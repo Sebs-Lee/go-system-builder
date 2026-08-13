@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
@@ -55,6 +56,12 @@ func NewRegistry(catalog *transition.Catalog) (*Registry, error) {
 		if len(requirements) == 0 {
 			return fmt.Errorf("quality gate %s has no semantic definition", gateID)
 		}
+		catalog := evidence.DefaultCatalog()
+		for _, requirement := range requirements {
+			if err := catalog.ValidateSlots([]string{requirement.Kind}); err != nil {
+				return fmt.Errorf("quality gate %s evidence contract: %w", gateID, err)
+			}
+		}
 		registry.gates[gateID] = GateSpec{
 			ID:                   gateID,
 			TransitionID:         transitionID,
@@ -79,6 +86,21 @@ func NewRegistry(catalog *transition.Catalog) (*Registry, error) {
 		}
 	}
 	return registry, nil
+}
+
+// ValidateEvidenceCatalog loads the repository's transition catalog and
+// proves every automatic Quality Gate requirement is closed by the shared
+// evidence catalog. It is used by doctor/validate so a gate-only compatibility
+// drift is reported before an operator attempts a transition.
+func ValidateEvidenceCatalog(root string) error {
+	catalog, err := transition.LoadCatalog(root)
+	if err != nil {
+		return fmt.Errorf("quality gate evidence catalog: load transitions: %w", err)
+	}
+	if _, err := NewRegistry(catalog); err != nil {
+		return fmt.Errorf("quality gate evidence catalog: %w", err)
+	}
+	return nil
 }
 
 // Lookup returns the registered gate definition.

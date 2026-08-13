@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `0c0a3096fe957fa7c7f127109d8172c6de702b331a9e9ddae81cd227898e6797`
+- **Loop definition SHA-256**: `3fa7c1ee8b2fb648ce8254c4d3d2fae62d1049c12b202dda19340a2af07cdb61`
 
 ---
 
@@ -26,6 +26,21 @@ The persisted `.claude/loop-state.json` `milestone` is a recovery cache, not a s
 During BUG investigation, answer why E2E did not cover or fail the gap (`skills/bug-resolution/SKILL.md`; `loop-harness e2e-coverage`). A contracted behavior that broke without a red CT/AC requires a coverage-gap Closing Contract item.
 
 ---
+
+## S11 Human decision gateway
+
+`awaiting_human_release` is a non-terminal human gateway. The Controller has no automatic candidate or decision at this cursor. Submit exactly one finite disposition with the explicit Runtime command:
+
+```bash
+loop-harness runtime human-decision \
+  --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> \
+  --expected-revision <N> --actor <user|orchestrator> \
+  --decision-evidence <human-decision-reference>
+```
+
+Disposition mapping is fixed: `approve` → TR-025 `release_authorized`; `defer` → TR-026 `paused` (the command binds generated `pause_record=generated:pause_checkpoint`); `reject_defect` → TR-027 S8 investigation (also requires `--finding-evidence`); `reject_acceptance` → TR-028 acceptance; `reject_release_audit` → TR-029 release audit; `abort` → TR-030 `aborted`. Arbitrary target states and transition IDs are not accepted.
+
+Human approval records release authorization only. Harness has no squash merge, publication, deployment, or formal release permission. Runtime rollover is eligible only from `release_authorized` or `aborted`.
 
 ## Contents
 
@@ -53,6 +68,12 @@ During BUG investigation, answer why E2E did not cover or fail the gap (`skills/
 - [`TR-022`](#tr-022) bug_resolution → verification — When the completed S8 disposition batch contains no accepted BUG, every finding is finally rejected without product/specification change or duplicate-linked to a canonical BUG with no remaining repair, the Loop returns to verification for a fresh complete round.
 - [`TR-023`](#tr-023) bug_resolution → planning — Finding-level specification rework (S8) routes back to planning.
 - [`TR-024`](#tr-024) bug_resolution → paused — A finding that requires modifying the locked REQ cannot proceed autonomously; the Loop pauses for human amendment.
+- [`TR-025`](#tr-025) awaiting_human_release → release_authorized — Record human release authorization without performing merge, publication, deployment, or formal release.
+- [`TR-026`](#tr-026) awaiting_human_release → paused — Defer the release decision and capture the S11 checkpoint before entering paused.
+- [`TR-027`](#tr-027) awaiting_human_release → bug_resolution — Route a human defect rejection to bug-resolution investigation with its finding evidence.
+- [`TR-028`](#tr-028) awaiting_human_release → acceptance — Re-enter acceptance and invalidate only prior acceptance and release-audit evidence.
+- [`TR-029`](#tr-029) awaiting_human_release → release_audit — Re-enter release audit and invalidate only prior release-audit evidence.
+- [`TR-030`](#tr-030) awaiting_human_release → aborted — Record a human release abort without performing any release side effect.
 
 _Phase: bug_resolution_
 
@@ -103,6 +124,15 @@ Start exactly one Loop for the named locked REQ.
 
 Evidence: `req_lock_record`, `loop_authorization_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `req_lock_record`: `--evidence req_lock_record=<reference>`
+  Accepted kinds: `human_decision`
+- `loop_authorization_record`: `--evidence loop_authorization_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-001` to inspect current candidates.
+
 ### `TR-002` {#tr-002}
 
 _planning → document_verification_
@@ -122,6 +152,17 @@ Lock only the exact contract and task versions jointly verified.
 
 Evidence: `document_review_record`, `contract_set_record`, `task_batch_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `document_review_record`: `--evidence document_review_record=<reference>`
+  Accepted kinds: `document_review`
+- `contract_set_record`: `--evidence contract_set_record=<reference>`
+  Accepted kinds: `document_review`
+- `task_batch_record`: `--evidence task_batch_record=<reference>`
+  Accepted kinds: `document_review`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-003` to inspect current candidates.
+
 ### `TR-004` {#tr-004}
 
 _document_verification → planning_
@@ -132,6 +173,13 @@ Non-REQ document findings return to planning.design for reworking the failing ar
 
 Evidence: `document_review_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `document_review_record`: `--evidence document_review_record=<reference>`
+  Accepted kinds: `document_review`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-004` to inspect current candidates.
+
 ### `TR-005` {#tr-005}
 
 _document_verification → paused_
@@ -141,6 +189,15 @@ REQ changes always return control to the human.
 _No guards._
 
 Evidence: `document_review_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `document_review_record`: `--evidence document_review_record=<reference>`
+  Accepted kinds: `document_review`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-005` to inspect current candidates.
 
 ### `TR-006` {#tr-006}
 
@@ -154,6 +211,15 @@ Start a complete review round after all activated Builders report.
 
 Evidence: `builder_report_record`, `team_manifest_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `builder_report_record`: `--evidence builder_report_record=<reference>`
+  Accepted kinds: `builder_report`, `agent_completion`
+- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
+  Accepted kinds: `builder_report`, `team_manifest`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-006` to inspect current candidates.
+
 ### `TR-007` {#tr-007}
 
 _building → planning_
@@ -164,6 +230,13 @@ Non-REQ execution conflicts return through planning and document verification.
 
 Evidence: `change_impact_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-007` to inspect current candidates.
+
 ### `TR-008` {#tr-008}
 
 _verification → bug_resolution_
@@ -173,6 +246,13 @@ Any blocking Delivery, QA, or E2E Browser finding means the REQ batch is incompl
 - `blocking_findings_present` [evidence_attestation] — At least one finding evidence item with severity=blocking exists for the current review round, referencing a canonical BUG.
 
 Evidence: `finding_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `finding_record`: `--evidence finding_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-008` to inspect current candidates.
 
 ### `TR-009` {#tr-009}
 
@@ -187,6 +267,13 @@ Acceptance requires one complete, current and blocker-free review round.
 
 Evidence: `clean_round_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `clean_round_record`: `--evidence clean_round_record=<reference>`
+  Accepted kinds: `clean_round`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-009` to inspect current candidates.
+
 ### `TR-010` {#tr-010}
 
 _verification → paused_
@@ -197,6 +284,15 @@ _No guards._
 
 Evidence: `review_result_record`, `pause_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `review_result_record`: `--evidence review_result_record=<reference>`
+  Accepted kinds: `delivery_review`, `qa_review`, `e2e_review`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-010` to inspect current candidates.
+
 ### `TR-011` {#tr-011}
 
 _verification → paused_
@@ -206,6 +302,15 @@ Security, compliance or equivalent blockers require human intervention.
 _No guards._
 
 Evidence: `review_result_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `review_result_record`: `--evidence review_result_record=<reference>`
+  Accepted kinds: `delivery_review`, `qa_review`, `e2e_review`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-011` to inspect current candidates.
 
 ### `TR-012` {#tr-012}
 
@@ -218,6 +323,15 @@ Only the ready_for_full_review handoff checkpoint may enter a complete Delivery 
 
 Evidence: `targeted_reverification_record`, `change_impact_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `targeted_reverification_record`: `--evidence targeted_reverification_record=<reference>`
+  Accepted kinds: `targeted_reverification`
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-012` to inspect current candidates.
+
 ### `TR-013` {#tr-013}
 
 _bug_resolution → planning_
@@ -228,6 +342,15 @@ Repair-driven specification changes return through planning and document verific
 
 Evidence: `change_impact_record`, `repair_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+- `repair_record`: `--evidence repair_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-013` to inspect current candidates.
+
 ### `TR-014` {#tr-014}
 
 _bug_resolution → paused_
@@ -237,6 +360,15 @@ Repair work cannot modify the locked REQ.
 _No guards._
 
 Evidence: `repair_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `repair_record`: `--evidence repair_record=<reference>`
+  Accepted kinds: `bug`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-014` to inspect current candidates.
 
 ### `TR-015` {#tr-015}
 
@@ -249,6 +381,15 @@ Release audit starts only from current ACC and clean-round evidence.
 
 Evidence: `acceptance_record`, `clean_round_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `acceptance_record`: `--evidence acceptance_record=<reference>`
+  Accepted kinds: `acceptance`
+- `clean_round_record`: `--evidence clean_round_record=<reference>`
+  Accepted kinds: `clean_round`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-015` to inspect current candidates.
+
 ### `TR-016` {#tr-016}
 
 _acceptance → verification_
@@ -258,6 +399,15 @@ Acceptance discrepancies restart the complete review.
 _No guards._
 
 Evidence: `acceptance_record`, `change_impact_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `acceptance_record`: `--evidence acceptance_record=<reference>`
+  Accepted kinds: `acceptance`
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-016` to inspect current candidates.
 
 ### `TR-017` {#tr-017}
 
@@ -271,6 +421,15 @@ Approved or approved-with-risk audit reaches the human release boundary.
 
 Evidence: `release_audit_record`, `acceptance_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `release_audit_record`: `--evidence release_audit_record=<reference>`
+  Accepted kinds: `release_audit`
+- `acceptance_record`: `--evidence acceptance_record=<reference>`
+  Accepted kinds: `acceptance`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-017` to inspect current candidates.
+
 ### `TR-018` {#tr-018}
 
 _release_audit → paused_
@@ -280,6 +439,15 @@ A blocked release audit pauses the Loop.
 _No guards._
 
 Evidence: `release_audit_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `release_audit_record`: `--evidence release_audit_record=<reference>`
+  Accepted kinds: `release_audit`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-018` to inspect current candidates.
 
 ### `TR-019` {#tr-019}
 
@@ -292,6 +460,15 @@ Resume the exact validated state, phase and entity checkpoint.
 
 Evidence: `human_decision_record`, `pause_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-019` to inspect current candidates.
+
 ### `TR-020` {#tr-020}
 
 _paused → planning_
@@ -302,6 +479,15 @@ A changed locked REQ starts a new planning generation.
 
 Evidence: `human_decision_record`, `req_lock_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+- `req_lock_record`: `--evidence req_lock_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-020` to inspect current candidates.
+
 ### `TR-021` {#tr-021}
 
 _paused → aborted_
@@ -311,6 +497,13 @@ Only a human may permanently abort the Loop.
 - `human_abort_approved` [evidence_attestation] — A human-approval evidence item signed by an authorized actor is referenced from runtime.evidence[] permitting the runtime to move to the `aborted` state.
 
 Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-021` to inspect current candidates.
 
 ### `TR-022` {#tr-022}
 
@@ -323,6 +516,13 @@ When the completed S8 disposition batch contains no accepted BUG, every finding 
 
 Evidence: `bug_batch_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-022` to inspect current candidates.
+
 ### `TR-023` {#tr-023}
 
 _bug_resolution → planning_
@@ -333,6 +533,15 @@ Finding-level specification rework (S8) routes back to planning.design for a new
 
 Evidence: `bug_batch_record`, `change_impact_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-023` to inspect current candidates.
+
 ### `TR-024` {#tr-024}
 
 _bug_resolution → paused_
@@ -342,6 +551,121 @@ A finding that requires modifying the locked REQ cannot proceed autonomously; th
 _No guards._
 
 Evidence: `bug_batch_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-024` to inspect current candidates.
+
+### `TR-025` {#tr-025}
+
+_awaiting_human_release → release_authorized_
+
+Record human release authorization without performing merge, publication, deployment, or formal release.
+
+_No guards._
+
+Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-025` to inspect current candidates.
+
+### `TR-026` {#tr-026}
+
+_awaiting_human_release → paused_
+
+Defer the release decision and capture the S11 checkpoint before entering paused.
+
+_No guards._
+
+Evidence: `human_decision_record`, `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-026` to inspect current candidates.
+
+### `TR-027` {#tr-027}
+
+_awaiting_human_release → bug_resolution_
+
+Route a human defect rejection to bug-resolution investigation with its finding evidence.
+
+_No guards._
+
+Evidence: `human_decision_record`, `finding_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+- `finding_record`: `--evidence finding_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-027` to inspect current candidates.
+
+### `TR-028` {#tr-028}
+
+_awaiting_human_release → acceptance_
+
+Re-enter acceptance and invalidate only prior acceptance and release-audit evidence.
+
+_No guards._
+
+Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-028` to inspect current candidates.
+
+### `TR-029` {#tr-029}
+
+_awaiting_human_release → release_audit_
+
+Re-enter release audit and invalidate only prior release-audit evidence.
+
+_No guards._
+
+Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-029` to inspect current candidates.
+
+### `TR-030` {#tr-030}
+
+_awaiting_human_release → aborted_
+
+Record a human release abort without performing any release side effect.
+
+- `human_abort_approved` [evidence_attestation] — A human-approval evidence item signed by an authorized actor is referenced from runtime.evidence[] permitting the runtime to move to the `aborted` state.
+
+Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain TR-030` to inspect current candidates.
 
 ## Phase transitions: bug_resolution
 
@@ -355,6 +679,15 @@ A finding cannot become repair work before root-cause evidence exists.
 
 Evidence: `finding_record`, `root_cause_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `finding_record`: `--evidence finding_record=<reference>`
+  Accepted kinds: `bug`
+- `root_cause_record`: `--evidence root_cause_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-01` to inspect current candidates.
+
 ### `PTR-BUG-02` {#ptr-bug-02}
 
 _bug_report_review → repair_readback_
@@ -366,6 +699,13 @@ The orchestrator approves canonical BUGs and duplicate mappings.
 
 Evidence: `bug_batch_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-02` to inspect current candidates.
+
 ### `PTR-BUG-03` {#ptr-bug-03}
 
 _bug_report_review → investigation_
@@ -375,6 +715,13 @@ Insufficient BUG reports return to investigation.
 _No guards._
 
 Evidence: `bug_batch_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-03` to inspect current candidates.
 
 ### `PTR-BUG-04` {#ptr-bug-04}
 
@@ -387,6 +734,13 @@ Repair execution uses the same two-phase activation gate.
 
 Evidence: `activation_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `activation_record`: `--evidence activation_record=<reference>`
+  Accepted kinds: `agent_activation`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-04` to inspect current candidates.
+
 ### `PTR-BUG-05` {#ptr-bug-05}
 
 _fixing → targeted_reverification_
@@ -396,6 +750,15 @@ Every repair invalidates affected historical PASS evidence before recheck.
 - `repair_reports_complete` [evidence_attestation] — Every repair task spawned for BUGs in the round has a completion_report evidence item referenced from runtime.evidence[].
 
 Evidence: `repair_record`, `change_impact_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `repair_record`: `--evidence repair_record=<reference>`
+  Accepted kinds: `bug`
+- `change_impact_record`: `--evidence change_impact_record=<reference>`
+  Accepted kinds: `change_impact`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-05` to inspect current candidates.
 
 ### `PTR-BUG-06` {#ptr-bug-06}
 
@@ -407,6 +770,13 @@ A targeted pass never substitutes for the full review round; it records the S9-t
 
 Evidence: `targeted_reverification_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `targeted_reverification_record`: `--evidence targeted_reverification_record=<reference>`
+  Accepted kinds: `targeted_reverification`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-06` to inspect current candidates.
+
 ### `PTR-BUG-07` {#ptr-bug-07}
 
 _targeted_reverification → investigation_
@@ -416,6 +786,13 @@ Failed repair verification restarts root-cause investigation.
 _No guards._
 
 Evidence: `targeted_reverification_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `targeted_reverification_record`: `--evidence targeted_reverification_record=<reference>`
+  Accepted kinds: `targeted_reverification`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-07` to inspect current candidates.
 
 ## Phase transitions: planning
 
@@ -447,6 +824,15 @@ QA cannot start until all required delivery dimensions pass.
 
 Evidence: `team_manifest_record`, `delivery_review_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
+  Accepted kinds: `builder_report`, `team_manifest`
+- `delivery_review_record`: `--evidence delivery_review_record=<reference>`
+  Accepted kinds: `delivery_review`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-01` to inspect current candidates.
+
 ### `PTR-VERIFY-02` {#ptr-verify-02}
 
 _qa → e2e_browser_
@@ -457,6 +843,15 @@ Real-browser E2E follows complete QA evidence.
 
 Evidence: `team_manifest_record`, `qa_review_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
+  Accepted kinds: `builder_report`, `team_manifest`
+- `qa_review_record`: `--evidence qa_review_record=<reference>`
+  Accepted kinds: `qa_review`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-02` to inspect current candidates.
+
 ### `PTR-VERIFY-03` {#ptr-verify-03}
 
 _e2e_browser → clean_round_evaluation_
@@ -466,6 +861,15 @@ Clean-round evaluation follows complete real-browser E2E evidence.
 - `e2e_angle_complete` [semantic_check] — _no spec_
 
 Evidence: `team_manifest_record`, `e2e_review_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
+  Accepted kinds: `builder_report`, `team_manifest`
+- `e2e_review_record`: `--evidence e2e_review_record=<reference>`
+  Accepted kinds: `e2e_review`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-03` to inspect current candidates.
 
 ### `PTR-VERIFY-04` {#ptr-verify-04}
 
@@ -480,6 +884,13 @@ Only one complete, current and blocker-free round passes.
 
 Evidence: `clean_round_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `clean_round_record`: `--evidence clean_round_record=<reference>`
+  Accepted kinds: `clean_round`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-04` to inspect current candidates.
+
 ### `PTR-VERIFY-05` {#ptr-verify-05}
 
 _clean_round_evaluation → delivery_
@@ -489,6 +900,13 @@ Mixed, incomplete or stale evidence restarts the full review.
 _No guards._
 
 Evidence: `clean_round_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `clean_round_record`: `--evidence clean_round_record=<reference>`
+  Accepted kinds: `clean_round`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-05` to inspect current candidates.
 
 ## Global transitions
 
@@ -502,6 +920,15 @@ _No guards._
 
 Evidence: `human_decision_record`, `pause_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-001` to inspect current candidates.
+
 ### `GTR-002` {#gtr-002}
 
 _planning|document_verification|building|verification|bug_resolution|acceptance|release_audit → paused_
@@ -511,6 +938,13 @@ Any required locked REQ change pauses automation.
 _No guards._
 
 Evidence: `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-002` to inspect current candidates.
 
 ### `GTR-003` {#gtr-003}
 
@@ -522,6 +956,13 @@ _No guards._
 
 Evidence: `pause_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-003` to inspect current candidates.
+
 ### `GTR-004` {#gtr-004}
 
 _verification|bug_resolution → paused_
@@ -532,6 +973,15 @@ _No guards._
 
 Evidence: `pause_record`, `bug_batch_record`
 
+Evidence bindings (copy into `runtime transition`):
+
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-004` to inspect current candidates.
+
 ### `GTR-005` {#gtr-005}
 
 _planning|document_verification|building|verification|bug_resolution|acceptance|release_audit → paused_
@@ -541,4 +991,11 @@ Runtime/document inconsistency fails closed.
 _No guards._
 
 Evidence: `pause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-005` to inspect current candidates.
 

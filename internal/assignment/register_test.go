@@ -102,6 +102,11 @@ func activeState(t *testing.T, root, state string, phase any, revision int) map[
 	value["revision"] = revision
 	value["runtime_id"] = "loop-REQ-002"
 	value["entities"] = map[string]any{"agents": []any{}, "tasks": []any{}, "bugs": []any{}, "teams": []any{}}
+	value["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
 	lifecycle := value["lifecycle"].(map[string]any)
 	lifecycle["state"] = state
 	lifecycle["phase"] = phase

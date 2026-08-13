@@ -29,6 +29,7 @@ package assignment_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -301,7 +302,7 @@ func step1RecordFindingBatch(t *testing.T, root, statePath, journalPath, finding
 	}
 	// The action mutates state.entities.bugs in place. We run it through a
 	// store.Update closure so the mutation is committed via CAS-safe append.
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, assignmentTestValidator{})
 	mutation := loopruntime.Mutation{
 		EventID:        "evt-record-finding-batch-r1",
 		TransitionID:   "TR-008",
@@ -359,6 +360,20 @@ func step1RecordFindingBatch(t *testing.T, root, statePath, journalPath, finding
 	}
 	return snap.Revision, journalLastSeq(journalPath)
 }
+
+type assignmentTestValidator struct{}
+
+func (assignmentTestValidator) ValidateCandidate(_ string, state map[string]any) error {
+	if state == nil || state["runtime_id"] == nil {
+		return errors.New("test validator rejects empty probe")
+	}
+	if lifecycle, ok := state["lifecycle"].(map[string]any); ok && lifecycle["phase"] == "invalid_semantic_phase" {
+		return errors.New("test validator rejects semantic probe")
+	}
+	return nil
+}
+
+var _ loopruntime.CandidateValidator = assignmentTestValidator{}
 
 // stepBugEvent is a thin wrapper that drives assignment.AdvanceBug and
 // returns the post-commit revision.

@@ -62,7 +62,30 @@ func TestRuntimeEvidenceAddCommand(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	state, err := schema.ReadAsset("loop-state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stateMap map[string]any
+	if err := json.Unmarshal(state, &stateMap); err != nil {
+		t.Fatal(err)
+	}
+	stateMap["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
+	state, err = json.MarshalIndent(stateMap, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,20 +125,44 @@ func TestRuntimeReconcileCommandRestoresMissingJournalEvent(t *testing.T) {
 	root := t.TempDir()
 	statePath := filepath.Join(root, "loop-state.json")
 	journalPath := filepath.Join(root, "loop-events.jsonl")
-	state := map[string]any{
-		"runtime_id": "loop-test",
-		"revision":   2,
-		"journal": map[string]any{
-			"path":          ".claude/loop-events.jsonl",
-			"last_sequence": 2,
-			"last_event_id": "evt-2",
-		},
-		"last_transition": map[string]any{
-			"event_id":      "evt-2",
-			"sequence":      2,
-			"transition_id": "TR-TEST",
-			"event":         "test_transition",
-		},
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stateData, err := schema.ReadAsset("loop-state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{}
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["runtime_id"] = "loop-test"
+	state["revision"] = 2
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 2,
+		"last_event_id": "evt-2",
+	}
+	state["last_transition"] = map[string]any{
+		"event_id":           "evt-2",
+		"sequence":           2,
+		"transition_id":      "TR-TEST",
+		"event":              "test_transition",
+		"actor":              "orchestrator",
+		"from":               map[string]any{"state": "planning", "phase": "design"},
+		"to":                 map[string]any{"state": "planning", "phase": "design"},
+		"expected_revision":  1,
+		"committed_revision": 2,
+		"idempotency_key":    "runtime:TR-TEST:1",
+		"evidence_ids":       []any{},
+		"occurred_at":        "2026-06-20T00:00:00Z",
 	}
 	data, err := json.Marshal(state)
 	if err != nil {
@@ -124,13 +171,27 @@ func TestRuntimeReconcileCommandRestoresMissingJournalEvent(t *testing.T) {
 	if err := os.WriteFile(statePath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath, nil, 0o644); err != nil {
+	priorEvent := map[string]any{
+		"schema_version": "1.0.0", "runtime_id": "loop-test", "event_id": "evt-1",
+		"sequence": 1, "event": "milestone_refreshed", "outcome": "refreshed",
+		"actor": map[string]any{"type": "system", "id": "cli-test"}, "request_id": "cli-test",
+		"baseline_generation": 1, "before_revision": 0, "after_revision": 1,
+		"from":         map[string]any{"state": "planning", "phase": "design"},
+		"to":           map[string]any{"state": "planning", "phase": "design"},
+		"evidence_ids": []any{}, "message": "Prior transition.", "occurred_at": "2026-06-20T00:00:00Z",
+	}
+	priorData, err := json.Marshal(priorEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, append(priorData, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
 		"runtime", "reconcile",
+		"--root", root,
 		"--state", statePath,
 		"--journal", journalPath,
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -430,6 +491,11 @@ func TestRuntimeRegisterWorkgroupCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeState["revision"] = float64(6)
+	runtimeState["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
 	runtimeState["lifecycle"].(map[string]any)["state"] = "document_verification"
 	runtimeState["lifecycle"].(map[string]any)["phase"] = nil
 	data, _ := json.Marshal(runtimeState)
@@ -473,6 +539,11 @@ func TestRuntimeAgentEventCommandRecordsReadback(t *testing.T) {
 	state["runtime_id"] = "loop-REQ-002"
 	state["lifecycle"].(map[string]any)["state"] = "verification"
 	state["lifecycle"].(map[string]any)["phase"] = "delivery"
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
 	state["entities"].(map[string]any)["agents"] = []any{map[string]any{
 		"id": "agent-ver-1", "role": "delivery-verifier", "state": "reading",
 		"task_ids": []any{"TASK-012"}, "team_id": "workgroup-delivery-round-1",

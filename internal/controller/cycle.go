@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
@@ -104,8 +105,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		ctx = context.Background()
 	}
 
-	statePath := filepath.Join(req.Root, ".claude", "loop-state.json")
-	journalPath := filepath.Join(req.Root, ".claude", "loop-events.jsonl")
+	statePath, journalPath := controlRuntimePaths(req)
 
 	// --- Step 2: read snapshot revision N ---
 	store := runtime.NewStore(statePath, journalPath)
@@ -508,9 +508,8 @@ func recomputeAfterStale(
 		return out, 1, nil
 	}
 	// Retry the transition once with the refreshed expected revision.
-	_, applyErr := transition.Apply(req.Root,
-		filepath.Join(req.Root, ".claude", "loop-state.json"),
-		filepath.Join(req.Root, ".claude", "loop-events.jsonl"),
+	statePath, journalPath := controlRuntimePaths(req)
+	_, applyErr := transition.Apply(req.Root, statePath, journalPath,
 		autoTransitionRequest(req, registry, refreshed, candidate, gateID, evaluation))
 	if applyErr != nil {
 		if errors.Is(applyErr, runtime.ErrStaleRevision) {
@@ -715,7 +714,7 @@ func projectZeroSelected(
 func isTopLevelLifecycleState(name string) bool {
 	switch name {
 	case "inactive", "planning", "document_verification", "building", "verification",
-		"bug_resolution", "acceptance", "release_audit", "awaiting_human_release", "paused", "aborted":
+		"bug_resolution", "acceptance", "release_audit", "awaiting_human_release", "release_authorized", "paused", "aborted":
 		return true
 	default:
 		return false
@@ -747,6 +746,15 @@ func candidateID(spec *transition.TransitionSpec) string {
 // state in the catalog separately; we have to match against both keys
 // to find planning.design -> planning.contracts, etc.
 func automaticCandidatesFor(catalog *transition.Catalog, cursor transition.Cursor) []transition.TransitionSpec {
+	// Human release decisions and terminal cursors are explicit operator
+	// surfaces. Even if a stale or malformed catalog accidentally carries an
+	// auto-trigger on one of these states, the Hook controller must not turn it
+	// into an automatic candidate.
+	switch cursor.State {
+	case "awaiting_human_release", "release_authorized", "aborted":
+		return nil
+	}
+
 	var matches []transition.TransitionSpec
 	// Top-level transitions match on state; phase is optional and the
 	// transition's `from_phase` (if set) must equal the cursor phase.
@@ -872,6 +880,22 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 
 func allowDecision() policy.Decision {
 	return policy.Decision{Decision: "allow", Reason: "no policy rule blocked this action", Retry: "not_applicable"}
+}
+
+// controlRuntimePaths resolves the Runtime pair for one control request.
+// Root remains the artifact/evidence boundary; only the optional pair is
+// redirected. Keeping the defaults here preserves the production path
+// contract for every existing caller.
+func controlRuntimePaths(req ControlRequest) (string, string) {
+	statePath := req.StatePath
+	if statePath == "" {
+		statePath = filepath.Join(req.Root, ".claude", "loop-state.json")
+	}
+	journalPath := req.JournalPath
+	if journalPath == "" {
+		journalPath = filepath.Join(req.Root, ".claude", "loop-events.jsonl")
+	}
+	return statePath, journalPath
 }
 
 func cursorString(state, phase string) string {
@@ -1004,13 +1028,14 @@ func buildTransitionEvidence(
 		}
 	}
 	currentRound := snapshotReviewRound(snapshot.State)
+	catalog := evidence.DefaultCatalog()
 	for _, kind := range candidate.RequiredEvidence {
-		// pause_record is a generated evidence kind (transition.Apply
-		// validates via validateGeneratedEvidence, not the runtime index).
-		// Synthetic refs unblock Hook-driven TR-014/024 / GTR pause paths.
-		if kind == "pause_record" {
+		// Generated evidence is supplied by catalog metadata rather than the
+		// concrete slot name, so a newly declared generated slot follows the
+		// same Hook path automatically.
+		if generator, generated := catalog.Generator(kind); generated {
 			if out[kind] == "" {
-				out[kind] = "generated:pause_checkpoint"
+				out[kind] = generator.Reference
 			}
 			continue
 		}
@@ -1131,13 +1156,7 @@ func evidenceAssignScore(requiredKind string, item map[string]any, currentRound 
 }
 
 func evidenceKindPreferred(requiredKind, actualKind string) bool {
-	switch requiredKind {
-	case "team_manifest_record":
-		// Prefer real manifests over the builder_report alias used by TR-006.
-		return actualKind == "team_manifest" || actualKind == "team_manifest_record"
-	default:
-		return false
-	}
+	return evidence.DefaultCatalog().IsPreferred(requiredKind, actualKind)
 }
 
 func snapshotReviewRound(state map[string]any) int {
@@ -1171,30 +1190,7 @@ func runtimeEvidenceIndex(state map[string]any) map[string]map[string]any {
 }
 
 func evidenceKindCompatible(requiredKind, actualKind string) bool {
-	switch requiredKind {
-	case "contract_set_record", "task_batch_record", "document_review_record":
-		return actualKind == "document_review" || actualKind == "document_review_record"
-	case "team_manifest_record":
-		return actualKind == "builder_report" || actualKind == "team_manifest" || actualKind == "team_manifest_record"
-	case "builder_report_record":
-		return actualKind == "builder_report" || actualKind == "agent_completion" || actualKind == "builder_report_record"
-	case "clean_round_record":
-		return actualKind == "clean_round" || actualKind == "clean_round_record"
-	case "bug_batch_record", "finding_record", "root_cause_record", "repair_record":
-		return actualKind == "bug" || actualKind == requiredKind
-	case "delivery_review_record":
-		return actualKind == "delivery_review" || actualKind == "delivery_review_record"
-	case "targeted_reverification_record":
-		return actualKind == "targeted_reverification" || actualKind == "targeted_reverification_record"
-	case "release_audit_record":
-		return actualKind == "release_audit" || actualKind == "release_audit_record"
-	case "completion_report":
-		return actualKind == "completion_report" || actualKind == "agent_completion"
-	case "activation_record":
-		return actualKind == "agent_activation" || actualKind == "activation_record"
-	default:
-		return actualKind == requiredKind || strings.TrimSuffix(requiredKind, "_record") == actualKind
-	}
+	return evidence.DefaultCatalog().Accepts(requiredKind, actualKind)
 }
 
 func containsString(values []string, target string) bool {

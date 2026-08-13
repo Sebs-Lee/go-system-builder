@@ -26,6 +26,7 @@ func TestRecordEvidenceAppendsFingerprintedEvidenceWithCAS(t *testing.T) {
 		Path:             "REV-001.md",
 		ProducedBy:       []string{"document-verifier"},
 		ResponsibilityID: "DV-TRUTH-AUDIT",
+		Validator:        testCandidateValidator(),
 	})
 	if err != nil {
 		t.Fatalf("RecordEvidence failed: %v", err)
@@ -90,6 +91,7 @@ func TestRecordEvidenceAcceptsChangeImpactEvidence(t *testing.T) {
 		Path:             "IMPACT-001.md",
 		ProducedBy:       []string{"orchestrator"},
 		ResponsibilityID: "BUILD-WORK-PACKAGE",
+		Validator:        testCandidateValidator(),
 	})
 	if err != nil {
 		t.Fatalf("RecordEvidence change impact failed: %v", err)
@@ -111,6 +113,7 @@ func writeExampleRuntime(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	state["evidence"] = []any{}
+	state["journal"] = map[string]any{"path": ".claude/loop-events.jsonl", "last_sequence": 0, "last_event_id": nil}
 	encoded, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		t.Fatal(err)

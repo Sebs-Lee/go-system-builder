@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/catalog"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/migration"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/team"
@@ -153,7 +154,73 @@ func ValidateRepository(root string) error {
 	if err := ValidateRuntimeReachability(root); err != nil {
 		return err
 	}
+	if err := ValidateEvidenceCatalog(root); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ValidateEvidenceCatalog proves every Loop Definition evidence slot has a
+// registered persisted kind or an explicit generator. Quality Gate closure is
+// checked by qualitygate.ValidateEvidenceCatalog at the doctor boundary.
+func ValidateEvidenceCatalog(root string) error {
+	definitionData, err := os.ReadFile(filepath.Join(root, "docs", "loop-definition.json"))
+	if err != nil {
+		return fmt.Errorf("evidence catalog: read Loop Definition: %w", err)
+	}
+	var definition evidenceDefinition
+	if err := json.Unmarshal(definitionData, &definition); err != nil {
+		return fmt.Errorf("evidence catalog: decode Loop Definition: %w", err)
+	}
+	catalog := evidence.DefaultCatalog()
+	for _, spec := range definition.Transitions {
+		if err := catalog.ValidateSlots(spec.RequiredEvidence); err != nil {
+			return fmt.Errorf("evidence catalog: transition %s: %w", spec.ID, err)
+		}
+	}
+	for owner, machine := range definition.PhaseMachines {
+		for _, spec := range machine.Transitions {
+			if err := catalog.ValidateSlots(spec.RequiredEvidence); err != nil {
+				return fmt.Errorf("evidence catalog: phase %s transition %s: %w", owner, spec.ID, err)
+			}
+		}
+	}
+	for _, spec := range definition.GlobalTransitions {
+		if err := catalog.ValidateSlots(spec.RequiredEvidence); err != nil {
+			return fmt.Errorf("evidence catalog: global transition %s: %w", spec.ID, err)
+		}
+	}
+	for entity, lifecycle := range definition.EntityLifecycles {
+		for _, spec := range lifecycle.Transitions {
+			if err := catalog.ValidateSlots(spec.RequiredEvidence); err != nil {
+				return fmt.Errorf("evidence catalog: entity %s transition %s: %w", entity, spec.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+type evidenceDefinition struct {
+	Transitions []struct {
+		ID               string   `json:"id"`
+		RequiredEvidence []string `json:"required_evidence"`
+	} `json:"transitions"`
+	PhaseMachines map[string]struct {
+		Transitions []struct {
+			ID               string   `json:"id"`
+			RequiredEvidence []string `json:"required_evidence"`
+		} `json:"transitions"`
+	} `json:"phase_machines"`
+	GlobalTransitions []struct {
+		ID               string   `json:"id"`
+		RequiredEvidence []string `json:"required_evidence"`
+	} `json:"global_transitions"`
+	EntityLifecycles map[string]struct {
+		Transitions []struct {
+			ID               string   `json:"id"`
+			RequiredEvidence []string `json:"required_evidence"`
+		} `json:"transitions"`
+	} `json:"entity_lifecycles"`
 }
 
 func ValidateAgentMessages(root string) error {

@@ -24,6 +24,7 @@ import (
 	impactanalysis "github.com/entroforge/go-system-builder/internal/impact"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
+	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/releasegraph"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -206,7 +207,10 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	}
 	statePath := filepath.Join(*root, ".claude/loop-state.json")
 	journalPath := filepath.Join(*root, ".claude/loop-events.jsonl")
-	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	// REQ bind is an explicit mutation command. Its writer is therefore the
+	// recovery boundary for a pending rollover/commit; read-only projections
+	// must report the marker instead of repairing it implicitly.
+	snapshot, err := runtime.NewWriter(statePath, journalPath, *root, semantic.RuntimeCandidateValidator{}).Snapshot()
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("read runtime revision: %w", err)))
 		return 1
@@ -342,7 +346,11 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "acceptance", "release_audit":
 		return "S10", "acceptance-and-handoff", "complete acceptance and release audit"
 	case "awaiting_human_release":
-		return "S11", "acceptance-and-handoff", "present the release-ready Gateway"
+		return "S11", "acceptance-and-handoff", "stop automation and submit one explicit runtime human-decision (approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort)"
+	case "release_authorized":
+		return "S11", "acceptance-and-handoff", "S11 human-authorized terminal; Harness performs no merge, publication, deployment, or formal release"
+	case "aborted":
+		return "aborted", "loop-orchestration", "aborted terminal; stop automation and use only an eligible human-authorized rollover for a new Runtime"
 	case "paused":
 		return "paused", "loop-orchestration", "resolve the recorded pause condition"
 	default:
@@ -755,22 +763,30 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <reconcile|migrate-planning|reconcile-policy-ref|rollover|transition|change|evidence|register-workgroup|agent-event|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|transition|change|evidence|register-workgroup|agent-event|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
+	case "recover":
+		return runRuntimeRecover(args[1:], stdout, stderr)
 	case "rollover":
 		return runRuntimeRollover(args[1:], stdout, stderr)
+	case "human-decision":
+		return runRuntimeHumanDecision(args[1:], stdout, stderr)
 	case "reconcile":
 		flags := flag.NewFlagSet("runtime reconcile", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		bindUsage(flags, "runtime reconcile")
+		root := flags.String("root", ".", "repository root")
 		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
 		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		reconciled, err := runtime.NewStore(*statePath, *journalPath).Reconcile()
+		resolvedState := resolveRootPath(*root, *statePath)
+		resolvedJournal := resolveRootPath(*root, *journalPath)
+		reconciler := runtime.NewWriter(resolvedState, resolvedJournal, *root, semantic.RuntimeCandidateValidator{})
+		reconciled, err := reconciler.Reconcile()
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime reconcile", err))
 			return 1
@@ -799,7 +815,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if !filepath.IsAbs(resolvedJournal) {
 			resolvedJournal = filepath.Join(*root, resolvedJournal)
 		}
-		migrated, err := runtime.NewStore(resolvedState, resolvedJournal).MigrateLegacyPlanning(*root)
+		migrated, err := runtime.NewWriter(resolvedState, resolvedJournal, *root, semantic.RuntimeCandidateValidator{}).MigrateLegacyPlanning(*root)
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime migrate-planning", err))
 			return 1
@@ -1024,7 +1040,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		result, err := runtime.NewStore(*statePath, *journalPath).RefreshFingerprints(*root)
+		result, err := runtime.NewWriter(*statePath, *journalPath, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root)
 		if err != nil {
 			fmt.Fprintf(stderr, "runtime fingerprint failed: %v\n", err)
 			return 1
@@ -1043,6 +1059,76 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+// runRuntimeHumanDecision is the only CLI entrypoint for S11 human decisions.
+// The disposition is mapped to a fixed transition by the Runtime package; the
+// caller cannot supply a target state or transition ID. This makes the command
+// usable for both legacy S11 snapshots and the current human gateway while
+// keeping missing evidence, actor, and CAS revision fail-closed.
+func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("runtime human-decision", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "runtime human-decision")
+	root := flags.String("root", ".", "repository root")
+	statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+	journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+	disposition := flags.String("disposition", "", "one of approve, defer, reject_defect, reject_acceptance, reject_release_audit, abort")
+	expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+	actor := flags.String("actor", "", "human decision actor")
+	decisionEvidence := flags.String("decision-evidence", "", "human_decision_record evidence reference")
+	findingEvidence := flags.String("finding-evidence", "", "finding_record evidence reference; required for reject_defect")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	missing := make([]string, 0, 4)
+	if strings.TrimSpace(*disposition) == "" {
+		missing = append(missing, "--disposition")
+	}
+	if *expectedRevision < 0 {
+		missing = append(missing, "--expected-revision")
+	}
+	if strings.TrimSpace(*actor) == "" {
+		missing = append(missing, "--actor")
+	}
+	if strings.TrimSpace(*decisionEvidence) == "" {
+		missing = append(missing, "--decision-evidence")
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr, "runtime human-decision requires %s; choose --disposition approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort\n", strings.Join(missing, ", "))
+		return 2
+	}
+
+	transitionID, err := runtime.HumanReleaseTransitionID(strings.TrimSpace(*disposition))
+	if err != nil {
+		fmt.Fprintf(stderr, "runtime human-decision: %v; choose approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort\n", err)
+		return 2
+	}
+	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionRejectDefect) && strings.TrimSpace(*findingEvidence) == "" {
+		fmt.Fprintln(stderr, "runtime human-decision reject_defect requires --finding-evidence for finding_record")
+		return 2
+	}
+
+	evidence := map[string]string{"human_decision_record": strings.TrimSpace(*decisionEvidence)}
+	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionDefer) {
+		evidence["pause_record"] = "generated:pause_checkpoint"
+	}
+	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionRejectDefect) {
+		evidence["finding_record"] = strings.TrimSpace(*findingEvidence)
+	}
+
+	next, err := transition.Apply(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), transition.Request{
+		TransitionID:     transitionID,
+		ExpectedRevision: *expectedRevision,
+		Actor:            strings.TrimSpace(*actor),
+		Evidence:         evidence,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("runtime human-decision", err))
+		return 1
+	}
+	return encodeJSON(stdout, next)
+}
+
 // runRuntimeReconcilePolicyRef realigns `hook_control.policy_ref` with the
 // Hook policy document on disk (BUG-039-12; REQ-039 §11, SYNC-039 §6-7).
 //
@@ -1050,7 +1136,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 // reference drift. It deliberately reuses Store.RefreshFingerprints rather than
 // writing policy_ref directly: fingerprint refresh is the single canonical
 // non-semantic housekeeping writer, it goes through the runtime lock, the
-// PreCommitValidator and the atomic write, and it does not bump the revision or
+// the mandatory semantic validator and atomic write, and it does not bump the revision or
 // append a journal entry. Realigning an audit snapshot is not a Loop transition,
 // so it must not look like one in the journal.
 //
@@ -1089,7 +1175,7 @@ func runRuntimeReconcilePolicyRef(args []string, stdout, stderr io.Writer) int {
 			before.Path, before.RecordedVersion, before.OnDiskVersion, before.RecordedSHA256, before.OnDiskSHA256)
 		return 1
 	}
-	if _, err := store.RefreshFingerprints(*root); err != nil {
+	if _, err := runtime.NewWriter(*statePath, *journalPath, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root); err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime reconcile-policy-ref", err))
 		return 1
 	}
@@ -1144,7 +1230,7 @@ func runRuntimeRollover(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime rollover", fmt.Errorf("validate fresh runtime: %w", err)))
 		return 1
 	}
-	record, err := runtime.NewStore(rootedPath(*root, ".claude/loop-state.json"), rootedPath(*root, ".claude/loop-events.jsonl")).Rollover(
+	record, err := runtime.NewWriter(rootedPath(*root, ".claude/loop-state.json"), rootedPath(*root, ".claude/loop-events.jsonl"), *root, semantic.RuntimeCandidateValidator{}).Rollover(
 		freshState, rootedPath(*root, *archive), runtime.RolloverApproval{ApprovedBy: *approvedBy, EvidenceID: *approvalEvidence}, now,
 	)
 	if err != nil {
@@ -1202,6 +1288,7 @@ func runRuntimeEvidence(args []string, stdout, stderr io.Writer) int {
 		ResponsibilityID: *responsibility,
 		ReviewRound:      round,
 		ScopeRefs:        append([]string(nil), scopeRefs...),
+		Validator:        semantic.RuntimeCandidateValidator{},
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime evidence add", err))
@@ -1266,6 +1353,7 @@ func runRuntimeChange(args []string, stdout, stderr io.Writer) int {
 	next, err := runtime.CreateChange(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), runtime.ChangeRequest{
 		ExpectedRevision: *expectedRevision,
 		Record:           record,
+		Validator:        semantic.RuntimeCandidateValidator{},
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime change create", err))
@@ -1378,6 +1466,10 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if err := semantic.ValidateRepository(*root); err != nil {
+		fmt.Fprintf(stderr, "doctor failed: %v\n", err)
+		return 1
+	}
+	if err := qualitygate.ValidateEvidenceCatalog(*root); err != nil {
 		fmt.Fprintf(stderr, "doctor failed: %v\n", err)
 		return 1
 	}
@@ -2195,7 +2287,7 @@ func runManual(args []string, stdout, stderr io.Writer) int {
 //	loop-harness explain <TR-xxx> --root .
 func runExplain(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness explain <TR-xxx> [--root <path>]")
+		fmt.Fprintln(stderr, "usage: loop-harness explain <TR-xxx> [--root <path>] [--state <path>]")
 		return 2
 	}
 	id := args[0]
@@ -2203,6 +2295,7 @@ func runExplain(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	bindUsage(flags, "explain")
 	root := flags.String("root", ".", "repository root")
+	statePath := flags.String("state", ".claude/loop-state.json", "current Runtime state path; read-only")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
@@ -2216,6 +2309,22 @@ func runExplain(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "explain: transition %q not found in top-level, phase, or global scope\n", id)
 		return 1
 	}
+	stateData, err := os.ReadFile(resolveRootPath(*root, *statePath))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprint(stdout, body)
+			fmt.Fprintf(stdout, "\nCurrent Runtime evidence candidates unavailable: state file %q does not exist.\n", filepath.ToSlash(*statePath))
+			return 0
+		}
+		fmt.Fprintf(stderr, "explain: read current Runtime state: %v\n", err)
+		return 1
+	}
+	var state map[string]any
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		fmt.Fprintf(stderr, "explain: decode current Runtime state: %v\n", err)
+		return 1
+	}
+	body = transition.RenderTransitionWithCandidates(catalog.Definition, id, *root, state)
 	fmt.Fprint(stdout, body)
 	return 0
 }

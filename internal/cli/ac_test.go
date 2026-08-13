@@ -87,7 +87,7 @@ func writeACState(t *testing.T, root string, state map[string]any) {
 
 // planningState builds a schema-valid loop-state.json that drives the
 // pre-tool-use ControlCycle. The fields mirror loop-state.example.json
-// (B1 §8.1) so the PreCommitValidator accepts the post-mutation state
+// (B1 §8.1) so the commit validator accepts the post-mutation state
 // the Controller persists (BUG-039-07 §4.1). Without the full schema
 // surface (bound_req sha256, manual_ref, instruction, recovery,
 // configuration), MarshalAndValidateRuntime would reject the

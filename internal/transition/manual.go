@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/evidence"
 )
 
 // ManualOptions controls markdown rendering.
@@ -35,11 +37,25 @@ func RenderManual(def *LoopDefinition, opts ManualOptions) string {
 	var b strings.Builder
 	writeHeader(&b, opts)
 	writeControlPlaneRecovery(&b)
+	writeS11HumanGateway(&b)
 	writeTOC(&b, def)
 	writeTopLevelTransitions(&b, def)
 	writePhaseTransitions(&b, def)
 	writeGlobalTransitions(&b, def)
 	return b.String()
+}
+
+func writeS11HumanGateway(b *strings.Builder) {
+	fmt.Fprintf(b, "## S11 Human decision gateway\n\n")
+	fmt.Fprintf(b, "`awaiting_human_release` is a non-terminal human gateway. The Controller has no automatic candidate or decision at this cursor. Submit exactly one finite disposition with the explicit Runtime command:\n\n")
+	fmt.Fprintf(b, "```bash\n")
+	fmt.Fprintln(b, "loop-harness runtime human-decision \\")
+	fmt.Fprintln(b, "  --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> \\")
+	fmt.Fprintln(b, "  --expected-revision <N> --actor <user|orchestrator> \\")
+	fmt.Fprintln(b, "  --decision-evidence <human-decision-reference>")
+	fmt.Fprintf(b, "```\n\n")
+	fmt.Fprintf(b, "Disposition mapping is fixed: `approve` → TR-025 `release_authorized`; `defer` → TR-026 `paused` (the command binds generated `pause_record=generated:pause_checkpoint`); `reject_defect` → TR-027 S8 investigation (also requires `--finding-evidence`); `reject_acceptance` → TR-028 acceptance; `reject_release_audit` → TR-029 release audit; `abort` → TR-030 `aborted`. Arbitrary target states and transition IDs are not accepted.\n\n")
+	fmt.Fprintf(b, "Human approval records release authorization only. Harness has no squash merge, publication, deployment, or formal release permission. Runtime rollover is eligible only from `release_authorized` or `aborted`.\n\n")
 }
 
 func writeControlPlaneRecovery(b *strings.Builder) {
@@ -186,7 +202,62 @@ func writeTransition(b *strings.Builder, t TransitionSpec) {
 	}
 	if len(t.RequiredEvidence) > 0 {
 		fmt.Fprintf(b, "Evidence: %s\n\n", joinBack(t.RequiredEvidence))
+		writeEvidenceBindings(b, t)
 	}
+}
+
+func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
+	catalog := evidence.DefaultCatalog()
+	fmt.Fprintf(b, "Evidence bindings (copy into `runtime transition`):\n\n")
+	for _, slot := range t.RequiredEvidence {
+		if generator, generated := catalog.Generator(slot); generated {
+			fmt.Fprintf(b, "- `%s`: `--evidence %s=%s` (%s)\n", slot, slot, generator.Reference, generator.Description)
+		} else {
+			fmt.Fprintf(b, "- `%s`: `--evidence %s=<reference>`\n", slot, slot)
+		}
+		fmt.Fprintf(b, "  Accepted kinds: %s\n", joinBack(catalog.RegisteredAcceptedKinds(slot)))
+	}
+	fmt.Fprintf(b, "\nIf a binding is missing, retry with the command above; run `loop-harness explain %s` to inspect current candidates.\n\n", t.ID)
+}
+
+// ValidateManualEvidenceBindings verifies that a generated Manual contains an
+// actionable binding template for every required evidence slot.
+func ValidateManualEvidenceBindings(def *LoopDefinition, markdown string) error {
+	if def == nil {
+		return nil
+	}
+	for _, spec := range allTransitionSpecs(def) {
+		for _, slot := range spec.RequiredEvidence {
+			prefix := "--evidence " + slot + "="
+			if !strings.Contains(markdown, prefix) {
+				return fmt.Errorf("manual missing evidence binding guidance for transition %s slot %s; run `loop-harness manual --root .` to regenerate; expected %s<reference>", spec.ID, slot, prefix)
+			}
+		}
+	}
+	return nil
+}
+
+func allTransitionSpecs(def *LoopDefinition) []TransitionSpec {
+	var specs []TransitionSpec
+	specs = append(specs, def.Transitions...)
+	owners := make([]string, 0, len(def.PhaseMachines))
+	for owner := range def.PhaseMachines {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+	for _, owner := range owners {
+		specs = append(specs, def.PhaseMachines[owner].Transitions...)
+	}
+	for _, global := range def.GlobalTransitions {
+		specs = append(specs, TransitionSpec{
+			ID:               global.ID,
+			RequiredEvidence: global.RequiredEvidence,
+		})
+	}
+	for _, lifecycle := range def.EntityLifecycles {
+		specs = append(specs, lifecycle.Transitions...)
+	}
+	return specs
 }
 
 func writeGuard(b *strings.Builder, guardID string) {

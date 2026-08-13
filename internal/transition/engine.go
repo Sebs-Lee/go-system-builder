@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/impact"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 // ResumeSentinel is the Loop Definition TR-019 sentinel that resolves to the
@@ -60,9 +62,10 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		occurredAt = time.Now().UTC()
 	}
 	evidenceIDs := evidenceValues(request.Evidence)
-	// Snapshot also completes any interrupted rollover before the transition is
-	// resolved, so guards never inspect a mixed state/journal pair.
-	snapshot, err := loopruntime.NewStore(statePath, journalPath).Snapshot()
+	// Apply is an explicit mutation boundary. Its writer may recover a durable
+	// pending operation before guards inspect the state/journal pair.
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	snapshot, err := store.Snapshot()
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
 	}
@@ -237,13 +240,8 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		},
 	}
 
-	store := loopruntime.NewStore(statePath, journalPath)
-	// Pre-commit validator per BUG-001 §4b.2(g). Runs semantic.ValidateRuntimeBytes
-	// on the post-mutation state before the atomic write; if invalid, the
-	// runtime is not committed and no journal entry is appended.
-	store.PreCommitValidator = func(state map[string]any) error {
-		return MarshalAndValidateRuntime(root, state)
-	}
+	// Inject the root-aware semantic validator at the composition boundary.
+	// Runtime owns the commit boundary but does not import this package.
 	return store.Update(request.ExpectedRevision, mutation)
 }
 
@@ -296,10 +294,11 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 		return fmt.Errorf("actor %q cannot execute %s", request.Actor, spec.ID)
 	}
 	seen := map[string]bool{}
+	catalog := evidence.DefaultCatalog()
 	for _, kind := range spec.RequiredEvidence {
 		ref := strings.TrimSpace(request.Evidence[kind])
 		if ref == "" {
-			return fmt.Errorf("transition %s requires evidence %s", spec.ID, kind)
+			return fmt.Errorf("%s", catalog.MissingBindingMessage(spec.ID, kind))
 		}
 		if seen[ref] {
 			return fmt.Errorf("transition %s reuses evidence %s for multiple requirements", spec.ID, ref)
@@ -322,50 +321,58 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 }
 
 func generatedEvidenceKind(kind string) bool {
-	return kind == "pause_record"
+	return evidence.DefaultCatalog().IsGenerated(kind)
 }
 
 func validateGeneratedEvidence(state map[string]any, kind, ref string, request Request) error {
-	if kind == "pause_record" {
-		return nil
+	generator, ok := evidence.DefaultCatalog().Generator(kind)
+	if !ok {
+		return fmt.Errorf("unsupported generated evidence kind %s", kind)
 	}
-	return fmt.Errorf("unsupported generated evidence kind %s", kind)
+	if !generatedEvidenceReferenceMatches(strings.TrimSpace(ref), generator.Reference) {
+		return fmt.Errorf("reference %q does not match catalog generator %q", ref, generator.Reference)
+	}
+	return nil
+}
+
+func generatedEvidenceReferenceMatches(ref, canonical string) bool {
+	return ref == canonical
 }
 
 func validateCurrentEvidence(root string, state map[string]any, requiredKind, ref string) error {
 	items, _ := state["evidence"].([]any)
-	var evidence map[string]any
+	var evidenceItem map[string]any
 	for _, raw := range items {
 		item, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
 		if item["id"] == ref || item["path"] == ref {
-			evidence = item
+			evidenceItem = item
 			break
 		}
 	}
-	if evidence == nil {
+	if evidenceItem == nil {
 		return fmt.Errorf("reference %q is not current runtime evidence", ref)
 	}
-	if evidence["status"] != "valid" {
+	if evidenceItem["status"] != "valid" {
 		return fmt.Errorf("reference %q is not valid", ref)
 	}
-	actualKind, _ := evidence["kind"].(string)
-	if !contains(allowedEvidenceKinds(requiredKind), actualKind) {
+	actualKind, _ := evidenceItem["kind"].(string)
+	if !evidence.DefaultCatalog().Accepts(requiredKind, actualKind) {
 		return fmt.Errorf("reference %q has kind %q, incompatible with %s", ref, actualKind, requiredKind)
 	}
 	baseline, _ := state["baseline"].(map[string]any)
-	if integer(evidence["baseline_generation"]) != integer(baseline["generation"]) {
-		return fmt.Errorf("reference %q belongs to baseline generation %d, current is %d", ref, integer(evidence["baseline_generation"]), integer(baseline["generation"]))
+	if integer(evidenceItem["baseline_generation"]) != integer(baseline["generation"]) {
+		return fmt.Errorf("reference %q belongs to baseline generation %d, current is %d", ref, integer(evidenceItem["baseline_generation"]), integer(baseline["generation"]))
 	}
-	if evidenceRound := integer(evidence["review_round"]); evidenceRound > 0 {
+	if evidenceRound := integer(evidenceItem["review_round"]); evidenceRound > 0 {
 		review, _ := state["review"].(map[string]any)
 		if evidenceRound != integer(review["round"]) {
 			return fmt.Errorf("reference %q belongs to review round %d, current is %d", ref, evidenceRound, integer(review["round"]))
 		}
 	}
-	rel, _ := evidence["path"].(string)
+	rel, _ := evidenceItem["path"].(string)
 	clean := filepath.Clean(rel)
 	if rel == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("reference %q has unsafe path %q", ref, rel)
@@ -374,7 +381,7 @@ func validateCurrentEvidence(root string, state map[string]any, requiredKind, re
 	if err != nil {
 		return fmt.Errorf("read reference %q: %w", ref, err)
 	}
-	want, _ := evidence["sha256"].(string)
+	want, _ := evidenceItem["sha256"].(string)
 	if actual := SHA256(data); want == "" || actual != want {
 		return fmt.Errorf("reference %q fingerprint mismatch", ref)
 	}
@@ -382,48 +389,7 @@ func validateCurrentEvidence(root string, state map[string]any, requiredKind, re
 }
 
 func allowedEvidenceKinds(required string) []string {
-	switch required {
-	case "req_lock_record", "loop_authorization_record", "human_decision_record", "pause_record":
-		return []string{"human_decision"}
-	// BUG-PLANNING-SUBSTATE: baseline_record removed because the only
-	// transition that demanded it (PTR-PLAN-01) is deleted. TR-002 has
-	// required_evidence=[] and is gated by the direct-check planning_complete
-	// guard.
-	case "activation_record":
-		return []string{"agent_activation"}
-	case "builder_report_record":
-		return []string{"builder_report", "agent_completion"}
-	case "team_manifest_record":
-		return []string{"builder_report", "team_manifest"}
-	case "completion_report":
-		return []string{"agent_completion", "completion_report"}
-	case "delivery_review_record":
-		return []string{"delivery_review"}
-	case "qa_review_record":
-		return []string{"qa_review"}
-	case "e2e_review_record":
-		return []string{"e2e_review"}
-	case "review_result_record":
-		return []string{"delivery_review", "qa_review", "e2e_review"}
-	case "finding_record", "bug_batch_record", "root_cause_record", "repair_record":
-		return []string{"bug"}
-	case "targeted_reverification_record":
-		return []string{"targeted_reverification"}
-	case "clean_round_record":
-		return []string{"clean_round"}
-	case "acceptance_record":
-		return []string{"acceptance"}
-	case "release_audit_record":
-		return []string{"release_audit"}
-	case "change_impact_record":
-		return []string{"change_impact"}
-	// Planning sub-state transitions no longer demand separate design/UI records,
-	// but TR-003 still consumes jointly verified contract/task batch records.
-	case "contract_set_record", "task_batch_record", "document_review_record":
-		return []string{"document_review", "document_review_record"}
-	default:
-		return nil
-	}
+	return evidence.DefaultCatalog().AcceptedKinds(required)
 }
 
 func dispatchAction(name string, results []map[string]any, state map[string]any, ctx *ActionContext) error {

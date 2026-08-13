@@ -49,14 +49,13 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
 	})
 	writeFullState(t, root, state)
 
 	// TR-019 should fail because the REQ file hash does not match the recorded fingerprint.
 	err := applyT(t, root, "TR-019", 5, "user", map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
+		"pause_record":          "generated:pause_checkpoint",
 	})
 	if err == nil {
 		t.Fatal("TR-019 should reject when document fingerprint drifted")
@@ -101,13 +100,12 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
 	})
 	writeFullState(t, root, state)
 
 	err := applyT(t, root, "TR-019", 5, "user", map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
+		"pause_record":          "generated:pause_checkpoint",
 	})
 	if err != nil {
 		t.Fatalf("TR-019 should succeed when fingerprints match: %v", err)

@@ -20,8 +20,8 @@ func TestREQBindRejectsNonCanonicalInactiveRuntime(t *testing.T) {
 	state["revision"] = float64(8)
 	state["journal"] = map[string]any{
 		"path":          ".claude/loop-events.jsonl",
-		"last_sequence": float64(8),
-		"last_event_id": "evt-old-r8",
+		"last_sequence": float64(0),
+		"last_event_id": nil,
 	}
 	writeJSONMap(t, statePath, state)
 
@@ -111,7 +111,7 @@ func TestRuntimeRolloverArchivesTerminalRuntimeAndSeedsCleanRuntime(t *testing.T
 	state := readJSONMap(t, statePath)
 	state["revision"] = float64(8)
 	state["runtime_id"] = "loop-REQ-037"
-	state["lifecycle"] = map[string]any{"state": "awaiting_human_release", "phase": nil, "phase_revision": float64(7)}
+	state["lifecycle"] = map[string]any{"state": "release_authorized", "phase": nil, "phase_revision": float64(7)}
 	state["bound_req"] = map[string]any{
 		"id":          "REQ-037",
 		"path":        "docs/requirements/REQ-099.md",
@@ -123,8 +123,11 @@ func TestRuntimeRolloverArchivesTerminalRuntimeAndSeedsCleanRuntime(t *testing.T
 		"metadata":    map[string]any{"ui_impact": "none"},
 	}
 	state["evidence"] = []any{rolloverApprovalEvidence("release-owner", "loop-REQ-037", 8)}
+	state["journal"] = map[string]any{
+		"path": ".claude/loop-events.jsonl", "last_sequence": float64(8), "last_event_id": "evt-old-r8",
+	}
 	writeJSONMap(t, statePath, state)
-	if err := os.WriteFile(journalPath, []byte("{\"event_id\":\"evt-old-r8\"}\n"), 0o644); err != nil {
+	if err := os.WriteFile(journalPath, validArchiveJournalForCLI("loop-REQ-037", 8, "evt-old-r8"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -232,7 +235,13 @@ func TestRuntimeEvidenceAddExpandsCurrentRolloverScope(t *testing.T) {
 	state["revision"] = float64(8)
 	state["runtime_id"] = "loop-REQ-037"
 	state["lifecycle"] = map[string]any{"state": "aborted", "phase": nil, "phase_revision": float64(7)}
+	state["journal"] = map[string]any{
+		"path": ".claude/loop-events.jsonl", "last_sequence": float64(8), "last_event_id": "evt-old-r8",
+	}
 	writeJSONMap(t, statePath, state)
+	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), validArchiveJournalForCLI("loop-REQ-037", 8, "evt-old-r8"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	evidencePath := "docs/reports/human/rollover-approval.md"
 	if err := os.MkdirAll(filepath.Join(root, "docs", "reports", "human"), 0o755); err != nil {
 		t.Fatal(err)
@@ -342,19 +351,28 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	fresh := readJSONMap(t, statePath)
-	if err := os.WriteFile(journalPath, []byte("{\"event_id\":\"evt-terminal\"}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	archiveDir := filepath.Join(root, ".claude", "runtime-archive", "loop-old-r8-test")
 	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	archivedState := []byte("terminal-state")
-	archivedJournal := []byte("{\"event_id\":\"evt-terminal\"}\n")
+	archivedStateMap := cloneJSONMapForCLI(fresh)
+	archivedStateMap["runtime_id"] = "loop-old"
+	archivedStateMap["revision"] = float64(8)
+	archivedStateMap["lifecycle"] = map[string]any{"state": "awaiting_human_release", "phase": nil, "phase_revision": float64(7)}
+	archivedStateMap["journal"] = map[string]any{"path": ".claude/loop-events.jsonl", "last_sequence": float64(8), "last_event_id": "evt-terminal"}
+	archivedStateMap["evidence"] = []any{rolloverApprovalEvidence("release-owner", "loop-old", 8)}
+	archivedState := mustJSONForCLI(archivedStateMap)
+	archivedJournal := validArchiveJournalForCLI("loop-old", 8, "evt-terminal")
 	if err := os.WriteFile(filepath.Join(archiveDir, "loop-state.json"), archivedState, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(archiveDir, "loop-events.jsonl"), archivedJournal, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, archivedState, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, archivedJournal, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	pending := map[string]any{
@@ -367,16 +385,28 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 			"archive_state_sha256":   sha256Hex(archivedState),
 			"archive_journal_sha256": sha256Hex(archivedJournal),
 		},
-		"approval":    map[string]any{"approved_by": "release-owner", "evidence_id": "ev-rollover-approval"},
-		"occurred_at": "2026-07-26T00:00:00Z",
+		"approval":              map[string]any{"approved_by": "release-owner", "evidence_id": "ev-rollover-approval"},
+		"occurred_at":           "2026-07-26T00:00:00Z",
+		"source_state_sha256":   sha256Hex(archivedState),
+		"source_journal_sha256": sha256Hex(archivedJournal),
+		"source_runtime_id":     "loop-old",
+		"source_revision":       8,
 	}
 	writeJSONMap(t, statePath+".rollover-pending.json", pending)
+	stateBefore := mustReadFile(t, statePath)
+	journalBefore := mustReadFile(t, journalPath)
 	var statusOut, statusErr bytes.Buffer
-	if code := cli.Run([]string{"status", "--root", root}, strings.NewReader(""), &statusOut, &statusErr); code != 0 {
-		t.Fatalf("status must recover pending rollover: code=%d stderr=%s", code, statusErr.String())
+	if code := cli.Run([]string{"status", "--root", root}, strings.NewReader(""), &statusOut, &statusErr); code == 0 {
+		t.Fatal("read-only status must report pending rollover instead of repairing it")
 	}
-	if !strings.Contains(statusOut.String(), `"stage":"S0"`) {
-		t.Fatalf("status after recovery = %s, want S0", statusOut.String())
+	if !strings.Contains(statusErr.String(), "pending") {
+		t.Fatalf("status error = %s, want pending-operation diagnostic", statusErr.String())
+	}
+	if got := mustReadFile(t, statePath); string(got) != string(stateBefore) {
+		t.Fatal("read-only status changed state")
+	}
+	if got := mustReadFile(t, journalPath); string(got) != string(journalBefore) {
+		t.Fatal("read-only status changed journal")
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -399,11 +429,19 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 
 func rolloverApprovalEvidence(approvedBy, runtimeID string, revision int) map[string]any {
 	return map[string]any{
-		"id":          "ev-rollover-approval",
-		"kind":        "human_decision",
-		"status":      "valid",
-		"produced_by": []any{approvedBy},
-		"scope_refs":  []any{fmt.Sprintf("runtime_rollover:%s@%d", runtimeID, revision)},
+		"id":                  "ev-rollover-approval",
+		"kind":                "human_decision",
+		"path":                "docs/requirements/REQ-099.md",
+		"sha256":              strings.Repeat("0", 64),
+		"status":              "valid",
+		"baseline_generation": 0,
+		"review_round":        nil,
+		"produced_by":         []any{approvedBy},
+		"invalidated_by":      nil,
+		"invalidation_rule":   nil,
+		"invalidation_reason": nil,
+		"responsibility_id":   nil,
+		"scope_refs":          []any{fmt.Sprintf("runtime_rollover:%s@%d", runtimeID, revision)},
 	}
 }
 
@@ -469,4 +507,52 @@ func mustReadFile(t *testing.T, path string) []byte {
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("%x", sum)
+}
+
+func validArchiveJournalForCLI(runtimeID string, revision int, lastEventID string) []byte {
+	var lines []byte
+	for sequence := 1; sequence <= revision; sequence++ {
+		eventID := fmt.Sprintf("%s-r%d", lastEventID, sequence)
+		if sequence == revision {
+			eventID = lastEventID
+		}
+		event := map[string]any{
+			"schema_version": "1.0.0", "runtime_id": runtimeID, "event_id": eventID,
+			"sequence": sequence, "event": "milestone_refreshed", "outcome": "refreshed",
+			"actor": map[string]any{"type": "system", "id": "archive-test"}, "request_id": "archive-test",
+			"baseline_generation": 1, "before_revision": sequence - 1, "after_revision": sequence,
+			"from": map[string]any{"state": "inactive", "phase": nil}, "to": map[string]any{"state": "inactive", "phase": nil},
+			"evidence_ids": []any{}, "message": "Archived test event.", "occurred_at": "2026-08-13T00:00:00Z",
+		}
+		lines = append(lines, mustJSONLineForCLI(event)...)
+	}
+	return lines
+}
+
+func mustJSONLineForCLI(value any) []byte {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return append(data, '\n')
+}
+
+func cloneJSONMapForCLI(value map[string]any) map[string]any {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(data, &clone); err != nil {
+		panic(err)
+	}
+	return clone
+}
+
+func mustJSONForCLI(value any) []byte {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return append(data, '\n')
 }

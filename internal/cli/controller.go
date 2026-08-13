@@ -18,7 +18,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
-	"github.com/entroforge/go-system-builder/internal/transition"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 const loopManualRef = ".claude/bin/loop-harness.md"
@@ -63,7 +63,13 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		guidance.HumanRequired = true
 		guidance.Blocked = true
 		guidance.Blocker = pauseReason(state, lifecycleState)
-		guidance.Action = "stop automation and surface the human Gateway"
+		if lifecycleState == "awaiting_human_release" {
+			guidance.Action = "stop automation and submit one explicit runtime human-decision (approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort)"
+		} else {
+			guidance.Action = "stop automation and surface the human Gateway"
+		}
+	} else if lifecycleState == "release_authorized" {
+		guidance.Action = "S11 human-authorized terminal; Harness performs no squash merge, publication, deployment, or formal release"
 	}
 	switch event {
 	case "PreCompact":
@@ -258,10 +264,7 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 	persistedGuidance.Instruction = formatGuidanceInstruction(persistedGuidance)
 	milestone := guidanceMapWithGate(persistedGuidance, controller.QualityGateResult{}, event, snapshot.Revision+1, now, gate)
 	from := lifecycleCursor(snapshot.State)
-	store := runtime.NewStore(statePath, journalPath)
-	store.PreCommitValidator = func(state map[string]any) error {
-		return transition.MarshalAndValidateRuntime(root, state)
-	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	updated, err := store.Update(snapshot.Revision, runtime.Mutation{
 		EventID:              fmt.Sprintf("evt-milestone-refreshed-r%d", snapshot.Revision+1),
 		TransitionID:         "MILESTONE-REFRESH",
@@ -301,7 +304,9 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 func reconcileGuidance(root, event string, input policy.Input) (policy.Guidance, runtime.Snapshot, error) {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
-	store := runtime.NewStore(statePath, journalPath)
+	// Guidance reconciliation persists a milestone, so it is an explicit
+	// mutation path and owns pending-runtime recovery.
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	for attempt := 0; attempt < 2; attempt++ {
 		snapshot, err := store.Snapshot()
 		if err != nil {
@@ -523,7 +528,7 @@ func pauseReason(state map[string]any, lifecycleState string) string {
 		}
 	}
 	if lifecycleState == "awaiting_human_release" {
-		return "release-ready package awaits human approval"
+		return "release-ready package awaits an explicit human decision: approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort"
 	}
 	return "runtime is in a human-controlled terminal or paused state"
 }
@@ -1388,10 +1393,7 @@ func casTeammateStatus(root, statePath, journalPath string, snapshot runtime.Sna
 	if snapshot.Revision == 0 {
 		return snapshot, false, nil
 	}
-	store := runtime.NewStore(statePath, journalPath)
-	store.PreCommitValidator = func(state map[string]any) error {
-		return transition.MarshalAndValidateRuntime(root, state)
-	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	now := time.Now().UTC()
 	updated, err := store.Update(snapshot.Revision, runtime.Mutation{
 		EventID:        fmt.Sprintf("evt-teammate-%s-%s-r%d", agentID, newStatus, snapshot.Revision+1),
@@ -1433,10 +1435,7 @@ func casCreateAssignment(root, statePath, journalPath string, snapshot runtime.S
 	if snapshot.Revision == 0 || next == nil {
 		return snapshot, false, nil
 	}
-	store := runtime.NewStore(statePath, journalPath)
-	store.PreCommitValidator = func(state map[string]any) error {
-		return transition.MarshalAndValidateRuntime(root, state)
-	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	now := time.Now().UTC()
 	newAssignmentID := fmt.Sprintf("assignment-%s-next-%s", teammate.ID, next.TaskID)
 	updated, err := store.Update(snapshot.Revision, runtime.Mutation{
@@ -1487,10 +1486,7 @@ func casCloseOutTeammate(root, statePath, journalPath string, snapshot runtime.S
 	if snapshot.Revision == 0 {
 		return snapshot, false, nil
 	}
-	store := runtime.NewStore(statePath, journalPath)
-	store.PreCommitValidator = func(state map[string]any) error {
-		return transition.MarshalAndValidateRuntime(root, state)
-	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	now := time.Now().UTC()
 	updated, err := store.Update(snapshot.Revision, runtime.Mutation{
 		EventID:        fmt.Sprintf("evt-teammate-%s-closeout-r%d", teammate.ID, snapshot.Revision+1),
@@ -1531,10 +1527,7 @@ func persistSubagentCheckpoint(root, statePath, journalPath string, snapshot run
 	if snapshot.Revision == 0 {
 		return snapshot, false, nil
 	}
-	store := runtime.NewStore(statePath, journalPath)
-	store.PreCommitValidator = func(state map[string]any) error {
-		return transition.MarshalAndValidateRuntime(root, state)
-	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	now := time.Now().UTC()
 	// The milestone schema constrains `integration` to a string array.
 	// Surface the checkpoint state + blockers as compact one-line

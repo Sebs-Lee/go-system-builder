@@ -21,8 +21,9 @@ The goal of Loop Engineering is not to let the model work without constraint. It
 is to let Claude Code, inside one human-locked requirement scope, continuously
 complete development, verification, repair and re-review under a state machine,
 document specifications, professional methods and automatic gates — and finally
-**stop at the human release gate**. Stopping at `awaiting_human_release` is the
-Loop's success definition; `aborted` is not.
+**stop at the human release gate**. `awaiting_human_release` is a non-terminal
+human decision gateway; an explicit approval reaches the `release_authorized`
+terminal, while `aborted` is the separate terminal/blocked outcome.
 
 A Loop never modifies the REQ, never squash-merges, and never formally releases.
 This is the first principle of the design.
@@ -35,8 +36,9 @@ The whole loop has one simple control shape:
 graph LR
     H1["**Human**<br/>locks REQ"]:::human
     M["**Loop automation**<br/>prototype gate → design → contracts<br/>→ TASK → Team → two-phase activation<br/>→ specialized Builder → Verifier → QA → E2E Tester<br/>→ BUG repair → full re-review<br/>→ ACC → Release Architecture Audit"]:::auto
+    G["**Human**<br/>S11 decision gateway"]:::human
     H2["**Human**<br/>squash merge + formal release"]:::human
-    H1 ==> M ==> H2
+    H1 ==> M ==> G ==> H2
     classDef human fill:#fce4ec,stroke:#c2185b
     classDef auto fill:#e8f5e9,stroke:#2e7d32
 ```
@@ -228,7 +230,7 @@ every other section:
 
 ## 5. Loop State Machine
 
-The Loop Definition defines 11 top-level states, 21 top-level transitions, and 5
+The Loop Definition defines 12 top-level states, 30 top-level transitions, and 5
 global transitions. The main flow is a single one-way trunk; every side branch
 is a correction loop that never bypasses the trunk.
 
@@ -253,7 +255,15 @@ stateDiagram-v2
     acceptance --> verification: TR-016 acceptance_review_required
     release_audit --> awaiting_human_release: TR-017 audit_approved
     release_audit --> paused: TR-018 audit_blocked
+    awaiting_human_release --> release_authorized: TR-025 approve
+    awaiting_human_release --> paused: TR-026 defer
+    awaiting_human_release --> bug_resolution: TR-027 reject_defect
+    awaiting_human_release --> acceptance: TR-028 reject_acceptance
+    awaiting_human_release --> release_audit: TR-029 reject_release_audit
+    awaiting_human_release --> aborted: TR-030 abort
     paused --> planning: TR-020 req_baseline_updated
+    release_authorized --> [*]
+    aborted --> [*]
 ```
 
 Main trunk:
@@ -267,6 +277,7 @@ inactive
 -> acceptance
 -> release_audit
 -> awaiting_human_release
+-> release_authorized
 ```
 
 Correction loops:
@@ -577,9 +588,11 @@ sufficient for engineering execution, so no separate `/goal` is required.
 
 ### Starting a REQ after a terminal Runtime
 
-`awaiting_human_release` and `aborted` remain terminal Loop states. They are
-not made reusable by editing `.claude/loop-state.json`. When a human has
-completed the release decision and wants to begin a new REQ, they first run:
+`release_authorized` and `aborted` are terminal Loop states. `awaiting_human_release`
+is a non-terminal human gateway and cannot be rolled over while its decision is
+pending. None of these states is made reusable by editing
+`.claude/loop-state.json`. When a human has completed the release decision and
+wants to begin a new REQ, they first run:
 
 ```bash
 .claude/bin/loop-harness runtime rollover \
@@ -595,7 +608,7 @@ Create that evidence with `runtime evidence add --scope-ref
 runtime_rollover:current`; the harness resolves the token to the revision
 committed by the evidence write, so the subsequent rollover has an exact
 authorization target.
-It archives the terminal state and its
+It archives the eligible terminal state and its
 journal under `.claude/runtime-archive/`, then creates a new empty inactive
 Runtime and journal. A durable pending marker recovers an interrupted rollover
 before any later runtime operation. Only this clean Runtime may be bound to the
@@ -717,14 +730,44 @@ mechanism; `.claude/loop-state.json` is never edited by hand.
 # Recover/replay the snapshot from the journal head at startup.
 .claude/bin/loop-harness runtime reconcile --root .
 
-# Human-authorized handoff after awaiting_human_release or aborted.
+# Human-authorized handoff after release_authorized or aborted.
+# awaiting_human_release must receive an explicit S11 decision first.
 # This archives the old Runtime; it is not a Loop transition.
 .claude/bin/loop-harness runtime rollover --approved-by <identity> --approval-evidence <human-decision-id> --root .
 
+# Record exactly one current S11 human decision; this is also the legacy
+# awaiting_human_release migration entrypoint. No target state is accepted.
+.claude/bin/loop-harness runtime human-decision \
+  --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> \
+  --expected-revision N --actor <user|orchestrator> \
+  --decision-evidence <human-decision-reference>
+# reject_defect additionally requires --finding-evidence <finding-reference>.
+
 # Apply one legal transition via compare-and-swap on revision.
 .claude/bin/loop-harness runtime transition \
-  --id TR-xxx --expected-revision N --actor orchestrator
+  --id TR-xxx --expected-revision N --actor orchestrator \
+  --evidence <slot>=<reference>
 ```
 
-Other runtime verbs: `register-workgroup`, `agent-event`, `bug-event`. Run
+For a transition with `required_evidence`, repeat `--evidence` once per slot.
+The left side is the requirement slot from the Manual, while the right side
+is the ID or repository-relative path of a currently valid registered
+evidence artifact; a `*_record` slot is not itself an evidence kind to
+register. For example, TR-006 can be recovered with:
+
+```bash
+.claude/bin/loop-harness runtime transition \
+  --id TR-006 --expected-revision N --actor orchestrator \
+  --evidence builder_report_record=<builder-report-id-or-path> \
+  --evidence team_manifest_record=<team-manifest-id-or-path>
+```
+
+If a binding is missing, retry with the command shape shown in the error and
+run `loop-harness explain TR-006` (replace the ID as needed) to see each slot's
+accepted registered kinds and current candidate evidence. Do not register the
+`*_record` slot name; use one of the accepted persisted kinds shown by the
+Manual or explain command.
+
+Other runtime verbs: `register-workgroup`, `agent-event`, `bug-event`, and
+`human-decision`. Run
 `loop-harness runtime` with no subcommand to list them.

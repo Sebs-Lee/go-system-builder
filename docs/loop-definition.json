@@ -4,7 +4,7 @@
   "status": "reviewed",
   "initial_state": "inactive",
   "terminal_states": [
-    "awaiting_human_release",
+    "release_authorized",
     "aborted"
   ],
   "states": {
@@ -82,11 +82,19 @@
     },
     "awaiting_human_release": {
       "stage": "S11",
-      "category": "terminal",
-      "description": "Loop automation is complete and cannot perform squash merge or formal release.",
+      "category": "control",
+      "description": "Automation stops at the human release gateway; only constrained human decision events may route S11.",
       "phase_machine": null,
       "entry_condition": "ACC and release architecture audit are approved.",
-      "exit_condition": "No automated exit exists."
+      "exit_condition": "A human-authorized decision event routes to release_authorized, paused, bug_resolution, acceptance, release_audit, or aborted."
+    },
+    "release_authorized": {
+      "stage": "S11",
+      "category": "terminal",
+      "description": "An external human release owner authorized the release handoff; the Harness performs no release side effect.",
+      "phase_machine": null,
+      "entry_condition": "TR-025 records a current human release decision.",
+      "exit_condition": "No exit exists."
     },
     "aborted": {
       "stage": "cross-stage",
@@ -1704,6 +1712,84 @@
         "human_required": false
       },
       "description": "A finding that requires modifying the locked REQ cannot proceed autonomously; the Loop pauses for human amendment. Complements TR-014 which handles repair-level REQ change."
+    },
+    {
+      "id": "TR-025",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_approved",
+      "to": "release_authorized",
+      "actors": ["user", "orchestrator"],
+      "guards": [],
+      "actions": ["record_human_release_decision"],
+      "required_evidence": ["human_decision_record"],
+      "on_guard_failure": "reject",
+      "description": "Record human release authorization without performing merge, publication, deployment, or formal release."
+    },
+    {
+      "id": "TR-026",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_deferred",
+      "to": "paused",
+      "actors": ["user", "orchestrator"],
+      "guards": [],
+      "actions": ["capture_pause_checkpoint", "record_human_release_decision"],
+      "required_evidence": ["human_decision_record", "pause_record"],
+      "on_guard_failure": "reject",
+      "description": "Defer the release decision and capture the S11 checkpoint before entering paused."
+    },
+    {
+      "id": "TR-027",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_rejected_defect",
+      "to": "bug_resolution",
+      "actors": ["user", "orchestrator"],
+      "guards": [],
+      "actions": ["record_human_release_decision"],
+      "required_evidence": ["human_decision_record", "finding_record"],
+      "on_guard_failure": "reject",
+      "description": "Route a human defect rejection to bug-resolution investigation with its finding evidence."
+    },
+    {
+      "id": "TR-028",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_rejected_acceptance",
+      "to": "acceptance",
+      "actors": ["user", "orchestrator"],
+      "guards": [],
+      "actions": ["record_human_release_decision", "invalidate_human_release_acceptance_evidence"],
+      "required_evidence": ["human_decision_record"],
+      "on_guard_failure": "reject",
+      "description": "Re-enter acceptance and invalidate only prior acceptance and release-audit evidence."
+    },
+    {
+      "id": "TR-029",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_rejected_release_audit",
+      "to": "release_audit",
+      "actors": ["user", "orchestrator"],
+      "guards": [],
+      "actions": ["record_human_release_decision", "invalidate_human_release_release_audit_evidence"],
+      "required_evidence": ["human_decision_record"],
+      "on_guard_failure": "reject",
+      "description": "Re-enter release audit and invalidate only prior release-audit evidence."
+    },
+    {
+      "id": "TR-030",
+      "from": "awaiting_human_release",
+      "automation": {"eligible": false, "human_boundary": true},
+      "event": "human_release_aborted",
+      "to": "aborted",
+      "actors": ["user", "orchestrator"],
+      "guards": ["human_abort_approved"],
+      "actions": ["record_human_release_decision"],
+      "required_evidence": ["human_decision_record"],
+      "on_guard_failure": "reject",
+      "description": "Record a human release abort without performing any release side effect."
     }
   ],
   "global_transitions": [
@@ -1889,6 +1975,11 @@
       "event": "automated_formal_release",
       "enforcement": "strong_block",
       "reason": "Formal release is outside Loop automation."
+    },
+    {
+      "event": "automated_s11_decision",
+      "enforcement": "strong_block",
+      "reason": "Automation stops at awaiting_human_release; only TR-025..TR-030 human events may route S11."
     }
   ],
   "invariants": [
@@ -1959,8 +2050,8 @@
     },
     {
       "id": "INV-014",
-      "statement": "Loop automation ends at awaiting_human_release.",
-      "enforcement": "schema"
+      "statement": "Loop automation stops at awaiting_human_release, which is a human control gateway routable only by constrained human events; it is not a terminal state.",
+      "enforcement": "combined"
     },
     {
       "id": "INV-015",

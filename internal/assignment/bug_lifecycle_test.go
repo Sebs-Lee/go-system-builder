@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/assignment"
+	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
 func setupBugRuntime(t *testing.T, root string, bugState string) {
@@ -26,34 +27,36 @@ func setupBugRuntime(t *testing.T, root string, bugState string) {
 		"id":                          "BUG-001",
 		"state":                       bugState,
 		"path":                        "docs/reports/bugs/BUG-001.md",
-		"severity":                    "blocking",
+		"severity":                    "P1",
 		"attempt_count":               float64(0),
 		"same_contract_failure_count": float64(0),
 		"original_finder_agent_ids":   []any{"agent-finder"},
 	}
-	state := map[string]any{
-		"schema_version": "1.0.0",
-		"runtime_id":     "loop-test",
-		"definition":     map[string]any{"path": "x", "version": "1.0.0", "sha256": "x"},
-		"revision":       3,
-		"lifecycle":      map[string]any{"state": "bug_resolution", "phase": "investigation", "phase_revision": float64(1)},
-		"authorization":  map[string]any{"mode": "loop", "command": "/loop", "actor": "x", "occurred_at": "2026-01-01T00:00:00Z"},
-		"bound_req":      map[string]any{"id": "REQ-X", "path": "x", "version": "1.0.0", "sha256": "x", "status": "locked"},
-		"baseline":       map[string]any{"generation": float64(1), "captured_at": "2026-01-01T00:00:00Z"},
-		"review":         map[string]any{"round": float64(0), "clean_round": nil},
-		"documents":      []any{},
-		"entities": map[string]any{
-			"agents": []any{},
-			"tasks":  []any{},
-			"bugs":   []any{bug},
-			"teams":  []any{},
-		},
-		"evidence":        []any{},
-		"blockers":        []any{},
-		"pause":           nil,
-		"journal":         map[string]any{"path": ".claude/loop-events.jsonl", "last_sequence": float64(0), "last_event_id": nil},
-		"last_transition": nil,
-		"updated_at":      "2026-01-01T00:00:00Z",
+	stateData, err := schema.ReadAsset("loop-state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["runtime_id"] = "loop-test"
+	state["revision"] = 3
+	state["lifecycle"] = map[string]any{
+		"state":          "bug_resolution",
+		"phase":          "investigation",
+		"phase_revision": 1,
+	}
+	state["entities"] = map[string]any{
+		"agents": []any{},
+		"tasks":  []any{},
+		"bugs":   []any{bug},
+		"teams":  []any{},
+	}
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
 	}
 	data, _ := json.MarshalIndent(state, "", "  ")
 	os.MkdirAll(filepath.Join(root, ".claude"), 0o755)

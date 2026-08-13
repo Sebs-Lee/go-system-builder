@@ -1,14 +1,13 @@
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 )
 
 // EvidenceRequest describes one current, fingerprinted evidence artifact to
@@ -25,24 +24,13 @@ type EvidenceRequest struct {
 	ReviewRound      *int
 	ScopeRefs        []string
 	OccurredAt       time.Time
+	Validator        CandidateValidator
 }
 
-var evidenceKinds = map[string]bool{
-	"document_review":         true,
-	"change_impact":           true,
-	"agent_readback":          true,
-	"agent_activation":        true,
-	"agent_completion":        true,
-	"builder_report":          true,
-	"delivery_review":         true,
-	"qa_review":               true,
-	"e2e_review":              true,
-	"bug":                     true,
-	"targeted_reverification": true,
-	"clean_round":             true,
-	"acceptance":              true,
-	"release_audit":           true,
-	"human_decision":          true,
+// IsRegisteredEvidenceKind reports whether kind can be persisted by
+// RecordEvidence using the shared evidence catalog.
+func IsRegisteredEvidenceKind(kind string) bool {
+	return evidence.DefaultCatalog().IsRegisteredKind(kind)
 }
 
 // RecordEvidence adds one valid evidence item and commits it as a Runtime
@@ -52,8 +40,9 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	if request.ID == "" {
 		return Snapshot{}, fmt.Errorf("evidence id is required")
 	}
-	if !evidenceKinds[request.Kind] {
-		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q", request.Kind)
+	catalog := evidence.DefaultCatalog()
+	if !catalog.IsRegisteredKind(request.Kind) {
+		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q; registered kinds: %s", request.Kind, strings.Join(catalog.RegisteredKinds(), ", "))
 	}
 	if len(request.ProducedBy) == 0 {
 		return Snapshot{}, fmt.Errorf("evidence produced_by is required")
@@ -72,7 +61,7 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		return Snapshot{}, fmt.Errorf("read evidence artifact: %w", err)
 	}
 
-	store := NewStore(statePath, journalPath)
+	store := NewWriter(statePath, journalPath, root, request.Validator)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read runtime: %w", err)
@@ -92,13 +81,6 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		return Snapshot{}, err
 	}
 	sha := sha256Hex(data)
-	store.PreCommitValidator = func(state map[string]any) error {
-		encoded, err := json.Marshal(state)
-		if err != nil {
-			return fmt.Errorf("encode post-evidence runtime: %w", err)
-		}
-		return schema.NewEmbeddedValidator().ValidateBytes("loop-state.schema.json", encoded)
-	}
 	return store.Update(request.ExpectedRevision, Mutation{
 		EventID:        fmt.Sprintf("evt-evidence-%s-r%d", request.ID, request.ExpectedRevision+1),
 		TransitionID:   "EVIDENCE-RECORD",

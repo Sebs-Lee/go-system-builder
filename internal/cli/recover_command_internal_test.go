@@ -74,18 +74,8 @@ func TestMergeRecoveryProjectionPreservesDurableBUGEntities(t *testing.T) {
 			"teams": {},
 		},
 	}
-	if err := mergeRecoveryProjection(root, statePath, imported); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var candidate map[string]any
-	if err := json.Unmarshal(data, &candidate); err != nil {
-		t.Fatal(err)
-	}
+	candidate := seed
+	mergeRecoveryProjectionState(candidate, root, imported)
 	entities, ok := candidate["entities"].(map[string]any)
 	if !ok {
 		t.Fatalf("candidate entities missing: %#v", candidate["entities"])

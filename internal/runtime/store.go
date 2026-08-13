@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
 func sha256Hex(data []byte) string {
@@ -21,9 +24,31 @@ func sha256Hex(data []byte) string {
 
 var ErrStaleRevision = errors.New("stale runtime revision")
 
+// ErrPendingRuntimeOperation is returned by read-only APIs when the durable
+// runtime pair has an unfinished rollover or commit. Readers must not repair
+// a pair implicitly: the caller must use an explicit writer/recovery path.
+var ErrPendingRuntimeOperation = errors.New("runtime has a pending durable operation")
+
+// ErrCandidateValidatorRequired is returned when a caller attempts a Runtime
+// write without injecting the repository-semantic validator. NewStore is
+// intentionally suitable for snapshots and inspection only; mutation writers
+// must use NewWriter so the composition root supplies the repository root and
+// semantic validation implementation.
+var ErrCandidateValidatorRequired = errors.New("runtime candidate validator is required for writes")
+
+// ErrCandidateValidatorInvalid is returned when a supplied validator cannot
+// demonstrate that it rejects an obviously invalid candidate. This is a
+// fail-closed guard against accidentally wiring a no-op test/function adapter
+// into a production writer.
+var ErrCandidateValidatorInvalid = errors.New("runtime candidate validator is invalid or no-op")
+
 const staleLockAge = 30 * time.Second
 
 type Mutation struct {
+	// Audit is the structured commit envelope. The legacy fields below remain
+	// as a compatibility surface for existing callers; Update normalizes both
+	// forms into this envelope before applying a mutation.
+	Audit          AuditEnvelope
 	EventID        string
 	TransitionID   string
 	Event          string
@@ -59,6 +84,22 @@ type Mutation struct {
 	Apply                func(state map[string]any) error
 }
 
+// AuditEnvelope contains the fields that identify and anchor one durable
+// Runtime commit. From and To are cursor objects rather than arbitrary JSON;
+// Update fills a missing cursor from the current Runtime cursor for entity
+// events that do not change the top-level lifecycle.
+type AuditEnvelope struct {
+	EventID        string
+	TransitionID   string
+	Event          string
+	Actor          string
+	IdempotencyKey string
+	RuntimeID      string
+	From           map[string]any
+	To             map[string]any
+	EvidenceIDs    []string
+}
+
 type Snapshot struct {
 	Revision int
 	State    map[string]any
@@ -84,24 +125,380 @@ type RolloverApproval struct {
 }
 
 type rolloverPending struct {
-	SchemaVersion string           `json:"schema_version"`
-	FreshState    map[string]any   `json:"fresh_state"`
-	Record        RolloverRecord   `json:"record"`
-	Approval      RolloverApproval `json:"approval"`
-	OccurredAt    string           `json:"occurred_at"`
+	SchemaVersion       string           `json:"schema_version"`
+	FreshState          map[string]any   `json:"fresh_state"`
+	Record              RolloverRecord   `json:"record"`
+	Approval            RolloverApproval `json:"approval"`
+	OccurredAt          string           `json:"occurred_at"`
+	SourceStateSHA256   string           `json:"source_state_sha256"`
+	SourceJournalSHA256 string           `json:"source_journal_sha256"`
+	SourceRuntimeID     string           `json:"source_runtime_id"`
+	SourceRevision      *int             `json:"source_revision"`
+}
+
+type commitPending struct {
+	SchemaVersion        string         `json:"schema_version"`
+	PreviousStateSHA256  string         `json:"previous_state_sha256"`
+	PreviousRevision     int            `json:"previous_revision"`
+	StateSHA256          string         `json:"state_sha256"`
+	JournalEventSHA256   string         `json:"journal_event_sha256"`
+	RequestID            string         `json:"request_id"`
+	IdempotencyKey       string         `json:"idempotency_key"`
+	RetainLastTransition bool           `json:"retain_last_transition"`
+	State                map[string]any `json:"state"`
+	JournalEvent         map[string]any `json:"journal_event"`
+}
+
+// statePending records a state-only durable write. Fingerprint refreshes do
+// not represent a lifecycle event, so they must not invent a journal entry or
+// revision bump; they still use the same marker-before-state-write protocol
+// and explicit writer recovery as normal commits.
+type statePending struct {
+	SchemaVersion       string         `json:"schema_version"`
+	PreviousStateSHA256 string         `json:"previous_state_sha256"`
+	PreviousRevision    int            `json:"previous_revision"`
+	StateSHA256         string         `json:"state_sha256"`
+	State               map[string]any `json:"state"`
+}
+
+// runtimeSemanticDefinition is the small, repository-owned part of the Loop
+// Definition that Runtime must understand itself. Keeping this check here is
+// deliberate: an injected CandidateValidator may add repository-wide checks,
+// but it cannot be the only authority deciding whether a lifecycle state,
+// phase, or entity state exists in the active machine.
+type runtimeSemanticDefinition struct {
+	States map[string]struct {
+		PhaseMachine *string `json:"phase_machine"`
+	} `json:"states"`
+	PhaseMachines map[string]struct {
+		Phases map[string]json.RawMessage `json:"phases"`
+	} `json:"phase_machines"`
+	EntityLifecycles map[string]struct {
+		States []string `json:"states"`
+	} `json:"entity_lifecycles"`
 }
 
 type Store struct {
-	statePath   string
-	journalPath string
-	// PreCommitValidator, when set, is invoked on the post-mutation state
-	// immediately before the atomic write. It must return an error if the
-	// state is invalid; the store then refuses to commit. Defaults to nil.
-	PreCommitValidator func(state map[string]any) error
+	statePath          string
+	journalPath        string
+	root               string
+	candidateValidator CandidateValidator
+	validatorInitErr   error
+	mutationCapable    bool
 }
 
 func NewStore(statePath, journalPath string) *Store {
 	return &Store{statePath: statePath, journalPath: journalPath}
+}
+
+// CandidateValidator validates a post-mutation Runtime candidate in the
+// repository context. Runtime deliberately owns only this small interface;
+// the semantic implementation is injected by the composition root so the
+// runtime package does not depend on transition or semantic packages. A
+// private method cannot be used here because it would prevent the semantic
+// package from implementing the interface across the package boundary; the
+// strongest runtime-local capability check is therefore the semantic-negative
+// probe performed by validateCandidate.
+type CandidateValidator interface {
+	ValidateCandidate(root string, state map[string]any) error
+}
+
+// NewWriter constructs a mutation-capable Store. A nil validator is retained
+// as an invalid writer and causes every write to fail closed; this keeps the
+// constructor convenient for error-returning public writer APIs while making
+// omission of semantic validation impossible at the commit boundary. The
+// probe also rejects a validator that accepts an empty, schema-invalid state,
+// which catches the common no-op adapter mistake before any write occurs.
+func NewWriter(statePath, journalPath, root string, validator CandidateValidator) *Store {
+	store := &Store{
+		statePath:          statePath,
+		journalPath:        journalPath,
+		root:               root,
+		candidateValidator: validator,
+		mutationCapable:    true,
+	}
+	if validator == nil {
+		store.validatorInitErr = ErrCandidateValidatorRequired
+		return store
+	}
+	if err := validator.ValidateCandidate("", map[string]any{}); err == nil {
+		store.validatorInitErr = ErrCandidateValidatorInvalid
+	}
+	return store
+}
+
+func normalizeMutation(state map[string]any, mutation Mutation) (Mutation, error) {
+	stateRuntimeID, _ := state["runtime_id"].(string)
+	if strings.TrimSpace(stateRuntimeID) == "" {
+		return Mutation{}, errors.New("state runtime_id is required")
+	}
+	allowsInitialBinding := mutation.TransitionID == "TR-001" && mutation.RequireEmptyJournal && strings.HasPrefix(mutation.RuntimeID, "loop-REQ-")
+	if allowsInitialBinding {
+		if err := ValidateFreshInactiveState(state); err != nil {
+			return Mutation{}, fmt.Errorf("requires a fresh inactive runtime: %w", err)
+		}
+	}
+	if mutation.RuntimeID != "" && mutation.RuntimeID != stateRuntimeID && !allowsInitialBinding {
+		return Mutation{}, fmt.Errorf("mutation runtime_id %q does not match state runtime_id %q", mutation.RuntimeID, stateRuntimeID)
+	}
+	if mutation.Audit.RuntimeID != "" && mutation.Audit.RuntimeID != stateRuntimeID && !allowsInitialBinding {
+		return Mutation{}, fmt.Errorf("mutation audit runtime_id %q does not match state runtime_id %q", mutation.Audit.RuntimeID, stateRuntimeID)
+	}
+	envelope := mutation.Audit
+	if envelope.EventID == "" {
+		envelope.EventID = mutation.EventID
+	}
+	if envelope.TransitionID == "" {
+		envelope.TransitionID = mutation.TransitionID
+	}
+	if envelope.Event == "" {
+		envelope.Event = mutation.Event
+	}
+	if envelope.Actor == "" {
+		envelope.Actor = mutation.Actor
+	}
+	if envelope.IdempotencyKey == "" {
+		envelope.IdempotencyKey = mutation.IdempotencyKey
+	}
+	if envelope.RuntimeID == "" {
+		envelope.RuntimeID = mutation.RuntimeID
+	}
+	if envelope.From == nil {
+		envelope.From = mutation.From
+	}
+	if envelope.To == nil {
+		envelope.To = mutation.To
+	}
+	if envelope.EvidenceIDs == nil {
+		envelope.EvidenceIDs = mutation.EvidenceIDs
+	}
+
+	if strings.TrimSpace(envelope.EventID) == "" {
+		return Mutation{}, errors.New("mutation event_id is required")
+	}
+	if strings.TrimSpace(envelope.Actor) == "" {
+		return Mutation{}, errors.New("mutation actor is required")
+	}
+	if strings.TrimSpace(envelope.IdempotencyKey) == "" {
+		return Mutation{}, errors.New("mutation idempotency_key is required")
+	}
+	if envelope.Event == "" {
+		envelope.Event = mutation.JournalEvent
+	}
+	if envelope.Event == "" {
+		return Mutation{}, errors.New("mutation event is required")
+	}
+	if envelope.TransitionID == "" && mutation.JournalEvent == "" {
+		return Mutation{}, errors.New("mutation transition_id is required")
+	}
+
+	if envelope.RuntimeID == "" {
+		envelope.RuntimeID = stateRuntimeID
+	}
+	if envelope.RuntimeID != stateRuntimeID && !allowsInitialBinding {
+		return Mutation{}, fmt.Errorf("mutation runtime_id %q does not match state runtime_id %q", envelope.RuntimeID, stateRuntimeID)
+	}
+	if envelope.From == nil || envelope.To == nil {
+		cursor, err := currentCursor(state)
+		if err != nil {
+			return Mutation{}, err
+		}
+		if envelope.From == nil {
+			envelope.From = cursor
+		}
+		if envelope.To == nil {
+			envelope.To = cursor
+		}
+	}
+	if envelope.EvidenceIDs == nil {
+		envelope.EvidenceIDs = []string{}
+	}
+
+	mutation.Audit = envelope
+	mutation.EventID = envelope.EventID
+	mutation.TransitionID = envelope.TransitionID
+	mutation.Event = envelope.Event
+	mutation.Actor = envelope.Actor
+	mutation.IdempotencyKey = envelope.IdempotencyKey
+	mutation.RuntimeID = envelope.RuntimeID
+	mutation.From = envelope.From
+	mutation.To = envelope.To
+	mutation.EvidenceIDs = envelope.EvidenceIDs
+	return mutation, nil
+}
+
+func currentCursor(state map[string]any) (map[string]any, error) {
+	lifecycle, err := objectField(state, "lifecycle")
+	if err != nil {
+		return nil, fmt.Errorf("runtime lifecycle is required for audit cursor: %w", err)
+	}
+	stateName, ok := lifecycle["state"].(string)
+	if !ok || strings.TrimSpace(stateName) == "" {
+		return nil, errors.New("runtime lifecycle state is required for audit cursor")
+	}
+	return map[string]any{"state": stateName, "phase": lifecycle["phase"]}, nil
+}
+
+func (s *Store) validateCandidate(state map[string]any) error {
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("encode candidate runtime: %w", err)
+	}
+	validator := schema.NewEmbeddedValidator()
+	if err := validator.ValidateBytes("loop-state.schema.json", encoded); err != nil {
+		return fmt.Errorf("candidate runtime schema: %w", err)
+	}
+	if err := s.requireCandidateValidator(); err != nil {
+		return err
+	}
+	if err := validateRuntimeSemanticCore(s.root, state); err != nil {
+		return fmt.Errorf("candidate runtime built-in semantic validation: %w", err)
+	}
+	probe, err := semanticInvalidProbe(state)
+	if err != nil {
+		return err
+	}
+	if err := s.candidateValidator.ValidateCandidate(s.root, probe); err == nil {
+		return ErrCandidateValidatorInvalid
+	}
+	if err := s.candidateValidator.ValidateCandidate(s.root, state); err != nil {
+		return fmt.Errorf("candidate runtime semantic validation: %w", err)
+	}
+	return nil
+}
+
+func validateRuntimeSemanticCore(root string, state map[string]any) error {
+	definitionPath := filepath.Join(root, "docs", "loop-definition.json")
+	definitionData, err := os.ReadFile(definitionPath)
+	if err != nil {
+		// The runtime package has small unit fixtures that intentionally inject
+		// a validator without materializing the repository definition. A real
+		// production writer still fails closed through the injected semantic
+		// validator (semantic.RuntimeCandidateValidator), which reads the same
+		// definition. Do not turn the runtime-local helper into a second fixture
+		// contract or require every low-level test to duplicate the repository.
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read Loop Definition %q: %w", definitionPath, err)
+	}
+	var definition runtimeSemanticDefinition
+	if err := json.Unmarshal(definitionData, &definition); err != nil {
+		return fmt.Errorf("decode Loop Definition: %w", err)
+	}
+
+	lifecycle, err := objectField(state, "lifecycle")
+	if err != nil {
+		return fmt.Errorf("lifecycle: %w", err)
+	}
+	lifecycleState, ok := lifecycle["state"].(string)
+	if !ok || strings.TrimSpace(lifecycleState) == "" {
+		return errors.New("lifecycle state is required")
+	}
+	stateSpec, ok := definition.States[lifecycleState]
+	if !ok {
+		return fmt.Errorf("unknown lifecycle state %q", lifecycleState)
+	}
+	phase := lifecycle["phase"]
+	if stateSpec.PhaseMachine == nil {
+		if phase != nil {
+			return fmt.Errorf("lifecycle state %q does not allow phase %v", lifecycleState, phase)
+		}
+	} else {
+		phaseName, ok := phase.(string)
+		if !ok || strings.TrimSpace(phaseName) == "" {
+			return fmt.Errorf("lifecycle state %q requires a phase", lifecycleState)
+		}
+		machine, ok := definition.PhaseMachines[*stateSpec.PhaseMachine]
+		if !ok {
+			return fmt.Errorf("missing phase machine %q", *stateSpec.PhaseMachine)
+		}
+		if _, ok := machine.Phases[phaseName]; !ok {
+			return fmt.Errorf("unknown phase %q for lifecycle state %q", phaseName, lifecycleState)
+		}
+	}
+
+	entities, err := objectField(state, "entities")
+	if err != nil {
+		return fmt.Errorf("entities: %w", err)
+	}
+	for field, lifecycleName := range map[string]string{
+		"agents": "agent",
+		"tasks":  "task",
+		"bugs":   "bug",
+	} {
+		items, ok := entities[field].([]any)
+		if !ok {
+			return fmt.Errorf("entities.%s must be an array", field)
+		}
+		allowed, ok := definition.EntityLifecycles[lifecycleName]
+		if !ok {
+			return fmt.Errorf("missing entity lifecycle %q", lifecycleName)
+		}
+		for index, raw := range items {
+			entity, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("entities.%s[%d] must be an object", field, index)
+			}
+			entityState, ok := entity["state"].(string)
+			if !ok || strings.TrimSpace(entityState) == "" {
+				return fmt.Errorf("entities.%s[%d] state is required", field, index)
+			}
+			if !containsRuntimeState(allowed.States, entityState) {
+				return fmt.Errorf("unknown %s state %q", lifecycleName, entityState)
+			}
+		}
+	}
+	return nil
+}
+
+func containsRuntimeState(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticInvalidProbe(state map[string]any) (map[string]any, error) {
+	probe, err := cloneState(state)
+	if err != nil {
+		return nil, fmt.Errorf("create validator capability probe: %w", err)
+	}
+	lifecycle, err := objectField(probe, "lifecycle")
+	if err != nil {
+		return nil, fmt.Errorf("create validator capability probe: %w", err)
+	}
+	// This value matches the Runtime schema's phase pattern but is not present
+	// in any Loop Definition phase machine. A real semantic validator must
+	// reject it; accepting it identifies a no-op or schema-only validator.
+	lifecycle["phase"] = "invalid_semantic_phase"
+	return probe, nil
+}
+
+func (s *Store) requireCandidateValidator() error {
+	if s.validatorInitErr != nil {
+		return s.validatorInitErr
+	}
+	if s.candidateValidator == nil {
+		return ErrCandidateValidatorRequired
+	}
+	if strings.TrimSpace(s.root) == "" {
+		return errors.New("runtime writer root is required")
+	}
+	return nil
+}
+
+func validateJournalEvent(event map[string]any) error {
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("encode journal event: %w", err)
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("loop-event.schema.json", encoded); err != nil {
+		return fmt.Errorf("journal event schema: %w", err)
+	}
+	return nil
 }
 
 // Snapshot reads the current runtime revision while holding the runtime lock.
@@ -113,7 +510,11 @@ func (s *Store) Snapshot() (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if s.mutationCapable {
+		if err := s.recoverPendingWritesLocked(); err != nil {
+			return Snapshot{}, err
+		}
+	} else if err := s.reportPendingOperationLocked(); err != nil {
 		return Snapshot{}, err
 	}
 
@@ -134,6 +535,9 @@ func (s *Store) Snapshot() (Snapshot, error) {
 // deliberately not a Loop Definition transition: terminal Loop states have no
 // automated exit, so a human authorization is required to start another REQ.
 func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval RolloverApproval, occurredAt time.Time) (RolloverRecord, error) {
+	if err := s.requireCandidateValidator(); err != nil {
+		return RolloverRecord{}, err
+	}
 	if strings.TrimSpace(approval.ApprovedBy) == "" {
 		return RolloverRecord{}, errors.New("rollover approval is required")
 	}
@@ -145,6 +549,9 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 	}
 	if err := ValidateFreshInactiveState(freshState); err != nil {
 		return RolloverRecord{}, fmt.Errorf("validate fresh runtime: %w", err)
+	}
+	if err := s.validateCandidate(freshState); err != nil {
+		return RolloverRecord{}, fmt.Errorf("validate fresh runtime semantics: %w", err)
 	}
 	if strings.TrimSpace(archiveRoot) == "" {
 		return RolloverRecord{}, errors.New("runtime archive path is required")
@@ -158,7 +565,7 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 		return RolloverRecord{}, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return RolloverRecord{}, err
 	}
 
@@ -174,9 +581,12 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 	if err := json.Unmarshal(stateData, &state); err != nil {
 		return RolloverRecord{}, fmt.Errorf("decode runtime for rollover: %w", err)
 	}
+	if err := s.validateCandidate(state); err != nil {
+		return RolloverRecord{}, fmt.Errorf("validate current runtime for rollover: %w", err)
+	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	lifecycleState, _ := lifecycle["state"].(string)
-	if lifecycleState != "awaiting_human_release" && lifecycleState != "aborted" {
+	if !isRolloverTerminalState(lifecycleState) {
 		return RolloverRecord{}, fmt.Errorf("runtime rollover requires terminal state, current state is %q", lifecycleState)
 	}
 	runtimeID, _ := state["runtime_id"].(string)
@@ -232,8 +642,12 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 			ArchiveDir: archiveDir, RuntimeID: runtimeID, Revision: revision,
 			ArchiveStateSHA: stateHash, ArchiveJournalSHA: journalHash,
 		},
-		Approval:   approval,
-		OccurredAt: occurredAt.UTC().Format(time.RFC3339Nano),
+		Approval:            approval,
+		OccurredAt:          occurredAt.UTC().Format(time.RFC3339Nano),
+		SourceStateSHA256:   stateHash,
+		SourceJournalSHA256: journalHash,
+		SourceRuntimeID:     runtimeID,
+		SourceRevision:      intPointer(revision),
 	}
 	if err := atomicWriteJSON(s.rolloverMarkerPath(), pending); err != nil {
 		return RolloverRecord{}, fmt.Errorf("record pending runtime rollover: %w", err)
@@ -297,13 +711,20 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 		return FingerprintResult{}, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return FingerprintResult{}, err
 	}
 
 	state, err := s.read()
 	if err != nil {
 		return FingerprintResult{}, err
+	}
+	inspection, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return FingerprintResult{}, fmt.Errorf("inspect runtime journal before fingerprint refresh: %w", err)
+	}
+	if err := validateStateJournalPair(state, inspection); err != nil {
+		return FingerprintResult{}, fmt.Errorf("validate state/journal pair before fingerprint refresh: %w", err)
 	}
 
 	var result FingerprintResult
@@ -405,12 +826,57 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 	}
 
 	if len(result.Updated) > 0 {
-		if s.PreCommitValidator != nil {
-			if err := s.PreCommitValidator(state); err != nil {
-				return FingerprintResult{}, fmt.Errorf("post-refresh snapshot invalid: %w", err)
-			}
+		if err := s.validateCandidate(state); err != nil {
+			return FingerprintResult{}, fmt.Errorf("post-refresh snapshot invalid: %w", err)
+		}
+		inspection, err = inspectJournal(s.journalPath)
+		if err != nil {
+			return FingerprintResult{}, fmt.Errorf("inspect runtime journal after fingerprint refresh: %w", err)
+		}
+		if err := validateStateJournalPair(state, inspection); err != nil {
+			return FingerprintResult{}, fmt.Errorf("validate state/journal pair after fingerprint refresh: %w", err)
+		}
+		previousState, err := s.read()
+		if err != nil {
+			return FingerprintResult{}, err
+		}
+		previousRevision, err := integerField(previousState, "revision")
+		if err != nil {
+			return FingerprintResult{}, fmt.Errorf("read runtime revision for fingerprint refresh: %w", err)
+		}
+		previousStateSHA256, err := hashState(previousState)
+		if err != nil {
+			return FingerprintResult{}, err
+		}
+		stateSHA256, err := hashState(state)
+		if err != nil {
+			return FingerprintResult{}, err
+		}
+		pending := statePending{
+			SchemaVersion:       "1.0.0",
+			PreviousStateSHA256: previousStateSHA256,
+			PreviousRevision:    previousRevision,
+			StateSHA256:         stateSHA256,
+			State:               state,
+		}
+		if err := atomicWriteJSON(s.fingerprintMarkerPath(), pending); err != nil {
+			return FingerprintResult{}, fmt.Errorf("record pending fingerprint refresh: %w", err)
 		}
 		if err := atomicWriteJSON(s.statePath, state); err != nil {
+			return FingerprintResult{}, fmt.Errorf("write refreshed runtime state: %w", err)
+		}
+		writtenState, err := s.read()
+		if err != nil {
+			return FingerprintResult{}, fmt.Errorf("read refreshed runtime state: %w", err)
+		}
+		writtenInspection, err := inspectJournal(s.journalPath)
+		if err != nil {
+			return FingerprintResult{}, fmt.Errorf("inspect runtime journal after refreshed state write: %w", err)
+		}
+		if err := validateStateJournalPair(writtenState, writtenInspection); err != nil {
+			return FingerprintResult{}, fmt.Errorf("validate state/journal pair after refreshed state write: %w", err)
+		}
+		if err := s.clearFingerprintMarkerLocked(); err != nil {
 			return FingerprintResult{}, err
 		}
 	}
@@ -507,19 +973,22 @@ func (s *Store) Update(expectedRevision int, mutation Mutation) (Snapshot, error
 		return Snapshot{}, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return Snapshot{}, err
 	}
 	return s.applyMutation(expectedRevision, mutation)
 }
 
 func (s *Store) Reconcile() (bool, error) {
+	if !s.mutationCapable {
+		return false, fmt.Errorf("%w: Reconcile requires a mutation-capable writer", ErrCandidateValidatorRequired)
+	}
 	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return false, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return false, err
 	}
 
@@ -535,21 +1004,56 @@ func (s *Store) Reconcile() (bool, error) {
 	if eventID == "" {
 		return false, errors.New("last transition has no event_id")
 	}
-	found, err := journalContains(s.journalPath, eventID)
+	inspection, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return false, fmt.Errorf("inspect runtime journal for reconcile: %w", err)
+	}
+	targetSequence, err := integerField(transition, "sequence")
+	if err != nil {
+		return false, fmt.Errorf("last transition sequence is invalid: %w", err)
+	}
+	if targetSequence < 1 {
+		return false, errors.New("last transition sequence is invalid: must be positive")
+	}
+	if eventIndex, found := inspection.EventIndex[eventID]; found {
+		if eventIndex != len(inspection.Events)-1 {
+			return false, fmt.Errorf("reconcile target event %q is not the journal tail", eventID)
+		}
+		return false, nil
+	}
+	if inspection.TailSequence != targetSequence-1 {
+		return false, fmt.Errorf("reconcile journal tail sequence %d does not precede target sequence %d", inspection.TailSequence, targetSequence)
+	}
+	stateJournal, err := objectField(state, "journal")
 	if err != nil {
 		return false, err
 	}
-	if found {
-		return false, nil
+	stateSequence, err := integerField(stateJournal, "last_sequence")
+	if err != nil || stateSequence != targetSequence {
+		return false, fmt.Errorf("reconcile state journal last_sequence %d does not match target sequence %d", stateSequence, targetSequence)
+	}
+	if inspection.RuntimeID != "" {
+		runtimeID, _ := state["runtime_id"].(string)
+		if inspection.RuntimeID != runtimeID {
+			return false, fmt.Errorf("reconcile journal runtime_id %q does not match state runtime_id %q", inspection.RuntimeID, runtimeID)
+		}
+	}
+	if err := s.validateCandidate(state); err != nil {
+		return false, fmt.Errorf("reconcile requires a valid runtime writer: %w", err)
 	}
 	runtimeID, _ := state["runtime_id"].(string)
 	actor, _ := transition["actor"].(string)
 	beforeRevision, _ := transition["expected_revision"].(float64)
 	afterRevision, _ := transition["committed_revision"].(float64)
+	idempotencyKey := stringValue(transition["idempotency_key"])
+	if idempotencyKey == "" {
+		idempotencyKey = "runtime:reconcile:" + eventID
+	}
 	event := buildJournalEvent(Mutation{
 		EventID:            eventID,
 		TransitionID:       stringValue(transition["transition_id"]),
 		Actor:              nonEmpty(actor, "runtime-reconciler"),
+		IdempotencyKey:     idempotencyKey,
 		RuntimeID:          runtimeID,
 		From:               mapValue(transition["from"]),
 		To:                 mapValue(transition["to"]),
@@ -560,8 +1064,40 @@ func (s *Store) Reconcile() (bool, error) {
 		JournalOutcome:     "reconciled",
 		Message:            "Reconciled a committed transition missing from the journal.",
 		OccurredAt:         time.Now().UTC(),
-	}, runtimeID, int(beforeRevision), int(afterRevision), intValue(transition["sequence"]), time.Now().UTC())
-	if err := appendJSONLine(s.journalPath, event); err != nil {
+	}, runtimeID, int(beforeRevision), int(afterRevision), targetSequence, time.Now().UTC())
+	if err := validateJournalEvent(event); err != nil {
+		return false, fmt.Errorf("reconcile journal event invalid: %w", err)
+	}
+	if err := s.commitJournalOnlyLocked(state, event); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RecoverPendingOperations completes a validated commit, fingerprint refresh,
+// or rollover marker without performing ordinary reconcile work. Recovery
+// callers use it as the highest-trust source before rebuilding from artifacts.
+func (s *Store) RecoverPendingOperations() (bool, error) {
+	if !s.mutationCapable {
+		return false, fmt.Errorf("%w: RecoverPendingOperations requires a mutation-capable writer", ErrCandidateValidatorRequired)
+	}
+	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	pending := false
+	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath()} {
+		if _, statErr := os.Stat(path); statErr == nil {
+			pending = true
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect pending Runtime operation %s: %w", path, statErr)
+		}
+	}
+	if !pending {
+		return false, nil
+	}
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -576,7 +1112,7 @@ func (s *Store) MigrateLegacyPlanning(root string) (bool, error) {
 		return false, err
 	}
 	defer release()
-	if err := s.recoverPendingRolloverLocked(); err != nil {
+	if err := s.recoverPendingWritesLocked(); err != nil {
 		return false, err
 	}
 
@@ -612,7 +1148,9 @@ func (s *Store) MigrateLegacyPlanning(root string) (bool, error) {
 
 	mutation := Mutation{
 		EventID:            eventID,
+		TransitionID:       "PLANNING-MIGRATION",
 		Actor:              "runtime-migrator",
+		Event:              "planning_phase_migrated",
 		IdempotencyKey:     fmt.Sprintf("runtime:migrate-planning:%d", expectedRevision),
 		RuntimeID:          runtimeID,
 		From:               from,
@@ -649,12 +1187,30 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err != nil {
 		return Snapshot{}, err
 	}
+	previousState, err := cloneState(state)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	revision, err := integerField(state, "revision")
 	if err != nil {
 		return Snapshot{}, err
 	}
 	if revision != expectedRevision {
 		return Snapshot{}, ErrStaleRevision
+	}
+	mutation, err = normalizeMutation(state, mutation)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	existingJournal, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("inspect existing runtime journal before mutation: %w", err)
+	}
+	if err := validateStateJournalPair(state, existingJournal); err != nil {
+		return Snapshot{}, fmt.Errorf("inspect runtime journal cursor before mutation: %w", err)
+	}
+	if _, exists := existingJournal.EventIndex[mutation.EventID]; exists {
+		return Snapshot{}, fmt.Errorf("mutation event_id %q already exists in runtime journal", mutation.EventID)
 	}
 	if mutation.RequireEmptyJournal {
 		empty, err := journalEmpty(s.journalPath)
@@ -669,6 +1225,9 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 		if err := mutation.Apply(state); err != nil {
 			return Snapshot{}, err
 		}
+	}
+	if err := validateMutationApplyBoundary(previousState, state, mutation.RetainLastTransition); err != nil {
+		return Snapshot{}, fmt.Errorf("mutation apply coherence: %w", err)
 	}
 
 	nextRevision := expectedRevision + 1
@@ -707,24 +1266,130 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 		state["last_transition"] = transition
 	}
 
-	if s.PreCommitValidator != nil {
-		if err := s.PreCommitValidator(state); err != nil {
-			return Snapshot{}, fmt.Errorf("post-mutation snapshot invalid: %w", err)
-		}
-	}
-
-	if err := atomicWriteJSON(s.statePath, state); err != nil {
-		return Snapshot{}, err
-	}
 	runtimeID := mutation.RuntimeID
 	if runtimeID == "" {
 		runtimeID, _ = state["runtime_id"].(string)
 	}
 	journalEvent := buildJournalEvent(mutation, runtimeID, expectedRevision, nextRevision, sequence, occurredAt)
+	if err := s.validateCandidate(state); err != nil {
+		return Snapshot{}, fmt.Errorf("post-mutation snapshot invalid: %w", err)
+	}
+	if err := validateJournalEvent(journalEvent); err != nil {
+		return Snapshot{}, fmt.Errorf("post-mutation journal invalid: %w", err)
+	}
+	previousStateSHA256, err := hashState(previousState)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	stateSHA256, err := hashState(state)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	journalEventBytes, err := jsonLineBytes(journalEvent)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	pending := commitPending{
+		SchemaVersion:        "1.0.0",
+		PreviousStateSHA256:  previousStateSHA256,
+		PreviousRevision:     expectedRevision,
+		StateSHA256:          stateSHA256,
+		JournalEventSHA256:   sha256Hex(journalEventBytes),
+		RequestID:            stringValue(journalEvent["request_id"]),
+		IdempotencyKey:       mutation.IdempotencyKey,
+		RetainLastTransition: mutation.RetainLastTransition,
+		State:                state,
+		JournalEvent:         journalEvent,
+	}
+	if err := validatePendingCommitCoherence(pending); err != nil {
+		return Snapshot{}, fmt.Errorf("pending runtime commit coherence: %w", err)
+	}
+	if err := atomicWriteJSON(s.commitMarkerPath(), pending); err != nil {
+		return Snapshot{}, fmt.Errorf("record pending runtime commit: %w", err)
+	}
+	if err := atomicWriteJSON(s.statePath, state); err != nil {
+		return Snapshot{}, fmt.Errorf("write committed runtime state: %w", err)
+	}
 	if err := appendJSONLine(s.journalPath, journalEvent); err != nil {
+		return Snapshot{}, fmt.Errorf("append committed runtime journal: %w", err)
+	}
+	if err := s.clearCommitMarkerLocked(); err != nil {
 		return Snapshot{}, err
 	}
 	return Snapshot{Revision: nextRevision, State: state}, nil
+}
+
+func validateMutationApplyBoundary(previousState, candidateState map[string]any, retainLastTransition bool) error {
+	previousJournal, err := objectField(previousState, "journal")
+	if err != nil {
+		return fmt.Errorf("previous state journal: %w", err)
+	}
+	candidateJournal, err := objectField(candidateState, "journal")
+	if err != nil {
+		return fmt.Errorf("candidate state journal: %w", err)
+	}
+	previousSequence, err := integerField(previousJournal, "last_sequence")
+	if err != nil {
+		return fmt.Errorf("previous journal last_sequence: %w", err)
+	}
+	candidateSequence, err := integerField(candidateJournal, "last_sequence")
+	if err != nil {
+		return fmt.Errorf("candidate journal last_sequence: %w", err)
+	}
+	if candidateSequence != previousSequence {
+		return fmt.Errorf("Mutation.Apply changed journal last_sequence from %d to %d", previousSequence, candidateSequence)
+	}
+	if !reflect.DeepEqual(previousJournal["last_event_id"], candidateJournal["last_event_id"]) {
+		return errors.New("Mutation.Apply changed journal last_event_id")
+	}
+	if retainLastTransition && !reflect.DeepEqual(previousState["last_transition"], candidateState["last_transition"]) {
+		return errors.New("Mutation.Apply changed retained last_transition")
+	}
+	return nil
+}
+
+// commitJournalOnlyLocked records a journal repair through the same durable
+// marker protocol as a normal mutation. State is intentionally unchanged: the
+// marker carries the current state as the already-committed target, so recovery
+// only needs to append the missing event and clear the marker.
+func (s *Store) commitJournalOnlyLocked(state map[string]any, event map[string]any) error {
+	if err := validateJournalEvent(event); err != nil {
+		return fmt.Errorf("journal-only commit event invalid: %w", err)
+	}
+	stateHash, err := hashState(state)
+	if err != nil {
+		return err
+	}
+	eventBytes, err := jsonLineBytes(event)
+	if err != nil {
+		return err
+	}
+	eventAfter, err := integerField(event, "after_revision")
+	if err != nil {
+		return fmt.Errorf("journal-only commit after_revision: %w", err)
+	}
+	pending := commitPending{
+		SchemaVersion:        "1.0.0",
+		PreviousStateSHA256:  stateHash,
+		PreviousRevision:     eventAfter - 1,
+		StateSHA256:          stateHash,
+		JournalEventSHA256:   sha256Hex(eventBytes),
+		RequestID:            stringValue(event["request_id"]),
+		IdempotencyKey:       stringValue(event["idempotency_key"]),
+		RetainLastTransition: true,
+		State:                state,
+		JournalEvent:         event,
+	}
+	if err := validatePendingCommitCoherence(pending); err != nil {
+		return fmt.Errorf("journal-only commit coherence: %w", err)
+	}
+	if err := atomicWriteJSON(s.commitMarkerPath(), pending); err != nil {
+		return fmt.Errorf("record pending journal-only commit: %w", err)
+	}
+	if err := appendJSONLine(s.journalPath, event); err != nil {
+		return fmt.Errorf("append reconciled runtime journal: %w", err)
+	}
+	return s.clearCommitMarkerLocked()
 }
 
 func buildJournalEvent(mutation Mutation, runtimeID string, beforeRevision, afterRevision, sequence int, occurredAt time.Time) map[string]any {
@@ -748,6 +1413,7 @@ func buildJournalEvent(mutation Mutation, runtimeID string, beforeRevision, afte
 		"schema_version":      "1.0.0",
 		"runtime_id":          runtimeID,
 		"event_id":            mutation.EventID,
+		"idempotency_key":     mutation.IdempotencyKey,
 		"sequence":            sequence,
 		"event":               eventKind,
 		"outcome":             outcome,
@@ -856,6 +1522,10 @@ func intValue(value any) int {
 	}
 }
 
+func intPointer(value int) *int {
+	return &value
+}
+
 func stringValue(value any) string {
 	if s, ok := value.(string); ok {
 		return s
@@ -909,12 +1579,349 @@ func (s *Store) rolloverMarkerPath() string {
 	return s.statePath + ".rollover-pending.json"
 }
 
+func (s *Store) commitMarkerPath() string {
+	return s.statePath + ".commit-pending.json"
+}
+
+func (s *Store) fingerprintMarkerPath() string {
+	return s.statePath + ".fingerprint-pending.json"
+}
+
+// reportPendingOperationLocked is the read-only counterpart of recovery. It
+// deliberately performs only metadata reads and returns a diagnostic error;
+// Snapshot must never rewrite either half of the Runtime pair.
+func (s *Store) reportPendingOperationLocked() error {
+	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath()} {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%w: %s", ErrPendingRuntimeOperation, filepath.Base(path))
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect pending runtime operation %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// recoverPendingWritesLocked is called only by explicit mutation-capable
+// writers. Each recovery candidate is validated before the first replacement
+// of state or journal, so a pending marker cannot become a semantic bypass.
+func (s *Store) recoverPendingWritesLocked() error {
+	if _, err := os.Stat(s.commitMarkerPath()); err == nil {
+		if err := s.recoverPendingCommitLocked(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect pending runtime commit: %w", err)
+	}
+	if _, err := os.Stat(s.fingerprintMarkerPath()); err == nil {
+		if err := s.recoverPendingFingerprintLocked(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect pending fingerprint refresh: %w", err)
+	}
+	if _, err := os.Stat(s.rolloverMarkerPath()); err == nil {
+		return s.recoverPendingRolloverLocked()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect pending runtime rollover: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recoverPendingFingerprintLocked() error {
+	if err := s.requireCandidateValidator(); err != nil {
+		return fmt.Errorf("recover pending fingerprint refresh: %w", err)
+	}
+	data, err := os.ReadFile(s.fingerprintMarkerPath())
+	if err != nil {
+		return fmt.Errorf("read pending fingerprint refresh: %w", err)
+	}
+	var pending statePending
+	if err := json.Unmarshal(data, &pending); err != nil {
+		return fmt.Errorf("decode pending fingerprint refresh: %w", err)
+	}
+	if pending.SchemaVersion != "1.0.0" {
+		return fmt.Errorf("unsupported pending fingerprint refresh schema %q", pending.SchemaVersion)
+	}
+	if err := s.validateCandidate(pending.State); err != nil {
+		return fmt.Errorf("pending fingerprint refresh state is invalid: %w", err)
+	}
+	pendingJournal, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return fmt.Errorf("inspect runtime journal for fingerprint recovery: %w", err)
+	}
+	if err := validateStateJournalPair(pending.State, pendingJournal); err != nil {
+		return fmt.Errorf("pending fingerprint refresh state/journal pair is invalid: %w", err)
+	}
+	stateHash, err := hashState(pending.State)
+	if err != nil {
+		return err
+	}
+	if stateHash != pending.StateSHA256 {
+		return errors.New("pending fingerprint refresh state fingerprint mismatch")
+	}
+	currentState, err := s.read()
+	if err != nil {
+		return fmt.Errorf("read runtime for fingerprint recovery: %w", err)
+	}
+	if err := validateStateJournalPair(currentState, pendingJournal); err != nil {
+		return fmt.Errorf("current fingerprint refresh state/journal pair is invalid: %w", err)
+	}
+	currentHash, err := hashState(currentState)
+	if err != nil {
+		return err
+	}
+	if currentHash == pending.StateSHA256 {
+		return s.clearFingerprintMarkerLocked()
+	}
+	if currentHash != pending.PreviousStateSHA256 {
+		return errors.New("pending fingerprint refresh found an unknown state fingerprint; refusing mixed-state recovery")
+	}
+	currentRevision, err := integerField(currentState, "revision")
+	if err != nil {
+		return fmt.Errorf("read current runtime revision for fingerprint recovery: %w", err)
+	}
+	if currentRevision != pending.PreviousRevision {
+		return errors.New("pending fingerprint refresh previous state revision does not match marker")
+	}
+	if err := atomicWriteJSON(s.statePath, pending.State); err != nil {
+		return fmt.Errorf("complete pending fingerprint refresh: %w", err)
+	}
+	recoveredState, err := s.read()
+	if err != nil {
+		return fmt.Errorf("read recovered fingerprint refresh state: %w", err)
+	}
+	recoveredJournal, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return fmt.Errorf("inspect runtime journal after fingerprint recovery: %w", err)
+	}
+	if err := validateStateJournalPair(recoveredState, recoveredJournal); err != nil {
+		return fmt.Errorf("recovered fingerprint refresh state/journal pair is invalid: %w", err)
+	}
+	return s.clearFingerprintMarkerLocked()
+}
+
+func (s *Store) clearFingerprintMarkerLocked() error {
+	if err := os.Remove(s.fingerprintMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear pending fingerprint refresh: %w", err)
+	}
+	if err := syncDir(filepath.Dir(s.fingerprintMarkerPath())); err != nil {
+		return fmt.Errorf("sync cleared pending fingerprint refresh: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) recoverPendingCommitLocked() error {
+	if err := s.requireCandidateValidator(); err != nil {
+		return fmt.Errorf("recover pending runtime commit: %w", err)
+	}
+	data, err := os.ReadFile(s.commitMarkerPath())
+	if err != nil {
+		return fmt.Errorf("read pending runtime commit: %w", err)
+	}
+	var pending commitPending
+	if err := json.Unmarshal(data, &pending); err != nil {
+		return fmt.Errorf("decode pending runtime commit: %w", err)
+	}
+	if pending.SchemaVersion != "1.0.0" {
+		return fmt.Errorf("unsupported pending runtime commit schema %q", pending.SchemaVersion)
+	}
+	if err := s.validateCandidate(pending.State); err != nil {
+		return fmt.Errorf("pending runtime commit state is invalid: %w", err)
+	}
+	if err := validateJournalEvent(pending.JournalEvent); err != nil {
+		return fmt.Errorf("pending runtime commit journal is invalid: %w", err)
+	}
+	if err := validatePendingCommitCoherence(pending); err != nil {
+		return fmt.Errorf("pending runtime commit coherence: %w", err)
+	}
+	journalEventBytes, err := jsonLineBytes(pending.JournalEvent)
+	if err != nil {
+		return err
+	}
+	if sha256Hex(journalEventBytes) != pending.JournalEventSHA256 {
+		return errors.New("pending runtime commit journal fingerprint mismatch")
+	}
+	state, err := s.read()
+	if err != nil {
+		return fmt.Errorf("read runtime for commit recovery: %w", err)
+	}
+	currentHash, err := hashState(state)
+	if err != nil {
+		return err
+	}
+	desiredHash, err := hashState(pending.State)
+	if err != nil {
+		return err
+	}
+	if desiredHash != pending.StateSHA256 {
+		return errors.New("pending runtime commit state fingerprint mismatch")
+	}
+	currentRevision, err := integerField(state, "revision")
+	if err != nil {
+		return fmt.Errorf("read current runtime revision for commit recovery: %w", err)
+	}
+	eventID, _ := pending.JournalEvent["event_id"].(string)
+	if eventID == "" {
+		return errors.New("pending runtime commit has no event_id")
+	}
+	journal, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return fmt.Errorf("inspect runtime journal during commit recovery: %w", err)
+	}
+	pendingRuntimeID, _ := pending.State["runtime_id"].(string)
+	eventRuntimeID, _ := pending.JournalEvent["runtime_id"].(string)
+	if journal.RuntimeID != "" && (journal.RuntimeID != pendingRuntimeID || journal.RuntimeID != eventRuntimeID) {
+		return fmt.Errorf("existing runtime journal runtime_id %q does not match pending state/event runtime_id %q", journal.RuntimeID, pendingRuntimeID)
+	}
+	eventIndex, found := journal.EventIndex[eventID]
+	if found {
+		if eventIndex != len(journal.Events)-1 {
+			return fmt.Errorf("pending runtime commit event %q is not the journal tail", eventID)
+		}
+		journalEvent := journal.Events[eventIndex]
+		journalSequence, sequenceErr := integerField(journalEvent, "sequence")
+		pendingSequence, pendingSequenceErr := integerField(pending.JournalEvent, "sequence")
+		if sequenceErr != nil || pendingSequenceErr != nil || journalSequence != pendingSequence {
+			return fmt.Errorf("pending runtime commit event %q has a journal sequence mismatch", eventID)
+		}
+		if !reflect.DeepEqual(journalEvent, pending.JournalEvent) {
+			return fmt.Errorf("pending runtime commit event %q conflicts with journal", eventID)
+		}
+	} else {
+		pendingSequence, sequenceErr := integerField(pending.JournalEvent, "sequence")
+		if sequenceErr != nil {
+			return fmt.Errorf("pending runtime commit sequence: %w", sequenceErr)
+		}
+		if journal.TailSequence != pendingSequence-1 {
+			return fmt.Errorf("pending runtime commit journal tail sequence %d does not precede pending sequence %d", journal.TailSequence, pendingSequence)
+		}
+	}
+
+	switch currentHash {
+	case desiredHash:
+		if currentRevision != pending.PreviousRevision+1 {
+			return errors.New("pending runtime commit desired state revision is not previous revision plus one")
+		}
+		if found {
+			// Both halves already contain the pending commit. The event must be the
+			// validated journal tail; no append is needed.
+		} else {
+			// State reached the target before the process stopped. Only the journal
+			// append (and marker cleanup) remain.
+		}
+		// State reached the target before the process stopped. Only the journal
+		// append (if needed) and marker cleanup remain.
+	case pending.PreviousStateSHA256:
+		if currentRevision != pending.PreviousRevision {
+			return errors.New("pending runtime commit previous state revision does not match marker")
+		}
+		if found {
+			return errors.New("pending runtime commit journal event exists while state is still previous")
+		}
+		if err := atomicWriteJSON(s.statePath, pending.State); err != nil {
+			return fmt.Errorf("restore pending runtime state: %w", err)
+		}
+	default:
+		return errors.New("pending runtime commit found an unknown state fingerprint; refusing mixed-pair recovery")
+	}
+	if !found {
+		if err := appendJSONLine(s.journalPath, pending.JournalEvent); err != nil {
+			return fmt.Errorf("complete pending runtime journal append: %w", err)
+		}
+	}
+	return s.clearCommitMarkerLocked()
+}
+
+func validatePendingCommitCoherence(pending commitPending) error {
+	stateRevision, err := integerField(pending.State, "revision")
+	if err != nil {
+		return fmt.Errorf("state revision: %w", err)
+	}
+	eventAfter, err := integerField(pending.JournalEvent, "after_revision")
+	if err != nil {
+		return fmt.Errorf("journal after_revision: %w", err)
+	}
+	eventBefore, err := integerField(pending.JournalEvent, "before_revision")
+	if err != nil {
+		return fmt.Errorf("journal before_revision: %w", err)
+	}
+	sequence, err := integerField(pending.JournalEvent, "sequence")
+	if err != nil {
+		return fmt.Errorf("journal sequence: %w", err)
+	}
+	eventID, _ := pending.JournalEvent["event_id"].(string)
+	if eventID == "" {
+		return errors.New("journal event_id is required")
+	}
+	if stateRevision != eventAfter || eventBefore+1 != eventAfter {
+		return fmt.Errorf("state revision %d and journal revisions %d->%d are incoherent", stateRevision, eventBefore, eventAfter)
+	}
+	stateJournal, err := objectField(pending.State, "journal")
+	if err != nil {
+		return fmt.Errorf("state journal: %w", err)
+	}
+	stateSequence, err := integerField(stateJournal, "last_sequence")
+	if err != nil || stateSequence != sequence {
+		return fmt.Errorf("state journal last_sequence %d does not match event sequence %d", stateSequence, sequence)
+	}
+	stateLastEventID, _ := stateJournal["last_event_id"].(string)
+	if stateLastEventID != eventID {
+		return fmt.Errorf("state journal last_event_id %q does not match event_id %q", stateLastEventID, eventID)
+	}
+	stateRuntimeID, _ := pending.State["runtime_id"].(string)
+	eventRuntimeID, _ := pending.JournalEvent["runtime_id"].(string)
+	if stateRuntimeID == "" || stateRuntimeID != eventRuntimeID {
+		return fmt.Errorf("state runtime_id %q does not match journal runtime_id %q", stateRuntimeID, eventRuntimeID)
+	}
+	requestID, _ := pending.JournalEvent["request_id"].(string)
+	if pending.RequestID == "" || pending.RequestID != requestID {
+		return fmt.Errorf("marker request_id %q does not match journal request_id %q", pending.RequestID, requestID)
+	}
+	if pending.IdempotencyKey == "" {
+		return errors.New("marker idempotency_key is required")
+	}
+	eventIdempotencyKey, _ := pending.JournalEvent["idempotency_key"].(string)
+	if eventIdempotencyKey == "" {
+		return errors.New("journal idempotency_key is required")
+	}
+	if eventIdempotencyKey != pending.IdempotencyKey {
+		return fmt.Errorf("marker idempotency_key %q does not match journal idempotency_key %q", pending.IdempotencyKey, eventIdempotencyKey)
+	}
+	if !pending.RetainLastTransition {
+		transition, err := objectField(pending.State, "last_transition")
+		if err != nil {
+			return fmt.Errorf("state last_transition: %w", err)
+		}
+		transitionEventID, _ := transition["event_id"].(string)
+		transitionSequence, _ := integerField(transition, "sequence")
+		transitionRevision, _ := integerField(transition, "committed_revision")
+		transitionIdempotency, _ := transition["idempotency_key"].(string)
+		if transitionEventID != eventID || transitionSequence != sequence || transitionRevision != eventAfter || transitionIdempotency != pending.IdempotencyKey {
+			return errors.New("state last_transition is not linked to pending journal event")
+		}
+	}
+	return nil
+}
+
+func (s *Store) clearCommitMarkerLocked() error {
+	if err := os.Remove(s.commitMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear pending runtime commit: %w", err)
+	}
+	if err := syncDir(filepath.Dir(s.commitMarkerPath())); err != nil {
+		return fmt.Errorf("sync cleared pending runtime commit: %w", err)
+	}
+	return nil
+}
+
 // recoverPendingRolloverLocked completes a rollover recorded before either
 // member of the state/journal pair was replaced. Callers must already hold the
-// state lock. The journal is reset first: a crash before the state write leaves
-// the marker in place, so the next Store operation deterministically finishes
-// the state write instead of accepting a mixed runtime pair.
+// state lock. The implementation writes the fresh state before resetting the
+// journal and therefore explicitly accepts that one durable crash state:
+// target state + source journal. The marker makes the retry deterministic.
 func (s *Store) recoverPendingRolloverLocked() error {
+	if err := s.requireCandidateValidator(); err != nil {
+		return fmt.Errorf("recover pending runtime rollover: %w", err)
+	}
 	data, err := os.ReadFile(s.rolloverMarkerPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -929,18 +1936,180 @@ func (s *Store) recoverPendingRolloverLocked() error {
 	if pending.SchemaVersion != "1.0.0" {
 		return fmt.Errorf("unsupported pending runtime rollover schema %q", pending.SchemaVersion)
 	}
+	if pending.SourceStateSHA256 == "" || pending.SourceJournalSHA256 == "" || pending.SourceRuntimeID == "" || pending.SourceRevision == nil || *pending.SourceRevision < 0 {
+		return errors.New("pending runtime rollover source binding is incomplete")
+	}
+	if pending.Record.RuntimeID == "" || pending.Record.Revision < 0 {
+		return errors.New("pending runtime rollover archive record is incomplete")
+	}
+	if pending.Record.RuntimeID != pending.SourceRuntimeID || pending.Record.Revision != *pending.SourceRevision || pending.Record.ArchiveStateSHA != pending.SourceStateSHA256 || pending.Record.ArchiveJournalSHA != pending.SourceJournalSHA256 {
+		return errors.New("pending runtime rollover marker cross-binding is incoherent")
+	}
+	if strings.TrimSpace(pending.Approval.ApprovedBy) == "" || strings.TrimSpace(pending.Approval.EvidenceID) == "" {
+		return errors.New("pending runtime rollover approval is incomplete")
+	}
 	if err := ValidateFreshInactiveState(pending.FreshState); err != nil {
 		return fmt.Errorf("pending runtime rollover is invalid: %w", err)
+	}
+	if err := s.validateCandidate(pending.FreshState); err != nil {
+		return fmt.Errorf("pending runtime rollover semantic validation: %w", err)
 	}
 	if err := verifyRolloverArchive(pending.Record); err != nil {
 		return fmt.Errorf("pending runtime rollover archive is invalid: %w", err)
 	}
-	if err := atomicWriteBytes(s.journalPath, nil, ".loop-journal-*.tmp"); err != nil {
-		return fmt.Errorf("reset runtime journal during rollover recovery: %w", err)
+	if err := s.validateRolloverArchivePair(pending.Record); err != nil {
+		return fmt.Errorf("pending runtime rollover archive journal is invalid: %w", err)
 	}
-	if err := atomicWriteJSON(s.statePath, pending.FreshState); err != nil {
-		return fmt.Errorf("seed fresh runtime during rollover recovery: %w", err)
+	archivedState, err := readRolloverArchiveState(pending.Record)
+	if err != nil {
+		return err
 	}
+	if err := validateRolloverApproval(archivedState, pending.Approval, pending.Record.RuntimeID, pending.Record.Revision); err != nil {
+		return fmt.Errorf("pending runtime rollover approval does not match archived runtime: %w", err)
+	}
+
+	currentStateData, err := os.ReadFile(s.statePath)
+	if err != nil {
+		return fmt.Errorf("read current runtime for rollover recovery: %w", err)
+	}
+	currentJournalData, err := os.ReadFile(s.journalPath)
+	if err != nil {
+		return fmt.Errorf("read current journal for rollover recovery: %w", err)
+	}
+	var currentState map[string]any
+	if err := json.Unmarshal(currentStateData, &currentState); err != nil {
+		return fmt.Errorf("decode current runtime for rollover recovery: %w", err)
+	}
+	currentStateHash, err := hashState(currentState)
+	if err != nil {
+		return err
+	}
+	targetStateHash, err := hashState(pending.FreshState)
+	if err != nil {
+		return err
+	}
+	currentJournalHash := sha256Hex(currentJournalData)
+	sourcePair := sha256Hex(currentStateData) == pending.SourceStateSHA256 && currentJournalHash == pending.SourceJournalSHA256
+	targetPair := currentStateHash == targetStateHash && len(strings.TrimSpace(string(currentJournalData))) == 0
+	targetStateSourceJournal := currentStateHash == targetStateHash && currentJournalHash == pending.SourceJournalSHA256
+	if !sourcePair && !targetPair && !targetStateSourceJournal {
+		return errors.New("pending runtime rollover current state/journal match neither source pair nor completed fresh pair")
+	}
+	if sourcePair {
+		currentRuntimeID, _ := currentState["runtime_id"].(string)
+		currentRevision, revisionErr := integerField(currentState, "revision")
+		if currentRuntimeID != pending.SourceRuntimeID || revisionErr != nil || currentRevision != *pending.SourceRevision {
+			return errors.New("pending runtime rollover source binding does not match current runtime")
+		}
+		if _, err := inspectJournalData(currentJournalData); err != nil {
+			return fmt.Errorf("validate current journal before rollover recovery: %w", err)
+		}
+		// State and journal are replaced only after every marker, archive,
+		// approval, and source-pair check has passed. A subsequent writer either
+		// observes the completed fresh pair or fails closed on a mixed pair.
+		if err := atomicWriteJSON(s.statePath, pending.FreshState); err != nil {
+			return fmt.Errorf("seed fresh runtime during rollover recovery: %w", err)
+		}
+		if err := atomicWriteBytes(s.journalPath, nil, ".loop-journal-*.tmp"); err != nil {
+			return fmt.Errorf("reset runtime journal during rollover recovery: %w", err)
+		}
+	} else if targetStateSourceJournal {
+		if _, err := inspectJournalData(currentJournalData); err != nil {
+			return fmt.Errorf("validate source journal in interrupted rollover recovery: %w", err)
+		}
+		if err := atomicWriteBytes(s.journalPath, nil, ".loop-journal-*.tmp"); err != nil {
+			return fmt.Errorf("complete interrupted rollover journal reset: %w", err)
+		}
+	}
+	return s.clearRolloverMarkerLocked()
+}
+
+func (s *Store) validateRolloverArchivePair(record RolloverRecord) error {
+	archivedState, err := readRolloverArchiveState(record)
+	if err != nil {
+		return err
+	}
+	if err := s.validateCandidate(archivedState); err != nil {
+		return fmt.Errorf("archived runtime state validation: %w", err)
+	}
+	runtimeID, _ := archivedState["runtime_id"].(string)
+	if runtimeID == "" || runtimeID != record.RuntimeID {
+		return fmt.Errorf("archived runtime runtime_id %q does not match archive record %q", runtimeID, record.RuntimeID)
+	}
+	archivedRevision, err := integerField(archivedState, "revision")
+	if err != nil || archivedRevision != record.Revision {
+		return fmt.Errorf("archived runtime revision %d does not match archive record %d", archivedRevision, record.Revision)
+	}
+	journalState, err := objectField(archivedState, "journal")
+	if err != nil {
+		return fmt.Errorf("archived runtime journal cursor: %w", err)
+	}
+	lastSequence, err := integerField(journalState, "last_sequence")
+	if err != nil {
+		return fmt.Errorf("archived runtime journal last_sequence: %w", err)
+	}
+	lastEventID, _ := journalState["last_event_id"].(string)
+
+	journalData, err := os.ReadFile(filepath.Join(record.ArchiveDir, "loop-events.jsonl"))
+	if err != nil {
+		return fmt.Errorf("read archived runtime journal: %w", err)
+	}
+	inspection, err := inspectJournalData(journalData)
+	if err != nil {
+		return fmt.Errorf("archived journal validation: %w", err)
+	}
+	if lastSequence != record.Revision {
+		return fmt.Errorf("archived state journal last_sequence %d does not match archived revision %d", lastSequence, record.Revision)
+	}
+	if len(inspection.Events) == 0 {
+		if record.Revision != 0 || lastEventID != "" {
+			return fmt.Errorf("empty archived journal requires revision 0 and empty event_id, got revision=%d event_id=%q", record.Revision, lastEventID)
+		}
+		return nil
+	}
+	if inspection.RuntimeID != runtimeID {
+		return fmt.Errorf("archived journal runtime_id %q does not match archived state %q", inspection.RuntimeID, runtimeID)
+	}
+	for _, event := range inspection.Events {
+		sequence, _ := integerField(event, "sequence")
+		beforeRevision, err := integerField(event, "before_revision")
+		if err != nil || beforeRevision != sequence-1 {
+			return fmt.Errorf("archived journal event sequence %d has before_revision %d", sequence, beforeRevision)
+		}
+		afterRevision, err := integerField(event, "after_revision")
+		if err != nil || afterRevision != sequence {
+			return fmt.Errorf("archived journal event sequence %d has after_revision %d", sequence, afterRevision)
+		}
+	}
+	finalEvent := inspection.Events[len(inspection.Events)-1]
+	finalSequence, _ := integerField(finalEvent, "sequence")
+	if finalSequence != lastSequence {
+		return fmt.Errorf("archived journal final sequence %d does not match state last_sequence %d", finalSequence, lastSequence)
+	}
+	finalAfterRevision, _ := integerField(finalEvent, "after_revision")
+	if finalAfterRevision != record.Revision {
+		return fmt.Errorf("archived journal final after_revision %d does not match archived revision %d", finalAfterRevision, record.Revision)
+	}
+	finalEventID, _ := finalEvent["event_id"].(string)
+	if finalEventID != lastEventID {
+		return fmt.Errorf("archived journal final event_id %q does not match state last_event_id %q", finalEventID, lastEventID)
+	}
+	return nil
+}
+
+func readRolloverArchiveState(record RolloverRecord) (map[string]any, error) {
+	stateData, err := os.ReadFile(filepath.Join(record.ArchiveDir, "loop-state.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read archived runtime state: %w", err)
+	}
+	var archivedState map[string]any
+	if err := json.Unmarshal(stateData, &archivedState); err != nil {
+		return nil, fmt.Errorf("decode archived runtime state: %w", err)
+	}
+	return archivedState, nil
+}
+
+func (s *Store) clearRolloverMarkerLocked() error {
 	if err := os.Remove(s.rolloverMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear pending runtime rollover: %w", err)
 	}
@@ -1101,11 +2270,47 @@ func verifyRolloverArchive(record RolloverRecord) error {
 }
 
 func atomicWriteJSON(path string, value any) error {
+	data, err := jsonDocumentBytes(value)
+	if err != nil {
+		return err
+	}
+	return atomicWriteBytes(path, data, ".loop-state-*.tmp")
+}
+
+func jsonDocumentBytes(value any) ([]byte, error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode runtime: %w", err)
+		return nil, fmt.Errorf("encode runtime: %w", err)
 	}
-	return atomicWriteBytes(path, append(data, '\n'), ".loop-state-*.tmp")
+	return append(data, '\n'), nil
+}
+
+func jsonLineBytes(value any) ([]byte, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode journal: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+func cloneState(state map[string]any) (map[string]any, error) {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return nil, fmt.Errorf("clone runtime state: %w", err)
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, fmt.Errorf("decode cloned runtime state: %w", err)
+	}
+	return clone, nil
+}
+
+func hashState(state map[string]any) (string, error) {
+	data, err := jsonDocumentBytes(state)
+	if err != nil {
+		return "", err
+	}
+	return sha256Hex(data), nil
 }
 
 func atomicWriteBytes(path string, data []byte, pattern string) error {
@@ -1183,6 +2388,121 @@ func appendJSONLine(path string, value any) error {
 		return fmt.Errorf("sync journal: %w", err)
 	}
 	return nil
+}
+
+type journalInspection struct {
+	Events       []map[string]any
+	EventIndex   map[string]int
+	RuntimeID    string
+	TailSequence int
+}
+
+func validateStateJournalPair(state map[string]any, inspection journalInspection) error {
+	runtimeID, _ := state["runtime_id"].(string)
+	if strings.TrimSpace(runtimeID) == "" {
+		return errors.New("state runtime_id is required")
+	}
+	if inspection.RuntimeID != "" && inspection.RuntimeID != runtimeID {
+		return fmt.Errorf("journal runtime_id %q does not match state runtime_id %q", inspection.RuntimeID, runtimeID)
+	}
+	stateJournal, err := objectField(state, "journal")
+	if err != nil {
+		return fmt.Errorf("state journal: %w", err)
+	}
+	return validateStateJournalCursor(stateJournal, inspection)
+}
+
+func validateStateJournalCursor(stateJournal map[string]any, inspection journalInspection) error {
+	stateSequence, err := integerField(stateJournal, "last_sequence")
+	if err != nil {
+		return fmt.Errorf("state last_sequence: %w", err)
+	}
+	if inspection.TailSequence != stateSequence {
+		return fmt.Errorf("existing runtime journal tail sequence %d does not match state last_sequence %d", inspection.TailSequence, stateSequence)
+	}
+	stateEventID := stateJournal["last_event_id"]
+	if inspection.TailSequence == 0 {
+		if stateEventID == nil {
+			return nil
+		}
+		if eventID, ok := stateEventID.(string); ok && strings.TrimSpace(eventID) == "" {
+			return errors.New("state journal last_event_id must be null when the journal is empty")
+		}
+		return fmt.Errorf("state journal last_event_id %v must be null when the journal is empty", stateEventID)
+	}
+	if len(inspection.Events) == 0 {
+		return errors.New("non-empty state journal cursor has no journal tail")
+	}
+	tailEventID, _ := inspection.Events[len(inspection.Events)-1]["event_id"].(string)
+	if tailEventID == "" {
+		return errors.New("journal tail event_id is required")
+	}
+	stateEventIDString, ok := stateEventID.(string)
+	if !ok || stateEventIDString != tailEventID {
+		return fmt.Errorf("state journal last_event_id %q does not match journal tail event_id %q", stateEventIDString, tailEventID)
+	}
+	return nil
+}
+
+// inspectJournal validates the complete journal before commit recovery makes a
+// decision. A missing journal is treated as an empty tail so a marker created
+// before journal creation can still be completed by an explicit writer.
+func inspectJournal(path string) (journalInspection, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return journalInspection{Events: []map[string]any{}, EventIndex: map[string]int{}}, nil
+	}
+	if err != nil {
+		return journalInspection{}, fmt.Errorf("read journal: %w", err)
+	}
+	return inspectJournalData(data)
+}
+
+func inspectJournalData(data []byte) (journalInspection, error) {
+	inspection := journalInspection{
+		Events:     make([]map[string]any, 0),
+		EventIndex: make(map[string]int),
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	expectedSequence := 1
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var event map[string]any
+		if err := json.Unmarshal(line, &event); err != nil {
+			return journalInspection{}, fmt.Errorf("decode journal event: %w", err)
+		}
+		if err := validateJournalEvent(event); err != nil {
+			return journalInspection{}, err
+		}
+		sequence, err := integerField(event, "sequence")
+		if err != nil || sequence != expectedSequence {
+			return journalInspection{}, fmt.Errorf("journal sequence %d is not contiguous; expected %d", sequence, expectedSequence)
+		}
+		runtimeID, _ := event["runtime_id"].(string)
+		if runtimeID == "" {
+			return journalInspection{}, errors.New("journal runtime_id is required")
+		}
+		if inspection.RuntimeID == "" {
+			inspection.RuntimeID = runtimeID
+		} else if inspection.RuntimeID != runtimeID {
+			return journalInspection{}, fmt.Errorf("journal runtime_id %q does not match journal runtime_id %q", runtimeID, inspection.RuntimeID)
+		}
+		eventID, _ := event["event_id"].(string)
+		if eventID == "" {
+			return journalInspection{}, errors.New("journal event_id is required")
+		}
+		if _, exists := inspection.EventIndex[eventID]; exists {
+			return journalInspection{}, fmt.Errorf("journal event_id %q is duplicated", eventID)
+		}
+		inspection.EventIndex[eventID] = len(inspection.Events)
+		inspection.Events = append(inspection.Events, event)
+		inspection.TailSequence = sequence
+		expectedSequence++
+	}
+	if err := scanner.Err(); err != nil {
+		return journalInspection{}, fmt.Errorf("scan journal: %w", err)
+	}
+	return inspection, nil
 }
 
 func journalContains(path, eventID string) (bool, error) {

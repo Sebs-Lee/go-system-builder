@@ -131,6 +131,9 @@ func InitActionRegistry() {
 		"invalidate_all_downstream_evidence": actionInvalidateAllDownstreamEvidence,
 		"record_abort":                       actionRecordAbort,
 	}
+	newReg["record_human_release_decision"] = actionRecordHumanReleaseDecision
+	newReg["invalidate_human_release_acceptance_evidence"] = actionInvalidateHumanReleaseAcceptanceEvidence
+	newReg["invalidate_human_release_release_audit_evidence"] = actionInvalidateHumanReleaseReleaseAuditEvidence
 	actionRegistryMu.Lock()
 	actionRegistry = newReg
 	actionRegistryMu.Unlock()
@@ -596,6 +599,65 @@ func actionRecordACC(state map[string]any, ctx *ActionContext) (ActionResult, er
 func actionRecordReleaseAudit(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "release audit")
 }
+
+func actionRecordHumanReleaseDecision(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	decisionRef := ""
+	if ctx != nil {
+		decisionRef = ctx.Evidence["human_decision_record"]
+	}
+	if strings.TrimSpace(decisionRef) == "" {
+		return ActionResult{Status: "failed", Detail: "human release decision evidence missing"}, fmt.Errorf("record_human_release_decision: human_decision_record evidence missing")
+	}
+	return ActionResult{
+		Status: "committed",
+		Detail: fmt.Sprintf("human release decision %s recorded from evidence %s", ctx.Spec.Event, decisionRef),
+	}, nil
+}
+
+func actionInvalidateHumanReleaseAcceptanceEvidence(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	return invalidateHumanReleaseEvidence(state, ctx, map[string]struct{}{
+		"acceptance":           {},
+		"acceptance_record":    {},
+		"release_audit":        {},
+		"release_audit_record": {},
+	})
+}
+
+func actionInvalidateHumanReleaseReleaseAuditEvidence(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	return invalidateHumanReleaseEvidence(state, ctx, map[string]struct{}{
+		"release_audit":        {},
+		"release_audit_record": {},
+	})
+}
+
+func invalidateHumanReleaseEvidence(state map[string]any, ctx *ActionContext, kinds map[string]struct{}) (ActionResult, error) {
+	items, ok := state["evidence"].([]any)
+	if !ok {
+		return ActionResult{Status: "committed", Detail: "no evidence entries to invalidate"}, nil
+	}
+	invalidated := 0
+	for _, raw := range items {
+		entry, ok := raw.(map[string]any)
+		if !ok || entry["status"] != "valid" {
+			continue
+		}
+		kind, _ := entry["kind"].(string)
+		if _, allowed := kinds[kind]; !allowed {
+			continue
+		}
+		entry["status"] = "invalid"
+		entry["invalidated_by"] = ctx.Spec.ID
+		entry["invalidation_rule"] = "human_release_decision"
+		entry["invalidation_reason"] = "human release rejection requires refreshed evidence"
+		invalidated++
+	}
+	return ActionResult{
+		Status:          "committed",
+		MutationApplied: invalidated > 0,
+		Detail:          fmt.Sprintf("%d human release evidence entries invalidated", invalidated),
+	}, nil
+}
+
 func actionRecordAbort(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "human abort")
 }

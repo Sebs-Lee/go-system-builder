@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
@@ -80,36 +81,7 @@ func (e *Engine) RequestedEvents(input Input) []string {
 }
 
 func evidenceKindsEqual(requirementKind, actualKind string) bool {
-	if requirementKind == actualKind {
-		return true
-	}
-	switch requirementKind {
-	case "document_review_record":
-		return actualKind == "document_review"
-	case "clean_round_record":
-		return actualKind == "clean_round"
-	case "bug_batch_record":
-		return actualKind == "bug"
-	case "targeted_reverification_record":
-		return actualKind == "targeted_reverification"
-	case "delivery_review_record":
-		return actualKind == "delivery_review"
-	case "finding_record", "root_cause_record", "repair_record":
-		return actualKind == "bug"
-	case "team_manifest_record":
-		return actualKind == "builder_report" || actualKind == "team_manifest"
-	case "completion_report":
-		return actualKind == "agent_completion" || actualKind == "completion_report"
-	case "builder_report_record":
-		return actualKind == "builder_report" || actualKind == "agent_completion"
-	case "activation_record":
-		return actualKind == "agent_activation"
-	case "pause_record":
-		// Schema evidence.kind enum uses human_decision; gate requirements
-		// still name pause_record (TR-014/024). Accept both spellings.
-		return actualKind == "pause" || actualKind == "human_decision"
-	}
-	return strings.TrimSuffix(requirementKind, "_record") == actualKind
+	return evidence.DefaultCatalog().Accepts(requirementKind, actualKind)
 }
 
 // Evaluate reports unknown for unregistered gates. Registered gate semantics

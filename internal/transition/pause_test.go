@@ -130,6 +130,11 @@ func stateAtVerification(t *testing.T, root string) {
 
 func writeState(t *testing.T, root string, state map[string]any) {
 	t.Helper()
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +169,7 @@ func TestTR010CapturePauseCheckpoint(t *testing.T) {
 	err := applyTransition(t, root, "TR-011", 5, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 		"review_result_record":  "docs/reports/qa/QA-1.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
+		"pause_record":          "generated:pause_checkpoint",
 	})
 	if err != nil {
 		t.Fatalf("TR-011 failed: %v", err)
@@ -204,7 +209,7 @@ func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 	if err := applyTransition(t, root, "TR-011", 5, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 		"review_result_record":  "docs/reports/qa/QA-1.md",
-		"pause_record":          "docs/reports/human/pause-record.md",
+		"pause_record":          "generated:pause_checkpoint",
 	}); err != nil {
 		t.Fatal(err)
 	}

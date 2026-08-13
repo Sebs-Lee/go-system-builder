@@ -33,6 +33,7 @@ import (
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
@@ -150,7 +151,7 @@ func AdvanceAgent(
 	}
 	agentTransitions := agentEntityTransitions(catalog)
 
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-agent-%s-%s-r%d", request.AgentID, request.Event, request.ExpectedRevision+1),
 		TransitionID:   "AGENT-LIFECYCLE",

@@ -13,6 +13,7 @@ import (
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/team"
 	"github.com/entroforge/go-system-builder/internal/transition"
 )
@@ -100,7 +101,7 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 	}
 	responsibilityIDs := assignedResponsibilities(value)
 
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-register-%s-r%d", value.WorkgroupID, request.ExpectedRevision+1),
 		TransitionID:   "ENTITY-REGISTER",
@@ -372,7 +373,7 @@ func RegisterBug(root, statePath, journalPath string, req RegisterBugRequest) (l
 		occurredAt = time.Now().UTC()
 	}
 
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	return store.Update(req.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-register-bug-%s-r%d", req.BugID, req.ExpectedRevision+1),
 		TransitionID:   "ENTITY-REGISTER",
@@ -555,7 +556,7 @@ func RegisterTask(root, statePath, journalPath string, req RegisterTaskRequest) 
 		occurredAt = time.Now().UTC()
 	}
 
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	return store.Update(req.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-register-task-%s-r%d", req.TaskID, req.ExpectedRevision+1),
 		TransitionID:   "ENTITY-REGISTER",

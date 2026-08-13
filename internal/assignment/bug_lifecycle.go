@@ -9,6 +9,7 @@ import (
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 // BugEventRequest drives a BUG entity lifecycle transition.
@@ -101,15 +102,26 @@ func AdvanceBug(root, statePath, journalPath string, request BugEventRequest) (l
 		return loopruntime.Snapshot{}, fmt.Errorf(
 			"runtime_id mismatch: request=%s state=%s", request.RuntimeID, currentRuntimeID)
 	}
+	lifecycle, ok := currentState["lifecycle"].(map[string]any)
+	if !ok {
+		return loopruntime.Snapshot{}, fmt.Errorf("runtime lifecycle must be an object")
+	}
+	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
+	occurredAt := time.Now().UTC()
 
 	mutation := loopruntime.Mutation{
-		EventID:        fmt.Sprintf("evt-bug-%s-%d", request.BugID, request.ExpectedRevision+1),
-		TransitionID:   "BUG-LIFECYCLE",
-		Event:          request.Event,
-		Actor:          "orchestrator",
-		IdempotencyKey: fmt.Sprintf("bug:%s:%s:%d", request.BugID, request.Event, request.ExpectedRevision),
-		OccurredAt:     time.Now().UTC(),
-		RuntimeID:      currentRuntimeID,
+		Audit: loopruntime.AuditEnvelope{
+			EventID:        fmt.Sprintf("evt-bug-%s-%d", request.BugID, request.ExpectedRevision+1),
+			TransitionID:   "BUG-LIFECYCLE",
+			Event:          request.Event,
+			Actor:          "orchestrator",
+			IdempotencyKey: fmt.Sprintf("bug:%s:%s:%d", request.BugID, request.Event, request.ExpectedRevision),
+			RuntimeID:      currentRuntimeID,
+			From:           cursor,
+			To:             cursor,
+			EvidenceIDs:    []string{},
+		},
+		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
 			entities, ok := state["entities"].(map[string]any)
 			if !ok {
@@ -180,12 +192,12 @@ func AdvanceBug(root, statePath, journalPath string, request BugEventRequest) (l
 					located["fix_ref"] = path
 				}
 			}
-			located["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
-			state["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+			located["updated_at"] = occurredAt.Format(time.RFC3339Nano)
+			state["updated_at"] = occurredAt.Format(time.RFC3339Nano)
 			return nil
 		},
 	}
-	store := loopruntime.NewStore(statePath, journalPath)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	return store.Update(request.ExpectedRevision, mutation)
 }
 
@@ -227,6 +239,7 @@ func checkBugGuards(bug map[string]any, request BugEventRequest, guards []string
 			if fix == "" {
 				return fmt.Errorf("guard %s failed: fix_ref param required", guard)
 			}
+			bug["fix_ref"] = fix
 		case "original_finder_assigned":
 			actor, _ := request.Params["actor_agent_id"].(string)
 			if actor == "" {
@@ -246,21 +259,25 @@ func checkBugGuards(bug map[string]any, request BugEventRequest, guards []string
 			if ev == "" {
 				return fmt.Errorf("guard %s failed: reverification_evidence param required", guard)
 			}
+			bug["reverification_evidence"] = ev
 		case "failure_evidence_recorded":
 			ev, _ := request.Params["failure_evidence"].(string)
 			if ev == "" {
 				return fmt.Errorf("guard %s failed: failure_evidence param required", guard)
 			}
+			bug["failure_evidence"] = ev
 		case "root_cause_evidence_complete":
 			ev, _ := request.Params["root_cause_evidence"].(string)
 			if ev == "" {
 				return fmt.Errorf("guard %s failed: root_cause_evidence param required", guard)
 			}
+			bug["root_cause_evidence"] = ev
 		case "bug_closing_contract_complete":
 			ev, _ := request.Params["closing_contract"].(string)
 			if ev == "" {
 				return fmt.Errorf("guard %s failed: closing_contract param required", guard)
 			}
+			bug["closing_contract"] = ev
 		default:
 			// Unknown guards are treated as satisfied (trust the loop-definition).
 		}

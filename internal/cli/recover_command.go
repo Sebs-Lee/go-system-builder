@@ -193,13 +193,46 @@ func runRuntimeRecoverApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime recover apply", fmt.Errorf("resolve root symlinks: %w", err)))
 		return 1
 	}
-	planPath, err := resolveRecoveryPath(root, *planFlag)
+	// Once the durable marker exists it is the authoritative crash-recovery
+	// source. Probe/resume it under the Runtime lock before any mutable plan
+	// file or repository input is read.
+	if result, resumeErr := runtime.ApplyRecovery(runtime.RecoveryRequest{
+		Root:        root,
+		StatePath:   filepath.Join(root, ".claude", "loop-state.json"),
+		JournalPath: filepath.Join(root, ".claude", "loop-events.jsonl"),
+		Approver:    strings.TrimSpace(*approvedBy),
+		OccurredAt:  time.Now().UTC(),
+		Validator:   semantic.RuntimeCandidateValidator{},
+	}); resumeErr == nil {
+		return encodeRecoveryApplyResult(stdout, result)
+	} else if !errors.Is(resumeErr, runtime.ErrRecoveryNoPending) {
+		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", resumeErr))
+		return 1
+	}
+	// A coherent Store commit/fingerprint/rollover marker contains a more exact
+	// source than artifact reconstruction. Complete it first; an invalid marker
+	// falls through so the approved recovery plan can quarantine it.
+	writer := runtime.NewWriter(
+		filepath.Join(root, ".claude", "loop-state.json"),
+		filepath.Join(root, ".claude", "loop-events.jsonl"),
+		root,
+		semantic.RuntimeCandidateValidator{},
+	)
+	if completed, pendingErr := writer.RecoverPendingOperations(); pendingErr == nil && completed {
+		return encodeJSON(stdout, struct {
+			Status string `json:"status"`
+		}{Status: "runtime_pending_completed"})
+	}
+	planPath, err := resolveRecoveryPathAllowMissing(root, *planFlag)
 	if err != nil {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(err)))
 		return 1
 	}
 	document, err := readRecoveryPlan(planPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return resumePendingRecovery(root, strings.TrimSpace(*approvedBy), stdout, stderr)
+		}
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", err))
 		return 1
 	}
@@ -211,23 +244,23 @@ func runRuntimeRecoverApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", err))
 		return 1
 	}
-	candidateStatePath, err := resolveRecoveryPath(root, document.CandidateStatePath)
+	candidateStatePath, err := resolveRecoveryPathAllowMissing(root, document.CandidateStatePath)
 	if err != nil {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(err)))
 		return 1
 	}
-	candidateJournalPath, err := resolveRecoveryPath(root, document.CandidateJournalPath)
+	candidateJournalPath, err := resolveRecoveryPathAllowMissing(root, document.CandidateJournalPath)
 	if err != nil {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(err)))
 		return 1
 	}
 	candidateState, err := os.ReadFile(candidateStatePath)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(fmt.Errorf("read candidate state: %w", err))))
 		return 1
 	}
 	candidateJournal, err := os.ReadFile(candidateJournalPath)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(fmt.Errorf("read candidate journal: %w", err))))
 		return 1
 	}
@@ -259,6 +292,26 @@ func runRuntimeRecoverApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", err))
 		return 1
 	}
+	return encodeRecoveryApplyResult(stdout, result)
+}
+
+func resumePendingRecovery(root, approvedBy string, stdout, stderr io.Writer) int {
+	result, err := runtime.ApplyRecovery(runtime.RecoveryRequest{
+		Root:        root,
+		StatePath:   filepath.Join(root, ".claude", "loop-state.json"),
+		JournalPath: filepath.Join(root, ".claude", "loop-events.jsonl"),
+		Approver:    approvedBy,
+		OccurredAt:  time.Now().UTC(),
+		Validator:   semantic.RuntimeCandidateValidator{},
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", err))
+		return 1
+	}
+	return encodeRecoveryApplyResult(stdout, result)
+}
+
+func encodeRecoveryApplyResult(stdout io.Writer, result runtime.RecoveryResult) int {
 	response := struct {
 		Status        string `json:"status"`
 		PlanID        string `json:"plan_id"`
@@ -266,7 +319,7 @@ func runRuntimeRecoverApply(args []string, stdout, stderr io.Writer) int {
 		QuarantineDir string `json:"quarantine_dir"`
 	}{
 		Status:        "applied",
-		PlanID:        document.PlanID,
+		PlanID:        result.Manifest.PlanID,
 		ManifestPath:  filepath.ToSlash(result.ManifestPath),
 		QuarantineDir: filepath.ToSlash(result.QuarantineDir),
 	}
@@ -332,6 +385,17 @@ func stableRecoveryInputHashes(inputs []recovery.InventoryInput) map[string]stri
 }
 
 func resolveRecoveryPath(root, path string) (string, error) {
+	resolved, err := resolveRecoveryPathAllowMissing(root, path)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(resolved); err != nil {
+		return "", fmt.Errorf("resolve recovery path %q: %w", path, err)
+	}
+	return resolved, nil
+}
+
+func resolveRecoveryPathAllowMissing(root, path string) (string, error) {
 	evaluatedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", fmt.Errorf("resolve repository root symlinks: %w", err)
@@ -344,10 +408,28 @@ func resolveRecoveryPath(root, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve recovery path %q: %w", path, err)
 	}
-	evaluated, err := filepath.EvalSymlinks(resolved)
+	probe := resolved
+	for {
+		if _, statErr := os.Lstat(probe); statErr == nil {
+			break
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("inspect recovery path %q: %w", path, statErr)
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			return "", fmt.Errorf("resolve recovery path %q: no existing ancestor", path)
+		}
+		probe = parent
+	}
+	evaluatedProbe, err := filepath.EvalSymlinks(probe)
 	if err != nil {
 		return "", fmt.Errorf("resolve recovery path symlinks %q: %w", path, err)
 	}
+	suffix, err := filepath.Rel(probe, resolved)
+	if err != nil || suffix == ".." || strings.HasPrefix(suffix, ".."+string(filepath.Separator)) || filepath.IsAbs(suffix) {
+		return "", fmt.Errorf("recovery path %q cannot be resolved from its existing ancestor", path)
+	}
+	evaluated := filepath.Clean(filepath.Join(evaluatedProbe, suffix))
 	relative, err := filepath.Rel(evaluatedRoot, evaluated)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return "", fmt.Errorf("recovery path %q escapes repository", path)
@@ -466,7 +548,7 @@ func persistRecoveryPlan(root string, inventory recovery.Inventory) (recoveryPla
 	if err != nil {
 		return recoveryPlanDocument{}, "", fmt.Errorf("import recovery artifacts: %w", err)
 	}
-	if err := mergeRecoveryProjection(root, statePath, imported); err != nil {
+	if err := mergeRecoveryProjection(root, statePath, journalPath, imported, basePlan.PlanSHA256, createdAt); err != nil {
 		return recoveryPlanDocument{}, "", err
 	}
 	replay, err := controller.RecoveryReplay(context.Background(), controller.RecoveryReplayRequest{
@@ -495,7 +577,7 @@ func persistRecoveryPlan(root string, inventory recovery.Inventory) (recoveryPla
 	planPath := filepath.Join(planDir, "plan.json")
 	if existing, readErr := readRecoveryPlan(planPath); readErr == nil {
 		return existing, filepath.ToSlash(planPath), nil
-	} else if !os.IsNotExist(readErr) {
+	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return recoveryPlanDocument{}, "", fmt.Errorf("read existing recovery plan: %w", readErr)
 	}
 	candidateState, err := os.ReadFile(statePath)
@@ -539,7 +621,7 @@ func persistRecoveryPlan(root string, inventory recovery.Inventory) (recoveryPla
 	return document, filepath.ToSlash(planPath), nil
 }
 
-func mergeRecoveryProjection(root, statePath string, imported recovery.ImportResult) error {
+func mergeRecoveryProjection(root, statePath, journalPath string, imported recovery.ImportResult, planHash string, occurredAt time.Time) error {
 	data, err := os.ReadFile(statePath)
 	if err != nil {
 		return fmt.Errorf("read recovery staging state for import: %w", err)
@@ -548,6 +630,55 @@ func mergeRecoveryProjection(root, statePath string, imported recovery.ImportRes
 	if err := json.Unmarshal(data, &state); err != nil {
 		return fmt.Errorf("decode recovery staging state for import: %w", err)
 	}
+	revision, err := recoveryInteger(state["revision"])
+	if err != nil {
+		return fmt.Errorf("read recovery staging revision: %w", err)
+	}
+	runtimeID, _ := state["runtime_id"].(string)
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
+	evidenceIDs := make([]string, 0, len(imported.Evidence))
+	for _, item := range imported.Evidence {
+		if id, _ := item["id"].(string); id != "" {
+			evidenceIDs = append(evidenceIDs, id)
+		}
+	}
+	eventSuffix := planHash
+	if len(eventSuffix) > 16 {
+		eventSuffix = eventSuffix[:16]
+	}
+	if eventSuffix == "" {
+		return errors.New("recovery projection plan hash is required")
+	}
+	writer := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	_, err = writer.Update(revision, runtime.Mutation{
+		EventID:              "evt-recovery-import-" + eventSuffix,
+		Event:                "recovery_projection_imported",
+		Actor:                "orchestrator",
+		IdempotencyKey:       "recovery-import:" + planHash,
+		RuntimeID:            runtimeID,
+		From:                 cursor,
+		To:                   cursor,
+		EvidenceIDs:          evidenceIDs,
+		JournalEvent:         "milestone_refreshed",
+		JournalOutcome:       "refreshed",
+		Message:              "Recovery projection imported from fingerprinted artifacts.",
+		RequestID:            "runtime-recovery:" + eventSuffix,
+		BaselineGeneration:   recoveryBaselineGeneration(state),
+		RetainLastTransition: true,
+		OccurredAt:           occurredAt,
+		Apply: func(candidate map[string]any) error {
+			mergeRecoveryProjectionState(candidate, root, imported)
+			return nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("commit imported recovery staging projection: %w", err)
+	}
+	return nil
+}
+
+func mergeRecoveryProjectionState(state map[string]any, root string, imported recovery.ImportResult) {
 	state["root"] = root
 	state["documents"] = recoveryMapsAsAny(imported.Documents)
 	state["evidence"] = recoveryMapsAsAny(imported.Evidence)
@@ -561,18 +692,26 @@ func mergeRecoveryProjection(root, statePath string, imported recovery.ImportRes
 		"bugs":   recoveryBugEntities(imported.Entities["bugs"]),
 		"teams":  []any{},
 	}
-	encoded, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode imported recovery staging state: %w", err)
+}
+
+func recoveryInteger(value any) (int, error) {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed), nil
+	case int:
+		return typed, nil
+	default:
+		return 0, fmt.Errorf("value %T is not an integer", value)
 	}
-	encoded = append(encoded, '\n')
-	if err := semantic.ValidateRuntimeBytes(root, encoded); err != nil {
-		return fmt.Errorf("validate imported recovery staging state: %w", err)
+}
+
+func recoveryBaselineGeneration(state map[string]any) int {
+	baseline, _ := state["baseline"].(map[string]any)
+	generation, err := recoveryInteger(baseline["generation"])
+	if err != nil || generation < 1 {
+		return 1
 	}
-	if err := os.WriteFile(statePath, encoded, 0o600); err != nil {
-		return fmt.Errorf("write imported recovery staging state: %w", err)
-	}
-	return nil
+	return generation
 }
 
 func recoveryMapsAsAny(values []map[string]any) []any {

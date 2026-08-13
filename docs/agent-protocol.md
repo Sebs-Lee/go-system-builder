@@ -447,7 +447,7 @@ These hold across every stage:
 
 ## S11 — human_release_gateway {#s11}
 
-- **purpose**: hand off the release-ready package to the human; automation stops.
+- **purpose**: hand off the release-ready package to the human; automation stops at a non-terminal decision gateway.
 - **inputs**: release-ready package, ACC, release audit.
 - **inputs_from**: [S10 (release-ready package + ACC + release audit evidence)]
 - **actions**:
@@ -456,10 +456,13 @@ These hold across every stage:
 - **done_when**:
   - Gateway package exists
   - Runtime is at `awaiting_human_release`
-- **next**: terminal for automation. The Controller performs no automatic lifecycle advance from S11. The human decides publication, deployment, and formal release; squash merge remains prohibited. To begin a later REQ after this terminal Runtime, record valid `human_decision` evidence produced by that identity using `--scope-ref runtime_rollover:current`, then run `loop-harness runtime rollover --approved-by <identity> --approval-evidence <human-decision-id> --root .`. The scope token resolves to `runtime_rollover:<runtime_id>@<revision>` for the evidence commit. The command archives this Runtime and seeds a new inactive one. It is not a state-machine transition.
-- **failure_route**: if the human rejects, return to the stage the Gateway recommends (often S10 or S9).
-- **human_gateway**: this stage **is** a `release_ready` Gateway.
+- **next**: no automatic transition. The human must submit exactly one explicit `runtime human-decision` disposition, mapped to a fixed transition: `approve` → TR-025 `release_authorized`; `defer` → TR-026 `paused` and a generated S11 pause checkpoint; `reject_defect` → TR-027 S8 investigation with `finding_record`; `reject_acceptance` → TR-028 `acceptance`; `reject_release_audit` → TR-029 `release_audit`; `abort` → TR-030 `aborted`.
+- **decision_command**: `loop-harness runtime human-decision --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> --expected-revision <N> --actor <user|orchestrator> --decision-evidence <human-decision-reference>`; `reject_defect` additionally requires `--finding-evidence <finding-reference>`.
+- **failure_route**: missing disposition, actor, current revision, decision evidence, finding evidence where required, or any arbitrary target state is rejected without state/journal mutation. A human decision never grants merge, publication, deployment, or formal release authority to the Harness.
+- **human_gateway**: this stage **is** a `release_ready` Gateway; `awaiting_human_release` is not terminal and has no automatic candidate.
 - **primary_skill**: `acceptance-and-handoff`
+
+`release_authorized` is the S11 human-authorized terminal. `aborted` remains a terminal/blocked projection. Runtime rollover is permitted only from `release_authorized` or `aborted`, never from `awaiting_human_release`.
 
 ---
 
@@ -485,7 +488,9 @@ normal S2/S3/S4 cursor authority.
 | S8 finding_investigation | `bug_resolution.investigation` / `bug_resolution.bug_report_review` |
 | S9 bug_resolution | `bug_resolution.repair_readback` / `bug_resolution.fixing` / `bug_resolution.targeted_reverification` / `bug_resolution.ready_for_full_review` (S9→S7 handoff checkpoint) |
 | S10 acceptance_and_audit | `acceptance` / `release_audit` |
-| S11 human_release_gateway | `awaiting_human_release` |
+| S11 human_release_gateway | `awaiting_human_release` (non-terminal decision gateway) |
+| S11 human_authorized_terminal | `release_authorized` (terminal; human authorization recorded only) |
+| S11 aborted_terminal | `aborted` (terminal/blocked) |
 
 Illegal combinations return `INVALID_CURSOR_MAPPING`. Independent mutation
 of any one cursor field is rejected without snapshot or journal side effect.

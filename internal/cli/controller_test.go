@@ -189,6 +189,15 @@ func TestRefreshMilestoneUsesCASAndIsIdempotent(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
+	data, err = json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(statePath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +251,11 @@ func TestRefreshMilestonePreservesLastTransition(t *testing.T) {
 	var state map[string]any
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
+	}
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
 	}
 	state["last_transition"] = map[string]any{
 		"event_id":           "evt-tr008",
@@ -506,6 +520,15 @@ func TestRefreshMilestonePersistsQualityGateObject(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
+	data, err = json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(statePath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -690,6 +713,11 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	}
 	state["runtime_id"] = "loop-REQ-039"
 	state["revision"] = 32
+	state["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
 	state["lifecycle"] = map[string]any{
 		"state":          "building",
 		"phase":          nil,
