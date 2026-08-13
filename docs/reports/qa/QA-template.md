@@ -17,6 +17,7 @@
 | REQ | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` |
 | TASK | TASK-{id} | `docs/tasks/TASK-{id}.md` | {version} | `{sha256}` |
 | source/tests | {scope} | `{path}` | {commit/version} | `{sha256}` |
+| module current truth | {module} | `docs/design/prototypes/{module}/` (scenario four-pack + stories/flows/index/*.html) | current | `{sha256}` |
 | Skill | {skill} | `.claude/skills/{skill}/SKILL.md` | {version} | `{sha256}` |
 
 ## 2. Assigned Quality Conclusion
@@ -27,6 +28,16 @@ in the manifest, not in this report.
 | Criterion | Evidence | Result |
 |:---|:---|:---|
 | {criterion from assigned Best Practice} | {path/command/sample} | PASS / FAIL / N/A |
+
+### Scenario quality gates
+
+| Check | Expected | Observed | Result | Evidence |
+|:---|:---|:---|:---|:---|
+| required allow branches | 100% | {n}/{n} | PASS / FAIL | `scenario-coverage.json` |
+| required reject branches | 100% | {n}/{n} | PASS / FAIL | `scenario-coverage.json` |
+| positive/negative capacity | module profile minimum | {ratio} | PASS / FAIL | `scenario-coverage.json` |
+| CASE → Story → PATH → Spec | no orphan | {observed} | PASS / FAIL | module files / `web/e2e/{module}/` |
+| module regression | complete current module set | {observed} | PASS / FAIL | round evidence |
 
 ## 3. Findings
 

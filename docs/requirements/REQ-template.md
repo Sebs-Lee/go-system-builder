@@ -104,7 +104,7 @@
 |:---|:---|
 | UI impact（引自顶部） | none / changed / unknown |
 | 影响页面 / 模块 | {页面、路由、组件或 N/A} |
-| 模块原型集 | `docs/design/prototypes/<module>/` (index.html + stories.md + flows.md + *.html) / N/A |
+| 模块当前真相包 | `docs/design/prototypes/<module>/` (index.html + stories.md + flows.md + scenario-model.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A |
 | 原型门禁状态 | N/A / pending / ready |
 
 门禁检查：
@@ -112,10 +112,12 @@
 - [ ] 已判断 UI impact 为 `none` / `changed` / `unknown`。
 - [ ] `UI impact = unknown` 时，不进入合同锁定。
 - [ ] `UI impact = changed` 时，受影响模块的 `docs/design/prototypes/<module>/` 已存在或已创建。
-- [ ] 模块原型集齐备：`index.html` + `stories.md` + `flows.md` + ≥1 页面 HTML。
-- [ ] 每个 HTML 文件携带 4 字段 header（设计代数 / 更新 / 路由 / index 链接）。
-- [ ] `stories.md` 覆盖 persona + S-NNN story；`flows.md` 覆盖 F-NNN flow。
-- [ ] 模块原型集已链接到 FE/BE/SYNC 合同输入（目录路径 + 当前 fingerprint）。
+- [ ] 模块当前真相包齐备：`index.html` + `stories.md` + `flows.md` + ≥1 页面 HTML。
+- [ ] 场景四件套齐备：`scenario-model.json` + `cases.json` + `scenario-coverage.json` + `fixture-contract.json`。
+- [ ] 每个 HTML 文件携带当前 3 字段 header（更新 / 路由 / index 链接），无版本、REQ、round 字段。
+- [ ] `stories.md` 覆盖模块完整 S-NNN story；`flows.md` 覆盖模块完整 F-NNN / PATH-* flow。
+- [ ] required allow/reject branch coverage = 100%，正反容量比符合 `coverage_profile`。
+- [ ] 模块当前真相包已链接到 FE/BE/SYNC 合同输入（目录路径 + 当前 fingerprint）。
 
 ## 12. 待澄清问题
 
@@ -165,9 +167,17 @@
 
 ### 条款覆盖
 
-| REQ 条款 | UI 设计包 | 合同条款 | TASK | 验证证据 | 状态 |
+| REQ 条款 / source_ref | Rule → CASE → Story → PATH → Spec | 合同条款 | TASK | 验证证据 | 状态 |
 |:---|:---|:---|:---|:---|:---|
-| FR-{id} | UI design package / N/A | FE/BE/SYNC-{id} §{n} | TASK-{id} | REV/QA/E2E/BUG/ACC-{id} | planned / covered / verified |
+| REQ-{id}/FR-{id} | BR-{id} → CASE-{id} → S-{id} → F-{id} → PATH-{id} → `web/e2e/{module}/*.spec.ts` | FE/BE/SYNC-{id} §{n} | TASK-{id} | REV/QA/E2E/BUG/ACC-{id} | planned / covered / verified |
+
+### 模块当前真相映射
+
+REQ 只能作为来源，不能创建需求私有设计或测试副本。任何触及模块的 REQ 都必须维护模块全集并触发 full-module regression。
+
+| 模块 | Rule / CASE | Story | PATH | Spec | Round evidence |
+|:---|:---|:---|:---|:---|:---|
+| {module} | `scenario-model.json` / `cases.json` | `stories.md` / S-{id} | `flows.md` / F-{id} / PATH-{id} | `web/e2e/{module}/` | REV/QA/E2E round {n} |
 
 ### 批次下游索引
 

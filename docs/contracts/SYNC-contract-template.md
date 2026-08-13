@@ -13,7 +13,7 @@
 | 关系 | 文档 | 条款/用途 |
 |:---|:---|:---|
 | upstream | `docs/requirements/REQ-{id}.md` | FR/流程/验收条款 |
-| related | `docs/design/prototypes/{module}/` | UI 字段、错误码、状态和交互 |
+| related | `docs/design/prototypes/{module}/` | 模块当前真相：字段、错误码、状态、规则和交互 |
 | related | `docs/contracts/FE-{id}.md` | 调用方行为 |
 | related | `docs/contracts/BE-{id}.md` | 提供方行为 |
 | downstream | `docs/tasks/TASK-{id}.md` | 联调任务 |
@@ -29,9 +29,15 @@
 
 ### UI 设计包映射
 
-| UI 设计文件 | 字段 / 错误 / 状态 / 权限 / 副作用 | 前端行为 | 后端行为 |
+| 模块当前真相文件 | 字段 / 错误 / 状态 / 权限 / 副作用 | 前端行为 | 后端行为 |
 |:---|:---|:---|:---|
-| prototype.html / USER-STORY / USER-FLOW | {field/error/state/permission/side-effect} | {behavior} | {behavior} |
+| `scenario-model.json` / `cases.json` / `stories.md` / `flows.md` / current `*.html` | {field/error/state/permission/side-effect} | {behavior} | {behavior} |
+
+### Rule → CASE → Story → PATH → Spec → Evidence
+
+| REQ source_ref | Rule / CASE | Story / PATH | Spec | contract assertion | Evidence |
+|:---|:---|:---|:---|:---|:---|
+| REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | {wire shape, error, idempotency and state assertion} | REV/QA/E2E round {n} |
 
 ### 请求
 

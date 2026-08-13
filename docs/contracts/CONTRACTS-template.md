@@ -15,7 +15,7 @@
 |:---|:---|:---|
 | upstream | `docs/requirements/REQ-{id}.md` | locked REQ 条款 |
 | related | `docs/design/{path}.md` | 设计约束或 N/A |
-| related | `docs/design/prototypes/{module}/` | UI impact = changed 时必填 |
+| related | `docs/design/prototypes/{module}/` | UI impact = changed 时必填；模块当前真相包 |
 | downstream | `docs/tasks/index.md` | 派生任务 |
 | evidence | `docs/reports/review/REV-{id}.md` | 文档审核 |
 | runtime | `.claude/loop-state.json` | 当前状态仅通过 runtime revision 引用 |
@@ -39,15 +39,15 @@
 
 ## UI 设计包输入
 
-| REQ | UI impact | UI 设计包 | Fingerprint (SHA-256) | 合同影响 | E2E 来源 |
+| REQ source_ref | UI impact | 模块当前真相包 | Fingerprint (SHA-256) | 合同影响 | E2E 来源 |
 |:---|:---|:---|:---|:---|:---|
-| REQ-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + *.html + stories.md + flows.md) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | `E2E-USER-FLOW` / N/A |
+| REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |
 
 ## 需求覆盖矩阵
 
-| REQ 条款 | UI 设计包 | FE 合同条款 | BE 合同条款 | SYNC 条款 | 派生 TASK |
+| REQ source_ref | Rule → CASE → Story → PATH → Spec | FE 合同条款 | BE 合同条款 | SYNC 条款 | 派生 TASK |
 |:---|:---|:---|:---|:---|:---|
-| FR-{id} | UI design package / N/A | FE-{id} §{n} | BE-{id} §{n} | SYNC-{id} §{n} | TASK-{id} |
+| REQ-{id}/FR-{id} | BR-{id} → CASE-{id} → S-{id} → F-{id} → PATH-{id} → `web/e2e/{module}/*.spec.ts` | FE-{id} §{n} | BE-{id} §{n} | SYNC-{id} §{n} | TASK-{id} |
 
 ## 合同变更记录
 

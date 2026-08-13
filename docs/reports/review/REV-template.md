@@ -16,6 +16,7 @@
 | REQ | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` |
 | contract | {id} | `docs/contracts/{id}.md` | {version} | `{sha256}` |
 | TASK | TASK-{id} | `docs/tasks/TASK-{id}.md` | {version} | `{sha256}` |
+| module current truth | {module} | `docs/design/prototypes/{module}/` (scenario four-pack + stories/flows/index/*.html) | current | `{sha256}` |
 | implementation | {scope} | `{path}` | {commit/version} | `{sha256}` |
 
 ## 2. Assigned Conclusion
@@ -25,6 +26,15 @@ This report evaluates exactly one manifest responsibility and scope partition.
 | Scope | Expected behavior / criterion | Result | Evidence |
 |:---|:---|:---|:---|
 | {module/clause/path} | {criterion} | PASS / FAIL / N/A | {command/path/sample} |
+
+### Scenario traceability conclusion
+
+| source_refs | Rule / CASE | Story / PATH | Module spec | Round evidence | Result |
+|:---|:---|:---|:---|:---|:---|
+| REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | E2E/QA round {n} | PASS / FAIL / N/A |
+
+The checked definitions are module current truth. This round may produce evidence; it does
+not create a round-owned story, flow, case, prototype, or spec.
 
 N/A requires a recorded rationale and evidence.
 

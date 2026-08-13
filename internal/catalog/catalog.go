@@ -45,6 +45,7 @@ var Skills = []SkillSpec{
 	{"dag-design", "best-practice"},
 	{"api-contracts", "best-practice"},
 	{"ui-prototyping", "best-practice"},
+	{"scenario-model-design", "best-practice"},
 	{"user-story-design", "best-practice"},
 	{"user-flow-design", "best-practice"},
 	{"testing-strategy", "best-practice"},
@@ -109,7 +110,7 @@ func ValidateSkill(root string, spec SkillSpec) error {
 	if frontmatter["name"] != spec.Name {
 		return fmt.Errorf("skill %s: frontmatter name mismatch", spec.Name)
 	}
-	if frontmatter["category"] != spec.Category {
+	if category := frontmatter["category"]; category != "" && category != spec.Category {
 		return fmt.Errorf("skill %s: category must be %s", spec.Name, spec.Category)
 	}
 	description := frontmatter["description"]
@@ -139,7 +140,8 @@ func ValidateSkill(root string, spec SkillSpec) error {
 	if !strings.Contains(body, "docs/loop-definition.json") &&
 		!strings.Contains(body, "docs/agent-protocol.md") &&
 		!strings.Contains(body, "docs/hook-policy.json") &&
-		!strings.Contains(body, "docs/design/loop-engineering/") {
+		!strings.Contains(body, "docs/design/loop-engineering/") &&
+		!strings.Contains(body, "docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md") {
 		return fmt.Errorf("skill %s: missing authoritative source reference", spec.Name)
 	}
 	return nil

@@ -2,7 +2,8 @@
 
 > Status: locked / activated / working / reported / review / blocked / complete / stale
 > Version: v1.0.0
-> Bound REQ: REQ-{id}
+> Source REQ refs: REQ-{id} / none
+> Module current truth: `docs/design/prototypes/{module}/` / N/A
 > Primary contract: {FE/BE/SYNC-id}
 > Closing Contract: TASK-{id}#closing-contract
 > Runtime ref: `{runtime-id}@{revision}`
@@ -24,7 +25,7 @@ the same authoritative chain and must not replace reading it.
 | 1 | task | TASK-{id} | `docs/tasks/TASK-{id}.md` | v1.0.0 | `{sha256}` | all |
 | 2 | contract | {contract-id} | `docs/contracts/{contract-id}.md` | {version} | `{sha256}` | §{n} |
 | 3 | req | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` | FR/NFR/acceptance |
-| 4 | ui/design | {id/N/A} | `{path/N/A}` | {version/N/A} | `{sha256/N/A}` | §{n}/N/A |
+| 4 | module scenario/design | {module/N/A} | `docs/design/prototypes/{module}/` | current | `{sha256/N/A}` | scenario/story/flow |
 | 5 | rule | {rule-id} | `docs/rules/{rule}.md` | locked | `{sha256}` | all |
 
 Repair assignments prepend the canonical BUG as order 1 and shift the remaining
@@ -35,6 +36,22 @@ documents. The request remains the authority for exact order.
 | REQ clause | Contract clause | Task output | Verification responsibility |
 |:---|:---|:---|:---|
 | FR-{id} | {contract-id} §{n} | {output} | {VER responsibility ID} |
+
+### 3.1 Module Scenario Coverage
+
+REQ is a source reference only. If this TASK touches a module, it consumes and updates the
+complete current module set; it never creates a per-REQ or per-round scenario/spec copy.
+
+| Rule | CASE / polarity | Story | PATH | module spec | evidence |
+|:---|:---|:---|:---|:---|:---|
+| BR-{id} | CASE-{id} · positive / negative | S-{id} | F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | REV/QA/E2E round {n} |
+
+Closing requirements for scenario-bearing TASKs:
+
+- [ ] required allow and reject branches both reach 100% coverage.
+- [ ] positive/negative capacity ratio satisfies the module `coverage_profile`.
+- [ ] `fixture-contract.json` setup/cleanup is isolated and does not perform the user journey.
+- [ ] module full regression is planned whenever any current module truth file changes.
 
 ## 4. Scope
 

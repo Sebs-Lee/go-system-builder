@@ -40,15 +40,21 @@
 
 ### 需求条款映射
 
-| REQ 条款 | 本合同条款 | 验收标准 |
-|:---|:---|:---|
-| FR-{id} | §{n} | {标准} |
+| REQ source_ref | Rule / CASE / Story / PATH | 本合同条款 | 验收标准 |
+|:---|:---|:---|:---|
+| REQ-{id}/FR-{id} | BR-{id} → CASE-{id} → S-{id} → F-{id} → PATH-{id} | §{n} | {标准} |
 
 ### UI 设计包反推需求
 
-| UI 设计文件 | 数据 / 状态 / 错误 / 权限 / 副作用 | 本合同条款 | SYNC 条款 |
+| 模块当前真相文件 | 数据 / 状态 / 错误 / 权限 / 副作用 | 本合同条款 | SYNC 条款 |
 |:---|:---|:---|:---|
-| prototype.html / USER-STORY / USER-FLOW | {field/state/error/permission/side-effect} | §{n} | SYNC-{id} §{n} |
+| `scenario-model.json` / `cases.json` / `stories.md` / `flows.md` / current `*.html` | {field/state/error/permission/side-effect} | §{n} | SYNC-{id} §{n} |
+
+### Rule → CASE → Story → PATH → Spec → Evidence
+
+| REQ source_ref | Rule / CASE | Story / PATH | Spec | BE oracle / persistence assertion | Evidence |
+|:---|:---|:---|:---|:---|:---|
+| REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | {visible, terminal_state, persisted_effects, forbidden_side_effects; negative also rejection, expected_state, recovery} | REV/QA/E2E round {n} |
 
 ## 4. 技术约束
 

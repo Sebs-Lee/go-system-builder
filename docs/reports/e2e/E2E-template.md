@@ -11,14 +11,16 @@
 
 ## 1. Header
 
-REQ ID + round + bound runtime revision + spec file path.
+Module current-truth package + source REQ refs + review round + bound runtime revision + module spec path.
 
 | Field | Value |
 |:---|:---|
-| REQ | REQ-{id} |
+| module | {module} |
+| source REQ refs | REQ-{id} / none |
 | review round | {n} |
 | runtime ref | `{runtime-id}@{revision}` |
-| spec chain | REQ `{sha256}` / contracts `{sha256}` / TASK `{sha256}` |
+| current scenario package | `docs/design/prototypes/{module}/` · `{sha256}` |
+| spec chain | current module spec `web/e2e/{module}/` `{sha256}` / contracts `{sha256}` / TASK `{sha256}` |
 
 ## 2. Stack-State Table
 
@@ -36,13 +38,13 @@ executed against. **Observed** versions, not "expected".
 ## 3. Test-Architecture Diagram
 
 Agent assignments + journey sequence (one box per `test()`). Pair this diagram
-with the `USER-FLOW-{REQ-id}-{module}.md` it transcribes; every flow box must
-trace to a `F-NNN` / `PATH-*` step in the source flow file.
+with the module's current `flows.md`; every flow box must trace to a `F-NNN` /
+`PATH-*` step and a CASE.
 
 ```text
 [login.spec] → [fund-list.spec] → [fund-detail.spec] → [kyc-review.spec]
       │                │                    │                    │
-   F-001/PATH-001  F-002/PATH-001       F-003/PATH-001       F-004/PATH-001
+   CASE-001 · F-001 · PATH-001  CASE-002 · F-002 · PATH-001  CASE-003 · F-003 · PATH-001  CASE-004 · F-004 · PATH-001
 ```
 
 ## 4. Real-Browser Flow Execution
@@ -53,9 +55,11 @@ SKILL §Evidence Bundle and serves as the legal source for BLOCKED findings).
 | Field | Value |
 |:---|:---|
 | executed path | PATH-{id}: {path title} |
+| CASE / polarity | CASE-{id} / positive / negative |
+| branch obligation | BR-{id} |
 | entry point used | {declared PATH entry point} |
 | direct URL used | no / yes: {declared reason from PATH} |
-| flow file | `USER-FLOW-{REQ-id}-{module}.md` |
+| flow file | `docs/design/prototypes/{module}/flows.md` |
 
 | Step ID | User action performed | Expected visible result | Observed visible result | Result | Evidence |
 |:---|:---|:---|:---|:---|:---|
@@ -88,12 +92,20 @@ errors). Each finding cites the JSONL line so a reviewer can replay.
 | console errors | none except documented benign warnings | {observed} | PASS / FAIL | `{log-ref}` |
 | failed network requests | none for required flow | {observed} | PASS / FAIL | `{trace-ref}` |
 | request/response contract | matches FE/BE/SYNC contract | {observed} | PASS / FAIL | `{trace-ref}` |
+| required branch | allow/reject branch is covered | {observed} | PASS / FAIL | `scenario-coverage.json` |
+| `visible` | every declared visible checkpoint observed | {observed} | PASS / FAIL | `{screenshot/trace-ref}` |
+| `terminal_state` | declared terminal state observed | {observed} | PASS / FAIL | `{evidence-ref}` |
+| `persisted_effects` | every declared persistence assertion holds | {observed} | PASS / FAIL | `{evidence-ref}` |
+| `forbidden_side_effects` | every declared forbidden effect remains absent | {observed} | PASS / FAIL | `{trace-ref}` |
+| negative `rejection` | declared rejection observed | {observed} | PASS / FAIL / N/A | `{evidence-ref}` |
+| negative `expected_state` | state remains at the declared rejection state | {observed} | PASS / FAIL / N/A | `{evidence-ref}` |
+| negative `recovery` | declared recovery succeeds, or sourced N/A is recorded | {observed} | PASS / FAIL / N/A | `{evidence/ref or source_refs + reason}` |
 
 ## 8. Evidence Validity + Status-Code Distribution
 
 | Field | Value |
 |:---|:---|
-| baseline generation | {n} |
+| module package fingerprint | `{sha256}` |
 | review round | {n} |
 | app fingerprint | `{sha256/commit}` |
 | supersedes | `{evidence-id}` / none |
@@ -146,7 +158,7 @@ docker compose up -d   # if backend services needed
 pnpm run seed:test
 
 # Run
-pnpm playwright test web/e2e/REQ-{id}-round{N}-cdp-{feature}.spec.ts
+pnpm playwright test web/e2e/{module}/ --grep 'CASE-|PATH-'
 
 # Evidence lands at
 ls docs/reports/e2e/evidence/*.jsonl

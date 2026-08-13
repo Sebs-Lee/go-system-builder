@@ -111,6 +111,7 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  release-graph Release-graph topological assertions")
 	fmt.Fprintln(stdout, "  angles      Module-level angles registry (list/commit/retract/revive/audit)")
 	fmt.Fprintln(stdout, "  e2e-coverage  Score E2E scenario inventory fidelity (REQ-039)")
+	fmt.Fprintln(stdout, "  scenario      Generate and validate module fact-driven scenario packages")
 	fmt.Fprintln(stdout, "  manual      Render the gate-level manual")
 	fmt.Fprintln(stdout, "  explain     Per-transition details (explain <TR-xxx>)")
 	fmt.Fprintln(stdout)
@@ -119,7 +120,7 @@ func printTopLevelUsage(stdout io.Writer) {
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|angles|e2e-coverage|manual|explain>")
+		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|angles|e2e-coverage|scenario|manual|explain>")
 		fmt.Fprintln(stderr, "manual:  see .claude/bin/loop-harness.md (gate-level specification)")
 		fmt.Fprintln(stderr, "explain: loop-harness explain <TR-xxx> (per-transition details)")
 		return 2
@@ -165,6 +166,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAngles(args[1:], stdout, stderr)
 	case "e2e-coverage":
 		return runE2ECoverage(args[1:], stdout, stderr)
+	case "scenario":
+		return runScenario(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 2
@@ -2065,8 +2068,7 @@ func populateUIPrototypeFact(root string, request *policy.Input) {
 	if !strings.HasPrefix(filePath, "docs/contracts/") {
 		return
 	}
-	protoDir := filepath.Join(root, "docs", "design", "prototypes")
-	complete, err := hasCompleteUIDesignPackage(protoDir)
+	complete, err := hasCompleteUIDesignPackageForREQ(root, request.Runtime.BoundREQPath)
 	if err != nil || !complete {
 		if request.Facts == nil {
 			request.Facts = make(map[string]bool)
@@ -2083,70 +2085,6 @@ func hookTargetPath(input map[string]any) string {
 		}
 	}
 	return ""
-}
-
-func hasCompleteUIDesignPackage(protoDir string) (bool, error) {
-	entries, err := os.ReadDir(protoDir)
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		moduleDir := filepath.Join(protoDir, entry.Name())
-		var (
-			indexPath, storiesPath, flowsPath string
-			pagePaths                         []string
-		)
-		if err := filepath.WalkDir(moduleDir, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				return nil
-			}
-			name := d.Name()
-			switch name {
-			case "index.html":
-				indexPath = path
-			case "stories.md":
-				storiesPath = path
-			case "flows.md":
-				flowsPath = path
-			}
-			if strings.HasSuffix(name, ".html") && name != "index.html" {
-				pagePaths = append(pagePaths, path)
-			}
-			return nil
-		}); err != nil {
-			return false, err
-		}
-		if indexPath == "" || storiesPath == "" || flowsPath == "" || len(pagePaths) == 0 {
-			continue
-		}
-		if !hasProtoMetaHeader(indexPath) {
-			continue
-		}
-		allPagesHaveHeader := true
-		for _, p := range pagePaths {
-			if !hasProtoMetaHeader(p) {
-				allPagesHaveHeader = false
-				break
-			}
-		}
-		if !allPagesHaveHeader {
-			continue
-		}
-		if !hasStoryIDWithReqID(storiesPath) {
-			continue
-		}
-		if !hasFlowIDWithReqID(flowsPath) {
-			continue
-		}
-		return true, nil
-	}
-	return false, nil
 }
 
 // hasProtoMetaHeader enforces the 4-field header mandate from

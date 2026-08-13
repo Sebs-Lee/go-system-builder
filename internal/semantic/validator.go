@@ -11,6 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/catalog"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/migration"
+	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/team"
 )
@@ -105,6 +106,9 @@ func ValidateRepository(root string) error {
 		if err := validator.ValidateEmbedded("agent-message.schema.json", name); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
+	}
+	if _, err := scenario.ValidateAll(root, scenario.ValidateOptions{}); err != nil {
+		return fmt.Errorf("scenario packages: %w", err)
 	}
 	// Runtime authorities on disk (validated against embedded schemas).
 	for _, pair := range [][2]string{

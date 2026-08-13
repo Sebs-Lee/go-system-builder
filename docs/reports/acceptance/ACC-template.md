@@ -2,7 +2,8 @@
 
 > Status: draft / passed / blocked / invalidated
 > Runtime ref: `{runtime-id}@{revision}`
-> Bound REQ: REQ-{id}
+> Source REQ refs: REQ-{id} / none
+> Accepted module current truth: `docs/design/prototypes/{module}/`
 > Baseline generation: {n}
 > Clean review round: {n}
 > Clean-round evidence: `{review-evidence-ref}`
@@ -13,7 +14,7 @@
 | Artifact | Path | Version | SHA-256 |
 |:---|:---|:---|:---|
 | REQ | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` |
-| design/UI | `{path/N/A}` | {version/N/A} | `{sha256/N/A}` |
+| module current truth | `docs/design/prototypes/{module}/` (scenario four-pack + stories/flows/index/*.html) | current | `{sha256/N/A}` |
 | contracts | `docs/contracts/CONTRACTS-{id}.md` | {version} | `{sha256}` |
 | tasks | `docs/tasks/index.md` | {version} | `{sha256}` |
 
@@ -30,9 +31,18 @@ All required dimensions must be PASS or evidence-backed N/A in the same round.
 
 ## 3. Requirement Acceptance
 
-| REQ / Contract clause | Expected | Evidence | Result |
+| REQ source_ref / Rule / CASE / Story / PATH / Spec | Expected | Evidence | Result |
 |:---|:---|:---|:---|
-| FR-{id} / {contract} §{n} | {behavior} | {REV/QA/E2E/test/sample} | pass / fail |
+| REQ-{id}/FR-{id} / BR-{id} / CASE-{id} / S-{id} / F-{id} / PATH-{id} / `web/e2e/{module}/*.spec.ts` | {behavior and oracle} | {REV/QA/E2E/test/sample} | pass / fail |
+
+### Module scenario acceptance
+
+| Gate | Expected | Evidence | Result |
+|:---|:---|:---|:---|
+| required allow branches | 100% | `scenario-coverage.json` | pass / fail |
+| required reject branches | 100% | `scenario-coverage.json` | pass / fail |
+| positive/negative ratio | meets `coverage_profile` | `scenario-coverage.json` | pass / fail |
+| module regression | all current required CASE/PATH | E2E round {n} | pass / fail |
 
 ## 4. Delivery And Operations
 

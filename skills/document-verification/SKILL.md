@@ -20,19 +20,21 @@ The reviewer produces evidence; the Orchestrator evaluates the gate. Runtime aut
 | Candidate TASK batch | `docs/tasks/TASK-*.md` | verify executability and Closing Contracts |
 | Contracts | `docs/contracts/FE-*.md`, `BE-*.md`, `SYNC-*.md` | verify REQ coverage and consistency |
 | Locked REQ | runtime `bound_req.path` | top-down traceability source |
-| Design + UI design package | `docs/design/**` | contract and TASK linkage target |
+| Design + UI/scenario package | `docs/design/**` | module current truth and contract/TASK linkage target |
 | Rules | `docs/rules/*.md` | naming, api-design, security constraints |
 | Team manifest | assignment manifest for this round | single-responsibility and independence |
 
 ## Procedure
 1. Read the assigned TASK bottom-up: TASK → its primary contract → related contracts → locked REQ → design/UI design package → applicable rules.
 2. Check REQ coverage: every acceptance criterion in the REQ maps to at least one contract clause, and every contract clause maps to at least one TASK.
-3. Check consistency: contracts agree on data shapes, error codes, state transitions, and API surfaces across FE/BE/SYNC boundaries.
-4. Check executability: each TASK has a clear input, output, allowed paths, forbidden paths, and required evidence — a Builder can execute it without further design decisions.
-5. Check link integrity: every cross-document reference resolves to a real file at the declared version with a matching fingerprint.
-6. Check Closing Contracts: every TASK declares what evidence must exist to close it, and that evidence is feasible given the current toolchain.
-7. Produce a REV report per assigned dimension with explicit PASS/FAIL/N-A and referenced evidence paths.
-8. Aggregate results: if all dimensions PASS, the Orchestrator requests TR-003 (`document_pass`). If any dimension requires a document fix, request TR-004 (`document_fix_required`). If a REQ change is needed, request TR-005 (`req_change_required`).
+3. Check module current truth: the scenario four-pack, `stories.md`, `flows.md`, index/page HTML, and module spec path are complete; no per-REQ/per-round/versioned copies exist.
+4. Check scenario consistency: every required allow/reject branch maps to CASE → Story → PATH → Spec, required branch coverage is 100%, positive/negative ratio passes, oracle is independent of implementation, and fixture setup/cleanup is feasible.
+5. Check consistency: contracts agree on data shapes, error codes, state transitions, and API surfaces across FE/BE/SYNC boundaries.
+6. Check executability: each TASK has a clear input, output, allowed paths, forbidden paths, and required evidence — a Builder can execute it without further design decisions.
+7. Check link integrity: every cross-document reference resolves to a real current file with a matching fingerprint; `source_refs` explain REQ origin but do not create ownership copies.
+8. Check Closing Contracts: every TASK declares what evidence must exist to close it, and that evidence is feasible given the current toolchain.
+9. Produce a REV report per assigned dimension with explicit PASS/FAIL/N-A and referenced evidence paths.
+10. Aggregate results: if all dimensions PASS, the Orchestrator requests TR-003 (`document_pass`). If any dimension requires a document fix, request TR-004 (`document_fix_required`). If a REQ change is needed, request TR-005 (`req_change_required`).
 
 ## Outputs
 - REV reports under `docs/reports/review/` with per-dimension verdicts.
@@ -51,7 +53,7 @@ Stop immediately and surface to the human if any of:
 ## Non-Goals
 - Do not repair the reviewed documents — return them to `planning.rework`.
 - Do not lock the batch or activate Builders — that follows TR-003.
-- Do not judge implementation quality or browser behavior — those belong to the S7 Delivery Verifier, QA, and E2E Browser workgroups.
+- Do not judge implementation quality or browser behavior — those belong to the S7 Delivery Verifier, QA, and E2E Browser workgroups. Do verify that every browser-required current CASE/PATH is dispatchable.
 
 ## Inlined Methodology
 

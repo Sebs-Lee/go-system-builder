@@ -154,7 +154,7 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 		if hasMarkdownArtifact(root, "docs/design/architecture", "ARCHITECTURE-*.md", "") {
 			contract.Missing = []string{"contract_set"}
 			if boundREQHasUIImpact(state) {
-				complete, _ := hasCompleteUIDesignPackage(filepath.Join(root, "docs/design/prototypes"))
+				complete, _ := hasCompleteUIDesignPackageForREQ(root, boundREQPathFromState(state))
 				if !complete {
 					contract.Missing = []string{"ui_design_package"}
 				}

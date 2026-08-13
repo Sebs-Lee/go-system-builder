@@ -18,7 +18,7 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 |:---|:---|:---|
 | Locked REQ | runtime `bound_req.path` | source of acceptance criteria and scope |
 | Existing design | `docs/design/**` | reuse and conflict detection |
-| Module prototypes | `docs/design/prototypes/<module>/{index.html, stories.md, flows.md, *.html}` | prototype gate input; current code IS the baseline |
+| Module current truth | `docs/design/prototypes/<module>/{index.html, stories.md, flows.md, scenario-model.json, cases.json, scenario-coverage.json, fixture-contract.json, *.html}` | current module package and prototype gate input |
 | Rules | `docs/rules/*.md` | naming, security, api-design, state-machine constraints |
 | Loop Definition | `docs/loop-definition.json` | planning exit transition and executable guards |
 
@@ -26,15 +26,16 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 1. Read the locked REQ end-to-end; extract acceptance criteria, scope boundaries, and non-goals.
 2. Draft the architecture: components, data model, state machines, data flow. Record decisions as ADRs under `docs/design/decisions/`.
 3. Determine UI impact. If the REQ changes a user-visible surface, complete the UI design package before locking affected contracts; otherwise record that UI impact is `none` and continue.
-4. For UI-impacting work, ensure the affected module's prototype set at `docs/design/prototypes/<module>/` exists and reflects the REQ's target behavior — `index.html` + `stories.md` + `flows.md` + page HTML files. The current implementation IS the baseline (no separate capture); the prototype describes the target only. The hybrid split is: HTML files (`index.html` + page HTML) come from `skills/ui-prototyping/SKILL.md`; `stories.md` content comes from `skills/user-story-design/SKILL.md` (with `USER-STORY-template.md` as the canonical format reference); `flows.md` content comes from `skills/user-flow-design/SKILL.md` (with `USER-FLOW-template.md` as the canonical format reference).
-5. Draft contracts in order: FE-contract → BE-contract → SYNC-contract. Each must link to the REQ clause it satisfies and to the locked design/prototype.
-6. Decompose into TASKs: each TASK binds one contract, has a Closing Contract (forbidden paths + required evidence), and obeys single-responsibility. Verify no TASK spans two contracts.
-7. Check the actual `TR-002 planning_ready` contract: at least one locked contract and one complete TASK must exist, with the required planning evidence current. Request `TR-002` only when that contract is satisfied.
-8. If document verification returns `document_fix_required` (`TR-004`), repair the affected documents. Re-open an architecture or UI decision only when verification evidence shows that the decision itself is invalid; otherwise keep rework bounded to the flagged contract or TASK.
+4. For UI-impacting or behavior-changing work, read the affected module's complete current package before editing. Reconcile the REQ into `index.html` + `stories.md` + `flows.md` + the four scenario JSON files + page HTML files. REQ is a `source_refs` input, never a package owner. The current implementation IS factual context; do not create a per-REQ, per-round, or versioned copy.
+5. Derive and validate `Rule → CASE → Story → PATH → Spec → Evidence` before contracts: require explicit allow/reject branches, 100% required branch coverage, module profile ratio, synthetic fixture cleanup, and full-module regression.
+6. Draft contracts in order: FE-contract → BE-contract → SYNC-contract. Each must link to the REQ source ref and the module current-truth package.
+7. Decompose into TASKs: each TASK binds one contract, has a Closing Contract (forbidden paths + required evidence), and obeys single-responsibility. Verify no TASK spans two contracts and that scenario-bearing TASKs name the module regression sweep.
+8. Check the actual `TR-002 planning_ready` contract: at least one locked contract and one complete TASK must exist, with the scenario and planning evidence current. Request `TR-002` only when that contract is satisfied.
+9. If document verification returns `document_fix_required` (`TR-004`), repair the affected documents. Re-open an architecture or UI decision only when verification evidence shows that the decision itself is invalid; otherwise keep rework bounded to the flagged contract or TASK.
 
 ## Outputs
 - Architecture and ADR records under `docs/design/`.
-- Locked final UI design package (when UI impact is changed) with fingerprints for HTML prototype, user story, and user flow.
+- Locked current module UI/scenario package (when UI impact or behavior is changed) with fingerprints for the scenario four-pack, HTML prototype, stories, flows, and module spec.
 - FE/BE/SYNC contracts with REQ and design traceability.
 - TASK batch with Closing Contracts and single-responsibility assignments.
 - Current planning evidence required by `TR-002`.
