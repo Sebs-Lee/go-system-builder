@@ -132,6 +132,10 @@ cp .claude/bin/"$HARNESS" .claude/bin/loop-harness
 chmod +x .claude/bin/loop-harness
 cp $TARDIR/loop-harness.md .claude/bin/loop-harness.md
 
+# Design blueprint (layered design docs: L1 philosophy, L2 lifecycle plan, ...)
+# Kept next to the Manual for on-demand lookup of design intent by agents and humans.
+cp -R $TARDIR/blueprint .claude/bin/blueprint
+
 # Documentation tree (templates + Loop definitions + rules)
 cp -R $TARDIR/docs .
 
