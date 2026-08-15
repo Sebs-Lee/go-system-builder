@@ -184,6 +184,42 @@ flowchart TD
 
 ---
 
+## REQ 授权生命周期（跨阶段控制面——七动词全图）
+
+> 本节是原"暂停语义/基线变更/单需求单周期"三行的正式化与扩展。REQ 的授权生命周期**不属于任何单一 stage，属于控制面**：各 stage 只拥有自己的暂停触发器与失败路由，控制面承载动词本身。REQ 文件状态只回答"这份文件是什么"（draft=草稿 / locked=冻结基线——不是"进行中" / changed=修订中 / archived=生命周期已关闭）；"这个需求走到哪了"的唯一权威是 runtime（活跃）与 runtime-archive（终态）——D1。人闸是七个动词的共同形态：机器公证事实（检查点/指纹/journal），人做授权决策（C4）。
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft : 人起草（S0 漏斗）
+    draft --> locked : 人锁定（冻结基线）
+    locked --> bound : 进入 bind（人闸记名）
+    bound --> paused : 暂停 pause（任一工作态）
+    paused --> bound : 恢复 resume（校验基线未漂移）
+    paused --> bound : 修订 amend（generation+1，下游全失效）
+    bound --> unbound : 退出 unbind（撤销授权，留痕归档）
+    bound --> released : 正常结束 approve（S11 人闸）
+    paused --> aborted : 退出 abort（人批准）
+    released --> archived : rollover 归档（REQ 落章+双指纹）
+    aborted --> archived : rollover 归档
+    unbound --> locked : 回到可绑定池（重新绑定）
+    archived --> [*] : 下一 REQ 新周期
+```
+
+| 动词 | 语义 | 人闸 | 失败路由 / 约束 |
+|:--|:--|:--|:--|
+| 进入 bind | 人锁定的 REQ 经显式命令登记为唯一授权对象 | 人（记名） | 一 runtime 一活需求；绑定是唯一授权入口 |
+| 暂停 pause | 七个工作态任一可暂停；检查点快照游标+指纹+generation+round（单次捕获不变式） | 人或机制触发 | 暂停不丢状态；恢复前一切下游工作静默（投影指路） |
+| 恢复 resume | 人批准 → 逐文件核对暂停时刻指纹 → 回原位置 | 人 | 漂移即拒（防移动靶）；漂移了走修订 |
+| 修订 amend | 周期内换基线：generation+1、下游证据全失效、新 REQ 入册且旧 REQ 保持锁定 | 人 | 与重绑的边界：周期不关、runtime 不换 |
+| 退出 unbind | 非终态任意时刻撤销授权：runtime 归档（disposition=unbound）+ 新 inactive + REQ 回可绑定池 | 人（记名+理由） | 撤销≠抹除：弃周期全程可审计；在飞实体软门 |
+| 退出 abort | paused 或 S11 处终止：aborted 终态 → 归档 | 人 | 与 unbind 的边界：abort 是终态语义（周期关闭） |
+| 正常结束 approve→rollover | 发布授权（终态）→ 归档 runtime、REQ 文件落章 archived（双指纹入 journal） | 人 | 自动化止步于发布；落章只在 rollover（周期正式关闭点，统一覆盖 approve/abort 两终态） |
+| 重新绑定 rebind | unbind 后 REQ 回池可再绑；rollover 后新周期可绑任意 locked；amend 是周期内换基线不是重绑 | 人 | 同 REQ 终态后立即重绑无冷却护栏（如实记录，待实战观测） |
+
+**三条裁决**（承接 owner 2026-08-15 拍板链）：① locked 语义收窄为文件级事实，生命周期权威归 runtime；② archived 落章在 rollover 时刻，只改状态行、基线内容永不变，journal 记 from-sha/to-sha 双指纹——第一原则精化为"基线内容永不变，生命周期元数据只在人闸点由 harness 迁移且留双指纹"；③ unbind 从任何非终态可用（人闸+留痕+在飞软门），与 abort（终态语义）分立。**终批状态（2026-08-15 owner 已批，按工程建议执行）**：①②③ 全部生效——② 落章时刻定为 **rollover**；L3-S1 §2.2"实施前待终批"清单同步销项。另：REQ 文件的 archived 是**可读性镜像**（消费者=浏览 docs/requirements/ 的人），bindable 判定的权威是 runtime-archive 扫描，不以文件状态为准。
+
+---
+
 ## 跨阶段全局规则
 
 | 规则 | 内容 | 承载 |
@@ -217,3 +253,4 @@ flowchart TD
 | 2026-08-14 | v1.3.1 | 总览流程图从 ASCII 改为 mermaid（主干/纠错回路/人闸三色区分），语义不变 | owner 指示 |
 | 2026-08-14 | v1.3.2 | 总览图补 S11 驳回回滚路（原图缺失）：驳回缺陷 → S8、驳回验收/审计 → S10；注明驳回缺陷经修复后须全新完整验证轮回 S11、不允许跳轮。表格路由本已含此路径，本修为图-表对齐 | owner 复核：S11 不通过须有回滚路 |
 | 2026-08-14 | v1.3.3 | 头部层声明与 L1 v2.3.0 对齐（第三层=各 Stage 详细设计） | L1 层定义升级 |
+| 2026-08-15 | v1.4.0 | 新增「REQ 授权生命周期」节：七动词全图（进入/暂停/恢复/修订/退出 unbind/退出 abort/正常结束/重新绑定）+ 状态图 + 三条裁决（locked=冻结基线语义收窄；archived 落章在 rollover 双指纹；unbind 任意非终态人闸）。原全局规则表的"暂停语义/基线变更/单需求单周期"三行由本节正式化承接 | owner 指示：必须考虑完整生命周期——REQ 可退出、正常结束、暂停、恢复、重新绑定；L1 经映射纪律核验无需修订 |
