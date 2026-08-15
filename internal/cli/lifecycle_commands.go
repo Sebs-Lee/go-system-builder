@@ -437,6 +437,6 @@ func runREQAmend(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "amended: bound %s → %s %s (baseline generation %d)\n", boundID, id, version, tolerantInt(baseline["generation"]))
 	fmt.Fprintf(stdout, "  downstream evidence invalidated: %d item(s); old REQ stays locked (history)\n", invalid)
 	fmt.Fprintf(stdout, "  superseded REQ file: move it to docs/requirements/versions/%s/ for the record (procedural; hook keeps protecting it)\n", boundID)
-	fmt.Fprintln(stdout, "next: resume the loop (runtime resume) to continue from planning.design")
+	fmt.Fprintln(stdout, "next: continue from planning.design — the amendment already left the paused state (checkpoint cleared)")
 	return 0
 }

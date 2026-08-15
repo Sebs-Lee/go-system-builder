@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `3fa7c1ee8b2fb648ce8254c4d3d2fae62d1049c12b202dda19340a2af07cdb61`
+- **Loop definition SHA-256**: `4884ad2a4d1dd2e5285d5fb4154255d6d29731f382121601502e661c7e84e25c`
 
 ---
 
@@ -116,10 +116,6 @@ _inactive → planning_
 
 Start exactly one Loop for the named locked REQ.
 
-- `req_exists` [evidence_attestation] — A REQ file exists at the path supplied to `loop-harness req bind`.
-- `req_locked` [evidence_attestation] — The REQ file declares status=locked and a non-empty version field in its frontmatter.
-- `req_questions_non_blocking` [evidence_attestation] — Any open questions recorded in the REQ's 待澄清问题 section are tagged non-blocking, or none exist.
-- `pm_context_matches_req` [evidence_attestation] — docs/project-map.md current stage and bound REQ references are consistent with the REQ being bound.
 - `no_other_active_loop` [semantic_check] — No other runtime is currently bound to a different REQ; the Loop model allows one active REQ per project.
 
 Evidence: `req_lock_record`, `loop_authorization_record`

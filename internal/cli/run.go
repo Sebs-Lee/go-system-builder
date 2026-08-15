@@ -991,7 +991,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				ApprovedBy: *reqApprovedBy, ApprovedAt: *reqApprovedAt,
 			}
 		}
-		next, err := transition.Apply(*root, *statePath, *journalPath, transition.Request{
+		next, err := transition.Apply(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), transition.Request{
 			TransitionID: *transitionID, ExpectedRevision: *expectedRevision,
 			Actor: *actor, Evidence: evidenceMap, REQ: req, OccurredAt: occurredAt,
 			Params: params,

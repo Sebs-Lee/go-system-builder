@@ -108,6 +108,8 @@ func classifyRequirements(root string) []reqSummary {
 	for i := range summaries {
 		s := &summaries[i]
 		switch {
+		case s.Status == "archived":
+			s.Note = "lifecycle closed (archived REQ; see runtime-archive)"
 		case s.Status != "locked":
 			s.Note = "not bindable: status is " + s.Status + " (lock it in S0 first)"
 		case s.ID == bound:
