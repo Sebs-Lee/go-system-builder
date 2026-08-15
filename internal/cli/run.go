@@ -175,12 +175,15 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func runREQ(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "bind" && args[0] != "list") {
-		fmt.Fprintln(stderr, "req requires <bind|list>")
+	if len(args) == 0 || (args[0] != "bind" && args[0] != "list" && args[0] != "unbind") {
+		fmt.Fprintln(stderr, "req requires <bind|list|unbind>")
 		return 2
 	}
 	if args[0] == "list" {
 		return runREQList(args[1:], stdout, stderr)
+	}
+	if args[0] == "unbind" {
+		return runREQUnbind(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("req bind", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1341,7 +1344,103 @@ func runRuntimeRollover(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "runtime rolled over: archived %s revision %d at %s\n", record.RuntimeID, record.Revision, record.ArchiveDir)
+	if note, err := archiveREQOnRollover(*root, record.ArchiveDir, *approvedBy, now); err != nil {
+		fmt.Fprintf(stderr, "runtime rollover: warning: REQ archival skipped: %v\n", err)
+	} else if note != "" {
+		fmt.Fprintf(stdout, "REQ %s (dual-fingerprint receipt: %s)\n", note, filepath.Join(record.ArchiveDir, "req-archive.json"))
+	}
 	return 0
+}
+
+// archiveREQOnRollover closes the REQ file's lifecycle at the rollover
+// moment: the status line flips locked → archived (baseline content is
+// never touched) and a dual-fingerprint receipt lands beside the sealed
+// journal in the archive directory. The manifest's sealed hashes stay
+// intact — the receipt is a separate, self-describing record.
+func archiveREQOnRollover(root, archiveDir, approvedBy string, occurredAt time.Time) (string, error) {
+	stateData, err := os.ReadFile(filepath.Join(archiveDir, "loop-state.json"))
+	if err != nil {
+		return "", fmt.Errorf("read archived runtime: %w", err)
+	}
+	var archived map[string]any
+	if err := json.Unmarshal(stateData, &archived); err != nil {
+		return "", fmt.Errorf("decode archived runtime: %w", err)
+	}
+	bound, _ := archived["bound_req"].(map[string]any)
+	reqPath, _ := bound["path"].(string)
+	reqID, _ := bound["id"].(string)
+	if reqPath == "" || reqID == "" {
+		return "", nil // nothing bound in the archived period; nothing to close
+	}
+	reqData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reqPath)))
+	if err != nil {
+		return "", fmt.Errorf("read bound REQ %s: %w", reqPath, err)
+	}
+	shaBefore := fmt.Sprintf("%x", sha256.Sum256(reqData))
+	flipped, ok := flipStatusLineToArchived(string(reqData))
+	if !ok {
+		return "", nil // already archived or not locked; leave untouched
+	}
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(reqPath)), []byte(flipped), 0o644); err != nil {
+		return "", fmt.Errorf("write archived REQ %s: %w", reqPath, err)
+	}
+	shaAfter := fmt.Sprintf("%x", sha256.Sum256([]byte(flipped)))
+	receipt := map[string]any{
+		"schema_version": "1.0.0",
+		"event":          "req_archived",
+		"disposition":    "lifecycle_closed",
+		"req": map[string]any{
+			"id": reqID, "path": reqPath,
+			"status_before": "locked", "status_after": "archived",
+			"sha256_before": shaBefore, "sha256_after": shaAfter,
+		},
+		"approved_by": approvedBy,
+		"occurred_at": occurredAt.UTC().Format(time.RFC3339Nano),
+	}
+	receiptData, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, "req-archive.json"), append(receiptData, '\n'), 0o644); err != nil {
+		return "", fmt.Errorf("write REQ archive receipt: %w", err)
+	}
+	short := func(s string) string {
+		if len(s) > 12 {
+			return s[:12]
+		}
+		return s
+	}
+	return fmt.Sprintf("%s status locked → archived (sha %s… → %s…)", reqID, short(shaBefore), short(shaAfter)), nil
+}
+
+// flipStatusLineToArchived rewrites the first top-of-file 状态/Status line
+// whose value is exactly "locked" to "archived". It touches nothing else —
+// baseline content is immutable (L2 first-principle refinement).
+func flipStatusLineToArchived(content string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">"))
+		for _, sep := range []string{"：", ":"} {
+			parts := strings.SplitN(trimmed, sep, 2)
+			if len(parts) != 2 {
+				continue
+			}
+			key := strings.ToLower(strings.TrimSpace(parts[0]))
+			if key != "状态" && key != "status" {
+				continue
+			}
+			if strings.TrimSpace(parts[1]) != "locked" {
+				return strings.Join(lines, "\n"), false
+			}
+			idx := strings.LastIndex(line, parts[1])
+			if idx < 0 {
+				return content, false
+			}
+			lines[i] = line[:idx] + "archived"
+			return strings.Join(lines, "\n"), true
+		}
+	}
+	return content, false
 }
 
 func rootedPath(root, path string) string {

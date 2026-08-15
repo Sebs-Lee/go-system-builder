@@ -217,3 +217,125 @@ func cursorLabel(state string, phase any) string {
 	}
 	return fmt.Sprintf("%s.%v", state, phase)
 }
+
+// inFlightEntities lists task/team ids that are still open. Unbind refuses
+// to strand them silently; the human can override with --force (a visible
+// abandonment, recorded in the archive).
+func inFlightEntities(state map[string]any) []string {
+	var out []string
+	entities, _ := state["entities"].(map[string]any)
+	tasks, _ := entities["tasks"].([]any)
+	for _, raw := range tasks {
+		task, _ := raw.(map[string]any)
+		if task == nil {
+			continue
+		}
+		if status, _ := task["status"].(string); status == "in_progress" || status == "review" {
+			if id, _ := task["id"].(string); id != "" {
+				out = append(out, "task "+id+" ("+status+")")
+			}
+		}
+	}
+	teams, _ := entities["teams"].([]any)
+	for _, raw := range teams {
+		team, _ := raw.(map[string]any)
+		if team == nil {
+			continue
+		}
+		if id, _ := team["id"].(string); id != "" {
+			out = append(out, "team "+id)
+		}
+	}
+	return out
+}
+
+func runREQUnbind(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("req unbind", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "req unbind")
+	root := flags.String("root", ".", "repository root")
+	archive := flags.String("archive-dir", ".claude/runtime-archive", "archive directory relative to repository root")
+	approvedBy := flags.String("approved-by", "", "human approver identity")
+	reason := flags.String("reason", "", "why the binding is revoked (recorded durably)")
+	force := flags.Bool("force", false, "unbind even with in-flight tasks/teams (visible abandonment)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *approvedBy == "" {
+		if identity := detectGitIdentity(*root); identity != "" {
+			fmt.Fprintf(stderr, "req unbind requires --approved-by (detected git identity %q; rerun with --approved-by %q)\n", identity, identity)
+		} else {
+			fmt.Fprintln(stderr, "req unbind requires --approved-by <human identity>")
+		}
+		return 2
+	}
+	if strings.TrimSpace(*reason) == "" {
+		fmt.Fprintln(stderr, "req unbind requires --reason <one sentence> — revocation without a recorded reason is not auditable")
+		return 2
+	}
+	snapshot, guidance := lifecycleSnapshot(*root)
+	if guidance != "" {
+		fmt.Fprintln(stderr, "req unbind: "+guidance)
+		return 1
+	}
+	state, phase := snapshotLifecycle(snapshot)
+	switch state {
+	case "release_authorized", "aborted":
+		fmt.Fprintf(stderr, "req unbind: runtime is terminal (%s) — use `runtime rollover` to close the period\n", state)
+		return 1
+	case "inactive":
+		fmt.Fprintln(stderr, "req unbind: nothing is bound")
+		return 1
+	case "paused":
+		fmt.Fprintln(stderr, "req unbind: runtime is paused — resume it first, or abort from the paused state (runtime transition TR-021)")
+		return 1
+	}
+	bound, _ := snapshot.State["bound_req"].(map[string]any)
+	boundID, _ := bound["id"].(string)
+	if boundID == "" {
+		fmt.Fprintln(stderr, "req unbind: no bound REQ in runtime")
+		return 1
+	}
+	if inFlight := inFlightEntities(snapshot.State); len(inFlight) > 0 && !*force {
+		fmt.Fprintln(stderr, "req unbind: in-flight entities would be stranded:")
+		for _, item := range inFlight {
+			fmt.Fprintf(stderr, "  %s\n", item)
+		}
+		fmt.Fprintln(stderr, "wind them down first, or rerun with --force (the abandonment is recorded in the archive)")
+		return 1
+	}
+	runtimeID, _ := snapshot.State["runtime_id"].(string)
+	evID, _, err := registerDecisionEvidence(*root, snapshot,
+		fmt.Sprintf("hd-unbind-r%d", snapshot.Revision+1), "req_unbind_requested", *reason, *approvedBy,
+		fmt.Sprintf("runtime_unbind:%s@%d", runtimeID, snapshot.Revision+1))
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req unbind", err))
+		return 1
+	}
+	now := time.Now().UTC()
+	freshState, err := inactiveRuntimeState(*root, now)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req unbind", err))
+		return 1
+	}
+	encoded, err := json.Marshal(freshState)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req unbind", fmt.Errorf("encode fresh runtime: %w", err)))
+		return 1
+	}
+	if err := semantic.ValidateRuntimeBytes(*root, encoded); err != nil {
+		fmt.Fprintln(stderr, formatFailure("req unbind", fmt.Errorf("validate fresh runtime: %w", err)))
+		return 1
+	}
+	record, err := runtime.NewWriter(rootedPath(*root, ".claude/loop-state.json"), rootedPath(*root, ".claude/loop-events.jsonl"), *root, semantic.RuntimeCandidateValidator{}).Unbind(
+		freshState, rootedPath(*root, *archive), runtime.UnbindApproval{ApprovedBy: *approvedBy, EvidenceID: evID, Reason: *reason}, now,
+	)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req unbind", err))
+		return 1
+	}
+	fmt.Fprintf(stdout, "unbound %s (was %s, revision %d; reason recorded; approved-by %s)\n", boundID, cursorLabel(state, phase), record.Revision, *approvedBy)
+	fmt.Fprintf(stdout, "  archived runtime: %s (disposition=unbound)\n", record.ArchiveDir)
+	fmt.Fprintf(stdout, "next: %s returned to the bindable pool — `req list` to pick the next target\n", boundID)
+	return 0
+}

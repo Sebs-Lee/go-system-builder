@@ -129,6 +129,7 @@ type rolloverPending struct {
 	FreshState          map[string]any   `json:"fresh_state"`
 	Record              RolloverRecord   `json:"record"`
 	Approval            RolloverApproval `json:"approval"`
+	Disposition         string           `json:"disposition,omitempty"`
 	OccurredAt          string           `json:"occurred_at"`
 	SourceStateSHA256   string           `json:"source_state_sha256"`
 	SourceJournalSHA256 string           `json:"source_journal_sha256"`
@@ -597,65 +598,11 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 	if err != nil {
 		return RolloverRecord{}, err
 	}
-	if err := validateRolloverApproval(state, approval, runtimeID, revision); err != nil {
+	if err := validateLifecycleApproval(state, approval.ApprovedBy, approval.EvidenceID, runtimeID, revision, "runtime_rollover"); err != nil {
 		return RolloverRecord{}, err
 	}
 
-	if err := os.MkdirAll(archiveRoot, 0o755); err != nil {
-		return RolloverRecord{}, fmt.Errorf("create runtime archive root: %w", err)
-	}
-	if err := syncDir(filepath.Dir(archiveRoot)); err != nil {
-		return RolloverRecord{}, fmt.Errorf("sync runtime archive parent: %w", err)
-	}
-	stamp := occurredAt.UTC().Format("20060102T150405.000000000Z")
-	archiveDir := filepath.Join(archiveRoot, fmt.Sprintf("%s-r%d-%s", runtimeID, revision, stamp))
-	if err := os.Mkdir(archiveDir, 0o755); err != nil {
-		return RolloverRecord{}, fmt.Errorf("create runtime archive: %w", err)
-	}
-	if err := syncDir(archiveRoot); err != nil {
-		return RolloverRecord{}, fmt.Errorf("sync runtime archive root: %w", err)
-	}
-	if err := writeDurableFile(filepath.Join(archiveDir, "loop-state.json"), stateData); err != nil {
-		return RolloverRecord{}, fmt.Errorf("archive runtime state: %w", err)
-	}
-	if err := writeDurableFile(filepath.Join(archiveDir, "loop-events.jsonl"), journalData); err != nil {
-		return RolloverRecord{}, fmt.Errorf("archive runtime journal: %w", err)
-	}
-	stateHash := sha256Hex(stateData)
-	journalHash := sha256Hex(journalData)
-	manifest := map[string]any{
-		"runtime_id":           runtimeID,
-		"revision":             revision,
-		"approved_by":          approval.ApprovedBy,
-		"approval_evidence_id": approval.EvidenceID,
-		"state_sha256":         stateHash,
-		"journal_sha256":       journalHash,
-		"occurred_at":          occurredAt.UTC().Format(time.RFC3339Nano),
-	}
-	if err := atomicWriteJSON(filepath.Join(archiveDir, "rollover.json"), manifest); err != nil {
-		return RolloverRecord{}, fmt.Errorf("write runtime archive manifest: %w", err)
-	}
-	pending := rolloverPending{
-		SchemaVersion: "1.0.0",
-		FreshState:    freshState,
-		Record: RolloverRecord{
-			ArchiveDir: archiveDir, RuntimeID: runtimeID, Revision: revision,
-			ArchiveStateSHA: stateHash, ArchiveJournalSHA: journalHash,
-		},
-		Approval:            approval,
-		OccurredAt:          occurredAt.UTC().Format(time.RFC3339Nano),
-		SourceStateSHA256:   stateHash,
-		SourceJournalSHA256: journalHash,
-		SourceRuntimeID:     runtimeID,
-		SourceRevision:      intPointer(revision),
-	}
-	if err := atomicWriteJSON(s.rolloverMarkerPath(), pending); err != nil {
-		return RolloverRecord{}, fmt.Errorf("record pending runtime rollover: %w", err)
-	}
-	if err := s.recoverPendingRolloverLocked(); err != nil {
-		return RolloverRecord{}, err
-	}
-	return pending.Record, nil
+	return s.archiveAndReset(stateData, journalData, runtimeID, revision, freshState, archiveRoot, nil, "", approval, occurredAt)
 }
 
 // DocumentMetadataVersion extracts the authoritative version string from a
@@ -1964,7 +1911,11 @@ func (s *Store) recoverPendingRolloverLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := validateRolloverApproval(archivedState, pending.Approval, pending.Record.RuntimeID, pending.Record.Revision); err != nil {
+	scopePrefix := "runtime_rollover"
+	if pending.Disposition == "unbound" {
+		scopePrefix = "runtime_unbind"
+	}
+	if err := validateLifecycleApproval(archivedState, pending.Approval.ApprovedBy, pending.Approval.EvidenceID, pending.Record.RuntimeID, pending.Record.Revision, scopePrefix); err != nil {
 		return fmt.Errorf("pending runtime rollover approval does not match archived runtime: %w", err)
 	}
 
@@ -2185,20 +2136,29 @@ func ValidateFreshInactiveState(state map[string]any) error {
 }
 
 func validateRolloverApproval(state map[string]any, approval RolloverApproval, runtimeID string, revision int) error {
+	return validateLifecycleApproval(state, approval.ApprovedBy, approval.EvidenceID, runtimeID, revision, "runtime_rollover")
+}
+
+// validateLifecycleApproval verifies that the human-decision evidence for a
+// lifecycle verb (rollover, unbind) is current, valid, produced by the named
+// approver, and scoped to exactly this runtime and revision. The scope
+// prefix distinguishes the verb so an unbind receipt cannot authorize a
+// rollover and vice versa.
+func validateLifecycleApproval(state map[string]any, approvedBy, evidenceID, runtimeID string, revision int, scopePrefix string) error {
 	items, ok := state["evidence"].([]any)
 	if !ok {
 		return errors.New("runtime evidence must be an array")
 	}
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
-		if item == nil || item["id"] != approval.EvidenceID || item["kind"] != "human_decision" || item["status"] != "valid" {
+		if item == nil || item["id"] != evidenceID || item["kind"] != "human_decision" || item["status"] != "valid" {
 			continue
 		}
-		if containsString(item["produced_by"], approval.ApprovedBy) && containsString(item["scope_refs"], fmt.Sprintf("runtime_rollover:%s@%d", runtimeID, revision)) {
+		if containsString(item["produced_by"], approvedBy) && containsString(item["scope_refs"], fmt.Sprintf("%s:%s@%d", scopePrefix, runtimeID, revision)) {
 			return nil
 		}
 	}
-	return fmt.Errorf("rollover approval evidence %q must be valid human_decision evidence produced by %q and scoped to runtime_rollover:%s@%d", approval.EvidenceID, approval.ApprovedBy, runtimeID, revision)
+	return fmt.Errorf("%s approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s:%s@%d", scopePrefix, evidenceID, approvedBy, scopePrefix, runtimeID, revision)
 }
 
 func emptyArray(value any) bool {
