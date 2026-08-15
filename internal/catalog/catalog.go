@@ -15,6 +15,7 @@ type SkillSpec struct {
 
 var Skills = []SkillSpec{
 	{"loop-orchestration", "methodology"},
+	{"requirement-funnel", "methodology"},
 	{"specification-planning", "methodology"},
 	{"document-verification", "methodology"},
 	{"two-phase-activation", "methodology"},

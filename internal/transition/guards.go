@@ -298,7 +298,7 @@ func guardUIIImpactResolvedFn(state map[string]any, _ map[string]string) error {
 	ui, _ := metadata["ui_impact"].(string)
 	if ui == "unknown" {
 		reqID, _ := bound["id"].(string)
-		return fmt.Errorf("ui_impact_resolved: bound REQ %s declares ui_impact=unknown; planning cannot advance until §11 clarifies the value", reqID)
+		return fmt.Errorf("ui_impact_resolved: bound REQ %s declares ui_impact=unknown; planning cannot advance until §D (待澄清问题) clarifies the value", reqID)
 	}
 	return nil
 }

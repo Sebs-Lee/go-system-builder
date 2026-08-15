@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 ｜ 版本 v3.0.0（叙事版；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 ｜ 版本 v3.1.0（v3.0.0 叙事版 + §6 注意力预算；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -31,7 +31,7 @@
 | 子问题 | 选用 | 否决与否决理由（减法） |
 |:--|:--|:--|
 | 怎么逼出全量双极性场景 | scenario-model 的 branch 字段（polarity/oracle 必填）+ 引擎校验（正反比、witness 引用注册 fact、S/F-NNN 必须真实存在） | 否决"自由格式设计文档"——无结构则无全量可言；字段即逼问 |
-| 怎么防"需求私有副本" | 模块目录为唯一家（REQ 只是 source_refs）；REQ-template §16 明令"REQ 不能创建私有副本" | 否决"每 REQ 一份场景"——副本必然漂移，模块才是全集的分母 |
+| 怎么防"需求私有副本" | 模块目录为唯一家（REQ 只是 source_refs）；REQ-template §F 明令"REQ 不能创建私有副本" | 否决"每 REQ 一份场景"——副本必然漂移，模块才是全集的分母 |
 | 怎么防生成物篡改 | cases/coverage 由引擎生成 + validate 字节级比对（"stale or tampered"） | 否决"手写 cases"——生成物不可手改，源头单点 |
 | 怎么管 UI 影响 | 三值 + `ui_impact_resolved` guard + hook 侧原型门（写契约瞬间查真相包） | 否决"仅文档提醒"——双门（规划 guard+hook 拦截）成本极低 |
 | 架构决策怎么落 | ARCHITECTURE 模板 12 节 + ADR 另录 decisions/ | 否决"再造 ADR 模板段"——已有 ADR-template.md 与目录惯例，不重复 |
@@ -57,9 +57,40 @@
 
 **如实记录的已知缺口/漂移**（供第四层修复清单）：①我 v2 版所写 `expected_observable/matcher` 为虚构——真实字段是 **oracle（检查点式，无机器 matcher）**，"预期事实机器核对"要等 REQ-040 的判据工作补齐；②`ui_impact_resolved` guard 已实现但**未挂到 PTR-PLAN-01**（guards 注释自认 wiring 是 follow-on，loop-definition.json:147 guards 为空）——unknown 拦截目前实际不生效；③HTML 头部字段三处说法不一（agent-protocol "4-field"/规则 §5 "3 字段"/代码实际 4 token 含"设计代数"）；④`--require-specs` 的 spec 级 100% 不在 doctor 常规校验内。
 
+## 6. 注意力预算与渐进披露
+
+总评：结构层典范（场景四件套的正确性由机器判——正反成对/负正比/防篡改都是 validate 说了算），错配在**两条 wiring 债让最关键防线退回文档层**，以及方法论入口缺渐进分岔。判定尺见 L3-README「注意力分配原则」。
+
+### 6.1 当前错配（什么不对、为什么不对）
+
+| # | 错配 | 为什么不对（L1 根据） |
+|:--|:--|:--|
+| 1 | `ui_impact_resolved` guard 已实现（guards.go:289-304）但 PTR-PLAN-01 的 guards 为空——unknown 拦截实际不生效 | 防止"UI 影响含糊进设计"的防线停留在 L2 文本（"禁止继续"）——恰是最弱承载层；一行 wiring 债让机制白写（D2：控制点在自然路径上的前提是挂上了） |
+| 2 | `--require-specs` 不进 doctor 常规校验 | spec 级 100% 覆盖是文档承诺；机械可判的覆盖留在自觉层（载体三问 1） |
+| 3 | `populateUIPrototypeFact` 是无消费者残迹（测试钉死 hook 永不匹配，run_test.go:1137-1148） | 公理三违例：信息量为零还占信道，且误导读者以为有 hook 门 |
+| 4 | specification-planning 九步一步铺开 5 个子 skill（合计约 50KB 方法论） | 渐进披露缺失：ui_impact=none 时 UI 三 skill 全部无关，但入口没有显式分岔——agent 倾向一次全载，为无关内容付 token |
+
+### 6.2 阅读预算（渐进披露的正面样板）
+
+| 时机 | 读什么 | 不读什么 |
+|:--|:--|:--|
+| 进入 S2 | ARCHITECTURE 模板 + 绑定的 REQ（模板字段即逼问） | 协议 S2 全文；5 个 skill 任何一个 |
+| ui_impact=none | 到此为止，直奔 S3 | 全部 UI 方法论（三个 skill） |
+| ui_impact=changed：建场景模型时 | scenario-model-design | stories/flows/原型方法论 |
+| 写 stories / flows / 原型页 时 | user-story-design / user-flow-design / ui-prototyping（用到才载） | 其余 |
+| 正确性核验（任何时刻） | validate 的**输出** | "必须正负成对/负正比≥N/生成物不可手改"的规则文本——引擎判，人不判 |
+
+### 6.3 整改方向
+
+- **P0 wiring**（一行级，性价比最高）：`ui_impact_resolved` 挂 PTR-PLAN-01；`--require-specs` 进 doctor；
+- **删减**：删 populateUIPrototypeFact；HTML 头部字段三处口径（协议"4-field"/规则"3 字段"/代码 4 token）以代码为准统一；
+- **左移（渐进披露结构化）**：入口 skill 第一步改为显式三路分岔（none→直奔契约 / changed→真相包流程 / unknown→指向澄清动作），把"何时无需读"写在最前面；
+- **保持**：四件套"手写 2 + 生成 2 + 字节比对"的承载结构（模块为唯一家、生成物防篡改——机制已最优）。
+
 ## 变更记录
 
 | 日期 | 版本 | 变更 |
 |:--|:--|:--|
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清；v2 的 expected_observable 系虚构） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（oracle/polarity/四件套生成关系/guard 未 wiring 等如实入档） | owner 复核 |
+| 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |

@@ -518,8 +518,8 @@ func bindREQ(root string, state map[string]any, request Request, occurredAt time
 // parseUIImpact reads the `UI impact` field from a locked REQ and returns
 // one of {none, changed, unknown}. The third value is part of the canonical
 // SM-003 planning-phase contract (LOOP-STATE-MACHINE.md §15): bindREQ
-// accepts `unknown`, but the planning cannot advance until PM clarifies it
-// in §12 of the REQ. The guard that enforces "unknown → planning paused"
+// accepts `unknown`, but the planning cannot advance until the REQ's §D
+// (待澄清问题) clarifies it. The guard that enforces "unknown → planning paused"
 // lives in guardUIIImpactResolved (registered as `ui_impact_resolved`).
 func parseUIImpact(content string) (string, error) {
 	for _, line := range strings.Split(content, "\n") {

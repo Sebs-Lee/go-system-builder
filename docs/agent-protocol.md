@@ -168,10 +168,11 @@ These hold across every stage:
 - **inputs**: user intent, project facts (`docs/project-map.md`), applicable rules.
 - **inputs_from**: [] (human input + existing project baselines; this is the entry stage)
 - **actions**:
-  1. draft the REQ (value, scope, flows, acceptance criteria)
-  2. record unknowns, dependencies, and out-of-scope items
-  3. determine UI impact (`none` / `changed`)
-  4. obtain human lock and a lock record (date, identity, version)
+  1. distill the user's expected outcome into §A — an agent-filtered restatement (ambiguous colloquial wording removed, implicit premises made explicit), confirmed by the human; never record raw quotes
+  2. funnel through §A (why) → §B (direction & constraints) → §C (what), one layer at a time; each hand-up is a complete proposal (recommendation + rationale + rejected alternatives) with at most 3 genuine value-decision points for the human
+  3. record unknowns, dependencies, and out-of-scope items (§D)
+  4. determine UI impact (`none` / `changed` / `unknown`)
+  5. obtain human lock and a lock record (date, identity, version)
 - **done_when**:
   - REQ file exists at `docs/requirements/REQ-<id>.md` with `status: locked`
   - lock record is present
@@ -179,7 +180,7 @@ These hold across every stage:
 - **next**: S1
 - **failure_route**: stay in S0 until locked; if locked but flawed, human amendment only.
 - **human_gateway**: any REQ change after lock requires `req_amendment`.
-- **primary_skill**: — (human-driven; the main session assists)
+- **primary_skill**: requirement-funnel (the human states the expected outcome and approves layer by layer; the main session owns the design and is accountable for it)
 
 ## S1 — initialize {#s1}
 
