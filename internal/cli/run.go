@@ -175,8 +175,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func runREQ(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "bind" && args[0] != "list" && args[0] != "unbind") {
-		fmt.Fprintln(stderr, "req requires <bind|list|unbind>")
+	if len(args) == 0 || (args[0] != "bind" && args[0] != "list" && args[0] != "unbind" && args[0] != "amend") {
+		fmt.Fprintln(stderr, "req requires <bind|list|unbind|amend>")
 		return 2
 	}
 	if args[0] == "list" {
@@ -184,6 +184,9 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "unbind" {
 		return runREQUnbind(args[1:], stdout, stderr)
+	}
+	if args[0] == "amend" {
+		return runREQAmend(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("req bind", flag.ContinueOnError)
 	flags.SetOutput(stderr)

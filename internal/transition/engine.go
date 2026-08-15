@@ -317,7 +317,7 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 			if err := validateGeneratedEvidence(state, kind, ref, request); err != nil {
 				return fmt.Errorf("transition %s evidence %s: %w", spec.ID, kind, err)
 			}
-		} else if spec.ID != "TR-001" {
+		} else if !(spec.ID == "TR-001" || (spec.ID == "TR-020" && kind == "req_lock_record")) {
 			if err := validateCurrentEvidence(root, state, kind, ref); err != nil {
 				return fmt.Errorf("transition %s evidence %s: %w", spec.ID, kind, err)
 			}
@@ -325,6 +325,9 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 	}
 	if spec.ID == "TR-001" && request.REQ == nil {
 		return fmt.Errorf("TR-001 requires locked REQ metadata")
+	}
+	if spec.ID == "TR-020" && request.REQ == nil {
+		return fmt.Errorf("TR-020 requires the amended locked REQ metadata")
 	}
 	return nil
 }
@@ -522,6 +525,117 @@ func bindREQ(root string, state map[string]any, request Request, occurredAt time
 		"generation": baseline["generation"],
 	})
 	return nil
+}
+
+// updateBoundREQ swaps the amended baseline into the running cycle: the new
+// locked REQ becomes bound_req with a current-generation documents entry,
+// while the superseded entry stays as locked history (the hook protects
+// every locked req generation — see the hookctx loader). Runs after
+// increment_baseline_generation, which already bumped the generation.
+func updateBoundREQ(root string, state map[string]any, request Request, occurredAt time.Time) error {
+	req := request.REQ
+	if req.ID == "" || req.Path == "" || req.Version == "" || req.SHA256 == "" ||
+		req.ApprovedBy == "" || req.ApprovedAt == "" {
+		return fmt.Errorf("amended REQ metadata is incomplete")
+	}
+	data, err := os.ReadFile(filepath.Join(root, req.Path))
+	if err != nil {
+		return fmt.Errorf("read amended REQ: %w", err)
+	}
+	if SHA256(data) != req.SHA256 {
+		return fmt.Errorf("amended REQ fingerprint mismatch")
+	}
+	status := ParseMarkdownField(string(data), "状态", "Status")
+	if !strings.EqualFold(status, "locked") {
+		return fmt.Errorf("amended REQ %s is not locked (status=%q)", req.ID, status)
+	}
+	bound, _ := state["bound_req"].(map[string]any)
+	if bound == nil {
+		return fmt.Errorf("runtime has no bound REQ to amend")
+	}
+	oldVersion, _ := bound["version"].(string)
+	if !versionStrictlyGreater(req.Version, oldVersion) {
+		return fmt.Errorf("amended REQ version %q must strictly exceed the bound version %q", req.Version, oldVersion)
+	}
+	uiImpact, err := parseUIImpact(string(data))
+	if err != nil {
+		return err
+	}
+	state["bound_req"] = map[string]any{
+		"path":        req.Path,
+		"version":     req.Version,
+		"sha256":      req.SHA256,
+		"id":          req.ID,
+		"status":      "locked",
+		"approved_by": req.ApprovedBy,
+		"approved_at": req.ApprovedAt,
+		"metadata":    map[string]any{"ui_impact": uiImpact},
+	}
+	baseline, ok := state["baseline"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("runtime baseline must be an object")
+	}
+	state["documents"] = appendDocument(state["documents"], map[string]any{
+		"id":         req.ID,
+		"kind":       "req",
+		"path":       req.Path,
+		"version":    req.Version,
+		"sha256":     req.SHA256,
+		"status":     "locked",
+		"generation": integer(baseline["generation"]),
+	})
+	state["authorization"] = map[string]any{
+		"mode":        "binding",
+		"command":     "loop-harness req amend",
+		"actor":       request.Actor,
+		"occurred_at": occurredAt.UTC().Format(time.RFC3339Nano),
+	}
+	return nil
+}
+
+// versionStrictlyGreater compares dotted numeric versions (an optional "v"
+// prefix is tolerated); non-numeric inputs fall back to string ordering.
+func versionStrictlyGreater(a, b string) bool {
+	parse := func(v string) ([]int, bool) {
+		v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+		if v == "" {
+			return nil, false
+		}
+		parts := strings.Split(v, ".")
+		nums := make([]int, 0, len(parts))
+		for _, part := range parts {
+			if part == "" {
+				return nil, false
+			}
+			n := 0
+			for _, r := range part {
+				if r < '0' || r > '9' {
+					return nil, false
+				}
+				n = n*10 + int(r-'0')
+			}
+			nums = append(nums, n)
+		}
+		return nums, true
+	}
+	na, okA := parse(a)
+	nb, okB := parse(b)
+	if !okA || !okB {
+		return a > b
+	}
+	for i := 0; i < len(na) || i < len(nb); i++ {
+		var x, y int
+		if i < len(na) {
+			x = na[i]
+		}
+		if i < len(nb) {
+			y = nb[i]
+		}
+		if x != y {
+			return x > y
+		}
+	}
+	return false
 }
 
 // parseUIImpact reads the `UI impact` field from a locked REQ and returns

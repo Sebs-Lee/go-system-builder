@@ -1,7 +1,9 @@
 package transition_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -213,20 +215,58 @@ func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	// Then reinit with a new locked REQ.
-	err := applyTransition(t, root, "TR-020", 6, map[string]string{
+	// Amend with the same REQ at a strictly higher version: write the file,
+	// then apply TR-020 with its metadata.
+	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	amended := "# REQ-099\n\n> 状态：locked\n> 版本：1.1.0\n> UI impact：none\n"
+	reqPath := filepath.Join(root, "docs", "requirements", "REQ-099.md")
+	if err := os.WriteFile(reqPath, []byte(amended), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shaHex := fmt.Sprintf("%x", sha256.Sum256([]byte(amended)))
+	state := readState(t, root)
+	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
-		"req_lock_record":       "docs/reports/human/req-lock.md",
 	})
+	writeState(t, root, state)
+	next, err := transition.Apply(root,
+		filepath.Join(root, ".claude", "loop-state.json"),
+		filepath.Join(root, ".claude", "loop-events.jsonl"),
+		transition.Request{
+			TransitionID:     "TR-020",
+			ExpectedRevision: 6,
+			Actor:            "orchestrator",
+			Evidence: map[string]string{
+				"human_decision_record": "docs/reports/human/decision.md",
+				"req_lock_record":       "docs/requirements/REQ-099.md@" + shaHex,
+			},
+			REQ: &transition.LockedREQ{
+				ID: "REQ-099", Path: "docs/requirements/REQ-099.md",
+				Version: "1.1.0", SHA256: shaHex,
+				ApprovedBy: "tester", ApprovedAt: "2026-01-02T00:00:00Z",
+			},
+		})
 	if err != nil {
 		t.Fatalf("TR-020 failed: %v", err)
 	}
-	state := readState(t, root)
-	baseline, _ := state["baseline"].(map[string]any)
-	if baseline["generation"] != float64(2) {
+	after := next.State
+	generationInt := func(v any) int {
+		switch n := v.(type) {
+		case float64:
+			return int(n)
+		case int:
+			return n
+		default:
+			return -1
+		}
+	}
+	baseline, _ := after["baseline"].(map[string]any)
+	if generationInt(baseline["generation"]) != 2 {
 		t.Errorf("expected baseline generation 2, got %v", baseline["generation"])
 	}
-	evidence := state["evidence"].([]any)
+	evidence := after["evidence"].([]any)
 	for _, raw := range evidence {
 		entry := raw.(map[string]any)
 		if entry["status"] != "invalid" {
@@ -235,6 +275,28 @@ func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 		if entry["invalidated_by"] != "TR-020" {
 			t.Errorf("expected invalidated_by TR-020, got %v", entry["invalidated_by"])
 		}
+	}
+	// The amended REQ really enters the runtime (v4 P3 completion).
+	bound, _ := after["bound_req"].(map[string]any)
+	if bound["version"] != "1.1.0" || bound["sha256"] != shaHex {
+		t.Errorf("bound_req not swapped to the amended REQ: %+v", bound)
+	}
+	generations := map[int]bool{}
+	for _, raw := range after["documents"].([]any) {
+		doc, _ := raw.(map[string]any)
+		if doc["kind"] == "req" {
+			if doc["status"] != "locked" {
+				t.Errorf("req document entry must stay locked, got %v", doc["status"])
+			}
+			generations[generationInt(doc["generation"])] = true
+		}
+	}
+	if !generations[1] || !generations[2] {
+		t.Errorf("expected locked req documents for both generations, got %v", generations)
+	}
+	// Leaving paused clears the checkpoint (pause-residue fix).
+	if after["pause"] != nil {
+		t.Errorf("pause checkpoint must be cleared when leaving paused, got %v", after["pause"])
 	}
 }
 

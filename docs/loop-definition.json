@@ -1685,6 +1685,7 @@
       ],
       "actions": [
         "increment_baseline_generation",
+        "update_bound_req",
         "invalidate_all_downstream_evidence"
       ],
       "required_evidence": [

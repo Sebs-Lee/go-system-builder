@@ -87,6 +87,7 @@ func InitActionRegistry() {
 	newReg := map[string]ActionFn{
 		"bind_loop_req":             actionBindLoopREQ,
 		"record_loop_authorization": actionRecordLoopAuthorization,
+		"update_bound_req":          actionUpdateBoundREQ,
 		// BUG-PLANNING-SUBSTATE: only set_planning_phase_design remains
 		// from the planning phase-set family. The other six (initialize,
 		// contract_drafting, task_drafting, ui_prototype, rework,
@@ -328,6 +329,16 @@ func actionBindLoopREQ(state map[string]any, ctx *ActionContext) (ActionResult, 
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
 	return ActionResult{Status: "committed", MutationApplied: true, Detail: "locked REQ bound"}, nil
+}
+
+func actionUpdateBoundREQ(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	if ctx.Request == nil || ctx.Request.REQ == nil {
+		return ActionResult{Status: "failed", Detail: "amended REQ request missing"}, fmt.Errorf("update_bound_req: amended REQ request missing")
+	}
+	if err := updateBoundREQ(ctx.Root, state, *ctx.Request, ctx.OccurredAt); err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	return ActionResult{Status: "committed", MutationApplied: true, Detail: "amended REQ swapped into the running cycle"}, nil
 }
 
 func actionEvidenceRecorded(ctx *ActionContext, label string) (ActionResult, error) {

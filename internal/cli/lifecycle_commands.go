@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -337,5 +338,105 @@ func runREQUnbind(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "unbound %s (was %s, revision %d; reason recorded; approved-by %s)\n", boundID, cursorLabel(state, phase), record.Revision, *approvedBy)
 	fmt.Fprintf(stdout, "  archived runtime: %s (disposition=unbound)\n", record.ArchiveDir)
 	fmt.Fprintf(stdout, "next: %s returned to the bindable pool — `req list` to pick the next target\n", boundID)
+	return 0
+}
+
+func runREQAmend(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("req amend", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "req amend")
+	root := flags.String("root", ".", "repository root")
+	reqPath := flags.String("req", "", "amended locked REQ path (version must strictly exceed the bound one)")
+	approvedBy := flags.String("approved-by", "", "human approver identity")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *approvedBy == "" {
+		if identity := detectGitIdentity(*root); identity != "" {
+			fmt.Fprintf(stderr, "req amend requires --approved-by (detected git identity %q; rerun with --approved-by %q)\n", identity, identity)
+		} else {
+			fmt.Fprintln(stderr, "req amend requires --approved-by <human identity>")
+		}
+		return 2
+	}
+	if *reqPath == "" {
+		fmt.Fprintln(stderr, "req amend requires --req <path to the amended locked REQ> — the new baseline generation is a human-approved fact")
+		return 2
+	}
+	snapshot, guidance := lifecycleSnapshot(*root)
+	if guidance != "" {
+		fmt.Fprintln(stderr, "req amend: "+guidance)
+		return 1
+	}
+	state, _ := snapshotLifecycle(snapshot)
+	if state != "paused" {
+		fmt.Fprintf(stderr, "req amend: runtime is %q, not paused — pause it first (`runtime pause`) so the amendment starts from a checkpoint\n", state)
+		return 1
+	}
+	bound, _ := snapshot.State["bound_req"].(map[string]any)
+	boundID, _ := bound["id"].(string)
+	if boundID == "" {
+		fmt.Fprintln(stderr, "req amend: no bound REQ in runtime")
+		return 1
+	}
+	data, err := os.ReadFile(filepath.Join(*root, *reqPath))
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req amend", err))
+		return 1
+	}
+	version := markdownField(string(data), "版本", "Version")
+	status := markdownField(string(data), "状态", "Status")
+	if status != "locked" || version == "" {
+		fmt.Fprintln(stderr, "req amend: amended REQ must declare locked status and version")
+		return 1
+	}
+	id := strings.TrimSuffix(filepath.Base(*reqPath), filepath.Ext(*reqPath))
+	if !strings.HasPrefix(id, "REQ-") {
+		fmt.Fprintln(stderr, "req amend: filename must start with REQ-")
+		return 1
+	}
+	runtimeID, _ := snapshot.State["runtime_id"].(string)
+	evID, _, err := registerDecisionEvidence(*root, snapshot,
+		fmt.Sprintf("hd-amend-r%d", snapshot.Revision+1), "req_amendment_approved", *reqPath, *approvedBy,
+		fmt.Sprintf("runtime_amend:%s@%d", runtimeID, snapshot.Revision+1))
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req amend", err))
+		return 1
+	}
+	now := time.Now().UTC()
+	shaHex := fmt.Sprintf("%x", sha256.Sum256(data))
+	next, err := transition.Apply(*root,
+		filepath.Join(*root, ".claude", "loop-state.json"),
+		filepath.Join(*root, ".claude", "loop-events.jsonl"),
+		transition.Request{
+			TransitionID: "TR-020", ExpectedRevision: snapshot.Revision + 1, Actor: "user",
+			Evidence: map[string]string{
+				"human_decision_record": evID,
+				"req_lock_record":       *reqPath + "@" + shaHex,
+			},
+			REQ: &transition.LockedREQ{
+				ID: id, Path: *reqPath, Version: version, SHA256: shaHex,
+				ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano),
+			},
+			OccurredAt: now,
+		})
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req amend", err))
+		return 1
+	}
+	baseline, _ := next.State["baseline"].(map[string]any)
+	invalid := 0
+	if items, ok := next.State["evidence"].([]any); ok {
+		for _, raw := range items {
+			item, _ := raw.(map[string]any)
+			if item != nil && item["status"] == "invalid" {
+				invalid++
+			}
+		}
+	}
+	fmt.Fprintf(stdout, "amended: bound %s → %s %s (baseline generation %d)\n", boundID, id, version, tolerantInt(baseline["generation"]))
+	fmt.Fprintf(stdout, "  downstream evidence invalidated: %d item(s); old REQ stays locked (history)\n", invalid)
+	fmt.Fprintf(stdout, "  superseded REQ file: move it to docs/requirements/versions/%s/ for the record (procedural; hook keeps protecting it)\n", boundID)
+	fmt.Fprintln(stdout, "next: resume the loop (runtime resume) to continue from planning.design")
 	return 0
 }
