@@ -28,14 +28,14 @@
 
 | 动词 | 机制 | 真度 | 缺口 |
 |:--|:--|:--|:--|
-| 进入 | TR-001 + `req bind`（如 §2） | ✅ 全通 | 4 桩 guard、record_loop_authorization 记账桩；bind UX 六项整改待做（自动发现/自动 init/preflight/人话输出/身份提示/投影带命令） |
+| 进入 | TR-001 + `req bind`（如 §2） | ✅ 全通 | ~~bind UX 六项待做~~ → **P0 已落地（2026-08-15）**：自动发现（接归档排除+终态排除）/ 自动 init / 人话输出（--json 保留）/ 身份提示（git identity 检测，attest 保持显式）/ 投影带完整命令行；`req list` 三色清单上线 |
 | 暂停 | GTR-001~005 + `capture_pause_checkpoint`（**真**，actions.go:248-292：单次捕获不变式、富快照含指纹/generation/round/idempotency keys） | ◐ | GTR-001/002/003/005 **零触发器**（只能手拼 `runtime transition` + 两段 evidence）；GTR-004 桥（adapter/dispatch.go:38-57）无生产调用方；无 `runtime pause` 封装 |
 | 恢复 | TR-019 哨兵 `RESUME_FROM_PAUSE` 解析（EG:93-103）+ 指纹漂移拒绝 | ✅ 结构错位 | `baselines_unchanged` guard 是桩（guards.go:145），真校验在 action 层 restoreFromPauseAction（EG:726-758，逐文件重哈希 checkpoint 指纹）；无 `runtime resume` 封装 |
 | 修订 | TR-020：`increment_baseline_generation` + 证据全作废（**真**） | ◐ **半缺** | `updated_req_locked` 纯桩；**新 REQ 不入 runtime**（bound_req/documents 均不更新，`--req` 参数被静默忽略）；pause 残留；旧 REQ 因 generation 过滤从 LockedArtifacts 消失（hook 失锁）；versions 目录零代码实现 |
 | 退出 unbind | **无机制**（全仓字面为零；唯一等价路径是 GTR-001 暂停→TR-021 两步） | ✖ | 设计态 `req unbind`（§3）；两步等价路径的成本/语义问题见 §3 否决理由 |
 | 退出 abort | TR-021（paused→aborted）/ TR-030（S11 人闸） | ◐ | TR-030 有封装+好测试；TR-021 guard/action 双桩、pause 残留、无行为测试 |
 | 正常结束 | TR-025 + rollover（审批四要素强校验 store.go:2187-2202 + 崩溃安全归档） | ✅ 样板 | REQ archived 落章待做（设计态：rollover 改状态行+双指纹 journal） |
-| 重新绑定 | rollover→再 bind（等价路径） | ✖ 作为机制零覆盖 | runtime-archive 归档件**零消费者**（全库唯一读是 rollover 自身恢复）；无 bindable 计算、无同 REQ 重绑护栏 |
+| 重新绑定 | rollover→再 bind（等价路径） | ◐ P0 后 | runtime-archive 归档件**已有消费者**：`req list`/自动发现按"locked − 当前绑定 − 终态归档引用"计算候选（unbound 归档不排除——P2 语义，暂无 unbound 归档形态）；同 REQ 终态重绑仍无护栏（显式 --req 可绑，如实记录待观测） |
 
 ### 2.2 CLI 策略与命令矩阵（v4.1.0 设计态）
 
@@ -135,3 +135,4 @@
 | 2026-08-15 | v4.1.0 | 新增 §2.2 CLI 策略与命令矩阵：五原则（人话化双形态/机器代办可派生参数/拒绝即指路/一动词一命令/输出与 journal 可互证）+ 命令矩阵（/goal、req bind/list/unbind、runtime pause/resume 封装）+ 调用纪律（主会话不主动敲人闸命令）+ 四实施批次 P0-P3 | owner 指示：明确 CLI 工具的运用策略与做法 |
 | 2026-08-15 | v4.2.0 | **撤回 /goal 提案**（v4.0.0 引入、经 Claude Code 机制查证后自我修正）：内置 /goal 是持续工作驱动器（evaluator 逐轮判定+推荐 Auto 权限模式），语义与人在场单点授权相反；口头授权三层结构替代（手势在对话/确认在 Claude Code 工具权限提示/记录在 journal），零新增机制；docs/README 原否决维持成立、理由升级。§2.2/§3/§4/§6.3 及 P2 批次同步 | owner 指示：调查 /goal 复杂度收益比，查证 Claude Code 机制，对比口头告知方案 |
 | 2026-08-15 | v4.2.1 | **多轮后自审修正七项**：F1 未终批参数不再以"裁决"口吻入档（L2 裁决段补终批状态，§2.2 增"实施前待 owner 终批"四点）；F2 §2.1 补"退出 unbind"行（零覆盖漏行）；F3 §6.3 三 bug 口径与 §5/§2.2 对齐（"新 REQ 入 runtime"是 P3 功能非 bug）；F4 L2 mermaid 全角冒号修正；F5 §5 补 v4 生命周期期望效果；F6 P0 批次补 protocol #s1 联动；F7 L2 显式声明文件 archived 是可读性镜像、bindable 判定权威是归档扫描 | owner 指示：多轮对话可能偏离，重梳逻辑自审 |
+| 2026-08-15 | v4.3.0 | **P0 落地**：`req bind` 六项 UX 改造（自动发现/自动 init 复用 writeInactiveRuntime/人话确认输出+`--json`/git 身份提示）+ `req list` 命令（bindable 计算：locked − 当前绑定 − 终态归档引用，unbound 不排除）+ S0 投影带完整命令行（projectNext inactive 分支）+ protocol #s1 三步收敛为一步（actions 重写，输出即核对）。新增 7 个 UX 测试（req_bind_ux_test.go）；§2.1 进入/重新绑定两行真度更新 | owner 终批四点按工程建议执行 |

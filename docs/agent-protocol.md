@@ -188,9 +188,8 @@ These hold across every stage:
 - **inputs**: locked REQ, healthy Loop Definition / Hook Policy / Runtime schema, inactive Runtime with no other bound REQ.
 - **inputs_from**: [S0 (human-locked REQ + lock record + SHA-256)]
 - **actions**:
-  1. run `loop-harness doctor --root .` and `loop-harness validate --all --root .`
-  2. run `loop-harness req bind --req <path> --approved-by <human identity>`
-  3. verify the Runtime shows Main Spine `S1`, machine `planning/design`, baseline generation 1, and the bound REQ fingerprint
+  1. run `loop-harness req bind --approved-by <human identity>` — it auto-initializes a missing runtime, self-preflights, and discovers the sole bindable REQ when `--req` is omitted (`req list` shows the candidate pool; multiple candidates require an explicit `--req`). The human may equivalently tell the main session to bind, which then executes the command on their behalf — the consent gesture is the human's explicit instruction, the execution confirmation is the tool-permission prompt, the durable record is the journal.
+  2. read the confirmation output (bound id/version/sha256, cursor, baseline generation, journal event) — the output is the verification; no manual state inspection is needed. `doctor` remains available for deep health checks but is not a binding prerequisite.
 - **done_when**:
   - Runtime `bound_req.path` matches the locked REQ file
   - SHA-256 in Runtime matches the file on disk

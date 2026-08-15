@@ -175,22 +175,69 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func runREQ(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "bind" {
-		fmt.Fprintln(stderr, "req requires <bind>")
+	if len(args) == 0 || (args[0] != "bind" && args[0] != "list") {
+		fmt.Fprintln(stderr, "req requires <bind|list>")
 		return 2
+	}
+	if args[0] == "list" {
+		return runREQList(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("req bind", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	bindUsage(flags, "req bind")
 	root := flags.String("root", ".", "repository root")
-	reqPath := flags.String("req", "", "locked REQ path")
+	reqPath := flags.String("req", "", "locked REQ path (default: auto-discover the sole bindable REQ)")
 	approvedBy := flags.String("approved-by", "", "human approver identity")
+	asJSON := flags.Bool("json", false, "machine-readable state output")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if *reqPath == "" || *approvedBy == "" {
-		fmt.Fprintln(stderr, "req bind requires --req and --approved-by")
+	if *approvedBy == "" {
+		if identity := detectGitIdentity(*root); identity != "" {
+			fmt.Fprintf(stderr, "req bind requires --approved-by (detected git identity %q; rerun with --approved-by %q)\n", identity, identity)
+		} else {
+			fmt.Fprintln(stderr, "req bind requires --approved-by <human identity>")
+		}
 		return 2
+	}
+	// Info lines go to stderr in --json mode so stdout stays a single valid
+	// JSON document for scripts.
+	infoW := io.Writer(stdout)
+	if *asJSON {
+		infoW = stderr
+	}
+	// Auto-init: a missing runtime is not an error state to route around —
+	// binding is the first mutating command a human runs on a fresh project.
+	if _, err := os.Stat(filepath.Join(*root, ".claude", "loop-state.json")); os.IsNotExist(err) {
+		if err := writeInactiveRuntime(*root); err != nil {
+			fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("auto-init runtime: %w", err)))
+			return 1
+		}
+		fmt.Fprintln(infoW, "initialized fresh runtime at .claude/loop-state.json")
+	} else if err != nil {
+		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("inspect runtime: %w", err)))
+		return 1
+	}
+	if *reqPath == "" {
+		candidates := bindableOnly(*root)
+		switch len(candidates) {
+		case 1:
+			*reqPath = candidates[0].Path
+			fmt.Fprintf(infoW, "discovered sole bindable REQ: %s\n", *reqPath)
+		case 0:
+			for _, s := range classifyRequirements(*root) {
+				fmt.Fprintf(stderr, "  %-11s %-8s %s\n", s.ID, s.Status, s.Note)
+			}
+			fmt.Fprintln(stderr, "req bind: no bindable REQ (status must be locked and lifecycle open); lock one in S0 first, see `req list`")
+			return 1
+		default:
+			fmt.Fprintln(stderr, "req bind: multiple bindable REQs — uniqueness is a human decision:")
+			for _, s := range candidates {
+				fmt.Fprintf(stderr, "  %s\n", s.Path)
+			}
+			fmt.Fprintln(stderr, "rerun with --req <path>")
+			return 2
+		}
 	}
 	data, err := os.ReadFile(filepath.Join(*root, *reqPath))
 	if err != nil {
@@ -228,7 +275,48 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
 		return 1
 	}
-	return encodeJSON(stdout, next.State)
+	if *asJSON {
+		return encodeJSON(stdout, next.State)
+	}
+	printBindConfirmation(stdout, next.State)
+	return 0
+}
+
+func runREQList(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("req list", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "req list")
+	root := flags.String("root", ".", "repository root")
+	asJSON := flags.Bool("json", false, "machine-readable output")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	summaries := classifyRequirements(*root)
+	if *asJSON {
+		return encodeJSON(stdout, summaries)
+	}
+	if len(summaries) == 0 {
+		fmt.Fprintln(stdout, "no REQ files under docs/requirements/ (draft one in S0 from the REQ template)")
+		return 0
+	}
+	fmt.Fprintf(stdout, "%-12s %-9s %-10s %s\n", "REQ", "STATUS", "VERSION", "NOTE")
+	bindable := 0
+	for _, s := range summaries {
+		mark := " "
+		if s.Bindable {
+			mark = "*"
+			bindable++
+		}
+		fmt.Fprintf(stdout, "%s %-11s %-9s %-10s %s\n", mark, s.ID, s.Status, s.Version, s.Note)
+	}
+	switch {
+	case bindable == 1:
+		fmt.Fprintln(stdout, "\nready to bind:")
+		fmt.Fprintf(stdout, "  %s\n", soleBindableCommand(*root))
+	case bindable > 1:
+		fmt.Fprintln(stdout, "\nmultiple bindable REQs: uniqueness is a human decision; rerun req bind with --req <path>")
+	}
+	return 0
 }
 
 func markdownField(content string, names ...string) string {
@@ -317,7 +405,11 @@ func projectNext(state, phase, root string) (string, string, string) {
 	cursor, _ := runtime.StageFor(state, phase, root)
 	switch state {
 	case "inactive":
-		return "S0", "loop-orchestration", "bind one human-locked REQ"
+		action := "bind one human-locked REQ"
+		if cmd := soleBindableCommand(root); cmd != "" {
+			action = "bind the human-locked REQ: " + cmd + " (or tell the main session to bind it for you)"
+		}
+		return "S0", "loop-orchestration", action
 	case "planning":
 		return cursor, "specification-planning", "complete the planning phase for " + phase
 	case "document_verification":
