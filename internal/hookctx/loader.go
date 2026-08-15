@@ -273,7 +273,10 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			if doc.Status != "locked" && doc.Status != "active" {
 				continue
 			}
-			if doc.Generation != loaded.BaselineGeneration {
+			// REQ baselines are immutable history: every locked generation
+			// stays write-protected, not only the current baseline's entry
+			// (after an amend the superseded REQ must remain locked).
+			if doc.Kind != "req" && doc.Generation != loaded.BaselineGeneration {
 				continue
 			}
 			if doc.ID == "" || doc.Kind == "" || doc.Path == "" ||
@@ -761,23 +764,24 @@ func optionalString(p *string) string {
 }
 
 // reqIDFromRuntime reads the runtime and returns the bound REQ id, used
-// only as a display hint in fallback assignment rows. Returns "REQ-039"
-// on any read failure so the synthesis path is fail-loud, not fail-silent.
+// only as a display hint in fallback assignment rows. Returns "UNBOUND"
+// when the runtime is unreadable or nothing is bound — a label, never a
+// plausible foreign REQ id.
 func reqIDFromRuntime(root string) string {
 	snapshot, err := runtime.NewStore(
 		filepath.Join(root, ".claude", "loop-state.json"),
 		filepath.Join(root, ".claude", "loop-events.jsonl"),
 	).Snapshot()
 	if err != nil {
-		return "REQ-039"
+		return "UNBOUND"
 	}
 	bound, ok := snapshot.State["bound_req"].(map[string]any)
 	if !ok {
-		return "REQ-039"
+		return "UNBOUND"
 	}
 	id, _ := bound["id"].(string)
 	if id == "" {
-		return "REQ-039"
+		return "UNBOUND"
 	}
 	return id
 }

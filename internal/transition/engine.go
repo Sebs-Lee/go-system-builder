@@ -235,6 +235,15 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 					return err
 				}
 			}
+
+			// A pause checkpoint is only meaningful while paused. After all
+			// actions ran (TR-019's restore reads the checkpoint), any
+			// transition out of `paused` (TR-019 restore, TR-020 amend,
+			// TR-021 abort) must drop it, or the next pause would be
+			// rejected as an overwrite.
+			if lifecycle["state"] != "paused" {
+				state["pause"] = nil
+			}
 			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			return nil
 		},

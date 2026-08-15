@@ -191,7 +191,9 @@ func TestLoadFullLockedArtifactsFiresExistingPolicyDecision(t *testing.T) {
 // TestLoadFullLockedArtifactsSkipsWrongGenerationOrMissingFields
 // ensures the loader does NOT fabricate block decisions when the
 // documents entry is incomplete or belongs to a different baseline
-// generation (BUG-039-04 §4.2).
+// generation (BUG-039-04 §4.2). REQ baselines are the exception: every
+// locked REQ generation stays write-protected, including superseded ones
+// (L3-S1 amend keeps the old REQ locked).
 func TestLoadFullLockedArtifactsSkipsWrongGenerationOrMissingFields(t *testing.T) {
 	root := t.TempDir()
 	state := `{
@@ -200,9 +202,9 @@ func TestLoadFullLockedArtifactsSkipsWrongGenerationOrMissingFields(t *testing.T
 		"baseline":{"generation":2},
 		"documents":[
 			{
-				"id":"OLD-REQ",
-				"kind":"req",
-				"path":"docs/requirements/OLD.md",
+				"id":"OLD-CONTRACT",
+				"kind":"contract",
+				"path":"docs/contracts/OLD.md",
 				"version":"v1.0.0",
 				"sha256":"0000000000000000000000000000000000000000000000000000000000000000",
 				"status":"locked",
@@ -224,7 +226,42 @@ func TestLoadFullLockedArtifactsSkipsWrongGenerationOrMissingFields(t *testing.T
 		t.Fatalf("load full: %v", err)
 	}
 	if len(loaded.PolicyContext.LockedArtifacts) != 0 {
-		t.Fatalf("expected 0 LockedArtifacts (g1 row + incomplete row must both be skipped), got %+v", loaded.PolicyContext.LockedArtifacts)
+		t.Fatalf("expected 0 LockedArtifacts (g1 contract row + incomplete row must both be skipped), got %+v", loaded.PolicyContext.LockedArtifacts)
+	}
+}
+
+// TestLoadFullKeepsSupersededReQLockedAcrossGenerations pins the REQ
+// exception: a locked req document from an older baseline generation
+// remains a locked artifact after an amend bumps the baseline.
+func TestLoadFullKeepsSupersededReQLockedAcrossGenerations(t *testing.T) {
+	root := t.TempDir()
+	state := `{
+		"runtime_id":"loop-REQ-039",
+		"revision":33,
+		"baseline":{"generation":2},
+		"documents":[
+			{
+				"id":"REQ-039",
+				"kind":"req",
+				"path":"docs/requirements/REQ-039.md",
+				"version":"v1.0.0",
+				"sha256":"0000000000000000000000000000000000000000000000000000000000000000",
+				"status":"locked",
+				"generation":1
+			}
+		]
+	}`
+	writeJSONL(t, filepath.Join(root, ".claude", "loop-state.json"), state)
+
+	loaded, err := hookctx.LoadFull(root, "")
+	if err != nil {
+		t.Fatalf("load full: %v", err)
+	}
+	if len(loaded.PolicyContext.LockedArtifacts) != 1 {
+		t.Fatalf("expected the superseded REQ to stay locked, got %+v", loaded.PolicyContext.LockedArtifacts)
+	}
+	if got := loaded.PolicyContext.LockedArtifacts[0].ID; got != "REQ-039" {
+		t.Fatalf("locked artifact id = %q, want REQ-039", got)
 	}
 }
 

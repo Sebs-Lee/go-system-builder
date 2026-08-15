@@ -271,7 +271,7 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 			if artifact.complete() &&
 				samePath(path, artifact.Path) {
 				recovery := []string{"create a new version through the formal rework path"}
-				if input.Runtime.BoundREQID != "" && artifact.Kind != "requirement" {
+				if input.Runtime.BoundREQID != "" && artifact.Kind != "req" {
 					recovery = []string{ReworkPath(
 						artifact.Kind,
 						input.Runtime.BoundREQID,
@@ -287,7 +287,7 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 					Stage:          input.Runtime.CurrentStage,
 					Recovery:       recovery,
 					Retry:          "after_rework",
-					HumanRequired:  artifact.Kind == "requirement",
+					HumanRequired:  artifact.Kind == "req",
 					MatchedRuleIDs: []string{RuleLockedArtifactWrite},
 				}, true
 			}

@@ -109,10 +109,11 @@ func GuardNames() []string {
 func InitGuardRegistry() {
 	newFns := map[string]GuardFn{
 		// Top-level / planning / verification / bug guards.
-		"req_exists":                 evidenceBackedGuard("req_exists"),
-		"req_locked":                 evidenceBackedGuard("req_locked"),
-		"req_questions_non_blocking": evidenceBackedGuard("req_questions_non_blocking"),
-		"pm_context_matches_req":     evidenceBackedGuard("pm_context_matches_req"),
+		// TR-001's former stub guards (req_exists / req_locked /
+		// req_questions_non_blocking / pm_context_matches_req) were removed:
+		// their semantics live in the bind CLI/engine prechecks and the
+		// human lock itself (L3-S1 v4.x); only the cross-entity check is a
+		// real transition guard.
 		"no_other_active_loop":       evidenceBackedGuard("no_other_active_loop"),
 		// BUG-PLANNING-SUBSTATE: planning_phase_ready / contracts_reviewed /
 		// candidate_tasks_complete are replaced by the single direct-check guard below.

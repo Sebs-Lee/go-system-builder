@@ -137,7 +137,10 @@
           "id": "PTR-PLAN-01",
           "from": "design",
           "selector": "SEL-PLANNING-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "planning_design_complete",
           "to": "contracts",
           "actors": [
@@ -162,7 +165,10 @@
           "id": "PTR-PLAN-02",
           "from": "contracts",
           "selector": "SEL-PLANNING-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "planning_contracts_complete",
           "to": "tasks",
           "actors": [
@@ -226,7 +232,10 @@
           "id": "PTR-VERIFY-01",
           "from": "delivery",
           "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "delivery_pass",
           "to": "qa",
           "actors": [
@@ -259,7 +268,10 @@
           "id": "PTR-VERIFY-02",
           "from": "qa",
           "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "qa_pass",
           "to": "e2e_browser",
           "actors": [
@@ -292,7 +304,10 @@
           "id": "PTR-VERIFY-03",
           "from": "e2e_browser",
           "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "e2e_browser_pass",
           "to": "clean_round_evaluation",
           "actors": [
@@ -325,7 +340,10 @@
           "id": "PTR-VERIFY-04",
           "from": "clean_round_evaluation",
           "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "clean_round_valid",
           "to": "clean_round_passed",
           "actors": [
@@ -359,7 +377,10 @@
           "id": "PTR-VERIFY-05",
           "from": "clean_round_evaluation",
           "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "clean_round_incomplete",
           "to": "delivery",
           "actors": [
@@ -432,7 +453,10 @@
           "id": "PTR-BUG-01",
           "from": "investigation",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "bug_drafts_ready",
           "to": "bug_report_review",
           "actors": [
@@ -464,7 +488,10 @@
           "id": "PTR-BUG-02",
           "from": "bug_report_review",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "canonical_bugs_accepted",
           "to": "repair_readback",
           "actors": [
@@ -496,7 +523,10 @@
           "id": "PTR-BUG-03",
           "from": "bug_report_review",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "bug_reports_rejected",
           "to": "investigation",
           "actors": [
@@ -525,7 +555,10 @@
           "id": "PTR-BUG-04",
           "from": "repair_readback",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "repair_builders_activated",
           "to": "fixing",
           "actors": [
@@ -557,7 +590,10 @@
           "id": "PTR-BUG-05",
           "from": "fixing",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "repair_batch_reported",
           "to": "targeted_reverification",
           "actors": [
@@ -590,7 +626,10 @@
           "id": "PTR-BUG-06",
           "from": "targeted_reverification",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "targeted_reverification_pass",
           "to": "ready_for_full_review",
           "actors": [
@@ -621,7 +660,10 @@
           "id": "PTR-BUG-07",
           "from": "targeted_reverification",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "targeted_reverification_fail",
           "to": "investigation",
           "actors": [
@@ -958,18 +1000,17 @@
     {
       "id": "TR-001",
       "from": "inactive",
-      "automation": {"eligible": false, "human_boundary": true},
-      "event": "loop_requested",
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
+      "event": "req_bound",
       "to": "planning",
       "actors": [
         "user",
         "orchestrator"
       ],
       "guards": [
-        "req_exists",
-        "req_locked",
-        "req_questions_non_blocking",
-        "pm_context_matches_req",
         "no_other_active_loop"
       ],
       "actions": [
@@ -988,7 +1029,10 @@
       "from": "planning",
       "from_phase": "tasks",
       "selector": "SEL-PLANNING-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "planning_ready",
       "to": "document_verification",
       "actors": [
@@ -1015,7 +1059,10 @@
       "id": "TR-003",
       "from": "document_verification",
       "selector": "SEL-DOCUMENT-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "document_pass",
       "to": "building",
       "actors": [
@@ -1051,7 +1098,10 @@
       "id": "TR-004",
       "from": "document_verification",
       "selector": "SEL-DOCUMENT-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "document_fix_required",
       "to": "planning",
       "actors": [
@@ -1082,7 +1132,10 @@
     {
       "id": "TR-005",
       "from": "document_verification",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "document_req_change_required",
       "to": "paused",
       "actors": [
@@ -1105,7 +1158,10 @@
       "id": "TR-006",
       "from": "building",
       "selector": "SEL-BUILDING-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "builder_batch_reported",
       "to": "verification",
       "actors": [
@@ -1143,7 +1199,10 @@
       "id": "TR-007",
       "from": "building",
       "selector": "SEL-BUILDING-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "execution_spec_change_required",
       "to": "planning",
       "actors": [
@@ -1177,7 +1236,10 @@
       "id": "TR-008",
       "from": "verification",
       "selector": "SEL-VERIFICATION-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "blocking_findings_reported",
       "to": "bug_resolution",
       "actors": [
@@ -1213,7 +1275,10 @@
       "from": "verification",
       "from_phase": "clean_round_passed",
       "selector": "SEL-VERIFICATION-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "clean_round_passed",
       "to": "acceptance",
       "actors": [
@@ -1247,7 +1312,10 @@
       "id": "TR-010",
       "from": "verification",
       "selector": "SEL-VERIFICATION-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "verification_req_change_required",
       "to": "paused",
       "actors": [
@@ -1280,7 +1348,10 @@
       "id": "TR-011",
       "from": "verification",
       "selector": "SEL-VERIFICATION-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "verification_release_blocked",
       "to": "paused",
       "actors": [
@@ -1312,7 +1383,10 @@
       "from": "bug_resolution",
       "from_phase": "ready_for_full_review",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "targeted_reverification_completed",
       "to": "verification",
       "actors": [
@@ -1349,7 +1423,10 @@
       "id": "TR-013",
       "from": "bug_resolution",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "repair_spec_change_required",
       "to": "planning",
       "actors": [
@@ -1384,7 +1461,10 @@
       "id": "TR-014",
       "from": "bug_resolution",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "repair_req_change_required",
       "to": "paused",
       "actors": [
@@ -1420,7 +1500,10 @@
       "id": "TR-015",
       "from": "acceptance",
       "selector": "SEL-ACCEPTANCE-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "acceptance_completed",
       "to": "release_audit",
       "actors": [
@@ -1453,7 +1536,10 @@
       "id": "TR-016",
       "from": "acceptance",
       "selector": "SEL-ACCEPTANCE-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "acceptance_review_required",
       "to": "verification",
       "actors": [
@@ -1485,7 +1571,10 @@
       "id": "TR-017",
       "from": "release_audit",
       "selector": "SEL-RELEASE-AUDIT-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "release_audit_approved",
       "to": "awaiting_human_release",
       "actors": [
@@ -1520,7 +1609,10 @@
       "id": "TR-018",
       "from": "release_audit",
       "selector": "SEL-RELEASE-AUDIT-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "release_audit_blocked",
       "to": "paused",
       "actors": [
@@ -1551,7 +1643,10 @@
     {
       "id": "TR-019",
       "from": "paused",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_resume_approved",
       "to": "RESUME_FROM_PAUSE",
       "actors": [
@@ -1575,7 +1670,10 @@
     {
       "id": "TR-020",
       "from": "paused",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "req_baseline_updated",
       "to": "planning",
       "actors": [
@@ -1599,7 +1697,10 @@
     {
       "id": "TR-021",
       "from": "paused",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_abort_approved",
       "to": "aborted",
       "actors": [
@@ -1622,7 +1723,10 @@
       "id": "TR-022",
       "from": "bug_resolution",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "findings_resolved_without_repair",
       "to": "verification",
       "actors": [
@@ -1655,7 +1759,10 @@
       "id": "TR-023",
       "from": "bug_resolution",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "finding_spec_change_required",
       "to": "planning",
       "actors": [
@@ -1687,7 +1794,10 @@
       "id": "TR-024",
       "from": "bug_resolution",
       "selector": "SEL-BUG-OUTCOME",
-      "automation": {"eligible": true, "human_boundary": false},
+      "automation": {
+        "eligible": true,
+        "human_boundary": false
+      },
       "event": "finding_req_change_required",
       "to": "paused",
       "actors": [
@@ -1716,78 +1826,145 @@
     {
       "id": "TR-025",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_approved",
       "to": "release_authorized",
-      "actors": ["user", "orchestrator"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
       "guards": [],
-      "actions": ["record_human_release_decision"],
-      "required_evidence": ["human_decision_record"],
+      "actions": [
+        "record_human_release_decision"
+      ],
+      "required_evidence": [
+        "human_decision_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Record human release authorization without performing merge, publication, deployment, or formal release."
     },
     {
       "id": "TR-026",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_deferred",
       "to": "paused",
-      "actors": ["user", "orchestrator"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
       "guards": [],
-      "actions": ["capture_pause_checkpoint", "record_human_release_decision"],
-      "required_evidence": ["human_decision_record", "pause_record"],
+      "actions": [
+        "capture_pause_checkpoint",
+        "record_human_release_decision"
+      ],
+      "required_evidence": [
+        "human_decision_record",
+        "pause_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Defer the release decision and capture the S11 checkpoint before entering paused."
     },
     {
       "id": "TR-027",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_rejected_defect",
       "to": "bug_resolution",
-      "actors": ["user", "orchestrator"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
       "guards": [],
-      "actions": ["record_human_release_decision"],
-      "required_evidence": ["human_decision_record", "finding_record"],
+      "actions": [
+        "record_human_release_decision"
+      ],
+      "required_evidence": [
+        "human_decision_record",
+        "finding_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Route a human defect rejection to bug-resolution investigation with its finding evidence."
     },
     {
       "id": "TR-028",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_rejected_acceptance",
       "to": "acceptance",
-      "actors": ["user", "orchestrator"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
       "guards": [],
-      "actions": ["record_human_release_decision", "invalidate_human_release_acceptance_evidence"],
-      "required_evidence": ["human_decision_record"],
+      "actions": [
+        "record_human_release_decision",
+        "invalidate_human_release_acceptance_evidence"
+      ],
+      "required_evidence": [
+        "human_decision_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Re-enter acceptance and invalidate only prior acceptance and release-audit evidence."
     },
     {
       "id": "TR-029",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_rejected_release_audit",
       "to": "release_audit",
-      "actors": ["user", "orchestrator"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
       "guards": [],
-      "actions": ["record_human_release_decision", "invalidate_human_release_release_audit_evidence"],
-      "required_evidence": ["human_decision_record"],
+      "actions": [
+        "record_human_release_decision",
+        "invalidate_human_release_release_audit_evidence"
+      ],
+      "required_evidence": [
+        "human_decision_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Re-enter release audit and invalidate only prior release-audit evidence."
     },
     {
       "id": "TR-030",
       "from": "awaiting_human_release",
-      "automation": {"eligible": false, "human_boundary": true},
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
       "event": "human_release_aborted",
       "to": "aborted",
-      "actors": ["user", "orchestrator"],
-      "guards": ["human_abort_approved"],
-      "actions": ["record_human_release_decision"],
-      "required_evidence": ["human_decision_record"],
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
+      "guards": [
+        "human_abort_approved"
+      ],
+      "actions": [
+        "record_human_release_decision"
+      ],
+      "required_evidence": [
+        "human_decision_record"
+      ],
       "on_guard_failure": "reject",
       "description": "Record a human release abort without performing any release side effect."
     }

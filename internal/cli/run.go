@@ -266,10 +266,14 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	now := time.Now().UTC()
+	shaHex := fmt.Sprintf("%x", sha256.Sum256(data))
 	next, err := transition.Apply(*root, statePath, journalPath, transition.Request{
 		TransitionID: "TR-001", ExpectedRevision: snapshot.Revision, Actor: "user",
-		Evidence: map[string]string{"req_lock_record": id + "#lock", "loop_authorization_record": "binding:" + id},
-		REQ:      &transition.LockedREQ{ID: id, Path: *reqPath, Version: version, SHA256: fmt.Sprintf("%x", sha256.Sum256(data)), ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
+		Evidence: map[string]string{
+			"req_lock_record":           *reqPath + "@" + shaHex,
+			"loop_authorization_record": "approved-by:" + *approvedBy,
+		},
+		REQ:      &transition.LockedREQ{ID: id, Path: *reqPath, Version: version, SHA256: shaHex, ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
@@ -858,7 +862,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|transition|change|evidence|register-workgroup|agent-event|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -868,6 +872,10 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		return runRuntimeRollover(args[1:], stdout, stderr)
 	case "human-decision":
 		return runRuntimeHumanDecision(args[1:], stdout, stderr)
+	case "pause":
+		return runRuntimePause(args[1:], stdout, stderr)
+	case "resume":
+		return runRuntimeResume(args[1:], stdout, stderr)
 	case "reconcile":
 		flags := flag.NewFlagSet("runtime reconcile", flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -1646,10 +1654,9 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Runtime.RuntimeID == "" {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
-			if request.Facts == nil {
-				request.Facts = make(map[string]bool)
-			}
-			request.Facts["runtime_integrity_failure"] = true
+			// Unreadable runtime fails closed through the policy checks that
+			// require runtime facts; no integrity fact is fabricated here.
+			_ = context
 		} else {
 			request.Runtime = context
 		}
