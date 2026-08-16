@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.1（v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.2（实施完成：机制 8/8+声明全落地；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -34,7 +34,7 @@
 
 | # | 断点 | 形态 | 处置归属 |
 |:--|:--|:--|:--|
-| 3 | spec 绑定：`--require-specs` 校验扎实（fail-closed TS 解析、case_id+全部 PATH token 须在同一 Playwright 回调体）但自愿触发 | 机械·非强制 | **本轮左移**（进 doctor） |
+| 3 | spec 绑定：`--require-specs` 校验扎实（fail-closed TS 解析、case_id+全部 PATH token 须在同一 Playwright 回调体）但自愿触发 | ~~机械·非强制~~ → **已左移**（v4.0.2 AutoSpecs：spec 树存在即 doctor/validate 强制，缺失不罚——S6+ 工件时序） |
 | 4 | 契约引用：CONTRACTS/BE/FE/SYNC/REQ §F/TASK §3.1 的 BR→CASE→S→F→PATH→Spec 链手抄无校验 | 手抄 | S3 轮（token 对账 cases.json，已记入 L3-S3 整改方向） |
 | 6 | 执行分派：e2e-tester 按协议读 cases.json 为"唯一清单"，runtime 无结构化 CASE 执行集 | 纯文本承诺 | REQ-040 FR-002 |
 | 7 | 验证计数：三 gate 只查一条 e2e_review pass 字符串；clean round 按职责 | 机械·分母错位 | REQ-040 FR-004（CASE_ID 粒度） |
@@ -113,14 +113,16 @@
 ### 6.3 整改方向（v4.0.1 联合审查全景，14 项）
 
 **机制项（8）**：
-1. `ui_impact_resolved` 挂 PTR-PLAN-01（P0 wiring）；
-2. `--require-specs` 进 doctor（P0 wiring，断点 3 左移）；
-3. 删 populateUIPrototypeFact（含调用点+钉死测试）；
-4. **AC↔CASE 桥（两段）**：AC→FR→BR 源头检查挂汇聚①后；全链检查在收口 validate——每条 AC 至少一 CASE 或**背书的 N/A**（类别+指针，清单进 ADR 拍板包；承载 D6"沉默不是不适用"）；
-5. case_id 格式升 schema pattern（`CASE-XXX-YYY` 从模板约定升为引擎约束；具体 pattern 待终批）；
-6. **skill 重构（两件）**：①specification-planning 重排为双轨汇聚顺序——渐进披露触发条件以修订后 §6.2 为契约（轨归属×时机×载哪个子 skill）；边界限定：其 step 6-9 属 S3/S4 的部分不动；"人闸只一个（ADR）"落地时须同步收敛其现有 5 条 Stop Conditions 中的 UI 包评审人触点（存废显式化）。②scenario-model-design 的 Workflow 顺序同步修正（现 step 7 才 reconcile stories——与双轨矛盾）；
-7. **交叉格清单载体**（v4.0.1 新增，F7 处置）：汇聚①产物为模块包内手写清单（fact×FR×story 格→branch id 或无分支理由），validate 轻校验引用存在——把"三方交叉找全量"从叙述变成填空（承载 D4）；
-8. **深度自审**（v4.0.1 新增，F8 处置）：收口前换实现者/e2e-tester/维护者三身份攻击产物（重点：每条负向 oracle 能否区分对错实现），结论入 ADR 包——REQ-040 matcher 空窗期的语义逼深（承载 D6+公理二）。
+1. ~~`ui_impact_resolved` 挂 PTR-PLAN-01~~ **已挂**（v4.0.2，E2E 钉死 unknown 拦截）；
+2. ~~`--require-specs` 进 doctor~~ **已进**（AutoSpecs 语义，E2E 钉死两态）；
+3. ~~删 populateUIPrototypeFact~~ **已删**（含调用点；completeness 测试改打真实门函数）；
+4. ~~AC↔CASE 桥~~ **已落地**：`scenario bridge`（源头）+ validate 全链（含 BR→CASE）；背书 N/A=NFR 编号（须已声明）或 §A4 指针，自由文本/空 target 拒绝——5 专项测试+E2E 钉死；
+5. ~~case_id pattern~~ **已定**（`^CASE-[A-Z0-9]+(-[A-Z0-9]+)*$`，引擎+schema 双层，存量兼容）；
+6. ~~skill 重构（两件）~~ **已完成**（specification-planning v2.0.0 双轨全重排+scenario-model-design v1.2.0 顺序修正）：①specification-planning 重排为双轨汇聚顺序——渐进披露触发条件以修订后 §6.2 为契约（轨归属×时机×载哪个子 skill）；边界限定：其 step 6-9 属 S3/S4 的部分不动；"人闸只一个（ADR）"落地时须同步收敛其现有 5 条 Stop Conditions 中的 UI 包评审人触点（存废显式化）。②scenario-model-design 的 Workflow 顺序同步修正（现 step 7 才 reconcile stories——与双轨矛盾）；
+7. ~~交叉格清单载体~~ **已落地**（cross-matrix.json=模块包第八文件：schema anyOf 强制 branch/理由二选一+引擎引用校验+重复格检测+completeness 门纳入；专项测试钉死四种非法形态）；
+8. ~~深度自审~~ **已入 skill**（specification-planning v2.0.0 步骤 8：三身份攻击+结论入 ADR 包——判断层机制，无机器门，如实定位）。
+
+**实施完成标记（v4.0.2）**：机制项 8/8 落地；声明项 9/10/11/12 全落地（L2 v1.4.1 行/scenario-model.md Coverage semantics 节/ui-prototype 4-field/REQ 指向列）；13/14 已入对应 L3。E2E：TestS2DualTrackConvergenceE2E 钉死全链（unknown 拦截→双轨→桥两段→自由文本 N/A 拒绝→AutoSpecs 两态）。**P0 wiring 遗留清零**。
 
 **声明项（3）**：
 9. 单一分母原则入 L2 全局规则（**已落地 v1.4.1**——AC↔CASE 双向可达，承载 D1+D6；v4.0.1 修复了首次编辑被覆盖的事故）；
@@ -140,5 +142,6 @@
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清；v2 的 expected_observable 系虚构） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（oracle/polarity/四件套生成关系/guard 未 wiring 等如实入档） | owner 复核 |
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |
+| 2026-08-15 | v4.0.2 | **实施完成**：机制 8 项全落地（wiring 两项/删残迹/AC 桥两段/case_id pattern/两 skill 重构/cross-matrix 第八文件/深度自审入 skill）；声明 4 项落地；E2E 全链钉死（unknown 拦截→双轨→桥两段→N/A 拒绝→AutoSpecs 两态）；27 包+doctor/validate 全绿；P0 wiring 遗留清零 | owner 指示：开工 |
 | 2026-08-15 | v4.0.1 | **设计对抗审查处置（11 findings）**：P1×7——①双轨"并行"语义定为同 agent 顺序自由（非子代理）+冲突仲裁规则（架构约束旅程、挑战升 ADR）+用户轨前置读既有模块包；②AC 的 N/A 升为背书逃生门（类别+指针+进 ADR 拍板包，L2 铁律 1 同构）+"人闸只一个"与 skill 现有 UI 评审触点的存废显式化；③AC 桥拆两段（AC→FR→BR 源头查挂汇聚①后、全链收口复核）；⑤skill 重构拆两件（主 skill 重排+scenario-model-design Workflow 顺序修正）+触发条件以 §6.2 为契约+边界限定；⑦交叉格清单为三方交叉的载体（叙述变填空，D4）；⑧深度自审（三身份攻击负向 oracle，matcher 空窗期的语义逼深，D6+公理二）；⑨L2 分母表行修复（首次编辑被覆盖的事故——内联 replace 未回赋值，第二次写回抹掉）。P2×4——④§6.2 按双轨重排+补既有包前置读；⑥§2 两处现在时改如实+行号修正；⑩§6.3 补 HTML 头部项并升为 14 项全景；⑪D/公理标注补齐（双轨=D4+C4、桥=D6、分母=D1+D6） | owner 指示：注意力引导与思考深度推进是本步命脉，审查设计理念 |
 | 2026-08-15 | v4.0.0 | **联合审查版**（S2+S3+S5+S7+S8 联动，sub-agent CASE 流水线端到端调查）：§1 增"验证源出生地"身份；§2.1 新增分母断裂地图（五断点+三事实修正+AC↔CASE 对位缺口）；§3 增双轨汇聚顺序与 AC 桥两条选用（否决"逐层拍板漏斗"——S0 形状硬搬造出不存在的判定层；否决六产物并行）；§4 时间线重写（stories 提前/fixtures 后移/两汇聚判据，hook 第二道保险改为如实——gate not_ready 才是真实保险）；§5 缺口段改处置台账；§6.3 升级为 11 项全景（机制 6+声明 3+跨 stage 输入 2，angles 冻结与 case_id pattern 待终批） | owner 指示：S2 与关联 stage 联合审查；产出对位下游所需；顺序不死板、按依赖重排 |

@@ -55,29 +55,24 @@ may identify a review round because they record an execution fact.
    rule, branch, CASE, story, PATH, prototype state, fixture, and module spec.
 2. Resolve locked business sources. Put REQ/decision/state/contract references
    in `source_refs`; stop for clarification when an oracle cannot be derived.
-3. Edit only `scenario-model.json` and `fixture-contract.json` as human inputs.
+3. Edit only `scenario-model.json`, `cross-matrix.json`, and `fixture-contract.json` as human inputs (cases/coverage are engine-generated).
    Keep `cases.json` and `scenario-coverage.json` as generated current outputs.
 4. Model facts as stable IDs and non-empty partitions. Use synthetic values only.
 5. Model `risk` on each parent rule. Model every required allow and reject
-   result as an explicit branch with `case_id`, `title`, `polarity`, `required`,
-   `witness`, `oracle`, `fixture_id`, `story_refs`, `flow_refs`, and
-   `browser_required`; never put `risk` on a branch.
-6. Validate the gates before handing the package to S5:
-   - required allow branch coverage is 100%;
-   - required reject branch coverage is 100%;
-   - `ordinary` meets at least `1:1` positive:negative;
-   - `rule-dense` meets at least `1:2`;
-   - `critical` meets at least `1:3`;
-   - every negative oracle has the common `visible`, `terminal_state`,
-     `persisted_effects`, and `forbidden_side_effects` fields plus `rejection`,
-     `expected_state`, and `recovery`;
-   - `recovery: "N/A"` also has non-empty `recovery_source_refs` drawn from the
-     rule's `source_refs` and a non-empty `recovery_reason`;
-   - every browser-required CASE has a Story, PATH, prototype-visible oracle,
-     and module spec binding.
-7. Reconcile the full `stories.md`, `flows.md`, and current `*.html` set. Do not
-   append a requirement-only subset. Remove behavior that is no longer current;
-   let Git preserve the historical diff.
+   branch with its oracle (written with the branch — polarity forces
+   outcome thinking). Fill `cross-matrix.json` as the hunt's carrier: every
+   meaningful fact×FR×story cell names its covering branch or a no-branch
+   reason — silence is not N/A. Cite `REQ-<id>/FR-<id>` in `source_refs`.
+6. Validate the gates before handing the package to S5: run
+   `loop-harness scenario bridge --root .` right after convergence-1 (the
+   AC source check needs no generated outputs — fix FR gaps now), then
+   `scenario generate` + `scenario validate` at close (full bridge
+   included). Endorsed N/A is a declared NFR id or an explicit §A4
+   pointer — free text is rejected.
+7. Reconcile the full `stories.md`, `flows.md`, and current `*.html` set —
+   by dual-track order stories are written BEFORE rules (they seed the
+   hunt and branches cite them); flows/prototypes converge stories with
+   branches and bind PATH for browser-required cases.
 8. Hand off `Rule → CASE → Story → PATH → Spec → Evidence` references to
    contracts, TASKs, DV, QA, and S7. Any module package change requires the full
    module regression sweep.

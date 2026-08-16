@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `4884ad2a4d1dd2e5285d5fb4154255d6d29731f382121601502e661c7e84e25c`
+- **Loop definition SHA-256**: `eab0da8a06dda99b2f328f35fffbcb08ee639c82ab84049785b06f8933165979`
 
 ---
 
@@ -798,7 +798,7 @@ _design → contracts_
 
 Advance formal planning from design to contracts after the design quality gate passes.
 
-_No guards._
+- `ui_impact_resolved` [semantic_check] — runtime.bound_req.metadata.ui_impact is not `unknown`, so the planning phase is not paused on the SM-003 gate waiting for §11 of the REQ to clarify UI impact.
 
 ### `PTR-PLAN-02` {#ptr-plan-02}
 
