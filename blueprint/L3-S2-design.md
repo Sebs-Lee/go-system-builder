@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 + L2「REQ 授权生命周期」分母条款 ｜ 版本 v4.0.0（v4.0.0 联合审查版：CASE 验证源断点地图+双轨汇聚顺序+AC↔CASE 桥；v3.1.0 增 §6；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.1（v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -23,8 +23,8 @@
 | `loop-harness scenario` | `generate`（校验+原子生成 cases/coverage）/`validate`（源头校验+生成物字节比对+可选 `--require-specs` 查 Playwright 覆盖 100%） | internal/scenario/engine.go；run.go:169 |
 | 覆盖率与正反比 | required branch 100%（构造保证）；负:正 ≥ coverage_profile 下限（critical=3/rule-dense=2/ordinary=1）；doctor/validate 自动跑 scenario 校验（不带 --require-specs） | engine.go:354-363,1220-1238；semantic/validator.go:110 |
 | 原型包规则 | index.html+stories.md(S-NNN)+flows.md(F-NNN/PATH-*)+页面 HTML+四件套；HTML 头部字段；sticky 侧栏 6 节；模块任一改动→E2E 全模块回归 | `docs/rules/ui-prototype.md` |
-| UI 原型门（hook 侧） | 写 `docs/contracts/` 且 ui_impact=changed 时，`populateUIPrototypeFact` 检查真相包完整性（7 文件+S/F-NNN 引 REQ-id+scenario 校验过），不完整→hook 拦截 | run.go:2040-2075；ui_scenario.go:66-120 |
-| skill 群 | `specification-planning`（主：9 步流程，串起下面四个）；`scenario-model-design`（四件套方法）；`user-story-design`（S-NNN result-led）；`user-flow-design`（F-NNN/PATH checklist）；`ui-prototyping`（HTML 容器/侧栏契约） | skills/ |
+| UI 原型门（hook 侧） | ~~populateUIPrototypeFact 检查真相包并拦截~~——**死残迹**（hook-policy 零匹配该 fact，测试钉死永不触发；调用点 run.go:1855，函数体 run.go:2330+；§6.1 #3 判定，本轮删除） | run_test.go:1137+ |
+| skill 群 | `specification-planning`（主：9 步流程，**未显式串联下面四个**——SKILL 与协议对子 skill 零引用，§6.1 #4 的诊断对象）；`scenario-model-design`（四件套方法，**其 Workflow 仍是旧顺序**——step 7 才 reconcile stories，v4.0.0 双轨顺序要求同步修正）；`user-story-design`（S-NNN result-led）；`user-flow-design`（F-NNN/PATH checklist）；`ui-prototyping`（HTML 容器/侧栏契约） | skills/ |
 | 规划门推进 | PTR-PLAN-01（design→contracts）挂在 GATE-PLANNING-DESIGN-COMPLETE 上，PreToolUse 自动评估自动迁移 | loop-definition.json:137-157；registry.go:153-155 |
 | angles 注册表 | 模块级 append-mostly 自检清单（ANG-{MODULE}-{NNN}，黑名单禁通用词），S5/S7 的 angle_complete guard 消费——S2 设计变更时的模块视角交接输入 | runtime/angles.go；`loop-harness angles` |
 
@@ -55,8 +55,8 @@
 | 架构决策怎么落 | ARCHITECTURE 模板 12 节 + ADR 另录 decisions/ | 否决"再造 ADR 模板段"——已有 ADR-template.md 与目录惯例，不重复 |
 | spec 覆盖 100% | `--require-specs` 显式开关（doctor 不默认跑） | 如实记录：这是**欠账**——L2 要求拒绝路径非空已由 oracle 保证，但 Playwright spec 级覆盖未进常规校验，属第四层待补 |
 | 模块视角积累 | angles 注册表（append-mostly） | 否决"每次全靠 REQ 内描述"——模块教训要跨 REQ 存活 |
-| 生产顺序怎么定（v4.0.0 新增） | **双轨汇聚顺序**：系统轨（架构→facts）∥用户轨（§A→stories）→ 汇聚① rules/branches+oracle（facts×FR×stories 三方交叉找全量）→ fixtures（行为定型后造）→ 汇聚② flows/原型（stories×branches，PATH 绑定）→ 收口 generate/validate+AC 桥。**stories 提前**（现状排在 fixtures 后——story 是行为缺口的上游种子，建模后才写则模型用不上交叉视角；且 branch.story_refs 引 stories，先写免返工）、**fixtures 后移**（数据需求等 branch 定型） | 否决"逐层拍板漏斗"（S0 形状硬搬）——oracle 是 branch 字段非独立生产步骤，"判定层"不存在；否决"六产物并行铺开"（现状）——改一处全链重跑。人闸只一个（ADR 方向），其余机闸 |
-| AC↔CASE 桥怎么承载（v4.0.0 新增） | `scenario validate` 新检查项：解析绑定 REQ 的 AC 表，每条 AC 须经 FR→BR→CASE 可达或有显式 N/A 理由——单一分母的完整形态 | 否决"只靠 §F 手抄矩阵"——分段无对账即断点；否决"S7 侧事后核"——错误的发现点越晚越贵 |
+| 生产顺序怎么定（v4.0.0 新增，v4.0.1 审查补强） | **双轨汇聚顺序**：系统轨（架构→facts）∥用户轨（§A→stories）→ 汇聚① rules/branches+oracle（facts×FR×stories 三方交叉找全量，**交叉格清单为载体**）→ fixtures（行为定型后造）→ 汇聚② flows/原型（stories×branches，PATH 绑定）→ 收口 generate/validate+AC 桥。**stories 提前**、**fixtures 后移**（理由同 v4.0.0）。**并行语义（v4.0.1）**：同一 agent 的顺序自由（两轨可交错、无强制先后），不是子代理派发；**冲突仲裁（v4.0.1）**：架构约束旅程——stories 挑战架构时升 ADR 人闸裁，不静默让步；**用户轨前置（v4.0.1）**：既有模块演进时先读完整模块包再写新 stories（防与既有 S-NNN 重复/矛盾） | 承载 D4（顺序即课程）+C4（人只拍方向）。否决"逐层拍板漏斗"（S0 形状硬搬）——oracle 是 branch 字段非独立生产步骤；否决"六产物并行铺开"——改一处全链重跑 |
+| AC↔CASE 桥怎么承载（v4.0.0 新增，v4.0.1 拆两段） | **两段检查**：AC→FR→BR 段挂汇聚①后即可机检（source_refs 溯源，不需生成物）——源头早查；全链 AC↔CASE 段在收口 validate 复核（需 cases 生成物）。**N/A 须背书（v4.0.1）**：N/A 不是自由文本逃生门——须带类别+指针（非功能 AC→NFR 编号；范围外→REQ §A4 负空间条目），且 N/A 清单进 ADR 人闸拍板包（L2 铁律 1"经独立背书的不适用"的同构） | 承载 D6（覆盖按用例计数、沉默不是不适用——L1:103 直引）。否决"只靠 §F 手抄矩阵"；否决"S7 侧事后核"；否决"N/A 一句理由过门"——无背书的 N/A 是从分母里静默移除验证项 |
 
 ## 4. 怎么编排（时间线讲完一件事）
 
@@ -65,13 +65,14 @@
 3. **双轨并进**（changed 时，v4.0.0 顺序修正）：
    - **系统轨**：数据模型/状态机定型 → facts 分区（架构词汇表的落盘）；
    - **用户轨**：从 REQ §A 写 stories（S-NNN 引 REQ-id）——行为缺口的上游种子，与架构并行；
-   - **汇聚①行为全量**：rules/branches（正反成对，oracle 随 branch 写）= facts × FR × stories 三方交叉找全（含拒绝路径）；分支的 story_refs 指向已存在的 stories；
+   - **汇聚①行为全量**：rules/branches（正反成对，oracle 随 branch 写）= facts × FR × stories 三方交叉找全（含拒绝路径）；分支的 story_refs 指向已存在的 stories。**交叉格清单（v4.0.1 载体）**：三方交叉的产物是模块包内一份手写清单（fact×FR×story 格 → branch id 或"无分支理由"）——"找全"从叙述变成填空，validate 轻校验其 branch 引用存在；**汇聚①后即跑 AC→FR→BR 源头检查**（早查早回，不等收口）；
    - **fixtures**：branches 定型后造数据（setup/cleanup），一次造对；
    - **汇聚②可走查**：flows（F-NNN/PATH-*）+ 原型页（头部+侧栏契约）= stories 的旅程 × branches 的行为；browser_required 的 branch 在此绑定 PATH。
    **在既有模块包上演进**，不建新副本。
-4. **收口**：`scenario generate` 产 cases/coverage → `scenario validate`（或 doctor）绿：正反比、引用存在性、字节冻结、**AC↔CASE 桥**（每条 AC 至少一 CASE 或显式 N/A）；不过 → 回汇聚①补负向分支或回 REQ 澄清 AC。
-5. **提交规划证据**：登记 `planning_design` 证据（pass）→ 下一次 PreToolUse，controller 评估 GATE-PLANNING-DESIGN-COMPLETE → PTR-PLAN-01 自动迁移进 contracts——无人工拨表。
-6. **UI 门的第二道保险**：~~hook 拦截~~（populateUIPrototypeFact 为无消费者残迹，测试钉死永不匹配——v4.0.0 裁定删除）；真实保险是 Quality Gate not_ready（真相包不齐 → missing 指回补包）。
+4. **深度自审（收口前，v4.0.1 新增）**：换身份攻击自己的产物——实现者："哪条 oracle 我落不了地或区分不了对错实现？"；e2e-tester："哪条负向 CASE 我按七维度取不了证？"；维护者："哪条规则会和模块演进打架？"——结论一段话入 ADR 包（REQ-040 matcher 落地前的语义质量逼深手段，S0 身份互换自审的同构）。
+5. **收口**：`scenario generate` 产 cases/coverage → `scenario validate`（或 doctor）绿：正反比、引用存在性、字节冻结、交叉格清单轻校验、**AC↔CASE 全桥**（每条 AC 至少一 CASE 或背书的 N/A）；不过 → 回汇聚①补负向分支或回 REQ 澄清 AC。
+6. **提交规划证据**：登记 `planning_design` 证据（pass）→ 下一次 PreToolUse，controller 评估 GATE-PLANNING-DESIGN-COMPLETE → PTR-PLAN-01 自动迁移进 contracts——无人工拨表。
+7. **UI 门的第二道保险**：~~hook 拦截~~（populateUIPrototypeFact 为无消费者残迹，测试钉死永不匹配——v4.0.0 裁定删除）；真实保险是 Quality Gate not_ready（真相包不齐 → missing 指回补包）。
 
 ## 5. 期望效果
 
@@ -96,32 +97,37 @@
 | 3 | `populateUIPrototypeFact` 是无消费者残迹（测试钉死 hook 永不匹配，run_test.go:1137-1148） | 公理三违例：信息量为零还占信道，且误导读者以为有 hook 门 |
 | 4 | specification-planning 九步一步铺开 5 个子 skill（合计约 50KB 方法论） | 渐进披露缺失：ui_impact=none 时 UI 三 skill 全部无关，但入口没有显式分岔——agent 倾向一次全载，为无关内容付 token |
 
-### 6.2 阅读预算（渐进披露的正面样板）
+### 6.2 阅读预算（v4.0.1 按双轨汇聚顺序重排）
 
-| 时机 | 读什么 | 不读什么 |
+| 时机（轨归属） | 读什么 | 不读什么 |
 |:--|:--|:--|
-| 进入 S2 | ARCHITECTURE 模板 + 绑定的 REQ（模板字段即逼问） | 协议 S2 全文；5 个 skill 任何一个 |
+| 进入 S2（共同前置） | ARCHITECTURE 模板 + 绑定的 REQ；**既有模块演进时：完整模块包**（防新 stories 与既有 S-NNN 重复/矛盾） | 协议 S2 全文；5 个 skill 任何一个 |
 | ui_impact=none | 到此为止，直奔 S3 | 全部 UI 方法论（三个 skill） |
-| ui_impact=changed：建场景模型时 | scenario-model-design | stories/flows/原型方法论 |
-| 写 stories / flows / 原型页 时 | user-story-design / user-flow-design / ui-prototyping（用到才载） | 其余 |
-| 正确性核验（任何时刻） | validate 的**输出** | "必须正负成对/负正比≥N/生成物不可手改"的规则文本——引擎判，人不判 |
+| 系统轨（架构→facts） | ARCHITECTURE 模板 12 节 + ADR 模板 | 任何 UI/stories 方法论 |
+| 用户轨（§A→stories） | user-story-design（用到才载） | 系统轨方法论 |
+| 汇聚①（branches+oracle+交叉格清单） | scenario-model-design | flows/原型方法论 |
+| fixtures | fixture 契约约定（scenario-model-design 内含） | — |
+| 汇聚②（flows/原型） | user-flow-design / ui-prototyping（用到才载） | — |
+| 深度自审+收口 | 自审三问（§4 第 4 步）+ validate 的**输出** | "必须正负成对/负正比≥N/生成物不可手改"的规则文本——引擎判，人不判；**AC→FR→BR 源头检查在汇聚①后就跑，不等收口** |
 
-### 6.3 整改方向（v4.0.0 联合审查全景，11 项）
+### 6.3 整改方向（v4.0.1 联合审查全景，14 项）
 
-**机制项（6）**：
+**机制项（8）**：
 1. `ui_impact_resolved` 挂 PTR-PLAN-01（P0 wiring）；
 2. `--require-specs` 进 doctor（P0 wiring，断点 3 左移）；
 3. 删 populateUIPrototypeFact（含调用点+钉死测试）；
-4. **AC↔CASE 桥**：`scenario validate` 新检查——每条 AC 至少经 FR→BR→CASE 可达或有显式 N/A（断点地图的核心修复，REQ-040 分母的直接加固）；
+4. **AC↔CASE 桥（两段）**：AC→FR→BR 源头检查挂汇聚①后；全链检查在收口 validate——每条 AC 至少一 CASE 或**背书的 N/A**（类别+指针，清单进 ADR 拍板包；承载 D6"沉默不是不适用"）；
 5. case_id 格式升 schema pattern（`CASE-XXX-YYY` 从模板约定升为引擎约束；具体 pattern 待终批）；
-6. specification-planning 重构为**双轨汇聚顺序**（§4 新时间线：stories 提前/fixtures 后移/单一人闸/两个汇聚判据；子 skill 方法论保留，按轨渐进加载；替代 v3.1.0 的浅改方案"入口三路分岔"——分岔保留为双轨的入口形态）。
+6. **skill 重构（两件）**：①specification-planning 重排为双轨汇聚顺序——渐进披露触发条件以修订后 §6.2 为契约（轨归属×时机×载哪个子 skill）；边界限定：其 step 6-9 属 S3/S4 的部分不动；"人闸只一个（ADR）"落地时须同步收敛其现有 5 条 Stop Conditions 中的 UI 包评审人触点（存废显式化）。②scenario-model-design 的 Workflow 顺序同步修正（现 step 7 才 reconcile stories——与双轨矛盾）；
+7. **交叉格清单载体**（v4.0.1 新增，F7 处置）：汇聚①产物为模块包内手写清单（fact×FR×story 格→branch id 或无分支理由），validate 轻校验引用存在——把"三方交叉找全量"从叙述变成填空（承载 D4）；
+8. **深度自审**（v4.0.1 新增，F8 处置）：收口前换实现者/e2e-tester/维护者三身份攻击产物（重点：每条负向 oracle 能否区分对错实现），结论入 ADR 包——REQ-040 matcher 空窗期的语义逼深（承载 D6+公理二）。
 
 **声明项（3）**：
-7. 单一分母原则入 L2 全局规则（AC↔CASE 双向可达，case.id 为 S2→S7 的唯一验证分母）；
-8. 构造性覆盖语义澄清（coverage.json 是设计声明，不作执行证据）；
-9. 非 UI REQ 无 CASE 宇宙显式声明（REQ-040 Q-002 承接）。
+9. 单一分母原则入 L2 全局规则（**已落地 v1.4.1**——AC↔CASE 双向可达，承载 D1+D6；v4.0.1 修复了首次编辑被覆盖的事故）；
+10. 构造性覆盖语义澄清（coverage.json 是设计声明，不作执行证据）；
+11. 非 UI REQ 无 CASE 宇宙显式声明（REQ-040 Q-002 承接）。
 
-**跨 stage 输入记录（2）**：10. S3 token 对账（已入 L3-S3）；11. S8 宇宙映射（已入 L3-S8，作 REQ-040 输入）。
+**修正项（1）+跨 stage 输入（2）**：12. HTML 头部统一 4-field（ui-prototype.md §5/§6 的 3-field 改齐 :123 门禁与代码——§5③的对应项，v4.0.0 遗漏编号）；13. S3 token 对账（已入 L3-S3）；14. S8 宇宙映射（已入 L3-S8，作 REQ-040 输入）。
 
 **待 owner 终批**：angles 冻结到 list/commit（C5：未被实战观测的机制不上第三档）；case_id pattern 具体格式。
 
@@ -134,4 +140,5 @@
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清；v2 的 expected_observable 系虚构） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（oracle/polarity/四件套生成关系/guard 未 wiring 等如实入档） | owner 复核 |
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |
+| 2026-08-15 | v4.0.1 | **设计对抗审查处置（11 findings）**：P1×7——①双轨"并行"语义定为同 agent 顺序自由（非子代理）+冲突仲裁规则（架构约束旅程、挑战升 ADR）+用户轨前置读既有模块包；②AC 的 N/A 升为背书逃生门（类别+指针+进 ADR 拍板包，L2 铁律 1 同构）+"人闸只一个"与 skill 现有 UI 评审触点的存废显式化；③AC 桥拆两段（AC→FR→BR 源头查挂汇聚①后、全链收口复核）；⑤skill 重构拆两件（主 skill 重排+scenario-model-design Workflow 顺序修正）+触发条件以 §6.2 为契约+边界限定；⑦交叉格清单为三方交叉的载体（叙述变填空，D4）；⑧深度自审（三身份攻击负向 oracle，matcher 空窗期的语义逼深，D6+公理二）；⑨L2 分母表行修复（首次编辑被覆盖的事故——内联 replace 未回赋值，第二次写回抹掉）。P2×4——④§6.2 按双轨重排+补既有包前置读；⑥§2 两处现在时改如实+行号修正；⑩§6.3 补 HTML 头部项并升为 14 项全景；⑪D/公理标注补齐（双轨=D4+C4、桥=D6、分母=D1+D6） | owner 指示：注意力引导与思考深度推进是本步命脉，审查设计理念 |
 | 2026-08-15 | v4.0.0 | **联合审查版**（S2+S3+S5+S7+S8 联动，sub-agent CASE 流水线端到端调查）：§1 增"验证源出生地"身份；§2.1 新增分母断裂地图（五断点+三事实修正+AC↔CASE 对位缺口）；§3 增双轨汇聚顺序与 AC 桥两条选用（否决"逐层拍板漏斗"——S0 形状硬搬造出不存在的判定层；否决六产物并行）；§4 时间线重写（stories 提前/fixtures 后移/两汇聚判据，hook 第二道保险改为如实——gate not_ready 才是真实保险）；§5 缺口段改处置台账；§6.3 升级为 11 项全景（机制 6+声明 3+跨 stage 输入 2，angles 冻结与 case_id pattern 待终批） | owner 指示：S2 与关联 stage 联合审查；产出对位下游所需；顺序不死板、按依赖重排 |
