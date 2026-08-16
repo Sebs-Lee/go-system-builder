@@ -78,6 +78,7 @@
 - **合一**：三文本收敛为单一权威——skill=流程权威，协议只留路由，R-P06 六行模板进 BUG 模板行内（REQ-041 FR-009 同向，执行时以本条为准绳）；
 - **删减**：字段分级（必填 10 + 条件必填）；mechanism 受控词表种子要小——词表一大，agent 学会挑词交差（Goodhart）；
 - **激活**：same_contract_failure_count 自增（REQ-041 FR-006）或删除——死字段不许躺（现在它还在消耗 SKILL 里的一句叙述）；
+- **分母统一（S2 v4.0.0 联合审查输入）**：e2e-coverage 的 inventory 宇宙（CT/AC/HOOK/TASK-CLOSING）与 CASE 宇宙零映射——反查分母应挂到 case.id（inventory.scenarios 的 id/test_refs 引 CASE/PATH），作 REQ-040 输入一并设计；
 - **保持**：param 门槛（root_cause_evidence + bug_closing_contract 不填迁移不了）；注册指纹去重；PTR-BUG-03"退报告不退发现"。
 
 ## 变更记录

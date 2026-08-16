@@ -77,7 +77,7 @@
 
 ### 6.3 整改方向
 
-- **左移（本 stage 最大机会）**：validate 新增契约链接三查——孤儿条款（§n 无任务指向）、断链引用（CASE/Story/PATH id 不在场景包）、指纹列与实算比对；REQ-040 的 schema 工作天然承接；
+- **左移（本 stage 最大机会）**：validate 新增契约链接三查——孤儿条款（§n 无任务指向）、断链引用（CASE/Story/PATH id 不在场景包，**token 存在性对账 cases.json——S2 v4.0.0 联合审查断点 4 的承接**）、指纹列与实算比对；REQ-040 的 schema 工作天然承接；
 - **删减**：SYNC 模板按 ui_impact 分档必填（纯后端 REQ 不出现 UI 对照章）；api-design 字段级规范下沉到模板行内注释；
 - **左移**：Fingerprint 列改由 `runtime fingerprint` 生成输出；
 - **保持**：UI 先决用 gate not_ready（D3 正用：门是顾问）；起草期不锁、锁在 S5（锁的权威单点）。
