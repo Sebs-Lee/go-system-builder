@@ -17,6 +17,11 @@ type UnbindApproval struct {
 	ApprovedBy string
 	EvidenceID string
 	Reason     string
+	// Forced records that the human overrode the in-flight soft gate; the
+	// abandoned entities are listed in InFlight so the archive carries the
+	// visible abandonment, not just the label.
+	Forced   bool
+	InFlight []string
 }
 
 // Unbind revokes the current binding from any non-terminal lifecycle state.
@@ -106,9 +111,15 @@ func (s *Store) Unbind(freshState map[string]any, archiveRoot string, approval U
 		return RolloverRecord{}, fmt.Errorf("unbind approval: %w", err)
 	}
 
+	extras := map[string]any{"disposition": "unbound", "reason": approval.Reason, "unbound_req": boundID}
+	if approval.Forced {
+		extras["forced"] = true
+	}
+	if len(approval.InFlight) > 0 {
+		extras["in_flight_entities"] = approval.InFlight
+	}
 	return s.archiveAndReset(stateData, journalData, runtimeID, revision, freshState, archiveRoot,
-		map[string]any{"disposition": "unbound", "reason": approval.Reason, "unbound_req": boundID},
-		"unbound", RolloverApproval{ApprovedBy: approval.ApprovedBy, EvidenceID: approval.EvidenceID}, occurredAt)
+		extras, "unbound", RolloverApproval{ApprovedBy: approval.ApprovedBy, EvidenceID: approval.EvidenceID}, occurredAt)
 }
 
 // archiveAndReset performs the shared crash-safe tail of Rollover and

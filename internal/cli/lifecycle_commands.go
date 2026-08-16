@@ -231,9 +231,9 @@ func inFlightEntities(state map[string]any) []string {
 		if task == nil {
 			continue
 		}
-		if status, _ := task["status"].(string); status == "in_progress" || status == "review" {
+		if state, _ := task["state"].(string); state == "in_progress" || state == "review" || state == "blocked" {
 			if id, _ := task["id"].(string); id != "" {
-				out = append(out, "task "+id+" ("+status+")")
+				out = append(out, "task "+id+" ("+state+")")
 			}
 		}
 	}
@@ -287,10 +287,11 @@ func runREQUnbind(args []string, stdout, stderr io.Writer) int {
 	case "inactive":
 		fmt.Fprintln(stderr, "req unbind: nothing is bound")
 		return 1
-	case "paused":
-		fmt.Fprintln(stderr, "req unbind: runtime is paused — resume it first, or abort from the paused state (runtime transition TR-021)")
-		return 1
 	}
+	// paused is deliberately allowed: revoking from a paused checkpoint is a
+	// legitimate "abandon" (L2 ruling: any non-terminal state), and the
+	// archived runtime keeps the checkpoint as part of the audit trail —
+	// especially valuable when resume is blocked by baseline drift.
 	bound, _ := snapshot.State["bound_req"].(map[string]any)
 	boundID, _ := bound["id"].(string)
 	if boundID == "" {
@@ -328,8 +329,10 @@ func runREQUnbind(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("req unbind", fmt.Errorf("validate fresh runtime: %w", err)))
 		return 1
 	}
+	unbindApproval := runtime.UnbindApproval{ApprovedBy: *approvedBy, EvidenceID: evID, Reason: *reason, Forced: *force}
+	unbindApproval.InFlight = inFlightEntities(snapshot.State)
 	record, err := runtime.NewWriter(rootedPath(*root, ".claude/loop-state.json"), rootedPath(*root, ".claude/loop-events.jsonl"), *root, semantic.RuntimeCandidateValidator{}).Unbind(
-		freshState, rootedPath(*root, *archive), runtime.UnbindApproval{ApprovedBy: *approvedBy, EvidenceID: evID, Reason: *reason}, now,
+		freshState, rootedPath(*root, *archive), unbindApproval, now,
 	)
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req unbind", err))

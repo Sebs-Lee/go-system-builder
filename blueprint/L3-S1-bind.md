@@ -32,7 +32,7 @@
 | 暂停 | GTR-001~005 + `capture_pause_checkpoint`（**真**，actions.go:248-292：单次捕获不变式、富快照含指纹/generation/round/idempotency keys） | ◐→✅ 用户路径 | **`runtime pause` 封装已落地（P1）**：决策工件+human_decision 证据登记+GTR-001 一条命令；GTR-002/003/005 仍零触发器（各 stage 失败路由接续，后续批次）；GTR-004 桥仍无生产调用方 |
 | 恢复 | TR-019 哨兵 `RESUME_FROM_PAUSE` 解析（EG:93-103）+ 指纹漂移拒绝 | ✅ 结构错位 | **`runtime resume` 封装已落地（P1）**，漂移→指路 amend；`baselines_unchanged` guard 仍是桩（真校验在 action 层）——guard/action 职责归位仍欠 |
 | 修订 | TR-020：increment → **update_bound_req**（新，真校验：locked/指纹/版本严格递增，换入 bound_req+新代 documents 条目）→ 证据全作废 | ✅（P3） | pause 残留已修（引擎不变式：离开 paused 即清 checkpoint）；旧 REQ 保持锁定（loader 对 req 文档跨代保护）；`updated_req_locked` guard 仍为声明桩（真语义在 action，Manual 如实标注）；versions 目录仍为程序性约定；CLI `req amend` 一条命令 |
-| 退出 unbind | `req unbind`：Store.Unbind 镜像 Rollover（disposition=unbound、审批 scope 独立、在飞实体软门 --force） | ✅（P2） | 归档留痕+回池语义（bindable 计算不排除 unbound 归档）；E2E 钉死 |
+| 退出 unbind | `req unbind`：Store.Unbind 镜像 Rollover（disposition=unbound、审批 scope 独立、在飞实体软门 --force，forced+in_flight 落 manifest） | ✅（P2+审查修复） | **任意非终态含 paused**（v4.5.0 修正：曾违终裁拒绝 paused，造成"漂移时 resume 被拒→无路可退"死区）；归档留痕+回池；paused 解绑时 checkpoint 随档留存；E2E+审查测试钉死 |
 | 退出 abort | TR-021（paused→aborted）/ TR-030（S11 人闸） | ◐→✅ | pause 残留已修；TR-021 走 `runtime transition`（证据经 evidence add 登记）+E2E 行为测试；guard/action 声明桩如实记录 |
 | 正常结束 | TR-025 + rollover（审批四要素强校验 + 崩溃安全归档） | ✅ 样板 | **REQ 落章已落地（P2）**：状态行 locked→archived + req-archive.json 双指纹回执（封存哈希不动）；E2E 钉死 |
 | 重新绑定 | unbind 回池再绑 / rollover 后新周期 | ✅（P2） | unbound 归档不排除（真实形态已存在）；同 REQ 终态重绑仍无护栏（显式 --req 可绑，如实记录待观测）；E2E 覆盖两条重绑路径 |
@@ -123,6 +123,8 @@
 4. **口头授权链** + `req list`（bindable 计算：locked − 当前绑定 − 终态归档引用，unbound 不排除）+ 投影带完整命令行（P0，agent 被告知跑什么、人不需记语法）；
 5. **req unbind**：Store.Unbind 镜像 Rollover（disposition=unbound、在飞实体软门、--force）；**同步修三 bug**——①pause 残留（TR-020/021 清 state["pause"]）、②TR-020 后旧 REQ 失锁（generation 过滤）、③GTR-005 死 fact 接线或删除。"TR-020 新 REQ 入 runtime"是 amend 完整化功能（P3），不算 bug——与 §5 缺口 ⑤⑥⑦ 及 §2.2 批次口径对齐。
 另：`runtime pause`/`runtime resume` 封装命令（把 evidence 构造收回机器）；TR-019 的漂移校验从 action 归位 guard 层。
+
+| 2026-08-15 | v4.5.0 | **第三方对抗审查（sub-agent）处置**：P1×2 已修——①unbind 放开 paused（曾违"任意非终态"终裁并制造漂移死区，checkpoint 随档留存）；②原地 amend 修复——reachability 与 RefreshFingerprints 对 superseded req 代次豁免（旧代历史不可机检漂移/不可被刷新改写，hook 层仍按 path 保护）。P2×7 已修——amend 强制同 ID（异 ID 指路 unbind）与数字版本格式、--force 的 forced+in_flight 落 manifest、落章原子写+路径遏制+CRLF 行尾保留、bind 输出补 revision（原则⑤齐）、validateRolloverApproval 死代码删除、hook 不可达注释改如实（fail-open）、docs/README mermaid 事件名。**审查另揪出一个真 bug**：inFlightEntities 读 task["status"] 而 schema 字段是 state——软门从未生效，已修（含 blocked 态）并钉测试。补测 7 项：scope 隔离单测/paused→unbind/--force 落档/unbind 回执不授权 rollover/漂移→resume 拒绝指路 amend/req list --json/amend 异 ID 与非数字版本拒绝。P3 backlog 如实入档：动词 Apply 失败遗留孤儿 decision 证据、三个旧测试的合成证据格式漂移（因豁免仍绿） | owner 指示：第三方审查启动 |
 
 ## 变更记录
 

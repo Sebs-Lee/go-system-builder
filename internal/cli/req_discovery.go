@@ -191,7 +191,7 @@ func printBindConfirmation(w io.Writer, state map[string]any) {
 	event, _ := last["event"].(string)
 	fmt.Fprintf(w, "bound %s %s (ui_impact=%s)\n", id, version, ui)
 	fmt.Fprintf(w, "  sha256 %s…  approved-by %s\n", sha, approvedBy)
-	fmt.Fprintf(w, "  cursor %s.%s  generation %d  event %s\n",
-		lifecycle["state"], lifecycle["phase"], tolerantInt(baseline["generation"]), event)
+	fmt.Fprintf(w, "  cursor %s.%s  revision %d  generation %d  event %s\n",
+		lifecycle["state"], lifecycle["phase"], tolerantInt(state["revision"]), tolerantInt(baseline["generation"]), event)
 	fmt.Fprintln(w, "next: S2 design — hooks project status automatically; no further CLI needed.")
 }

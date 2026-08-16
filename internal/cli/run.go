@@ -1375,17 +1375,21 @@ func archiveREQOnRollover(root, archiveDir, approvedBy string, occurredAt time.T
 	if reqPath == "" || reqID == "" {
 		return "", nil // nothing bound in the archived period; nothing to close
 	}
-	reqData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reqPath)))
+	cleanRel, err := containedRelPath(reqPath)
 	if err != nil {
-		return "", fmt.Errorf("read bound REQ %s: %w", reqPath, err)
+		return "", fmt.Errorf("bound REQ path %q: %w", reqPath, err)
+	}
+	reqData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(cleanRel)))
+	if err != nil {
+		return "", fmt.Errorf("read bound REQ %s: %w", cleanRel, err)
 	}
 	shaBefore := fmt.Sprintf("%x", sha256.Sum256(reqData))
 	flipped, ok := flipStatusLineToArchived(string(reqData))
 	if !ok {
 		return "", nil // already archived or not locked; leave untouched
 	}
-	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(reqPath)), []byte(flipped), 0o644); err != nil {
-		return "", fmt.Errorf("write archived REQ %s: %w", reqPath, err)
+	if err := atomicWriteREQFile(filepath.Join(root, filepath.FromSlash(cleanRel)), []byte(flipped)); err != nil {
+		return "", fmt.Errorf("write archived REQ %s: %w", cleanRel, err)
 	}
 	shaAfter := fmt.Sprintf("%x", sha256.Sum256([]byte(flipped)))
 	receipt := map[string]any{
@@ -1404,7 +1408,7 @@ func archiveREQOnRollover(root, archiveDir, approvedBy string, occurredAt time.T
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(archiveDir, "req-archive.json"), append(receiptData, '\n'), 0o644); err != nil {
+	if err := atomicWriteREQFile(filepath.Join(archiveDir, "req-archive.json"), append(receiptData, '\n')); err != nil {
 		return "", fmt.Errorf("write REQ archive receipt: %w", err)
 	}
 	short := func(s string) string {
@@ -1419,6 +1423,39 @@ func archiveREQOnRollover(root, archiveDir, approvedBy string, occurredAt time.T
 // flipStatusLineToArchived rewrites the first top-of-file 状态/Status line
 // whose value is exactly "locked" to "archived". It touches nothing else —
 // baseline content is immutable (L2 first-principle refinement).
+// containedRelPath enforces that a runtime-recorded document path stays
+// inside the repository before it is used for a write.
+func containedRelPath(rel string) (string, error) {
+	clean := filepath.Clean(filepath.ToSlash(rel))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("must stay within the repository")
+	}
+	return clean, nil
+}
+
+// atomicWriteREQFile writes via temp-file + rename so a crash cannot
+// truncate a human-authored REQ or a receipt mid-write.
+func atomicWriteREQFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".req-archive-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
 func flipStatusLineToArchived(content string) (string, bool) {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
@@ -1439,7 +1476,8 @@ func flipStatusLineToArchived(content string) (string, bool) {
 			if idx < 0 {
 				return content, false
 			}
-			lines[i] = line[:idx] + "archived"
+			suffix := line[idx+len(parts[1]):]
+			lines[i] = line[:idx] + "archived" + suffix
 			return strings.Join(lines, "\n"), true
 		}
 	}
@@ -1756,8 +1794,10 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Runtime.RuntimeID == "" {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
-			// Unreadable runtime fails closed through the policy checks that
-			// require runtime facts; no integrity fact is fabricated here.
+			// Unreadable runtime leaves the context empty: hook policy cannot
+			// evaluate runtime-derived checks (locked artifacts unknown →
+			// locked_artifact_write is effectively fail-open here — same
+			// behavior as before the dead fact removal, recorded honestly).
 			_ = context
 		} else {
 			request.Runtime = context

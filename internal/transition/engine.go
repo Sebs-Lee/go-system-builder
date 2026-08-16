@@ -553,8 +553,16 @@ func updateBoundREQ(root string, state map[string]any, request Request, occurred
 	if bound == nil {
 		return fmt.Errorf("runtime has no bound REQ to amend")
 	}
+	oldID, _ := bound["id"].(string)
+	if oldID != "" && req.ID != oldID {
+		return fmt.Errorf("amended REQ %q does not match the bound REQ %q — changing the target is an unbind + rebind, not an amendment", req.ID, oldID)
+	}
 	oldVersion, _ := bound["version"].(string)
-	if !versionStrictlyGreater(req.Version, oldVersion) {
+	greater, parseable := versionStrictlyGreater(req.Version, oldVersion)
+	if !parseable {
+		return fmt.Errorf("REQ versions must be dotted numeric (got amended %q, bound %q)", req.Version, oldVersion)
+	}
+	if !greater {
 		return fmt.Errorf("amended REQ version %q must strictly exceed the bound version %q", req.Version, oldVersion)
 	}
 	uiImpact, err := parseUIImpact(string(data))
@@ -594,8 +602,9 @@ func updateBoundREQ(root string, state map[string]any, request Request, occurred
 }
 
 // versionStrictlyGreater compares dotted numeric versions (an optional "v"
-// prefix is tolerated); non-numeric inputs fall back to string ordering.
-func versionStrictlyGreater(a, b string) bool {
+// prefix is tolerated). parseable is false when either side is not dotted
+// numeric — callers must reject instead of guessing an ordering.
+func versionStrictlyGreater(a, b string) (greater, parseable bool) {
 	parse := func(v string) ([]int, bool) {
 		v = strings.TrimPrefix(strings.TrimSpace(v), "v")
 		if v == "" {
@@ -621,7 +630,7 @@ func versionStrictlyGreater(a, b string) bool {
 	na, okA := parse(a)
 	nb, okB := parse(b)
 	if !okA || !okB {
-		return a > b
+		return false, false
 	}
 	for i := 0; i < len(na) || i < len(nb); i++ {
 		var x, y int
@@ -632,10 +641,10 @@ func versionStrictlyGreater(a, b string) bool {
 			y = nb[i]
 		}
 		if x != y {
-			return x > y
+			return x > y, true
 		}
 	}
-	return false
+	return false, true
 }
 
 // parseUIImpact reads the `UI impact` field from a locked REQ and returns

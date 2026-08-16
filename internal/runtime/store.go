@@ -731,10 +731,26 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 	}
 
 	if docs, ok := state["documents"].([]any); ok {
-		for _, raw := range docs {
-			if doc, ok := raw.(map[string]any); ok {
-				refresh(doc)
+		baseline, _ := state["baseline"].(map[string]any)
+		currentGeneration := 0
+		if baseline != nil {
+			if gen, err := integerField(baseline, "generation"); err == nil {
+				currentGeneration = gen
 			}
+		}
+		for _, raw := range docs {
+			doc, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			// Superseded REQ generations are immutable history: a fingerprint
+			// refresh must not rewrite them to match an amended file.
+			if doc["kind"] == "req" {
+				if gen, err := integerField(doc, "generation"); err == nil && gen < currentGeneration {
+					continue
+				}
+			}
+			refresh(doc)
 		}
 	}
 	if evidence, ok := state["evidence"].([]any); ok {
@@ -2133,10 +2149,6 @@ func ValidateFreshInactiveState(state map[string]any) error {
 		}
 	}
 	return nil
-}
-
-func validateRolloverApproval(state map[string]any, approval RolloverApproval, runtimeID string, revision int) error {
-	return validateLifecycleApproval(state, approval.ApprovedBy, approval.EvidenceID, runtimeID, revision, "runtime_rollover")
 }
 
 // validateLifecycleApproval verifies that the human-decision evidence for a

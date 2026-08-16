@@ -237,7 +237,7 @@ is a correction loop that never bypasses the trunk.
 ```mermaid
 stateDiagram-v2
     [*] --> inactive
-    inactive --> planning: TR-001 loop_requested
+    inactive --> planning: TR-001 req_bound
     planning --> document_verification: TR-002 planning_ready
     document_verification --> building: TR-003 document_pass
     document_verification --> planning: TR-004 document_fix_required

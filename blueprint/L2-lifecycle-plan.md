@@ -197,6 +197,7 @@ stateDiagram-v2
     paused --> bound : 恢复 resume（校验基线未漂移）
     paused --> bound : 修订 amend（generation+1，下游全失效）
     bound --> unbound : 退出 unbind（撤销授权，留痕归档）
+    paused --> unbound : 退出 unbind（任意非终态，checkpoint 随档留存）
     bound --> released : 正常结束 approve（S11 人闸）
     paused --> aborted : 退出 abort（人批准）
     released --> archived : rollover 归档（REQ 落章+双指纹）
