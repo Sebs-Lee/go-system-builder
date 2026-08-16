@@ -92,7 +92,7 @@ func ValidateRuntimeReachability(root string) error {
 		// been moved to versions/), so reachability and fingerprint equality
 		// only apply to the current baseline's documents. The hook still
 		// write-protects every locked req generation by path.
-		if doc.Kind == "req" && doc.Generation < state.Baseline.Generation {
+		if doc.Kind == "req" && doc.Generation > 0 && doc.Generation < state.Baseline.Generation {
 			continue
 		}
 		if err := checkReachablePath(root, fmt.Sprintf("documents[%s]", doc.ID), doc.Path); err != nil {

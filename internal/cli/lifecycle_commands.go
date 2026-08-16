@@ -150,7 +150,7 @@ func runRuntimePause(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	_ = next
-	fmt.Fprintf(stdout, "paused from %v (reason recorded; approved-by %s)\n", cursorLabel(state, phase), *approvedBy)
+	fmt.Fprintf(stdout, "paused from %v at revision %d (reason recorded; approved-by %s)\n", cursorLabel(state, phase), next.Revision, *approvedBy)
 	fmt.Fprintln(stdout, "resume: loop-harness runtime resume --approved-by <you>   (baseline drift on resume routes to amendment)")
 	return 0
 }
@@ -208,7 +208,7 @@ func runRuntimeResume(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime resume", err))
 		return 1
 	}
-	fmt.Fprintf(stdout, "resumed to %v (pause checkpoint verified and cleared)\n", cursorLabel(next.State["lifecycle"].(map[string]any)["state"].(string), next.State["lifecycle"].(map[string]any)["phase"]))
+	fmt.Fprintf(stdout, "resumed to %v at revision %d (pause checkpoint verified and cleared)\n", cursorLabel(next.State["lifecycle"].(map[string]any)["state"].(string), next.State["lifecycle"].(map[string]any)["phase"]), next.Revision)
 	return 0
 }
 
@@ -243,8 +243,14 @@ func inFlightEntities(state map[string]any) []string {
 		if team == nil {
 			continue
 		}
+		// Teams are append-only history: only planned/active ones are really
+		// in flight. Blocking on completed teams would train --force habit.
+		status, _ := team["status"].(string)
+		if status != "planned" && status != "active" {
+			continue
+		}
 		if id, _ := team["id"].(string); id != "" {
-			out = append(out, "team "+id)
+			out = append(out, "team "+id+" ("+status+")")
 		}
 	}
 	return out
@@ -437,9 +443,9 @@ func runREQAmend(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	fmt.Fprintf(stdout, "amended: bound %s → %s %s (baseline generation %d)\n", boundID, id, version, tolerantInt(baseline["generation"]))
+	fmt.Fprintf(stdout, "amended: bound %s → %s %s (baseline generation %d, revision %d)\n", boundID, id, version, tolerantInt(baseline["generation"]), next.Revision)
 	fmt.Fprintf(stdout, "  downstream evidence invalidated: %d item(s); old REQ stays locked (history)\n", invalid)
-	fmt.Fprintf(stdout, "  superseded REQ file: move it to docs/requirements/versions/%s/ for the record (procedural; hook keeps protecting it)\n", boundID)
+	fmt.Fprintf(stdout, "  superseded REQ file: move it to docs/requirements/versions/%s/ for the record (its fingerprint stays in runtime history; hook protection is path-based and follows the file only while it stays put)\n", boundID)
 	fmt.Fprintln(stdout, "next: continue from planning.design — the amendment already left the paused state (checkpoint cleared)")
 	return 0
 }

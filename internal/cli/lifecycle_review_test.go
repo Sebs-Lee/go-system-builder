@@ -81,10 +81,10 @@ func TestUnbindForceRecordsInFlight(t *testing.T) {
 		"bugs":   []any{},
 		"teams":  []any{},
 		"tasks": []any{map[string]any{
-			"id":             "TASK-001",
-			"state":          "in_progress",
-			"path":           "docs/tasks/TASK-001.md",
-			"sha256":         "0000000000000000000000000000000000000000000000000000000000000000",
+			"id":              "TASK-001",
+			"state":           "in_progress",
+			"path":            "docs/tasks/TASK-001.md",
+			"sha256":          "0000000000000000000000000000000000000000000000000000000000000000",
 			"owner_agent_ids": []any{},
 		}},
 	}
@@ -144,7 +144,7 @@ func TestUnbindReceiptCannotAuthorizeRollover(t *testing.T) {
 		"id": "ev-unbind", "kind": "human_decision", "status": "valid",
 		"baseline_generation": float64(1), "review_round": nil,
 		"path": ".claude/decisions/unbind.json", "sha256": "placeholder",
-		"produced_by": []any{"alice"}, "scope_refs": []any{"runtime_unbind:loop-REQ-202@5"},
+		"produced_by": []any{"alice"}, "scope_refs": []any{"runtime_unbind:loop-REQ-202@4"},
 		"invalidated_by": nil, "invalidation_rule": nil, "invalidation_reason": nil,
 		"responsibility_id": nil,
 	}}
@@ -239,5 +239,46 @@ func TestAmendRejectsNonNumericVersion(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "dotted numeric") {
 		t.Fatalf("rejection must name the format, got: %s", stderr.String())
+	}
+}
+
+// TestRolloverArchivesCRLFREQ pins the CRLF handling of the archival flip
+// through the real rollover path: the trailing CR must survive so the
+// file's line endings stay exactly as the author left them.
+func TestRolloverArchivesCRLFREQ(t *testing.T) {
+	reqBody := "# REQ-208\r\n\r\n> 状态：locked\r\n> 版本：v1.0.0\r\n> UI impact：none\r\n"
+	root := newUXTestRoot(t, map[string]string{"REQ-208.md": reqBody})
+	bindForReviewReq(t, root, "docs/requirements/REQ-208.md")
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	state := readJSONMap(t, statePath)
+	state["lifecycle"] = map[string]any{"state": "release_authorized", "phase": nil, "phase_revision": float64(3)}
+	decision := filepath.Join(root, ".claude", "decisions", "rollover.json")
+	os.MkdirAll(filepath.Dir(decision), 0o755)
+	decisionBody := []byte(`{"decision":"runtime_rollover","approved_by":"alice"}`)
+	os.WriteFile(decision, decisionBody, 0o644)
+	state["evidence"] = []any{map[string]any{
+		"id": "hd-rollover", "kind": "human_decision", "status": "valid",
+		"baseline_generation": float64(1), "review_round": nil,
+		"path":           ".claude/decisions/rollover.json",
+		"sha256":         fmt.Sprintf("%x", sha256.Sum256(decisionBody)),
+		"produced_by":    []any{"alice"},
+		"scope_refs":     []any{"runtime_rollover:loop-REQ-208@1"},
+		"invalidated_by": nil, "invalidation_rule": nil, "invalidation_reason": nil,
+		"responsibility_id": nil,
+	}}
+	writeJSONMap(t, statePath, state)
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"runtime", "rollover", "--root", root,
+		"--approved-by", "alice", "--approval-evidence", "hd-rollover"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("rollover failed: %s", stderr.String())
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "requirements", "REQ-208.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# REQ-208\r\n\r\n> 状态：archived\r\n> 版本：v1.0.0\r\n> UI impact：none\r\n"
+	if string(data) != want {
+		t.Fatalf("archived REQ = %q, want %q", string(data), want)
 	}
 }

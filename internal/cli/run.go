@@ -1434,8 +1434,14 @@ func containedRelPath(rel string) (string, error) {
 }
 
 // atomicWriteREQFile writes via temp-file + rename so a crash cannot
-// truncate a human-authored REQ or a receipt mid-write.
+// truncate a human-authored REQ or a receipt mid-write. The original file
+// mode is preserved (CreateTemp defaults to 0600, which would strip read
+// access for other identities on a git-tracked REQ).
 func atomicWriteREQFile(path string, data []byte) error {
+	mode := os.FileMode(0o644)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".req-archive-*")
 	if err != nil {
 		return err
@@ -1453,7 +1459,17 @@ func atomicWriteREQFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		dir.Sync()
+		dir.Close()
+	}
+	return nil
 }
 
 func flipStatusLineToArchived(content string) (string, bool) {

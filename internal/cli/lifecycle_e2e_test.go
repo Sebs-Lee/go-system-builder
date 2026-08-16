@@ -92,7 +92,7 @@ func TestLifecycleVerbChainE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = must("amend", "req", "amend", "--root", root, "--req", "docs/requirements/REQ-100.md", "--approved-by", "alice")
-	if !strings.Contains(out, "REQ-100 v1.1.0 (baseline generation 2)") {
+	if !strings.Contains(out, "REQ-100 v1.1.0 (baseline generation 2") {
 		t.Fatalf("amend output: %s", out)
 	}
 	state := stateOf()
