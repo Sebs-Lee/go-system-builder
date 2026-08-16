@@ -743,12 +743,12 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 			if !ok {
 				continue
 			}
-			// Superseded REQ generations are immutable history: a fingerprint
-			// refresh must not rewrite them to match an amended file.
-			if doc["kind"] == "req" {
-				if gen, err := integerField(doc, "generation"); err == nil && gen < currentGeneration {
-					continue
-				}
+			// Superseded generations of every kind are immutable history:
+			// a fingerprint refresh must not rewrite them to match
+			// amended files (L3-S3 v4.0.1: the req-only exemption is
+			// promoted now that contracts and tasks also register).
+			if gen, err := integerField(doc, "generation"); err == nil && gen < currentGeneration {
+				continue
 			}
 			refresh(doc)
 		}

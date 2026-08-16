@@ -672,8 +672,25 @@ func parseUIImpact(content string) (string, error) {
 	return "", fmt.Errorf("locked REQ is missing UI impact metadata")
 }
 
+// appendDocument appends a document entry unless a same-id entry of the
+// same baseline generation already exists — that one is replaced in place.
+// Same-generation re-registration happens when S6→S5 rework re-locks a
+// revised contract: stacking entries would break exactSubjects matching
+// forever (each stale sha poisons the manifest).
 func appendDocument(value any, document map[string]any) []any {
 	documents, _ := value.([]any)
+	id, _ := document["id"].(string)
+	generation := integer(document["generation"])
+	for i, raw := range documents {
+		existing, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if existingID, _ := existing["id"].(string); existingID == id && integer(existing["generation"]) == generation {
+			documents[i] = document
+			return documents
+		}
+	}
 	return append(documents, document)
 }
 

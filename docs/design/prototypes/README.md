@@ -22,6 +22,7 @@ docs/design/prototypes/{module}/
   cases.json
   scenario-coverage.json
   fixture-contract.json
+cross-matrix.json      # convergence-1 carrier (fact x FR x story hunt)
   *.html
   assets/
 ```

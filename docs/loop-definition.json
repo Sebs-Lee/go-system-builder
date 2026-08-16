@@ -177,8 +177,12 @@
             "orchestrator",
             "hook_controller"
           ],
-          "guards": [],
-          "actions": [],
+          "guards": [
+            "contracts_checked"
+          ],
+          "actions": [
+            "register_locked_contracts"
+          ],
           "required_evidence": [],
           "on_guard_failure": "warn_and_retry",
           "auto_trigger": {
@@ -1077,7 +1081,7 @@
         "verified_versions_current"
       ],
       "actions": [
-        "atomically_lock_execution_batch",
+        "register_execution_batch",
         "record_document_result"
       ],
       "required_evidence": [

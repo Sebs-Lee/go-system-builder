@@ -107,6 +107,15 @@ func ValidateRepository(root string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
+	// Contracts check: S3's mechanical close runs with every repository
+	// validation — link references, fingerprint column, clause cells.
+	contractResult, err := ContractsCheck(root)
+	if err != nil {
+		return fmt.Errorf("contracts: %w", err)
+	}
+	if len(contractResult.Problems) > 0 {
+		return fmt.Errorf("contracts: %d problem(s): %s", len(contractResult.Problems), strings.Join(contractResult.Problems, "; "))
+	}
 	// AutoSpecs: once a module's Playwright spec tree exists, every doctor
 	// run enforces its browser-case coverage (specs are S6+ artifacts —
 	// absent trees are expected earlier and are not failures).

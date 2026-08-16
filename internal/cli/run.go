@@ -120,7 +120,7 @@ func printTopLevelUsage(stdout io.Writer) {
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|angles|e2e-coverage|scenario|manual|explain>")
+		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|angles|e2e-coverage|scenario|contracts|manual|explain>")
 		fmt.Fprintln(stderr, "manual:  see .claude/bin/loop-harness.md (gate-level specification)")
 		fmt.Fprintln(stderr, "explain: loop-harness explain <TR-xxx> (per-transition details)")
 		return 2
@@ -168,6 +168,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runE2ECoverage(args[1:], stdout, stderr)
 	case "scenario":
 		return runScenario(args[1:], stdout, stderr)
+	case "contracts":
+		return runContracts(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 2

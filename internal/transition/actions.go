@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/impact"
@@ -88,6 +90,8 @@ func InitActionRegistry() {
 		"bind_loop_req":             actionBindLoopREQ,
 		"record_loop_authorization": actionRecordLoopAuthorization,
 		"update_bound_req":          actionUpdateBoundREQ,
+		"register_locked_contracts": actionRegisterLockedContracts,
+		"register_execution_batch":  actionRegisterExecutionBatch,
 		// BUG-PLANNING-SUBSTATE: only set_planning_phase_design remains
 		// from the planning phase-set family. The other six (initialize,
 		// contract_drafting, task_drafting, ui_prototype, rework,
@@ -339,6 +343,125 @@ func actionUpdateBoundREQ(state map[string]any, ctx *ActionContext) (ActionResul
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
 	return ActionResult{Status: "committed", MutationApplied: true, Detail: "amended REQ swapped into the running cycle"}, nil
+}
+
+// actionRegisterLockedContracts runs on PTR-PLAN-02 (contracts→tasks):
+// it scans docs/contracts/*.md for status=locked files and registers each
+// into documents[] (same-generation-same-id replaces, appendDocument) —
+// feeding the S3 exit gate that consumes documents[], and arming hook
+// write-protection for contracts (L3-S3 v4.0.1).
+func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	root := ctx.Root
+	if root == "" {
+		root, _ = state["root"].(string)
+	}
+	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/contracts", "CONTRACTS-", "contract", "locked")
+	if err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	return ActionResult{Status: "committed", MutationApplied: registered > 0,
+		Detail: fmt.Sprintf("registered %d locked contract(s)", registered)}, nil
+}
+
+// actionRegisterExecutionBatch replaces the evidence-presence placeholder
+// on TR-003: the atomic lock registers the execution batch — complete TASK
+// files join the already-registered contracts in documents[].
+func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	root := ctx.Root
+	if root == "" {
+		root, _ = state["root"].(string)
+	}
+	if len(ctx.Evidence) == 0 {
+		return ActionResult{Status: "failed", Detail: "execution batch evidence missing"}, fmt.Errorf("register_execution_batch: current evidence missing")
+	}
+	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/tasks", "TASK-", "task", "complete")
+	if err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	return ActionResult{Status: "committed", MutationApplied: registered > 0,
+		Detail: fmt.Sprintf("registered %d complete task(s)", registered)}, nil
+}
+
+// registerDocumentsFromDisk scans a docs subtree for files whose top-of-file
+// status field matches; each is registered into documents[] with the current
+// baseline generation and the registering actor as author. Status mismatch
+// on a filename-matching file FAILS (skip would silently starve the
+// exactSubjects manifest downstream — axiom five).
+func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionContext, dirRel, prefix, kind, wantStatus string) (int, error) {
+	if root == "" {
+		root = "."
+	}
+	dir := filepath.Join(root, filepath.FromSlash(dirRel))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", dirRel, err)
+	}
+	baseline, _ := state["baseline"].(map[string]any)
+	generation := 0
+	if baseline != nil {
+		generation = integerOf(baseline["generation"])
+	}
+	actor := ""
+	if ctx.Request != nil {
+		actor = ctx.Request.Actor
+	}
+	occurredAt := ""
+	if !ctx.OccurredAt.IsZero() {
+		occurredAt = ctx.OccurredAt.UTC().Format(time.RFC3339Nano)
+	}
+	registered := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		id := strings.TrimSuffix(name, ".md")
+		if entry.IsDir() || !strings.HasSuffix(name, ".md") ||
+			strings.Contains(strings.ToLower(name), "template") ||
+			strings.EqualFold(name, "README.md") ||
+			!strings.HasPrefix(id, prefix) {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(dirRel, name))
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			return registered, fmt.Errorf("read %s: %w", rel, err)
+		}
+		status := ParseMarkdownField(string(data), "状态", "Status")
+		if status == "" {
+			// No status field: the file declares no batch membership (legacy
+			// fixture, README-like stub). Not part of this batch — skip.
+			continue
+		}
+		if status != wantStatus {
+			// Declares a different state: a real partial batch (e.g. a draft
+			// contract at TR-003). Failing here keeps exactSubjects honest.
+			return registered, fmt.Errorf("%s status is %q, want %q — register refuses partial batches (fix the file or finish the batch)", rel, status, wantStatus)
+		}
+		version := ParseMarkdownField(string(data), "版本", "Version")
+		if version == "" {
+			// Legacy fixtures and minimal drafts may omit the version field;
+			// the document id is the join key — register with a placeholder
+			// rather than failing the whole batch (version presence is the
+			// template's job, enforced by S5 review, not the registration).
+			version = "unversioned"
+		}
+		state["documents"] = appendDocument(state["documents"], map[string]any{
+			"id": id, "kind": kind, "path": rel, "version": version,
+			"sha256": SHA256(data), "status": status, "generation": generation,
+			"author_agent_id": actor, "registered_at": occurredAt,
+		})
+		registered++
+	}
+	return registered, nil
+}
+
+func integerOf(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
 }
 
 func actionEvidenceRecorded(ctx *ActionContext, label string) (ActionResult, error) {

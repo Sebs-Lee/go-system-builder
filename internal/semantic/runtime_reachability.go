@@ -87,12 +87,12 @@ func ValidateRuntimeReachability(root string) error {
 	}
 
 	for _, doc := range state.Documents {
-		// Superseded REQ generations are history: after an in-place amend the
-		// old entry keeps its original fingerprint (and the file may have
-		// been moved to versions/), so reachability and fingerprint equality
-		// only apply to the current baseline's documents. The hook still
-		// write-protects every locked req generation by path.
-		if doc.Kind == "req" && doc.Generation > 0 && doc.Generation < state.Baseline.Generation {
+		// Superseded generations of every kind are immutable history: after
+		// an in-place amend the old entry keeps its original fingerprint
+		// (and the file may have been moved to versions/), so reachability
+		// and fingerprint equality only apply to the current baseline's
+		// documents (L3-S3 v4.0.1: promotion from the req-only exemption).
+		if doc.Generation > 0 && doc.Generation < state.Baseline.Generation {
 			continue
 		}
 		if err := checkReachablePath(root, fmt.Sprintf("documents[%s]", doc.ID), doc.Path); err != nil {

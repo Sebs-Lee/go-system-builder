@@ -7,7 +7,7 @@
 > Contractor：{Contractor}
 > 锁定日期：YYYY-MM-DD
 
-> 锁定依据：`{runtime-id}@{revision}` / `{transition-id}` / `{document-verification-evidence}`。
+> 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
 
 ## 文档链接
 
@@ -41,7 +41,7 @@
 
 | REQ source_ref | UI impact | 模块当前真相包 | Fingerprint (SHA-256) | 合同影响 | E2E 来源 |
 |:---|:---|:---|:---|:---|:---|
-| REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |
+| REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cross-matrix.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |
 
 ## 需求覆盖矩阵
 

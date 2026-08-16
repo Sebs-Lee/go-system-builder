@@ -8,7 +8,7 @@
 > 关联设计：`docs/design/architecture/ARCHITECTURE.md`
 > 锁定日期：YYYY-MM-DD
 
-> 锁定依据：`{runtime-id}@{revision}` / `{transition-id}` / `{document-verification-evidence}`。
+> 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
 
 ## 1. 文档链接
 

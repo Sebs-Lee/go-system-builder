@@ -103,7 +103,7 @@ UI 影响（任何涉及前端页面、组件、交互、可见状态、错误�
 |:--|:--|
 | UI impact（引自顶部） | none / changed / unknown（顶部 blockquote 是唯一被 `parseUIImpact` 解析的位置，本节只回显，不独立声明） |
 | 影响页面 / 模块 | {页面、路由、组件或 N/A} |
-| 模块当前真相包 | `docs/design/prototypes/<module>/`（index.html + stories.md + flows.md + scenario-model.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html）/ N/A |
+| 模块当前真相包 | `docs/design/prototypes/<module>/`（index.html + stories.md + flows.md + scenario-model.json + cross-matrix.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html）/ N/A |
 | 原型门禁状态 | N/A / pending / ready |
 
 > 真相包齐备性、S/F-NNN 完整性与 branch 覆盖率由 S2 的 `loop-harness scenario validate` 校验，不在本节自查。
@@ -122,7 +122,7 @@ UI 影响（任何涉及前端页面、组件、交互、可见状态、错误�
 
 {agent 自审结论——提议锁定前全审的输出，一段话：审过什么、修了什么、留了什么旁注}
 
-## §F 派生文档与覆盖矩阵（骨架——S3 起填写，S0 不动）
+## §F 派生文档与覆盖矩阵（骨架——**活矩阵唯一居所在 CONTRACTS-{id} 索引**，本表仅锁定时快照；REQ 是锁定基线，agent 不填写本表——L3-S3 v4.0.1）
 
 ### 派生 UI 设计包
 

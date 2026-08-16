@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `eab0da8a06dda99b2f328f35fffbcb08ee639c82ab84049785b06f8933165979`
+- **Loop definition SHA-256**: `395f935aa99aaa3c273b8d980e5e663ea93dc1c3cca09ad4fb1e5eba1b570b90`
 
 ---
 
@@ -806,7 +806,7 @@ _contracts → tasks_
 
 Advance formal planning from contracts to tasks after the contract quality gate passes.
 
-_No guards._
+- `contracts_checked` [semantic_check] — _no spec_
 
 ## Phase transitions: verification
 

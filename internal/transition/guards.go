@@ -12,6 +12,7 @@ package transition
 
 import (
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,7 @@ func InitGuardRegistry() {
 		// human lock itself (L3-S1 v4.x); only the cross-entity check is a
 		// real transition guard.
 		"no_other_active_loop": evidenceBackedGuard("no_other_active_loop"),
+		"contracts_checked":    guardContractsCheckedFn,
 		// BUG-PLANNING-SUBSTATE: planning_phase_ready / contracts_reviewed /
 		// candidate_tasks_complete are replaced by the single direct-check guard below.
 		"planning_complete":                     guardPlanningCompleteFn,
@@ -206,6 +208,7 @@ func InitGuardRegistry() {
 	}
 	semanticChecks := map[string]bool{
 		"no_other_active_loop": true, "resume_checkpoint_valid": true,
+		"contracts_checked": true,
 		"same_review_round": true, "all_required_dimensions_passed": true,
 		"no_invalidated_pass_evidence": true, "no_open_blocking_bugs": true,
 		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
@@ -322,6 +325,25 @@ func guardUIIImpactResolvedFn(state map[string]any, _ map[string]string) error {
 // state["root"] slot populated by Apply; the guard does not require
 // evidence (the only transition that uses it is TR-002, whose required_evidence
 // is empty).
+// guardContractsCheckedFn runs S3's mechanical close (token reconciliation,
+// clause cells, fingerprint column) as a real transition guard — the check
+// happens on the natural path (PTR-PLAN-02 evaluation), not as a voluntary
+// CLI invocation (L3-S3 v4.0.1: D2 wiring).
+func guardContractsCheckedFn(state map[string]any, _ map[string]string) error {
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	result, err := semantic.ContractsCheck(root)
+	if err != nil {
+		return fmt.Errorf("contracts_checked: %w", err)
+	}
+	if len(result.Problems) > 0 {
+		return fmt.Errorf("contracts_checked: %d problem(s): %s", len(result.Problems), strings.Join(result.Problems, "; "))
+	}
+	return nil
+}
+
 func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 	root, _ := state["root"].(string)
 	if root == "" {
