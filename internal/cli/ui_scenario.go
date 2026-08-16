@@ -70,7 +70,8 @@ func hasCompleteUIDesignPackageForModule(root, module string) (bool, error) {
 	}
 	for _, name := range []string{
 		"index.html", "stories.md", "flows.md", "scenario-model.json",
-		"fixture-contract.json", "cases.json", "scenario-coverage.json",
+		"fixture-contract.json", "cross-matrix.json", "cases.json",
+		"scenario-coverage.json",
 	} {
 		exists, err := validateUIDesignFile(filepath.Join(directory, name), prototypesRealPath)
 		if err != nil {

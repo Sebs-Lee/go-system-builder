@@ -147,7 +147,9 @@
             "orchestrator",
             "hook_controller"
           ],
-          "guards": [],
+          "guards": [
+            "ui_impact_resolved"
+          ],
           "actions": [],
           "required_evidence": [],
           "on_guard_failure": "warn_and_retry",

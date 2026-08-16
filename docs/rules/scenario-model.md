@@ -166,3 +166,11 @@ regression；只补本 REQ 的路径不满足规范。
 - 用直接提交 API、手改数据库、隐藏 URL 或共享可变账号代替被测用户动作。
 - 只断言 HTTP 200、toast、URL 或“没有抛错”而不验证业务终态和拒绝副作用。
 - 失败后修改 expected outcome 使当前测试变绿。
+
+## Coverage semantics (S2 v4.0.1 joint review)
+
+- `scenario-coverage.json` 的 `required_branch_coverage` 是**构造性 100%**（引擎对每个 required case 同时计数 required 与 covered）——它是**设计时声明覆盖**，不是执行覆盖；**不得作为执行覆盖证据**。执行覆盖由 S7 的验证证据计数承担（REQ-040 的 CASE_ID 粒度完整性门）。
+- **非 UI REQ 没有 CASE 宇宙**（四件套只对 `ui_impact=changed` 的模块强制存在）——这是显式设计边界：此类 REQ 的 S7 验证分母是职责粒度+任务收尾契约；REQ-040 Q-002 预留"无场景包 ⇒ BLOCKED 而非静默跳过"。
+- **case id 格式**：`^CASE-[A-Z0-9]+(-[A-Z0-9]+)*$`（引擎强制）——case id 是 S2→S7 的唯一验证分母（L2 全局规则「单一验证分母」）。
+- **cross-matrix.json**（模块包第八文件）：汇聚①的事实×需求点×故事交叉清单——每格指向覆盖它的 branch 或记录无分支理由；"沉默不是不适用"。
+- **AC↔CASE 桥**：`scenario bridge`（源头检查，汇聚①后即可跑）与 `scenario validate`（全链含 BR→CASE）——每条验收标准须达 FR→BR→CASE 或带背书 N/A（NFR 编号或 §A4 指针；自由文本不是 N/A）。

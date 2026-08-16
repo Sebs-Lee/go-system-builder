@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/scenario"
 )
 
@@ -24,39 +23,31 @@ func TestUIDesignPackageRequiresEveryREQBoundModuleAndScenarioOutputs(t *testing
 		t.Fatal(err)
 	}
 
-	request := policy.Input{
-		ToolName:  "Write",
-		ToolInput: map[string]any{"file_path": "docs/contracts/FE-001.md"},
-		Runtime:   policy.RuntimeContext{BoundREQUIImpact: "changed", BoundREQPath: "docs/requirements/REQ-001.md"},
-	}
-	populateUIPrototypeFact(root, &request)
-	if !request.Facts["ui_contract_before_prototype"] {
+	complete, err := hasCompleteUIDesignPackageForREQ(root, "docs/requirements/REQ-001.md")
+	if err == nil && complete {
 		t.Fatal("missing current module scenario package must fail the UI design gate")
 	}
 
 	if err := writeCompleteUIDesignPackageForTest(root, "investor-workbench"); err != nil {
 		t.Fatal(err)
 	}
-	request.Facts = nil
-	populateUIPrototypeFact(root, &request)
-	if request.Facts["ui_contract_before_prototype"] {
-		t.Fatal("complete current module package was rejected")
+	complete, err = hasCompleteUIDesignPackageForREQ(root, "docs/requirements/REQ-001.md")
+	if err != nil || !complete {
+		t.Fatalf("complete current module package was rejected: complete=%v err=%v", complete, err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "docs", "design", "prototypes", "investor-workbench", "page.html"), []byte("page without metadata"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	request.Facts = nil
-	populateUIPrototypeFact(root, &request)
-	if !request.Facts["ui_contract_before_prototype"] {
+	complete, _ = hasCompleteUIDesignPackageForREQ(root, "docs/requirements/REQ-001.md")
+	if complete {
 		t.Fatal("a page without the required prototype metadata header must fail the UI design gate")
 	}
 
 	if err := os.WriteFile(reqPath, []byte("# REQ-001\n\nAffected modules: docs/design/prototypes/investor-workbench/ and docs/design/prototypes/portfolio/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	request.Facts = nil
-	populateUIPrototypeFact(root, &request)
-	if !request.Facts["ui_contract_before_prototype"] {
+	complete, _ = hasCompleteUIDesignPackageForREQ(root, "docs/requirements/REQ-001.md")
+	if complete {
 		t.Fatal("a second unbound module must fail the UI design gate")
 	}
 }
@@ -100,7 +91,8 @@ func TestUIDesignPackageRejectsExternalModuleSymlink(t *testing.T) {
 func TestUIDesignPackageRejectsSymlinkRequiredFiles(t *testing.T) {
 	requiredFiles := []string{
 		"index.html", "stories.md", "flows.md", "scenario-model.json",
-		"fixture-contract.json", "cases.json", "scenario-coverage.json",
+		"fixture-contract.json", "cross-matrix.json", "cases.json",
+		"scenario-coverage.json",
 	}
 	for _, name := range requiredFiles {
 		t.Run(name, func(t *testing.T) {
@@ -187,7 +179,10 @@ func writeCompleteUIDesignPackageForTest(root, module string) error {
 		}}},
 	}
 	fixture := map[string]any{"module": module, "fixtures": []any{map[string]any{"id": "fixture", "persona": "operator", "synthetic": true, "setup": []any{"seed"}, "cleanup": []any{"cleanup"}}}}
-	for name, value := range map[string]any{"scenario-model.json": model, "fixture-contract.json": fixture} {
+	crossMatrix := map[string]any{"module": module, "entries": []any{map[string]any{
+		"fact": "fact-investor", "req_ref": "REQ-001", "story": "S-001", "branch": "branch-allow",
+	}}}
+	for name, value := range map[string]any{"scenario-model.json": model, "fixture-contract.json": fixture, "cross-matrix.json": crossMatrix} {
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
 			return err

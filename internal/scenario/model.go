@@ -149,4 +149,8 @@ type Report struct {
 
 type ValidateOptions struct {
 	RequireSpecs bool
+	// AutoSpecs enforces browser-spec coverage for modules whose Playwright
+	// spec tree already exists (specs are S6+ artifacts — absent trees are
+	// expected before building and are not failures).
+	AutoSpecs bool
 }

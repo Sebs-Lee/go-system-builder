@@ -28,17 +28,20 @@ const (
 var (
 	moduleNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	storyRefPattern   = regexp.MustCompile(`^S-[0-9]{3}$`)
+	caseIDPattern     = regexp.MustCompile(`^CASE-[A-Z0-9]+(-[A-Z0-9]+)*$`)
 	flowRefPattern    = regexp.MustCompile(`^(?:F-[0-9]{3}|PATH-[A-Za-z0-9-]+)$`)
 )
 
 type sourcePackage struct {
-	directory    string
-	model        ScenarioModel
-	fixtures     FixtureContract
-	modelBytes   []byte
-	fixtureBytes []byte
-	stories      []byte
-	flows        []byte
+	directory       string
+	model           ScenarioModel
+	fixtures        FixtureContract
+	crossMatrix     CrossMatrix
+	modelBytes      []byte
+	fixtureBytes    []byte
+	crossMatrixByte []byte
+	stories         []byte
+	flows           []byte
 }
 
 // GenerateModule validates the module's source package and atomically writes
@@ -72,7 +75,7 @@ func ValidateModule(root, module string, options ValidateOptions) (Report, error
 	if err := validateCurrentOutputs(source.directory, outputs); err != nil {
 		return Report{}, err
 	}
-	if err := validateSpecs(root, module, outputs.cases, options.RequireSpecs); err != nil {
+	if err := validateSpecs(root, module, outputs.cases, options); err != nil {
 		return Report{}, err
 	}
 	return buildReport(source, outputs, root)
@@ -120,6 +123,9 @@ func ValidateAll(root string, options ValidateOptions) ([]Report, error) {
 		}
 		reports = append(reports, report)
 	}
+	if _, err := RunBridge(root, true); err != nil {
+		return reports, err
+	}
 	return reports, nil
 }
 
@@ -164,9 +170,20 @@ func loadSourcePackage(root, module string) (sourcePackage, error) {
 	if err := decodeStrict(fixtureBytes, &fixtures); err != nil {
 		return sourcePackage{}, fmt.Errorf("decode fixture-contract.json: %w", err)
 	}
+	crossMatrixBytes, err := readRequiredFile(directory, "cross-matrix.json")
+	if err != nil {
+		return sourcePackage{}, err
+	}
+	if err := validateSchema("scenario-cross-matrix.schema.json", crossMatrixBytes); err != nil {
+		return sourcePackage{}, fmt.Errorf("cross-matrix.json schema: %w", err)
+	}
+	crossMatrix, err := decodeCrossMatrix(crossMatrixBytes)
+	if err != nil {
+		return sourcePackage{}, err
+	}
 	source := sourcePackage{
-		directory: directory, model: model, fixtures: fixtures,
-		modelBytes: modelBytes, fixtureBytes: fixtureBytes,
+		directory: directory, model: model, fixtures: fixtures, crossMatrix: crossMatrix,
+		modelBytes: modelBytes, fixtureBytes: fixtureBytes, crossMatrixByte: crossMatrixBytes,
 		stories: stories, flows: flows,
 	}
 	if err := validateSource(source, module); err != nil {
@@ -184,6 +201,9 @@ func validateSource(source sourcePackage, module string) error {
 	}
 	if !validProfile(source.model.CoverageProfile) {
 		return fmt.Errorf("unsupported coverage_profile %q", source.model.CoverageProfile)
+	}
+	if err := validateCrossMatrix(source); err != nil {
+		return err
 	}
 	idRegistry := map[string]string{}
 	partitions := map[string]map[string]struct{}{}
@@ -230,6 +250,9 @@ func validateSource(source sourcePackage, module string) error {
 			}
 			if err := registerID(idRegistry, branch.ID, "branch"); err != nil {
 				return err
+			}
+			if !caseIDPattern.MatchString(branch.CaseID) {
+				return fmt.Errorf("case id %q must match %s (the case id is the S2→S7 verification denominator — L2 single-denominator rule)", branch.CaseID, caseIDPattern.String())
 			}
 			if _, exists := caseIDs[branch.CaseID]; exists {
 				return fmt.Errorf("duplicate case id %q", branch.CaseID)
@@ -454,14 +477,20 @@ func buildReport(source sourcePackage, outputs builtOutputs, root string) (Repor
 	}, nil
 }
 
-func validateSpecs(root, module string, cases []Case, required bool) error {
+func validateSpecs(root, module string, cases []Case, options ValidateOptions) error {
 	coverage, err := inspectSpecs(root, module, cases)
 	if err != nil {
 		return err
 	}
+	required := options.RequireSpecs
+	if !required && options.AutoSpecs {
+		if _, statErr := os.Stat(filepath.Join(root, "web", "e2e", module)); statErr == nil {
+			required = true
+		}
+	}
 	if !required {
 		return nil
-	}
+}
 	if coverage.RequiredCases != coverage.CoveredCases || coverage.RequiredPaths != coverage.CoveredPaths {
 		return fmt.Errorf("browser spec coverage incomplete: cases %d/%d paths %d/%d", coverage.CoveredCases, coverage.RequiredCases, coverage.CoveredPaths, coverage.RequiredPaths)
 	}

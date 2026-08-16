@@ -38,7 +38,7 @@ When `UI impact = changed`:
 3. Ensure the module ships `index.html`, `stories.md`, `flows.md`, `scenario-model.json`,
    `cases.json`, `scenario-coverage.json`, `fixture-contract.json`, and ≥1 page HTML file.
 4. Update the complete module set; REQ is a `source_refs` value, not the owner of a copy.
-5. Confirm every page HTML file carries the current 3-field header (see §5).
+5. Confirm every page HTML file carries the current 4-field header (see §5).
 6. Confirm scenario JSON, `stories.md`, and `flows.md` satisfy §6 and §7, including
    positive/negative and 100% required branch gates.
 7. Link the module current-truth package into FE/BE/SYNC contracts before contract lock
@@ -68,7 +68,7 @@ Folder naming: use `prototypes/` (not `proto/`). The two are unified; legacy `pr
 
 ## 5. HTML Header Minimum
 
-Every page HTML file carries a 3-field current-truth header in a dark gradient
+Every page HTML file carries a 4-field current-truth header in a dark gradient
 `.proto-meta` bar. **No version, REQ, round, or owner fields.**
 
 | # | Field | Format | Example |

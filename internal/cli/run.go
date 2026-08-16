@@ -1852,8 +1852,6 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			request.Runtime = context
 		}
 	}
-	populateUIPrototypeFact(root, &request)
-
 	// The Hook policy document is the minimal-safety authority. If it
 	// cannot be loaded, evaluate() cannot render a safety decision and
 	// the Hook output is meaningless — return the load error instead of
@@ -2327,46 +2325,6 @@ func runVerification(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// populateUIPrototypeFact is the producer side of HOOK_UI_PROTOTYPE_GATE. When
-// the request writes under docs/contracts/ against a bound REQ whose ui_impact
-// is "changed", the helper checks docs/design/prototypes/{module}/ for at
-// least one complete final UI design package per
-// docs/rules/ui-prototype.md §4:
-//
-//	docs/design/prototypes/{module}/index.html  (4-field header)
-//	docs/design/prototypes/{module}/stories.md  (>=1 S-NNN with REQ-id)
-//	docs/design/prototypes/{module}/flows.md    (>=1 F-NNN with REQ-id)
-//	docs/design/prototypes/{module}/<page>.html (>=1 page HTML, 4-field header)
-//
-// If no complete package is present, it sets
-// request.Facts["ui_contract_before_prototype"] = true so the policy engine
-// fires HOOK_UI_PROTOTYPE_GATE. Closing contract:
-// TestHookCommandWarnUIPrototypeWhenNoDesignPackageExists + the negative
-// branches in TestHookCommandAllowsUIPrototypeWhenDesignPackageExists and
-// TestHookCommandIgnoresUIPrototypeWhenImpactNotChanged.
-func populateUIPrototypeFact(root string, request *policy.Input) {
-	if request.ToolName != "Write" &&
-		request.ToolName != "Edit" &&
-		request.ToolName != "MultiEdit" &&
-		request.ToolName != "NotebookEdit" {
-		return
-	}
-	if request.Runtime.BoundREQUIImpact != "changed" {
-		return
-	}
-	filePath := hookTargetPath(request.ToolInput)
-	if !strings.HasPrefix(filePath, "docs/contracts/") {
-		return
-	}
-	complete, err := hasCompleteUIDesignPackageForREQ(root, request.Runtime.BoundREQPath)
-	if err != nil || !complete {
-		if request.Facts == nil {
-			request.Facts = make(map[string]bool)
-		}
-		request.Facts["ui_contract_before_prototype"] = true
-		return
-	}
-}
 
 func hookTargetPath(input map[string]any) string {
 	for _, key := range []string{"file_path", "path", "notebook_path"} {

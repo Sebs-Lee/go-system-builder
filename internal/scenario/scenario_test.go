@@ -153,7 +153,7 @@ func TestScenarioValidationEnforcesProfileRatiosAndRequiredCoverage(t *testing.T
 				branches = branches[:1]
 				model["rules"].([]any)[0].(map[string]any)["branches"] = branches
 			} else {
-				branches = append(branches, positiveBranch("branch-extra-"+profile, "CASE-EXTRA-"+profile))
+				branches = append(branches, positiveBranch("branch-extra-"+profile, "CASE-EXTRA-"+strings.ToUpper(profile)))
 				model["rules"].([]any)[0].(map[string]any)["branches"] = branches
 			}
 			writeModel(t, root, model)
@@ -675,6 +675,7 @@ func newScenarioRoot(t *testing.T, module, profile string) string {
 	}
 	writeJSON(t, filepath.Join(dir, "scenario-model.json"), validModel(module, profile))
 	writeJSON(t, filepath.Join(dir, "fixture-contract.json"), validFixtures(module))
+	writeJSON(t, filepath.Join(dir, "cross-matrix.json"), validCrossMatrix(module))
 	if err := os.WriteFile(filepath.Join(dir, "stories.md"), []byte("# Stories\n\n## S-001\n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -753,6 +754,15 @@ func validFixtures(module string) map[string]any {
 			"setup":     []any{"create-synthetic-investor"},
 			"cleanup":   []any{"delete-synthetic-investor"},
 		}},
+	}
+}
+
+func validCrossMatrix(module string) map[string]any {
+	return map[string]any{
+		"module": module,
+		"entries": []any{
+			map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001", "branch": "branch-allow"},
+		},
 	}
 }
 

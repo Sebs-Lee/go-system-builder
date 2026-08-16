@@ -107,7 +107,10 @@ func ValidateRepository(root string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	if _, err := scenario.ValidateAll(root, scenario.ValidateOptions{}); err != nil {
+	// AutoSpecs: once a module's Playwright spec tree exists, every doctor
+	// run enforces its browser-case coverage (specs are S6+ artifacts —
+	// absent trees are expected earlier and are not failures).
+	if _, err := scenario.ValidateAll(root, scenario.ValidateOptions{AutoSpecs: true}); err != nil {
 		return fmt.Errorf("scenario packages: %w", err)
 	}
 	// Runtime authorities on disk (validated against embedded schemas).

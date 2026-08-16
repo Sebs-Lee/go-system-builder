@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/scenario"
 )
@@ -13,7 +14,7 @@ import (
 // package contract; this layer only maps CLI arguments and reports.
 func runScenario(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "scenario requires <generate|validate>")
+		fmt.Fprintln(stderr, "scenario requires <generate|validate|bridge>")
 		return 2
 	}
 	switch args[0] {
@@ -21,10 +22,37 @@ func runScenario(args []string, stdout, stderr io.Writer) int {
 		return runScenarioGenerate(args[1:], stdout, stderr)
 	case "validate":
 		return runScenarioValidate(args[1:], stdout, stderr)
+	case "bridge":
+		return runScenarioBridge(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "scenario: unknown subcommand %q; expected generate or validate\n", args[0])
+		fmt.Fprintf(stderr, "scenario: unknown subcommand %q; expected generate, validate or bridge\n", args[0])
 		return 2
 	}
+}
+
+// runScenarioBridge is the source-stage AC check: every acceptance
+// criterion of the bound REQ reaches FR→BR or carries an endorsed N/A.
+// Usable right after convergence-1 — it reads only handwritten packages,
+// no generated outputs required.
+func runScenarioBridge(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("scenario bridge", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "scenario bridge")
+	root := flags.String("root", ".", "repository root")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	result, err := scenario.RunBridge(*root, false)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("scenario bridge", err))
+		return 1
+	}
+	if len(result.IgnoredEntries) > 0 {
+		fmt.Fprintln(stdout, strings.Join(result.IgnoredEntries, "; "))
+		return 0
+	}
+	fmt.Fprintf(stdout, "AC bridge (source stage): REQ %s — %d criteria, %d reach FR→CASE, %d endorsed N/A\n", result.REQ, result.TotalAC, result.ReachedCases, result.EndorsedNA)
+	return 0
 }
 
 func runScenarioGenerate(args []string, stdout, stderr io.Writer) int {
