@@ -1046,9 +1046,12 @@
         "hook_controller"
       ],
       "guards": [
-        "planning_complete"
+        "planning_complete",
+        "tasks_checked"
       ],
-      "actions": [],
+      "actions": [
+        "register_planning_tasks"
+      ],
       "required_evidence": [],
       "on_guard_failure": "warn_and_retry",
       "auto_trigger": {
@@ -1059,7 +1062,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Planning completes when at least one CONTRACTS-*.md is locked AND at least one TASK-*.md is complete. Direct file+status check via the planning_complete guard."
+      "description": "Planning completes when PTR-PLAN-02-registered contracts are locked in runtime documents AND the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked). The batch is then registered into documents[] by register_planning_tasks."
     },
     {
       "id": "TR-003",

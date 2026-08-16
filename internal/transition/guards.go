@@ -117,6 +117,7 @@ func InitGuardRegistry() {
 		// real transition guard.
 		"no_other_active_loop": evidenceBackedGuard("no_other_active_loop"),
 		"contracts_checked":    guardContractsCheckedFn,
+		"tasks_checked":        guardTasksCheckedFn,
 		// BUG-PLANNING-SUBSTATE: planning_phase_ready / contracts_reviewed /
 		// candidate_tasks_complete are replaced by the single direct-check guard below.
 		"planning_complete":                     guardPlanningCompleteFn,
@@ -208,7 +209,7 @@ func InitGuardRegistry() {
 	}
 	semanticChecks := map[string]bool{
 		"no_other_active_loop": true, "resume_checkpoint_valid": true,
-		"contracts_checked": true,
+		"contracts_checked": true, "tasks_checked": true,
 		"same_review_round": true, "all_required_dimensions_passed": true,
 		"no_invalidated_pass_evidence": true, "no_open_blocking_bugs": true,
 		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
@@ -344,6 +345,33 @@ func guardContractsCheckedFn(state map[string]any, _ map[string]string) error {
 	return nil
 }
 
+// guardTasksCheckedFn runs S4's mechanical close (batch quality: coverage,
+// DAG, closing contracts) at TR-002 evaluation time. Like contracts_checked,
+// the real check happens on the natural path (TR-002 evaluation), not as a
+// voluntary CLI invocation (L3-S4 v4.0.1).
+func guardTasksCheckedFn(state map[string]any, _ map[string]string) error {
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	result, err := semantic.TasksCheck(root)
+	if err != nil {
+		return fmt.Errorf("tasks_checked: %w", err)
+	}
+	if len(result.Problems) > 0 {
+		return fmt.Errorf("tasks_checked: %d problem(s): %s", len(result.Problems), strings.Join(result.Problems, "; "))
+	}
+	return nil
+}
+
+// guardPlanningCompleteFn is S4's state-readiness gate (L3-S4 v4.0.1).
+// Contracts: current-baseline documents[] registration is the authority —
+// PTR-PLAN-02 registers locked contracts before TR-002 can fire, so the
+// former filename-scan fallback would only silently weaken the check.
+// Tasks: the batch is registered by TR-002's own action
+// (register_planning_tasks); at gate time the disk batch must already be
+// fully complete (or cancelled). "Disk-consistent" means the markdown Status
+// field matches — fingerprints are owned by registration and reachability.
 func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 	root, _ := state["root"].(string)
 	if root == "" {
@@ -351,48 +379,37 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		// the call path; fall back to "." so the helper can be exercised.
 		root = "."
 	}
-	if err := checkPlanningDocumentsComplete(root, state); err == nil {
-		return nil
-	}
-	if err := checkArtifactStatus(root, "docs/contracts", "CONTRACTS-*.md", "locked", "planning"); err != nil {
-		return err
-	}
-	return checkArtifactStatus(root, "docs/tasks", "TASK-*.md", "complete", "planning")
-}
-
-// checkPlanningDocumentsComplete mirrors GATE-PLANNING-TASKS-COMPLETE: it
-// inspects current-baseline runtime documents instead of legacy filename
-// patterns so organic fixtures (e.g. BE-039-loop-controller.md) satisfy TR-002
-// when contracts and tasks are locked/complete in state and on disk.
-func checkPlanningDocumentsComplete(root string, state map[string]any) error {
 	baseline, _ := state["baseline"].(map[string]any)
 	generation := integer(baseline["generation"])
 	documents, _ := state["documents"].([]any)
 	hasLockedContract := false
-	hasCompleteTask := false
 	for _, raw := range documents {
 		doc, ok := raw.(map[string]any)
 		if !ok || integer(doc["generation"]) != generation {
 			continue
 		}
-		kind, _ := doc["kind"].(string)
+		if kind, _ := doc["kind"].(string); kind != "contract" {
+			continue
+		}
 		status, _ := doc["status"].(string)
 		path, _ := doc["path"].(string)
-		switch {
-		case kind == "contract" && strings.EqualFold(status, "locked"):
-			if err := verifyDocumentStatusOnDisk(root, path, "locked"); err != nil {
-				return fmt.Errorf("planning not complete: contract %s: %w", path, err)
-			}
-			hasLockedContract = true
-		case kind == "task" && strings.EqualFold(status, "complete"):
-			if err := verifyDocumentStatusOnDisk(root, path, "complete"); err != nil {
-				return fmt.Errorf("planning not complete: task %s: %w", path, err)
-			}
-			hasCompleteTask = true
+		if !strings.EqualFold(status, "locked") {
+			continue
 		}
+		if err := verifyDocumentStatusOnDisk(root, path, "locked"); err != nil {
+			return fmt.Errorf("planning not complete: contract %s: %w", path, err)
+		}
+		hasLockedContract = true
 	}
-	if !hasLockedContract || !hasCompleteTask {
-		return fmt.Errorf("planning not complete: runtime documents missing locked contract or complete task at generation %d", generation)
+	if !hasLockedContract {
+		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — run PTR-PLAN-02 (contracts→tasks) first; it registers contracts, TR-002 does not scan filenames", generation)
+	}
+	_, _, problems, err := semantic.TaskBatchComplete(root)
+	if err != nil {
+		return fmt.Errorf("planning not complete: %w", err)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("planning not complete: %s", strings.Join(problems, "; "))
 	}
 	return nil
 }
@@ -410,48 +427,6 @@ func verifyDocumentStatusOnDisk(root, relPath, required string) error {
 		return fmt.Errorf("status=%q, want %q", got, required)
 	}
 	return nil
-}
-
-// checkArtifactStatus returns nil when at least one file matching `pattern`
-// exists in `dir` whose markdown carries `status: <required>` on a top-level
-// blockquote line. Returns a direct error message naming the file and the
-// observed status so the caller can fix it without grepping the manual.
-// scope is the error prefix (e.g. "planning") used in the rejection line.
-//
-// Used by guardPlanningCompleteFn; exported here so it can be reused by
-// future direct-check guards.
-func checkArtifactStatus(root, dir, pattern, required, scope string) error {
-	fullDir := filepath.Join(root, dir)
-	entries, err := os.ReadDir(fullDir)
-	if err != nil {
-		return fmt.Errorf("%s not complete: %s not readable: %v", scope, dir, err)
-	}
-	var observed []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		matched, err := filepath.Match(pattern, entry.Name())
-		if err != nil || !matched {
-			continue
-		}
-		path := filepath.Join(fullDir, entry.Name())
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			observed = append(observed, fmt.Sprintf("%s (unreadable)", entry.Name()))
-			continue
-		}
-		got := markdownStatusField(string(data))
-		if strings.EqualFold(got, required) {
-			return nil
-		}
-		observed = append(observed, fmt.Sprintf("%s status=%q", entry.Name(), got))
-	}
-	if len(observed) == 0 {
-		return fmt.Errorf("%s not complete: no %s matching %s in %s", scope, pattern, pattern, dir)
-	}
-	return fmt.Errorf("%s not complete: %s — none has status=%q (observed: %s)",
-		scope, dir, required, strings.Join(observed, "; "))
 }
 
 // markdownStatusField extracts the value of a top-level `> 状态：value` or

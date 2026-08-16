@@ -301,18 +301,25 @@ func TestRuntimeRecoveryPlanReplaysTrustedPlanningEvidence(t *testing.T) {
 		{
 			path: "docs/contracts/CONTRACTS-039-recovery.md", kind: "planning_contract",
 			responsibility: "Contract Planner", id: "ev-recovery-contract",
-			content: "# Contracts\n\n> REQ: REQ-039\n> Status: locked\n> Version: v1.0.0\n",
+			content: "# Contracts\n\n> REQ: REQ-039\n> Status: locked\n> Version: v1.0.0\n\n" +
+				"## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-039 | — | BE-039-RECOVERY §1 | — |\n",
 		},
 		{
 			path: "docs/tasks/TASK-039-01.md", kind: "planning_task",
 			responsibility: "Task Planner", id: "ev-recovery-task",
-			content: "# Task\n\n> REQ: REQ-039\n> Status: complete\n> Version: v1.0.0\n",
+			content: "# Task\n\n> REQ: REQ-039\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-039-RECOVERY\n\n" +
+				"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-039-RECOVERY | §1 |\n\n" +
+				"## 7. Closing Contract\n\n```text\nassert BE-039-RECOVERY §1 == satisfied\n```\n",
 		},
 	}
 	for _, document := range documents {
 		writeRecoveryFile(t, root, document.path, document.content)
 		writeTrustedPlanningEvidence(t, root, document.id, document.kind, document.responsibility, document.path, "v1.0.0")
 	}
+	// The batch-quality guard (tasks_checked) resolves the primary contract on
+	// disk and reconciles it against the index clause cell (L3-S4 v4.0.1).
+	writeRecoveryFile(t, root, "docs/contracts/BE-039-RECOVERY.md",
+		"# BE-039-RECOVERY\n\n> REQ: REQ-039\n> Status: locked\n> Version: v1.0.0\n")
 
 	planPath := createRecoveryPlan(t, root)
 	plan := readJSON(t, planPath)

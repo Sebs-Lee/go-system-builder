@@ -112,7 +112,7 @@ func InitActionRegistry() {
 		"set_bug_phase_ready_for_full_review":           actionSetBugPhase("ready_for_full_review"),
 		"record_planning_checkpoint":                    actionRecordPlanningCheckpoint,
 		"record_document_result":                        actionRecordDocumentResult,
-		"atomically_lock_execution_batch":               actionAtomicallyLockExecutionBatch,
+		"register_planning_tasks":                       actionRegisterPlanningTasks,
 		"start_review_round":                            actionStartReviewRound,
 		"start_new_review_round":                        actionStartNewReviewRound,
 		"record_bug_drafts":                             actionRecordBugDrafts,
@@ -345,17 +345,25 @@ func actionUpdateBoundREQ(state map[string]any, ctx *ActionContext) (ActionResul
 	return ActionResult{Status: "committed", MutationApplied: true, Detail: "amended REQ swapped into the running cycle"}, nil
 }
 
+// actionRoot resolves the disk root for registration actions: state["root"]
+// first (the runtime's own tree — guards read the same slot), then ctx.Root,
+// then registerDocumentsFromDisk's "." fallback. Priority matters in unit
+// tests where the runtime state lives in a temp root distinct from the
+// catalog root passed to Apply (L3-S4 v4.0.1).
+func actionRoot(state map[string]any, ctx *ActionContext) string {
+	if root, _ := state["root"].(string); root != "" {
+		return root
+	}
+	return ctx.Root
+}
+
 // actionRegisterLockedContracts runs on PTR-PLAN-02 (contracts→tasks):
 // it scans docs/contracts/*.md for status=locked files and registers each
 // into documents[] (same-generation-same-id replaces, appendDocument) —
 // feeding the S3 exit gate that consumes documents[], and arming hook
 // write-protection for contracts (L3-S3 v4.0.1).
 func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	root := ctx.Root
-	if root == "" {
-		root, _ = state["root"].(string)
-	}
-	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/contracts", []string{"BE-", "FE-", "SYNC-", "CONTRACTS-"}, "contract", "locked")
+	registered, err := registerDocumentsFromDisk(actionRoot(state, ctx), state, ctx, "docs/contracts", []string{"BE-", "FE-", "SYNC-", "CONTRACTS-"}, "contract", "locked")
 	if err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
@@ -367,14 +375,24 @@ func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (Ac
 // on TR-003: the atomic lock registers the execution batch — complete TASK
 // files join the already-registered contracts in documents[].
 func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	root := ctx.Root
-	if root == "" {
-		root, _ = state["root"].(string)
-	}
 	if len(ctx.Evidence) == 0 {
 		return ActionResult{Status: "failed", Detail: "execution batch evidence missing"}, fmt.Errorf("register_execution_batch: current evidence missing")
 	}
-	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/tasks", []string{"TASK-"}, "task", "complete")
+	registered, err := registerDocumentsFromDisk(actionRoot(state, ctx), state, ctx, "docs/tasks", []string{"TASK-"}, "task", "complete")
+	if err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	return ActionResult{Status: "committed", MutationApplied: registered > 0,
+		Detail: fmt.Sprintf("registered %d complete task(s)", registered)}, nil
+}
+
+// actionRegisterPlanningTasks runs on TR-002 (tasks→document_verification):
+// it registers the complete TASK batch into documents[], so S5's exit gates
+// and the independence check consume real registrations instead of seeded
+// fixtures. Unlike TR-003's register_execution_batch it carries no evidence
+// precondition — TR-002's required_evidence is empty (L3-S4 v4.0.1 B4).
+func actionRegisterPlanningTasks(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	registered, err := registerDocumentsFromDisk(actionRoot(state, ctx), state, ctx, "docs/tasks", []string{"TASK-"}, "task", "complete")
 	if err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
@@ -394,6 +412,11 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 	dir := filepath.Join(root, filepath.FromSlash(dirRel))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// No directory = nothing to register (a repo without this docs
+			// subtree yet); an absent batch is not a partial batch.
+			return 0, nil
+		}
 		return 0, fmt.Errorf("read %s: %w", dirRel, err)
 	}
 	baseline, _ := state["baseline"].(map[string]any)
@@ -428,6 +451,12 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 		if status == "" {
 			// No status field: the file declares no batch membership (legacy
 			// fixture, README-like stub). Not part of this batch — skip.
+			continue
+		}
+		if status == "cancelled" {
+			// Cancelled declares the task out of the batch (S4 document
+			// status vocabulary) — skip instead of failing the partial-batch
+			// check, matching tasks check / TaskBatchComplete semantics.
 			continue
 		}
 		if status != wantStatus {
@@ -487,9 +516,6 @@ func actionRecordPlanningCheckpoint(state map[string]any, ctx *ActionContext) (A
 }
 func actionRecordDocumentResult(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "document result")
-}
-func actionAtomicallyLockExecutionBatch(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	return actionEvidenceRecorded(ctx, "execution batch")
 }
 func actionRecordBugDrafts(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "bug drafts")

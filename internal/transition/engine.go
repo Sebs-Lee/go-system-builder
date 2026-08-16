@@ -70,6 +70,13 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
 	}
 	current := snapshot.State
+	// Direct-check guards resolve disk paths from state["root"]. Default it
+	// to the Apply root when absent so guards scan the same tree the
+	// registration actions write into — without this, guards fall back to
+	// "." and can pass vacuously in CLI flows (L3-S4 v4.0.1).
+	if currentRoot, _ := current["root"].(string); currentRoot == "" {
+		current["root"] = root
+	}
 	currentLifecycle, ok := current["lifecycle"].(map[string]any)
 	if !ok {
 		return loopruntime.Snapshot{}, fmt.Errorf("runtime lifecycle must be an object")

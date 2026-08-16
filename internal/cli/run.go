@@ -170,6 +170,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runScenario(args[1:], stdout, stderr)
 	case "contracts":
 		return runContracts(args[1:], stdout, stderr)
+	case "tasks":
+		return runTasks(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
 		return 2

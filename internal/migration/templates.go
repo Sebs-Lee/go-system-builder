@@ -67,7 +67,8 @@ func ValidateTemplates(root string) error {
 		{
 			path: "docs/tasks/TASK-template.md",
 			required: []string{
-				"Team manifest:", "Assignment ID:", "Document Manifest", "SHA-256",
+				"Team manifest:", "Assignment ID:", "Document Manifest",
+				"Delivered Clauses", "Module Impact",
 				"Selected Skills", "Lifecycle Evidence", "Closing Contract",
 			},
 			forbidden: []string{

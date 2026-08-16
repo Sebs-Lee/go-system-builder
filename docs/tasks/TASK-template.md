@@ -1,6 +1,6 @@
 # Task: TASK-{id}
 
-> Status: locked / activated / working / reported / review / blocked / complete / stale
+> Status: draft / complete / cancelled
 > Version: v1.0.0
 > Source REQ refs: REQ-{id} / none
 > Module current truth: `docs/design/prototypes/{module}/` / N/A
@@ -17,41 +17,38 @@
 
 ## 2. Document Manifest
 
-The phase-one request assigns read order and fingerprints. This table must link
-the same authoritative chain and must not replace reading it.
+Read order for the builder. Fingerprints, versions, and lock state live in
+runtime documents[] (.claude/loop-state.json) — this table never hand-copies
+them.
 
-| Order | Kind | ID | Path | Version | SHA-256 | Clauses |
-|:---|:---|:---|:---|:---|:---|:---|
-| 1 | task | TASK-{id} | `docs/tasks/TASK-{id}.md` | v1.0.0 | `{sha256}` | all |
-| 2 | contract | {contract-id} | `docs/contracts/{contract-id}.md` | {version} | `{sha256}` | §{n} |
-| 3 | req | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` | FR/NFR/acceptance |
-| 4 | module scenario/design | {module/N/A} | `docs/design/prototypes/{module}/` | current | `{sha256/N/A}` | scenario/story/flow |
-| 5 | rule | {rule-id} | `docs/rules/{rule}.md` | locked | `{sha256}` | all |
+| Order | Kind | ID | Path | Clauses |
+|:---|:---|:---|:---|:---|
+| 1 | contract | {contract-id} | `docs/contracts/{contract-id}.md` | §{n} |
+| 2 | req | REQ-{id} | `docs/requirements/REQ-{id}.md` | FR/NFR/acceptance |
+| 3 | module scenario/design | {module/N/A} | `docs/design/prototypes/{module}/` | scenario/story/flow |
+| 4 | rule | {rule-id} | `docs/rules/{rule}.md` | all |
 
 Repair assignments prepend the canonical BUG as order 1 and shift the remaining
 documents. The request remains the authority for exact order.
 
-## 3. Contract Coverage
+## 3. Delivered Clauses
 
-| REQ clause | Contract clause | Task output | Verification responsibility |
-|:---|:---|:---|:---|
-| FR-{id} | {contract-id} §{n} | {output} | {VER responsibility ID} |
+Which clauses of the primary contract this TASK delivers. The CONTRACTS index
+is the clause universe; `tasks check` aggregates these declarations against it.
 
-### 3.1 Module Scenario Coverage
+| Contract | Delivered clauses |
+|:---|:---|
+| {FE/BE/SYNC-id} | §{n}, §{n} |
 
-REQ is a source reference only. If this TASK touches a module, it consumes and updates the
-complete current module set; it never creates a per-REQ or per-round scenario/spec copy.
+An empty clause list means a support TASK — legitimate, but excluded from
+coverage aggregation.
 
-| Rule | CASE / polarity | Story | PATH | module spec | evidence |
-|:---|:---|:---|:---|:---|:---|
-| BR-{id} | CASE-{id} · positive / negative | S-{id} | F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | REV/QA/E2E round {n} |
+### 3.1 Module Impact
 
-Closing requirements for scenario-bearing TASKs:
-
-- [ ] required allow and reject branches both reach 100% coverage.
-- [ ] positive/negative capacity ratio satisfies the module `coverage_profile`.
-- [ ] `fixture-contract.json` setup/cleanup is isolated and does not perform the user journey.
-- [ ] module full regression is planned whenever any current module truth file changes.
+Modules touched: `{module}` / N/A. Scenario truth lives in the module package
+(`docs/design/prototypes/{module}/`) — never create a per-REQ or per-round
+scenario/spec copy. Any change to a current-module truth file triggers a full
+module regression sweep.
 
 ## 4. Scope
 
@@ -68,10 +65,10 @@ scope, activation, runtime state, and Hook policy.
 
 ## 5. Selected Skills
 
-| Skill | Category | Source | Version | SHA-256 | Applicability |
-|:---|:---|:---|:---|:---|:---|
-| two-phase-activation | methodology | `.claude/skills/two-phase-activation/SKILL.md` | 1.0.0 | `{sha256}` | teammate activation |
-| {skill} | best-practice | `.claude/skills/{skill}/SKILL.md` | {version} | `{sha256}` | {risk/responsibility} |
+| Skill | Category | Source | Version | Applicability |
+|:---|:---|:---|:---|:---|
+| two-phase-activation | methodology | `.claude/skills/two-phase-activation/SKILL.md` | 1.0.0 | teammate activation |
+| {skill} | best-practice | `.claude/skills/{skill}/SKILL.md` | {version} | {risk/responsibility} |
 
 ## 6. Outputs And Evidence
 
@@ -101,13 +98,13 @@ assert scope_deviations == []
 
 ## 9. Lifecycle Evidence
 
-| Evidence | Reference | Fingerprint / Revision |
-|:---|:---|:---|
-| document verification | `{review-evidence-ref}` | `{sha256}` |
-| phase-one request | `{message-ref}` | `{sha256}` |
-| approved read-back | `{message-ref}` | `{sha256}` |
-| activation | `{activation-ref}` | runtime revision {n} |
-| completion report | `{message-ref}` | `{sha256}` |
+| Evidence | Reference |
+|:---|:---|
+| document verification | `{review-evidence-ref}` |
+| phase-one request | `{message-ref}` |
+| approved read-back | `{message-ref}` |
+| activation | `{activation-ref}` |
+| completion report | `{message-ref}` |
 
 ## 10. Findings And Repairs
 

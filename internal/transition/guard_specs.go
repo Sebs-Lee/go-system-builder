@@ -293,7 +293,15 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"planning_complete": {
 		ID:    "planning_complete",
-		Check: "At least one current-baseline contract document has status=locked and a matching on-disk markdown status, AND at least one current-baseline task document has status=complete with a matching on-disk status (aligned with GATE-PLANNING-TASKS-COMPLETE). Falls back to CONTRACTS-*.md / TASK-*.md filename patterns when runtime documents are absent.",
+		Check: "At least one current-baseline contract document has status=locked with a matching on-disk markdown Status field (contracts are registered by PTR-PLAN-02), AND every docs/tasks/TASK-*.md declares status complete or cancelled with at least one complete (the batch is registered by TR-002's own register_planning_tasks action). Fingerprints are owned by registration and reachability, not re-checked here.",
+	},
+	"contracts_checked": {
+		ID:    "contracts_checked",
+		Check: "S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.",
+	},
+	"tasks_checked": {
+		ID:    "tasks_checked",
+		Check: "S4's mechanical close (semantic.TasksCheck) runs at TR-002: the TASK batch is fully complete (cancelled tasks excluded), every task has an existing primary contract and a Closing Contract block, clause coverage between the CONTRACTS index universe and TASK §3 declarations closes in both directions, and the §8 dependency graph is acyclic (cycle path reported).",
 	},
 }
 

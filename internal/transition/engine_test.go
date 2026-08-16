@@ -168,25 +168,13 @@ func TestApplyPlanningCompleteAcceptsEnglishStatusFields(t *testing.T) {
 	root := filepath.Join("..", "..")
 	statePath, journalPath := copyInactiveRuntime(t, root)
 	startLockedREQ(t, root, statePath, journalPath)
-	planningRoot := filepath.Dir(statePath)
-	if err := os.MkdirAll(filepath.Join(planningRoot, "docs", "contracts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(planningRoot, "docs", "tasks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(planningRoot, "docs", "contracts", "CONTRACTS-english.md"), []byte("# Contract\n\n> Status: locked\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(planningRoot, "docs", "tasks", "TASK-english.md"), []byte("# Task\n\n> Status: complete\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	seedPlanningArtifactsLang(t, statePath, true)
 	advancePlanningToTasks(t, root, statePath, journalPath)
 
 	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
 	}); err != nil {
-		t.Fatalf("TR-002 must accept the English Status field used by TASK templates: %v", err)
+		t.Fatalf("TR-002 must accept the English Status fields used by TASK templates: %v", err)
 	}
 }
 
@@ -242,6 +230,9 @@ func TestApplyDispatchesRegisteredGuardAndAction(t *testing.T) {
 		guardCalled = true
 		return nil
 	})
+	transition.RegisterGuard("tasks_checked", func(state map[string]any, evidence map[string]string) error {
+		return nil
+	})
 	defer transition.InitGuardRegistry()
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
@@ -280,8 +271,8 @@ func TestApplyRejectsEvidenceWithIncompatibleKind(t *testing.T) {
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "status=\"draft\"") {
-		t.Fatalf("TR-002 must report the offending file's status when contracts are not locked: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no locked contract registered") || !strings.Contains(err.Error(), "PTR-PLAN-02") {
+		t.Fatalf("TR-002 must point at PTR-PLAN-02 when no locked contract is registered: %v", err)
 	}
 }
 
@@ -388,12 +379,17 @@ func copyInactiveRuntime(t *testing.T, root string) (string, string) {
 	return statePath, journalPath
 }
 
-// seedPlanningArtifacts creates the minimum CONTRACTS/TASKS files the
-// planning_complete direct-check guard requires. The temp root is derived
-// from statePath (see copyInactiveRuntime which writes state["root"]).
-// Used by tests that exercise TR-002 after BUG-PLANNING-SUBSTATE collapsed
-// the planning sub-state machine.
+// seedPlanningArtifacts creates the minimum planning surface both TR-002
+// guards require: a locked CONTRACTS index whose 需求覆盖矩阵 declares the
+// clause universe, a locked contract file, and a complete TASK declaring
+// coverage + closing contract (L3-S4 v4.0.1 — the batch-quality guard
+// consumes structure, not just Status lines). The temp root is derived from
+// statePath (see copyInactiveRuntime which writes state["root"]).
 func seedPlanningArtifacts(t *testing.T, statePath string) {
+	seedPlanningArtifactsLang(t, statePath, false)
+}
+
+func seedPlanningArtifactsLang(t *testing.T, statePath string, english bool) {
 	t.Helper()
 	root := filepath.Dir(statePath)
 	contractsDir := filepath.Join(root, "docs", "contracts")
@@ -404,14 +400,29 @@ func seedPlanningArtifacts(t *testing.T, statePath string) {
 	if err := os.MkdirAll(tasksDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	contractPath := filepath.Join(contractsDir, "CONTRACTS-test.md")
-	if err := os.WriteFile(contractPath,
-		[]byte("# CONTRACTS-test\n\n> 状态：locked\n"), 0o644); err != nil {
+	status := func(value string) string {
+		if english {
+			return "> Status: " + value
+		}
+		return "> 状态：" + value
+	}
+	index := "# CONTRACTS-test\n\n" + status("locked") + "\n> 版本：v1.0.0\n\n" +
+		"## 需求覆盖矩阵\n\n" +
+		"| REQ source_ref | Rule → CASE | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n" +
+		"|:--|:--|:--|:--|:--|\n" +
+		"| REQ-test | — | — | BE-TEST §1 | — |\n"
+	if err := os.WriteFile(filepath.Join(contractsDir, "CONTRACTS-test.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	taskPath := filepath.Join(tasksDir, "TASK-test.md")
-	if err := os.WriteFile(taskPath,
-		[]byte("# TASK-test\n\n> 状态：complete\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(contractsDir, "BE-TEST.md"),
+		[]byte("# BE-TEST\n\n"+status("locked")+"\n> 版本：v1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := "# TASK-test\n\n" + status("complete") + "\n> Version: v1.0.0\n> Primary contract: BE-TEST\n\n" +
+		"## 3. Delivered Clauses\n\n" +
+		"| Contract | Delivered clauses |\n|:--|:--|\n| BE-TEST | §1 |\n\n" +
+		"## 7. Closing Contract\n\n```text\nassert BE-TEST §1 == satisfied\n```\n"
+	if err := os.WriteFile(filepath.Join(tasksDir, "TASK-test.md"), []byte(task), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
