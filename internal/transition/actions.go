@@ -355,7 +355,7 @@ func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (Ac
 	if root == "" {
 		root, _ = state["root"].(string)
 	}
-	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/contracts", "CONTRACTS-", "contract", "locked")
+	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/contracts", []string{"BE-", "FE-", "SYNC-", "CONTRACTS-"}, "contract", "locked")
 	if err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
@@ -374,7 +374,7 @@ func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (Act
 	if len(ctx.Evidence) == 0 {
 		return ActionResult{Status: "failed", Detail: "execution batch evidence missing"}, fmt.Errorf("register_execution_batch: current evidence missing")
 	}
-	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/tasks", "TASK-", "task", "complete")
+	registered, err := registerDocumentsFromDisk(root, state, ctx, "docs/tasks", []string{"TASK-"}, "task", "complete")
 	if err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
@@ -387,7 +387,7 @@ func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (Act
 // baseline generation and the registering actor as author. Status mismatch
 // on a filename-matching file FAILS (skip would silently starve the
 // exactSubjects manifest downstream — axiom five).
-func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionContext, dirRel, prefix, kind, wantStatus string) (int, error) {
+func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionContext, dirRel string, prefixes []string, kind, wantStatus string) (int, error) {
 	if root == "" {
 		root = "."
 	}
@@ -416,7 +416,7 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 		if entry.IsDir() || !strings.HasSuffix(name, ".md") ||
 			strings.Contains(strings.ToLower(name), "template") ||
 			strings.EqualFold(name, "README.md") ||
-			!strings.HasPrefix(id, prefix) {
+			!hasAnyPrefix(id, prefixes) {
 			continue
 		}
 		rel := filepath.ToSlash(filepath.Join(dirRel, name))
@@ -451,6 +451,15 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 		registered++
 	}
 	return registered, nil
+}
+
+func hasAnyPrefix(id string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(id, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func integerOf(v any) int {

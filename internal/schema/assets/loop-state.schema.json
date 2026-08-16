@@ -995,6 +995,10 @@
         "author_agent_id": {
           "type": "string",
           "description": "Registering actor — consumed by the S5 independence check (reviewer must not be an author)."
+        },
+        "registered_at": {
+          "type": "string",
+          "description": "ISO timestamp of the registration transition (documents are registered by PTR-PLAN-02 / TR-003 actions)."
         }
       }
     },

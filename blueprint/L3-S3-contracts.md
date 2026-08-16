@@ -1,6 +1,6 @@
 # L3-S3 — 契约（Contracts）
 
-> 层：第三层 ｜ 上游：L2 §S3 + L2 全局规则「单一验证分母」 ｜ 版本 v4.0.1（v4.0.1 设计对抗审查处置：P0×1+P1×7；v4.0.0 联合审查版：契约流水线断点地图+三查+documents 登记落地；v3.1.0 增 §6；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S3 + L2 全局规则「单一验证分母」 ｜ 版本 v4.0.2（实施完成：机制 6/6+E2E；v4.0.1 设计对抗审查处置：P0×1+P1×7；v4.0.0 联合审查版：契约流水线断点地图+三查+documents 登记落地；v3.1.0 增 §6；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -109,13 +109,15 @@
 
 ### 6.3 整改方向（v4.0.1 修订全景，机制 6+保持 3）
 
-**机制项（6）**：
-1. **`contracts check`**（挂 PTR-PLAN-02 guard 链+doctor）：断链引用/Fingerprint 实算/CONTRACTS 矩阵条款格——孤儿条款延后（对象不存在）；只提 token 不析语义（边界声明）；
-2. **PTR-003→PTR-PLAN-02 双点登记**：PTR-PLAN-02 action `register_locked_contracts`（locked 契约，同代同 id 替换）；TR-003 action 登记 complete 任务；fail 不 skip；
-3. ~~锁定依据行机写~~ → **删手填行换指路行**（权威居所=documents[]+journal）；
-4. **代际豁免推广全 kind** + schema documentReference 补 author_agent_id（值=登记 actor；主会话场景实效边界如实记录）；
-5. **八件套同步**：CONTRACTS/REQ/FE 模板+prototypes README 的 7→8 文件；
-6. **appendDocument 替换语义**：同代同 id 条目替换不堆叠（修复同代重锁死锁）。
+**机制项（6/6 已落地，v4.0.2）**：
+1. ✅ **`contracts check`**：semantic.ContractsCheck 核心+CLI 子命令+validate --all 接入+**guard `contracts_checked` 挂 PTR-PLAN-02**（D2 闭环）；断链/条款格已落地，Fingerprint 实算落地（行内 file 引用解析）；孤儿条款如实延后；
+2. ✅ **双点登记**：`register_locked_contracts`（BE-/FE-/SYNC-/CONTRACTS- 前缀扫描；无状态=跳过、错状态=fail、错版本=unversioned 占位）+`register_execution_batch`（TR-003 真动作替代占位）；appendDocument 同代同 id 替换；schema 补 author_agent_id+registered_at；
+3. ✅ 四模板手填锁定依据行已换指路行（权威=documents[]+journal）；
+4. ✅ RefreshFingerprints/reachability 豁免已推广全 kind；schema 已补（author_agent_id+registered_at）；
+5. ✅ 四契约模板+REQ 模板（含 §F 骨架注+真相包列）+FE 输入依赖行+prototypes README 全部 8 文件；
+6. ✅ appendDocument 同代同 id 替换（E2E 钉死重锁不堆叠）。
+
+**E2E**：TestS3ContractPipelineE2E 钉死全链（check 绿→断链红指名→PTR-PLAN-01/02 连发→契约登记含 author/sha→同代修订重锁替换不堆叠）。
 
 **保持项（3）**：SYNC 四列人审（有意设计）；FE→BE→SYNC 起草顺序；oracle 词表同构（token 对账覆盖）。
 
@@ -127,6 +129,7 @@
 |:--|:--|:--|
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清；v2 的契约机检门系虚构） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（模板三张映射表/SYNC 四列对照/UI 门=not_ready/追溯无机检等如实入档） | owner 复核 |
+| 2026-08-16 | v4.0.2 | **实施完成**：机制 6/6 落地——contracts check（核心+CLI+validate --all+guard 挂 PTR-PLAN-02）；双点登记（register_locked_contracts 动作：BE/FE/SYNC/CONTRACTS 前缀扫描+无状态跳过/错状态 fail 语义；register_execution_batch 真动作）；appendDocument 替换语义；schema 补 author_agent_id+registered_at；代际豁免全 kind；四模板 8 文件+指路行+REQ §F 骨架注。E2E 全链钉死。实施中发现并修复：前缀过滤写死 CONTRACTS- 漏掉 BE/FE/SYNC（E2E 抓出）、schema additionalProperties 拒 registered_at。27 包+doctor/validate 全绿 | owner 指示：开工（沿用 S2 模式） |
 | 2026-08-15 | v4.0.1 | **设计对抗审查处置（P0×1+P1×7+P2×7）**：P0——§F 轻校验输入被 hook 人-only/基线不可变三重锁死，**活矩阵唯一居所改判为 CONTRACTS 索引**（REQ §F 留骨架注指路）；P1——documents 喂食点前移至 PTR-003-02（出口门无粮问题）+appendDocument 同代同 id 替换语义（重锁死锁）；锁定依据行回填改删除+指路（事务外文件写破坏指纹）；孤儿条款延后（检查对象不存在——模板无编号条款清单，§n 仅在映射表内=自证）；oracle 翻译抽查补进 S5 审查预算（S3 最深思考动作的消费者）；author_agent_id 补 schema 字段+主会话场景实效边界如实降级；三查从自愿命令改挂 PTR-PLAN-02 guard 链（D2 接线）；P2——§2 两处失实修正（verified_versions_current 张冠李戴/populateUIPrototypeFact 过去时）、步骤重排、oracle"token 对账覆盖"自相矛盾修正、bridge/check 分工边界声明、计数对齐 | 设计对抗审查（sub-agent）：方案闭合 half 返工 |
 | 2026-08-15 | v4.0.0 | **联合审查版**（S3+S4+S5+S7 联动，sub-agent 契约流水线端到端调查）：§1 增"两端机械、中段手抄、锁点断源"定位与三套空转机制清单；§2.1 新增十二断点地图（documents[] 登记无路径为最大断点——生产代码仅 req 写入，TR-003 占位；hook 保护/S5 独立性/代际保护三套建成机制空转；S2 八件套未同步为新断点）；§3 新增五条选用（contracts check 三查/TR-003 真登记/锁定依据机写/代际豁免推广/§F 轻校验，各含否决）；§4 补机检与登记时间线；§5 改处置台账（七项全处置）；§6.3 升 8 项全景（机制 5+保持 3） | owner 批准六决策点按建议执行 |
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |
