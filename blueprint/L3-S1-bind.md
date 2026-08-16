@@ -54,7 +54,7 @@
 
 **调用纪律**：主会话不主动敲任何人闸命令（只在人显式指令后代笔）；状态获取走 hook 投影（manual CLI 只保留初始化/绑定/对账/回滚/闸门）；生命周期迁移由 controller 自动做，手工 `runtime transition` 仅限 reconcile 指引下的恢复。
 
-**实施批次**（风险递增）：P0 纯 UX（bind 改造+req list+投影带命令+protocol #s1 actions 联动，零状态机变更）→ P1 修复与统一（三 bug+真实性五项+pause/resume 封装）→ P2 新动词（unbind+落章+口头授权链文档联动）→ P3 amend 完整化（TR-020 换入新 REQ）。每批闭环：实现+测试→doctor/validate→§2.1 真度表更新→自审+第三人审查。
+**实施批次**（已全部完成，2026-08-15）：P0 纯 UX → P1 修复与统一 → P2 新动词 → P3 amend 完整化 → E2E 全链 → 两轮对抗审查处置。每批闭环均执行：实现+测试→doctor/validate→§2.1 真度表更新→自审+第三人审查。
 
 **已 owner 终批（2026-08-15，按工程建议执行）**：① archived 落章时刻=rollover；② bind UX 四参数（多候选列清单要求显式 --req / 自动 init 内嵌 / 人话输出默认+--json / 身份提示保持显式 attest）；③ unbind=任意非终态+在飞软门；④ `req archive` 与引导换绑维持 backlog（C5）。
 
@@ -68,10 +68,10 @@
 | 绑定前查什么 | doctor+validate（环境健康） | 否决"重复 REQ 内容审查"——内容质量属 S0（模板自检+人）；bind 只查可绑定性 |
 | 绑定后怎么让全系统知道 | hook 每事件重读状态文件 | 否决"绑定事件广播/通知机制"——重读比订阅简单且无漏报 |
 | 终态后重启 | rollover（人审批证据+归档） | 与 TR-020（改需求：代际+1、下游全失效）是两条不同路径，不合并——一个是换周期，一个是周期内换基线 |
-| 退出怎么做（v4.0.0 新增） | `req unbind`（设计态）：镜像 rollover 机械——runtime 归档 disposition=unbound、新 inactive、REQ 回可绑定池；非终态任意时刻可用；在飞实体（in_progress 任务/active teams）软门 + `--force` | 否决"pause→TR-021 两步退出"作为唯一路径——为退一扇进错的门先造一次暂停记录，成本与语义双输；否决"agent 可解绑"——撤销授权是授权域动作，人-only 与 bind 对称 |
+| 退出怎么做（v4.0.0 新增，已落地） | `req unbind`：镜像 rollover 机械——runtime 归档 disposition=unbound、新 inactive、REQ 回可绑定池；非终态任意时刻可用（含 paused）；在飞实体（in_progress/blocked 任务、planned/active teams）软门 + `--force`（forced+清单落 manifest） | 否决"pause→TR-021 两步退出"作为唯一路径——为退一扇进错的门先造一次暂停记录，成本与语义双输；否决"agent 可解绑"——撤销授权是授权域动作，人-only 与 bind 对称 |
 | archived 在哪落章（v4.0.0 新增） | rollover 时刻由 harness 写 REQ 状态行（locked→archived）+ journal 记 `req_archived` 双指纹（from-sha/to-sha）；基线内容区永不动 | 否决"approve 时刻落章"——approve 只授权发布、周期未关（人批后未发布的窗口期语义含糊）；rollover 统一覆盖 approve/abort 两终态且本就是周期关闭点 |
 | 绑定的入口形态（v4.2.0 修正） | 口头授权 + 主会话代跑：投影带完整命令行（P0）→ 人一句话确认 → 代跑经 Claude Code 工具权限提示原生确认 → journal 记名。**撤回 v4.0.0 的 /goal 提案**——机制查证（2026-08-15）：Claude Code 内置 /goal 是持续工作驱动器（evaluator 逐轮判定、驱动 agent 自主干活、推荐配 Auto 权限模式），语义与"人在场单点授权"相反；且它在手势（对话事件）/确认（权限提示已有）/审计（journal 才是权威）三层均不新增价值。docs/README 原否决"no separate /goal required"**维持成立**，理由升级 | 否决"/goal 触发绑定"——公理一违例的自我修正：望文生义引入未查证机制；公理四：无消费者的新机制（新增 commands/ 分发类别+维护成本） |
-| bindable 怎么算（v4.0.0 新增） | `req list`（设计态）：locked REQ 文件 − 当前 runtime 已绑 − 归档件 disposition∈{release_authorized,aborted} 引用的（**unbound 归档不排除**——换目标后绑回是正当的） | 否决"REQ 文件状态独判"——locked=冻结基线不是进行中，终态信息在 archive；否决"归档一律排除"——unbind 回池语义 |
+| bindable 怎么算（v4.0.0 新增，已落地） | `req list`：locked REQ 文件 − 当前 runtime 已绑 − 归档件 disposition∈{release_authorized,aborted} 引用的（**unbound 归档不排除**——换目标后绑回是正当的） | 否决"REQ 文件状态独判"——locked=冻结基线不是进行中，终态信息在 archive；否决"归档一律排除"——unbind 回池语义 |
 | pause 残留怎么修（v4.0.0 新增） | TR-020/TR-021 的 action 链补清 `state["pause"]`（与 TR-019 restore 同一语义位） | 不是新机制是 bug 修复：现状残留会让下一次暂停必然失败（"would overwrite"，actions.go:249-251） |
 
 ## 4. 怎么编排（时间线讲完一件事）
@@ -81,7 +81,7 @@
 3. **落点校验**：主会话核对 done_when——bound_req 指纹=磁盘实算、cursor=planning/design、日志含绑定事件。
 4. **控制面即刻生效**：下一次任何 hook 事件（SessionStart/PreToolUse）从状态文件读到 bound_req——S2 的第一个 PreToolUse 就带着授权上下文；未绑定项目则投影为 "S0: bind one human-locked REQ"。
 5. **崩溃恢复**：绑定中途挂 → pending marker 自愈或 `runtime reconcile` 对账；终态后的重启走 rollover（人证据+归档），不是重跑 bind。
-6. **生命周期动词（设计态时间线，v4.0.0）**：暂停——各 stage 失败路由触发或人 `runtime pause`（待封装），checkpoint 富快照落盘；恢复——人 `runtime resume`，逐文件核对暂停时刻指纹，漂移即拒、漂移了改走修订；修订——人批新 generation 后 TR-020（修完后）真正换入新 REQ 并保持旧 REQ 锁定；退出——非终态 `req unbind`（留痕归档回池），paused/S11 处 abort（终态）；结束——approve→rollover，REQ 状态行落章 archived+双指纹入册；重绑——unbound 回池再绑 / rollover 后新周期，`req list`+投影带命令+口头授权一条链。
+6. **生命周期动词（v4.5.2 起全部已落地）**：暂停——各 stage 失败路由触发或人 `runtime pause`，checkpoint 富快照落盘；恢复——人 `runtime resume`，逐文件核对暂停时刻指纹，漂移即拒并指路修订；修订——人批新 generation 后 `req amend` 真正换入新 REQ 并保持旧 REQ 锁定；退出——非终态（含 paused）`req unbind`（留痕归档回池），paused/S11 处 abort（终态）；结束——approve→rollover，REQ 状态行落章 archived+双指纹入册；重绑——unbound 回池再绑 / rollover 后新周期，`req list`+投影带命令+口头授权一条链。
 
 ## 5. 期望效果
 
@@ -90,9 +90,9 @@
 - **结构性防住**：双绑定（四层唯一性）、半绑定状态（原子提交）、绑定后漂移（指纹 mismatch 即可见）、"绕过绑定开工"（一切门以已绑定为先决，未绑定投影只指向"去绑定"）；
 - **交给 S2**：runtime 处于 planning/design + milestone 初始值（单一下一步）——S2 从权威投影起步，不靠记忆。
 
-**v4 生命周期控制面的期望效果**（设计态，随 P0-P3 分批兑现）：七动词各有一条人话命令可达；撤销与结束全程留痕（弃周期在 archive 可审计、REQ 落章带双指纹）；bindable 判定机器可算（归档扫描，不以文件状态为准）；人的注意力只花在记名与拍板；审计面与事实一致（真度表 §2.1 每行从 ◐/✖ 收敛到 ✅）。
+**v4 生命周期控制面的期望效果**（v4.5.2 起已兑现，真度表 §2.1 为准）：七动词各有一条人话命令可达；撤销与结束全程留痕（弃周期在 archive 可审计、REQ 落章带双指纹）；bindable 判定机器可算（归档扫描，不以文件状态为准）；人的注意力只花在记名与拍板；审计面与事实一致（真度表 §2.1 每行从 ◐/✖ 收敛到 ✅）。
 
-**如实记录的已知缺口**（2026-08-15 sub-agent 全面调查后更新，供第四层修复清单）：①TR-001 五 guard 中仅 `no_other_active_loop` 有真实语义体（guards.go:112-116），其余四个是证据非空桩且 TR-001 被 engine.go:311 显式豁免 `validateCurrentEvidence`；②两个证据槽是合成字符串占位（run.go:224）；③事件名分叉的真身：TR-001 的 `event` 字段在 loop-definition.json 声明为 `loop_requested`，协议 done_when 要求 `req_bound`（v3.0.0 所记"engine.go:125 硬编码"已漂移——生产代码泛化消费声明值）；④loader 读不到 req id 时回退哨兵 "REQ-039"（loader.go:763-783，注释自称 fail-loud 实为 fail-silent）。**调查新增三项 bug 级缺口**：⑤pause 残留——TR-020/TR-021 不清 `state["pause"]`，下一次任何暂停必失败（actions.go:249-251 "would overwrite"），schema/semantic 双双放行；⑥TR-020 后 REQ 从 LockedArtifacts 消失（generation 过滤，loader.go:276-277）→ hook 不再拦任何人改旧 REQ；⑦GTR-005 的 `runtime_integrity_failure` fact 已采集（run.go:1560）但全库零消费者——"漂移自动暂停"停留在纸面。**共性如实记录**：七个人闸的"human-only"实质是"evidence-only"（human_decision 证据经 `runtime evidence add` 登记，无签名无身份认证，store.go:118-121 自注）——威胁模型是防 agent 越权，不是防人冒充人。
+**缺口处置台账**（v4.5.2 重写为处置视角——以下七项在调查时均为真缺口，现全部处置完毕）：①TR-001 四个证据非空桩 → **已删**（guards 5→1，真语义单列）；②证据槽合成字符串 → **已做实** path@sha256 + approved-by 记名（含 v4.5.2 补上的 recover_command 遗漏点）；③事件名分叉 → **已统一** req_bound（definition+schema example+文档，journal 行以 transition_id=TR-001 溯源）；④REQ-039 哨兵 → **已改** UNBOUND 标签；⑤pause 残留 → **已修**（引擎不变式：离开 paused 即清）；⑥TR-020 后 REQ 失锁 → **已修**（loader 对 req 文档跨代保护）；⑦GTR-005 死 fact → **已清除**（不可达 runtime 的 fail-open 事实如实入档注释）。**共性如实记录（仍然成立）**：七个人闸的"human-only"实质是"evidence-only"——威胁模型是防 agent 越权，不是防人冒充人；agent 代跑与人执行在仓库层面不可区分（详见 v4.5.1 台账）。
 
 ## 6. 注意力预算与渐进披露
 
@@ -103,8 +103,8 @@
 | # | 错配 | 为什么不对（L1 根据） |
 |:--|:--|:--|
 | 1 | TR-001 五 guard 中 4 个是证据非空桩（guards.go:112-115），仅 no_other_active_loop 有真语义（:249-275） | 公理四违例：桩制造"有五道门"的审计假象（实际一道）——用机制的名字支付了叙述的成本，却没买到确定性 |
-| 2 | 事件名分叉：loop-definition TR-001 声明 `loop_requested`，协议 done_when 要求 `req_bound` | 公理五违例：文档与机制同名异指，按文档重建理由的人拿到错误事实 |
-| 3 | loader 读不到 req id 时回退哨兵 "REQ-039"（loader.go:763-783），注释自称 fail-loud | 形式上 fail-silent：哨兵字符串会流进投影文本；`NO_BOUND_REQ` 投影语义已存在却未复用 |
+| 2 | ~~事件名分叉~~ → **已统一 req_bound**（P1） | 处置前为公理五违例 |
+| 3 | ~~REQ-039 哨兵~~ → **已改 UNBOUND**（P1） | 处置前为形式上 fail-silent |
 | 4 | bind UX 六处摩擦（实测）：成功输出 2.5KB 单行 JSON dump、未 init 报错不指路、已绑定报错只对内行自解释、--req 必填、--approved-by 无身份提示、前置自检独立三条命令 | C4/D3 违例：人的注意力花在迁就机器输出上；成功输出本应是"正向指导+确认"，现在是原始数据 |
 | 5 | 生命周期动词无 CLI 封装：GTR-001 用户暂停要手拼 `runtime transition --id GTR-001` + 两段 evidence；恢复同款；unbind/req list 不存在 | 公理二分工错位：evidence 引用的构造是机器的活，现在留给人的记忆；动词可达性差等于机制不存在 |
 
@@ -123,6 +123,8 @@
 4. **口头授权链** + `req list`（bindable 计算：locked − 当前绑定 − 终态归档引用，unbound 不排除）+ 投影带完整命令行（P0，agent 被告知跑什么、人不需记语法）；
 5. **req unbind**：Store.Unbind 镜像 Rollover（disposition=unbound、在飞实体软门、--force）；**同步修三 bug**——①pause 残留（TR-020/021 清 state["pause"]）、②TR-020 后旧 REQ 失锁（generation 过滤）、③GTR-005 死 fact 接线或删除。"TR-020 新 REQ 入 runtime"是 amend 完整化功能（P3），不算 bug——与 §5 缺口 ⑤⑥⑦ 及 §2.2 批次口径对齐。
 另：`runtime pause`/`runtime resume` 封装命令（把 evidence 构造收回机器）；TR-019 的漂移校验从 action 归位 guard 层。
+
+| 2026-08-15 | v4.5.2 | **深度终审处置**：①recover_command 证据格式遗漏（生产代码仍 `#lock`）→ 统一 path@sha256，P1 该项至此真正做全；②bind 补控制面指纹 preflight（definition/policy 与 runtime 记录不一致即拒并指路 doctor——原"self-preflights"仅覆盖解析层，合法漂移静默通过）；③journal 字面歧义 → protocol done_when 与 docs/README 改为真实表述（journal 行是 TR-001 commit，语义事件名在 state）；④README bind 示例更新（--req 可选+自动发现）；⑤本文档时态大扫除：§3 两行"设计态"、§4"待封装"、§5 缺口段七项改处置台账、§2.2 批次标注完成、§6.1 两行标已处置——已实现仍写待做是最直接的歧义源；⑥hookctx 三处 REQ-039 注释通用化；⑦四个旧测试的合成证据格式统一（消"哪种格式才对"歧义） | owner 指示：深度审查确认整改到位无遗漏无歧义 |
 
 | 2026-08-15 | v4.5.1 | **第二轮对抗审查处置**：处置验证 7/7 属实；P2×1 已修——team 在飞判定按 status 过滤（planned/active 才阻断；teams 只增不删，原实现会让软门永久误伤并催生 --force 习惯化）；P3×7 已修/入档——落章原子写保留原文件权限+父目录 fsync（原 CreateTemp 0600 会剥掉 git 跟踪 REQ 的组/他读）、reachability 豁免统一要求 generation>0（与 RefreshFingerprints 口径一致）、CLI scope 隔离测试改为仅前缀错误（revision 对齐，隔离证明纯净）、CRLF 翻转走真实 rollover 路径钉测、amend 输出如实化（hook 保护是按路径的，文件移走即止）、pause/resume/amend 输出补 revision（原则⑤全覆盖）。**如实入档两项**：①残余信任边界——生命周期动词由 agent 代跑时，仓库层面与人执行不可区分（hook 无 actor 区分，--approved-by 自我声明+detectGitIdentity 还会主动建议身份），唯一人闸是 Claude Code 权限提示，属设计接受的威胁模型（防 agent 越权靠协议纪律）；②非 req 旧代 documents 无豁免（契约应重做到新代是 L2 意图），但**旧代非 req 文档不得移动**，否则 validate 报 not reachable——S2 落地 documents 写入路径后此口径需重审 | owner 指示：再做一遍对抗审查 |
 

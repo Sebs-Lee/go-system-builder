@@ -528,7 +528,7 @@ func persistRecoveryPlan(root string, inventory recovery.Inventory) (recoveryPla
 		ExpectedRevision: 0,
 		Actor:            "orchestrator",
 		Evidence: map[string]string{
-			"req_lock_record":           basePlan.REQ.ID + "#lock",
+			"req_lock_record":           basePlan.REQ.Path + "@" + basePlan.REQ.SHA256,
 			"loop_authorization_record": "recovery-plan:" + basePlan.PlanSHA256[:16],
 		},
 		REQ: &transition.LockedREQ{

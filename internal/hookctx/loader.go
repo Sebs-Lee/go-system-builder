@@ -163,7 +163,7 @@ func Load(root, agentID string) (policy.RuntimeContext, error) {
 //     LockedArtifacts derived from state.documents[] (BUG-039-04 §4.1).
 //   - Assignments: one AssignmentContext per active task in the current
 //     generation, with assignment_id/owner/worktree/branch/target_branch
-//     sourced from .claude/workgroups/REQ-039/<TASK>/manifest.json. Tasks
+//     sourced from .claude/workgroups/<REQ-ID>/<TASK>/manifest.json. Tasks
 //     with state ∈ {candidate, reviewed, locked} are surfaced as
 //     "structured-but-not-active" rows; tasks with state ∈
 //     {in_progress, review, done, blocked} participate in the active
@@ -411,7 +411,7 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 	loaded.PolicyContext = context
 
 	// Integration checkpoint (BUG-039-04 §4.1). The runtime's
-	// milestone.integration block today is `[]` for the active REQ-039
+	// milestone.integration block today is `[]` for the active REQ
 	// tree; we read it as an arbitrary slice and pick the first item
 	// that looks like an integration record. Future loop-states that
 	// land a real integration record will surface here.
@@ -641,7 +641,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// loadWorkgroupManifest reads .claude/workgroups/REQ-039/<task>/manifest.json
+// loadWorkgroupManifest reads .claude/workgroups/<REQ-ID>/<task>/manifest.json
 // from the project root. The function returns (path-or-empty, manifest-or-nil);
 // callers distinguish "manifest not present" from "manifest present but
 // unparseable" by checking only the manifest pointer.

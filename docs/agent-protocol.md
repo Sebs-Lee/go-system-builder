@@ -194,7 +194,7 @@ These hold across every stage:
   - Runtime `bound_req.path` matches the locked REQ file
   - SHA-256 in Runtime matches the file on disk
   - Main Spine cursor = S1
-  - journal contains `req_bound`
+  - the binding is journalled (TR-001 commit) and the state records event `req_bound`
 - **next**: S2. After binding records the required Runtime facts, the next `PreToolUse` reflects the Controller-established `planning.design` cursor; no manual transition CLI is needed.
 - **failure_route**: if doctor/validate fail, fix Loop Definition / Hook Policy / schema first; if a REQ is already bound, surface `req_amendment` or abort.
 - **human_gateway**: binding cannot proceed without a human-locked REQ and a human identity approver.

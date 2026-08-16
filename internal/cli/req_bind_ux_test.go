@@ -41,8 +41,8 @@ const lockedReqBody = "# REQ-098\n\n> 状态：locked\n> 版本：v1.0.0\n> UI i
 
 func TestREQListClassifiesStatusesAndSkipsTemplate(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{
-		"REQ-097.md": "# REQ-097\n\n> 状态：draft\n> 版本：v0.1.0\n> UI impact：unknown\n",
-		"REQ-098.md": lockedReqBody,
+		"REQ-097.md":      "# REQ-097\n\n> 状态：draft\n> 版本：v0.1.0\n> UI impact：unknown\n",
+		"REQ-098.md":      lockedReqBody,
 		"REQ-template.md": "# template\n\n> 状态：draft\n> 版本：v0.1.0\n> UI impact：none\n",
 	})
 	var stdout, stderr bytes.Buffer

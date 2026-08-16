@@ -260,7 +260,7 @@ func TestRuntimeTransitionCommandStartsLockedREQ(t *testing.T) {
 		"--id", "TR-001",
 		"--expected-revision", "0",
 		"--actor", "user",
-		"--evidence", "req_lock_record=REQ-002#lock",
+		"--evidence", "req_lock_record=docs/requirements/REQ-002.md@0000000000000000000000000000000000000000000000000000000000000000",
 		"--evidence", "loop_authorization_record=user:/loop REQ-002",
 		"--req-id", "REQ-002",
 		"--req-path", reqPath,

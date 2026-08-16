@@ -282,3 +282,31 @@ func TestRolloverArchivesCRLFREQ(t *testing.T) {
 		t.Fatalf("archived REQ = %q, want %q", string(data), want)
 	}
 }
+
+// TestBindPreflightsControlPlaneDrift pins the preflight: a valid-but-
+// changed loop-definition must be refused instead of silently burning a
+// stale fingerprint into a fresh baseline.
+func TestBindPreflightsControlPlaneDrift(t *testing.T) {
+	root := newUXTestRoot(t, map[string]string{"REQ-209.md": "# REQ-209\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n"})
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"init", "--root", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("init failed: %s", stderr.String())
+	}
+	defPath := filepath.Join(root, "docs", "loop-definition.json")
+	data, err := os.ReadFile(defPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(defPath, append(data, []byte("\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "alice"}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("bind must refuse a drifted control plane")
+	}
+	if !strings.Contains(stderr.String(), "control plane drifted") || !strings.Contains(stderr.String(), "doctor") {
+		t.Fatalf("drift refusal must route to doctor, got: %s", stderr.String())
+	}
+}

@@ -177,7 +177,7 @@ func TestBindREQAcceptsUnknownUIIImpact(t *testing.T) {
 		ExpectedRevision: 0,
 		Actor:            "user",
 		Evidence: map[string]string{
-			"req_lock_record":           "REQ-099#lock",
+			"req_lock_record":           "docs/requirements/REQ-099.md@0000000000000000000000000000000000000000000000000000000000000000",
 			"loop_authorization_record": "user:/loop REQ-099",
 		},
 		REQ: &transition.LockedREQ{

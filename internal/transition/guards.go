@@ -114,7 +114,7 @@ func InitGuardRegistry() {
 		// their semantics live in the bind CLI/engine prechecks and the
 		// human lock itself (L3-S1 v4.x); only the cross-entity check is a
 		// real transition guard.
-		"no_other_active_loop":       evidenceBackedGuard("no_other_active_loop"),
+		"no_other_active_loop": evidenceBackedGuard("no_other_active_loop"),
 		// BUG-PLANNING-SUBSTATE: planning_phase_ready / contracts_reviewed /
 		// candidate_tasks_complete are replaced by the single direct-check guard below.
 		"planning_complete":                     guardPlanningCompleteFn,

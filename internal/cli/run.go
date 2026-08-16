@@ -271,6 +271,13 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("read runtime revision: %w", err)))
 		return 1
 	}
+	// Preflight: refuse to burn a drifted control-plane fingerprint into a
+	// fresh baseline. Parse-level drift already fails closed above (catalog
+	// load); this catches a valid-but-changed definition or policy file.
+	if hint := controlPlaneDrift(*root, snapshot.State); hint != "" {
+		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("control plane drifted: %s", hint)))
+		return 1
+	}
 	now := time.Now().UTC()
 	shaHex := fmt.Sprintf("%x", sha256.Sum256(data))
 	next, err := transition.Apply(*root, statePath, journalPath, transition.Request{
@@ -279,7 +286,7 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 			"req_lock_record":           *reqPath + "@" + shaHex,
 			"loop_authorization_record": "approved-by:" + *approvedBy,
 		},
-		REQ:      &transition.LockedREQ{ID: id, Path: *reqPath, Version: version, SHA256: shaHex, ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
+		REQ: &transition.LockedREQ{ID: id, Path: *reqPath, Version: version, SHA256: shaHex, ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
@@ -327,6 +334,32 @@ func runREQList(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "\nmultiple bindable REQs: uniqueness is a human decision; rerun req bind with --req <path>")
 	}
 	return 0
+}
+
+// controlPlaneDrift compares the runtime-recorded definition/policy
+// fingerprints with the on-disk files; empty string means consistent.
+func controlPlaneDrift(root string, state map[string]any) string {
+	checks := []struct {
+		stateKey, rel string
+	}{
+		{"definition", "docs/loop-definition.json"},
+		{"hook_control", "docs/hook-policy.json"},
+	}
+	for _, check := range checks {
+		block, _ := state[check.stateKey].(map[string]any)
+		recorded, _ := block["sha256"].(string)
+		if recorded == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(check.rel)))
+		if err != nil {
+			return fmt.Sprintf("%s unreadable (%v) — run doctor", check.rel, err)
+		}
+		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != recorded {
+			return fmt.Sprintf("%s changed since the runtime was initialized — run doctor and reconcile before binding", check.rel)
+		}
+	}
+	return ""
 }
 
 func markdownField(content string, names ...string) string {

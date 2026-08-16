@@ -76,12 +76,13 @@ REQ-003 decouples the two lifetimes:
 - **Engineering Loop binding** is a Harness operation:
 
   ```bash
-  loop-harness req bind --req docs/requirements/REQ-<id>.md \
-    --approved-by <human identity>
+  loop-harness req bind --approved-by <human identity>
   ```
 
-  It creates the Runtime Bookmark, sets the cursor to S1, and writes the
-  `req_bound` journal event. It does not start any schedule.
+  `--req` is optional: with exactly one bindable REQ (`req list` shows the
+  pool) it is auto-discovered. It creates the Runtime Bookmark (machine
+  cursor `planning/design`) and records the binding (journal: TR-001
+  commit; state event: `req_bound`). It does not start any schedule.
 
 - **Claude `/loop`** is a Claude Code built-in scheduler that delivers the
   project's `.claude/loop.md` Wake-up Prompt on a cadence. It does not bind

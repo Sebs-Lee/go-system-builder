@@ -4,7 +4,7 @@ import "github.com/entroforge/go-system-builder/internal/policy"
 
 // AssignmentContext is the read-only view of one active agent assignment as
 // projected into the Hook Context. It is sourced from runtime.entities.tasks[]
-// (for status/task_id) and from .claude/workgroups/REQ-039/<TASK>/manifest.json
+// (for status/task_id) and from .claude/workgroups/<REQ-ID>/<TASK>/manifest.json
 // (for assignment_id, agent_id, write_paths and report status). The fields
 // here intentionally do NOT include any path the loader could mutate — the
 // Hook is observation-only on the runtime, per SYNC-039 §3 / §8.
