@@ -51,7 +51,8 @@ func TasksCheck(root string) (TaskCheckResult, error) {
 	result.Tasks = len(tasks)
 	if len(tasks) == 0 {
 		result.Problems = append(result.Problems, "no TASK documents under docs/tasks — write the batch before checking")
-		return result, nil
+		// Fall through: the clause-universe floor must still be named so an
+		// empty repo cannot look half-green.
 	}
 
 	// Clause universe: the CONTRACTS index matrix is the single home (L3-S4 v4).

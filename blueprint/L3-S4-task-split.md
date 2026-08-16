@@ -1,6 +1,6 @@
 # L3-S4 — 任务拆分（Task Split）
 
-> 层：第三层 ｜ 上游：L2 §S4 ｜ 版本 v4.0.1（v4.0.0 设计定稿 owner 已拍板；+对抗审查处置，见变更记录）
+> 层：第三层 ｜ 上游：L2 §S4 ｜ 版本 v4.0.2（实施收口：四批次落地+真度清零）
 
 ## 1. 要实现什么
 
@@ -106,30 +106,30 @@
 
 ### 6.3 实施清单与真度表（划线=已落地并验证）
 
-**批次 1 模板层**
-- [ ] TASK-template v4：Status 三词；§2 列 `Order/Kind/ID/Path/Clauses`（删 Version/SHA-256 列与自我行）；§3 → Delivered Clauses 表（`| Contract | Delivered clauses |` 单行）；§3.1 → Module Impact 两行声明；§5 删 SHA-256 列；§9 列 `Evidence/Reference`（删 Fingerprint 列）
-- [ ] CONTRACTS-template 需求覆盖矩阵删"派生 TASK"列
-- [ ] migration/templates.go：TASK 必含词去 "SHA-256"、加 "Delivered clauses"/"Module Impact"；测试同步
+**批次 1 模板层（完成）**
+- [x] TASK-template v4：Status 三词；§2 列 `Order/Kind/ID/Path/Clauses`（删 Version/SHA-256 列与自我行）；§3 → Delivered Clauses 表（`| Contract | Delivered clauses |` 单行）；§3.1 → Module Impact 两行声明；§5 删 SHA-256 列；§9 列 `Evidence/Reference`（删 Fingerprint 列）——126→113 行，手抄哈希清零
+- [x] CONTRACTS-template 需求覆盖矩阵删"派生 TASK"列+条款记号说明（每条款一个 `{id} §{n}` 记号）
+- [x] migration/templates.go：TASK 必含词去 "SHA-256"、加 "Delivered Clauses"/"Module Impact"；migration 测试绿
 
-**批次 2 检查与接线层**
-- [ ] internal/semantic/tasks.go：TasksCheck **五查**——①批完整性：TASK-*.md（非模板）全 complete、cancelled 跳过并注记、≥1 存在；②主契约存在：Primary contract 对应 docs/contracts/{id}*.md 在盘；③收尾契约在场：每 TASK 文件含 Closing Contract 块+assert 行；④条款覆盖双向，文法规格——**索引 cell=每条款一个 `{id} §{n}` 记号**（允许多记号并排，跨行集合去重）；**任务 §3=逗号分隔 §n 列表，空=支撑性任务、不计入覆盖聚合**；**cancelled 任务的声明剔除出覆盖聚合**（其条款漏覆盖显红，不许静默击穿）；宇宙下限 ≥1 cell（索引缺失/矩阵空=红，指路）；docs/contracts 每个 FE/BE/SYNC 文件在宇宙有 ≥1 cell（契约↔索引双向，堵假绿洞）；缺向指名 cell、幽灵条款指名任务；⑤DAG：§8 TASK- 引用存在（引用 cancelled 任务=problem）、全批 DFS 无环**报环路径**（参照 team/validator.go 先例重写扩展）
-- [ ] internal/cli/tasks_check.go：`tasks check --root [--json]`（输出 tasks/cancelled/clauses_total/clauses_covered/problems）
-- [ ] guards.go：`tasks_checked` guard（挂 TR-002，root 取 state）；`planning_complete` 重写（契约=当前代 documents[] contract+locked，磁盘一致**定义为 Status 字段 EqualFold**——沿用 verifyDocumentStatusOnDisk；sha 由登记动作与 reachability 承载，guard 不重复查；无契约条目则指路"PTR-PLAN-02 是否已跑"；任务=磁盘全批 complete；删双分支与文件名回退）
-- [ ] actions.go：`register_planning_tasks`（直接复用 registerDocumentsFromDisk，prefixes=["TASK-"]，wantStatus=complete；**不套 actionRegisterExecutionBatch 的 ctx.Evidence 非空前置**——TR-002 required_evidence=[]，套了即永远失败）；registerDocumentsFromDisk 增 cancelled 跳过语义（TR-003 同享）；删 atomically_lock_execution_batch（registry+实现+注释）
-- [ ] loop-definition.json TR-002：guards=["planning_complete","tasks_checked"]，actions=["register_planning_tasks"]
-- [ ] guard_specs.go：补 `tasks_checked` + `contracts_checked`（S3 遗留）词条；**重写 planning_complete 词条**（现文案"falls back to filename patterns"在删回退后成谎言）
-- [ ] 回归面：engine_test.go:175-186,219,400-420（TR-002 夹具改 documents[] 形态）、task039_01_planning_test.go 12 例、req039 planning_chain 夹具、conformance 单向确认
+**批次 2 检查与接线层（完成，49b3f2b）**
+- [x] internal/semantic/tasks.go：TasksCheck **五查**——①批完整性：TASK-*.md（非模板）全 complete、cancelled 跳过并注记、≥1 存在；②主契约存在：Primary contract 对应 docs/contracts/{id}*.md 在盘；③收尾契约在场：每 TASK 文件含 Closing Contract 块+assert 行；④条款覆盖双向，文法规格——**索引 cell=每条款一个 `{id} §{n}` 记号**（允许多记号并排，跨行集合去重）；**任务 §3=逗号分隔 §n 列表，空=支撑性任务、不计入覆盖聚合**；**cancelled 任务的声明剔除出覆盖聚合**（其条款漏覆盖显红，不许静默击穿）；宇宙下限 ≥1 cell（索引缺失/矩阵空=红，指路）；docs/contracts 每个 FE/BE/SYNC 文件在宇宙有 ≥1 cell（契约↔索引双向，堵假绿洞）；缺向指名 cell、幽灵条款指名任务；⑤DAG：§8 TASK- 引用存在（引用 cancelled 任务=problem）、全批 DFS 无环**报环路径**（参照 team/validator.go 先例重写扩展）
+- [x] internal/cli/tasks_check.go：`tasks check --root [--json]`（输出 tasks/cancelled/clauses_total/clauses_covered/problems）
+- [x] guards.go：`tasks_checked` guard（挂 TR-002，root 取 state）；`planning_complete` 重写（契约=当前代 documents[] contract+locked，磁盘一致**定义为 Status 字段 EqualFold**——沿用 verifyDocumentStatusOnDisk；sha 由登记动作与 reachability 承载，guard 不重复查；无契约条目则指路"PTR-PLAN-02 是否已跑"；任务=磁盘全批 complete；删双分支与文件名回退）
+- [x] actions.go：`register_planning_tasks`（直接复用 registerDocumentsFromDisk，prefixes=["TASK-"]，wantStatus=complete；**不套 actionRegisterExecutionBatch 的 ctx.Evidence 非空前置**——TR-002 required_evidence=[]，套了即永远失败）；registerDocumentsFromDisk 增 cancelled 跳过语义（TR-003 同享）；删 atomically_lock_execution_batch（registry+实现+注释）——已删
+- [x] loop-definition.json TR-002：guards=["planning_complete","tasks_checked"]，actions=["register_planning_tasks"]
+- [x] guard_specs.go：补 `tasks_checked` + `contracts_checked`（S3 遗留）词条；**重写 planning_complete 词条**（现文案"falls back to filename patterns"在删回退后成谎言）
+- [x] 回归面：engine_test.go:175-186,219,400-420（TR-002 夹具改 documents[] 形态）、task039_01_planning_test.go 12 例、req039 planning_chain 夹具、conformance 单向确认
 
-**批次 3 清理与同步层**
-- [ ] skills/specification-planning：Entry Conditions 换现行三 phase；Inlined Methodology 三段 phase 表述；S4 步骤 12-14 对齐新模板（条款清单/模块声明/无指纹抄写/TR-002 双 guard）
-- [ ] skills/dag-design：卸查环职责表述（Quality Criteria/Operating Procedure 措辞）
-- [ ] skills/document-verification：覆盖/DAG 手工审查指令（"every contract clause maps to at least one TASK"等）改为消费 tasks check 输出——其原数据源（派生 TASK 列）已删
-- [ ] blueprint 同步：L3-S5:35 占位行+§55 已解决两缺口+§6.1#1+§4 步骤 2（覆盖/DAG 已左移，DV 转消费输出）；L3-S6:34（criterion_id 已推迟，勿当既成事实）；L3-S3 涉占位的历史叙述核对
-- [ ] docs/loop-harness.md：tasks check 命令 + TR-002 变更
+**批次 3 清理与同步层（完成，b97fffc）**
+- [x] skills/specification-planning：Entry Conditions 换现行三 phase；Inlined Methodology 三段 phase 表述；S4 步骤 12-14 对齐新模板（条款清单/模块声明/无指纹抄写/TR-002 双 guard）
+- [x] skills/dag-design：卸查环职责表述（Quality Criteria/Operating Procedure 措辞）
+- [x] skills/document-verification：覆盖/DAG 手工审查指令（"every contract clause maps to at least one TASK"等）改为消费 tasks check 输出——其原数据源（派生 TASK 列）已删
+- [x] blueprint 同步：L3-S5:35 占位行+§55 已解决两缺口+§6.1#1+§4 步骤 2（覆盖/DAG 已左移，DV 转消费输出）；L3-S6:34（criterion_id 已推迟，勿当既成事实）；L3-S3 涉占位的历史叙述核对
+- [x] 根 manual（loop-harness.md，init/manual 再生）：tasks check 命令 + TR-002 变更
 
-**批次 4 E2E 与真度清零**
-- [ ] TestS4TaskSplitPipelineE2E：绿路径（索引宇宙+条款清单+依赖链）→ 断链红各指名（幽灵条款/漏覆盖 cell/缺依赖 TASK/双任务互依环/批次夹 draft/**cancelled 后其条款漏覆盖显红**）→ TR-002 双 guard 过+**空 evidence 下 action 成功**+登记（author/sha 对磁盘）→ **planning_complete 失败指路文案断言**+**tasks_checked guard 层错误穿透**（非仅 CLI 红）→ **修复回环二趟**（TR-004→改文档→再 TR-002，documents[] 携同代旧条目不误拒——generation 只在 TR-020 递增，回环安全）→ cancelled 跳过 → TR-003 幂等重锁（同代替换不堆叠）
-- [ ] 全库 grep **TASK 文档 Status 叙述**同步（activated/working/reported/stale——实际仅 TASK-template.md:3 一处；勿伤实体词汇：reported=BUG 模板与实体态、stale=workgroup 枚举、working=write_scope_enforced 词条）；validate --all 绿；真度表全部划线
+**批次 4 E2E 与真度清零（完成）**
+- [x] TestS4TaskSplitPipelineE2E（internal/cli/tasks_e2e_test.go）：绿路径（索引宇宙+条款清单+依赖链）→ 断链红各指名（幽灵条款/漏覆盖 cell/缺依赖 TASK/双任务互依环/批次夹 draft/**cancelled 后其条款漏覆盖显红**）→ TR-002 双 guard 过+**空 evidence 下 action 成功**+登记（author/sha 对磁盘）→ **planning_complete 失败指路文案断言**+**tasks_checked guard 层错误穿透**（非仅 CLI 红）→ **修复回环二趟**（TR-004→改文档→再 TR-002，documents[] 携同代旧条目不误拒——generation 只在 TR-020 递增，回环安全）→ cancelled 跳过 → TR-003 幂等重锁（同代替换不堆叠）
+- [x] 全库 grep **TASK 文档 Status 叙述**同步（仅 TASK-template 一处，实体词汇三处未伤）；validate --all 绿；doctor 绿（activated/working/reported/stale——实际仅 TASK-template.md:3 一处；勿伤实体词汇：reported=BUG 模板与实体态、stale=workgroup 枚举、working=write_scope_enforced 词条）；validate --all 绿；真度表全部划线
 
 ## 变更记录
 
@@ -140,3 +140,4 @@
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露 | owner 指示：渐进披露、机制承载规范 |
 | 2026-08-16 | v4.0.0 | 联合调查核实（P0 强分支断点/三套词汇/手抄指纹三连等 10 项入档）；设计定稿：单一居所原则推广+tasks check 左移+TR-002 对称接线+模板瘦身+收回两项过度设计（指纹报错抛光/写路径交集机检） | owner 拍板：索引删派生列、Status 三词、其余按建议 |
 | 2026-08-16 | v4.0.1 | 设计对抗审查处置（无 P0；P1×5 全采纳）：①条款文法规格化+宇宙下限+契约↔索引双向（堵假绿洞）②cancelled 声明剔除覆盖聚合+死依赖计 problem ③register_planning_tasks 明示无 evidence 前置 ④E2E 补修复回环/空 evidence/指路文案/guard 穿透四断言 ⑤planning_complete 词条重写入批次。P2 随批：DFS 措辞（参照重写非移植）、测试计数 14→12、"磁盘一致"=Status 定义、grep 限域 TASK 文档、自动触发首趟 posture 入档、看板口径改"收口填写+人向总览"、§10/§11 双居所入档留 S6/S8、收尾契约实例级机检（第五查）、L3-S5 §4/L3-S6:34/document-verification skill 同步 | 对抗审查（sub-agent）+ 全采纳 |
+| 2026-08-16 | v4.0.2 | 四批次实施+E2E 收口：模板/检查/接线/同步全落地；TestS4TaskSplitPipelineE2E 钉死六种断链指名+双 guard 穿透+空 evidence 登记+修复回环同代替换；空仓地板问题测试。实施中发现并修复：state["root"] 默认值必须写在迁移闭包内（Writer 在 applyMutation 重读磁盘 state，外层 snapshot 副本对 guard 不可见）；S3 潜伏洞（direct-check guard 在 CLI 流程扫 cwd 空转）随此修复；TR-003 幂等重锁由修复回环第二趟的同代替换语义覆盖（appendDocument 同路径） | owner 验收：27 包测试全绿+validate/doctor 绿 |
