@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `395f935aa99aaa3c273b8d980e5e663ea93dc1c3cca09ad4fb1e5eba1b570b90`
+- **Loop definition SHA-256**: `ec52c321b16a6fc7e5b48df98846ca9160019b1c6fc322c337d13d0b1db66f01`
 
 ---
 
@@ -45,7 +45,7 @@ Human approval records release authorization only. Harness has no squash merge, 
 ## Contents
 
 - [`TR-001`](#tr-001) inactive → planning — Start exactly one Loop for the named locked REQ.
-- [`TR-002`](#tr-002) planning → document_verification — Planning completes when at least one CONTRACTS-*.
+- [`TR-002`](#tr-002) planning → document_verification — Planning completes when PTR-PLAN-02-registered contracts are locked in runtime documents AND the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked).
 - [`TR-003`](#tr-003) document_verification → building — Lock only the exact contract and task versions jointly verified.
 - [`TR-004`](#tr-004) document_verification → planning — Non-REQ document findings return to planning.
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
@@ -133,9 +133,10 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _planning → document_verification_
 
-Planning completes when at least one CONTRACTS-*.md is locked AND at least one TASK-*.md is complete. Direct file+status check via the planning_complete guard.
+Planning completes when PTR-PLAN-02-registered contracts are locked in runtime documents AND the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked). The batch is then registered into documents[] by register_planning_tasks.
 
-- `planning_complete` [semantic_check] — At least one current-baseline contract document has status=locked and a matching on-disk markdown status, AND at least one current-baseline task document has status=complete with a matching on-disk status (aligned with GATE-PLANNING-TASKS-COMPLETE). Falls back to CONTRACTS-*.md / TASK-*.md filename patterns when runtime documents are absent.
+- `planning_complete` [semantic_check] — At least one current-baseline contract document has status=locked with a matching on-disk markdown Status field (contracts are registered by PTR-PLAN-02), AND every docs/tasks/TASK-*.md declares status complete or cancelled with at least one complete (the batch is registered by TR-002's own register_planning_tasks action). Fingerprints are owned by registration and reachability, not re-checked here.
+- `tasks_checked` [semantic_check] — S4's mechanical close (semantic.TasksCheck) runs at TR-002: the TASK batch is fully complete (cancelled tasks excluded), every task has an existing primary contract and a Closing Contract block, clause coverage between the CONTRACTS index universe and TASK §3 declarations closes in both directions, and the §8 dependency graph is acyclic (cycle path reported).
 
 ### `TR-003` {#tr-003}
 
@@ -806,7 +807,7 @@ _contracts → tasks_
 
 Advance formal planning from contracts to tasks after the contract quality gate passes.
 
-- `contracts_checked` [semantic_check] — _no spec_
+- `contracts_checked` [semantic_check] — S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.
 
 ## Phase transitions: verification
 

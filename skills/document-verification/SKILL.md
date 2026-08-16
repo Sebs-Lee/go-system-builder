@@ -2,7 +2,7 @@
 name: document-verification
 description: Use when reviewed contracts and candidate tasks require independent specification verification
 category: methodology
-version: 1.1.0
+version: 1.2.0
 ---
 # Document Verification
 
@@ -26,7 +26,7 @@ The reviewer produces evidence; the Orchestrator evaluates the gate. Runtime aut
 
 ## Procedure
 1. Read the assigned TASK bottom-up: TASK → its primary contract → related contracts → locked REQ → design/UI design package → applicable rules.
-2. Check REQ coverage: every acceptance criterion in the REQ maps to at least one contract clause, and every contract clause maps to at least one TASK.
+2. Consume the machine's coverage verdict: `loop-harness tasks check` already reconciles every contract clause (CONTRACTS index universe) against TASK §3 declarations and rejects dependency cycles — read its output, then judge what machines cannot (clause semantics, granularity, write-path overlap serialization).
 3. Check module current truth: the scenario four-pack, `stories.md`, `flows.md`, index/page HTML, and module spec path are complete; no per-REQ/per-round/versioned copies exist.
 4. Check scenario consistency: every required allow/reject branch maps to CASE → Story → PATH → Spec, required branch coverage is 100%, positive/negative ratio passes, oracle is independent of implementation, and fixture setup/cleanup is feasible.
 5. Check consistency: contracts agree on data shapes, error codes, state transitions, and API surfaces across FE/BE/SYNC boundaries.

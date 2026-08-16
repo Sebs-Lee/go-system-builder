@@ -2,7 +2,7 @@
 name: specification-planning
 description: Use when designing architecture, final UI design packages, contracts, and task decomposition in the planning phase
 category: methodology
-version: 2.0.0
+version: 2.1.0
 ---
 # Specification Planning
 
@@ -10,7 +10,7 @@ version: 2.0.0
 The locked REQ is the baseline. Design, contracts, and tasks must trace back to it. Runtime authority lives in `docs/loop-definition.json`; stage contracts live in `docs/agent-protocol.md`; the method summary is inlined below.
 
 ## Entry Conditions
-- The Loop is in `planning` (any phase: initialize, design, ui_prototype, contract_drafting, task_drafting, rework).
+- The Loop is in `planning` (phases advance design → contracts → tasks via PTR-PLAN-01/02 and TR-002).
 - The locked REQ is readable and its fingerprint matches the runtime baseline.
 
 ## Required Inputs
@@ -78,18 +78,21 @@ ADR human gate — never silently let one side win.
     to contracts (step 11); if `unknown`, stop — resolve it in the REQ's
     §D first (`ui_impact_resolved` guards PTR-PLAN-01).
 
-**S3/S4 steps (unchanged):**
+**S3/S4 steps:**
 11. Draft contracts in order: FE-contract → BE-contract → SYNC-contract.
     Each must link to the REQ source ref and the module current-truth
-    package.
-12. Decompose into TASKs: each TASK binds one contract, has a Closing
-    Contract (forbidden paths + required evidence), and obeys
-    single-responsibility. Scenario-bearing TASKs name the module
-    regression sweep.
-13. Check the actual `TR-002 planning_ready` contract: at least one locked
-    contract and one complete TASK must exist, with the scenario and
-    planning evidence current. Request `TR-002` only when that contract
-    is satisfied.
+    package. The CONTRACTS index 需求覆盖矩阵 is the clause universe — one
+    `{id} §{n}` cell per clause.
+12. Decompose into TASKs: each TASK binds one primary contract, declares
+    its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
+    Contract (§7 four assert lines), and obeys single-responsibility.
+    Never hand-copy fingerprints or versions — runtime documents[] owns
+    them; §2 keeps read order only.
+13. Run `loop-harness tasks check` before requesting `TR-002`: batch
+    completeness, clause coverage against the index, DAG acyclicity, and
+    closing contracts are machine-checked there. Request `TR-002` (its
+    `planning_complete` + `tasks_checked` guards re-run the same checks)
+    only when the self-check is green.
 14. If document verification returns `document_fix_required` (`TR-004`),
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is
@@ -124,11 +127,12 @@ Stop immediately and surface to the human if any of:
 
 ## Inlined Methodology
 
-Planning is a single executable Loop phase (`planning.design`), not a
-document-production state machine. Architecture, optional UI design,
-contracts, and TASKs are work products within that phase; they do not each
-require a runtime transition. `TR-002 planning_ready` is the only planning
-exit and evaluates the current planning package. `TR-004
+Planning is an executable Loop phase machine (design → contracts →
+tasks via PTR-PLAN-01/02), not a document-production state machine.
+Architecture, optional UI design, contracts, and TASKs are work products
+within those phases; they do not each require a runtime transition.
+`TR-002 planning_ready` is the only planning exit and evaluates the
+current planning package (registered contracts + the complete TASK batch). `TR-004
 document_fix_required` returns failed documents to planning for
 evidence-bounded rework. The TASK lifecycle remains `candidate ->
 reviewed -> locked -> in_progress -> review -> done`; contracts and TASKs

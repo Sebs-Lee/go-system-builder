@@ -1,6 +1,6 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v3.1.0（v3.0.0 叙事版 + §6 注意力预算；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v3.2.0（v3.1.0 + S4 联动同步：覆盖/DAG 左移 tasks check、登记路径落地回写）
 
 ## 1. 要实现什么
 
@@ -32,13 +32,13 @@
 | 怎么防"纸面对齐" | subject_refs 精确全量匹配——证据必须精确覆盖**当前指纹**的文档集（多一少一都拒） | 否决"抽样引用 subject"——S5 的签收对象是整批，抽样签收=给漂移留门 |
 | 返工怎么收敛 | TR-004 回 planning → 修复 → **受影响职责以新指纹重跑**（旧证据 subject 自动失效，不需要显式作废机制） | 否决"每次全量重审"——指纹失配天然圈定重跑范围，省时滞 |
 | 并行还是串行 | S5.2/S5.3 并行（协议子阶段不变量），任一有发现即进 S5.4 | 并行买时滞，代价仅编排复杂度一点——值得 |
-| 锁的原子性 | TR-003 单事务（CAS 迁移）承载"原子"；无中间可见态 | 如实记录：`atomically_lock_execution_batch` action 本身是**证据记录占位**（actions.go:348-350）——原子性实际由迁移事务保证；契约/任务的 documents 登记**写入路径在代码中无先例**（仅 REQ bind 写过 documents），是欠账 |
+| 锁的原子性 | TR-003 单事务（CAS 迁移）承载"原子"；无中间可见态 | v3.1 记账的占位 action 与登记欠账**均已解决**（S3 落地 register_locked_contracts/register_execution_batch，S4 落地 register_planning_tasks；占位 action 已删）；原子性由迁移事务保证 |
 | N/A 怎么管 | 模板要求 N/A 须记理由与证据（判断层） | 否决"机器枚举合法 N/A"——适用性是语义判断，模板逼问即可 |
 
 ## 4. 怎么编排（时间线讲完一件事）
 
 1. **组队（S5.1）**：主会话派两职责任命——team-manifest 声明 separation_edges（independence），validator 拒共享 agent；每个审查者走两阶段激活（readback 四枚举→激活信封）。
-2. **并行审查（S5.2/S5.3）**：各审查者按 skill 10 步自底向上读（TASK→契约→REQ→设计→rules），逐层核对：一致性职责盯"验收↔条款↔场景映射+跨文档引用指纹"；可执行性职责盯"覆盖/Closing Contract 可行/DAG 无环/写路径归属"。
+2. **并行审查（S5.2/S5.3）**：各审查者按 skill 自底向上读（TASK→契约→REQ→设计→rules），逐层核对：一致性职责盯"验收↔条款↔场景映射+跨文档引用指纹"；可执行性职责消费 `tasks check` 机检结论（覆盖双向/DAG 无环已在 TR-002 把门），再审机器算不了的三件——Closing Contract 可行性/粒度/写路径归属串行。
 3. **发现回路（S5.4）**：任一职责出 finding（REV §3，P0-P3 带定位）→ 结论 FIX_REQUIRED + requested_event=document_fix_required → TR-004 回 planning → 修复受影响层 → **仅该职责以新指纹重跑**（旧证据因 subject 失配自动作废）。
 4. **双 PASS 收口（S5.5）**：两职责各登记一条 document_review 证据（pass，subject=当前文档集精确指纹）→ 下一次 PreToolUse：gate 求值（两条证据合格 + 三层独立性过）→ TR-003 提交——批次锁定，hook 拦截自此生效。
 5. **REQ 级歧义**：结论 REQ_CHANGE_REQUIRED → TR-005 → paused，human_boundary——交人。
@@ -52,7 +52,7 @@
 - **知识共享复利**：审查者读全链建立的心智模型可在 S7 转任对应验证职责；
 - **交给 S6**：锁定批次（锁定清单+指纹）——构建读序与授权面的基准。
 
-**如实记录的已知缺口**（供第四层修复清单）：①documents[].author_agent_id 生产路径缺失（仅测试 fixtures 有）——"审查者∉作者集合"检查实际空转，独立性现靠 separation+双 producer 互异支撑；②契约/任务的 documents 登记写入路径无代码先例（原子锁 action 是占位）；③轮次语义：S5 的证据 review_round=0，若 S7 期间产生新 document_review 需注意轮次校验；④REV 模板三枚举与 gate 的 conclusion 词汇（pass/fix_required）不同名，靠登记时映射。
+**如实记录的已知缺口**（供第四层修复清单）：~~①author_agent_id 无生产写入路径~~（S3/S4 登记 action 落地，作者随登记写入）；~~②契约/任务 documents 登记无代码先例~~（PTR-PLAN-02/TR-002/TR-003 三点登记）；③轮次语义：S5 的证据 review_round=0，若 S7 期间产生新 document_review 需注意轮次校验；④REV 模板三枚举与 gate 的 conclusion 词汇（pass/fix_required）不同名，靠登记时映射。
 
 ## 6. 注意力预算与渐进披露
 
@@ -62,7 +62,7 @@
 
 | # | 错配 | 为什么不对（L1 根据） |
 |:--|:--|:--|
-| 1 | `documents[].author_agent_id` 无生产写入路径（仅测试 fixtures 有）——"审查者∉作者集合"检查空转 | 禁令写在 skill 停止条件 + 协议 + 角色定义三处，机器检查却无数据可查——用三份叙述补一个机制洞，而补洞只需一条登记写入（D2：自觉式检查不值得部署；此处连"自觉检查的数据"都没有） |
+| 1 | ~~`documents[].author_agent_id` 无生产写入路径~~（**已解决**：S3/S4 登记 action 落地；TR-002 起任务批也在册） | 原 D2 论证成立——补的正是那条登记写入；S5 设计时独立性检查从"叙述三处"收敛到机器数据 |
 | 2 | document-verification skill 十步未区分必做与按发现触发 | 审查者进入即背十步——前 3 步（读序/指纹/覆盖双向）是必做，后 7 步应由发现触发；渐进披露缺失导致均匀付费 |
 | 3 | REV 三枚举（DOCUMENT_PASS/FIX_REQUIRED/REQ_CHANGE_REQUIRED）与 gate conclusion（pass/fix_required）不同名，登记时映射 | 词汇翻译是摩擦+错读面——同一概念两套名字违反"一概念一名字"（naming 规则自己的纪律） |
 
@@ -86,4 +86,5 @@
 |:--|:--|:--|
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（三层独立性/精确 subject/轮次=0/author 空转等如实入档） | owner 复核 |
+| 2026-08-16 | v3.2.0 | S4 联动同步：覆盖/DAG 审查改为消费 tasks check 机检结论；登记路径/author_agent_id 欠账划线；占位 action 已删 | S4 整改（L3-S4 v4.0.1） |
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |

@@ -271,7 +271,7 @@ These hold across every stage:
   |:---|:---|:---|:---|
   | S5.1 workgroup_setup | main session (via `team-planning`) | sequential entry | Document Verifier Team validated; two assignments ready for activation |
   | S5.2 spec_consistency_review | Document Verifier (DV-SPEC-CONSISTENCY) | **parallel with S5.3** | REQ/design/contracts/UI consistency: every acceptance criterion mappable to a contract clause; cross-document references resolve at matching fingerprints |
-  | S5.3 task_executability_review | Document Verifier (DV-TASK-EXECUTABILITY) | **parallel with S5.2** | Every contract clause covered by ≥1 TASK; every TASK has verifiable Closing Contract; DAG acyclic; write-path overlaps have explicit sequential ownership |
+  | S5.3 task_executability_review | Document Verifier (DV-TASK-EXECUTABILITY) | **parallel with S5.2** | Clause coverage and DAG acyclicity already machine-gated (`tasks check` at TR-002) — DV consumes that verdict and judges the rest: every TASK has a verifiable Closing Contract; write-path overlaps have explicit sequential ownership |
   | S5.4 rework_loop | main session (repairs) + affected DV responsibility (rerun) | triggered by finding | All findings addressed; affected responsibilities re-run with fresh fingerprints; no open finding remains |
   | S5.5 atomic_lock | Controller via Transition Engine | sequential exit | Both independent current PASS records and exact fingerprints are available; the next `PreToolUse` auto-commits `TR-003`, whose actions atomically lock the contract + TASK batch; machine checks (`loop-harness validate --all`, `loop-harness doctor`) pass |
 
