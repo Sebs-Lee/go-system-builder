@@ -162,12 +162,15 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q points at unknown contract", id, cell))
 				continue
 			}
-			// Cheap anti-drift check (BUG-CX-04): the §n cited in an index
+			// Cheap anti-drift check (BUG-CX-04/10): the §n cited in an index
 			// cell must exist in the target contract's own clause map —
-			// otherwise the two sides number clauses independently.
+			// otherwise the two sides number clauses independently. The
+			// numbers are compared as a set, so §1 cannot satisfy §10
+			// (substring false-negative, BUG-CX-10).
 			n := clauseNumberOf(cell)
 			targetData, err := os.ReadFile(target)
-			if err != nil || !strings.Contains(string(targetData), "§"+n) {
+			declared := declaredClauseNumbers(string(targetData))
+			if err != nil || !declared[n] {
 				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q cites %s §%s but the target contract never declares that clause number — align the index cell with the contract's own clause map", id, cell, contractID, n))
 			}
 		}
@@ -273,4 +276,16 @@ func modelCaseIDs(path string) (map[string]bool, error) {
 		}
 	}
 	return ids, nil
+}
+
+// clauseNumbersPattern extracts every §n token (digits only) so clause
+// numbers compare as a set — "§1" must not satisfy "§10".
+var clauseNumbersPattern = regexp.MustCompile(`§(\d+)`)
+
+func declaredClauseNumbers(content string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range clauseNumbersPattern.FindAllStringSubmatch(content, -1) {
+		out[m[1]] = true
+	}
+	return out
 }

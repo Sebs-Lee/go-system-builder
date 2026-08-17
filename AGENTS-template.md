@@ -19,7 +19,7 @@ integrity failure, rollback/rollover, or the human release Gateway.
 
 **If the Runtime is a fresh inactive Runtime with no bound REQ:**
 
-1. Get one REQ human-locked at `docs/requirements/REQ-<id>.md` ( REQ locking is human-only).
+1. Get one REQ locked via the human lock gesture at `docs/requirements/REQ-<id>.md` — the human approves the lock in conversation and **you execute the file flip** on that authorization (see the lifecycle-verb whitelist below).
 2. `loop-harness req bind --req <path> --approved-by <human identity>`
 3. Then proceed above.
 
@@ -73,8 +73,8 @@ the Milestone instead of relying on conversation memory.
 
 ## Control boundaries
 
-- Humans lock REQs and approve release. AI drives everything in between.
-- Loop automation cannot lock or modify the bound REQ, cannot squash merge, publish, deploy, or release.
+- Humans own lock decisions and release approval. AI drives everything in between — including executing the `状态：locked` file flip on the human's explicit lock gesture.
+- Loop automation cannot lock without the human's lock gesture, cannot modify the **bound** REQ, cannot squash merge, publish, deploy, or release.
 - **Lifecycle-verb whitelist** — what the main session may execute on a human's behalf:
   | Verb | May the agent run it? | Required human gesture |
   |:--|:--|:--|

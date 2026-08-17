@@ -143,7 +143,7 @@ func soleBindableCommand(root string) string {
 	if len(candidates) != 1 {
 		return ""
 	}
-	return "loop-harness req bind --req " + candidates[0].Path + " --approved-by <you>"
+	return "loop-harness req bind --req " + candidates[0].Path + " --approved-by <the human who locked it>"
 }
 
 // detectGitIdentity returns the local git user.name for the --approved-by

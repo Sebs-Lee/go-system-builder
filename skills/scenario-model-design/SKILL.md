@@ -39,9 +39,10 @@ index.html
 stories.md
 flows.md
 scenario-model.json
-cases.json
-scenario-coverage.json
-fixture-contract.json
+cross-matrix.json      (hand-written convergence-1 carrier)
+fixture-contract.json  (hand-written)
+cases.json             (generated — do not hand-edit)
+scenario-coverage.json (generated — do not hand-edit)
 *.html
 ```
 
@@ -97,7 +98,9 @@ S5 oracle-independence check and S7 Playwright assertions):
 | `forbidden_side_effects` | what must provably NOT have happened (e.g. `"duplicate-filing"`) | all branches |
 | `rejection` | the stable rejection reason/code the user/system sees | negative branches |
 | `expected_state` | the state the system settles into after the rejection (e.g. `"draft"`) — distinct from `terminal_state`, which describes the positive path | negative branches |
-| `recovery` | how the user recovers from the rejection (e.g. `"select-institutional"`) | negative branches | Also require deterministic
+| `recovery` | how the user recovers from the rejection (e.g. `"select-institutional"`); `recovery: "N/A"` must carry `recovery_source_refs` + `recovery_reason` | negative branches |
+
+Also require deterministic
 current outputs, explicit positive and negative witnesses, 100% required
 allow/reject branch coverage, the configured polarity ratio, complete
 CASE/Story/PATH/spec traceability, synthetic isolated fixtures, and full-module

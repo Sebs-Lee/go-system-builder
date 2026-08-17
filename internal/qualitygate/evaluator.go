@@ -1,6 +1,8 @@
 package qualitygate
 
 import (
+	"os"
+	"path"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,6 +33,14 @@ const (
 // FileView is the evaluator's read-only artifact boundary.
 type FileView interface {
 	ReadFile(path string) ([]byte, error)
+}
+
+// fileDirLister is the optional directory-listing capability a FileView may
+// implement so the planning gates can discover disk-declared artifacts
+// (BUG-CX-07: documents[] registration is produced by the gated transitions
+// themselves, so requiring it up front deadlocks the auto-advance path).
+type fileDirLister interface {
+	ReadDir(dir string) ([]os.DirEntry, error)
 }
 
 // Input contains the immutable facts observed for one gate evaluation.
@@ -214,6 +224,22 @@ func evaluatePlanningArtifact(
 		if document.Kind == kind && document.Status == status {
 			found = true
 			break
+		}
+	}
+	if !found {
+		// Disk fallback (BUG-CX-07): the agent's producible fact is the
+		// file itself — a contract declaring `Status: locked` / a task
+		// declaring `Status: complete` on disk satisfies the gate's
+		// precondition; the commit-time registration into documents[]
+		// (with journal) remains the transition's job.
+		if diskFacts, ok := diskDeclaredArtifacts(input, kind, status); ok {
+			documents = append(documents, diskFacts...)
+			for _, fact := range diskFacts {
+				if fact.Kind == kind && fact.Status == status {
+					found = true
+					break
+				}
+			}
 		}
 	}
 	if !found {
@@ -767,4 +793,84 @@ func intValue(value any) int {
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// diskDeclaredArtifacts scans the artifact directory for the given kind and
+// returns the on-disk documents whose top-of-file status field matches.
+// The bool reports whether listing was possible at all (a FileView without
+// directory listing — legacy test doubles — keeps the documents[]-only
+// behavior).
+func diskDeclaredArtifacts(input Input, kind, status string) ([]documentFact, bool) {
+	lister, ok := input.Files.(fileDirLister)
+	if !ok || input.Files == nil {
+		return nil, false
+	}
+	dirRel := "docs/contracts"
+	filePrefix := ""
+	if kind == "task" {
+		dirRel = "docs/tasks"
+		filePrefix = "TASK-"
+	}
+	entries, err := lister.ReadDir(dirRel)
+	if err != nil {
+		return nil, false
+	}
+	var facts []documentFact
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".md") ||
+			strings.Contains(strings.ToLower(name), "template") ||
+			strings.EqualFold(name, "README.md") ||
+			(filePrefix != "" && !strings.HasPrefix(strings.TrimSuffix(name, ".md"), filePrefix)) {
+			continue
+		}
+		rel := path.Join(dirRel, name)
+		data, err := input.Files.ReadFile(rel)
+		if err != nil {
+			continue
+		}
+		declared := parseMarkdownStatusField(string(data))
+		if declared != status {
+			continue
+		}
+		facts = append(facts, documentFact{
+			Kind: kind, Path: rel,
+			Version: parseMarkdownVersionField(string(data)),
+			SHA256:  sha256Hex(data),
+			Status:  declared,
+		})
+	}
+	return facts, true
+}
+
+// parseMarkdownStatusField reads the top blockquote `状态`/`Status` field,
+// mirroring the transition package's ParseMarkdownField semantics without
+// importing it.
+func parseMarkdownStatusField(content string) string {
+	return parseTopField(content, "状态", "Status")
+}
+
+func parseMarkdownVersionField(content string) string {
+	return parseTopField(content, "版本", "Version")
+}
+
+func parseTopField(content string, keys ...string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">"))
+		for _, key := range keys {
+			for _, sep := range []string{"：", ":"} {
+				prefix := key + sep
+				if strings.HasPrefix(line, prefix) {
+					value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+					// Trailing parenthetical annotations (e.g. the REQ
+					// template's guidance note) are not part of the value.
+					if i := strings.IndexAny(value, "（( "); i > 0 {
+						value = strings.TrimSpace(value[:i])
+					}
+					return value
+				}
+			}
+		}
+	}
+	return ""
 }

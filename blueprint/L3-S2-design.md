@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.4（v4.0.3  实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.5（v4.0.4  实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -118,7 +118,7 @@
 3. ~~删 populateUIPrototypeFact~~ **已删**（含调用点；completeness 测试改打真实门函数）；
 4. ~~AC↔CASE 桥~~ **已落地**：`scenario bridge`（源头）+ validate 全链（含 BR→CASE）；背书 N/A=NFR 编号（须已声明）或 §A4 指针，自由文本/空 target 拒绝——5 专项测试+E2E 钉死；
 5. ~~case_id pattern~~ **已定**（`^CASE-[A-Z0-9]+(-[A-Z0-9]+)*$`，引擎+schema 双层，存量兼容）；
-6. ~~skill 重构（两件）~~ **已完成**（specification-planning v2.0.0 双轨全重排+scenario-model-design v1.2.0 顺序修正）：①specification-planning 重排为双轨汇聚顺序——渐进披露触发条件以修订后 §6.2 为契约（轨归属×时机×载哪个子 skill）；边界限定：其 step 6-9 属 S3/S4 的部分不动；"人闸只一个（ADR）"落地时须同步收敛其现有 5 条 Stop Conditions 中的 UI 包评审人触点（存废显式化）。②scenario-model-design 的 Workflow 顺序同步修正（现 step 7 才 reconcile stories——与双轨矛盾）；
+6. ~~skill 重构（两件）~~ **已完成**（specification-planning v2.0.0 双轨全重排+scenario-model-design v1.2.0 顺序修正）：①specification-planning 重排为双轨汇聚顺序——渐进披露触发条件以修订后 §6.2 为契约（轨归属×时机×载哪个子 skill）；边界限定：其 S3/S4 步骤（现 v2.1.1 起编号 10-13）不动；"人闸只一个（ADR）"落地时须同步收敛其现有 5 条 Stop Conditions 中的 UI 包评审人触点（存废显式化）。②scenario-model-design 的 Workflow 顺序同步修正（现 step 7 才 reconcile stories——与双轨矛盾）；
 7. ~~交叉格清单载体~~ **已落地**（cross-matrix.json=模块包第八文件：schema anyOf 强制 branch/理由二选一+引擎引用校验+重复格检测+completeness 门纳入；专项测试钉死四种非法形态）；
 8. ~~深度自审~~ **已入 skill**（specification-planning v2.0.0 步骤 8：三身份攻击+结论入 ADR 包——判断层机制，无机器门，如实定位）。
 
@@ -147,3 +147,4 @@
 | 2026-08-15 | v4.0.0 | **联合审查版**（S2+S3+S5+S7+S8 联动，sub-agent CASE 流水线端到端调查）：§1 增"验证源出生地"身份；§2.1 新增分母断裂地图（五断点+三事实修正+AC↔CASE 对位缺口）；§3 增双轨汇聚顺序与 AC 桥两条选用（否决"逐层拍板漏斗"——S0 形状硬搬造出不存在的判定层；否决六产物并行）；§4 时间线重写（stories 提前/fixtures 后移/两汇聚判据，hook 第二道保险改为如实——gate not_ready 才是真实保险）；§5 缺口段改处置台账；§6.3 升级为 11 项全景（机制 6+声明 3+跨 stage 输入 2，angles 冻结与 case_id pattern 待终批） | owner 指示：S2 与关联 stage 联合审查；产出对位下游所需；顺序不死板、按依赖重排 |
 | 2026-08-17 | v4.0.3 | **cross-matrix 接入分母（P0 修复）**：矩阵此前与 AC↔CASE 链零 join——req_ref 只验形状、branch 不验其 rule 是否真引用该 FR、无完整性下限（10 fact 填 1 格即过）、no_branch_reason 任意非空串算 N/A。现 validateCrossMatrix 接入 bound REQ：FR 级引用必须存在于 REQ FR 表、REQ 级必须指向 bound REQ、branch 的 rule 必须在 source_refs 真实引用该 cell、每个 fact/story 至少被一格猎杀、理由须 ≥8 字符且含字母。AC 桥同时挂上 PTR-PLAN-02 guard（scenario_bridge_checked，RunBridge(root,true)；无模块包时仅全 N/A 背书可过——沉默不是 N/A）。测试钉死五条红路 | L1 价值观复审（sub-agent）：D6 单一分母/公理三/D2 违例处置 | |
 | 2026-08-17 | v4.0.4 | **对抗审查处置**：①bound REQ 不可读/FR 表为空时 cross-matrix 由静默降级改 fail-closed（与 RunBridge 对齐）；②story 下限提取口径与 cell 校验统一（S-id 可在标题任意位置，含中英文标题）；③cross-matrix/模块源包校验挂入 scenario_bridge_checked 自然路径（generate 后篡改矩阵无法存活到规划推进）；④注释如实：地板是 per-fact/per-story，fact×story 组合仍是人的猎杀判断 | 第三方对抗审查（sub-agent）：假绿路径构造 |
+| 2026-08-17 | v4.0.5 | **二轮复杂度审查处置（BUG-CX-09）**：模板 risk 示例改自由短语（原值恰为 coverage_profile 枚举名，违自家指导）；包清单三处统一为九文件口径（SKILL 清单/rules 目录树补 cross-matrix.json，protocol eight→nine）；specification-planning 步骤重排 10-13（原 9→11 断档）；ADR-template 增 Depth Self-Review 与 Endorsed N/A 固定段，protocol #s2 定义签核包居所；oracle 表补 recovery N/A 伴随字段并修表格粘连 | 二轮 agent 视角复杂度审查 |

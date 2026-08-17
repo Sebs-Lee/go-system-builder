@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-07
 
-> Status: reported
+> Status: fixed
 > Severity: P0
 > Runtime ref: N/A（模板仓库自审——第二轮 agent 视角复杂度审查；所有结论经主会话亲自核验）
 > Found in review round: complexity-review-2
@@ -75,18 +75,18 @@ assert missing 词汇在 loop-harness.md 有解释
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending（owner 拍板修复方向） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 接受（本轮直接修复） |
+| repair assignment | same batch |
+| Builder activation | same batch |
+| repair fingerprint | 本轮修复 commit |
+| impact analysis | same batch |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 自动路径可达性 E2E（无手动 transition） | 待派 | pending | — |
+| 自动路径可达性 E2E（无手动 transition） | 待派 | pass | evaluatePlanningArtifact 磁盘前置回退（evaluator 级 pin：TestPlanningGatesReadDiskDeclaredArtifacts/StillRefuse）+diskFiles.ReadDir+TR-002 挂幂等 register_locked_contracts+guard 文案改真；**决定性证据：TestS2ToS11_HookDrivenCleanPath 首次真实 PASS**（此前一直被 product-blocker skip 掩盖——修复中顺带发现该 skip 掩盖死锁的测试卫生问题），S2→S11 全程 hook 自动推进、无手动 transition、无手工 documents[] 播种（planning_chain fixture 去播种后由 commit 时登记承载） |
 
 ## 7. Deduplication And History
 
@@ -95,3 +95,4 @@ Canonical BUG: BUG-CX-07（planning 推进链可达性；BUG-CX-04 修复的深�
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（二轮复杂度审查 N1/N2，主会话亲证） | 主会话+sub-agent（复核） | n/a | 本文件 |
+| 2026-08-17 | fixed+verified | 主会话 | n/a | evaluatePlanningArtifact 磁盘前置回退（evaluator 级 pin：TestPlanningGatesReadDiskDeclaredArtifacts/StillRefuse）+diskFiles.ReadDi |

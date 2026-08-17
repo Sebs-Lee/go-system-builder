@@ -1,7 +1,7 @@
 # 开发合同总览
 
 > 需求：REQ-{id}
-> 状态：draft / reviewed / locked
+> 状态：draft / reviewed / locked（机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
 > PM / Architect：{name}
 > Contractor：{Contractor}
@@ -45,7 +45,7 @@
 
 ## 需求覆盖矩阵
 
-条款列每条款一个 `{id} §{n}` 记号，可并列多个（如 `BE-001 §2, BE-001 §3`）——本矩阵是条款宇宙唯一居所；任务侧覆盖声明（TASK §3）由 `tasks check` 对此聚合对账。
+条款列每条款一个 `{id} §{n}` 记号，可并列多个（如 `BE-001 §2, BE-001 §3`）——本矩阵是条款宇宙唯一居所；每个 `§n` 必须与目标契约正文任一「本合同条款」列声明的条款号一致（contracts check 机检，数字精确匹配）；任务侧覆盖声明（TASK §3）由 `tasks check` 对此聚合对账。
 
 | REQ source_ref | Rule → CASE → Story → PATH → Spec | FE 合同条款 | BE 合同条款 | SYNC 条款 |
 |:---|:---|:---|:---|:---|

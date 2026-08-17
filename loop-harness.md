@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `79a6e9a9195a9bbf0aea7d582ba00057906331aba3c93b40b30290ab26f737f3`
+- **Loop definition SHA-256**: `8c2454b8c97cca05e0eff27bba59a2dc97033ddfbd9991d76f9f2cec9341b0d2`
 
 ---
 

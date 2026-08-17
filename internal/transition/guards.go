@@ -430,7 +430,7 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		// the actionable gap there is the contract file's own Status field.
 		if lifecycle, _ := state["lifecycle"].(map[string]any); lifecycle != nil {
 			if phase, _ := lifecycle["phase"].(string); phase == "tasks" {
-				return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 already advanced past contracts; flip the contract markdown Status to `locked` (a finalized contract declares locked at authoring time, see docs/agent-protocol.md#s3) and the next PreToolUse re-runs the registration", generation)
+				return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 already advanced past contracts; flip the contract markdown Status to `locked` (a finalized contract declares locked at authoring time, see docs/agent-protocol.md#s3) and TR-002 itself re-registers locked contracts when it commits", generation)
 			}
 		}
 		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 (contracts→tasks) fires on the next PreToolUse and registers contracts whose markdown Status is `locked` (see docs/agent-protocol.md#s3); TR-002 does not scan filenames", generation)

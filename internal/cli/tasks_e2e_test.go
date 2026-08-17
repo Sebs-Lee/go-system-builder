@@ -305,3 +305,26 @@ func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
 		t.Fatalf("clause number drift must be flagged, got: %s", stderr.String())
 	}
 }
+
+// TestContractsCheckClauseNumberPrecision pins BUG-CX-10: §1 must not
+// satisfy §10 — clause numbers compare as a set, not substrings.
+func TestContractsCheckClauseNumberPrecision(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs", "contracts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Target declares only §10; the index cites §1 — substring matching
+	// used to let this pass.
+	write("docs/contracts/BE-820.md", "# BE-820\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §10 | — |\n")
+	write("docs/contracts/CONTRACTS-820.md", "# CONTRACTS-820\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-820/FR-821 | — | BE-820 §1 | — |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "never declares that clause number") {
+		t.Fatalf("§1-vs-§10 precision must flag the drift, got: %s", stderr.String())
+	}
+}

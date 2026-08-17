@@ -1,6 +1,6 @@
 # 联调合同：SYNC-{id}
 
-> 状态：draft / reviewed / locked
+> 状态：draft / reviewed / locked（机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
 > 前端合同：FE-{id}
 > 后端合同：BE-{id}
@@ -23,9 +23,11 @@
 
 ### 上游需求
 
-| REQ | 条款 | 前端合同 | 后端合同 |
+| REQ | 本合同条款 | 前端合同 | 后端合同 |
 |:---|:---|:---|:---|
-| REQ-{id} | FR-{id} / §{n} | FE-{id} §{n} | BE-{id} §{n} |
+| REQ-{id} | SYNC-{id} §{n} | FE-{id} §{n} | BE-{id} §{n} |
+
+> 「本合同条款」列是 SYNC 自己的条款号唯一声明居所——CONTRACTS 索引的 `SYNC-{id} §{n}` cell 必须与此列一致（contracts check 机检）。
 
 ### UI 设计包映射
 

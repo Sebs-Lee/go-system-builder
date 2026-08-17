@@ -22,7 +22,7 @@
       "source_refs": [
         "REQ-<id>/FR-<id>"
       ],
-      "risk": "rule-dense",
+      "risk": "money is involved",
       "branches": [
         {
           "id": "BR-EXAMPLE-ALLOW",

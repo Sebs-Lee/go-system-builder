@@ -35,3 +35,5 @@
 
 - CX-02 的人闸执行权问题与 L3-S1 v4.5.1/v4.6.1 已入档的信任边界（仓库层无法区分 actor）同源——本 BUG 只要求补文档侧意图白名单，不要求新机器强制。
 - CX-05 的 UI impact 一致性校验是 D2 补洞，与 v4.4.0 的 preflight 方向一致。
+
+> **2026-08-17 二轮修复状态**：BUG-CX-07..10 同批修复完毕（fixed）。CX-07 的决定性验证：`TestS2ToS11_HookDrivenCleanPath` 首次真实 PASS——修复过程中发现该测试此前一直被 product-blocker skip 掩盖（skip-as-pass 的测试卫生问题另记），去除 fixture 手工 documents[] 播种后 S2→S11 全程 hook 自动推进。全量测试 + validate --all + doctor 绿。

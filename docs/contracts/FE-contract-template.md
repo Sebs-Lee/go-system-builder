@@ -1,7 +1,7 @@
 # 开发合同：FE-{id}
 
 > 类型：frontend
-> 状态：draft / reviewed / locked
+> 状态：draft / reviewed / locked（机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
 > 负责 Builder：{Builder-FE-01}
 > 关联需求：`docs/requirements/REQ-{id}.md`

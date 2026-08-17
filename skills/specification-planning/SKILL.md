@@ -28,7 +28,7 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 REQ's top `UI impact` field. `unknown` → stop, resolve it in the REQ's §D
 first (the `ui_impact_resolved` guard blocks PTR-PLAN-01). `none` → skip
 the entire S2 package work (steps 1–9) and go straight to contracts
-(step 11). `changed` → run the full flow below.
+(step 10). `changed` → run the full flow below.
 
 The S2 portion runs as two tracks with free ordering within one agent (not
 subagent parallelism), converging twice. "Free ordering" means either track
@@ -103,28 +103,28 @@ win.
    silent removal from the verification denominator).
 
 **S3/S4 steps:**
-11. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
+10. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
     from the four templates under `docs/contracts/` (CONTRACTS / BE / FE /
     SYNC). Each must link to the REQ source ref and the module
     current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
     universe — one `{id} §{n}` cell per clause, and each `§n` must match
-    the clause number the target contract itself declares in its
-    需求条款映射 table. On finalization set each contract's top `Status`
+    the clause number the target contract itself declares in any of its
+    「本合同条款」 columns. On finalization set each contract's top `Status`
     field to `locked` (PTR-PLAN-02 registers only locked contracts), and
     run `go run ./cmd/loop-harness contracts check --root .` — token
     references, clause cells, and fingerprint columns are machine-checked
     there and again at PTR-PLAN-02.
-12. Decompose into TASKs: each TASK binds one primary contract, declares
+11. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
     Contract (§7 four assert lines), and obeys single-responsibility.
     Never hand-copy fingerprints or versions — runtime documents[] owns
     them; §2 keeps read order only.
-13. Run `loop-harness tasks check` before requesting `TR-002`: batch
+12. Run `loop-harness tasks check` before requesting `TR-002`: batch
     completeness, clause coverage against the index, DAG acyclicity, and
     closing contracts are machine-checked there. Request `TR-002` (its
     `planning_complete` + `tasks_checked` guards re-run the same checks)
     only when the self-check is green.
-14. If document verification returns `document_fix_required` (`TR-004`),
+13. If document verification returns `document_fix_required` (`TR-004`),
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is
     invalid; otherwise keep rework bounded to the flagged contract or TASK.

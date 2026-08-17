@@ -1,6 +1,7 @@
 # Task: TASK-{id}
 
-> Status: draft (still writing) / complete (the document is finished — required across the whole batch at TR-002; it says nothing about implementation, which happens in S6) / cancelled (out of the batch; its §3 clause declarations drop out of coverage so any gap resurfaces)
+> Status: draft
+> （draft=still writing；complete=the document is finished——required across the whole batch at TR-002, says nothing about implementation（那是 S6 的事）；cancelled=out of the batch, its §3 clause declarations drop out of coverage so any gap resurfaces）
 > Version: v1.0.0
 > Source REQ refs: REQ-{id} / none
 > Module current truth: `docs/design/prototypes/{module}/` / N/A

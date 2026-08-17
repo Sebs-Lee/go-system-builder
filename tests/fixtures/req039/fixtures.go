@@ -824,7 +824,8 @@ func SeedG2Rework(t *testing.T, root string, state map[string]any) {
 // SeedPlanningDesignComplete seeds S2 planning.design with architecture evidence.
 func SeedPlanningDesignComplete(t *testing.T, root string, state map[string]any) {
 	t.Helper()
-	reqData := []byte("# REQ-039\n")
+	reqData := []byte("# REQ-039\n\n> 状态：locked\n> 版本：v2.0.0\n\n" +
+		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n")
 	archData := []byte("# ARCHITECTURE-039\n")
 	for _, pair := range []struct {
 		path string

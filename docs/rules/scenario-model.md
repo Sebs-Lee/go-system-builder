@@ -34,8 +34,9 @@ docs/design/prototypes/<module>/
 ├── stories.md
 ├── flows.md
 ├── scenario-model.json
-├── cases.json
-├── scenario-coverage.json
+├── cross-matrix.json
+├── cases.json            (generated)
+├── scenario-coverage.json (generated)
 ├── fixture-contract.json
 └── *.html
 ```
@@ -53,7 +54,7 @@ web/e2e/<module>/**/*.spec.ts
 ## 3. Strict JSON Contract
 
 第一版只接受严格 JSON，所有对象拒绝未知字段；文件必须是 UTF-8、两空格缩进、
-末尾换行并按稳定 ID 排序。四个文件的顶层允许字段固定如下：
+末尾换行并按稳定 ID 排序（cross-matrix.json 与两个生成文件无此约束）。四个手写/校验 JSON 文件的顶层允许字段固定如下：
 
 | 文件 | 顶层允许字段 | 权威性 |
 |:---|:---|:---|
@@ -147,7 +148,7 @@ regression；只补本 REQ 的路径不满足规范。
 
 ## 6. Fail-closed Gates
 
-- S2：四个 JSON 文件齐备、schema 合法、当前模块全集已重算、required obligations
+- S2：四个 JSON 文件齐备（外加 cross-matrix.json 与两个生成文件）、schema 合法、当前模块全集已重算、required obligations
   全覆盖、正反容量比满足、没有 per-REQ/per-round 永久副本。
 - S5：独立验证 Rule→CASE→Story→PATH→Spec 追踪链、oracle 独立于实现、fixture
   可复现且可清理、allow/reject branch 均 100%。
@@ -172,6 +173,6 @@ regression；只补本 REQ 的路径不满足规范。
 - `scenario-coverage.json` 的 `required_branch_coverage` 是**构造性 100%**（引擎对每个 required case 同时计数 required 与 covered）——它是**设计时声明覆盖**，不是执行覆盖；**不得作为执行覆盖证据**。执行覆盖由 S7 的验证证据计数承担（REQ-040 的 CASE_ID 粒度完整性门）。
 - **非 UI REQ 没有 CASE 宇宙**（四件套只对 `ui_impact=changed` 的模块强制存在）——这是显式设计边界：此类 REQ 的 S7 验证分母是职责粒度+任务收尾契约；REQ-040 Q-002 预留"无场景包 ⇒ BLOCKED 而非静默跳过"。
 - **case id 格式**：`^CASE-[A-Z0-9]+(-[A-Z0-9]+)*$`（引擎强制）——case id 是 S2→S7 的唯一验证分母（L2 全局规则「单一验证分母」）。
-- **cross-matrix.json**（模块包第八文件）：汇聚①的事实×需求点×故事交叉清单——每格指向覆盖它的 branch 或记录无分支理由；"沉默不是不适用"。机器地板（`scenario generate/validate` 强制）：每个 fact、每个 story 至少出现在一格（fact×story 组合本身是猎杀判断，不要求笛卡尔积）；branch 格的 rule 必须在 `source_refs` 真实引用该格的 `REQ-<id>/FR-<id>`（且只可引用 bound REQ）；无分支理由须 ≥8 字符且含字母（讲清 why——"."或"不需要"不是背书）。
+- **cross-matrix.json**（模块包第九文件；5 手写 + 页面 HTML + 2 生成）：汇聚①的事实×需求点×故事交叉清单——每格指向覆盖它的 branch 或记录无分支理由；"沉默不是不适用"。机器地板（`scenario generate/validate` 强制）：每个 fact、每个 story 至少出现在一格（fact×story 组合本身是猎杀判断，不要求笛卡尔积）；branch 格的 rule 必须在 `source_refs` 真实引用该格的 `REQ-<id>/FR-<id>`（且只可引用 bound REQ）；无分支理由须 ≥8 字符且含字母（讲清 why——"."或"不需要"不是背书）。
 - **AC↔CASE 桥**：`scenario bridge`（源头检查，汇聚①后即可跑）与 `scenario validate`（全链含 BR→CASE）——每条验收标准须达 FR→BR→CASE 或带背书 N/A（NFR 编号或 §A4 指针；自由文本不是 N/A）。
 - **S-NNN 恰好三位数字**（`S-001`，引擎按 `S-[0-9]{3}` 匹配）：`S-1`/`S-1234` 不会被识别为 story 引用（引用校验与 cross-matrix 地板两侧同时不认，静默失效）。F-NNN 同理三位。

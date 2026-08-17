@@ -452,13 +452,21 @@ func fileHash(t *testing.T, path string) string {
 // (a drifted echo would silently route a changed REQ through the none path).
 func TestParseUIImpactRejectsDriftedReflection(t *testing.T) {
 	base := "> 状态：locked\n> 版本：v1.0.0\n"
-	drifted := base + "> UI impact：none\n\n# 内容\n\n## §C 具体需求\n\nUI impact：changed\n"
+	// The template's real §C reflection is a table row — pin THAT format
+	// (a colon-form-only parser was the BUG-CX-08 false safety net).
+	drifted := base + "> UI impact：none\n\n# 内容\n\n## §C 具体需求\n\n| 字段 | 内容 |\n|:--|:--|\n| UI impact（引自顶部） | changed（顶部 blockquote 是唯一被解析的位置，本节只回显） |\n"
 	if _, err := transition.ParseUIImpactForTest(drifted); err == nil || !strings.Contains(err.Error(), "inconsistent") {
-		t.Fatalf("drifted §C reflection must be refused, got %v", err)
+		t.Fatalf("drifted template-row reflection must be refused, got %v", err)
 	}
-	aligned := base + "> UI impact：changed\n\n# 内容\n\n## §C 具体需求\n\nUI impact：changed\n"
+	aligned := base + "> UI impact：changed\n\n# 内容\n\n## §C 具体需求\n\n| 字段 | 内容 |\n|:--|:--|\n| UI impact（引自顶部） | changed（回显） |\n"
 	value, err := transition.ParseUIImpactForTest(aligned)
 	if err != nil || value != "changed" {
-		t.Fatalf("aligned reflection must pass, got %q %v", value, err)
+		t.Fatalf("aligned template-row reflection must pass, got %q %v", value, err)
+	}
+	// The untouched template placeholder row must not read as a mismatch.
+	placeholder := base + "> UI impact：none\n\n# 内容\n\n## §C 具体需求\n\n| 字段 | 内容 |\n|:--|:--|\n| UI impact（引自顶部） | none / changed / unknown（顶部 blockquote 是唯一被解析的位置，本节只回显，不独立声明） |\n"
+	top, err := transition.ParseUIImpactForTest(placeholder)
+	if err != nil || top != "none" || !strings.HasPrefix(top, "none") {
+		t.Fatalf("legal top value with placeholder row must pass, got %q %v", top, err)
 	}
 }

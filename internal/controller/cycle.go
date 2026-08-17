@@ -44,6 +44,17 @@ type diskFiles struct {
 	root string
 }
 
+func (d diskFiles) ReadDir(dir string) ([]os.DirEntry, error) {
+	if dir == "" {
+		dir = "."
+	}
+	cleaned := filepath.Clean(dir)
+	if filepath.IsAbs(cleaned) {
+		return os.ReadDir(cleaned)
+	}
+	return os.ReadDir(filepath.Join(d.root, cleaned))
+}
+
 func (d diskFiles) ReadFile(path string) ([]byte, error) {
 	if path == "" {
 		return nil, os.ErrNotExist

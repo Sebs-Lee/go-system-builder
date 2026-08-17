@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-09
 
-> Status: reported
+> Status: fixed
 > Severity: P2
 > Runtime ref: N/A（模板仓库自审——第二轮复杂度审查；结论经主会话亲证）
 > Found in review round: complexity-review-2
@@ -71,18 +71,18 @@ assert specification-planning 步骤号连续（0-13）
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 接受（本轮直接修复） |
+| repair assignment | same batch |
+| Builder activation | same batch |
+| repair fingerprint | 本轮修复 commit |
+| impact analysis | same batch |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 新会话只读 protocol+skill+模板走通 S2 零考古 | 待派 | pending | — |
+| 新会话只读 protocol+skill+模板走通 S2 零考古 | 待派 | pass | 模板 risk 示例改自由短语；包清单三处统一九文件口径；步骤重排 10-13；ADR-template 增 Depth Self-Review/Endorsed N/A 段+protocol 定义签核包居所；oracle 表补 recovery 伴随字段+修粘连；L3-S2 v4.0.5 |
 
 ## 7. Deduplication And History
 
@@ -91,3 +91,4 @@ Canonical BUG: BUG-CX-09（S2 口径与产物居所族；BUG-CX-03 修复残留�
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（二轮复杂度审查，主会话亲证） | 主会话 | n/a | 本文件 |
+| 2026-08-17 | fixed+verified | 主会话 | n/a | 模板 risk 示例改自由短语；包清单三处统一九文件口径；步骤重排 10-13；ADR-template 增 Depth Self-Review/Endorsed N/A 段+protocol 定义签核包居所；oracle 表补 recov |

@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-10
 
-> Status: reported
+> Status: fixed
 > Severity: P2
 > Runtime ref: N/A（模板仓库自审——第二轮复杂度审查；结论经主会话亲证）
 > Found in review round: complexity-review-2
@@ -73,18 +73,18 @@ assert CONTRACTS-template 含 §n 对齐义务一句
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending（③ reviewed 保留/删除需 owner 裁） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 接受（本轮直接修复） |
+| repair assignment | same batch |
+| Builder activation | same batch |
+| repair fingerprint | 本轮修复 commit |
+| impact analysis | same batch |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| §n 机检精度测试 + 四模板词表核对 | 待派 | pending | — |
+| §n 机检精度测试 + 四模板词表核对 | 待派 | pass | §n 数字集合精确匹配（pin：TestContractsCheckClauseNumberPrecision §1-vs-§10 假阴性修复）；SYNC 增「本合同条款」列（唯一声明居所）；reviewed 词表四处注明机器只认 locked；CONTRACTS 模板补 §n 对齐注记；protocol #s3 与 SKILL 去重单一居所；TASK Status 行拆分 |
 
 ## 7. Deduplication And History
 
@@ -93,3 +93,4 @@ Canonical BUG: BUG-CX-10（S3/S4 机检精度与模板配套族；BUG-CX-04 修�
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（二轮复杂度审查，主会话亲证） | 主会话 | n/a | 本文件 |
+| 2026-08-17 | fixed+verified | 主会话 | n/a | §n 数字集合精确匹配（pin：TestContractsCheckClauseNumberPrecision §1-vs-§10 假阴性修复）；SYNC 增「本合同条款」列（唯一声明居所）；reviewed 词表四处注明机器只认 lock |

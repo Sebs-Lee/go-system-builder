@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-08
 
-> Status: reported
+> Status: fixed
 > Severity: P1
 > Runtime ref: N/A（模板仓库自审——第二轮复杂度审查；结论经主会话亲证）
 > Found in review round: complexity-review-2
@@ -72,18 +72,18 @@ assert skill 拍板落盘指引指向 §E 逐层拍板记录表且列序一致
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 接受（本轮直接修复） |
+| repair assignment | same batch |
+| Builder activation | same batch |
+| repair fingerprint | 本轮修复 commit |
+| impact analysis | same batch |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 新 agent 冷启动至落锁无矛盾/无假签核路径 | 待派 | pending | — |
+| 新 agent 冷启动至落锁无矛盾/无假签核路径 | 待派 | pass | <you> 占位符全仓清零（grep=0）；AGENTS 22/76 与白名单矛盾消解；§C 解析器学习模板表行格式+占位行豁免（pin 测试改用模板真实格式，含 drifted 拒绝/aligned 通过/占位行通过三向）；拍板表名指向 §E 逐层拍板记录；§E 标题/变更记录示例行修正 |
 
 ## 7. Deduplication And History
 
@@ -92,3 +92,4 @@ Canonical BUG: BUG-CX-08（S0/S1 信任链文案与假安全网族；BUG-CX-02/0
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（二轮复杂度审查，主会话亲证全部条目） | 主会话 | n/a | 本文件 |
+| 2026-08-17 | fixed+verified | 主会话 | n/a | <you> 占位符全仓清零（grep=0）；AGENTS 22/76 与白名单矛盾消解；§C 解析器学习模板表行格式+占位行豁免（pin 测试改用模板真实格式，含 drifted 拒绝/aligned 通过/占位行通过三向）；拍板表名指向  |

@@ -202,7 +202,7 @@ These hold across every stage:
 
 ## S2 — design {#s2}
 
-- **purpose**: produce the architecture decisions and, when UI impact is `changed`, the module's eight-file scenario design package (the dual-track convergence of `skills: specification-planning`).
+- **purpose**: produce the architecture decisions and, when UI impact is `changed`, the module's nine-file scenario design package (the dual-track convergence of `skills: specification-planning`).
 - **inputs**: locked REQ, existing architecture, existing module packages (if any), applicable design rules (`docs/rules/scenario-model.md`).
 - **inputs_from**: [S0 (locked REQ), S1 (Runtime Bookmark + baseline generation 1)]
 - **actions**:
@@ -212,11 +212,11 @@ These hold across every stage:
   4. record decisions that the contracts will need (state, data, integration, migration)
 - **done_when**:
   - architecture document covers every decision the contract stage needs
-  - if UI impact = `changed`: the **eight-file package** exists at `docs/design/prototypes/<module>/` — `index.html` + page HTML files (4-field header per `docs/rules/ui-prototype.md` §5/§6/§7), `stories.md` (≥1 `S-NNN` citing its REQ-id), `flows.md` (≥1 `F-NNN` + `PATH-*`), `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`, plus the generated `cases.json` and `scenario-coverage.json`
+  - if UI impact = `changed`: the **nine-file package** exists at `docs/design/prototypes/<module>/` (5 hand-maintained + page HTML + 2 generated; `scenario generate` writes the two generated files — never hand-edit them) — `index.html` + page HTML files (4-field header per `docs/rules/ui-prototype.md` §5/§6/§7), `stories.md` (≥1 `S-NNN` citing its REQ-id), `flows.md` (≥1 `F-NNN` + `PATH-*`), `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`, plus the generated `cases.json` and `scenario-coverage.json`
   - `scenario generate` + `scenario validate` exit green, and the AC↔CASE bridge reports every acceptance criterion of the bound REQ reached (or carrying an endorsed N/A: an NFR id or a §A4 negative-space pointer — free text is rejected)
 - **next**: S3. Produce any missing architecture/prototype deliverable and qualified design evidence; the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `PTR-PLAN-01` when satisfied.
 - **failure_route**: if a design decision changes REQ semantics, surface `req_amendment`; otherwise iterate the design document. Bridge failures are S2 gaps even when they surface at S3's gate — return here.
-- **human_gateway**: `req_amendment`, `unrecoverable_business_decision`, and the ADR direction sign-off (the single S2 human gate of `skills: specification-planning` — the endorsed N/A list joins the same sign-off package).
+- **human_gateway**: `req_amendment`, `unrecoverable_business_decision`, and the ADR direction sign-off (the single S2 human gate of `skills: specification-planning`). The sign-off package = the REQ's `docs/design/decisions/ADR-<id>.md`, whose `## Depth Self-Review` and `## Endorsed N/A` sections (see `docs/design/decisions/ADR-template.md`) carry the three-role self-review conclusion and the endorsed N/A list.
 - **primary_skill**: `specification-planning`
 
 ## S3 — contracts {#s3}
@@ -229,8 +229,7 @@ These hold across every stage:
   2. draft the contracts in order `FE-<id>.md` → `BE-<id>.md` → `SYNC-<id>.md` (FE first: its API expectations feed BE and SYNC)
   3. ensure contracts jointly cover every REQ acceptance criterion
   4. add bottom-up references and a coverage matrix
-  5. run `go run ./cmd/loop-harness contracts check --root .` — token references, clause cells, and fingerprint columns are machine-reconciled at PTR-PLAN-02; fix any flagged cell before advancing
-  6. on finalization, set each contract file's top `Status` field to `locked` — PTR-PLAN-02's registration action only registers locked contracts (a draft at that point registers nothing and TR-002 will refuse)
+  5. on finalization follow `skills: specification-planning` step 10 exactly: flip each contract's top `Status` to `locked`, then run `go run ./cmd/loop-harness contracts check --root .` (the single detailed home for the machine-checked close; PTR-PLAN-02 registers only locked contracts)
 - **done_when**:
   - the contract set covers the entire REQ
   - every contract has stability metadata (status, version, owner)

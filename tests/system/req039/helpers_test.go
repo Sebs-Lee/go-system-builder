@@ -121,6 +121,16 @@ func systemPlanningState(t *testing.T, root, phase string, revision int) map[str
 	case "tasks":
 		stageLetter = "4"
 	}
+	// The bound REQ must exist on disk (hook-protected path; the AC bridge
+	// and reachability read it) — a minimal locked REQ with no AC rows.
+	reqPath := filepath.Join(root, "docs", "requirements", "REQ-039.md")
+	if err := os.MkdirAll(filepath.Dir(reqPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reqPath, []byte("# REQ-039\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
+		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return map[string]any{
 		"schema_version": "1.1.0",
 		"runtime_id":     "loop-system-test",

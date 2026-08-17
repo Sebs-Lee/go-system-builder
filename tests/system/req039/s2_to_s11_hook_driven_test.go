@@ -34,7 +34,7 @@ func TestS2ToS11_HookDrivenCleanPath(t *testing.T) {
 	req039fixtures.WritePlanningContractPass(t, root, state)
 	writeSystemState(t, root, state)
 	req039fixtures.RequireLifecycleTransition(t, runner, root, "spine-s3", "Edit",
-		map[string]any{"file_path": "docs/contracts/BE-039-loop-controller.md"},
+		map[string]any{"file_path": "docs/contracts/BE-039.md"},
 		"PTR-PLAN-02", "planning", "tasks", bugID)
 
 	// S4 → S5 (TR-002)
@@ -50,7 +50,7 @@ func TestS2ToS11_HookDrivenCleanPath(t *testing.T) {
 	req039fixtures.WriteDocumentVerificationPassEvidence(t, root, state, "dv-spec", "dv-task")
 	writeSystemState(t, root, state)
 	req039fixtures.RequireLifecycleTransition(t, runner, root, "spine-s5", "Edit",
-		map[string]any{"file_path": "docs/contracts/BE-039-loop-controller.md"},
+		map[string]any{"file_path": "docs/contracts/BE-039.md"},
 		"TR-003", "building", "", bugID)
 
 	// S6 → S7 delivery (TR-006)

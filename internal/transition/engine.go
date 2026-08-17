@@ -774,14 +774,20 @@ func parseUIImpactField(content string) (string, error) {
 	return "", fmt.Errorf("locked REQ is missing UI impact metadata")
 }
 
-// sectionCUIImpact extracts a "UI impact：" value declared inside the §C
-// section (the template's reflection table). Empty when §C declares none.
+// sectionCUIImpact extracts the UI-impact value declared inside the §C
+// section. The REQ template's reflection is a markdown table row
+// `| UI impact（引自顶部） | none / changed / unknown（…） |` — the value is
+// the first token of the second cell that matches one of the three legal
+// values. A colon-form `UI impact：value` line is also accepted (free-form
+// REQs). Empty when §C declares neither. Without the three-value filter the
+// template's own placeholder row ("none / changed / unknown（…）") would be
+// read as a mismatch on every template-conformant REQ.
 func sectionCUIImpact(content string) string {
 	inC := false
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
-			inC = strings.Contains(trimmed, "§C") || strings.HasPrefix(trimmed, "# §C")
+			inC = strings.Contains(trimmed, "§C")
 			continue
 		}
 		if !inC {
@@ -790,8 +796,28 @@ func sectionCUIImpact(content string) string {
 		for _, separator := range []string{"：", ":"} {
 			parts := strings.SplitN(trimmed, separator, 2)
 			if len(parts) == 2 && strings.Contains(strings.ToLower(parts[0]), "ui impact") {
-				return strings.TrimSpace(parts[1])
+				if value := firstLegalUIImpact(parts[1]); value != "" {
+					return value
+				}
 			}
+		}
+		if strings.HasPrefix(trimmed, "|") && strings.Contains(strings.ToLower(trimmed), "ui impact") {
+			cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+			for _, cell := range cells {
+				if value := firstLegalUIImpact(cell); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func firstLegalUIImpact(cell string) string {
+	lowered := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(cell), "**")))
+	for _, legal := range []string{"none", "changed", "unknown"} {
+		if strings.HasPrefix(lowered, legal) {
+			return legal
 		}
 	}
 	return ""

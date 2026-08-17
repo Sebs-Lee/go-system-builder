@@ -25,7 +25,7 @@ func lifecycleSnapshot(root string) (runtime.Snapshot, string) {
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	snapshot, err := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).Snapshot()
 	if err != nil {
-		return runtime.Snapshot{}, "no readable runtime — bind a REQ first (req bind --approved-by <you>)"
+		return runtime.Snapshot{}, "no readable runtime — bind a REQ first (req bind --approved-by <human identity>)"
 	}
 	return snapshot, ""
 }
@@ -128,7 +128,7 @@ func runRuntimePause(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime pause: runtime is terminal (%s) — use `runtime rollover` to archive and start fresh\n", state)
 		return 1
 	case "inactive":
-		fmt.Fprintln(stderr, "runtime pause: nothing is bound — bind a REQ first (req bind --approved-by <you>)")
+		fmt.Fprintln(stderr, "runtime pause: nothing is bound — bind a REQ first (req bind --approved-by <human identity>)")
 		return 1
 	}
 	evID, nextRev, err := registerDecisionEvidence(*root, snapshot,
@@ -155,7 +155,7 @@ func runRuntimePause(args []string, stdout, stderr io.Writer) int {
 	}
 	_ = next
 	fmt.Fprintf(stdout, "paused from %v at revision %d (reason recorded; approved-by %s)\n", cursorLabel(state, phase), next.Revision, *approvedBy)
-	fmt.Fprintln(stdout, "resume: loop-harness runtime resume --approved-by <you>   (baseline drift on resume routes to amendment)")
+	fmt.Fprintln(stdout, "resume: loop-harness runtime resume --approved-by <the same human>   (baseline drift on resume routes to amendment)")
 	return 0
 }
 

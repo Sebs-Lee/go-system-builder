@@ -1051,6 +1051,7 @@
         "tasks_checked"
       ],
       "actions": [
+        "register_locked_contracts",
         "register_planning_tasks"
       ],
       "required_evidence": [],

@@ -1,0 +1,127 @@
+package qualitygate_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/entroforge/go-system-builder/internal/qualitygate"
+	"github.com/entroforge/go-system-builder/internal/runtime"
+)
+
+// listingFiles extends memoryFiles with directory listing so the evaluator
+// can discover disk-declared artifacts (BUG-CX-07).
+type listingFiles map[string][]byte
+
+func (m listingFiles) ReadFile(path string) ([]byte, error) {
+	data, ok := m[path]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return append([]byte(nil), data...), nil
+}
+
+func (m listingFiles) ReadDir(dir string) ([]os.DirEntry, error) {
+	prefix := ""
+	if dir != "." {
+		prefix = strings.TrimSuffix(dir, "/") + "/"
+	}
+	var entries []os.DirEntry
+	seen := map[string]bool{}
+	for path := range m {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		name := strings.SplitN(strings.TrimPrefix(path, prefix), "/", 2)[0]
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		entries = append(entries, memoryDirEntry{name: name})
+	}
+	return entries, nil
+}
+
+type memoryDirEntry struct{ name string }
+
+func (e memoryDirEntry) Name() string { return e.name }
+func (e memoryDirEntry) IsDir() bool  { return !strings.HasSuffix(e.name, ".md") }
+func (e memoryDirEntry) Type() os.FileMode { return 0 }
+func (e memoryDirEntry) Info() (os.FileInfo, error) { return nil, os.ErrNotExist }
+
+// TestPlanningGatesReadDiskDeclaredArtifacts pins BUG-CX-07: the planning
+// gates' document precondition must be satisfiable by disk-declared facts
+// (contract Status: locked / task Status: complete) — the registration that
+// documents[] carries is produced by the gated transitions themselves, so
+// requiring it up front deadlocks the hook auto-advance path.
+func TestPlanningGatesReadDiskDeclaredArtifacts(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+
+	contractData := []byte("# BE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	envelope := map[string]any{
+		"schema_version":          "1.0.0",
+		"evidence_id":             "ev-contract",
+		"kind":                    "planning_contract",
+		"runtime_id":              "loop-test",
+		"baseline_generation":     1,
+		"producer_agent_id":       "planner-1",
+		"producer_responsibility": "Contract Planner",
+		"subject_refs": []any{map[string]any{
+			"path": "docs/contracts/BE-001.md", "version": "v1.0.0",
+			"sha256": sha256Hex(contractData),
+		}},
+		"conclusion": "pass",
+		"created_at": "2026-08-17T00:00:00Z",
+	}
+	envelopeData, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 3,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "planning", "phase": "contracts", "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				"documents":  []any{},
+				"evidence": []any{map[string]any{
+					"id": "ev-contract", "kind": "planning_contract", "path": "evidence/contract.json",
+					"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": float64(1),
+					"review_round": nil, "produced_by": []any{"planner-1"}, "invalidated_by": nil,
+					"responsibility_id": "Contract Planner", "scope_refs": []any{},
+				}},
+			},
+		},
+		TransitionID: "PTR-PLAN-02",
+		GateID:       "GATE-PLANNING-CONTRACTS-COMPLETE",
+		Files: listingFiles{
+			"docs/contracts/BE-001.md": contractData,
+			"evidence/contract.json":   envelopeData,
+		},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusSatisfied {
+		t.Fatalf("BUG-CX-07: disk-declared locked contract + qualified planning evidence must satisfy the gate without a pre-existing documents[] registration; got status=%q missing=%#v", result.Status, result.Missing)
+	}
+}
+
+// TestPlanningGatesStillRefuseWhenDiskAlsoLacks: the disk fallback must not
+// weaken the gate — no disk contract and no registration stays NOT_READY.
+func TestPlanningGatesStillRefuseWhenDiskAlsoLacks(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	input := planningInputForGate(t, "GATE-PLANNING-CONTRACTS-COMPLETE", "PTR-PLAN-02", "contracts", "planning_contract_record", "Contract Planner")
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusNotReady {
+		t.Fatalf("gate must stay NOT_READY when neither disk nor documents[] declares the artifact, got %q", result.Status)
+	}
+}

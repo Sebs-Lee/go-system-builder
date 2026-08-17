@@ -20,7 +20,7 @@ Stage contract: `docs/agent-protocol.md` #s0 (primary_skill). Structure and fiel
 | Module truth packages | `docs/design/prototypes/<module>/` (when touched) | UI impact and regression scope |
 
 ## Procedure
-0. **拍板手势（全流程通则）**：一层"被批准"的唯一形式 = 人类在对话中对你的提案给出明确肯定（"可以 / 按建议办 / 选方案 A"）。收到拍板后，当场把一行记录写进 REQ 变更记录表（日期 / 人 / 层），然后才进入下一层——对话不是权威，未落盘的拍板等于没发生。等待拍板是正常姿态：给出提案后明确说"需要你确认 §X"，然后停下，不要自己继续。
+0. **拍板手势（全流程通则）**：一层"被批准"的唯一形式 = 人类在对话中对你的提案给出明确肯定（"可以 / 按建议办 / 选方案 A"）。收到拍板后，当场把一行记录写进 §E 逐层拍板记录表（层 / 日期 / 拍板人 / 方式），然后才进入下一层——对话不是权威，未落盘的拍板等于没发生。等待拍板是正常姿态：给出提案后明确说"需要你确认 §X"，然后停下，不要自己继续。
 1. **Mode**: the human states the expected outcome; you own the design end-to-end; the human only approves (拍板). You are not an interviewer — keep questions to yourself, hand proposals up.
 2. **§A 理念**: filter the expected outcome — strip ambiguous colloquial wording, surface implicit premises — into a structured restatement (A1) and have the human confirm it says what they meant. Recording raw quotes records ambiguity. Then draft A2-A4, stakeholders, glossary. Hand up: complete §A proposal, ≤3 decision points.
 3. **§B 方向与约束**: design 2-3 viable directions, prune to one recommendation with a one-line rejection reason per discarded direction; challenge every "must" constraint ("what does breaking it cost?" — no answer means preference, demote it); log assumptions and risks. Hand up: complete §B proposal, ≤3 decision points.
