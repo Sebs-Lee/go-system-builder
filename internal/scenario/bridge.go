@@ -203,9 +203,15 @@ func listModules(root string) ([]string, error) {
 // no ACs) may pass — an AC pointing at FR- with no packages to cite it is
 // a broken denominator, not a boundary case.
 func GuardBridgeChecked(root string) error {
-	if _, err := listModules(root); err != nil {
+	modules, err := listModules(root)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("ac bridge: enumerate module packages: %w", err)
+		}
 		bound, ok := readBoundREQ(root)
 		if !ok {
+			// No bound REQ and no packages: nothing to check (template/CI
+			// contexts). A bound REQ without packages is checked below.
 			return nil
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path)))
@@ -222,6 +228,14 @@ func GuardBridgeChecked(root string) error {
 	}
 	if _, err := RunBridge(root, true); err != nil {
 		return err
+	}
+	// The module source packages (scenario-model, fixtures, cross-matrix)
+	// re-validate on the natural path too — a matrix edited after generate
+	// must not survive to the planning advance unnoticed.
+	for _, module := range modules {
+		if _, err := loadSourcePackage(root, module); err != nil {
+			return fmt.Errorf("module %s: %w", module, err)
+		}
 	}
 	return nil
 }

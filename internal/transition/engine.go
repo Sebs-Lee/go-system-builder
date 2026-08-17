@@ -435,6 +435,12 @@ func validateHumanDecisionScope(state map[string]any, spec TransitionSpec, reque
 	revision := integer(state["revision"])
 	expected := fmt.Sprintf("%s:%s@%d", spec.HumanDecisionScope, runtimeID, revision)
 	items, _ := state["evidence"].([]any)
+	// Prefer the evidence bound to the canonical human_decision slot: stray
+	// extra keys in request.Evidence must not widen the gate's match set.
+	var preferred string
+	if slot, ok := request.Evidence["human_decision_record"]; ok && strings.TrimSpace(slot) != "" {
+		preferred = strings.TrimSpace(slot)
+	}
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
 		if item == nil || item["kind"] != "human_decision" || item["status"] != "valid" {
@@ -442,11 +448,13 @@ func validateHumanDecisionScope(state map[string]any, spec TransitionSpec, reque
 		}
 		idRef, _ := item["id"].(string)
 		pathRef, _ := item["path"].(string)
-		cited := false
-		for _, value := range request.Evidence {
-			if value == idRef || value == pathRef {
-				cited = true
-				break
+		cited := preferred != "" && (preferred == idRef || preferred == pathRef)
+		if !cited && preferred == "" {
+			for _, value := range request.Evidence {
+				if value == idRef || value == pathRef {
+					cited = true
+					break
+				}
 			}
 		}
 		if !cited {

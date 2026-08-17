@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -60,6 +61,40 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 					universe[token] = true
 					if file == "cases.json" && strings.HasPrefix(token, "CASE-") {
 						caseUniverse[token] = true
+					}
+				}
+			}
+		}
+		// The scenario-model's branch case_ids are the authoritative CASE
+		// denominator: cases.json is a generated artifact, and a tampered
+		// cases.json (delete a CASE, delete its citations) would otherwise
+		// silently shrink the verification denominator.
+		modelCaseIDs, modelErr := modelCaseIDs(filepath.Join(mpath, "scenario-model.json"))
+		switch {
+		case modelErr != nil:
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: scenario-model.json unreadable: %v — the CASE denominator cannot be verified", module.Name(), modelErr))
+		case len(modelCaseIDs) > 0:
+			for id := range modelCaseIDs {
+				caseUniverse[id] = true
+				universe[id] = true
+			}
+			if casesData, err := os.ReadFile(filepath.Join(mpath, "cases.json")); err == nil {
+				generated := map[string]bool{}
+				for _, pattern := range contractTokenPatterns {
+					for _, token := range pattern.FindAllString(string(casesData), -1) {
+						if strings.HasPrefix(token, "CASE-") {
+							generated[token] = true
+						}
+					}
+				}
+				for id := range modelCaseIDs {
+					if !generated[id] {
+						result.Problems = append(result.Problems, fmt.Sprintf("%s: cases.json is missing %s declared by scenario-model.json — regenerate (`scenario generate`) instead of hand-editing generated artifacts", module.Name(), id))
+					}
+				}
+				for id := range generated {
+					if !modelCaseIDs[id] {
+						result.Problems = append(result.Problems, fmt.Sprintf("%s: cases.json carries %s which scenario-model.json does not declare — regenerate instead of hand-editing generated artifacts", module.Name(), id))
 					}
 				}
 			}
@@ -191,4 +226,35 @@ func resolveContractFingerprint(root, row string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), true
+}
+
+// modelCaseIDs extracts the branch case_id set from a module's
+// scenario-model.json — the authoritative CASE denominator.
+func modelCaseIDs(path string) (map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var model struct {
+		Rules []struct {
+			Branches []struct {
+				CaseID string `json:"case_id"`
+			} `json:"branches"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(data, &model); err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for _, rule := range model.Rules {
+		for _, branch := range rule.Branches {
+			if branch.CaseID != "" {
+				ids[branch.CaseID] = true
+			}
+		}
+	}
+	return ids, nil
 }

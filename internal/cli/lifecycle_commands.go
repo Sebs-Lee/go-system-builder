@@ -67,6 +67,9 @@ func registerDecisionEvidence(root string, snapshot runtime.Snapshot, id, decisi
 		"approved_by": approvedBy,
 		"runtime_id":  runtimeID,
 		"revision":    snapshot.Revision,
+		// the scope binds the NEXT revision — the one the follow-up
+		// transition will apply at — so the audit artifact states it too.
+		"authorization_revision": snapshot.Revision + 1,
 	}
 	if scopeRef != "" {
 		payload["scope"] = scopeRef

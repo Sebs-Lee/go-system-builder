@@ -14,7 +14,10 @@ import (
 // CrossMatrix is the convergence-1 carrier: the fact×FR×story completeness
 // hunt made fill-in (L3-S2 v4.0.1). Each entry either names the branch that
 // covers the cell or records why no branch exists — the field is the
-// question (D4), the reference check is the machine's part.
+// question (D4), the reference check is the machine's part. The machine
+// floor is per-fact and per-story (every declared fact and story must be
+// hunted at least once); the fact×story combinations themselves remain a
+// human hunting judgment, not a cartesian product requirement.
 type CrossMatrix struct {
 	Module  string             `json:"module"`
 	Entries []CrossMatrixEntry `json:"entries"`
@@ -73,11 +76,16 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	reqID := ""
 	if bound, ok := readBoundREQ(root); ok {
 		reqID = bound.ID
-		if data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path))); err == nil {
-			rows, _, _ := parseREQTables(string(data))
-			for _, row := range rows {
-				frIDs[row.ID] = true
-			}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path)))
+		if err != nil {
+			return fmt.Errorf("cross-matrix: read bound REQ %s: %w — the FR join cannot degrade to shape-only", bound.Path, err)
+		}
+		rows, _, _ := parseREQTables(string(data))
+		if len(rows) == 0 {
+			return fmt.Errorf("cross-matrix: bound REQ %s declares no FR table rows — the FR join cannot degrade to shape-only", bound.ID)
+		}
+		for _, row := range rows {
+			frIDs[row.ID] = true
 		}
 	}
 	coveredFacts := map[string]bool{}
@@ -101,7 +109,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 			if refREQ := entry.ReqRef; refREQ != reqID && !strings.HasPrefix(refREQ, reqID+"/") {
 				return fmt.Errorf("cross-matrix %s req_ref %q does not reference the bound REQ %s — the matrix must join the bound requirement's denominator", cell, entry.ReqRef, reqID)
 			}
-			if frID, _, ok := splitFRRef(entry.ReqRef); ok && len(frIDs) > 0 && !frIDs[frID] {
+			if frID, _, ok := splitFRRef(entry.ReqRef); ok && !frIDs[frID] {
 				return fmt.Errorf("cross-matrix %s req_ref %q names FR %q which the bound REQ's FR table does not declare", cell, entry.ReqRef, frID)
 			}
 		}
@@ -165,13 +173,31 @@ func ruleCitesReqRef(rule Rule, ref string) bool {
 	return false
 }
 
-// storyIDsFromHeadings extracts S-nnn ids from stories.md headings.
+// storyIDsFromHeadings extracts S-nnn ids from stories.md heading lines,
+// using the same anywhere-in-heading caliber as markdownHeadingContainsID
+// so a cell can never reference a story the floor fails to count.
 func storyIDsFromHeadings(data []byte) []string {
 	var ids []string
-	for _, match := range storyHeadingPattern.FindAllStringSubmatch(string(data), -1) {
-		ids = append(ids, match[1])
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		hashCount := 0
+		for hashCount < len(line) && line[hashCount] == '#' {
+			hashCount++
+		}
+		if hashCount == 0 || hashCount > 6 || hashCount == len(line) || (line[hashCount] != ' ' && line[hashCount] != '\t') {
+			continue
+		}
+		heading := line[hashCount:]
+		for _, token := range storyAnywherePattern.FindAllString(heading, -1) {
+			if !seen[token] {
+				seen[token] = true
+				ids = append(ids, token)
+			}
+		}
 	}
 	return ids
 }
 
-var storyHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+(S-[0-9]{3})\b`)
+// storyAnywherePattern matches an S-nnn token anywhere inside a heading —
+// the same caliber containsExactID uses for cell references.
+var storyAnywherePattern = regexp.MustCompile(`\bS-[0-9]{3}\b`)

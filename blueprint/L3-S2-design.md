@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.3（v4.0.2 实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.4（v4.0.3  实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -146,3 +146,4 @@
 | 2026-08-15 | v4.0.1 | **设计对抗审查处置（11 findings）**：P1×7——①双轨"并行"语义定为同 agent 顺序自由（非子代理）+冲突仲裁规则（架构约束旅程、挑战升 ADR）+用户轨前置读既有模块包；②AC 的 N/A 升为背书逃生门（类别+指针+进 ADR 拍板包，L2 铁律 1 同构）+"人闸只一个"与 skill 现有 UI 评审触点的存废显式化；③AC 桥拆两段（AC→FR→BR 源头查挂汇聚①后、全链收口复核）；⑤skill 重构拆两件（主 skill 重排+scenario-model-design Workflow 顺序修正）+触发条件以 §6.2 为契约+边界限定；⑦交叉格清单为三方交叉的载体（叙述变填空，D4）；⑧深度自审（三身份攻击负向 oracle，matcher 空窗期的语义逼深，D6+公理二）；⑨L2 分母表行修复（首次编辑被覆盖的事故——内联 replace 未回赋值，第二次写回抹掉）。P2×4——④§6.2 按双轨重排+补既有包前置读；⑥§2 两处现在时改如实+行号修正；⑩§6.3 补 HTML 头部项并升为 14 项全景；⑪D/公理标注补齐（双轨=D4+C4、桥=D6、分母=D1+D6） | owner 指示：注意力引导与思考深度推进是本步命脉，审查设计理念 |
 | 2026-08-15 | v4.0.0 | **联合审查版**（S2+S3+S5+S7+S8 联动，sub-agent CASE 流水线端到端调查）：§1 增"验证源出生地"身份；§2.1 新增分母断裂地图（五断点+三事实修正+AC↔CASE 对位缺口）；§3 增双轨汇聚顺序与 AC 桥两条选用（否决"逐层拍板漏斗"——S0 形状硬搬造出不存在的判定层；否决六产物并行）；§4 时间线重写（stories 提前/fixtures 后移/两汇聚判据，hook 第二道保险改为如实——gate not_ready 才是真实保险）；§5 缺口段改处置台账；§6.3 升级为 11 项全景（机制 6+声明 3+跨 stage 输入 2，angles 冻结与 case_id pattern 待终批） | owner 指示：S2 与关联 stage 联合审查；产出对位下游所需；顺序不死板、按依赖重排 |
 | 2026-08-17 | v4.0.3 | **cross-matrix 接入分母（P0 修复）**：矩阵此前与 AC↔CASE 链零 join——req_ref 只验形状、branch 不验其 rule 是否真引用该 FR、无完整性下限（10 fact 填 1 格即过）、no_branch_reason 任意非空串算 N/A。现 validateCrossMatrix 接入 bound REQ：FR 级引用必须存在于 REQ FR 表、REQ 级必须指向 bound REQ、branch 的 rule 必须在 source_refs 真实引用该 cell、每个 fact/story 至少被一格猎杀、理由须 ≥8 字符且含字母。AC 桥同时挂上 PTR-PLAN-02 guard（scenario_bridge_checked，RunBridge(root,true)；无模块包时仅全 N/A 背书可过——沉默不是 N/A）。测试钉死五条红路 | L1 价值观复审（sub-agent）：D6 单一分母/公理三/D2 违例处置 | |
+| 2026-08-17 | v4.0.4 | **对抗审查处置**：①bound REQ 不可读/FR 表为空时 cross-matrix 由静默降级改 fail-closed（与 RunBridge 对齐）；②story 下限提取口径与 cell 校验统一（S-id 可在标题任意位置，含中英文标题）；③cross-matrix/模块源包校验挂入 scenario_bridge_checked 自然路径（generate 后篡改矩阵无法存活到规划推进）；④注释如实：地板是 per-fact/per-story，fact×story 组合仍是人的猎杀判断 | 第三方对抗审查（sub-agent）：假绿路径构造 |

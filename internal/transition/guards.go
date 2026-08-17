@@ -245,9 +245,12 @@ func InitGuardRegistry() {
 //
 // TODO(BUG-GUARDS-OVER-ENGINEERED step 1): this helper is the source
 // of the guard-theater pattern. New transitions MUST NOT wire through it
-// without a semantic body of their own. The switch above carries the only
-// four real checks (`no_other_active_loop`, `resume_checkpoint_valid`, plus
-// the clean-round names delegated to `verification.EvaluateCleanRound`);
+// without a semantic body of their own. Real semantic bodies live both in
+// this switch (`no_other_active_loop`, `resume_checkpoint_valid`, plus the
+// clean-round names delegated to `verification.EvaluateCleanRound`) and in
+// the dedicated guard*Fn functions registered outside it (contracts/tasks/
+// planning/bridge/UI-impact/angles/reverification, and the transition-layer
+// human_decision scope validation in validateRequest);
 // every other name lands in the final `len(evidence) == 0` check, which
 // is not a guard — it is a request validator.
 func evidenceBackedGuard(name string) GuardFn {

@@ -48,6 +48,22 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 
 	// REQ with an FR; module package with CASE/S/F/PATH universe.
 	write("docs/requirements/REQ-500.md", "# REQ-500\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：changed\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-501 | wb | 提交 | A1 | Must |\n")
+	write("docs/design/prototypes/wb/scenario-model.json", `{
+  "module": "wb", "coverage_profile": "ordinary",
+  "facts": [{"id": "fact-wb", "partitions": [{"id": "ok", "value": "ok"}, {"id": "bad", "value": "bad"}]}],
+  "rules": [{"id": "rule-wb", "source_refs": ["REQ-500/FR-501"], "risk": "ordinary", "branches": [
+    {"id": "branch-allow", "case_id": "CASE-WB-001", "title": "submit accepted", "polarity": "positive", "required": true,
+     "witness": {"fact-wb": "ok"},
+     "oracle": {"visible": ["receipt"], "terminal_state": "submitted", "persisted_effects": ["record"], "forbidden_side_effects": ["dup"]},
+     "fixture_id": "fixture-wb", "story_refs": ["S-001"], "flow_refs": ["F-001", "PATH-SUBMIT"], "browser_required": true},
+    {"id": "branch-reject", "case_id": "CASE-WB-002", "title": "submit rejected", "polarity": "negative", "required": true,
+     "witness": {"fact-wb": "bad"},
+     "oracle": {"visible": ["error"], "terminal_state": "draft", "persisted_effects": ["draft-retained"], "rejection": "invalid", "expected_state": "draft", "forbidden_side_effects": ["record"], "recovery": "fix-input"},
+     "fixture_id": "fixture-wb", "story_refs": ["S-001"], "flow_refs": ["F-001", "PATH-SUBMIT"], "browser_required": true}
+  ]}]
+}`)
+	write("docs/design/prototypes/wb/fixture-contract.json", `{"module": "wb", "fixtures": [{"id": "fixture-wb", "persona": "operator", "synthetic": true, "setup": ["seed"], "cleanup": ["purge"]}]}`)
+	write("docs/design/prototypes/wb/cross-matrix.json", `{"module": "wb", "entries": [{"fact": "fact-wb", "req_ref": "REQ-500/FR-501", "story": "S-001", "branch": "branch-allow"}]}`)
 	write("docs/design/prototypes/wb/cases.json", `{"cases":[{"id":"CASE-WB-001"},{"id":"CASE-WB-002"}]}`)
 	write("docs/design/prototypes/wb/stories.md", "# S-001\n")
 	write("docs/design/prototypes/wb/flows.md", "# F-001\n\n### PATH-SUBMIT\n")
@@ -198,5 +214,45 @@ func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 	if code := cli.Run([]string{"runtime", "transition", "--root", root,
 		"--id", "PTR-PLAN-02", "--expected-revision", "2", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "AC-701") {
 		t.Fatalf("PTR-PLAN-02 must be blocked by the bridge naming AC-701, got: %s", stderr.String())
+	}
+}
+
+// TestContractsReverseClosureUsesModelAsAuthority pins the adversarial
+// finding: cases.json is a generated artifact — hand-deleting a CASE (and
+// its citations) must not silently shrink the verification denominator,
+// because scenario-model.json remains the authoritative CASE universe.
+func TestContractsReverseClosureUsesModelAsAuthority(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/prototypes/wb", ".claude"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"docs/loop-definition.json", "docs/hook-policy.json"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/requirements/REQ-510.md", "# REQ-510\n\n> 状态：locked\n> 版本：v1.0.0\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-511 | wb | 提交 | A1 | Must |\n")
+	write("docs/design/prototypes/wb/scenario-model.json", `{"module":"wb","rules":[{"id":"rule-1","source_refs":["REQ-510/FR-511"],"branches":[{"id":"b1","case_id":"CASE-WB-001"},{"id":"b2","case_id":"CASE-WB-002"}]}]}`)
+	// Tampered generated artifact: CASE-WB-002 deleted from cases.json…
+	write("docs/design/prototypes/wb/cases.json", `{"cases":[{"id":"CASE-WB-001"}]}`)
+	// …and its citation deleted from the contract.
+	write("docs/contracts/BE-510.md", "# BE-510\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
+		"| REQ source_ref | Rule/CASE/Story/PATH | 本合同条款§ | 验收标准 |\n|:--|:--|:--|:--|\n"+
+		"| REQ-510/FR-511 | CASE-WB-001 | BE-510 §1 | 可提交 |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "CASE-WB-002") {
+		t.Fatalf("tampered cases.json must be caught against the model authority, got: %s", stderr.String())
 	}
 }

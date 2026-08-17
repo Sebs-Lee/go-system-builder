@@ -152,6 +152,15 @@ func TestCrossMatrixCompletenessFloor(t *testing.T) {
 			t.Fatalf("unhunted story must fail, got %v", err)
 		}
 	})
+	t.Run("story id mid-heading is still floored", func(t *testing.T) {
+		root := newScenarioRoot(t, "investor-workbench", "ordinary")
+		if err := os.WriteFile(filepath.Join(root, "docs/design/prototypes", "investor-workbench", "stories.md"), []byte("# Stories\n\n## S-001\n\n## 用户故事 S-002 备注\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := scenario.GenerateModule(root, "investor-workbench"); err == nil || !strings.Contains(err.Error(), "never hunts story") {
+			t.Fatalf("mid-heading story must count toward the floor, got %v", err)
+		}
+	})
 	t.Run("unhunted fact", func(t *testing.T) {
 		root := newScenarioRoot(t, "investor-workbench", "ordinary")
 		model := loadModel(t, root)
