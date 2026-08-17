@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -137,7 +138,8 @@ func TestLifecycleVerbChainE2E(t *testing.T) {
 	must("abort-evidence", "runtime", "evidence", "add", "--root", root,
 		"--expected-revision", itoa(revision), "--id", "hd-abort",
 		"--kind", "human_decision", "--path", ".claude/decisions/abort.json",
-		"--produced-by", "alice")
+		"--produced-by", "alice",
+		"--scope-ref", fmt.Sprintf("runtime_abort:%s@%d", snapshot["runtime_id"], revision+1))
 	must("abort", "runtime", "transition", "--root", root,
 		"--id", "TR-021", "--expected-revision", itoa(revision+1), "--actor", "user",
 		"--evidence", "human_decision_record=hd-abort")

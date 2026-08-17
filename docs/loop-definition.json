@@ -178,7 +178,8 @@
             "hook_controller"
           ],
           "guards": [
-            "contracts_checked"
+            "contracts_checked",
+            "scenario_bridge_checked"
           ],
           "actions": [
             "register_locked_contracts"
@@ -1673,6 +1674,7 @@
         "human_decision_record",
         "pause_record"
       ],
+      "human_decision_scope": "runtime_resume",
       "on_guard_failure": "reject",
       "description": "Resume the exact validated state, phase and entity checkpoint."
     },
@@ -1701,6 +1703,7 @@
         "human_decision_record",
         "req_lock_record"
       ],
+      "human_decision_scope": "runtime_amend",
       "on_guard_failure": "reject",
       "description": "A changed locked REQ starts a new planning generation."
     },
@@ -1726,6 +1729,7 @@
       "required_evidence": [
         "human_decision_record"
       ],
+      "human_decision_scope": "runtime_abort",
       "on_guard_failure": "reject",
       "description": "Only a human may permanently abort the Loop."
     },
@@ -1853,6 +1857,7 @@
       "required_evidence": [
         "human_decision_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Record human release authorization without performing merge, publication, deployment, or formal release."
     },
@@ -1878,6 +1883,7 @@
         "human_decision_record",
         "pause_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Defer the release decision and capture the S11 checkpoint before entering paused."
     },
@@ -1902,6 +1908,7 @@
         "human_decision_record",
         "finding_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Route a human defect rejection to bug-resolution investigation with its finding evidence."
     },
@@ -1926,6 +1933,7 @@
       "required_evidence": [
         "human_decision_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Re-enter acceptance and invalidate only prior acceptance and release-audit evidence."
     },
@@ -1950,6 +1958,7 @@
       "required_evidence": [
         "human_decision_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Re-enter release audit and invalidate only prior release-audit evidence."
     },
@@ -1975,6 +1984,7 @@
       "required_evidence": [
         "human_decision_record"
       ],
+      "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",
       "description": "Record a human release abort without performing any release side effect."
     }
@@ -2005,6 +2015,7 @@
         "human_decision_record",
         "pause_record"
       ],
+      "human_decision_scope": "runtime_pause",
       "on_guard_failure": "reject",
       "description": "A user may pause from any active state."
     },

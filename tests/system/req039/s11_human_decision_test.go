@@ -32,7 +32,9 @@ func TestBUG104S11ExplicitApproveE2E(t *testing.T) {
 	expectedRevision := int(req039fixtures.Revision(state))
 
 	decision := req039fixtures.EvidenceEnvelope(state, "ev-human-approve", "human_decision", "release-owner", "release owner", "approved", nil)
-	req039fixtures.AppendEvidence(state, req039fixtures.WriteEvidenceEnvelope(t, root, state, "ev-human-approve", "human_decision", "release-owner", "release owner", decision, nil))
+	req039fixtures.AppendEvidence(state, req039fixtures.WriteEvidenceEnvelope(t, root, state, "ev-human-approve", "human_decision", "release-owner", "release owner", decision, []any{
+		fmt.Sprintf("runtime_release:%s@%d", req039fixtures.RuntimeIDFromState(state), expectedRevision),
+	}))
 	req039fixtures.WriteState(t, root, state)
 	var stdout, decisionStderr bytes.Buffer
 	code = runCLI(t, []string{
@@ -57,7 +59,8 @@ func TestBUG104ApproveRolloverE2E(t *testing.T) {
 	req039fixtures.SeedAwaitingHumanRelease(t, root, state)
 	req039fixtures.EnsureStateRoot(state, root)
 	decision := req039fixtures.EvidenceEnvelope(state, "ev-human-approve", "human_decision", "release-owner", "release owner", "approved", nil)
-	req039fixtures.AppendEvidence(state, req039fixtures.WriteEvidenceEnvelope(t, root, state, "ev-human-approve", "human_decision", "release-owner", "release owner", decision, nil))
+	releaseScope := fmt.Sprintf("runtime_release:%s@%d", req039fixtures.RuntimeIDFromState(state), int(req039fixtures.Revision(state)))
+	req039fixtures.AppendEvidence(state, req039fixtures.WriteEvidenceEnvelope(t, root, state, "ev-human-approve", "human_decision", "release-owner", "release owner", decision, []any{releaseScope}))
 	req039fixtures.WriteState(t, root, state)
 	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), nil, 0o644); err != nil {
 		t.Fatal(err)

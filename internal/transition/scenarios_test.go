@@ -251,11 +251,9 @@ func TestSM022_ReqChangeInvalidatesDownstream(t *testing.T) {
 		"phase_revision":             float64(1),
 		"baseline_generation":        float64(1),
 		"review_round":               float64(1),
-		"entity_snapshot_revision":   float64(0),
 		"reason":                     "test",
 		"required_human_action":      "test",
 		"document_fingerprints":      []any{},
-		"committed_idempotency_keys": []string{},
 		"paused_at":                  "2026-01-01T00:00:00Z",
 	}
 	state["evidence"] = []any{
@@ -276,6 +274,7 @@ func TestSM022_ReqChangeInvalidatesDownstream(t *testing.T) {
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 	})
+	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_amend:loop-inactive@5")
 	writeFullState(t, root, state)
 	err := applyTWithREQ(t, root, "TR-020", 5, "user", map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",

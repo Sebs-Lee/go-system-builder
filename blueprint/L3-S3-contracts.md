@@ -1,6 +1,6 @@
 # L3-S3 — 契约（Contracts）
 
-> 层：第三层 ｜ 上游：L2 §S3 + L2 全局规则「单一验证分母」 ｜ 版本 v4.0.2（实施完成：机制 6/6+E2E；v4.0.1 设计对抗审查处置：P0×1+P1×7；v4.0.0 联合审查版：契约流水线断点地图+三查+documents 登记落地；v3.1.0 增 §6；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S3 + L2 全局规则「单一验证分母」 ｜ 版本 v4.0.3（v4.0.2 实施完成 6/6+E2E；v4.0.1 设计对抗审查处置：P0×1+P1×7；v4.0.0 联合审查版：契约流水线断点地图+三查+documents 登记落地；v3.1.0 增 §6；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -130,6 +130,7 @@
 | 2026-08-14 | v1/v2 | 前两版（被判空洞→叙事不清；v2 的契约机检门系虚构） |
 | 2026-08-14 | v3.0.0 | 叙事版；机制事实经 sub-agent 调查核实（模板三张映射表/SYNC 四列对照/UI 门=not_ready/追溯无机检等如实入档） | owner 复核 |
 | 2026-08-16 | v4.0.2 | **实施完成**：机制 6/6 落地——contracts check（核心+CLI+validate --all+guard 挂 PTR-PLAN-02）；双点登记（register_locked_contracts 动作：BE/FE/SYNC/CONTRACTS 前缀扫描+无状态跳过/错状态 fail 语义；register_execution_batch 真动作）；appendDocument 替换语义；schema 补 author_agent_id+registered_at；代际豁免全 kind；四模板 8 文件+指路行+REQ §F 骨架注。E2E 全链钉死。实施中发现并修复：前缀过滤写死 CONTRACTS- 漏掉 BE/FE/SYNC（E2E 抓出）、schema additionalProperties 拒 registered_at。27 包+doctor/validate 全绿 | owner 指示：开工（沿用 S2 模式） |
-| 2026-08-15 | v4.0.1 | **设计对抗审查处置（P0×1+P1×7+P2×7）**：P0——§F 轻校验输入被 hook 人-only/基线不可变三重锁死，**活矩阵唯一居所改判为 CONTRACTS 索引**（REQ §F 留骨架注指路）；P1——documents 喂食点前移至 PTR-003-02（出口门无粮问题）+appendDocument 同代同 id 替换语义（重锁死锁）；锁定依据行回填改删除+指路（事务外文件写破坏指纹）；孤儿条款延后（检查对象不存在——模板无编号条款清单，§n 仅在映射表内=自证）；oracle 翻译抽查补进 S5 审查预算（S3 最深思考动作的消费者）；author_agent_id 补 schema 字段+主会话场景实效边界如实降级；三查从自愿命令改挂 PTR-PLAN-02 guard 链（D2 接线）；P2——§2 两处失实修正（verified_versions_current 张冠李戴/populateUIPrototypeFact 过去时）、步骤重排、oracle"token 对账覆盖"自相矛盾修正、bridge/check 分工边界声明、计数对齐 | 设计对抗审查（sub-agent）：方案闭合 half 返工 |
+| 2026-08-15 | v4.0.1 | **设计对抗审查处置（P0×1+P1×7+P2×7）**：P0——§F 轻校验输入被 hook 人-only/基线不可变三重锁死，**活矩阵唯一居所改判为 CONTRACTS 索引**（REQ §F 留骨架注指路）；P1——documents 喂食点前移至 PTR-PLAN-02（出口门无粮问题）+appendDocument 同代同 id 替换语义（重锁死锁）；锁定依据行回填改删除+指路（事务外文件写破坏指纹）；孤儿条款延后（检查对象不存在——模板无编号条款清单，§n 仅在映射表内=自证）；oracle 翻译抽查补进 S5 审查预算（S3 最深思考动作的消费者）；author_agent_id 补 schema 字段+主会话场景实效边界如实降级；三查从自愿命令改挂 PTR-PLAN-02 guard 链（D2 接线）；P2——§2 两处失实修正（verified_versions_current 张冠李戴/populateUIPrototypeFact 过去时）、步骤重排、oracle"token 对账覆盖"自相矛盾修正、bridge/check 分工边界声明、计数对齐 | 设计对抗审查（sub-agent）：方案闭合 half 返工 |
 | 2026-08-15 | v4.0.0 | **联合审查版**（S3+S4+S5+S7 联动，sub-agent 契约流水线端到端调查）：§1 增"两端机械、中段手抄、锁点断源"定位与三套空转机制清单；§2.1 新增十二断点地图（documents[] 登记无路径为最大断点——生产代码仅 req 写入，TR-003 占位；hook 保护/S5 独立性/代际保护三套建成机制空转；S2 八件套未同步为新断点）；§3 新增五条选用（contracts check 三查/TR-003 真登记/锁定依据机写/代际豁免推广/§F 轻校验，各含否决）；§4 补机检与登记时间线；§5 改处置台账（七项全处置）；§6.3 升 8 项全景（机制 5+保持 3） | owner 批准六决策点按建议执行 |
 | 2026-08-15 | v3.1.0 | 新增 §6 注意力预算与渐进披露（错配诊断/阅读预算/整改方向），判定尺引 L3-README | owner 指示：渐进披露、机制承载规范、削减平白叙述 |
+| 2026-08-17 | v4.0.3 | **反向闭合+空仓地板（P1/P2 修复）**：ContractsCheck 此前只查 contract→CASE 单向——CASE 可进验证分母却不被任何条款锁定。现每个 cases.json 中的 CASE 必被某契约引用（无契约时跳过，模板仓不误伤；README.md 不再误计为契约）；contracts_checked guard 增空仓地板（PTR-PLAN-02 不放行零契约阶段）；指纹列接受大小写 hex | L1 价值观复审（sub-agent）：D6/公理三违例处置 | |

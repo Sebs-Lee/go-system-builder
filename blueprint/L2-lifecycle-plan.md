@@ -188,6 +188,8 @@ flowchart TD
 
 > 本节是原"暂停语义/基线变更/单需求单周期"三行的正式化与扩展。REQ 的授权生命周期**不属于任何单一 stage，属于控制面**：各 stage 只拥有自己的暂停触发器与失败路由，控制面承载动词本身。REQ 文件状态只回答"这份文件是什么"（draft=草稿 / locked=冻结基线——不是"进行中" / changed=修订中 / archived=生命周期已关闭）；"这个需求走到哪了"的唯一权威是 runtime（活跃）与 runtime-archive（终态）——D1。人闸是七个动词的共同形态：机器公证事实（检查点/指纹/journal），人做授权决策（C4）。
 
+> 图注：本图混排两台状态机——REQ **文件**状态（draft/locked/archived）与 **runtime** 状态（bound/paused/unbound/released）。权威是 runtime（D1）；文件状态只回答"这份文件是什么"，bindable 判定以 runtime 归档扫描为准。
+
 ```mermaid
 stateDiagram-v2
     [*] --> draft : 人起草（S0 漏斗）

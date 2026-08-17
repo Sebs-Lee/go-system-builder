@@ -64,13 +64,21 @@ func TestBUG104DeferResumeS11E2E(t *testing.T) {
 		t.Fatalf("defer checkpoint = %#v, want S11 cursor", pause)
 	}
 
+	// The defer decision is scoped to its own revision and cannot authorize
+	// the resume — a fresh runtime_resume-scoped decision is required.
+	resumeDecision := req039fixtures.EvidenceEnvelope(state, "ev-resume", "human_decision", "release-owner", "release owner", "approved", nil)
+	req039fixtures.AppendEvidence(state, req039fixtures.WriteEvidenceEnvelope(t, root, state, "ev-resume", "human_decision", "release-owner", "release owner", resumeDecision, []any{
+		fmt.Sprintf("runtime_resume:%s@%d", req039fixtures.RuntimeIDFromState(state), int(req039fixtures.Revision(state))),
+	}))
+	req039fixtures.WriteState(t, root, state)
+
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	var stdout, stderr bytes.Buffer
 	code := runCLI(t, []string{
 		"runtime", "transition", "--root", root, "--state", statePath, "--journal", journalPath,
 		"--id", "TR-019", "--expected-revision", fmt.Sprint(int(req039fixtures.Revision(state))),
-		"--actor", "user", "--evidence", "human_decision_record=" + decisionID,
+		"--actor", "user", "--evidence", "human_decision_record=ev-resume",
 		"--evidence", "pause_record=generated:pause_checkpoint",
 	}, bytes.NewReader(nil), &stdout, &stderr)
 	if code != 0 {
@@ -220,6 +228,9 @@ func addS11EvidenceWithScope(t *testing.T, root string, state map[string]any, id
 
 func addS11EvidenceWithScopeProducer(t *testing.T, root string, state map[string]any, id, kind, conclusion, producer string, scope []any) string {
 	t.Helper()
+	if scope == nil && kind == "human_decision" {
+		scope = []any{fmt.Sprintf("runtime_release:%s@%d", req039fixtures.RuntimeIDFromState(state), int(req039fixtures.Revision(state)))}
+	}
 	envelope := req039fixtures.EvidenceEnvelope(state, id, kind, producer, "BUG-104", conclusion, nil)
 	entry := req039fixtures.WriteEvidenceEnvelope(t, root, state, id, kind, producer, "BUG-104", envelope, scope)
 	req039fixtures.AppendEvidence(state, entry)

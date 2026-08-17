@@ -183,9 +183,9 @@ func TestTR010CapturePauseCheckpoint(t *testing.T) {
 	}
 	requiredFields := []string{
 		"from_state", "from_phase", "phase_revision", "baseline_generation",
-		"review_round", "entity_snapshot_revision", "reason",
+		"review_round", "reason",
 		"required_human_action", "document_fingerprints",
-		"committed_idempotency_keys", "paused_at",
+		"paused_at",
 	}
 	for _, field := range requiredFields {
 		if _, present := pause[field]; !present {
@@ -230,6 +230,7 @@ func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 	})
+	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_amend:loop-test@6")
 	writeState(t, root, state)
 	next, err := transition.Apply(root,
 		filepath.Join(root, ".claude", "loop-state.json"),
@@ -373,4 +374,21 @@ func fixtureInt(value any) int {
 	default:
 		return 0
 	}
+}
+
+// scopeFixtureEvidence stamps a lifecycle-verb scope onto a registered
+// human_decision fixture item, mirroring what the lifecycle CLI verbs
+// record (`<scope>:<runtime_id>@<revision>`).
+func scopeFixtureEvidence(t *testing.T, state map[string]any, ref, scope string) {
+	t.Helper()
+	items, _ := state["evidence"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item == nil || (item["id"] != ref && item["path"] != ref) {
+			continue
+		}
+		item["scope_refs"] = []any{scope}
+		return
+	}
+	t.Fatalf("scopeFixtureEvidence: evidence %q not found", ref)
 }

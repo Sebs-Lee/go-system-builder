@@ -1,6 +1,6 @@
 # L3-S4 — 任务拆分（Task Split）
 
-> 层：第三层 ｜ 上游：L2 §S4 ｜ 版本 v4.0.2（实施收口：四批次落地+真度清零）
+> 层：第三层 ｜ 上游：L2 §S4 ｜ 版本 v4.0.3（v4.0.2 实施收口：四批次落地+真度清零；v4.0.3 空执行批地板）
 
 ## 1. 要实现什么
 
@@ -141,3 +141,4 @@
 | 2026-08-16 | v4.0.0 | 联合调查核实（P0 强分支断点/三套词汇/手抄指纹三连等 10 项入档）；设计定稿：单一居所原则推广+tasks check 左移+TR-002 对称接线+模板瘦身+收回两项过度设计（指纹报错抛光/写路径交集机检） | owner 拍板：索引删派生列、Status 三词、其余按建议 |
 | 2026-08-16 | v4.0.1 | 设计对抗审查处置（无 P0；P1×5 全采纳）：①条款文法规格化+宇宙下限+契约↔索引双向（堵假绿洞）②cancelled 声明剔除覆盖聚合+死依赖计 problem ③register_planning_tasks 明示无 evidence 前置 ④E2E 补修复回环/空 evidence/指路文案/guard 穿透四断言 ⑤planning_complete 词条重写入批次。P2 随批：DFS 措辞（参照重写非移植）、测试计数 14→12、"磁盘一致"=Status 定义、grep 限域 TASK 文档、自动触发首趟 posture 入档、看板口径改"收口填写+人向总览"、§10/§11 双居所入档留 S6/S8、收尾契约实例级机检（第五查）、L3-S5 §4/L3-S6:34/document-verification skill 同步 | 对抗审查（sub-agent）+ 全采纳 |
 | 2026-08-16 | v4.0.2 | 四批次实施+E2E 收口：模板/检查/接线/同步全落地；TestS4TaskSplitPipelineE2E 钉死六种断链指名+双 guard 穿透+空 evidence 登记+修复回环同代替换；空仓地板问题测试。实施中发现并修复：state["root"] 默认值必须写在迁移闭包内（Writer 在 applyMutation 重读磁盘 state，外层 snapshot 副本对 guard 不可见）；S3 潜伏洞（direct-check guard 在 CLI 流程扫 cwd 空转）随此修复；TR-003 幂等重锁由修复回环第二趟的同代替换语义覆盖（appendDocument 同路径） | owner 验收：27 包测试全绿+validate/doctor 绿 |
+| 2026-08-17 | v4.0.3 | **空执行批地板（P1 修复）**：register_execution_batch 此前 registered=0 也 committed（TR-003 可锁空批入 building）。现空批显式失败并指路补批 | L1 价值观复审（sub-agent）：公理三违例处置 | |

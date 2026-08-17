@@ -2,6 +2,7 @@ package transition_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,6 +187,7 @@ func TestBUG104DeferCapturesS11BeforeCursorChange(t *testing.T) {
 	state := inactiveState(5)
 	state["lifecycle"] = map[string]any{"state": "awaiting_human_release", "phase": nil, "phase_revision": float64(1)}
 	registerFixtureEvidence(t, root, state, map[string]string{"human_decision_record": "docs/reports/human/decision.md"})
+	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_release:loop-inactive@5")
 	writeFullState(t, root, state)
 
 	if err := applyT(t, root, "TR-026", 5, "orchestrator", map[string]string{
@@ -202,6 +204,12 @@ func TestBUG104DeferCapturesS11BeforeCursorChange(t *testing.T) {
 	if updated["lifecycle"].(map[string]any)["state"] != "paused" {
 		t.Fatalf("state after defer = %#v, want paused", updated["lifecycle"])
 	}
+	// The defer decision is scoped to revision 5 and must not authorize the
+	// revision-6 resume (one approval, one verb, one revision) — a fresh
+	// scoped decision is required.
+	state6 := readState(t, root)
+	scopeFixtureEvidence(t, state6, "docs/reports/human/decision.md", "runtime_resume:loop-inactive@6")
+	writeFullState(t, root, state6)
 	if err := applyT(t, root, "TR-019", 6, "user", map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 		"pause_record":          "generated:pause_checkpoint",
@@ -281,11 +289,16 @@ func addS11Evidence(t *testing.T, root string, state map[string]any, fixtures []
 		if fixture.slot == "human_decision_record" {
 			id = "human-decision-record"
 		}
+		scopeRefs := []any{}
+		if fixture.kind == "human_decision" {
+			runtimeID, _ := state["runtime_id"].(string)
+			scopeRefs = []any{fmt.Sprintf("runtime_release:%s@%d", runtimeID, fixtureInt(state["revision"]))}
+		}
 		items = append(items, map[string]any{
 			"id": id, "kind": fixture.kind, "path": ref, "sha256": transition.SHA256(content),
 			"status": "valid", "baseline_generation": 0, "review_round": nil,
 			"produced_by": []any{"user"}, "invalidated_by": nil, "invalidation_rule": nil,
-			"invalidation_reason": nil, "responsibility_id": nil, "scope_refs": []any{},
+			"invalidation_reason": nil, "responsibility_id": nil, "scope_refs": scopeRefs,
 		})
 		if fixture.slot != "old-acceptance" && fixture.slot != "old-release-audit" {
 			refs[fixture.slot] = id

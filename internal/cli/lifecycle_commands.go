@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/sha256"
+	"errors"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -201,7 +202,7 @@ func runRuntimeResume(args []string, stdout, stderr io.Writer) int {
 			OccurredAt: time.Now().UTC(),
 		})
 	if err != nil {
-		if strings.Contains(err.Error(), "baselines_unchanged") {
+		if errors.Is(err, transition.ErrBaselineDrift) {
 			fmt.Fprintln(stderr, "runtime resume: baseline drifted while paused — resume is refused; amend the baseline instead (req amend)")
 			return 1
 		}
@@ -231,9 +232,9 @@ func inFlightEntities(state map[string]any) []string {
 		if task == nil {
 			continue
 		}
-		if state, _ := task["state"].(string); state == "in_progress" || state == "review" || state == "blocked" {
+		if taskState, _ := task["state"].(string); taskState == "in_progress" || taskState == "review" || taskState == "blocked" {
 			if id, _ := task["id"].(string); id != "" {
-				out = append(out, "task "+id+" ("+state+")")
+				out = append(out, "task "+id+" ("+taskState+")")
 			}
 		}
 	}
@@ -445,7 +446,7 @@ func runREQAmend(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "amended: bound %s → %s %s (baseline generation %d, revision %d)\n", boundID, id, version, tolerantInt(baseline["generation"]), next.Revision)
 	fmt.Fprintf(stdout, "  downstream evidence invalidated: %d item(s); old REQ stays locked (history)\n", invalid)
-	fmt.Fprintf(stdout, "  superseded REQ file: move it to docs/requirements/versions/%s/ for the record (its fingerprint stays in runtime history; hook protection is path-based and follows the file only while it stays put)\n", boundID)
+	fmt.Fprintf(stdout, "  superseded REQ file: keep %s where it is — hook write-protection is path-based, so moving the file would drop it out of protection (its fingerprint already lives in runtime history)\n", boundID)
 	fmt.Fprintln(stdout, "next: continue from planning.design — the amendment already left the paused state (checkpoint cleared)")
 	return 0
 }

@@ -271,8 +271,8 @@ func TestApplyRejectsEvidenceWithIncompatibleKind(t *testing.T) {
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
 	})
-	if err == nil || !strings.Contains(err.Error(), "no locked contract registered") || !strings.Contains(err.Error(), "PTR-PLAN-02") {
-		t.Fatalf("TR-002 must point at PTR-PLAN-02 when no locked contract is registered: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no complete TASK document") {
+		t.Fatalf("TR-002 must fail while the planning batch is incomplete (a locked contract now exists via the advance fixture, so the gap is the missing complete TASK): %v", err)
 	}
 }
 
@@ -291,6 +291,17 @@ func startLockedREQ(t *testing.T, root, statePath, journalPath string) {
 
 func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 	t.Helper()
+	// PTR-PLAN-02's contracts_checked guard demands at least one real
+	// contract on disk (the contractless-stage floor).
+	tempRoot := filepath.Dir(statePath)
+	contractsDir := filepath.Join(tempRoot, "docs", "contracts")
+	if err := os.MkdirAll(contractsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contractsDir, "BE-test.md"),
+		[]byte("# BE-test\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| 需求 | 模块 | 条款 | 验收 |\n|---|---|---|---|\n| — | — | BE-test §1 | — |\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for revision, id := range []string{"PTR-PLAN-01", "PTR-PLAN-02"} {
 		if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
 			TransitionID: id, ExpectedRevision: revision + 1, Actor: "hook_controller",

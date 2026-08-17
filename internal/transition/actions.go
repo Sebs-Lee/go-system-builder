@@ -272,13 +272,7 @@ func actionCapturePauseCheckpoint(state map[string]any, ctx *ActionContext) (Act
 	if review != nil {
 		reviewRound = integer(review["round"])
 	}
-	entities, _ := state["entities"].(map[string]any)
-	entitySnapshotRevision := 0
-	if entities != nil {
-		entitySnapshotRevision = len(asEntityArray(entities))
-	}
 	documents := documentFingerprints(state)
-	keys := committedIdempotencyKeys(state)
 
 	state["pause"] = map[string]any{
 		"from_state":                 fromState,
@@ -286,11 +280,9 @@ func actionCapturePauseCheckpoint(state map[string]any, ctx *ActionContext) (Act
 		"phase_revision":             phaseRevision,
 		"baseline_generation":        baselineGeneration,
 		"review_round":               reviewRound,
-		"entity_snapshot_revision":   entitySnapshotRevision,
 		"reason":                     ctx.Spec.Description,
 		"required_human_action":      pauseRequiredAction(fromState),
 		"document_fingerprints":      documents,
-		"committed_idempotency_keys": keys,
 		"paused_at":                  ctx.OccurredAt.UTC().Format(time.RFC3339Nano),
 	}
 	return ActionResult{Status: "committed", MutationApplied: true, Detail: "pause checkpoint captured"}, nil
@@ -382,7 +374,11 @@ func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (Act
 	if err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
-	return ActionResult{Status: "committed", MutationApplied: registered > 0,
+	if registered == 0 {
+		return ActionResult{Status: "failed",
+			Detail: "execution batch is empty — no complete TASK under docs/tasks; an empty batch would lock nothing into building"}, fmt.Errorf("register_execution_batch: no complete TASK document under docs/tasks — write and complete the task batch before TR-003")
+	}
+	return ActionResult{Status: "committed", MutationApplied: true,
 		Detail: fmt.Sprintf("registered %d complete task(s)", registered)}, nil
 }
 

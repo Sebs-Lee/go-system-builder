@@ -43,6 +43,7 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 	}
 
 	universe := map[string]bool{}
+	caseUniverse := map[string]bool{}
 	modules, _ := os.ReadDir(filepath.Join(root, "docs", "design", "prototypes"))
 	for _, module := range modules {
 		if !module.IsDir() || module.Name() == "template" || module.Name() == "templates" {
@@ -57,6 +58,9 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 			for _, pattern := range contractTokenPatterns {
 				for _, token := range pattern.FindAllString(string(data), -1) {
 					universe[token] = true
+					if file == "cases.json" && strings.HasPrefix(token, "CASE-") {
+						caseUniverse[token] = true
+					}
 				}
 			}
 		}
@@ -80,10 +84,11 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 		}
 	}
 
+	citedCases := map[string]bool{}
 	contractIDs := map[string]string{}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") || strings.Contains(entry.Name(), "template") {
-			continue
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") || strings.Contains(entry.Name(), "template") || entry.Name() == "README.md" {
+			continue // README is directory documentation, not a contract
 		}
 		id := strings.TrimSuffix(entry.Name(), ".md")
 		contractIDs[id] = filepath.Join(dir, entry.Name())
@@ -100,6 +105,9 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 		for _, pattern := range contractTokenPatterns {
 			for _, token := range pattern.FindAllString(content, -1) {
 				result.TokenRefs++
+				if strings.HasPrefix(token, "CASE-") {
+					citedCases[token] = true
+				}
 				if strings.HasPrefix(token, "FR-") {
 					if !reqFRs[token] {
 						result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any REQ's FR table", id, token))
@@ -126,12 +134,22 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 			cells := strings.Split(strings.Trim(trimmed, "|"), "|")
 			for i, cell := range cells {
 				cell = strings.TrimSpace(cell)
-				if isHex64(cell) && strings.Contains(strings.ToLower(strings.Join(cells[:i], " ")), "fingerprint") {
+				if isHex64(strings.ToLower(cell)) && strings.Contains(strings.ToLower(strings.Join(cells[:i], " ")), "fingerprint") {
 					result.Fingerprints++
 					if resolved, ok := resolveContractFingerprint(root, trimmed); ok && resolved != cell {
 						result.Problems = append(result.Problems, fmt.Sprintf("%s: fingerprint column does not match disk (recorded %s… actual %s…)", id, cell[:12], resolved[:12]))
 					}
 				}
+			}
+		}
+	}
+	// Reverse closure: every generated CASE is a verification-denominator
+	// member; a case no contract clause cites is neither locked nor covered
+	// by any TASK — the chain leaks at CASE→contract (single-denominator rule).
+	if result.Contracts > 0 {
+		for token := range caseUniverse {
+			if !citedCases[token] {
+				result.Problems = append(result.Problems, fmt.Sprintf("reverse closure: %s exists in module packages but no contract cites it — an uncited case is outside the verification denominator", token))
 			}
 		}
 	}

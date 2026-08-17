@@ -56,7 +56,8 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 	write("docs/contracts/BE-501.md", ""+
 		"# BE-501\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
 		"| REQ source_ref | Rule/CASE/Story/PATH | 本合同条款§ | 验收标准 |\n|:--|:--|:--|:--|\n"+
-		"| REQ-500/FR-501 | CASE-WB-001 / S-001 / F-001 / PATH-SUBMIT | §2 | 可提交 |\n")
+		"| REQ-500/FR-501 | CASE-WB-001 / S-001 / F-001 / PATH-SUBMIT | §2 | 可提交 |\n"+
+		"| REQ-500/FR-501 | CASE-WB-002 / S-001 / F-001 / PATH-SUBMIT | §3 | 拒绝 |\n")
 	out, _, code := run("contracts", "check", "--root", root)
 	if code != 0 || !strings.Contains(out, "all reconciled") {
 		t.Fatalf("green contract must pass: code=%d out=%s", code, out)
@@ -152,3 +153,50 @@ func readFile(t *testing.T, root, rel string) string {
 }
 
 func intStr(n int) string { return fmt.Sprintf("%d", n) }
+
+// TestPTRPLAN02BlocksOnBrokenBridge pins the D2 mount: an AC pointing at an
+// FR that no module package cites blocks the planning advance — the bridge
+// is a gate, not a voluntary command.
+func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/contracts", "docs/requirements", ".claude"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, rel := range []string{"docs/loop-definition.json", "docs/hook-policy.json"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// REQ with an AC pointing at an FR; a contract exists (so the
+	// contractless-stage floor passes) but no module packages exist — the
+	// bridge must name the AC.
+	write("docs/contracts/BE-700.md", "# BE-700\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
+		"| REQ source_ref | Rule/CASE/Story/PATH | 本合同条款§ | 验收标准 |\n|:--|:--|:--|:--|\n"+
+		"| REQ-700/FR-701 | — | BE-700 §1 | 可提交 |\n")
+	write("docs/requirements/REQ-700.md", "# REQ-700\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
+		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-701 | wb7 | 提交 | A1 | Must |\n"+
+		"| 编号 | 验收标准 | 指向 |\n|:--|:--|:--|\n| AC-701 | 提交成功 | FR-701 |\n")
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "bob"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("bind failed: %s", stderr.String())
+	}
+	if code := cli.Run([]string{"runtime", "transition", "--root", root,
+		"--id", "PTR-PLAN-01", "--expected-revision", "1", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("PTR-PLAN-01 failed: %s", stderr.String())
+	}
+	if code := cli.Run([]string{"runtime", "transition", "--root", root,
+		"--id", "PTR-PLAN-02", "--expected-revision", "2", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "AC-701") {
+		t.Fatalf("PTR-PLAN-02 must be blocked by the bridge naming AC-701, got: %s", stderr.String())
+	}
+}

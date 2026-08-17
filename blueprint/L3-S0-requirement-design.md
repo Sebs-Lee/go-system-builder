@@ -18,7 +18,7 @@
 | requirement-funnel skill（2026-08-15 新建） | S0 过程方法论：漏斗思考（发散穷尽→上层剪枝→自审→上交）、提案拍板纪律（完整方案是上交唯一合格形态/开放问题禁止上交/拍板点每层 ≤3）、身份互换自审、上浮必须带方案；已登记 catalog 并满足 skill 契约（frontmatter+Authority/Procedure/Stop Conditions 等八节） | `skills/requirement-funnel/SKILL.md` |
 | 模板自描述 | 模板直接告诉作者"顶部 UI impact 是唯一被 parseUIImpact 解析的位置"——文档即接口契约 | REQ-template.md 顶部说明 |
 | harness 绑定校验 | 状态=locked、版本非空、文件名 REQ- 前缀、SHA-256 复核、UI impact 三值解析 | `req bind`（run.go:177-232；engine.go:462-541） |
-| UI impact 三值机制 | none/changed/unknown；unknown 可锁定但触发 `ui_impact_resolved` guard，规划不放行（"先干着再说"无路） | engine.go:524-541；guards.go:289-304 |
+| UI impact 三值机制 | none/changed/unknown；unknown 可锁定但触发 `ui_impact_resolved` guard，规划不放行（"先干着再说"无路） | engine.go:731；guards.go:289-304 |
 | 锁定写入拦截 | 锁定产物写入→硬阻断，恢复提示指向新 generation 目录 `docs/req/versions/{REQ-ID}/g{N+1}/`——旧版不可变 | HOOK_LOCKED_ARTIFACT_WRITE（hook-policy.json:17；policy/engine.go:264-312） |
 | 变更控制规则 | "Chat never changes a baseline"；REQ 目标/范围/优先级/验收的变更暂停整个 loop；锁定与修订 human-only | `docs/rules/change-control.md`（R-CHANGE-01） |
 | 协议契约 | S0 的 done_when（locked+锁定记录+SHA-256 可算）、human_gateway（req_amendment）、primary_skill=requirement-funnel（漏斗语义：人表述预期效果并逐层拍板，agent 为设计负责） | `docs/agent-protocol.md` #s0 |
@@ -83,7 +83,7 @@
 
 - **撤回**（v3.1.0 的过度设计）：bind 不做章节级扩展；`validate --all` 不覆盖 requirements——**S0 的质量门就是人**：人 review + 人执行 bind；
 - **删减**：三套自查清单（21 项）删除；§11 删除（检查归 S2 引擎）；§14 删除（公理五问归 blueprint）；TR-001 桩 guard 折叠（保留 req 状态检查与 no_other_active_loop 真语义）；
-- **模板重设计（核心）**：扁平 17 节 → **推导式三层结构**——§A 理念（Why，**A1=agent 整理的预期效果**：接收并理解人的表述后过滤口语歧义的结构化复述，交人确认忠实——原话会引起歧义，且对话不是权威 D1，整理稿才入册）→ §B 方向与约束（How 的边界）→ §C 具体需求（What，每条指回 §A 编号——指不回理念即范围蔓延，逼问字段防大爆炸变更）→ §D 未决澄清 → §E 锁定记录 → §F 覆盖矩阵骨架（S3 起填）。模板头部给 agent 约 5 行漏斗指引——**模板即设计脚手架：agent 从人的预期效果出发漏斗式逐层设计，人逐层拍板**，而非一次填完 REQ 或替人提问；§B 只记需求级选型与理由（方向边界），详细架构仍归 S2——REQ 锁定边界，不锁定设计；**机器锚点不动**：顶部 `> 状态：`/`> 版本：`/`> UI impact：` 三键的键名与位置保留（parseUIImpact 只认顶部，internal/transition/engine.go:524-541）；
+- **模板重设计（核心）**：扁平 17 节 → **推导式三层结构**——§A 理念（Why，**A1=agent 整理的预期效果**：接收并理解人的表述后过滤口语歧义的结构化复述，交人确认忠实——原话会引起歧义，且对话不是权威 D1，整理稿才入册）→ §B 方向与约束（How 的边界）→ §C 具体需求（What，每条指回 §A 编号——指不回理念即范围蔓延，逼问字段防大爆炸变更）→ §D 未决澄清 → §E 锁定记录 → §F 覆盖矩阵骨架（S3 起填）。模板头部给 agent 约 5 行漏斗指引——**模板即设计脚手架：agent 从人的预期效果出发漏斗式逐层设计，人逐层拍板**，而非一次填完 REQ 或替人提问；§B 只记需求级选型与理由（方向边界），详细架构仍归 S2——REQ 锁定边界，不锁定设计；**机器锚点不动**：顶部 `> 状态：`/`> 版本：`/`> UI impact：` 三键的键名与位置保留（parseUIImpact 只认顶部，internal/transition/engine.go:731）；
 - **新增 S0 专职 skill（v3.4.0 形式修正）**：`requirement-funnel`——教 agent **漏斗思考**：理念→方向→拆解逐层推进，上一层拍板前不设计下一层；每层循环"发散穷尽→上层剪枝收敛→自审→上交"。+ **提案拍板纪律**：人只表述预期效果，agent 全权接管设计并**为设计负责**——每次上交=完整方案（有推荐、有理由、有备选及代价），**开放问题禁止上交**（能自己定的决策自己定并记录理由）；只有不可派生的价值判断才设拍板点，每层 ≤3 个；把问题丢给人=上瘾依赖的入口（L1 已命名："每次靠'人再盯一次'解决"）。+ 身份互换自审（每层上交前轻审、提议锁定前全审，审推导链不审格式）+ 上浮条件（上浮也必须带方案与倾向）。预算修正（v3.7.0）：实测 ≈4.7KB——v3.6.0 记录的"≈1.9KB"为契约化前旧值，失实已纠；契约八节是 catalog 强制且是全仓最薄 methodology skill，注意力纪律的意义在如实记录而非死数。**推翻 v3.0.0 §3 的否决条目**（"模板逼问已够"随模板重构失效：漏斗思考是过程方法论，模板承载不了"怎么收敛、怎么上交"）；三分工：skill=过程（怎么思考怎么上交）、模板=结构（填什么）、协议=路由（何时做什么）；skill 同时服务修订（generation 升版走同一漏斗）；
 - **保持**：bind 五项状态校验（locked/版本/前缀/SHA/UI 三值）；hook 写入拦截；human-only 锁定与 generation 不可变（防不可逆的最右层，成本已最低）。
 
@@ -97,6 +97,6 @@
 | 2026-08-15 | v3.2.0 | §6 重定向：撤回 v3.1.0 的机器校验扩展建议（S0 质量门=人闸本身）；整改方向改为"删自查清单 + 模板推导式重构（理念→方向→拆解，agent 访谈式引导人共同思考）" | owner 裁定：S0 人参与、人把关，机器只查状态；模板扁平结构丢失推导逻辑，应按思考顺序分层引导 |
 | 2026-08-15 | v3.3.0 | 增设 S0 专职 skill `requirement-elicitation`（访谈方法/层内追问库/身份互换自审/停止条件，≤3KB），推翻 v3.0.0 §3 对 S0 skill 的否决条目 | owner 裁定：模板重构后 S0 工作从填表变为访谈共思，过程方法论（怎么问、怎么自审）需要专门载体 |
 | 2026-08-15 | v3.4.0 | 形式修正：访谈框架 → **漏斗思考 + 提案拍板**。人只表述预期效果并逐层拍板；agent 全权接管中度复杂度的设计并为设计负责；开放问题禁止上交，只有不可派生的价值判断才设拍板点（每层 ≤3） | owner 裁定：模型能力已足够强，访谈/追问是把设计负担转移给人；只有清晰的方案交出去才有沟通意义 |
-| 2026-08-15 | v3.5.0 | A1 语义修正：不是记录人的原话，而是 agent 理解后**过滤口语歧义的整理稿**，交人确认；核实机器锚点（parseUIImpact 在 internal/transition/engine.go:524-541，顶部三键必须保留）与重编号影响面（全仓无 "REQ-{id} §n" 引用，PM Todo 无代码消费者） | owner 裁定：原话会引起歧义，预期效果须过一遍筛选；整改方案须落到文件级 |
+| 2026-08-15 | v3.5.0 | A1 语义修正：不是记录人的原话，而是 agent 理解后**过滤口语歧义的整理稿**，交人确认；核实机器锚点（parseUIImpact 在 internal/transition/engine.go:731，顶部三键必须保留）与重编号影响面（全仓无 "REQ-{id} §n" 引用，PM Todo 无代码消费者） | owner 裁定：原话会引起歧义，预期效果须过一遍筛选；整改方案须落到文件级 |
 | 2026-08-15 | v3.6.0 | **落地实施**：REQ-template 重写为漏斗结构（旧节→新居全量映射，仅删 PM Todo/21 项 checklist/公理五问；状态枚举精简为 draft/locked/changed/archived）；新建 skills/requirement-funnel/SKILL.md（≈1.9KB）；agent-protocol #s0 更新（primary_skill/A1 整理稿/三值/漏斗 actions）；README Core Gates 第 1 条改指 bound REQ 机器门；§2/§3/§4/§5 同步现状化，不一致①②标记已修、③归 harness 批次 | owner 拍板：删 PM Todo、精简状态枚举、旧模板内容不无故丢弃全量映射进新结构 |
 | 2026-08-15 | v3.7.0 | **自审 + 第三人对抗审查（sub-agent，D6 纪律）修复 9 项 findings**：P1×4——L3-S0 自身 §12/§D 自相矛盾、L3-S2 引用旧 §16、guards.go 运行时报错与 engine.go 注释指向已删节号（改为 §D，公理五：拒绝信息必须指对路）、skill 尺寸记录失实（1.9KB→实测 4.7KB，如实纠正）；P2×5——模板头 6 行复述 skill 纪律压缩为 2 行（消除三处重复叙述之一）、流程表补权限列（旧 §14 检查维度回归字段形态）、非功能表补 NFR 编号（AC 指向可解析）、正向范围显式声明（=§C 需求点全集）、skill 失效模式指认修正（负担转移→上瘾依赖，L1 定义核对）；模板变更记录补 v2.0.0 锚点。审查确认：机器锚点兼容、旧→新映射无字段级丢失、packaging 会随发新 skill | owner 指示：自审 + 第三人原则审查 |

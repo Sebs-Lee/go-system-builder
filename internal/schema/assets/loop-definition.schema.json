@@ -272,6 +272,10 @@
         "required_evidence": {
           "$ref": "#/$defs/idList"
         },
+        "human_decision_scope": {
+          "type": "string",
+          "pattern": "^runtime_[a-z]+$"
+        },
         "actors": {
           "type": "array",
           "minItems": 1,
@@ -448,6 +452,10 @@
         },
         "required_evidence": {
           "$ref": "#/$defs/idList"
+        },
+        "human_decision_scope": {
+          "type": "string",
+          "pattern": "^runtime_[a-z]+$"
         },
         "on_guard_failure": {
           "enum": ["reject", "warn_and_retry", "pause"]

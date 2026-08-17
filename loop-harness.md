@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `ec52c321b16a6fc7e5b48df98846ca9160019b1c6fc322c337d13d0b1db66f01`
+- **Loop definition SHA-256**: `79a6e9a9195a9bbf0aea7d582ba00057906331aba3c93b40b30290ab26f737f3`
 
 ---
 
@@ -453,7 +453,7 @@ _paused → RESUME_FROM_PAUSE_
 Resume the exact validated state, phase and entity checkpoint.
 
 - `resume_checkpoint_valid` [semantic_check] — A pause checkpoint exists at runtime.pause with a non-empty `reason` and `required_human_action`, so the resume transition has a captured state to restore.
-- `baselines_unchanged` [evidence_attestation] — The baseline document fingerprints captured at pause time still match the on-disk files in docs/contracts/ and docs/tasks/ so the resume cannot quietly advance on drifted inputs.
+- `baselines_unchanged` [evidence_attestation] — Every document fingerprint captured at pause time matches the on-disk file, so the resume cannot quietly advance on drifted inputs. The re-hash runs in TR-019's restore_from_pause action (fail-closed, sentinel ErrBaselineDrift routes the CLI to amendment); the guard body itself only rejects an empty evidence map.
 
 Evidence: `human_decision_record`, `pause_record`
 
@@ -491,7 +491,7 @@ _paused → aborted_
 
 Only a human may permanently abort the Loop.
 
-- `human_abort_approved` [evidence_attestation] — A human-approval evidence item signed by an authorized actor is referenced from runtime.evidence[] permitting the runtime to move to the `aborted` state.
+- `human_abort_approved` [evidence_attestation] — The transition's evidence validation enforces that the cited human_decision evidence is current and scoped to `runtime_abort:<runtime_id>@<revision>` (human_decision_scope on TR-021/TR-030) — one approval authorizes exactly one abort at one revision; the guard body itself only rejects an empty evidence map.
 
 Evidence: `human_decision_record`
 
@@ -653,7 +653,7 @@ _awaiting_human_release → aborted_
 
 Record a human release abort without performing any release side effect.
 
-- `human_abort_approved` [evidence_attestation] — A human-approval evidence item signed by an authorized actor is referenced from runtime.evidence[] permitting the runtime to move to the `aborted` state.
+- `human_abort_approved` [evidence_attestation] — The transition's evidence validation enforces that the cited human_decision evidence is current and scoped to `runtime_abort:<runtime_id>@<revision>` (human_decision_scope on TR-021/TR-030) — one approval authorizes exactly one abort at one revision; the guard body itself only rejects an empty evidence map.
 
 Evidence: `human_decision_record`
 
@@ -808,6 +808,7 @@ _contracts → tasks_
 Advance formal planning from contracts to tasks after the contract quality gate passes.
 
 - `contracts_checked` [semantic_check] — S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.
+- `scenario_bridge_checked` [semantic_check] — S2's AC↔CASE bridge (scenario.GuardBridgeChecked) runs at PTR-PLAN-02: every AC of the bound REQ reaches a rule via FR source_refs (with branches), or carries an endorsed N/A (NFR id / §A4). With no module packages at all, only fully N/A-endorsed REQs pass — an AC pointing at FR- with nothing citing it is a broken denominator.
 
 ## Phase transitions: verification
 

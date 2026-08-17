@@ -49,7 +49,7 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"baselines_unchanged": {
 		ID:    "baselines_unchanged",
-		Check: "The baseline document fingerprints captured at pause time still match the on-disk files in docs/contracts/ and docs/tasks/ so the resume cannot quietly advance on drifted inputs.",
+		Check: "Every document fingerprint captured at pause time matches the on-disk file, so the resume cannot quietly advance on drifted inputs. The re-hash runs in TR-019's restore_from_pause action (fail-closed, sentinel ErrBaselineDrift routes the CLI to amendment); the guard body itself only rejects an empty evidence map.",
 	},
 	"blocker_recorded": {
 		ID:    "blocker_recorded",
@@ -133,7 +133,7 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"human_abort_approved": {
 		ID:    "human_abort_approved",
-		Check: "A human-approval evidence item signed by an authorized actor is referenced from runtime.evidence[] permitting the runtime to move to the `aborted` state.",
+		Check: "The transition's evidence validation enforces that the cited human_decision evidence is current and scoped to `runtime_abort:<runtime_id>@<revision>` (human_decision_scope on TR-021/TR-030) — one approval authorizes exactly one abort at one revision; the guard body itself only rejects an empty evidence map.",
 	},
 	"no_invalidated_pass_evidence": {
 		ID:    "no_invalidated_pass_evidence",
@@ -294,6 +294,10 @@ var guardSpecRegistry = map[string]GuardSpec{
 	"planning_complete": {
 		ID:    "planning_complete",
 		Check: "At least one current-baseline contract document has status=locked with a matching on-disk markdown Status field (contracts are registered by PTR-PLAN-02), AND every docs/tasks/TASK-*.md declares status complete or cancelled with at least one complete (the batch is registered by TR-002's own register_planning_tasks action). Fingerprints are owned by registration and reachability, not re-checked here.",
+	},
+	"scenario_bridge_checked": {
+		ID:    "scenario_bridge_checked",
+		Check: "S2's AC↔CASE bridge (scenario.GuardBridgeChecked) runs at PTR-PLAN-02: every AC of the bound REQ reaches a rule via FR source_refs (with branches), or carries an endorsed N/A (NFR id / §A4). With no module packages at all, only fully N/A-endorsed REQs pass — an AC pointing at FR- with nothing citing it is a broken denominator.",
 	},
 	"contracts_checked": {
 		ID:    "contracts_checked",

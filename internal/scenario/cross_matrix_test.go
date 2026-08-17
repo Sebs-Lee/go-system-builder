@@ -73,3 +73,94 @@ func TestCaseIDPatternPinned(t *testing.T) {
 		t.Fatalf("lowercase case id must be rejected, got %v", err)
 	}
 }
+
+// bindREQ writes a minimal runtime + REQ fixture so the matrix's REQ joins
+// have a live denominator to check against.
+func bindREQ(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "docs/requirements"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	req := "# REQ-INV-001\n\n> 状态：locked\n\n| ID | 描述 | 指向 |\n|---|---|---|\n| FR-001 | screen investors | S-001 |\n"
+	if err := os.WriteFile(filepath.Join(root, "docs/requirements/REQ-INV-001.md"), []byte(req), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{
+		"lifecycle": map[string]any{"state": "planning", "phase": "design"},
+		"bound_req": map[string]any{"id": "REQ-INV-001", "path": "docs/requirements/REQ-INV-001.md"},
+	}
+	writeJSON(t, filepath.Join(root, ".claude/loop-state.json"), state)
+}
+
+// TestCrossMatrixJoinsBoundREQ pins the matrix↔model↔REQ joins: a cell may
+// not run parallel to the AC↔CASE chain.
+func TestCrossMatrixJoinsBoundREQ(t *testing.T) {
+	cell := func(extra map[string]any) map[string]any {
+		entry := map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001"}
+		for k, v := range extra {
+			entry[k] = v
+		}
+		return map[string]any{"module": "investor-workbench", "entries": []any{entry}}
+	}
+
+	cases := []struct {
+		name    string
+		matrix  map[string]any
+		wantErr string
+	}{
+		{"undeclared FR", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-INV-001/FR-999"}), "does not declare"},
+		{"foreign REQ", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-OTHER/FR-001"}), "bound REQ"},
+		{"branch rule never cites the cell", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-INV-001/FR-001"}), "never cites"},
+		{"trivial no-branch reason", cell(map[string]any{"no_branch_reason": "."}), "not a rationale"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newScenarioRoot(t, "investor-workbench", "ordinary")
+			bindREQ(t, root)
+			writeCrossMatrix(t, root, "investor-workbench", tc.matrix)
+			_, err := scenario.GenerateModule(root, "investor-workbench")
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+
+	t.Run("cited FR-level cell passes", func(t *testing.T) {
+		root := newScenarioRoot(t, "investor-workbench", "ordinary")
+		bindREQ(t, root)
+		model := loadModel(t, root)
+		model["rules"].([]any)[0].(map[string]any)["source_refs"] = []any{"REQ-INV-001/FR-001"}
+		writeModel(t, root, model)
+		writeCrossMatrix(t, root, "investor-workbench", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-INV-001/FR-001"}))
+		if _, err := scenario.GenerateModule(root, "investor-workbench"); err != nil {
+			t.Fatalf("cell joining a citing rule must pass, got %v", err)
+		}
+	})
+}
+
+// TestCrossMatrixCompletenessFloor pins the hunt floor: silence is not coverage.
+func TestCrossMatrixCompletenessFloor(t *testing.T) {
+	t.Run("unhunted story", func(t *testing.T) {
+		root := newScenarioRoot(t, "investor-workbench", "ordinary")
+		if err := os.WriteFile(filepath.Join(root, "docs/design/prototypes", "investor-workbench", "stories.md"), []byte("# Stories\n\n## S-001\n\n## S-002\n\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := scenario.GenerateModule(root, "investor-workbench"); err == nil || !strings.Contains(err.Error(), "never hunts story") {
+			t.Fatalf("unhunted story must fail, got %v", err)
+		}
+	})
+	t.Run("unhunted fact", func(t *testing.T) {
+		root := newScenarioRoot(t, "investor-workbench", "ordinary")
+		model := loadModel(t, root)
+		model["facts"] = append(model["facts"].([]any), map[string]any{
+			"id": "fact-unhunted", "partitions": []any{map[string]any{"id": "any", "value": "any"}},
+		})
+		writeModel(t, root, model)
+		if _, err := scenario.GenerateModule(root, "investor-workbench"); err == nil || !strings.Contains(err.Error(), "never hunts fact") {
+			t.Fatalf("unhunted fact must fail, got %v", err)
+		}
+	})
+}

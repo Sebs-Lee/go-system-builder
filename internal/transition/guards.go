@@ -12,6 +12,7 @@ package transition
 
 import (
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"os"
 	"path/filepath"
@@ -206,6 +207,7 @@ func InitGuardRegistry() {
 		// guardUIIImpactResolvedFn). The seven entries that used to live under
 		// "Planning phase." in this block are deleted (see comment above).
 		"ui_impact_resolved": guardUIIImpactResolvedFn,
+		"scenario_bridge_checked": guardScenarioBridgeCheckedFn,
 	}
 	semanticChecks := map[string]bool{
 		"no_other_active_loop": true, "resume_checkpoint_valid": true,
@@ -214,7 +216,7 @@ func InitGuardRegistry() {
 		"no_invalidated_pass_evidence": true, "no_open_blocking_bugs": true,
 		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
 		"planning_complete": true, "all_targeted_reverification_passed": true,
-		"ui_impact_resolved": true,
+		"ui_impact_resolved": true, "scenario_bridge_checked": true,
 		// REQ-003 TASK-003-C: the three angle_complete guards run semantic
 		// checks against on-disk angle_declaration + team_manifest evidence
 		// (FR-002 + FR-003 + FR-004 + FR-010). They are not declarative
@@ -339,8 +341,25 @@ func guardContractsCheckedFn(state map[string]any, _ map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("contracts_checked: %w", err)
 	}
+	if result.Contracts == 0 {
+		return fmt.Errorf("contracts_checked: no contracts found under docs/contracts — the contracts stage produced nothing; write the contracts before advancing planning")
+	}
 	if len(result.Problems) > 0 {
 		return fmt.Errorf("contracts_checked: %d problem(s): %s", len(result.Problems), strings.Join(result.Problems, "; "))
+	}
+	return nil
+}
+
+// guardScenarioBridgeCheckedFn runs the S2 AC↔CASE bridge at PTR-PLAN-02
+// evaluation — the single-denominator rule made a natural-path gate instead
+// of a voluntary `scenario bridge` invocation (D2).
+func guardScenarioBridgeCheckedFn(state map[string]any, _ map[string]string) error {
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	if err := scenario.GuardBridgeChecked(root); err != nil {
+		return fmt.Errorf("scenario_bridge_checked: %w", err)
 	}
 	return nil
 }

@@ -396,7 +396,7 @@ func SeedDocumentPassS5(t *testing.T, root string, state map[string]any, specAge
 		{"REQ-039", "req", "docs/requirements/REQ-039-loop-control-plane.md", "v2.0.0", []byte("# REQ-039\n")},
 		{"ARCH-039", "design", "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "v2.0.2", []byte("# ARCH\n")},
 		{"BE-039", "contract", "docs/contracts/BE-039-loop-controller.md", "v1.0.2", []byte("# BE\n")},
-		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK\n")},
+		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK-039-01\n\n> 状态：complete\n")},
 	}
 	var documents []any
 	var subjects []any
@@ -564,7 +564,7 @@ func SeedDocumentFixRequired(t *testing.T, root string, state map[string]any, sp
 		{"REQ-039", "req", "docs/requirements/REQ-039-loop-control-plane.md", "v2.0.0", []byte("# REQ-039\n")},
 		{"ARCH-039", "design", "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "v2.0.2", []byte("# ARCH\n")},
 		{"BE-039", "contract", "docs/contracts/BE-039-loop-controller.md", "v1.0.2", []byte("# BE\n")},
-		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK\n")},
+		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK-039-01\n\n> 状态：complete\n")},
 	}
 	var documents []any
 	var subjects []any

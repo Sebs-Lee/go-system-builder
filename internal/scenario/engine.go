@@ -42,6 +42,7 @@ type sourcePackage struct {
 	crossMatrixByte []byte
 	stories         []byte
 	flows           []byte
+	root            string
 }
 
 // GenerateModule validates the module's source package and atomically writes
@@ -184,15 +185,15 @@ func loadSourcePackage(root, module string) (sourcePackage, error) {
 	source := sourcePackage{
 		directory: directory, model: model, fixtures: fixtures, crossMatrix: crossMatrix,
 		modelBytes: modelBytes, fixtureBytes: fixtureBytes, crossMatrixByte: crossMatrixBytes,
-		stories: stories, flows: flows,
+		stories: stories, flows: flows, root: root,
 	}
-	if err := validateSource(source, module); err != nil {
+	if err := validateSource(source, module, root); err != nil {
 		return sourcePackage{}, err
 	}
 	return source, nil
 }
 
-func validateSource(source sourcePackage, module string) error {
+func validateSource(source sourcePackage, module string, root string) error {
 	if source.model.Module != module || source.fixtures.Module != module {
 		return fmt.Errorf("module mismatch: expected %q", module)
 	}
@@ -202,7 +203,7 @@ func validateSource(source sourcePackage, module string) error {
 	if !validProfile(source.model.CoverageProfile) {
 		return fmt.Errorf("unsupported coverage_profile %q", source.model.CoverageProfile)
 	}
-	if err := validateCrossMatrix(source); err != nil {
+	if err := validateCrossMatrix(source, root); err != nil {
 		return err
 	}
 	idRegistry := map[string]string{}
@@ -386,7 +387,7 @@ func validateRatio(profile string, positive, negative int) error {
 }
 
 func buildOutputs(source sourcePackage) (builtOutputs, error) {
-	if err := validateSource(source, source.model.Module); err != nil {
+	if err := validateSource(source, source.model.Module, source.root); err != nil {
 		return builtOutputs{}, err
 	}
 	var cases []Case

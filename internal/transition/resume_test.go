@@ -34,7 +34,6 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 		"phase_revision":           float64(1),
 		"baseline_generation":      float64(1),
 		"review_round":             float64(1),
-		"entity_snapshot_revision": float64(0),
 		"reason":                   "test",
 		"required_human_action":    "test",
 		"document_fingerprints": []any{
@@ -44,12 +43,12 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 				"sha256":  "deadbeef0000000000000000000000000000000000000000000000000000ffff",
 			},
 		},
-		"committed_idempotency_keys": []string{},
 		"paused_at":                  "2026-01-01T00:00:00Z",
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 	})
+	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_resume:loop-test@5")
 	writeFullState(t, root, state)
 
 	// TR-019 should fail because the REQ file hash does not match the recorded fingerprint.
@@ -85,7 +84,6 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 		"phase_revision":           float64(1),
 		"baseline_generation":      float64(1),
 		"review_round":             float64(1),
-		"entity_snapshot_revision": float64(0),
 		"reason":                   "test",
 		"required_human_action":    "test",
 		"document_fingerprints": []any{
@@ -95,12 +93,12 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 				"sha256":  realSHA,
 			},
 		},
-		"committed_idempotency_keys": []string{},
 		"paused_at":                  "2026-01-01T00:00:00Z",
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
 	})
+	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_resume:loop-test@5")
 	writeFullState(t, root, state)
 
 	err := applyT(t, root, "TR-019", 5, "user", map[string]string{

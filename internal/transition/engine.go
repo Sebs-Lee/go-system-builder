@@ -2,6 +2,7 @@ package transition
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -298,6 +299,7 @@ func resolveCatalog(catalog *Catalog, id, currentState string, currentPhase any)
 			ID: global.ID, Event: global.Event, To: global.To, Actors: global.Actors,
 			Guards: global.Guards, Actions: global.Actions, RequiredEvidence: global.RequiredEvidence,
 			OnGuardFailure: global.OnGuardFailure, Description: global.Description,
+			HumanDecisionScope: global.HumanDecisionScope,
 		}, Global: true, FromStates: append([]string(nil), global.FromStates...)}, nil
 	}
 	return resolvedTransition{}, fmt.Errorf("unknown transition %q", id)
@@ -337,8 +339,17 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 	if spec.ID == "TR-020" && request.REQ == nil {
 		return fmt.Errorf("TR-020 requires the amended locked REQ metadata")
 	}
+	if spec.HumanDecisionScope != "" {
+		if err := validateHumanDecisionScope(state, spec, request); err != nil {
+			return fmt.Errorf("transition %s: %w", spec.ID, err)
+		}
+	}
 	return nil
 }
+
+// ErrBaselineDrift marks the resume path's fingerprint-drift refusal so
+// callers can route to amendment with errors.Is instead of string matching.
+var ErrBaselineDrift = errors.New("baselines_unchanged")
 
 func generatedEvidenceKind(kind string) bool {
 	return evidence.DefaultCatalog().IsGenerated(kind)
@@ -410,6 +421,59 @@ func validateCurrentEvidence(root string, state map[string]any, requiredKind, re
 
 func allowedEvidenceKinds(required string) []string {
 	return evidence.DefaultCatalog().AcceptedKinds(required)
+}
+
+// validateHumanDecisionScope enforces that a human-boundary transition's
+// human_decision evidence is scoped to exactly this verb, runtime, and
+// revision (`<scope>:<runtime_id>@<revision>` — the revision the evidence
+// became current, which is the state this transition applies to). One
+// approval therefore cannot be replayed after the revision moves or be
+// reused as a different verb — the transition-layer counterpart of
+// runtime.validateLifecycleApproval.
+func validateHumanDecisionScope(state map[string]any, spec TransitionSpec, request Request) error {
+	runtimeID, _ := state["runtime_id"].(string)
+	revision := integer(state["revision"])
+	expected := fmt.Sprintf("%s:%s@%d", spec.HumanDecisionScope, runtimeID, revision)
+	items, _ := state["evidence"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item == nil || item["kind"] != "human_decision" || item["status"] != "valid" {
+			continue
+		}
+		idRef, _ := item["id"].(string)
+		pathRef, _ := item["path"].(string)
+		cited := false
+		for _, value := range request.Evidence {
+			if value == idRef || value == pathRef {
+				cited = true
+				break
+			}
+		}
+		if !cited {
+			continue
+		}
+		if containsString(toStringSlice(item["scope_refs"]), expected) {
+			return nil
+		}
+		return fmt.Errorf("human_decision evidence %q must be scoped to %q — record the decision with the matching lifecycle verb (e.g. `runtime pause/resume`, `req amend`, or `runtime human-decision`) so one approval authorizes exactly one verb at one revision", idRef, expected)
+	}
+	return fmt.Errorf("transition %s cites no current human_decision evidence; the decision must be registered and scoped to %q", spec.ID, expected)
+}
+
+func toStringSlice(value any) []string {
+	switch values := value.(type) {
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, raw := range values {
+			if s, _ := raw.(string); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		return []string{values}
+	}
+	return nil
 }
 
 func dispatchAction(name string, results []map[string]any, state map[string]any, ctx *ActionContext) error {
@@ -629,6 +693,9 @@ func versionStrictlyGreater(a, b string) (greater, parseable bool) {
 				if r < '0' || r > '9' {
 					return nil, false
 				}
+				if n > (1<<31-1)/10 {
+					return nil, false // numeric field would overflow — not a real version
+				}
 				n = n*10 + int(r-'0')
 			}
 			nums = append(nums, n)
@@ -845,14 +912,7 @@ func capturePauseCheckpoint(state map[string]any, resolved resolvedTransition, o
 		reviewRound = integer(review["round"])
 	}
 
-	entities, _ := state["entities"].(map[string]any)
-	entitySnapshotRevision := 0
-	if entities != nil {
-		entitySnapshotRevision = len(asEntityArray(entities))
-	}
-
 	documents := documentFingerprints(state)
-	keys := committedIdempotencyKeys(state)
 
 	state["pause"] = map[string]any{
 		"from_state":                 fromState,
@@ -860,11 +920,9 @@ func capturePauseCheckpoint(state map[string]any, resolved resolvedTransition, o
 		"phase_revision":             phaseRevision,
 		"baseline_generation":        baselineGeneration,
 		"review_round":               reviewRound,
-		"entity_snapshot_revision":   entitySnapshotRevision,
 		"reason":                     resolved.Spec.Description,
 		"required_human_action":      pauseRequiredAction(fromState),
 		"document_fingerprints":      documents,
-		"committed_idempotency_keys": keys,
 		"paused_at":                  occurredAt.UTC().Format(time.RFC3339Nano),
 	}
 	return nil
@@ -901,13 +959,13 @@ func restoreFromPauseAction(root string, state map[string]any) error {
 		}
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
-			return fmt.Errorf("baselines_unchanged: cannot read %s: %w", path, err)
+			return fmt.Errorf("%w: cannot read %s: %w", ErrBaselineDrift, path, err)
 		}
 		actualSHA := fmt.Sprintf("%x", sha256.Sum256(data))
 		if actualSHA != expectedSHA {
 			return fmt.Errorf(
-				"baselines_unchanged: %s fingerprint drifted (pause recorded %s, actual %s)",
-				path, expectedSHA[:12], actualSHA[:12])
+				"%w: %s fingerprint drifted (pause recorded %s, actual %s)",
+				ErrBaselineDrift, path, expectedSHA[:12], actualSHA[:12])
 		}
 	}
 	state["pause"] = nil
@@ -1029,27 +1087,6 @@ func documentFingerprints(state map[string]any) []any {
 		})
 	}
 	return out
-}
-
-func committedIdempotencyKeys(state map[string]any) []string {
-	last, ok := state["last_transition"].(map[string]any)
-	if !ok {
-		return []string{}
-	}
-	if key, _ := last["idempotency_key"].(string); key != "" {
-		return []string{key}
-	}
-	return []string{}
-}
-
-func asEntityArray(entities map[string]any) []any {
-	var combined []any
-	for _, key := range []string{"agents", "tasks", "bugs", "teams"} {
-		if arr, ok := entities[key].([]any); ok {
-			combined = append(combined, arr...)
-		}
-	}
-	return combined
 }
 
 func pauseRequiredAction(fromState string) string {

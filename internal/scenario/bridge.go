@@ -195,3 +195,33 @@ func listModules(root string) ([]string, error) {
 	}
 	return modules, nil
 }
+
+// GuardBridgeChecked is the PTR-PLAN-02 mount of the AC↔CASE bridge (D2:
+// the check rides the planning advance, not a voluntary command). When
+// module packages exist the full bridge runs. When the prototypes root is
+// absent entirely, only a REQ whose every AC is endorsed N/A (or that has
+// no ACs) may pass — an AC pointing at FR- with no packages to cite it is
+// a broken denominator, not a boundary case.
+func GuardBridgeChecked(root string) error {
+	if _, err := listModules(root); err != nil {
+		bound, ok := readBoundREQ(root)
+		if !ok {
+			return nil
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path)))
+		if err != nil {
+			return fmt.Errorf("ac bridge: read bound REQ %s: %w", bound.Path, err)
+		}
+		_, acRows, _ := parseREQTables(string(data))
+		for _, ac := range acRows {
+			if strings.HasPrefix(strings.TrimSpace(ac.Target), "FR-") {
+				return fmt.Errorf("ac bridge: %s points at %s but no module packages exist under docs/design/prototypes — build the S2 package or endorse the N/A (NFR id / §A4); silence is not N/A", ac.ID, strings.TrimSpace(ac.Target))
+			}
+		}
+		return nil
+	}
+	if _, err := RunBridge(root, true); err != nil {
+		return err
+	}
+	return nil
+}

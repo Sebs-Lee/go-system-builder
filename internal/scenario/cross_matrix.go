@@ -3,7 +3,12 @@ package scenario
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // CrossMatrix is the convergence-1 carrier: the fact×FR×story completeness
@@ -39,9 +44,12 @@ func decodeCrossMatrix(data []byte) (CrossMatrix, error) {
 }
 
 // validateCrossMatrix checks that every hunted cell points at real package
-// facts, stories, and branches, and that a reason is recorded exactly when
-// no branch covers the cell.
-func validateCrossMatrix(source sourcePackage) error {
+// facts, stories, and branches, that a reason is recorded exactly when no
+// branch covers the cell, that the named branch's rule actually cites the
+// cell's REQ/FR reference (the matrix joins the AC↔CASE chain instead of
+// running parallel to it), and that the hunt has a completeness floor: every
+// fact and every story must appear in at least one cell.
+func validateCrossMatrix(source sourcePackage, root string) error {
 	matrix := source.crossMatrix
 	if matrix.Module != source.model.Module {
 		return fmt.Errorf("cross-matrix.json module %q does not match scenario-model module %q", matrix.Module, source.model.Module)
@@ -53,12 +61,27 @@ func validateCrossMatrix(source sourcePackage) error {
 	for _, fact := range source.model.Facts {
 		factIDs[fact.ID] = true
 	}
-	branchIDs := map[string]bool{}
+	branchRule := map[string]Rule{}
 	for _, rule := range source.model.Rules {
 		for _, branch := range rule.Branches {
-			branchIDs[branch.ID] = true
+			branchRule[branch.ID] = rule
 		}
 	}
+	// The bound REQ's FR table is the join target for FR-level cells; without
+	// a bound REQ (template fixtures) the table join degrades to shape-only.
+	frIDs := map[string]bool{}
+	reqID := ""
+	if bound, ok := readBoundREQ(root); ok {
+		reqID = bound.ID
+		if data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path))); err == nil {
+			rows, _, _ := parseREQTables(string(data))
+			for _, row := range rows {
+				frIDs[row.ID] = true
+			}
+		}
+	}
+	coveredFacts := map[string]bool{}
+	coveredStories := map[string]bool{}
 	seen := map[string]bool{}
 	for i, entry := range matrix.Entries {
 		cell := fmt.Sprintf("entry %d (fact=%s req_ref=%s story=%s)", i, entry.Fact, entry.ReqRef, entry.Story)
@@ -70,20 +93,85 @@ func validateCrossMatrix(source sourcePackage) error {
 		if !factIDs[entry.Fact] {
 			return fmt.Errorf("cross-matrix %s references unknown fact %q", cell, entry.Fact)
 		}
+		coveredFacts[entry.Fact] = true
 		if !crossMatrixReqRefPattern.MatchString(entry.ReqRef) {
 			return fmt.Errorf("cross-matrix %s req_ref %q must be REQ-<id> or REQ-<id>/FR-<id>", cell, entry.ReqRef)
+		}
+		if reqID != "" {
+			if refREQ := entry.ReqRef; refREQ != reqID && !strings.HasPrefix(refREQ, reqID+"/") {
+				return fmt.Errorf("cross-matrix %s req_ref %q does not reference the bound REQ %s — the matrix must join the bound requirement's denominator", cell, entry.ReqRef, reqID)
+			}
+			if frID, _, ok := splitFRRef(entry.ReqRef); ok && len(frIDs) > 0 && !frIDs[frID] {
+				return fmt.Errorf("cross-matrix %s req_ref %q names FR %q which the bound REQ's FR table does not declare", cell, entry.ReqRef, frID)
+			}
 		}
 		if !storyRefPattern.MatchString(entry.Story) || !markdownHeadingContainsID(source.stories, entry.Story) {
 			return fmt.Errorf("cross-matrix %s references story %q missing from stories.md", cell, entry.Story)
 		}
+		coveredStories[entry.Story] = true
 		switch {
 		case entry.Branch == "" && entry.NoBranchReason == "":
 			return fmt.Errorf("cross-matrix %s names neither a branch nor a no-branch reason — silence is not N/A", cell)
 		case entry.Branch != "" && entry.NoBranchReason != "":
 			return fmt.Errorf("cross-matrix %s sets both branch and no-branch reason", cell)
-		case entry.Branch != "" && !branchIDs[entry.Branch]:
+		case entry.Branch != "" && branchRule[entry.Branch].ID == "":
 			return fmt.Errorf("cross-matrix %s references unknown branch %q", cell, entry.Branch)
+		case entry.Branch != "":
+			rule := branchRule[entry.Branch]
+			if !ruleCitesReqRef(rule, entry.ReqRef) {
+				return fmt.Errorf("cross-matrix %s names branch %q but its rule %q never cites %q in source_refs — the matrix must join the model, not assert alongside it", cell, entry.Branch, rule.ID, entry.ReqRef)
+			}
+		default:
+			if reason := strings.TrimSpace(entry.NoBranchReason); utf8.RuneCountInString(reason) < 8 || !strings.ContainsFunc(reason, unicode.IsLetter) {
+				return fmt.Errorf("cross-matrix %s no_branch_reason %q is not a rationale — a real reason names the why (at least 8 characters with a letter); free-word escapes are not endorsed N/A", cell, entry.NoBranchReason)
+			}
+		}
+	}
+	for _, fact := range source.model.Facts {
+		if !coveredFacts[fact.ID] {
+			return fmt.Errorf("cross-matrix never hunts fact %q — every declared fact must appear in at least one cell (silence is not coverage)", fact.ID)
+		}
+	}
+	for _, story := range storyIDsFromHeadings(source.stories) {
+		if !coveredStories[story] {
+			return fmt.Errorf("cross-matrix never hunts story %q — every story must appear in at least one cell (silence is not coverage)", story)
 		}
 	}
 	return nil
 }
+
+// splitFRRef splits "REQ-040/FR-003" into ("FR-003", "REQ-040", true);
+// REQ-level references return ok=false.
+func splitFRRef(ref string) (fr, req string, ok bool) {
+	parts := strings.SplitN(ref, "/", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[1], parts[0], true
+}
+
+// ruleCitesReqRef reports whether the rule's source_refs cite the cell's
+// reference: an FR-level ref must be cited exactly; a REQ-level ref is
+// satisfied by any FR of that REQ.
+func ruleCitesReqRef(rule Rule, ref string) bool {
+	for _, cited := range rule.SourceRefs {
+		if cited == ref {
+			return true
+		}
+		if _, req, isFR := splitFRRef(ref); !isFR && strings.HasPrefix(cited, req+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// storyIDsFromHeadings extracts S-nnn ids from stories.md headings.
+func storyIDsFromHeadings(data []byte) []string {
+	var ids []string
+	for _, match := range storyHeadingPattern.FindAllStringSubmatch(string(data), -1) {
+		ids = append(ids, match[1])
+	}
+	return ids
+}
+
+var storyHeadingPattern = regexp.MustCompile(`(?m)^#{1,6}\s+(S-[0-9]{3})\b`)

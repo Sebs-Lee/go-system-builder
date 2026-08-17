@@ -1600,11 +1600,9 @@
         "phase_revision",
         "baseline_generation",
         "review_round",
-        "entity_snapshot_revision",
         "reason",
         "required_human_action",
         "document_fingerprints",
-        "committed_idempotency_keys",
         "paused_at"
       ],
       "properties": {
@@ -1630,10 +1628,6 @@
           "type": "integer",
           "minimum": 0
         },
-        "entity_snapshot_revision": {
-          "type": "integer",
-          "minimum": 0
-        },
         "reason": {
           "type": "string",
           "minLength": 1
@@ -1646,13 +1640,6 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/fingerprintedReference"
-          }
-        },
-        "committed_idempotency_keys": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string"
           }
         },
         "paused_at": {
