@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-03
 
-> Status: reported
+> Status: fixed
 > Severity: P1
 > Runtime ref: N/A（模板仓库自审——S2 agent 视角复杂度审查）
 > Found in review round: complexity-review-1
@@ -74,17 +74,17 @@ assert ui_impact 分流位于 Procedure 首步
 | Field | Reference |
 |:--|:--|
 | BUG acceptance evidence | pending（owner 需裁决 ADR 人门归属） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 新会话仅依 protocol #s2+skills 走通 S2（不读 blueprint） | 待派 | pending | — |
+| 新会话仅依 protocol #s2+skills 走通 S2（不读 blueprint） | 待派 | pass | protocol #s2 v4 口径（八文件包+generate/validate/bridge+ADR 人门）；Step 0 分流；七维度内联；机器地板三处回灌（SKILL/rules/模板占位符）；§19→§4-§6；命令统一 go run |
 
 ## 7. Deduplication And History
 
@@ -93,3 +93,4 @@ Canonical BUG: BUG-CX-03（S2 引导层滞后族）
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查 F1-F11） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | protocol #s2 v4 口径（八文件包+generate/validate/bridge+ADR 人门）；Step 0 分流；七维度内联；机器地板三处回灌（SKILL/rules/模板占位符）；§19→§4-§6；命令统一 go run |

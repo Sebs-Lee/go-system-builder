@@ -20,7 +20,9 @@
 2. **词汇无单一居所**（CX-01 的 stage 引导三处、CX-03 的 oracle 七字段三处、CX-04 的双 locked）：引导与术语分散多处必然漂移。建议：每个机器契约词汇（Status 三词/locked 双义/七维度/S-NNN 位数）在 rules 或模板定一个 normative 居所，其余位置只留锚点。
 3. **报错即文档没有标准**（CX-06）：建议把 cross_matrix.go 的文案水准（为什么红+往哪修）写成一条 checklist 进 L3-README 或贡献纪律。
 
-## 建议修复顺序
+> **2026-08-17 修复状态**：owner 全部接受后同批修复完毕，六份 BUG 均为 fixed（机器项附测试钉住：冷启动投影/§n 漂移/非 TASK 依赖/UI impact 不一致/rebind 指路）；全量测试 + validate --all + doctor 绿。三个系统性根因的防复发建制（机检落地三处同步说明/词汇 normative 居所/文案 checklist）留待下一轮 L3-README 修订时并入。
+
+## 建议修复顺序（已执行完毕，留档）
 
 1. BUG-CX-04 的死锁路径（①）+ BUG-CX-01 的冷启动死路——两个"卡死"先修；
 2. BUG-CX-02（落锁手势——S0 进口）；

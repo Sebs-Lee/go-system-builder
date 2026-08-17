@@ -333,7 +333,7 @@ func validateBranch(branch Branch, rule Rule, partitions map[string]map[string]s
 		return fmt.Errorf("references unknown fixture %q", branch.FixtureID)
 	}
 	if len(branch.StoryRefs) == 0 || len(branch.FlowRefs) == 0 {
-		return fmt.Errorf("story_refs and flow_refs must not be empty")
+		return fmt.Errorf("story_refs and flow_refs must not be empty — story_refs needs at least one S-NNN (exactly three digits) and flow_refs needs at least one F-NNN and one PATH-* entry")
 	}
 	for _, ref := range branch.StoryRefs {
 		if !storyRefPattern.MatchString(ref) || !markdownHeadingContainsID(stories, ref) {
@@ -346,7 +346,7 @@ func validateBranch(branch Branch, rule Rule, partitions map[string]map[string]s
 		}
 	}
 	if branch.BrowserRequired && !hasPathReference(branch.FlowRefs) {
-		return fmt.Errorf("browser-required branch must reference at least one PATH")
+		return fmt.Errorf("browser-required branch must reference at least one PATH-* entry in flow_refs (the Playwright route the case walks)")
 	}
 	if err := validateCommonOracle(branch.Oracle); err != nil {
 		return err

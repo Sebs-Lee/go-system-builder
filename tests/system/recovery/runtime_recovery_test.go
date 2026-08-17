@@ -319,7 +319,7 @@ func TestRuntimeRecoveryPlanReplaysTrustedPlanningEvidence(t *testing.T) {
 	// The batch-quality guard (tasks_checked) resolves the primary contract on
 	// disk and reconciles it against the index clause cell (L3-S4 v4.0.1).
 	writeRecoveryFile(t, root, "docs/contracts/BE-039-RECOVERY.md",
-		"# BE-039-RECOVERY\n\n> REQ: REQ-039\n> Status: locked\n> Version: v1.0.0\n")
+		"# BE-039-RECOVERY\n\n> REQ: REQ-039\n> Status: locked\n> Version: v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
 
 	planPath := createRecoveryPlan(t, root)
 	plan := readJSON(t, planPath)

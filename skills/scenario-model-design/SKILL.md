@@ -7,7 +7,7 @@ description: Use when S2 defines or changes a module's facts, business-rule bran
 ## Authority
 
 Use `docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md`
-§19 and `docs/rules/scenario-model.md`. The locked business rule is the oracle
+§4–§6 and `docs/rules/scenario-model.md`. The locked business rule is the oracle
 source. A REQ is a `source_refs` input, never the owner of a case, story, flow,
 prototype, fixture, or Playwright copy. Stage legality stays with the Loop
 Definition; this Skill only defines the scenario design practice.
@@ -79,9 +79,25 @@ may identify a review round because they record an execution fact.
 
 ## Quality Criteria
 
-Require every parent rule to declare its `risk`, and every branch to declare
+Require every parent rule to declare its `risk` (a short free-text phrase
+naming what makes this rule risky, e.g. `"money is involved"`,
+`"third-party API flakiness"` — it is orthogonal to `coverage_profile`,
+do not copy profile names into it), and every branch to declare
 `case_id`, `title`, `polarity`, `required`, `witness`, `oracle`, `fixture_id`,
-`story_refs`, `flow_refs`, and `browser_required`. Also require deterministic
+`story_refs`, `flow_refs`, and `browser_required`.
+
+Oracle field semantics (what each field asserts, and who consumes it — the
+S5 oracle-independence check and S7 Playwright assertions):
+
+| Field | Write what | Applies to |
+|:--|:--|:--|
+| `visible` | the observable checkpoint(s) on the page/output that prove the outcome (UI selector or any observable output for non-UI modules) | all branches |
+| `terminal_state` | the end state the system must be in (e.g. `"submitted"`) | all branches |
+| `persisted_effects` | the business results that must exist afterwards (e.g. `"filing-created"`) — assertions, not narrations | all branches |
+| `forbidden_side_effects` | what must provably NOT have happened (e.g. `"duplicate-filing"`) | all branches |
+| `rejection` | the stable rejection reason/code the user/system sees | negative branches |
+| `expected_state` | the state the system settles into after the rejection (e.g. `"draft"`) — distinct from `terminal_state`, which describes the positive path | negative branches |
+| `recovery` | how the user recovers from the rejection (e.g. `"select-institutional"`) | negative branches | Also require deterministic
 current outputs, explicit positive and negative witnesses, 100% required
 allow/reject branch coverage, the configured polarity ratio, complete
 CASE/Story/PATH/spec traceability, synthetic isolated fixtures, and full-module

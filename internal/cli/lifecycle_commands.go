@@ -400,7 +400,7 @@ func runREQAmend(args []string, stdout, stderr io.Writer) int {
 	version := markdownField(string(data), "版本", "Version")
 	status := markdownField(string(data), "状态", "Status")
 	if status != "locked" || version == "" {
-		fmt.Fprintln(stderr, "req amend: amended REQ must declare locked status and version")
+		fmt.Fprintln(stderr, "req amend: the amended REQ top blockquote must declare `状态：locked` (or `Status: locked`) and `版本：<semver>` — see docs/requirements/REQ-template.md")
 		return 1
 	}
 	id := strings.TrimSuffix(filepath.Base(*reqPath), filepath.Ext(*reqPath))

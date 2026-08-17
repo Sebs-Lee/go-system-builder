@@ -292,7 +292,7 @@ func guardAllTargetedReverificationPassedFn(state map[string]any, evidence map[s
 
 // guardUIIImpactResolvedFn is the SM-003 guard (LOOP-STATE-MACHINE.md §15):
 // once `req bind` registers a REQ with `ui_impact = unknown`, planning must
-// pause until PM clarifies the value in §11 of the REQ. The guard is
+// pause until PM clarifies the value in the REQ's §D (待澄清). The guard is
 // state-derived (it inspects bound_req.metadata.ui_impact directly) and is
 // wired into the registry as `ui_impact_resolved`. Loop-Definition wiring
 // is a follow-on human-decision change.
@@ -424,7 +424,16 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		hasLockedContract = true
 	}
 	if !hasLockedContract {
-		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — run PTR-PLAN-02 (contracts→tasks) first; it registers contracts, TR-002 does not scan filenames", generation)
+		// Phase-aware routing (BUG-CX-04): from the contracts phase the
+		// PTR-PLAN-02 transition is the natural next PreToolUse advance;
+		// from the tasks phase it has already fired and cannot re-fire —
+		// the actionable gap there is the contract file's own Status field.
+		if lifecycle, _ := state["lifecycle"].(map[string]any); lifecycle != nil {
+			if phase, _ := lifecycle["phase"].(string); phase == "tasks" {
+				return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 already advanced past contracts; flip the contract markdown Status to `locked` (a finalized contract declares locked at authoring time, see docs/agent-protocol.md#s3) and the next PreToolUse re-runs the registration", generation)
+			}
+		}
+		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 (contracts→tasks) fires on the next PreToolUse and registers contracts whose markdown Status is `locked` (see docs/agent-protocol.md#s3); TR-002 does not scan filenames", generation)
 	}
 	_, _, problems, err := semantic.TaskBatchComplete(root)
 	if err != nil {

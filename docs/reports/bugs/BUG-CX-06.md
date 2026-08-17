@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-06
 
-> Status: reported
+> Status: fixed
 > Severity: P2
 > Runtime ref: N/A（模板仓库自审——S1/S2 报错指路与静默行为族）
 > Found in review round: complexity-review-1
@@ -67,18 +67,18 @@ assert scenario bridge skipped 输出含 "SKIPPED" 且 S2 close 语境非 exit 0
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 全部接受（2026-08-17） |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 报错文案核对清单逐条过 | 待派 | pending | — |
+| 报错文案核对清单逐条过 | 待派 | pass | locked 报错指路；rebind 指路 amend/unbind（TestREQBindAlreadyBoundRoutesToAmendOrUnbind）；reconcile 子命令全名；bridge SKIPPED(not PASS)；bridge/反向闭合/engine 文案指路；guards §D 注释；S-NNN 三位入 rules；paused 三出口投影 |
 
 ## 7. Deduplication And History
 
@@ -87,3 +87,4 @@ Canonical BUG: BUG-CX-06（报错指路与静默行为族）
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查 C1/C2/C4/C5 + S2 F12/F13/F15 + S3 A4/A6） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | locked 报错指路；rebind 指路 amend/unbind（TestREQBindAlreadyBoundRoutesToAmendOrUnbind）；reconcile 子命令全名；bridge SKIPPED(not PASS)；bridge/反向闭合/engine 文案指路；guards §D 注释；S-NNN 三位入 rules；paused 三出口投影 |

@@ -187,3 +187,20 @@ func TestREQListExcludesTerminatedArchiveAndAutoDiscoverySkipsIt(t *testing.T) {
 		t.Fatalf("ready-to-bind must point at the open REQ only: %q", out)
 	}
 }
+
+// TestREQBindAlreadyBoundRoutesToAmendOrUnbind pins BUG-CX-06: re-binding
+// while a REQ is actively bound must name the two legal routes instead of
+// the raw TR-001 source-state rejection.
+func TestREQBindAlreadyBoundRoutesToAmendOrUnbind(t *testing.T) {
+	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody, "REQ-099.md": lockedReqBody})
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"req", "bind", "--root", root, "--req", "docs/requirements/REQ-098.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("first bind failed: %s", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := cli.Run([]string{"req", "bind", "--root", root, "--req", "docs/requirements/REQ-099.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "already bound") || !strings.Contains(stderr.String(), "req amend") || !strings.Contains(stderr.String(), "req unbind") {
+		t.Fatalf("rebind must route to amend/unbind, got: %s", stderr.String())
+	}
+}

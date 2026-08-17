@@ -38,6 +38,7 @@ type taskDocument struct {
 	hasClose  bool
 	clauses   []string // expanded "{contract} §{n}"
 	deps      []string
+	problems  []string // parse-level problems surfaced by TasksCheck
 }
 
 // TasksCheck is S4's exit-side reconciliation. It runs as the tasks_checked
@@ -96,6 +97,7 @@ func TasksCheck(root string) (TaskCheckResult, error) {
 	deps := map[string][]string{}
 	for _, task := range tasks {
 		byID[task.id] = task
+		result.Problems = append(result.Problems, task.problems...)
 		if task.status == "cancelled" {
 			result.Cancelled++
 			continue
@@ -253,8 +255,16 @@ func loadTaskDocuments(root string) ([]*taskDocument, error) {
 			}
 		}
 		for _, row := range sectionTable(content, "Dependencies") {
-			if len(row) >= 1 && taskDepReference.MatchString(row[0]) {
-				task.deps = append(task.deps, row[0])
+			cell := strings.TrimSpace(row[0])
+			isMarker := cell == "" || cell == "Dependency" || cell == "TASK-{id}" || cell == "N/A" || cell == "—" || cell == "-" || strings.HasPrefix(cell, ":--")
+			if !isMarker {
+				if taskDepReference.MatchString(cell) {
+					task.deps = append(task.deps, cell)
+				} else {
+					// A silently-dropped dependency is a declared ordering
+					// the DAG never sees (BUG-CX-04): name it.
+					task.problems = append(task.problems, fmt.Sprintf("%s: dependency reference %q is not machine-tracked — only TASK-* ids join the DAG; write cross-task ordering as a TASK dependency or move it to the closing contract", task.id, cell))
+				}
 			}
 		}
 		tasks = append(tasks, task)

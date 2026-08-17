@@ -48,7 +48,11 @@ func runScenarioBridge(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if len(result.IgnoredEntries) > 0 {
-		fmt.Fprintln(stdout, strings.Join(result.IgnoredEntries, "; "))
+		// A skip is not a pass: without a bound REQ there is no denominator
+		// to check. In an S2 close context this is abnormal (the REQ must be
+		// bound before design starts) — say so loudly.
+		fmt.Fprintln(stdout, "AC bridge SKIPPED (not PASS) — "+strings.Join(result.IgnoredEntries, "; "))
+		fmt.Fprintln(stdout, "if you are closing S2, a bound REQ is expected: `req list` then `req bind` before re-running the bridge")
 		return 0
 	}
 	fmt.Fprintf(stdout, "AC bridge (source stage): REQ %s — %d criteria, %d reach FR→CASE, %d endorsed N/A\n", result.REQ, result.TotalAC, result.ReachedCases, result.EndorsedNA)

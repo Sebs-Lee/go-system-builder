@@ -81,7 +81,7 @@ performs recovery. This pair is the compact recovery protocol.
 
 | ID | Stage | Primary skill | Anchor |
 |:---|:---|:---|:---|
-| S0 | requirement_design | — | `#s0` |
+| S0 | requirement_design | `requirement-funnel` | `#s0` |
 | S1 | initialize | `loop-orchestration` | `#s1` |
 | S2 | design | `specification-planning` | `#s2` |
 | S3 | contracts | `specification-planning` | `#s3` |
@@ -193,8 +193,8 @@ These hold across every stage:
 - **done_when**:
   - Runtime `bound_req.path` matches the locked REQ file
   - SHA-256 in Runtime matches the file on disk
-  - Main Spine cursor = S1
-  - the binding is journalled (TR-001 commit) and the state records event `req_bound`
+  - the bind confirmation output was printed (bound id/version/sha256, cursor, generation)
+  - the binding is journalled (TR-001 commit) and the state records event `req_bound` — the cursor advances directly to `planning.design`; a literal "S1" state is never observed (S1 is the bind action, not a residence)
 - **next**: S2. After binding records the required Runtime facts, the next `PreToolUse` reflects the Controller-established `planning.design` cursor; no manual transition CLI is needed.
 - **failure_route**: if doctor/validate fail, fix Loop Definition / Hook Policy / schema first; if a REQ is already bound, surface `req_amendment` or abort.
 - **human_gateway**: binding cannot proceed without a human-locked REQ and a human identity approver.
@@ -202,19 +202,21 @@ These hold across every stage:
 
 ## S2 — design {#s2}
 
-- **purpose**: produce the architecture decisions and, when UI impact is `changed`, the module prototype set (HTML + `stories.md` + `flows.md`).
-- **inputs**: locked REQ, existing architecture, existing module prototypes (if any), applicable design rules.
+- **purpose**: produce the architecture decisions and, when UI impact is `changed`, the module's eight-file scenario design package (the dual-track convergence of `skills: specification-planning`).
+- **inputs**: locked REQ, existing architecture, existing module packages (if any), applicable design rules (`docs/rules/scenario-model.md`).
 - **inputs_from**: [S0 (locked REQ), S1 (Runtime Bookmark + baseline generation 1)]
 - **actions**:
-  1. draft or update `docs/design/architecture/ARCHITECTURE-<id>.md`
-  2. if UI impact = `changed`: update the affected module's `stories.md`, `flows.md`, and page HTML files at `docs/design/prototypes/<module>/` to reflect the REQ target. The current implementation IS the baseline; no separate capture is required.
-  3. record decisions that the contracts will need (state, data, integration, migration)
+  1. draft or update `docs/design/architecture/ARCHITECTURE-<id>.md` (system track)
+  2. if UI impact = `changed`: run the dual-track convergence per `skills: specification-planning` — user track first lands `stories.md`; convergence-1 fills the hand-written `cross-matrix.json` carrier (fact×FR×story cells: covering branch or no-branch reason) and produces `scenario-model.json` + `fixture-contract.json`; convergence-2 lands `flows.md`, page HTML, and `index.html`. The current implementation IS the baseline; no separate capture is required.
+  3. at close: run `go run ./cmd/loop-harness scenario generate --module <module> --root .` then `scenario validate --module <module>` — validate runs the full AC↔CASE bridge
+  4. record decisions that the contracts will need (state, data, integration, migration)
 - **done_when**:
   - architecture document covers every decision the contract stage needs
-  - if UI impact = `changed`: the module prototype set (`index.html` + `stories.md` + `flows.md` + page HTML files) exists at `docs/design/prototypes/<module>/` with the 4-field header on every HTML file, `stories.md` carries ≥1 `S-NNN` entry citing its `REQ-id`, and `flows.md` carries ≥1 `F-NNN` entry citing its `REQ-id` (per `docs/rules/ui-prototype.md` §5/§6/§7)
+  - if UI impact = `changed`: the **eight-file package** exists at `docs/design/prototypes/<module>/` — `index.html` + page HTML files (4-field header per `docs/rules/ui-prototype.md` §5/§6/§7), `stories.md` (≥1 `S-NNN` citing its REQ-id), `flows.md` (≥1 `F-NNN` + `PATH-*`), `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`, plus the generated `cases.json` and `scenario-coverage.json`
+  - `scenario generate` + `scenario validate` exit green, and the AC↔CASE bridge reports every acceptance criterion of the bound REQ reached (or carrying an endorsed N/A: an NFR id or a §A4 negative-space pointer — free text is rejected)
 - **next**: S3. Produce any missing architecture/prototype deliverable and qualified design evidence; the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `PTR-PLAN-01` when satisfied.
-- **failure_route**: if a design decision changes REQ semantics, surface `req_amendment`; otherwise iterate the design document.
-- **human_gateway**: only `req_amendment` or `unrecoverable_business_decision`.
+- **failure_route**: if a design decision changes REQ semantics, surface `req_amendment`; otherwise iterate the design document. Bridge failures are S2 gaps even when they surface at S3's gate — return here.
+- **human_gateway**: `req_amendment`, `unrecoverable_business_decision`, and the ADR direction sign-off (the single S2 human gate of `skills: specification-planning` — the endorsed N/A list joins the same sign-off package).
 - **primary_skill**: `specification-planning`
 
 ## S3 — contracts {#s3}
@@ -224,9 +226,11 @@ These hold across every stage:
 - **inputs_from**: [S0 (locked REQ), S2 (architecture + module prototype set)]
 - **actions**:
   1. draft `docs/contracts/CONTRACTS-<id>.md` (index)
-  2. draft `BE-<id>.md`, `FE-<id>.md` (if UI), `SYNC-<id>.md`
+  2. draft the contracts in order `FE-<id>.md` → `BE-<id>.md` → `SYNC-<id>.md` (FE first: its API expectations feed BE and SYNC)
   3. ensure contracts jointly cover every REQ acceptance criterion
   4. add bottom-up references and a coverage matrix
+  5. run `go run ./cmd/loop-harness contracts check --root .` — token references, clause cells, and fingerprint columns are machine-reconciled at PTR-PLAN-02; fix any flagged cell before advancing
+  6. on finalization, set each contract file's top `Status` field to `locked` — PTR-PLAN-02's registration action only registers locked contracts (a draft at that point registers nothing and TR-002 will refuse)
 - **done_when**:
   - the contract set covers the entire REQ
   - every contract has stability metadata (status, version, owner)
@@ -279,7 +283,7 @@ These hold across every stage:
 
   - S5.2 and S5.3 run **in parallel** (two independent responsibilities); S5.4 may be entered as soon as either returns a finding.
   - S5.4 does **not** re-open settled design decisions — it applies corrections only to the flagged contract/TASK/design clause and re-runs the affected responsibility (compare S9 rework discipline).
-  - S5.5 is the only legal point at which contracts and TASKs transition from `*-draft` to `locked`; this is the spec chain's baseline-generation boundary for S6 onward.
+  - S5.5 is the only legal point at which contracts and TASKs receive their **baseline-generation lock** (fingerprint registration into runtime `documents[]` via TR-003's atomic actions). This is a different thing from the markdown `Status` field: contract and TASK **files** declare `Status: locked` / `Status: complete` at authoring/finalization time in S3/S4 (PTR-PLAN-02 and TR-002 consume those on-disk declarations); S5.5 then freezes the exact fingerprints as the baseline-generation boundary for S6 onward.
 
 - **done_when**:
   - both mandatory responsibilities (S5.2 + S5.3) PASS

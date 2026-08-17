@@ -157,8 +157,18 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 		for _, cell := range contractClauseCellPattern.FindAllString(content, -1) {
 			result.Clauses++
 			contractID := strings.TrimSpace(strings.Fields(cell)[0])
-			if _, ok := contractIDs[contractID]; !ok {
+			target, ok := contractIDs[contractID]
+			if !ok {
 				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q points at unknown contract", id, cell))
+				continue
+			}
+			// Cheap anti-drift check (BUG-CX-04): the §n cited in an index
+			// cell must exist in the target contract's own clause map —
+			// otherwise the two sides number clauses independently.
+			n := clauseNumberOf(cell)
+			targetData, err := os.ReadFile(target)
+			if err != nil || !strings.Contains(string(targetData), "§"+n) {
+				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q cites %s §%s but the target contract never declares that clause number — align the index cell with the contract's own clause map", id, cell, contractID, n))
 			}
 		}
 		for _, line := range strings.Split(content, "\n") {
@@ -184,7 +194,7 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 	if result.Contracts > 0 {
 		for token := range caseUniverse {
 			if !citedCases[token] {
-				result.Problems = append(result.Problems, fmt.Sprintf("reverse closure: %s exists in module packages but no contract cites it — an uncited case is outside the verification denominator", token))
+				result.Problems = append(result.Problems, fmt.Sprintf("reverse closure: %s exists in module packages but no contract cites it — cite it in the CONTRACTS index coverage matrix (or the FE contract case-mapping table) so it re-enters the verification denominator", token))
 			}
 		}
 	}
@@ -226,6 +236,12 @@ func resolveContractFingerprint(root, row string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(data)), true
+}
+
+// clauseNumberOf extracts the digits of the trailing §n in a clause cell.
+func clauseNumberOf(cell string) string {
+	fields := strings.Fields(cell)
+	return strings.TrimPrefix(fields[len(fields)-1], "§")
 }
 
 // modelCaseIDs extracts the branch case_id set from a module's

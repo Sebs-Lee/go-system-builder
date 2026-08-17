@@ -257,7 +257,7 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	status := markdownField(string(data), "状态", "Status")
 	version := markdownField(string(data), "版本", "Version")
 	if status != "locked" || version == "" {
-		fmt.Fprintln(stderr, "req bind: REQ must declare locked status and version")
+		fmt.Fprintln(stderr, "req bind: the REQ top blockquote must declare `状态：locked` (or `Status: locked`) and `版本：<semver>` — see docs/requirements/REQ-template.md")
 		return 1
 	}
 	id := strings.TrimSuffix(filepath.Base(*reqPath), filepath.Ext(*reqPath))
@@ -274,6 +274,20 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("read runtime revision: %w", err)))
 		return 1
+	}
+	// Preflight: a REQ is already bound — TR-001 would refuse on source
+	// state; name the two legal routes instead of the raw rejection. (An
+	// inactive runtime still carrying a bound_req is the rollover-pending
+	// case, handled by the recovery preflight below with its own wording.)
+	if lifecycleState, _ := snapshot.State["lifecycle"].(map[string]any); lifecycleState != nil {
+		if state, _ := lifecycleState["state"].(string); state != "" && state != "inactive" {
+			if bound, _ := snapshot.State["bound_req"].(map[string]any); bound != nil {
+				if boundID, _ := bound["id"].(string); boundID != "" {
+					fmt.Fprintf(stderr, "req bind: %s is already bound (TR-001 requires an inactive runtime) — to change the requirement: `runtime pause` then `req amend --req <new version of %s>`; to abandon it: `req unbind`\n", boundID, boundID)
+					return 1
+				}
+			}
+		}
 	}
 	// Preflight: refuse to burn a drifted control-plane fingerprint into a
 	// fresh baseline. Parse-level drift already fails closed above (catalog
@@ -360,7 +374,7 @@ func controlPlaneDrift(root string, state map[string]any) string {
 			return fmt.Sprintf("%s unreadable (%v) — run doctor", check.rel, err)
 		}
 		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != recorded {
-			return fmt.Sprintf("%s changed since the runtime was initialized — run doctor and reconcile before binding", check.rel)
+			return fmt.Sprintf("%s changed since the runtime was initialized — run `loop-harness doctor --root .` first; if it reports a policy_ref drift, reconcile with `runtime reconcile-policy-ref`, otherwise the control-plane change must be re-baselined (bind preflight refuses stale fingerprints)", check.rel)
 		}
 	}
 	return ""
@@ -452,11 +466,13 @@ func projectNext(state, phase, root string) (string, string, string) {
 	cursor, _ := runtime.StageFor(state, phase, root)
 	switch state {
 	case "inactive":
-		action := "bind one human-locked REQ"
+		action := "produce one human-locked REQ (docs/requirements/REQ-template.md + skills: requirement-funnel), then bind it"
+		skill := "requirement-funnel"
 		if cmd := soleBindableCommand(root); cmd != "" {
 			action = "bind the human-locked REQ: " + cmd + " (or tell the main session to bind it for you)"
+			skill = "loop-orchestration"
 		}
-		return "S0", "loop-orchestration", action
+		return "S0", skill, action
 	case "planning":
 		return cursor, "specification-planning", "complete the planning phase for " + phase
 	case "document_verification":
@@ -771,14 +787,14 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 			"stage":           "S0",
 			"lifecycle_state": "inactive",
 			"lifecycle_phase": nil,
-			"objective":       "bind one human-locked requirement",
-			"action":          "bind one human-locked REQ",
+			"objective":       "produce one human-locked requirement (binding is the S1 action)",
+			"action":          "produce one human-locked REQ (docs/requirements/REQ-template.md + skills: requirement-funnel), then bind it",
 			"protocol_ref":    "docs/agent-protocol.md#s0",
 			"manual_ref":      loopManualRef,
-			"primary_skill":   "loop-orchestration",
+			"primary_skill":   "requirement-funnel",
 			"read":            []any{"docs/requirements/"},
-			"missing":         []any{"locked_req_binding"},
-			"done_when":       []any{"a locked REQ is fingerprinted and bound to the runtime"},
+			"missing":         []any{"human_locked_req"},
+			"done_when":       []any{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"},
 			"human_required":  false,
 			"blocked":         false,
 			"blocker":         nil,
@@ -2062,6 +2078,10 @@ func refreshGuidanceFromController(root string, request *policy.Input, decision 
 		decision.Guidance = &guidance
 		return
 	}
+	if runtimeStateMissing(root) {
+		decision.Guidance = FreshStartGuidanceForController(root, request.Event)
+		return
+	}
 	decision.Guidance = FallbackGuidanceForController(request.Event)
 }
 
@@ -2328,7 +2348,6 @@ func runVerification(args []string, stdout, stderr io.Writer) int {
 	}
 	return 0
 }
-
 
 func hookTargetPath(input map[string]any) string {
 	for _, key := range []string{"file_path", "path", "notebook_path"} {

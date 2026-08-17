@@ -20,7 +20,7 @@ type stageContract struct {
 }
 
 var projectionContracts = map[string]stageContract{
-	"S0":                 {"bind one human-locked requirement", []string{"docs/requirements/"}, []string{"locked_req_binding"}, []string{"a locked REQ is fingerprinted and bound to the runtime"}},
+	"S0":                 {"produce one human-locked requirement (draft via requirement-funnel; binding is the S1 action)", []string{"docs/requirements/"}, []string{"human_locked_req"}, []string{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"}},
 	"S2":                 {"complete architecture and any required UI design package", []string{"bound REQ", "docs/design/", "docs/rules/"}, []string{"architecture_record"}, []string{"architecture decisions cover the contract boundary", "any UI-impacting module has a complete target design package"}},
 	"S3":                 {"complete the development contract set", []string{"bound REQ", "docs/design/", "docs/contracts/"}, []string{"locked_contract_set"}, []string{"at least one contract set is locked and traces to the REQ"}},
 	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/contracts/", "docs/tasks/"}, []string{"complete_task_batch"}, []string{"at least one TASK is complete and every contract clause has TASK coverage"}},
@@ -33,7 +33,7 @@ var projectionContracts = map[string]stageContract{
 	"S11":                {"present the release-ready package to the human and record one explicit decision", []string{"acceptance record", "release audit", "release-ready package"}, []string{"human_decision"}, []string{"one explicit S11 decision is recorded or the Gateway remains awaiting a decision"}},
 	"release_authorized": {"S11 human-authorized terminal", []string{"human decision record"}, []string{}, []string{"human authorization is recorded; Harness performs no merge, publication, deployment, or formal release"}},
 	"aborted":            {"aborted terminal Runtime", []string{"human decision record"}, []string{}, []string{"automation remains stopped and only an eligible human-authorized rollover may start a new Runtime"}},
-	"paused":             {"resolve the recorded pause condition", []string{"runtime pause checkpoint", "recorded blockers"}, []string{"pause_resolution"}, []string{"the blocking condition is resolved or a human chooses the next route"}},
+	"paused":             {"resolve the pause via one of the three human-gated exits: `runtime resume` (baselines unchanged) / `req amend` (drifted baseline, new REQ version) / `runtime human-decision --disposition abort` (abandon)", []string{"runtime pause checkpoint", "recorded blockers"}, []string{"pause_resolution"}, []string{"the blocking condition is resolved or a human chooses the next route"}},
 	"cross-stage":        {"recover a valid runtime cursor", []string{".claude/loop-state.json", "docs/loop-definition.json"}, []string{"valid_runtime_cursor"}, []string{"runtime lifecycle and phase map to one declared stage"}},
 }
 

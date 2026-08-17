@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-02
 
-> Status: reported
+> Status: fixed
 > Severity: P1
 > Runtime ref: N/A（模板仓库自审——S0/S1 agent 视角复杂度审查）
 > Found in review round: complexity-review-1
@@ -70,17 +70,17 @@ assert 三份文档对 "locking is human-only" 的表述一致（意图=决策�
 | Field | Reference |
 |:--|:--|
 | BUG acceptance evidence | pending（owner 拍板手势方案） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 以新会话走漏斗至落锁，无手势歧义 | 待派 | pending | — |
+| 以新会话走漏斗至落锁，无手势歧义 | 待派 | pass | 三文档手势一致：requirement-funnel Procedure 0/Exit/Stop、REQ-template 头部注释+§E 拍板表、AGENTS-template 白名单表 |
 
 ## 7. Deduplication And History
 
@@ -89,3 +89,4 @@ Canonical BUG: BUG-CX-02（人工手势协议缺失族；含 v4.5.1/v4.6.1 已�
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查 B1/B2/C3） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | 三文档手势一致：requirement-funnel Procedure 0/Exit/Stop、REQ-template 头部注释+§E 拍板表、AGENTS-template 白名单表 |

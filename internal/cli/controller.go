@@ -304,6 +304,11 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 func reconcileGuidance(root, event string, input policy.Input) (policy.Guidance, runtime.Snapshot, error) {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	// A fresh checkout (no state file) is S0, not a recovery case: there is
+	// nothing to reconcile and no lock to take (BUG-CX-01).
+	if runtimeStateMissing(root) {
+		return *freshStartGuidance(root, event), runtime.Snapshot{}, nil
+	}
 	// Guidance reconciliation persists a milestone, so it is an explicit
 	// mutation path and owns pending-runtime recovery.
 	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
@@ -631,11 +636,44 @@ func refreshHookControl(root string, request *policy.Input, decision *policy.Dec
 		}
 	}
 	if err != nil {
+		if runtimeStateMissing(root) {
+			decision.Guidance = freshStartGuidance(root, request.Event)
+			return
+		}
 		decision.Guidance = fallbackGuidance(request.Event)
 		return
 	}
 	request.Runtime = controllerRuntimeContext(snapshot.State, root, request.Runtime)
 	decision.Guidance = &guidance
+}
+
+// freshStartGuidance covers the state every new project starts in: no
+// loop-state.json yet. That is not a blocked condition — it is S0 with the
+// bind path not yet taken (BUG-CX-01: the former BLOCKED + reconcile
+// instruction could never succeed on a fresh checkout).
+func freshStartGuidance(root, event string) *policy.Guidance {
+	guidance := &policy.Guidance{
+		RuntimeID:      "unbound",
+		Revision:       0,
+		Event:          event,
+		Stage:          "S0",
+		LifecycleState: "inactive",
+		Objective:      "produce one human-locked requirement",
+		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), have the human lock it, then bind with `req bind --approved-by <you>` (bind auto-initializes the runtime)",
+		ProtocolRef:    "docs/agent-protocol.md#s0",
+		ManualRef:      loopManualRef,
+		PrimarySkill:   "requirement-funnel",
+		Read:           []string{"docs/agent-protocol.md#s0", "docs/requirements/REQ-template.md"},
+		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "docs/agent-protocol.md#s0", "skills/requirement-funnel/SKILL.md", "docs/requirements/REQ-template.md"},
+		Missing:        []string{"human_locked_req"},
+		DoneWhen:       []string{"a locked REQ exists and `req bind` succeeds (the runtime is initialized by bind)"},
+		Blocked:        false,
+		Blocker:        "",
+		Recovery:       []string{"check `req list` for bindable REQs once one is locked"},
+		Automation:     []string{"req bind auto-initializes the runtime — do not run `runtime reconcile` on a fresh checkout"},
+	}
+	guidance.Instruction = formatGuidanceInstruction(*guidance)
+	return guidance
 }
 
 func fallbackGuidance(event string) *policy.Guidance {
@@ -691,6 +729,12 @@ func ReconcileGuidanceForController(root, event string, input policy.Input) (pol
 // surfaces when the Runtime snapshot cannot be safely read.
 func FallbackGuidanceForController(event string) *policy.Guidance {
 	return fallbackGuidance(event)
+}
+
+// FreshStartGuidanceForController returns the S0 bootstrap Guidance for a
+// fresh checkout (no runtime state file yet) — not a blocked condition.
+func FreshStartGuidanceForController(root, event string) *policy.Guidance {
+	return freshStartGuidance(root, event)
 }
 
 // HandleTeammateIdleForController is the BUG-039-06 §4.1 repair: the
@@ -1635,4 +1679,12 @@ func buildGuidanceFromDecision(root string, state map[string]any, event string, 
 	guidance.Integration = appendUniqueStrings(guidance.Integration, decision.missingReports...)
 	guidance.Instruction = formatGuidanceInstruction(guidance)
 	return guidance
+}
+
+// runtimeStateMissing reports whether the runtime state file does not exist
+// at all (fresh checkout) — distinct from a corrupted state, which keeps the
+// BLOCKED recovery path.
+func runtimeStateMissing(root string) bool {
+	_, err := os.Stat(filepath.Join(root, ".claude", "loop-state.json"))
+	return err != nil && os.IsNotExist(err)
 }

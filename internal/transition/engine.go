@@ -737,6 +737,25 @@ func versionStrictlyGreater(a, b string) (greater, parseable bool) {
 // (待澄清问题) clarifies it. The guard that enforces "unknown → planning paused"
 // lives in guardUIIImpactResolved (registered as `ui_impact_resolved`).
 func parseUIImpact(content string) (string, error) {
+	value, err := parseUIImpactField(content)
+	if err != nil {
+		return "", err
+	}
+	// The REQ template carries a second UI-impact declaration in §C (a
+	// human-facing reflection of the top anchor field). A drifted §C value
+	// would silently route a `changed` requirement through the `none` path
+	// (BUG-CX-05): refuse the mismatch and name both values.
+	if echo := sectionCUIImpact(content); echo != "" && !strings.EqualFold(echo, value) {
+		return "", fmt.Errorf("REQ UI impact is inconsistent: top anchor field says %q but the §C reflection says %q — align them (the top field is the machine anchor; §C only reflects it)", value, echo)
+	}
+	return value, nil
+}
+
+// ParseUIImpactForTest exposes parseUIImpact for the drift pin test.
+func ParseUIImpactForTest(content string) (string, error) { return parseUIImpact(content) }
+
+// parseUIImpactField reads only the top blockquote `UI impact` anchor.
+func parseUIImpactField(content string) (string, error) {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">"))
 		for _, separator := range []string{"：", ":"} {
@@ -753,6 +772,29 @@ func parseUIImpact(content string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("locked REQ is missing UI impact metadata")
+}
+
+// sectionCUIImpact extracts a "UI impact：" value declared inside the §C
+// section (the template's reflection table). Empty when §C declares none.
+func sectionCUIImpact(content string) string {
+	inC := false
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			inC = strings.Contains(trimmed, "§C") || strings.HasPrefix(trimmed, "# §C")
+			continue
+		}
+		if !inC {
+			continue
+		}
+		for _, separator := range []string{"：", ":"} {
+			parts := strings.SplitN(trimmed, separator, 2)
+			if len(parts) == 2 && strings.Contains(strings.ToLower(parts[0]), "ui impact") {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
 
 // appendDocument appends a document entry unless a same-id entry of the

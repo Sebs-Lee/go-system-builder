@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-04
 
-> Status: reported
+> Status: fixed
 > Severity: P1（含一条 P0 级死锁路径）
 > Runtime ref: N/A（模板仓库自审——S3/S4 agent 视角复杂度审查）
 > Found in review round: complexity-review-1
@@ -74,18 +74,18 @@ assert tasks check 对非 TASK- 依赖引用报 problem（新增测试）
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 全部接受（2026-08-17） |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 模拟行走：守文档的 agent 能否无死锁通过 S3→S4→TR-002 | 待派 | pending | — |
+| 模拟行走：守文档的 agent 能否无死锁通过 S3→S4→TR-002 | 待派 | pass | S5.5 双 locked 消歧；guards 文案 phase 分支；§n 存在性机检（TestContractsCheckFlagsClauseNumberDrift）；非 TASK 依赖显式报错（TestTasksCheckFlagsNonTaskDependency）；TASK/CONTRACTS/index 模板补注 |
 
 ## 7. Deduplication And History
 
@@ -94,3 +94,4 @@ Canonical BUG: BUG-CX-04（S3/S4 机器契约未传达 + locked 词汇碰撞族�
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查 A1-A3/B1-B3/B6/B9） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | S5.5 双 locked 消歧；guards 文案 phase 分支；§n 存在性机检（TestContractsCheckFlagsClauseNumberDrift）；非 TASK 依赖显式报错（TestTasksCheckFlagsNonTaskDependency）；TASK/CONTRACTS/index 模板补注 |

@@ -24,10 +24,20 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 
 ## Procedure — dual-track convergence (v2.0.0)
 
+**Step 0 — route by UI impact before doing anything else**: read the bound
+REQ's top `UI impact` field. `unknown` → stop, resolve it in the REQ's §D
+first (the `ui_impact_resolved` guard blocks PTR-PLAN-01). `none` → skip
+the entire S2 package work (steps 1–9) and go straight to contracts
+(step 11). `changed` → run the full flow below.
+
 The S2 portion runs as two tracks with free ordering within one agent (not
-subagent parallelism), converging twice. Architecture constrains journeys;
-when a story challenges the architecture, escalate that trade-off to the
-ADR human gate — never silently let one side win.
+subagent parallelism), converging twice. "Free ordering" means either track
+may start first — inside Convergence 1 there is a hard order: **stories.md
+must exist before rules/branches** (every branch's `story_refs` cites an
+S-NNN; writing rules first means citing stories that do not exist yet).
+Architecture constrains journeys; when a story challenges the architecture,
+escalate that trade-off to the ADR human gate — never silently let one side
+win.
 
 **Track system (architecture → facts):**
 1. Draft the architecture: components, data model, state machines, data
@@ -50,9 +60,21 @@ ADR human gate — never silently let one side win.
    points (FR) × stories, rejection paths included. `source_refs` cite
    `REQ-<id>/FR-<id>` so the AC bridge can resolve. The hunt's carrier is
    `cross-matrix.json`: every meaningful cell names its covering branch or
-   records a no-branch reason — silence is not N/A.
-5. Immediately run `loop-harness scenario bridge --root .` — the AC source
-   check (AC→FR→BR) needs no generated outputs; fix gaps now, not at close.
+   records a no-branch reason — silence is not N/A. Machine floors (enforced
+   by `scenario validate` / generate):
+   - every declared fact and every story must appear in at least one cell
+     (per-fact and per-story floors; the fact×story combinations themselves
+     are your hunting judgment, **not** a cartesian-product requirement);
+   - a branch cell must be a branch whose rule actually cites the cell's
+     `REQ-<id>/FR-<id>` in `source_refs` (the matrix joins the model, it
+     does not assert alongside it); `req_ref` may only reference the bound
+     REQ;
+   - a `no_branch_reason` is a rationale: name the why — at least 8
+     characters including a letter (a bare "不需要"/"." is rejected;
+     free-word escapes are not endorsed N/A).
+5. Immediately run `go run ./cmd/loop-harness scenario bridge --root .` — the
+   AC source check (AC→FR→BR) needs no generated outputs; fix gaps now, not
+   at close.
 
 **Fixtures:**
 6. After branches settle, write `fixture-contract.json` (synthetic data +
@@ -67,22 +89,31 @@ ADR human gate — never silently let one side win.
 8. Before closing, attack your own package in three roles — implementer:
    "which oracle can't I build or can't distinguish a wrong implementation
    by?"; e2e-tester: "which negative case can't I evidence across the
-   seven dimensions?"; maintainer: "which rule will clash with module
-   evolution?" Record the conclusion as one paragraph in the ADR package.
-9. Close: `loop-harness scenario generate` then `validate` — ratio gates,
-   reference existence, byte-frozen outputs, cross-matrix references, and
-   the full AC bridge (every AC reaches a CASE or carries an endorsed
-   N/A: a declared NFR id or an explicit §A4 pointer; free text is
-   rejected as a silent removal from the verification denominator).
-10. If `ui_impact` is `none`, skip tracks/convergences 3–9 and go straight
-    to contracts (step 11); if `unknown`, stop — resolve it in the REQ's
-    §D first (`ui_impact_resolved` guards PTR-PLAN-01).
+   seven oracle dimensions? (visible, terminal_state, persisted_effects,
+   forbidden_side_effects — plus, for negative branches, rejection,
+   expected_state, recovery)"; maintainer: "which rule will clash with
+   module evolution?" Record the conclusion as one paragraph under a
+   `## Depth Self-Review` heading in the ADR package.
+9. Close: `go run ./cmd/loop-harness scenario generate --module <module>
+   --root .` then `scenario validate --module <module> --root .` — ratio
+   gates, reference existence, byte-frozen outputs, cross-matrix
+   references, and the full AC bridge (every AC reaches a CASE or carries
+   an endorsed N/A: a declared NFR id or an explicit §A4 negative-space
+   pointer — §A4 is the REQ's "明确不做" table; free text is rejected as a
+   silent removal from the verification denominator).
 
 **S3/S4 steps:**
-11. Draft contracts in order: FE-contract → BE-contract → SYNC-contract.
-    Each must link to the REQ source ref and the module current-truth
-    package. The CONTRACTS index 需求覆盖矩阵 is the clause universe — one
-    `{id} §{n}` cell per clause.
+11. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
+    from the four templates under `docs/contracts/` (CONTRACTS / BE / FE /
+    SYNC). Each must link to the REQ source ref and the module
+    current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
+    universe — one `{id} §{n}` cell per clause, and each `§n` must match
+    the clause number the target contract itself declares in its
+    需求条款映射 table. On finalization set each contract's top `Status`
+    field to `locked` (PTR-PLAN-02 registers only locked contracts), and
+    run `go run ./cmd/loop-harness contracts check --root .` — token
+    references, clause cells, and fingerprint columns are machine-checked
+    there and again at PTR-PLAN-02.
 12. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
     Contract (§7 four assert lines), and obeys single-responsibility.

@@ -1414,3 +1414,27 @@ func gitCommand(root string, args ...string) *exec.Cmd {
 	full := append([]string{"-C", root}, args...)
 	return exec.Command("git", full...)
 }
+
+// TestFreshCheckoutSessionStartIsNotBlocked pins BUG-CX-01: a fresh
+// checkout (no loop-state.json) must receive non-BLOCKED S0 bootstrap
+// guidance, not the corrupted-runtime recovery packet whose reconcile
+// command cannot succeed.
+func TestFreshCheckoutSessionStartIsNotBlocked(t *testing.T) {
+	root := t.TempDir()
+	guidance, _, err := ReconcileGuidanceForController(root, "SessionStart", policy.Input{})
+	if err != nil {
+		t.Fatalf("fresh checkout must not error: %v", err)
+	}
+	if guidance.Blocked {
+		t.Fatalf("fresh checkout must not be BLOCKED, got blocker=%q action=%q", guidance.Blocker, guidance.Action)
+	}
+	if guidance.Stage != "S0" || guidance.PrimarySkill != "requirement-funnel" {
+		t.Fatalf("fresh checkout must route to S0/requirement-funnel, got %s/%s", guidance.Stage, guidance.PrimarySkill)
+	}
+	if !strings.Contains(guidance.Action, "REQ-template") || !strings.Contains(guidance.Action, "req bind") {
+		t.Fatalf("fresh checkout action must point at drafting + bind, got %q", guidance.Action)
+	}
+	if strings.Contains(guidance.Action, "reconcile") {
+		t.Fatalf("fresh checkout must not suggest reconcile, got %q", guidance.Action)
+	}
+}

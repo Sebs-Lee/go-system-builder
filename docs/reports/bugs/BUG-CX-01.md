@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-01
 
-> Status: reported
+> Status: fixed
 > Severity: P1
 > Runtime ref: N/A（模板仓库自审——S0-S4 agent 视角复杂度审查，未绑定 runtime）
 > Found in review round: complexity-review-1（三路 sub-agent 模拟行走 + 主会话复核）
@@ -74,18 +74,18 @@ assert 新增空根投影测试 fails_before_and_passes_after
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending（owner 拍板） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 全部接受（2026-08-17） |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 冷启动投影测试 + 三处一致性检查 | 待派 | pending | — |
+| 冷启动投影测试 + 三处一致性检查 | 待派 | pass | TestFreshCheckoutSessionStartIsNotBlocked；S0 contract/inactiveRuntimeState/projection 三处一致 |
 
 ## 7. Deduplication And History
 
@@ -94,3 +94,4 @@ Canonical BUG: BUG-CX-01（冷启动/引导权威分裂族）
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查发现 A1/A2/A3/A5） | 主会话+sub-agent×3 | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | TestFreshCheckoutSessionStartIsNotBlocked；S0 contract/inactiveRuntimeState/projection 三处一致 |

@@ -75,6 +75,12 @@ the Milestone instead of relying on conversation memory.
 
 - Humans lock REQs and approve release. AI drives everything in between.
 - Loop automation cannot lock or modify the bound REQ, cannot squash merge, publish, deploy, or release.
+- **Lifecycle-verb whitelist** — what the main session may execute on a human's behalf:
+  | Verb | May the agent run it? | Required human gesture |
+  |:--|:--|:--|
+  | `req bind` | yes | the human's explicit instruction in conversation (verbal-authorization chain) |
+  | `runtime pause` / `runtime resume` / `req amend` / `req unbind` / `runtime rollover` / `runtime human-decision` | only when the human supplies the complete command line verbatim (including `--approved-by`) | the human's own typed/approved command — never infer the approver name from context |
+  "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization, and `req bind --approved-by <same human>` is the second confirmation. When in doubt, hand the command up and wait.
 - `/loop` only delivers the Layer 2 prompt. REQ binding is `loop-harness req bind`; the two are independent lifetimes.
 - Subagents are read-only until phase-one read-back is approved and phase two is activated.
 - Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for read-back; it does not complete the delegated responsibility itself unless the assignment is revoked or reassigned.

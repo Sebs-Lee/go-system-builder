@@ -299,7 +299,7 @@ func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(contractsDir, "BE-test.md"),
-		[]byte("# BE-test\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| 需求 | 模块 | 条款 | 验收 |\n|---|---|---|---|\n| — | — | BE-test §1 | — |\n"), 0o644); err != nil {
+		[]byte("# BE-test\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for revision, id := range []string{"PTR-PLAN-01", "PTR-PLAN-02"} {
@@ -426,7 +426,7 @@ func seedPlanningArtifactsLang(t *testing.T, statePath string, english bool) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(contractsDir, "BE-TEST.md"),
-		[]byte("# BE-TEST\n\n"+status("locked")+"\n> 版本：v1.0.0\n"), 0o644); err != nil {
+		[]byte("# BE-TEST\n\n"+status("locked")+"\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	task := "# TASK-test\n\n" + status("complete") + "\n> Version: v1.0.0\n> Primary contract: BE-TEST\n\n" +
@@ -445,4 +445,20 @@ func fileHash(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return transition.SHA256(data)
+}
+
+// TestParseUIImpactRejectsDriftedReflection pins BUG-CX-05: a §C
+// reflection that disagrees with the top anchor field must be refused
+// (a drifted echo would silently route a changed REQ through the none path).
+func TestParseUIImpactRejectsDriftedReflection(t *testing.T) {
+	base := "> 状态：locked\n> 版本：v1.0.0\n"
+	drifted := base + "> UI impact：none\n\n# 内容\n\n## §C 具体需求\n\nUI impact：changed\n"
+	if _, err := transition.ParseUIImpactForTest(drifted); err == nil || !strings.Contains(err.Error(), "inconsistent") {
+		t.Fatalf("drifted §C reflection must be refused, got %v", err)
+	}
+	aligned := base + "> UI impact：changed\n\n# 内容\n\n## §C 具体需求\n\nUI impact：changed\n"
+	value, err := transition.ParseUIImpactForTest(aligned)
+	if err != nil || value != "changed" {
+		t.Fatalf("aligned reflection must pass, got %q %v", value, err)
+	}
 }

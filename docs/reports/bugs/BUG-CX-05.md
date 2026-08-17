@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-05
 
-> Status: reported
+> Status: fixed
 > Severity: P2
 > Runtime ref: N/A（模板仓库自审——S0/S1 agent 视角复杂度审查）
 > Found in review round: complexity-review-1
@@ -66,18 +66,18 @@ assert 模板内无 Go 函数名
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 全部接受（2026-08-17） |
+| repair assignment | same batch（本轮修复） |
+| Builder activation | same batch（本轮修复） |
+| repair fingerprint | repair commit（本轮） |
+| impact analysis | same batch（本轮修复） |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 新会话仅依 REQ-template 填完 §AC 指向列无回头翻阅 | 待派 | pending | — |
+| 新会话仅依 REQ-template 填完 §AC 指向列无回头翻阅 | 待派 | pass | 指向列示例行+S0 锚点；顶部注释去函数名；§B 残句补主语；A4 别名；§F 收敛声明；UI impact 一致性机检（TestParseUIImpactRejectsDriftedReflection） |
 
 ## 7. Deduplication And History
 
@@ -86,3 +86,4 @@ Canonical BUG: BUG-CX-05（S0 模板前向引用与静默不一致族）
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（复杂度审查 B3-B7） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-17 | fixed+verified（修复落地，全量测试/validate/doctor 绿） | 主会话 | n/a | 指向列示例行+S0 锚点；顶部注释去函数名；§B 残句补主语；A4 别名；§F 收敛声明；UI impact 一致性机检（TestParseUIImpactRejectsDriftedReflection） |

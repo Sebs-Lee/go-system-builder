@@ -221,7 +221,7 @@ func GuardBridgeChecked(root string) error {
 		_, acRows, _ := parseREQTables(string(data))
 		for _, ac := range acRows {
 			if strings.HasPrefix(strings.TrimSpace(ac.Target), "FR-") {
-				return fmt.Errorf("ac bridge: %s points at %s but no module packages exist under docs/design/prototypes — build the S2 package or endorse the N/A (NFR id / §A4); silence is not N/A", ac.ID, strings.TrimSpace(ac.Target))
+				return fmt.Errorf("ac bridge: %s points at %s but no module packages exist under docs/design/prototypes — this is an S2 design-package gap (see docs/agent-protocol.md#s2 failure_route): build the package or endorse the N/A (an NFR id declared in the REQ, or a §A4 明确不做 entry); silence is not N/A", ac.ID, strings.TrimSpace(ac.Target))
 			}
 		}
 		return nil

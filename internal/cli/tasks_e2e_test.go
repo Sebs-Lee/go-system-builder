@@ -52,7 +52,10 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	// in the CONTRACTS index + a locked contract + a complete two-task batch.
 	write("docs/requirements/REQ-600.md", "# REQ-600\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-601 | wb6 | 提交 | A1 | Must |\n")
-	write("docs/contracts/BE-600.md", "# BE-600\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	write("docs/contracts/BE-600.md", "# BE-600\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
+		"### 需求条款映射\n\n| REQ source_ref | Rule / CASE / Story / PATH | 本合同条款 | 验收标准 |\n|:--|:--|:--|:--|\n"+
+		"| REQ-600/FR-601 | — | §1 | 可提交 |\n"+
+		"| REQ-600/FR-601 | — | §2 | 拒绝重复 |\n")
 	write("docs/contracts/CONTRACTS-600.md", "# CONTRACTS-600\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
 		"## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n"+
 		"| REQ-600/FR-601 | — | BE-600 §1 | — |\n| REQ-600/FR-601 | — | BE-600 §2 | — |\n")
@@ -252,5 +255,53 @@ func TestS4TasksCheckEmptyRoot(t *testing.T) {
 	joined := strings.Join(result.Problems, "; ")
 	if !strings.Contains(joined, "no TASK documents") || !strings.Contains(joined, "clause universe is empty") {
 		t.Fatalf("floor problems must be named, got: %s", joined)
+	}
+}
+
+// TestTasksCheckFlagsNonTaskDependency pins BUG-CX-04: a dependency row the
+// DAG does not track must be named, not silently dropped.
+func TestTasksCheckFlagsNonTaskDependency(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/contracts", "docs/tasks", "docs/requirements"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/contracts/BE-800.md", "# BE-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
+	write("docs/contracts/CONTRACTS-800.md", "# CONTRACTS-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-800/FR-801 | — | BE-800 §1 | — |\n")
+	write("docs/tasks/TASK-800-01.md", "# TASK-800-01\n\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-800\n\n"+
+		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-800 | §1 |\n\n"+
+		"## 7. Closing Contract\n\n```text\nassert BE-800 §1 == satisfied\n```\n\n"+
+		"## 8. Dependencies\n\n| Dependency | Required evidence | Status |\n|:--|:--|:--|\n| assignment-42 | `ev-1` | pending |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "assignment-42") || !strings.Contains(stderr.String(), "not machine-tracked") {
+		t.Fatalf("non-TASK dependency must be named, got: %s", stderr.String())
+	}
+}
+
+// TestContractsCheckFlagsClauseNumberDrift pins BUG-CX-04: an index cell
+// citing a §n the target contract never declares must be flagged.
+func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs/contracts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/contracts/BE-810.md", "# BE-810\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
+	write("docs/contracts/CONTRACTS-810.md", "# CONTRACTS-810\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-810/FR-811 | — | BE-810 §2 | — |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "never declares that clause number") {
+		t.Fatalf("clause number drift must be flagged, got: %s", stderr.String())
 	}
 }

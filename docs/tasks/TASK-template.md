@@ -1,6 +1,6 @@
 # Task: TASK-{id}
 
-> Status: draft / complete / cancelled
+> Status: draft (still writing) / complete (the document is finished — required across the whole batch at TR-002; it says nothing about implementation, which happens in S6) / cancelled (out of the batch; its §3 clause declarations drop out of coverage so any gap resurfaces)
 > Version: v1.0.0
 > Source REQ refs: REQ-{id} / none
 > Module current truth: `docs/design/prototypes/{module}/` / N/A
@@ -94,7 +94,9 @@ assert scope_deviations == []
 
 | Dependency | Required evidence | Status |
 |:---|:---|:---|
-| {TASK/assignment} | `{evidence-ref}` | pending / satisfied |
+| TASK-{id} | `{evidence-ref}` | pending / satisfied |
+
+依赖列只认 `TASK-*` 引用——只有 TASK 引用进入 DAG（`tasks check` 的环检测与拓扑）。assignment 级依赖不被机检追踪，需要跨任务顺序时写成 TASK 依赖或在收尾契约中声明。
 
 ## 9. Lifecycle Evidence
 
