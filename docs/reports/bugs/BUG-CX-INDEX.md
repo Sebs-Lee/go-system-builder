@@ -21,6 +21,8 @@
 3. **报错即文档没有标准**（CX-06）：建议把 cross_matrix.go 的文案水准（为什么红+往哪修）写成一条 checklist 进 L3-README 或贡献纪律。
 
 > **2026-08-17 修复状态**：owner 全部接受后同批修复完毕，六份 BUG 均为 fixed（机器项附测试钉住：冷启动投影/§n 漂移/非 TASK 依赖/UI impact 不一致/rebind 指路）；全量测试 + validate --all + doctor 绿。三个系统性根因的防复发建制（机检落地三处同步说明/词汇 normative 居所/文案 checklist）留待下一轮 L3-README 修订时并入。
+>
+> **2026-08-17 第二轮审查（complexity-review-2）**：上轮修复验证 CX-01/03/06 ✓、CX-02/04/05 ◐/✗；新立 BUG-CX-07（**P0**：planning 门的前置事实由被门转换自己产生——自动推进鸡生蛋，所有 E2E 靠禁用的手动 transition 绕过；TR-002 文案承诺不存在的重跑）、BUG-CX-08（S0/S1 信任链文案：`<you>` 占位符/AGENTS 自相矛盾/§C 一致性校验假安全网——上轮自修项的缺口）、BUG-CX-09（S2 口径：模板 risk 示例违自家指导/包清单三处矛盾/ADR package 无定义/步骤断档）、BUG-CX-10（§n 机检精度：§1 子串 §10/SYNC 无条款列/reviewed 词表谎言/CONTRACTS 注记漏落地）。全部经主会话亲证后落盘。系统性根因再发印证：词汇多居所无对账纪律（CX-08/09/10 三族同源）。
 
 ## 建议修复顺序（已执行完毕，留档）
 
