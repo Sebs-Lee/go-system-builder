@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `8c2454b8c97cca05e0eff27bba59a2dc97033ddfbd9991d76f9f2cec9341b0d2`
+- **Loop definition SHA-256**: `6766092e78fd909599e3574fff2b99ec2dc8b170a7dd299bf01f88b5b1c8fa10`
 
 ---
 
@@ -45,7 +45,7 @@ Human approval records release authorization only. Harness has no squash merge, 
 ## Contents
 
 - [`TR-001`](#tr-001) inactive → planning — Start exactly one Loop for the named locked REQ.
-- [`TR-002`](#tr-002) planning → document_verification — Planning completes when PTR-PLAN-02-registered contracts are locked in runtime documents AND the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked).
+- [`TR-002`](#tr-002) planning → document_verification — Planning completes when contracts are locked and the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked).
 - [`TR-003`](#tr-003) document_verification → building — Lock only the exact contract and task versions jointly verified.
 - [`TR-004`](#tr-004) document_verification → planning — Non-REQ document findings return to planning.
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
@@ -133,7 +133,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _planning → document_verification_
 
-Planning completes when PTR-PLAN-02-registered contracts are locked in runtime documents AND the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked). The batch is then registered into documents[] by register_planning_tasks.
+Planning completes when contracts are locked and the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked). Gate readiness facts: a TASK declaring `Status: complete` on disk (or a registered complete task) plus valid planning_task evidence — the missing token `document:task:complete` means neither was found. On commit, locked contracts and complete tasks are registered into documents[].
 
 - `planning_complete` [semantic_check] — At least one current-baseline contract document has status=locked with a matching on-disk markdown Status field (contracts are registered by PTR-PLAN-02), AND every docs/tasks/TASK-*.md declares status complete or cancelled with at least one complete (the batch is registered by TR-002's own register_planning_tasks action). Fingerprints are owned by registration and reachability, not re-checked here.
 - `tasks_checked` [semantic_check] — S4's mechanical close (semantic.TasksCheck) runs at TR-002: the TASK batch is fully complete (cancelled tasks excluded), every task has an existing primary contract and a Closing Contract block, clause coverage between the CONTRACTS index universe and TASK §3 declarations closes in both directions, and the §8 dependency graph is acyclic (cycle path reported).
@@ -805,7 +805,7 @@ Advance formal planning from design to contracts after the design quality gate p
 
 _contracts → tasks_
 
-Advance formal planning from contracts to tasks after the contract quality gate passes.
+Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top Status field to locked.
 
 - `contracts_checked` [semantic_check] — S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.
 - `scenario_bridge_checked` [semantic_check] — S2's AC↔CASE bridge (scenario.GuardBridgeChecked) runs at PTR-PLAN-02: every AC of the bound REQ reaches a rule via FR source_refs (with branches), or carries an endorsed N/A (NFR id / §A4). With no module packages at all, only fully N/A-endorsed REQs pass — an AC pointing at FR- with nothing citing it is a broken denominator.
