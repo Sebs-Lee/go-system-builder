@@ -659,7 +659,7 @@ func freshStartGuidance(root, event string) *policy.Guidance {
 		Stage:          "S0",
 		LifecycleState: "inactive",
 		Objective:      "produce one human-locked requirement",
-		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), have the human lock it, then bind with `req bind --approved-by <the human who locked it>` (bind auto-initializes the runtime)",
+		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), have the human lock it, then bind with `loop-harness req bind --approved-by <the human who locked it>` (bind auto-initializes the runtime)",
 		ProtocolRef:    "docs/agent-protocol.md#s0",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "requirement-funnel",

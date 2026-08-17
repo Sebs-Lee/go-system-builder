@@ -170,13 +170,14 @@ Legacy `proto/` paths must be migrated.
 
 ## HTML Header Contract
 
-Every prototype HTML file carries a 3-field current-truth header in a dark
+Every prototype HTML file carries a 4-field current-truth header in a dark
 gradient `.proto-meta` bar. **No other fields.** Version, REQ ID, lock status,
 round, owner, and related contracts are excluded; the prototype describes the
 current target only, and contracts live elsewhere.
 
 ```html
 <header class="proto-meta">
+  <span>设计代数: v2</span>
   <span>更新: 2026-07-09</span>
   <span>路由: <strong>/layout/fund — overview</strong></span>
   <span><a href="index.html">↩ 模块入口</a></span>
@@ -185,9 +186,10 @@ current target only, and contracts live elsewhere.
 
 | # | Field | Format | Example | Purpose |
 |---|---|---|---|---|
-| 1 | 更新 | `YYYY-MM-DD` | `2026-07-09` | Last edit date. |
-| 2 | 路由 | `<strong>...</strong>` | `/layout/fund — overview`, `/layout/fund/:id — 父详情` | Page route plus slot label. Optional on dialogs / wizards / component mockups (omit if no route). |
-| 3 | index 链接 | `<a href="index.html">↩ 模块入口</a>` | link back | Present when an `index.html` hub exists for the module. |
+| 1 | 设计代数 | `v{n}` | `v2` | Design generation; bumps when the S2 package is re-converged. Machine-checked. |
+| 2 | 更新 | `YYYY-MM-DD` | `2026-07-09` | Last edit date. |
+| 3 | 路由 | `<strong>...</strong>` | `/layout/fund — overview`, `/layout/fund/:id — 父详情` | Page route plus slot label. Optional on dialogs / wizards / component mockups (omit if no route). |
+| 4 | index 链接 | `<a href="index.html">↩ 模块入口</a>` | link back | Present when an `index.html` hub exists for the module. |
 
 REQ source refs live inside the module scenario/story/flow mappings, not in the
 HTML header, because the package is module-scoped. Version, lock status, round,
@@ -344,7 +346,7 @@ A module prototype set is ready for contract lock when ALL of these hold:
 
 - [ ] `docs/design/prototypes/{module}/` exists with `index.html`,
       `stories.md`, `flows.md`, the scenario four-pack, and ≥1 page HTML file
-- [ ] Every HTML file carries the 3-field header (更新 / 路由 /
+- [ ] Every HTML file carries the 4-field header (设计代数 / 更新 / 路由 /
       index 链接); no version, REQ ID, round, lock status, no owner, no
       related-contracts field
 - [ ] Every HTML file's `aside.proto-notes` has the 6 mandatory sections

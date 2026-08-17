@@ -133,7 +133,7 @@ win.
 - Architecture and ADR records (with the depth self-review paragraph and
   the endorsed-N/A list) under `docs/design/`.
 - Locked current module UI/scenario package (when UI impact or behavior is
-  changed) with fingerprints for the scenario package (now eight files incl.
+  changed) with fingerprints for the scenario package (nine files incl.
   cross-matrix.json), HTML prototype, stories, flows, and module spec.
 - FE/BE/SYNC contracts with REQ and design traceability.
 - TASK batch with Closing Contracts and single-responsibility assignments.

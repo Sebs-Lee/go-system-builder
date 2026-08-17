@@ -1,6 +1,6 @@
 # L3-S2 — 设计（Design）
 
-> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.5（v4.0.4  实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
+> 层：第三层 ｜ 上游：L2 §S2 + L2 跨阶段全局规则「单一验证分母」 ｜ 版本 v4.0.6（v4.0.5  实施完成 8/8；v4.0.1 设计对抗审查处置：并行语义/仲裁/N/A 背书/桥拆两段/交叉格载体/深度自审；v4.0.0 联合审查版：断点地图+双轨汇聚+AC 桥；机制事实经调查核实，含 file:line）
 
 ## 1. 要实现什么
 
@@ -148,3 +148,4 @@
 | 2026-08-17 | v4.0.3 | **cross-matrix 接入分母（P0 修复）**：矩阵此前与 AC↔CASE 链零 join——req_ref 只验形状、branch 不验其 rule 是否真引用该 FR、无完整性下限（10 fact 填 1 格即过）、no_branch_reason 任意非空串算 N/A。现 validateCrossMatrix 接入 bound REQ：FR 级引用必须存在于 REQ FR 表、REQ 级必须指向 bound REQ、branch 的 rule 必须在 source_refs 真实引用该 cell、每个 fact/story 至少被一格猎杀、理由须 ≥8 字符且含字母。AC 桥同时挂上 PTR-PLAN-02 guard（scenario_bridge_checked，RunBridge(root,true)；无模块包时仅全 N/A 背书可过——沉默不是 N/A）。测试钉死五条红路 | L1 价值观复审（sub-agent）：D6 单一分母/公理三/D2 违例处置 | |
 | 2026-08-17 | v4.0.4 | **对抗审查处置**：①bound REQ 不可读/FR 表为空时 cross-matrix 由静默降级改 fail-closed（与 RunBridge 对齐）；②story 下限提取口径与 cell 校验统一（S-id 可在标题任意位置，含中英文标题）；③cross-matrix/模块源包校验挂入 scenario_bridge_checked 自然路径（generate 后篡改矩阵无法存活到规划推进）；④注释如实：地板是 per-fact/per-story，fact×story 组合仍是人的猎杀判断 | 第三方对抗审查（sub-agent）：假绿路径构造 |
 | 2026-08-17 | v4.0.5 | **二轮复杂度审查处置（BUG-CX-09）**：模板 risk 示例改自由短语（原值恰为 coverage_profile 枚举名，违自家指导）；包清单三处统一为九文件口径（SKILL 清单/rules 目录树补 cross-matrix.json，protocol eight→nine）；specification-planning 步骤重排 10-13（原 9→11 断档）；ADR-template 增 Depth Self-Review 与 Endorsed N/A 固定段，protocol #s2 定义签核包居所；oracle 表补 recovery N/A 伴随字段并修表格粘连 | 二轮 agent 视角复杂度审查 |
+| 2026-08-17 | v4.0.6 | **三轮重走处置**：①4-field 头部"已完成"系**虚假完成**——rules §5 字段表与 ui-prototyping SKILL 仍教 3 字段（`设计代数` 全库无文档），且 gate 静默 not_ready；现三处同步 4 字段+gate 报错点名缺失 token（TestProtoHeaderFailureNamesMissingTokens）；②九文件口径第四/五处遗漏收尾（spec-planning Outputs 的 "eight files"、prototypes README File Types 表）；③零页面误报 header 的边角分支拆分 | 三轮 agent 视角重走（S2 sub-agent 发现，主会话亲证） |

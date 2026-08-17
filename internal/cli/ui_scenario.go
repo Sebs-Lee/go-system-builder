@@ -102,12 +102,15 @@ func hasCompleteUIDesignPackageForModule(root, module string) (bool, error) {
 	}); err != nil {
 		return false, fmt.Errorf("module %s: inspect pages: %w", module, err)
 	}
-	if len(pagePaths) == 0 || !hasProtoMetaHeader(filepath.Join(directory, "index.html")) {
-		return false, nil
+	if !hasProtoMetaHeader(filepath.Join(directory, "index.html")) {
+		return missingProtoHeaderError(directory, "index.html")
+	}
+	if len(pagePaths) == 0 {
+		return false, fmt.Errorf("module %s: no page HTML beyond index.html — the package needs at least one page", module)
 	}
 	for _, pagePath := range pagePaths {
 		if !hasProtoMetaHeader(pagePath) {
-			return false, nil
+			return missingProtoHeaderError(directory, pagePath)
 		}
 	}
 	if !hasStoryIDWithReqID(filepath.Join(directory, "stories.md")) ||
@@ -200,4 +203,21 @@ func boundREQPathFromState(state map[string]any) string {
 	bound, _ := state["bound_req"].(map[string]any)
 	path, _ := bound["path"].(string)
 	return path
+}
+
+// missingProtoHeaderError names the page and the missing header tokens so a
+// failed UI gate is self-repairing (the 4-field header is taught in
+// skills/ui-prototyping; BUG round-3 NEW-3: the gate used to fail silently).
+func missingProtoHeaderError(directory, rel string) (bool, error) {
+	data, err := os.ReadFile(filepath.Join(directory, rel))
+	if err != nil {
+		return false, fmt.Errorf("page %s: unreadable: %w", rel, err)
+	}
+	var missing []string
+	for _, marker := range []string{"设计代数", "更新", "路由", "index.html"} {
+		if !strings.Contains(string(data), marker) {
+			missing = append(missing, marker)
+		}
+	}
+	return false, fmt.Errorf("page %s: missing 4-field proto-meta header token(s) %v — every page HTML carries 设计代数 / 更新 / 路由 / index 链接 (see skills/ui-prototyping)", rel, missing)
 }
