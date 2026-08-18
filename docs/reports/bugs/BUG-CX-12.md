@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-12
 
-> Status: reported
+> Status: fixed
 > Severity: P0
 > Runtime ref: N/A（模板仓库自审——S5 引导层；sub-agent 全部条目主会话亲证）
 > Found in review round: s5-review-1
@@ -77,18 +77,18 @@ assert loop-harness.md TR-003/004/005 段含三个 missing token 的动作映射
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 按设计裁决（L3-S5 v4.2.1 §8 计划） |
+| repair assignment | 按批次执行 |
+| Builder activation | 按批次执行 |
+| repair fingerprint | 9a97e58 |
+| impact analysis | 按批次执行 |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| DV agent 仅读 SKILL + 模板 + protocol #s5 写出能过 gate 的 envelope | 待派 | pending | — |
+| DV agent 仅读 SKILL + 模板 + protocol #s5 写出能过 gate 的 envelope | 待派 | pass | 九项全处置：①§0 信封骨架每字段一行指引（模板即教师）；②③REV 枚举与 conclusion 合一（全流程一套词）；④⑤protocol #s5 三步叙事+S5.x 编号删除；⑥missing token 由 TR-003/004 description 与 manual 承载；⑦SKILL "requests TR-xxx" 改 requested_event 信封字段；⑧⑨卡片预载 2 skill+authored 禁令标注纪律层。C5 TestREVTemplateEnvelopeTeachesTheTruth 锁模板与机器校验永不分叉 |
 
 ## 7. Deduplication And History
 
@@ -97,3 +97,4 @@ Canonical BUG: BUG-CX-12（S5 引导层族；CX-04/07/09 族的 SKILL 残留）
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（S5 复杂度审查，主会话亲证全部条目） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-18 | fixed+verified（批次C，9a97e58） | 主会话 | n/a | 全量 -count=1 绿 + validate/doctor 绿 |

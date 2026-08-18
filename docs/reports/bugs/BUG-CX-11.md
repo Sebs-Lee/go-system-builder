@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-11
 
-> Status: reported
+> Status: fixed
 > Severity: P0
 > Runtime ref: N/A（模板仓库自审——S5 文档验证阶段机器链与可达性审查；sub-agent 七条声明均经主会话亲证）
 > Found in review round: s5-review-1
@@ -71,18 +71,18 @@ assert verified_versions_current 假绿路径：编辑未在 subject 的 TASK-02
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending（owner 裁决 ①a/b 路径与 ③REQ author 政策） |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 按设计裁决（L3-S5 v4.2.1 §8 计划） |
+| repair assignment | 按批次执行 |
+| Builder activation | 按批次执行 |
+| repair fingerprint | daa7a07 |
+| impact analysis | 按批次执行 |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 真绿/假绿构造双向 | 待派 | pending | — |
+| 真绿/假绿构造双向 | 待派 | pass | 四项全处置：①别名槽删除+record_document_result 桩同删（TR-003 只认 document_review_record）；②invalidate_consumed_review_evidence（活锁关闭，字段按 schema 塑形——首版裸字符串被 post-mutation schema 检查当场抓住）；③author 降级如实入档（guard_specs/evaluator 注释对齐，代码休眠保留）；④registeredDocumentDrift 前置筛（document_drift:<path> conflict，TestDocumentPassGateFlagsRegisteredDocumentDrift 先红后绿） |
 
 ## 7. Deduplication And History
 
@@ -91,3 +91,4 @@ Canonical BUG: BUG-CX-11（S5 机器链结构性缺口族；同 BUG-CX-04/07 族
 | Date | Event | Actor | Runtime revision | Evidence |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（S5 机器链与可达性审查，主会话亲证全部条目） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-18 | fixed+verified（批次B，daa7a07） | 主会话 | n/a | 全量 -count=1 绿 + validate/doctor 绿 |

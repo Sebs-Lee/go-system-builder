@@ -1,6 +1,6 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.2.0（机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.3.0（实施完成：四批次 A-D 落地并全量验证；v4.2.0 机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
 
 ## 1. S5 是什么，为什么要有它
 
@@ -94,7 +94,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 | 审查者几人 | 两人两职责，并行 | 单人通吃——两问题正交且 gate 要求互异 producer；三人加仲裁——现复杂度下无收益 |
 | 防自审 | 事前 separation_edges + 事后 producer 双查 + 纪律层 | "author 机器检查"第三层——author 数据不具备（REQ 不写 author，契约/TASK 的登记 author=hook_controller 即执行者非真实作者），机器层恒空转；与其虚称三层，不如如实两层 + 纪律 |
 | 防纸面签字 | subject_refs 精确全量匹配 | 抽样引用——签收对象是整批，抽样=给漂移留门 |
-| 返工范围 | 指纹失配自动作废旧证据 | 显式失效动作——多余机制；全量重审——时滞浪费 |
+| 返工范围 | 指纹失配自动作废旧 pass 证据 + TR-004 的 invalidate_consumed_review_evidence 消费触发的 fix 记录 | 仅指纹失配——不改已登记文档的 fix 会无限重入（活锁，批次 B 修正）；全量重审——时滞浪费 |
 | TR-003 证据槽 | 只要两条 document_review（各职责一条） | ~~contract_set_record / task_batch_record 第三槽~~——曾声明"三类独立事实"，实际 path 别名允许同一条记录顶三槽（假独立），v4.0.0 删除 |
 | TR-004 动作 | 无 action（纯指纹机制收敛回路） | ~~record_document_result 占位 action~~——无逻辑消费，v4.0.0 删除 |
 | 结论词汇 | pass / fix_required / req_change_required（REV 与 gate 同词） | ~~REV 自造 DOCUMENT_PASS 等大写枚举再登记时映射~~——同一概念两套名字是翻译摩擦与错读源，v4.0.0 合一 |
@@ -119,7 +119,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 
 设计修正一处（随批次 B 落地）：§6 取舍表"TR-004 无 action（纯指纹机制收敛）"只对"修复改了已登记文档"的情况成立；finding 不改任何已登记文档时旧 fix_required 证据永真、TR-004 无限重入（CX-11②活锁）。修正为：TR-004 挂 **`invalidate_consumed_review_evidence`**（把本次 commit 引用的 fix_required 证据置 invalid）——精确的消费失效，不是恢复占位桩。
 
-### 批次 A：S2 design 出链打通（BUG-CX-13 全部；S5 有机路径的前置）
+### 批次 A：S2 design 出链打通（BUG-CX-13 全部；S5 有机路径的前置）——✅ 完成（6749b1d）
 
 | # | 改动 | 文件 | 内容 | 复验 |
 |:--|:--|:--|:--|:--|
@@ -131,7 +131,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 
 边界：不动 design 指纹算法；不把 design 塞进 contract 登记路径。
 
-### 批次 B：S5 机器链修正（BUG-CX-11 ①②③④）
+### 批次 B：S5 机器链修正（BUG-CX-11 ①②③④）——✅ 完成（daa7a07）
 
 | # | 改动 | 文件 | 内容 | 复验 |
 |:--|:--|:--|:--|:--|
@@ -144,7 +144,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 
 边界：不改 TR-005 事件名；不删 evaluator 的 author 检查代码；不动 S6+ 转换。
 
-### 批次 C：引导层落地（BUG-CX-12 全部 + v4.2.0 设计）
+### 批次 C：引导层落地（BUG-CX-12 全部 + v4.2.0 设计）——✅ 完成（9a97e58）
 
 | # | 改动 | 文件 | 内容 | 复验 |
 |:--|:--|:--|:--|:--|
@@ -156,7 +156,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 
 边界：不新建 envelope 模板文件（骨架单一居所在 REV-template §0）；不做 `evidence scaffold` 命令。
 
-### 批次 D：收口
+### 批次 D：收口——✅ 完成（本 commit）
 
 | # | 改动 | 内容 | 复验 |
 |:--|:--|:--|:--|
@@ -185,5 +185,6 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 | 2026-08-16 | v3.2.0 | S4 联动：审查消费 tasks check 机检结论；登记欠账划线 |
 | 2026-08-17 | v4.0.0 | 减法重做：删 TR-003 别名双槽与 TR-004 占位 action；REV 枚举与 gate 词汇合一；author 机器检查明示降级为纪律层；SKILL 砍到必做+触发 |
 | 2026-08-17 | v4.1.0 | v4.0.0 被判"改动说明而非设计"——按讲明白一件事重排叙事，设计内容与 v4.0.0 一致 |
+| 2026-08-18 | v4.3.0 | **实施完成**：四批次按 §8 逐行落地（A=6749b1d/B=daa7a07/C=9a97e58/D=本 commit），每行复验判据通过；§6 TR-004 行按批次 B 修正；执行中测试现场抓出并修正三处首版错误（裸字符串失效字段、ARCH- 前缀未对齐 protocol 命名、模板占位类型）；spine 纯有机 PASS |
 | 2026-08-18 | v4.2.1 | 新增 §8 落地规划（L4 四批次 A-D，含每行复验判据与全局禁区——审查与复验对着本表逐行核对）；设计修正预告：TR-004 需 `invalidate_consumed_review_evidence`（§6 该行随批次 B 修正） |
 | 2026-08-17 | v4.2.0 | **机制复杂度/收益二次审计**（owner 指示"考虑复杂度和收益的比率……引导埋在必经之路"）：①REV 报告降为 findings-only（双 PASS 不产 REV——无消费者的产物是仪式）；②信封模板升级为字段级脚手架（模板即教师，SKILL 卸下字段教学）；③subject_refs 手动复制的"故意不做命令"入档（抄写即签收对峙，防未来被自动化掉）；④审查者卡片预载 9 skill 砍到 2（与激活信封的渐进披露对齐）；⑤S5.1-S5.5 子阶段编号删除（三步叙事：派活→审查→收口三岔路）；⑥review_round 出模板（S5=0 缺省即正确）；⑦诚实限制入档：独立性是程序性的，非认识论双盲 |

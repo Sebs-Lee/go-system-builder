@@ -37,3 +37,5 @@
 - CX-05 的 UI impact 一致性校验是 D2 补洞，与 v4.4.0 的 preflight 方向一致。
 
 > **2026-08-17 二轮修复状态**：BUG-CX-07..10 同批修复完毕（fixed）。CX-07 的决定性验证：`TestS2ToS11_HookDrivenCleanPath` 首次真实 PASS——修复过程中发现该测试此前一直被 product-blocker skip 掩盖（skip-as-pass 的测试卫生问题另记），去除 fixture 手工 documents[] 播种后 S2→S11 全程 hook 自动推进。全量测试 + validate --all + doctor 绿。
+
+> **2026-08-18 S5 落地（四批次，L3-S5 v4.2.1 §8 计划逐行执行）**：CX-13→批次 A（6749b1d，S2 design 出链+fixture 去播种，spine 真实 PASS）；CX-11→批次 B（daa7a07，别名槽删除/活锁失效/漂移前置筛/author 降级如实）；CX-12→批次 C（9a97e58，envelope-first 三步叙事/findings-only/词汇合一/模板即教师+C5 分叉锁）。三份 BUG 全部 fixed；全量 -count=1 绿、validate/doctor 绿。执行中测试现场抓出三处首版错误（裸字符串失效字段/ARCH- 前缀/模板占位类型）——先红后绿纪律持续兑现。

@@ -1,6 +1,6 @@
 # Canonical BUG: BUG-CX-13
 
-> Status: reported
+> Status: fixed
 > Severity: P0
 > Runtime ref: N/A（模板仓库自审——S5 fixture 与可达性）
 > Found in review round: s5-review-1
@@ -71,18 +71,18 @@ assert spine S2→S5 全程纯有机可达（去 fixture 播种）
 
 | Field | Reference |
 |:--|:--|
-| BUG acceptance evidence | pending |
-| repair assignment | pending |
-| Builder activation | pending |
-| repair fingerprint | pending |
-| impact analysis | pending |
+| BUG acceptance evidence | owner 按设计裁决（L3-S5 v4.2.1 §8 计划） |
+| repair assignment | 按批次执行 |
+| Builder activation | 按批次执行 |
+| repair fingerprint | 6749b1d |
+| impact analysis | 按批次执行 |
 | invalidated evidence | n/a |
 
 ## 6. Verification
 
 | Verification | Owner | Result | Evidence |
 |:--|:--|:--|:--|
-| 纯有机链可达性 E2 | | pending | — |
+| 纯有机链可达性 E2 | | pass | 四项全处置：A1/A2 PTR-PLAN-01 挂 register_design_documents（ARCHITECTURE- 命名对齐 protocol，首版 ARCH- 前缀被 replay fixture 抓出）；A3 evaluatePlanningDesign 磁盘回退（TestPlanningDesignGateReadsDiskDeclaredArchitecture 先红后绿）；A4 SeedPlanningDesignComplete 去 documents[] 播种（诚实调整：evidence 信封构造保留 fixture 内存态模式，gate 时被 evaluator 全量校验）；A5 spine 真实 PASS 纯有机 |
 
 ## 7. Deduplication And History
 
@@ -91,3 +91,4 @@ Canonical BUG: BUG-CX-13（S2 design 出链与 S5 fixture 同步族；CX-07 修�
 | Date | Event | Actor | Runtime revision | | |
 |:--|:--|:--|:--|:--|
 | 2026-08-17 | reported（S5 机器链审查，主会话亲证） | 主会话+sub-agent | n/a | 本文件 |
+| 2026-08-18 | fixed+verified（批次A，6749b1d） | 主会话 | n/a | 全量 -count=1 绿 + validate/doctor 绿 |
