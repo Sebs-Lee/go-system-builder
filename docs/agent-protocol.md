@@ -266,12 +266,12 @@ These hold across every stage:
 
   1. **派活**：主会话按 `team-planning` 建两职责任命——两个 document-verifier subagent 分别绑 `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY`，manifest 声明 separation_edges（independence），validator 拒共享 agent。各审查者走 two-phase-activation（readback → 激活信封）。
   2. **审查**（两职责并行，任一出 finding 即可进第 3 步）：
-     - `DV-SPEC-CONSISTENCY`：激活后**第一件事**是把 `docs/reports/review/REV-template.md` §0 的证据信封骨架复制到 `docs/reports/review/REV-{runid}-{resp}.json`（12 字段每字段带填写指引——写骨架即读懂要交什么）；然后自底向上读 TASK→契约→REQ→设计，核对验收↔条款映射、跨文档引用指纹、契约间边界一致、场景映射。
+     - `DV-SPEC-CONSISTENCY`：激活后**第一件事**是把 `docs/reports/review/REV-template.md` §0 的证据信封骨架复制到 `docs/reports/review/REV-{runid}-{resp}.json`（11 字段每字段带填写指引——写骨架即读懂要交什么）；然后自底向上读 TASK→契约→REQ→设计，核对验收↔条款映射、跨文档引用指纹、契约间边界一致、场景映射。
      - `DV-TASK-EXECUTABILITY`：同样先落信封骨架；跑 `loop-harness tasks check` 消费机检结论（覆盖/DAG 机器已判，不重算），再审机器判不了的三件——收尾契约可行性、粒度、写路径串行归属。
      - 有 finding 才写 REV 报告（带定位）；双 pass 不产报告。
   3. **收口三岔路**（信封回填 conclusion，由 PreToolUse 自动路由——agent 不调用任何 transition 命令）：
-     - 双 `pass`：各自信封 conclusion=pass、subject_refs 手动从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意无自动命令）→ gate（两证据 + 独立性）→ **TR-003 自动提交，批次锁定**，进 S6。
-     - 任一 `fix_required`：信封 conclusion=fix_required + requested_event=document_fix_required → TR-004 自动回 planning → 主会话修复被标记文档 → **仅受影响职责以新指纹重跑**（旧证据因 subject 指纹失配自动作废；触发的 fix 记录由 TR-004 的失效动作消费）→ 回第 2 步。
+     - 双 `pass`：各自信封 conclusion=pass、subject_refs 手动从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意无自动命令），并按 REV-template §0 注 2 用 `runtime evidence add` 登记进 runtime（未登记 gate 看不见）→ gate（两证据 + 独立性）→ **TR-003 自动提交，批次锁定**，进 S6。
+     - 任一 `fix_required`：信封 conclusion=fix_required + requested_event=document_fix_required → TR-004 自动回 planning → 主会话修复被标记文档 → 受影响职责重新审查；**另一职责至少以新指纹重签信封**（任一文档变指纹，两份旧 pass 信封同时失配——subject 全量匹配不区分谁受影响）→ 回第 2 步。触发的 fix 记录由 TR-004 的失效动作消费。
      - `req_change_required`（REQ 级歧义，规格链写不出一致解读）：TR-005 → runtime paused（human_boundary）——交人裁决 amendment 或放弃。
 
   两条不变量：修复不重开已定的设计决策（只改被标记的条款，同 S9 纪律）；S5 的**基线代际锁**（TR-003 指纹登记）≠ 文件 `Status` 字段——契约/TASK 文件在 S3/S4 定稿时就声明 locked/complete（PTR-PLAN-02/TR-002 消费磁盘声明），TR-003 只是把精确指纹冻结为 S6 起的基线边界。

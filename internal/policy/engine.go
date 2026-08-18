@@ -89,6 +89,7 @@ type RuntimeContext struct {
 	LastActivityAt     string           `json:"last_activity_at,omitempty"`
 	ProjectRoot        string           `json:"project_root,omitempty"`
 	CurrentStage       string           `json:"current_stage,omitempty"`
+	CurrentBaselineGeneration int       `json:"current_baseline_generation,omitempty"`
 	LockedArtifacts    []LockedArtifact `json:"locked_artifacts,omitempty"`
 }
 
@@ -267,6 +268,19 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 	}
 	affectedPaths := provenMutationPaths(input)
 	for _, artifact := range input.Runtime.LockedArtifacts {
+		// Stage-aware locking (L3-S5 §5): registration projects the artifact
+		// into LockedArtifacts immediately, but the write-block for a
+		// CURRENT-generation artifact is active only from its lock stage
+		// onward (contract/task/design lock at S6) — before that, the
+		// planning and document-verification stages (including the TR-004
+		// repair loop) stay writable. Superseded generations are immutable
+		// history at every stage.
+		if artifact.BaselineGeneration > 0 &&
+			input.Runtime.CurrentBaselineGeneration > artifact.BaselineGeneration {
+			// superseded generation — always locked
+		} else if !lockStageReached(input.Runtime.CurrentStage, artifact.LockedFromStage) {
+			continue
+		}
 		for _, path := range affectedPaths {
 			if artifact.complete() &&
 				samePath(path, artifact.Path) {
@@ -484,4 +498,31 @@ func nullableInt(ok bool, value int) *int {
 		return nil
 	}
 	return &value
+}
+
+// lockStageReached reports whether the current lifecycle stage has reached
+// the artifact's lock stage ("S6" locks from S6 onward). Unparseable stages
+// fail closed (treat as reached) — an unreadable stage must not silently
+// unlock a baseline artifact.
+func lockStageReached(current, lockStage string) bool {
+	c, okC := stageNumber(current)
+	l, okL := stageNumber(lockStage)
+	if !okC || !okL {
+		return true
+	}
+	return c >= l
+}
+
+func stageNumber(stage string) (int, bool) {
+	if len(stage) < 2 || stage[0] != 'S' {
+		return 0, false
+	}
+	n := 0
+	for _, r := range stage[1:] {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n, true
 }

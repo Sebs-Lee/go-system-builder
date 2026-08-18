@@ -392,3 +392,60 @@ func scopeFixtureEvidence(t *testing.T, state map[string]any, ref, scope string)
 	}
 	t.Fatalf("scopeFixtureEvidence: evidence %q not found", ref)
 }
+
+// TestTR004InvalidatesConsumedFixRecord pins BUG-CX-11 B2 (the retest the
+// batch-D ledger claimed but did not deliver): the fix_required record that
+// triggers TR-004 is invalidated at commit — without it, a fix that changes
+// no registered document re-selects TR-004 forever.
+func TestTR004InvalidatesConsumedFixRecord(t *testing.T) {
+	root := t.TempDir()
+	setupRepoWithDefinition(t, root)
+	state := inactiveState(5)
+	state["lifecycle"] = map[string]any{"state": "document_verification", "phase": nil, "phase_revision": float64(1)}
+	state["baseline"] = map[string]any{"generation": float64(1), "captured_at": "2026-08-18T00:00:00Z"}
+	writeFullState(t, root, state)
+	// The consumed fix record: valid document_review with requested_event.
+	fixEnvelope := map[string]any{
+		"schema_version": "1.0.0", "evidence_id": "ev-dv-fix", "kind": "document_review",
+		"runtime_id": "loop-inactive", "baseline_generation": 1,
+		"producer_agent_id": "dv-spec-1", "producer_responsibility": "DV-SPEC-CONSISTENCY",
+		"conclusion": "fix_required", "requested_event": "document_fix_required",
+		"created_at": "2026-08-18T00:00:00Z",
+	}
+	fixData, _ := json.Marshal(fixEnvelope)
+	fixPath := "evidence/dv-fix.json"
+	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, fixPath), fixData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := readState(t, root)
+	items, _ := st["evidence"].([]any)
+	items = append(items, map[string]any{
+		"id": "ev-dv-fix", "kind": "document_review", "path": fixPath,
+		"sha256": transition.SHA256(fixData), "status": "valid", "baseline_generation": float64(1),
+		"review_round": nil, "produced_by": []any{"dv-spec-1"}, "invalidated_by": nil,
+		"responsibility_id": "DV-SPEC-CONSISTENCY", "scope_refs": []any{},
+	})
+	st["evidence"] = items
+	writeFullState(t, root, st)
+
+	if err := applyT(t, root, "TR-004", 5, "hook_controller", map[string]string{
+		"document_review_record": "ev-dv-fix",
+	}); err != nil {
+		t.Fatalf("TR-004 failed: %v", err)
+	}
+	after := readState(t, root)
+	for _, raw := range after["evidence"].([]any) {
+		item := raw.(map[string]any)
+		if item["id"] != "ev-dv-fix" {
+			continue
+		}
+		if item["status"] != "invalid" || item["invalidation_rule"] != "consumed_fix_record" {
+			t.Fatalf("consumed fix record must be invalid with consumed_fix_record rule, got status=%v rule=%v", item["status"], item["invalidation_rule"])
+		}
+		return
+	}
+	t.Fatal("ev-dv-fix not found after TR-004")
+}

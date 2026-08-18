@@ -333,3 +333,61 @@ func TestREVTemplateEnvelopeTeachesTheTruth(t *testing.T) {
 		t.Fatalf("BUG-CX-12: the template-taught envelope must qualify at the gate; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
+
+// TestREVTemplateEnvelopeFixRequiredVariant extends the C5 lock to the
+// fix_required branch: the taught requested_event value must satisfy
+// GATE-DOCUMENT-FIX-REQUIRED's requested requirement (round-3 H2/#1 —
+// the template once taught a dead value on the req_change branch).
+func TestREVTemplateEnvelopeFixRequiredVariant(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	contractData := []byte("# BE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	envelope := map[string]any{
+		"schema_version": "1.0.0", "evidence_id": "ev-dv-fix", "kind": "document_review",
+		"runtime_id": "loop-test", "baseline_generation": 1,
+		"producer_agent_id": "dv-spec-1", "producer_responsibility": "DV-SPEC-CONSISTENCY",
+		"subject_refs":     []any{map[string]any{"path": "docs/contracts/BE-001.md", "version": "v1.0.0", "sha256": sha256Hex(contractData)}},
+		"conclusion": "fix_required", "requested_event": "document_fix_required",
+		"created_at": "2026-08-18T00:00:00Z",
+	}
+	envelopeData, _ := json.Marshal(envelope)
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 5,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "document_verification", "phase": nil, "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				"documents": []any{map[string]any{
+					"id": "BE-001", "kind": "contract", "path": "docs/contracts/BE-001.md",
+					"version": "v1.0.0", "sha256": sha256Hex(contractData), "status": "locked", "generation": float64(1),
+				}},
+				"evidence": []any{map[string]any{
+					"id": "ev-dv-fix", "kind": "document_review", "path": "evidence/dv-fix.json",
+					"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": float64(1),
+					"review_round": nil, "produced_by": []any{"dv-spec-1"}, "invalidated_by": nil,
+					"responsibility_id": "DV-SPEC-CONSISTENCY", "scope_refs": []any{},
+				}},
+			},
+		},
+		TransitionID: "TR-004",
+		GateID:       "GATE-DOCUMENT-FIX-REQUIRED",
+		Files: listingFiles{
+			"docs/contracts/BE-001.md": contractData,
+			"evidence/dv-fix.json":     envelopeData,
+		},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	qualified := false
+	for _, ref := range result.EvidenceRefs {
+		if ref == "ev-dv-fix" {
+			qualified = true
+		}
+	}
+	if !qualified {
+		t.Fatalf("the taught fix_required envelope must satisfy GATE-DOCUMENT-FIX-REQUIRED; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
+	}
+}

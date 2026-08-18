@@ -32,12 +32,12 @@ module current-truth package when the REQ touches UI.
 2. **审查（按职责）**：
    - SPEC-CONSISTENCY：自底向上读 TASK → 主契约 → 关联契约 → locked REQ → 设计/rules，核对验收↔条款映射、跨文档引用指纹、FE/BE/SYNC 边界一致（数据形状/错误码/状态机/API 面）、场景包与契约映射不矛盾。
    - TASK-EXECUTABILITY：跑 `go run ./cmd/loop-harness tasks check --root .` 消费机检结论（覆盖双向/DAG 机器已判，不重算），再审机器判不了的三件——每个 TASK 的收尾契约可判定且现有工具能产出其证据、粒度单一、写路径冲突有显式串行归属。
-3. **收口**：信封回填 `conclusion`（pass / fix_required / req_change_required——与 gate 同词，全流程没有第二套枚举）与 `requested_event`（仅 fix_required 填 document_fix_required）。此后不调用任何 transition 命令——PreToolUse 按你的 conclusion 自动路由。
+3. **收口（登记 + 回填）**：信封回填 `conclusion`（pass / fix_required / req_change_required——与 gate 同词，全流程没有第二套枚举）与 `requested_event`（仅 fix_required 填 document_fix_required；req_change_required 留空走人闸）；然后按 REV-template §0 注 2 的命令行把信封**登记进 runtime**（`runtime evidence add`，`--kind document_review` 与信封同词）——未登记的信封 gate 看不见。此后不调用任何 transition 命令——PreToolUse 按你的 conclusion 自动路由。
 4. **触发——有 finding 才写 REV 报告**：按 `REV-template.md` §1-§5 写（findings 表带 P0-P3/定位/预期/实测/证据；N/A 须记理由与证据）。双 pass 不产报告——没有人读"都挺好"。
 
 ## Outputs
 
-- 必产物：`REV-{runid}-{resp}.json` 证据信封（12 字段，机器校验）。
+- 必产物：`REV-{runid}-{resp}.json` 证据信封（11 字段、10 个机器校验 + review_round 故意不写）+ runtime 登记（§0 注 2）。
 - 条件产物：`REV-{runid}-{resp}.md` findings 报告（仅有 finding 时）。
 
 ## Exit Conditions

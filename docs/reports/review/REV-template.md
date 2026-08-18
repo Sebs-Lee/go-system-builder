@@ -19,18 +19,24 @@
     "手动从 .claude/loop-state.json 的 documents[] 逐条复制 {path, version, sha256}——多一少一都拒。故意没有自动命令：逐条抄写就是'我签的是哪一版'的对峙，这一步的笨拙是审查的锚"
   ],
   "conclusion": "审查完成后回填，三选一：pass / fix_required / req_change_required（与 gate 同词，全流程没有第二套枚举）",
-  "requested_event": "仅 fix_required 时填 document_fix_required（触发 TR-004 回 planning）；pass 留空；req_change_required 时填 req_change_required",
+  "requested_event": "仅 fix_required 时填 document_fix_required（触发 TR-004 回 planning）；pass 与 req_change_required 都留空（后者走人闸，见注 4）",
   "created_at": "填写 ISO 时间戳"
 }
 ```
 
-注：`review_round` 字段**不写**——S5 是轮 0，缺省即正确；误填反而静默失配。
+注 1：`review_round` 字段**不写**——S5 是轮 0，缺省即正确；误填反而静默失配。
+注 2（**登记——教学链此前漏了这步**）：信封写盘后必须登记进 runtime 才被 gate 看到：
+`go run ./cmd/loop-harness runtime evidence add --id REV-{runid}-{resp} --kind document_review --path docs/reports/review/REV-{runid}-{resp}.json --produced-by <你的 agent id> --responsibility <你的职责> --expected-revision <当前 revision>`
+`--kind` 必须与信封内的 `kind` 同词（都用 `document_review`）。这是 evidence 命令，不是 transition 命令——"不调 transition"的纪律不禁止它。
+注 3：字段口径 = 11 个字段（10 个机器校验；`created_at` 仅归档）+ 1 个故意不写的 `review_round`。
+注 4：`req_change_required` 分支的 `requested_event` **留空**——TR-005 是人闸路径（runtime → paused），由人提交，不走 requested_event 自动路由；只有 `fix_required` 填 `document_fix_required`。词汇映射：信封结论词 `req_change_required`（gate 词汇）在人闸处对应 protocol 的 `req_amendment`（= `req amend` 命令路径，S1-S4 同名）——两个命名空间，一处映射，别造第三个词。
 
 ## 1. Fingerprinted Inputs（以下仅在有 finding 时随报告填写）
 
 | Kind | ID | Path | Version | SHA-256 |
 |:---|:---|:---|:---|:---|
 | REQ | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` |
+| architecture | ARCHITECTURE-{id} | `docs/design/architecture/ARCHITECTURE-{id}.md` | {version} | `{sha256}` |
 | contract | {id} | `docs/contracts/{id}.md` | {version} | `{sha256}` |
 | TASK | TASK-{id} | `docs/tasks/TASK-{id}.md` | {version} | `{sha256}` |
 | module current truth | {module} | `docs/design/prototypes/{module}/` (scenario four-pack + stories/flows/index/*.html) | current | `{sha256}` |
@@ -49,8 +55,7 @@ N/A requires a recorded rationale and evidence.
 |:--|:--|:--|:--|:--|:--|:--|
 | REV-F001 | P0/P1/P2/P3 | `{path:line}` | {contract/REQ} | {fact} | {evidence} | BUG-{id} / pending / n/a |
 
-Blocking findings cannot be repaired in this assignment. They enter
-`.claude/skills/bug-resolution/SKILL.md`.
+Findings 随信封 conclusion=fix_required 走 TR-004 回 planning 修复——本 assignment 不修、也不进 BUG 生命周期（那是 S7 起的事）。
 
 ## 4. Checks
 
@@ -63,5 +68,5 @@ Blocking findings cannot be repaired in this assignment. They enter
 
 ```text
 Conclusion: pass | fix_required | req_change_required
-Requested lifecycle event: (none) | document_fix_required | req_change_required
+Requested lifecycle event: (none) | document_fix_required
 ```

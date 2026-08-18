@@ -501,7 +501,8 @@ func TestOldGenerationRemainsImmutableDuringRework(t *testing.T) {
 		ToolName:  "Edit",
 		ToolInput: map[string]any{"file_path": oldPath},
 		Runtime: policy.RuntimeContext{
-			CurrentStage: "S5",
+			CurrentStage:              "S5",
+			CurrentBaselineGeneration: 2,
 			LockedArtifacts: []policy.LockedArtifact{{
 				ID:                 "BE-039",
 				Kind:               "contracts",

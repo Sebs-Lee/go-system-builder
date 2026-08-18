@@ -506,6 +506,7 @@ func qualifiedEvidence(
 	raw, _ := state["evidence"].([]any)
 	var valid []string
 	var conflicts []string
+	var mismatched []string
 	for _, item := range raw {
 		index, _ := item.(map[string]any)
 		if index == nil || !evidenceKindsEqual(requirement.Kind, stringValue(index["kind"])) {
@@ -552,16 +553,35 @@ func qualifiedEvidence(
 			(envelope.ReviewRound != currentRound || envelope.ReviewRound != intValue(index["review_round"])) {
 			continue
 		}
-		if envelope.InvalidatedBy != "" ||
-			!containsString(requirement.Conclusions, envelope.Conclusion) ||
-			(requirement.RequestedEvent != "" && envelope.RequestedEvent != requirement.RequestedEvent) ||
-			!subjectsMatch(envelope.SubjectRefs, documents) {
+		if envelope.InvalidatedBy != "" {
+			continue
+		}
+		// A registered current-generation record whose conclusion or
+		// requested_event misses the requirement may be a naming error —
+		// but the same kind legitimately serves several requirements with
+		// different conclusion vocabularies (bug serves finding_record AND
+		// root_cause_record), so the conflict is deferred: it is reported
+		// only when nothing ends up qualifying (BUG-CX-12 M2, without the
+		// false alarms).
+		if !containsString(requirement.Conclusions, envelope.Conclusion) {
+			mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":conclusion_mismatch:"+envelope.Conclusion)
+			continue
+		}
+		if requirement.RequestedEvent != "" && envelope.RequestedEvent != requirement.RequestedEvent {
+			mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":requested_event_mismatch:"+envelope.RequestedEvent)
+			continue
+		}
+		if !subjectsMatch(envelope.SubjectRefs, documents) {
 			continue
 		}
 		if !containsString(requirement.Responsibilities, envelope.ProducerResponsibility) {
 			continue
 		}
 		valid = append(valid, envelope.EvidenceID)
+	}
+	if len(valid) == 0 && len(mismatched) > 0 {
+		// Nothing qualified and naming errors exist — they are the reason.
+		conflicts = append(conflicts, mismatched...)
 	}
 	return sortedUnique(valid), sortedUnique(conflicts)
 }
@@ -586,8 +606,9 @@ func applyDocumentPassIndependence(input Input, result *Evaluation, documents []
 		if _, isAuthor := authors[envelope.ProducerAgentID]; isAuthor {
 			result.Missing = append(result.Missing, "evidence:reviewer_not_candidate_author")
 		}
-		if !exactSubjects(envelope.SubjectRefs, documents) {
+		if missing := missingSubjects(envelope.SubjectRefs, documents); len(missing) > 0 {
 			result.Missing = append(result.Missing, "evidence:exact_document_manifest")
+			result.Conflicts = append(result.Conflicts, "exact_subjects_missing:"+strings.Join(missing, ","))
 		}
 	}
 	if len(envelopes) != len(result.EvidenceRefs) {
@@ -931,6 +952,9 @@ func registeredDocumentDrift(input Input) []string {
 	var conflicts []string
 	for _, document := range documents {
 		if document.Path == "" || document.SHA256 == "" {
+			// An empty path/sha escapes both this screen and exactSubjects —
+			// name it instead of silently shrinking the manifest.
+			conflicts = append(conflicts, "document_drift:"+document.Path+"(missing path/sha)")
 			continue
 		}
 		data, err := input.Files.ReadFile(document.Path)
@@ -940,4 +964,20 @@ func registeredDocumentDrift(input Input) []string {
 	}
 	sort.Strings(conflicts)
 	return conflicts
+}
+
+// missingSubjects lists the manifest entries the envelope did not cover.
+func missingSubjects(subjects []subjectRef, documents []documentFact) []string {
+	have := make(map[string]bool, len(subjects))
+	for _, subject := range subjects {
+		have[subject.Path] = true
+	}
+	var missing []string
+	for _, document := range documents {
+		if !have[document.Path] {
+			missing = append(missing, document.Path)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }

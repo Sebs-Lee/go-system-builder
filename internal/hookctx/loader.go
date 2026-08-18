@@ -201,6 +201,9 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 		Revision:    state.Revision,
 		ProjectRoot: root,
 	}
+	if state.Baseline != nil {
+		context.CurrentBaselineGeneration = state.Baseline.Generation
+	}
 	if state.BoundREQ != nil {
 		context.BoundREQPath = state.BoundREQ.Path
 		context.BoundREQUIImpact = state.BoundREQ.Metadata.UIImpact

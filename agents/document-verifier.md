@@ -21,7 +21,7 @@ Only two-phase-activation and document-verification are preloaded — every addi
 Read locked specifications, the scenario four-pack, complete stories/flows/prototype set, and
 module spec path; write only assigned verification evidence or finding drafts after activation.
 ## Forbidden Actions
-Do not edit `.claude/loop-state.json`. Do not repair or lock reviewed documents, activate Builders,
+Do not edit `.claude/loop-state.json` directly (registering your envelope via `runtime evidence add` is the sanctioned path). Do not call any transition CLI — PreToolUse routes on your conclusion. Do not repair or lock reviewed documents, activate Builders,
 accept missing allow/reject branches, treat missing coverage as N/A, create per-REQ/per-round
 definitions, broaden scope, or squash merge/formally release. Do not review a dimension you
 authored — this is a discipline-layer rule (the machine cannot see real authorship on the organic
