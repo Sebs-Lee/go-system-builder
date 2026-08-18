@@ -1,163 +1,324 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 机制事实经调查核实，含 file:line
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 前置：S4 registered TASK batch ｜ 下游：S6 构建
+>
+> 阅读顺序：§1～§3 先建立“为什么审、审什么、如何分流”的完整漏斗；§4 再映射 reviewer、REV 信封、quality gate 和 transition；§5～§8 审计职责、真实强制边界、出口和易错点。本文把“审查者应做的判断”与“当前代码已经强制的事实”分开表述。
 
-## 1. S5 是什么，为什么要有它
+## 1. 第一层：S5 的立意与目标
 
-**S5 做一件事：在写第一行代码之前，让两个没有参与写作的人，各自把整条规格链核对一遍，双人签字后整批冻结。**
+### 1.1 为什么需要 S5
 
-为什么值得一个独立阶段：
+S2～S4 已经形成设计、契约和任务链，但这些文档大多来自同一轮规划过程。作者很容易把自己的默认前提当成已写明事实；结构检查也只能证明字段、覆盖和 DAG 成立，不能证明规格真的自洽、Builder 拿到 TASK 真的做得完。
 
-- S2/S3/S4 的产物是同一条会话链写出来的——写的人容易"自己看着都对"。错误进代码之前改是纸面成本，进代码之后改要烧一整轮构建加验证；
-- S6 的 Builder 是照 TASK 干活的——如果 TASK 引用的契约条款根本对不上、或收尾契约要求的证据现有工具做不出来，Builder 会在半路卡死；
-- 冻结（原子锁）之后，任何人改这批文档都会被 hook 拦下，必须走新代次——S6/S7 的所有验证都建立在"基线不会悄悄变"之上。
+S5 因而不是再写一层规格，而是在写第一行实现代码前，用两个相互分离的职责回答两个问题：
 
-所以 S5 的产出只有三样：
+1. **规格链是否一致**：REQ、设计、FE/BE/SYNC 契约与 TASK 是否指向同一件事；
+2. **任务是否可执行**：范围、依赖、完成判据和证据要求是否足以让 Builder 在一个受控上下文内交付。
 
-1. **两份审查结论**（一份规格一致性、一份任务可执行性，各来自一个独立审查者）；
-2. **一批被这两份结论精确覆盖的文档指纹**（不是"看过了"，是"看的就是这一版"）；
-3. **一次原子锁定**（TR-003，之后这批文档只读不改）。
+只有两个问题都得到当前版本的 PASS，系统才允许建立 execution batch 并进入 S6。S5 的价值是把纸面缺陷留在仍可低成本修改的阶段，并为后续锁定建立可追溯签字。
 
-进入条件：S4 出口——契约 locked、任务批 complete、`tasks check` 已过。出去条件：两条 `document_review` 证据 conclusion=pass + 独立性检查过 → TR-003 自动提交。
+### 1.2 阶段目标与完成定义
 
-## 2. 谁参与，各自干什么
+| 项目 | 定义 |
+|:--|:--|
+| 输入 | runtime `documents[]` 中当前登记的 REQ、design、contracts、TASK 指纹；S2 模块场景包等补充材料；S4 `tasks check` 结果；`document_verification` cursor |
+| 要搞清楚 | 规格链有没有断裂/矛盾；TASK 能否按声明范围完成；哪些风险专项被触发；两份结论签的是不是同一批当前文档 |
+| 核心工作 | 组建双职责 → 锚定被审对象 → 两路独立审查 → 写 REV 证据/必要 findings → gate 聚合并分流 |
+| 输出 | 两条 `document_review` 证据；有 finding 时的 REV 报告；PASS 时建立的 execution batch，或明确的修文档/改需求路由 |
+| 完成 | `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY` 均由不同 producer 给出当前轮 PASS；subject 精确匹配且已登记文档无漂移；TR-003 进入 building |
+| 下一阶段 | S6 只在已签收的执行基线上任命 Builder、激活 scope 并产出实现证据 |
 
-S5 只有三种角色：
+### 1.3 Overview：输入、主步骤与输出
 
-| 角色 | 是谁 | 干什么 |
+```mermaid
+flowchart LR
+    subgraph INPUT["Input"]
+        I1["registered REQ + design"]
+        I2["registered contracts + TASK batch"]
+        I3["tasks check result"]
+        I4["module/scenario supplements"]
+        I5["document_verification cursor"]
+    end
+
+    subgraph S5["S5 Document Verification"]
+        T1["T1 组建双职责与独立关系"] --> T2["T2 锚定 subject 并激活审查者"]
+        T2 --> T3["T3 审规格一致性"]
+        T2 --> T4["T4 审任务可执行性"]
+        T3 --> T5["T5 登记证据、聚合与分流"]
+        T4 --> T5
+    end
+
+    subgraph OUTPUT["Output"]
+        O1["2 document_review envelopes"]
+        O2["findings-only REV reports"]
+        O3["PASS: execution batch"]
+        O4["FIX: return planning"]
+        O5["REQ change: human pause"]
+    end
+
+    I1 --> T2
+    I2 --> T2
+    I3 --> T4
+    I4 --> T3
+    I5 --> T1
+    T5 --> O1
+    T5 --> O2
+    T5 --> O3
+    T5 --> O4
+    T5 --> O5
+    O3 --> NEXT["S6 Building"]
+```
+
+这里有一个必须保留的现实边界：模块场景包可以被 reviewer 阅读，却尚未登记进 runtime `documents[]`。因此它不在 `subject_refs` 精确集合和 registered-document drift 检查中，不能把“审查时参考过”写成“已被机器精确签署”。
+
+### 1.4 S5 的边界与当前保证
+
+- **负责**：独立文档审查、风险触发深挖、当前指纹签收、结论证据和失败分流；
+- **不负责**：改文档、改 REQ、实现代码或在审查中顺手修复；发现问题只定位并选择路由；
+- **机器能保证**：两个规定职责都存在；显式 separation edge 不允许同一 agent 承担两职；两条 PASS 的 producer 不同；`subject_refs` 精确匹配当前登记文档；登记文档磁盘指纹未漂移；
+- **机器不能保证**：两名 reviewer 的判断在认识论上独立；真实作者没有参与自审；finding 深度足够；触发式专项全部被执行；未登记的模块场景包没有漂移；
+- **锁定时序**：S5 仍允许通过 TR-004 返回规划修文档；TR-003 进入 building 后，当前执行基线的阶段感知写保护才生效。
+
+## 2. 第二层：S5 的任务分解
+
+| 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
+|:--|:--|:--|:--|
+| T1 组建双职责与独立关系 | 谁分别回答“一致吗”和“做得完吗”；如何避免同人双签 | 建 team manifest；任命两个 document-verifier；声明 independence separation edge；按文档特征标记触发专项 | 两个不同 agent 的职责分配 |
+| T2 锚定 subject 并激活审查者 | 每个人究竟签哪一版；是否读懂职责和交付 | readback；activation envelope；从 runtime 当前 `documents[]` 形成完整 `subject_refs`；先落 REV JSON 骨架 | 可追踪的审查上下文与证据骨架 |
+| T3 审规格一致性 | REQ→设计→合同→TASK 是否语义闭合 | 核验引用和版本；走查 AC/NFR/错误路径；对账 FE/BE/SYNC 边界；参考场景包 | `DV-SPEC-CONSISTENCY` 结论与 findings |
+| T4 审任务可执行性 | Builder 是否能在范围、依赖和证据约束下完成 | 消费 `tasks check`；逐 TASK 做五问+半问；执行迁移、集成、critical 风险等触发审查 | `DV-TASK-EXECUTABILITY` 结论与 findings |
+| T5 登记证据、聚合与分流 | 两个结论能否共同授权构建；失败回哪里 | 完成并登记 REV envelope；运行 document gate；按 PASS/FIX/REQ-change 走 TR-003/004/005 | execution batch，或受控返工/人闸 |
+
+这五项任务形成一个漏斗：先确定谁审，再固定审查对象，然后各自回答正交问题，最后才聚合结论。不能先看结果再补 `subject_refs`，也不能让一个 reviewer 代另一个 reviewer 签字。
+
+## 3. 从候选规格链到执行基线的完整工作流
+
+```mermaid
+flowchart TD
+    IN["document_verification<br/>registered candidate documents"] --> TEAM["T1 建双职责 manifest<br/>声明 separation_edges"]
+    TEAM --> VALID{"required responsibilities<br/>与显式独立关系有效？"}
+    VALID -->|否| REPLAN["重派 agent / 修 manifest"]
+    REPLAN --> TEAM
+    VALID -->|是| READ["T2 两名 reviewer 各自 readback<br/>接收 activation envelope"]
+    READ --> SUBJECT["复制当前 documents[]<br/>形成完整 subject_refs"]
+    SUBJECT --> SKELETON["先写各自 REV JSON 骨架"]
+    SKELETON --> A["T3 DV-SPEC-CONSISTENCY<br/>规格一致性 + 风险深挖"]
+    SKELETON --> B["T4 DV-TASK-EXECUTABILITY<br/>五问+半问 + 触发专项"]
+    A --> CA{"A conclusion"}
+    B --> CB{"B conclusion"}
+    CA -->|finding| RA["写 findings-only REV 报告"]
+    CB -->|finding| RB["写 findings-only REV 报告"]
+    CA --> AGG["T5 完成并登记 document_review"]
+    CB --> AGG
+    RA --> AGG
+    RB --> AGG
+    AGG --> DECIDE{"聚合结论"}
+    DECIDE -->|both pass| GATE["GATE-DOCUMENT-PASS<br/>双职责 + distinct producer<br/>exact subjects + drift screen"]
+    GATE -->|not_ready / conflict| RECHECK["修证据、重签或处理漂移"]
+    RECHECK --> SUBJECT
+    GATE -->|satisfied| TR3["TR-003<br/>register execution batch"]
+    TR3 --> LOCK["building<br/>执行基线写保护生效"]
+    DECIDE -->|fix_required| TR4["TR-004<br/>invalidate consumed fix evidence"]
+    TR4 --> PLAN["planning.design<br/>修文档并重新登记/重审"]
+    PLAN --> SUBJECT
+    DECIDE -->|req_change_required| TR5["TR-005 human boundary"]
+    TR5 --> PAUSE["paused<br/>等待 amendment 或终止"]
+```
+
+正常路径不要求 reviewer 手工调用 transition。证据登记后，后续自然工具调用触发 gate 和 transition。若文档修复改变任一登记指纹，两份旧 PASS 都不再精确覆盖当前 subject 集，因此不能只让“发现问题的人”沿用旧签字；应按当前指纹重新签收。
+
+## 4. 第三层：每项任务如何被引导和承载
+
+### 4.1 T1 — 组建双职责与独立关系
+
+| 维度 | 设计 |
+|:--|:--|
+| 固定职责 | `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY` |
+| 角色卡 | `agents/document-verifier.md`；两者使用相同角色类型、不同 assignment 与上下文 |
+| 编排方法 | `team-planning` 生成 manifest；为两职责声明 reason=`independence` 的 separation edge |
+| 事前检查 | team validator 检查 required responsibilities、agent 绑定、显式 separation edge 和内部依赖合法性 |
+| 事后检查 | GATE-DOCUMENT-PASS 再检查两条证据 producer 不同 |
+| 触发信息 | 主会话根据 REQ/契约特征把 NFR、迁移、外部集成、critical risk 等专项写入 activation envelope |
+
+两层检查证明“不是同一个 agent ID 双签”，并不证明两个 agent 没有共享模型偏差，也不证明它们真的独立完成了全部思考。当前 team validator 也没有检查 workgroup 成员的 prospective write-path overlap；S5 依靠两个 reviewer 写各自证据路径的任务约定，而不是这项尚不存在的机器能力。
+
+### 4.2 T2 — 锚定 subject 与两阶段激活
+
+每名 reviewer 先 readback 自己的责任、被审对象、允许输出和 stop condition，再接收 activation envelope。激活后第一件事是复制 `docs/reports/review/REV-template.md` 的 JSON envelope 骨架，而不是先自由审查、最后凭记忆补记录。
+
+关键字段的分工是：
+
+| 字段 | 回答的问题 |
+|:--|:--|
+| `producer_agent_id` / `producer_responsibility` | 谁以哪个职责签字 |
+| `conclusion` | `pass`、`fix_required`、`req_change_required` 三选一 |
+| `subject_refs` | 实际审查的登记路径、version、sha256 是否完整对应当前 runtime 文档 |
+| `requested_event` | fix 时请求 `document_fix_required`；REQ 变更人闸不在此伪造自动事件 |
+| evidence ID / path | 当前这次签字的唯一身份；重签使用新 ID，如 `-r2` |
+
+S5 的 review round 是 0，模板不要求显式填写 `review_round`。`subject_refs` 当前按流程从 runtime 手动复制；这能迫使 reviewer 面对具体版本，但也带来抄漏/抄错成本，最终由 exact-subject gate 兜底。
+
+`two-phase-activation` 提供的是 readback、信封和主会话派发纪律。当前实现对未激活或越界写入主要呈现 `not_ready`/流程阻断，并非覆盖所有路径的强制文件锁；不要把这一层描述成与 S6 scope hook 等价的硬隔离。
+
+### 4.3 T3 — 规格一致性审查
+
+`DV-SPEC-CONSISTENCY` 沿整条规格链回答以下问题：
+
+1. REQ 的 AC 能否沿设计决策、合同条款和 TASK Closing Contract 走到可验证事实；
+2. NFR 是否真正进入架构、合同或任务，而非停留在需求表；
+3. FE、BE、SYNC 对同一字段、错误码、状态和外部边界的表述是否一致；
+4. 负向路径、权限拒绝、异常状态是否在 REQ、场景与契约之间对得上；
+5. 引用的路径、版本和 clause 是否是当前登记对象。
+
+建议从 TASK 向上反查到合同和 REQ，再从关键 AC 向下抽样到 Closing Contract，避免只做单向“存在性浏览”。NFR、权限/API 负向分支是恒常或条件深挖；场景包用于发现矛盾，但由于未进入 `documents[]`，其版本目前不受 S5 gate 精确保护。
+
+### 4.4 T4 — 任务可执行性审查
+
+`DV-TASK-EXECUTABILITY` 先消费 S4 `tasks check` 的结构结果，不重复手算 coverage 和 DAG；注意当前 TasksCheck 只证明结构地板。每个 TASK 继续回答五问+半问：
+
+| 问题 | 判定焦点 | 当前机器帮助 |
 |:--|:--|:--|
-| 主会话（Orchestrator） | 一直存在的编排者 | 只做一件事：派活。把两个审查职责任命给两个不同的 subagent（并按 REQ/契约特征核对触发条件、在激活信封指名 Triggered Deep-Dives），之后等结论。**不参与审查本身** |
-| 审查者 A | 一个 document-verifier subagent | 拿到 **DV-SPEC-CONSISTENCY** 职责：核对"规格链自洽"——REQ 的每条验收标准能走到契约条款，契约之间的数据形状/错误码/状态机在 FE/BE/SYNC 边界上一致，场景包与契约映射不矛盾；外加三项深挖（§3.2 #1-#3） |
-| 审查者 B | 另一个 document-verifier subagent | 拿到 **DV-TASK-EXECUTABILITY** 职责：核对"任务能执行"——不是纸面存在性检查，而是**代入 builder 视角回答"我拿到这个任务单能顺利干完吗"**（五问+半问见 §3.1）；外加持表三个触发式专项（§3.2 #5-#8） |
+| 1. 单一职责 | 能否用一句话说完交付物；是否混装 FE/BE/SYNC 或多个独立结果 | 无语义检查 |
+| 2. 单窗口可行 | 必读、触碰路径和预计改动会不会使 Builder 中途丢失任务上下文 | required-reading KB、write-path count 仅供参考 |
+| 3. 依赖语义 | 地基是否先于消费者；有没有缺失边、假边或单链瓶颈 | 只查引用/取消目标/环 |
+| 4. 自包含 | 路径、条款、scope 是否足够精确，不要求 Builder 重做全仓探索 | 无语义检查 |
+| 5. 可测性前向 | Closing Contract 的命令和证据能否在 S6 产出、S7 复验 | 只查出现 Closing Contract 和至少一条 `assert` |
+| 半问：批次节奏 | 可并行项是否被假依赖串行；关键路径是否不必要地过长 | DAG 结构可见，节奏靠判断 |
 
-两个职责为什么分开、为什么并行：它们看同一批文档但问的问题正交（"纸面对不对" vs "照着能不能干"）；并行省时滞；互为对方的第二双眼睛。
+按条件增加三类专项：数据模型变化时检查迁移/破坏性决策；存在 SYNC/外部依赖时检查 timeout、retry、degrade 与错误翻译；critical coverage 时检查 S7 风险维度是否已有落点。这些专项目前由信封指名和 reviewer 自查触发，没有 machine gate 证明“命中条件就一定审过”。
 
-**独立性怎么保证**（这是 S5 机制的立足点，分两层机器检查 + 一层纪律）：
+### 4.5 T5 — REV 证据、聚合 gate 与三路分流
 
-- 事前（派发时）：team-manifest 必须声明 separation_edges（reason=independence）——两个职责派给同一个 agent 直接被 validator 拒绝；
-- 事后（收口时）：gate 机器核对两条证据的 producer 必须是不同 agent，且每条证据的 subject_refs 必须**精确等于**当前 documents[] 的完整指纹集（多一份少一份都拒——防止"看的是旧版"或"只看了一半就签字"）；
-- 纪律层：审查者若发现自己参与写过被审文档，stop condition 立即上浮（文档级禁令；author 数据在机器层不区分真实作者，这条不做机器承诺——如实记录，不虚称三层）。
+每名 reviewer 必须产出一份 JSON evidence envelope；只有存在 finding 时才另写 Markdown REV 报告。PASS 不要求“无问题报告”，因为它没有后续修复消费者。
 
-审查者卡片只预载 two-phase-activation 与 document-verification 两个 skill——其余按激活信封指名加载（渐进披露）。诚实限制：两个审查者是同一模型同一套卡片，独立性是**程序性的**（不同上下文窗口、不同职责透镜），不是认识论意义上的双盲——比自审强，但文档不暗示更多。
+信封完成后运行 `runtime evidence add --kind document_review` 登记。未登记文件不会进入 gate；同一 evidence ID 不能覆盖，重审必须创建新 ID。随后：
 
-## 3. 审查者产出什么（一个必产物 + 一个条件产物）
-
-**必产物：document_review_record 证据信封**（`docs/reports/review/REV-<runid>-<resp>.json`，机器消费）
-→ 给 gate 看的签字单，激活后第一件事就落骨架。**模板即教师**：REV-template §0 的骨架每个字段带一行"填什么"，agent 复制模板的过程就是读字段含义的过程——引导嵌在必填结构里（D4 彻底形态），SKILL 不再承担字段教学。核心三个字段：
-
-- `producer_responsibility`：自己是哪条职责（DV-SPEC-CONSISTENCY 或 DV-TASK-EXECUTABILITY）；
-- `conclusion`：三选一——`pass` / `fix_required` / `req_change_required`（与 gate 同词，全流程无第二套枚举）；
-- `subject_refs`：自己核对过的文档指纹清单。
-
-`subject_refs` **必须手动**从 `.claude/loop-state.json` 的 documents[] 逐条复制 `{path, version, sha256}`——这是故意不做命令的：逐条抄写迫使审查者与"我签的到底是哪一版"对峙，这个笨拙动作本身就是审查的锚。自动 scaffold 会把这次深度思考优化掉（写明此处，防未来被"改进"）。review_round 字段模板不列（S5=轮 0，缺省即正确；误填反而静默失配）。
-
-**登记**：信封写盘后必须 `runtime evidence add --kind document_review`（含 `--expected-revision`；重签用 `-r2` 递增后缀新 ID——同 ID 会被拒）——未登记的信封 gate 看不见。详见 REV-template §0 注 2。
-
-**条件产物：REV 报告**（`docs/reports/review/REV-<runid>-<resp>.md`，markdown）
-→ 只在有 finding 时才写：给修复者看的过程与定位（P0-P3/哪份文档哪一条/预期 vs 实测/证据路径），N/A 须记理由。**双 PASS 不产 REV 文件**——没有人读一份"都挺好"的审查报告（公理三：无消费者的产物是仪式）。
-
-### 3.1 可执行性五问+半问（TASK-EXECUTABILITY 的深挖标准）
-
-审查者 B 对每个 TASK 回答五个问题+半问——每一问都有判定测试，不是感觉：
-
-**问 1 · 单一职责——一句话测试**：用一句话说出该 TASK 的交付物。说不成一句、或句子里出现"以及/然后"→ 拆。三个具体信号：§3 条款跨多张契约；FE+BE+SYNC 混进同一任务（跨层切换即上下文损耗）；收尾契约的 assert 超过四行（一个交付物不该需要四条以上断言）。
-
-**问 2 · 单窗口可行——compact 是灾难性表现**：如果我是 builder，读完 §2 清单 + 写完 §4 路径，会不会在中途撞 compact？**subagent 中途 compact 丢任务信息 = 杂音与错误开发的头号来源，是灾难性表现**——这不是硬性尺寸门禁（不限制模型的创造力，绕的活该绕），而是拆分者与审查者共持的强警示：能拆小就拆小，能裁清单就裁清单（只引用需要的条款切片）。判定依据：规模直觉锚（必读合计 ~30KB / 触碰 ~8 文件 / 改动 ~400 行）+ `tasks check` 输出的 reference load 参考值——数字是参考不是门槛，审查者判"这个任务会不会真的撞上"。
-
-**问 3 · 语义连贯——DAG 的机器外一半**：`tasks check` 查了无环与引用存在，查不了语义序。三查：**地基先于依赖者**（类型/schema/迁移任务的下游有没有声明依赖它）；**缺失边**（B 任务用到 A 任务的产物却没声明依赖——builder 会读到半成品）；**假边**（复制粘贴来的依赖，实际无读写关系——虚增串行浪费时滞）。
-
-**问 4 · 自包含——防探索浪费**：任务单给的是精确锚点（路径+条款号+行区间）还是"自己去理解模块"？builder 需要 grep 找活干 = 任务书写得不合格，探索烧掉的上下文直接挤占问 2 的预算。
-
-**问 5 · 可测性前向**：收尾契约要求的证据在 S7 三角度（DV/QA/E2E）下真的能产出吗？验收标准本身可判定吗（"响应快"无指标=到 S7 只能靠猜）？
-
-**附加半问 · 批次节奏**：DAG 机器已判无环——再看关键路径有没有单链瓶颈、有没有假依赖把可并行的任务串起来。
-
-五问的分工：全部纯判断（审查者），唯问 2 有机器参考数字（reference load，不产 problem；该数字同时供问 5 判断证据产出成本）。
-
-### 3.2 审查角度全景（S5 是最后一道设计闸）
-
-组织原则：**核心双职责必审 + 按需触发的专项角度**（触发条件来自 REQ/契约的特征——D5 精神：按观测到的风险升级，不做均匀付费）。八个角度的处置：
-
-| # | 审查角度 | 审什么 | 触发条件 | 承载 |
-|:--|:--|:--|:--|:--|
-| 1 | 需求覆盖端到端 | 每条 AC 沿 REQ→条款→TASK→收尾契约 assert 走通最后一公里（bridge 只到 CASE）——抽 2-3 条走全程 | 恒常 | 职责 A 深挖 |
-| 2 | NFR 落地追踪 | REQ 非功能表的每行有没有落进契约条款（NFR 最易静默掉队——Eroding Goals 的经典入口）——没落地的每一行都是 finding | REQ 有 NFR 行 | 职责 A 深挖 |
-| 3 | 负向与错误路径完备 | 契约错误码表 ↔ 场景包负向分支 ↔ 权限拒绝用例三方对账（REQ 流程表的权限列有没有负向场景） | API 类契约 / REQ 有权限列 | 职责 A 深挖 |
-| 4 | 可测性前向 | 收尾契约证据 S7 三角度真能产出？验收标准可判定？ | 恒常 | 职责 B 第五问 |
-| 5 | 迁移与破坏性变更处置 | **默认干净断裂，不默认向后兼容**（owner 裁定：非必须不兼容——兼容是必须辩护的技术债）。审查者查**决策与登记**而非兼容实现：选了兼容的有没有登记（决策理由/影响面/移除路径+责任人）？破坏性变更的数据迁移任务在不在批里？无登记的兼容 = 无声负债，直接 finding | BE 契约含数据模型变更 | 触发式附加段（归 B） |
-| 6 | 外部集成韧性 | 每个外部调用点的超时/重试/降级声明；SYNC 把外部错误翻译成本地错误码 | SYNC 契约或 REQ 声明外部依赖 | 触发式附加段（归 B） |
-| 7 | 批次节奏 | 关键路径单链瓶颈、假依赖串行 | — | 职责 B 半问 |
-| 8 | 风险触发验证就位 | critical 的 REQ——S7 的 risk-triggered 验证维度"座位"在不在（required 分支/PATH 预检；负向齐备性归深挖 #3 不重复） | coverage_profile=critical | 触发式附加段（归 B） |
-
-触发式专项不设第三任命（防职责表膨胀）——主会话派活时按 REQ/契约特征核对触发表并在激活信封指名（expected_outputs 或附言均可）；审查者命中触发条件可**自查自救直接开审**——漏审比越权严重。
-
-**暂缓项**（有意识不做，理由入档）：现有代码库的债务适配——需要读实现代码，超出文档验证职责边界，归 S6 builder 的 Best Practices 触发与 S7 的实现级验证；契约内状态机与持久层一致性——待 BE 契约模板有独立状态机节后再审。
-
-## 4. 机制清单（每台机器管什么）
-
-| 机制 | 管什么 | 在哪 |
+| 结论 | 当前机制 | 去向 |
 |:--|:--|:--|
-| team-planning + separation_edges | 派发时挡"两职责同 agent" | team/validator.go |
-| two-phase-activation | 审查者先 readback 证明读懂了任务再动手；信封承载触发段指名 | skills/two-phase-activation |
-| GATE-DOCUMENT-PASS | 收口判定：两条证据（各职责一条 pass、当前轮）+ producer 互异 + subject 精确匹配 + **registered-document drift 前置筛**（任一当前代条目磁盘 sha ≠ 登记 sha → `document_drift:<path>` conflict——堵"编辑未审文档随批锁入"） | internal/qualitygate/evaluator.go |
-| TR-003 | 双 PASS 后由 PreToolUse 自动提交——原子锁定批次进 documents[]；登记 execution batch（空批显式失败） | docs/loop-definition.json |
-| TR-004 / TR-005 | 失败路由（见 §5 时间线第 4/5 步）；TR-004 挂 `invalidate_consumed_review_evidence`（消费触发的 fix 记录置 invalid） | 同上 |
-| tasks check 机检 | S4 已把覆盖/DAG 把过关——审查者 B 消费其结论，不重算 | loop-harness tasks check |
-| reference load 统计 | 每任务必读 KB + 写路径数——**仅供参考不产 problem**（提示词与审查要点形态，不锁死创造力）；目录行按 0 计（自估真实体积） | 同上 |
-| 写路径重叠检测 | 两任务 prospective write paths 交集非空且无依赖串行声明 → problem（"串行归属"的机器地板） | 同上 |
-| hook 锁定拦截（阶段感知） | 登记即投影进 LockedArtifacts，但写拦截自锁阶段起才激活（contract/task/design=S6）；S5 修复回路（TR-004）可写；旧代次恒锁；wire 路径经共享投影接入 | policy/engine.go；hookctx.LockedArtifactsFromSnapshot |
+| 双 PASS | GATE-DOCUMENT-PASS 查两职责、当前轮、distinct producer、exact subjects、registered-document drift；TR-003 登记 execution batch | S6 building |
+| 任一 `fix_required` | 对应 envelope 请求 `document_fix_required`；TR-004 使已消费的 fix evidence 失效并回 planning | 修文档、更新登记指纹、两路重新签收 |
+| 任一 `req_change_required` | 不伪造自动修文档事件；TR-005 是 human boundary | paused，等待 amendment/终止 |
 
-## 5. 完整时间线（agent 视角，一步一步）
+gate 中存在 reviewer-vs-author 检查逻辑，但当前有机登记普遍把 `author_agent_id` 记为 `hook_controller`，而不是真实文档作者；因此这项检查实际上休眠。真正能工作的独立性保障是 assignment separation、producer distinct 和 reviewer 自觉上浮利益冲突。
 
-**第 1 步 · 派活（主会话）**
-按 team-planning 建两职责任命：两个 document-verifier subagent，分别绑 DV-SPEC-CONSISTENCY 与 DV-TASK-EXECUTABILITY，manifest 里声明 separation_edges；按 REQ/契约特征核对触发表，命中项在激活信封指名。各审查者走 two-phase-activation（readback → 激活信封）。S5 就是三步：派活 → 审查 → 收口三岔路。
+## 5. 职责分布与覆盖审计
 
-**第 2 步 · 落信封骨架（每个审查者，激活后第一件事）**
-把 document_review_record 的 JSON 骨架写到自己的 REV 文件（11 字段全列，值可空）。字段即问题——写骨架时就读懂了自己要交什么。
+### 5.1 职能落点
 
-**第 3 步 · 并行审查（两个审查者同时）**
-- 职责 A：自底向上读 TASK→契约→REQ→设计，核对验收↔条款映射、跨文档引用指纹、契约间边界一致、场景映射 + 三项深挖（AC→assert 抽样 / NFR 落地 / 负向三方对账）；
-- 职责 B：跑 `loop-harness tasks check` 消费机检结论（覆盖/DAG 机器已判，不重算），再审五问+半问 + 触发式专项（信封指名或自查命中）；
-- 有 finding 才写 REV 报告（带定位；缺失型 finding 的 Location 填"应出现处"，Observed 记 absent），没有则只在信封收口。
+| 职能 | 主责 | 承载位置 | 消费者 |
+|:--|:--|:--|:--|
+| 双职责组队与触发项识别 | Orchestrator | team manifest + activation envelope | team validator、reviewer |
+| 规格链语义审查 | DV-SPEC-CONSISTENCY | REV envelope / findings report | document gate、修复者 |
+| TASK 可执行性审查 | DV-TASK-EXECUTABILITY | REV envelope / findings report | document gate、S4 planner |
+| 结构覆盖与 DAG 算术 | harness | `tasks check` | task reviewer、TR-002 |
+| subject 精确签收与漂移检查 | quality gate | evidence index + runtime documents | TR-003 |
+| 失败分类与路由 | reviewer + protocol | conclusion / requested event / TR-004/005 | planner、人 |
+| 执行批次建立与写保护切换 | protocol/store/policy | TR-003 + building state | S6 Builder/hook |
 
-**第 4 步 · 收口（三条路，按结论走）**
-- 双 pass：各自登记 document_review 证据（conclusion=pass，subject_refs=当前 documents[] 精确指纹）→ 下一次 PreToolUse：gate 求值（两条证据 + 独立性两查 + drift 筛）→ **TR-003 自动提交，批次锁定**，S5 结束进 S6。agent 不调用任何 transition 命令。
-- 任一 fix_required：该审查者信封填 `conclusion=fix_required` + `requested_event=document_fix_required` → TR-004 自动提交（消费的 fix 记录置 invalid），回 planning → 主会话修复被标记的文档 → **受影响职责重新审查，另一职责至少以新指纹重签信封**（任一文档变指纹，两份旧 pass 信封同时失配——subject 全量匹配不区分谁受影响；重签用 -r2 后缀新 ID）→ 回到第 3 步。
-- REQ 级歧义（规格链写不出一致解读）：`conclusion=req_change_required`（requested_event 留空——人闸不走自动路由）→ TR-005 → runtime paused（human_boundary）——交人裁决 amendment 或放弃。
+### 5.2 重叠是怎样被控制的
 
-**第 5 步 · 冻结生效**
-TR-003 提交后，documents[] 中这批条目的写拦截自 S6 起激活——任何人想改这批文档，PreToolUse 直接拒绝，指路 versions/g{N+1}/ 新代次。
+- 两名 reviewer 故意读取同一条规格链，但问题不同：A 判断“语义一致”，B 判断“照单可做”；同读不是职责重复；
+- `tasks check` 与 B 的审查也不重复：前者算存在性、覆盖和无环，后者判断粒度、语义依赖、自包含与可测性；
+- Orchestrator 只组队、指名触发项和等待结论，不代写 reviewer 的判断；
+- REV JSON 是机器签字，REV Markdown 是 finding 的修复说明；二者消费者不同，不应把同一长报告复制两份；
+- subject exactness 与 drift screen 分别回答“签了哪些登记对象”和“登记后磁盘是否变过”，两道检查互补。
 
-## 6. 设计取舍记录（为什么这样、否决过什么）
+### 5.3 如实现状与未闭合缺口
 
-| 问题 | 选择 | 否决的与理由 |
+1. **场景包未进入签署集合**：S2 模块真相/场景包可被审阅，但未注册为 runtime document，S5 无法对其 exact subject 或 drift 给机器承诺；
+2. **作者独立性校验休眠**：`author_agent_id=hook_controller` 不能代表真实作者，reviewer-vs-author check 当前没有实际区分力；
+3. **独立性仅是程序性的**：不同 agent ID、上下文和职责透镜优于自审，但不是双盲，也不能消除同模型偏差；
+4. **manifest 不检查写路径重叠**：team validator 检查职责、separation、skill 和内部依赖，不检查 prospective write-path overlap；
+5. **两阶段激活不是全面硬锁**：其主要力量来自 readback、信封和编排纪律，不应虚称所有 phase-one 越界写都由 hook 拒绝；
+6. **专项深挖是流程要求**：目前没有结构化字段或 gate 证明 NFR/迁移/外部集成/critical risk 的触发项逐项完成；
+7. **手工 subject 有摩擦**：精确 gate 能发现抄错，却不能消除人工复制成本；这是当前设计取舍，不是自动化事实；
+8. **TasksCheck 能力有限**：没有 TASK write-path overlap 检查，也不验证 Closing Contract 四类语义；S5 必须如实补判断层。
+
+### 5.4 关键取舍
+
+| 问题 | 当前选择 | 代价与边界 |
 |:--|:--|:--|
-| 审查者几人 | 两人两职责，并行 | 单人通吃——两问题正交且 gate 要求互异 producer；三人加仲裁——现复杂度下无收益 |
-| 防自审 | 事前 separation_edges + 事后 producer 双查 + 纪律层 | "author 机器检查"第三层——author 数据不具备（REQ 不写 author，契约/TASK 的登记 author=hook_controller 即执行者非真实作者），机器层恒空转；与其虚称三层，不如如实两层 + 纪律 |
-| 防纸面签字 | subject_refs 精确全量匹配 + drift 前置筛 | 抽样引用——签收对象是整批，抽样=给漂移留门 |
-| 返工范围 | 指纹失配自动作废旧 pass 证据 + TR-004 的失效动作消费触发的 fix 记录 | 仅指纹失配——不改已登记文档的 fix 会无限重入（活锁）；全量重审——时滞浪费 |
-| TR-003 证据槽 | 只要两条 document_review（各职责一条） | contract_set_record / task_batch_record 第三槽——曾声明"三类独立事实"，实际 path 别名允许同一条记录顶三槽（假独立），已删除 |
-| TR-004 动作 | invalidate_consumed_review_evidence（精确消费失效） | 无 action（纯指纹机制）——不覆盖"不改登记文档的 fix"；占位桩——无逻辑消费 |
-| 结论词汇 | pass / fix_required / req_change_required（REV 与 gate 同词） | REV 自造大写枚举再登记时映射——同一概念两套名字是翻译摩擦与错读源 |
-| SKILL 步骤 | 3 必做（落骨架/审/收口登记）+ finding 触发式展开 | 10 步均匀手册——后 7 步是发现后才需要的，预读是均匀付费 |
-| 可执行性审到多深 | 五问+半问；"避免 compact"以提示词（S4 拆分时）+ 审查要点（S5）的形态进入流程，机器只出参考数字 | 纸面存在性检查——审不出"builder 拿到干不完"；也否决两类过刚：硬阈值门禁（限制创造力——owner 裁定不取）与 token 精确计数（伪精度） |
-| 拆分引导埋哪 | 主战场在 S4 拆分时（TASK 模板字段即问题），S5 是第二道核对 | 全压在 S5 审查——拆错的成本在 S5 才发现，晚了一整轮返工 |
-| 字段教学放哪 | 信封模板每个字段带一行"填什么"（模板即教师） | SKILL 手册教字段——预读与填写分离，抄模板时不带走理解 |
-| PASS 要不要 REV 报告 | 不要（findings-only） | 每次都写——"都挺好"的报告无消费者，纯仪式 |
-| subject_refs 生成 | 手动逐条复制 | 自动 scaffold 命令——会把"签的是哪一版"的对峙优化掉 |
-| 审查者卡片预载 | 仅 2 skill（激活信封按需指名其余） | 预载 9 skill——与渐进披露机制自相矛盾的上下文噪音 |
-| 阶段叙事 | 三步：派活→审查→收口三岔路 | S5.1-S5.5 子阶段编号——SKILL 从不使用，双义源头 |
-| 锁定时序 | 登记即投影、S6 前可写（修复回路）、旧代恒锁 | 登记即全锁——挡死 TR-004 修复；S6 才投影——wire 路径要重投影 |
-| 专项角度形态 | 触发式附加段（归 B，信封指名+自查自救） | 第三任命——职责表膨胀；均匀全审——为无风险 REQ 付费 |
+| reviewer 数量 | 两人两职责 | 控制时滞；没有第三方仲裁，分歧只能转 fix/人闸 |
+| 审查对象 | 对 runtime 当前 `documents[]` 做精确全量签收 | 未登记补充物落在保护外 |
+| PASS 报告 | 只写 JSON，不写空洞 Markdown | 机器证据紧凑；人向过程只在 finding 时存在 |
+| subject 构造 | reviewer 手动复制，gate 精确校验 | 强化版本意识，但增加操作摩擦 |
+| 任务规模 | info-only 数字 + 人工五问 | 避免硬阈值诱导，却保留判断差异 |
+| 失败路由 | 文档问题自动回 planning；REQ 问题停在人闸 | 不允许 reviewer 越权改需求 |
+| 写保护 | PASS 进入 S6 后生效 | S5 可修复；同时要求所有重签指纹真实更新 |
 
-## 7. 期望效果与如实缺口
+## 6. L1 准则如何嵌入 S5
 
-走完 S5：规格链两路独立签收并冻结；自审、纸面对齐、半锁、返工蔓延、礼貌通过、NFR 掉队、断链最后一公里、迁移债各有结构性防线；S6 拿到锁定批次作为读序与授权基准；审查者建立的全链心智可在 S7 转任验证。
+| L1 准则 | S5 中的实际落点 |
+|:--|:--|
+| D1 权威外置 | 两个结论、producer、subject 指纹和 findings 落盘并登记 evidence index |
+| D2 自然路径观测 | 证据登记后的正常工具调用触发 gate/transition；不依赖人工口头宣布 PASS |
+| D3 门是顾问 | 缺职责、producer 重合、subject 不匹配、document drift 分别给出可定位原因 |
+| D4 引导性产物 | REV 骨架先行；字段迫使 reviewer 明确身份、对象、结论和路由 |
+| D5 三级强制 | skill/五问引导判断；manifest/gate 强制可算事实；REQ 变化交人裁决 |
+| D6 三方收敛 | agent 审查、机器验签和分流、人只处理需求级决策 |
+| D7 收敛可观测 | 两个责任槽、每条 evidence 状态和 gate conflict 显示离出口还缺什么 |
+| 公理一 原型 | 对应真实的独立设计审查、签字和 baseline freeze |
+| 公理二 分工 | planner/author 不自证；两个 reviewer 问正交问题；machine 不伪装语义判断 |
+| 公理三 消费 | JSON 被 gate 消费；Markdown 只在 finding 时被修复者消费 |
+| 公理四 成本 | 两路并行、结构算术复用 S4 结果、风险专项按触发升级 |
+| 公理五 传达 | findings 指向文档/条款/观察与预期；failure route 与问题层级一致 |
 
-如实记录的缺口与限制（供修复清单）：
-1. author 纪律层无机器数据支撑（见 §6 防自审行）——若未来要真挡，需 REQ 登记写真实作者；
-2. 独立性是程序性的（同模型同卡片、不同上下文与职责透镜），不是认识论双盲——如实声明，不虚称；
-3. S5 证据 review_round=0；S7 期间若产生新 document_review，注意轮次校验（模板已删该字段防误填）；
-4. S5 fixture 派生化：有机链的 documents[] 注册优先（信封 subject 直接取当前注册指纹）；仅压缩前置场景才写文件+建注册；轮次不强制为 1；证据索引追加而非替换。诚实边界：证据索引条目仍由 fixture 构造（内存态模式，gate 时全量校验）；
-5. 词汇映射（三个名字、两个命名空间，REV-template §0 注 4 固化）：信封结论词 `req_change_required`（gate 词汇）＝ protocol 人闸名 `req_amendment`（= `req amend` 命令路径）＝机器事件名 `document_req_change_required`（loop-definition TR-005，机器名不进 agent 读物）；
-6. 两条诊断不对称观察（如实不修）：subject 超集静默不合格、延迟冲突在真实堵点为 subject 漂移时可能指错原因——均属诊断噪音，且静默跳过正是"指纹失配自动作废"的预期通道，修反成害。
+## 7. 产出、出口门槛与失败路由
+
+### 7.1 正式产出
+
+- 两份不同 producer 的 `document_review` JSON envelope，分别承担两个固定职责；
+- 有 finding 时，对应 `docs/reports/review/REV-*.md` 定位报告；
+- exact `subject_refs`：对当前 runtime 登记文档逐项给出 path、version、sha256；
+- 双 PASS 时由 TR-003 建立 execution batch 并进入 building；
+- 非 PASS 时留下可追溯的 fix 或 req-change 证据与路由。
+
+### 7.2 出口判定
+
+| 判定 | 必须满足 |
+|:--|:--|
+| 职责完整 | 当前 review round 同时存在 SPEC-CONSISTENCY 与 TASK-EXECUTABILITY PASS |
+| 程序独立 | 两职责 assignment 分离，最终 evidence producer 不同 |
+| 版本精确 | 两条 evidence 的 subject 集精确等于当前 `documents[]` |
+| 无登记漂移 | 当前登记路径的磁盘 sha 与 runtime sha 一致 |
+| 语义签收 | A 认为规格链一致；B 认为 TASK 可执行；触发风险已被说明 |
+| protocol 出口 | GATE-DOCUMENT-PASS satisfied，TR-003 成功登记非空 execution batch |
+
+### 7.3 失败路由
+
+| 情况 | 去向 |
+|:--|:--|
+| 缺一职责、同 producer、证据未登记 | 留 S5，补正确 reviewer/evidence |
+| subject 漏项、旧指纹或 registered document drift | 不得 PASS；更新/恢复文档登记后两路按当前版本重签 |
+| 规格或 TASK 可修复，但不改变需求立意 | `fix_required` → TR-004 → planning.design，按影响回 S2/S3/S4 |
+| 只有任务粒度/依赖/判据问题 | 回 S4 修 TASK；仍需完整重签当前 subject |
+| 合同/设计矛盾 | 回 S3/S2 修正确层级，不在 REV 中发明新规则 |
+| 必须改变 REQ | `req_change_required` → TR-005 → paused → amendment/终止 |
+| execution batch 为空或 TR-003 失败 | 留 S5/回 S4 修登记事实，不绕 gate 直接进 S6 |
+
+## 8. 易错点与渐进披露
+
+### 8.1 易错点
+
+- “两个 agent”只证明程序分离，不等于双盲或真实作者隔离；
+- `documents[]` 之外的场景包不会因 reviewer 阅读过就自动获得指纹保护；
+- PASS 也必须写并登记 JSON envelope；只有 Markdown findings report 可以省略；
+- evidence 文件写盘但未 `evidence add`，gate 等同于看不见；
+- 不能复用 evidence ID 覆盖旧签字，重审应新建 `-r2` 等记录；
+- `fix_required` 与 `req_change_required` 不可混用：前者回规划，后者必须停在人闸；
+- 一份文档改动会改变当前 subject 集，两条旧 PASS 都不能代表新版本；
+- `tasks check` 绿不代表单职责、无 overlap、assert 可执行或依赖语义正确；
+- reviewer 发现问题不能顺手改受审文档，否则审查与作者职责重新混合；
+- author machine check 当前休眠，不能把它写成第三层有效防线。
+
+### 8.2 阅读预算
+
+| 角色/时机 | 最小阅读集 | 按需加载 | 不需要背诵 |
+|:--|:--|:--|:--|
+| Orchestrator 组队 | 两个职责定义、team-planning、触发表、当前 documents | 复杂 team/DAG 方法 | 审查细节全文 |
+| 两名 reviewer 激活 | assignment、two-phase-activation、REV template、当前 subject 集 | 被指名的专项规则 | transition 实现 |
+| 规格 reviewer | REQ、design、contracts、TASK coverage；相关场景包 | NFR/权限/API 深挖 | S4 覆盖算法 |
+| TASK reviewer | TASK、contracts、tasks check 输出 | 迁移、外部集成、critical 风险规则 | 全仓实现代码 |
+| gate 收口 | 两条 evidence、runtime documents、drift/conflict | 对应错误诊断 | 人工重做语义审查 |
+
+S5 的最小心智模型应始终是：**两个正交问题、同一批精确对象、两份独立签字、三种明确去向**。其余深挖只在文档特征触发时展开。

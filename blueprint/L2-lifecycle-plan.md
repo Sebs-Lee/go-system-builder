@@ -219,7 +219,7 @@ stateDiagram-v2
 | 正常结束 approve→rollover | 发布授权（终态）→ 归档 runtime、REQ 文件落章 archived（双指纹入 journal） | 人 | 自动化止步于发布；落章只在 rollover（周期正式关闭点，统一覆盖 approve/abort 两终态） |
 | 重新绑定 rebind | unbind 后 REQ 回池可再绑；rollover 后新周期可绑任意 locked；amend 是周期内换基线不是重绑 | 人 | 同 REQ 终态后立即重绑无冷却护栏（如实记录，待实战观测） |
 
-**三条裁决**（承接 owner 2026-08-15 拍板链）：① locked 语义收窄为文件级事实，生命周期权威归 runtime；② archived 落章在 rollover 时刻，只改状态行、基线内容永不变，journal 记 from-sha/to-sha 双指纹——第一原则精化为"基线内容永不变，生命周期元数据只在人闸点由 harness 迁移且留双指纹"；③ unbind 从任何非终态可用（人闸+留痕+在飞软门），与 abort（终态语义）分立。**终批状态（2026-08-15 owner 已批，按工程建议执行）**：①②③ 全部生效——② 落章时刻定为 **rollover**；L3-S1 §2.2"实施前待终批"清单同步销项。另：REQ 文件的 archived 是**可读性镜像**（消费者=浏览 docs/requirements/ 的人），bindable 判定的权威是 runtime-archive 扫描，不以文件状态为准。
+**三条裁决**（承接 owner 2026-08-15 拍板链）：① locked 语义收窄为文件级事实，生命周期权威归 runtime；② archived 落章在 rollover 时刻，只改状态行、基线内容永不变，journal 记 from-sha/to-sha 双指纹——第一原则精化为"基线内容永不变，生命周期元数据只在人闸点由 harness 迁移且留双指纹"；③ unbind 从任何非终态可用（人闸+留痕+在飞软门），与 abort（终态语义）分立。**终批状态（2026-08-15 owner 已批，按工程建议执行）**：①②③ 全部生效——② 落章时刻定为 **rollover**；L3-S1 §5.2 已按此固化控制面语义。另：REQ 文件的 archived 是**可读性镜像**（消费者=浏览 docs/requirements/ 的人），bindable 判定的权威是 runtime-archive 扫描，不以文件状态为准。
 
 ---
 
