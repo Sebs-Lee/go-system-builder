@@ -329,3 +329,37 @@ func TestContractsCheckClauseNumberPrecision(t *testing.T) {
 		t.Fatalf("§1-vs-§10 precision must flag the drift, got: %s", stderr.String())
 	}
 }
+
+// TestTasksCheckReportsReferenceLoads pins L3-S5 v4.4.1: the context-budget
+// figures are informational output (never problems) for the S5 executability
+// reviewer.
+func TestTasksCheckReportsReferenceLoads(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/contracts", "docs/tasks", "docs/requirements", "docs/design/architecture"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/requirements/REQ-830.md", "# REQ-830\n\n> 状态：locked\n> 版本：v1.0.0\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-831 | wb | 提交 | A1 | Must |\n")
+	write("docs/contracts/BE-830.md", "# BE-830\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
+	write("docs/contracts/CONTRACTS-830.md", "# CONTRACTS-830\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-830/FR-831 | — | BE-830 §1 | — |\n")
+	write("docs/tasks/TASK-830-01.md", "# TASK-830-01\n\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-830\n\n"+
+		"## 2. Document Manifest\n\n| Order | Kind | ID | Path | Clauses |\n|:--|:--|:--|:--|:--|\n| 1 | contract | BE-830 | `docs/contracts/BE-830.md` | §1 |\n| 2 | req | REQ-830 | `docs/requirements/REQ-830.md` | FR |\n\n"+
+		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-830 | §1 |\n\n"+
+		"## 4. Scope\n\n| Type | Paths / Commands |\n|:--|:--|\n| read paths | `docs/contracts/BE-830.md` |\n| prospective write paths | `internal/x/a.go`, `internal/x/b.go` |\n\n"+
+		"## 7. Closing Contract\n\n```text\nassert BE-830 §1 == satisfied\n```\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("tasks check failed: %s", stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "TASK-830-01: required reading ~") || !strings.Contains(out, "write paths 2") || !strings.Contains(out, "reference only") {
+		t.Fatalf("reference load info line missing or wrong: %s", out)
+	}
+}

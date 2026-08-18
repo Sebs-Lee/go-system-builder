@@ -28,6 +28,11 @@ type TaskCheckResult struct {
 	ClausesTotal   int      `json:"clauses_total"`
 	ClausesCovered int      `json:"clauses_covered"`
 	Problems       []string `json:"problems,omitempty"`
+	// ReferenceLoads are informational per-task context-budget figures
+	// (required-reading bytes + write-path count) for the S5 executability
+	// reviewer — deliberately NOT problems: avoiding subagent compact is a
+	// prompt-and-review concern, not a hard gate (L3-S5 v4.4.1).
+	ReferenceLoads []string `json:"reference_loads,omitempty"`
 }
 
 type taskDocument struct {
@@ -39,6 +44,8 @@ type taskDocument struct {
 	clauses   []string // expanded "{contract} §{n}"
 	deps      []string
 	problems  []string // parse-level problems surfaced by TasksCheck
+	manifestPaths []string
+	writePaths    []string
 }
 
 // TasksCheck is S4's exit-side reconciliation. It runs as the tasks_checked
@@ -182,6 +189,27 @@ func TasksCheck(root string) (TaskCheckResult, error) {
 
 	result.ClausesTotal = len(universe)
 	result.ClausesCovered = len(covered)
+	// Informational context-budget figures for the S5 reviewer (no
+	// thresholds — the compact-avoidance warning lives in the split prompt
+	// and the review checklist, not as a machine gate).
+	for _, task := range tasks {
+		if task.status == "cancelled" {
+			continue
+		}
+		readBytes := 0
+		for _, p := range task.manifestPaths {
+			clean := filepath.Clean(p)
+			if clean == "" || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+				continue
+			}
+			if data, err := os.ReadFile(filepath.Join(root, clean)); err == nil {
+				readBytes += len(data)
+			}
+		}
+		result.ReferenceLoads = append(result.ReferenceLoads,
+			fmt.Sprintf("%s: required reading ~%dKB, write paths %d (reference only — avoid subagent compact; split or trim if it feels too big)",
+				task.id, readBytes/1024, len(task.writePaths)))
+	}
 	return result, nil
 }
 
@@ -251,6 +279,24 @@ func loadTaskDocuments(root string) ([]*taskDocument, error) {
 			if len(row) >= 2 && taskContractCell.MatchString(row[0]) {
 				for _, m := range taskClauseNumber.FindAllStringSubmatch(row[1], -1) {
 					task.clauses = append(task.clauses, row[0]+" §"+m[1])
+				}
+			}
+		}
+		for _, row := range sectionTable(content, "Document Manifest") {
+			if len(row) >= 4 {
+				p := strings.Trim(row[3], "` ")
+				if p != "" && p != "{path}" && !strings.HasPrefix(p, ":--") && p != "Path" {
+					task.manifestPaths = append(task.manifestPaths, p)
+				}
+			}
+		}
+		for _, row := range sectionTable(content, "Scope") {
+			if len(row) >= 2 && strings.Contains(strings.ToLower(row[0]), "write") {
+				for _, cell := range strings.Split(row[1], ",") {
+					p := strings.TrimSpace(strings.Trim(cell, "` "))
+					if p != "" && p != "{path}" && !strings.HasPrefix(p, ":--") {
+						task.writePaths = append(task.writePaths, p)
+					}
 				}
 			}
 		}

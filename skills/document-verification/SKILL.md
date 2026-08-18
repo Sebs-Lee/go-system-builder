@@ -31,7 +31,11 @@ module current-truth package when the REQ touches UI.
 1. **落信封骨架（激活后第一件事）**：复制 `docs/reports/review/REV-template.md` §0 到你的报告路径 `docs/reports/review/REV-{runid}-{resp}.json`——每个字段带一行填写指引，写骨架即读懂要交什么。`subject_refs` 从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意没有自动命令——逐条抄写就是"我签的是哪一版"的对峙，这一步的笨拙是审查的锚）。
 2. **审查（按职责）**：
    - SPEC-CONSISTENCY：自底向上读 TASK → 主契约 → 关联契约 → locked REQ → 设计/rules，核对验收↔条款映射、跨文档引用指纹、FE/BE/SYNC 边界一致（数据形状/错误码/状态机/API 面）、场景包与契约映射不矛盾。
-   - TASK-EXECUTABILITY：跑 `go run ./cmd/loop-harness tasks check --root .` 消费机检结论（覆盖双向/DAG 机器已判，不重算），再审机器判不了的三件——每个 TASK 的收尾契约可判定且现有工具能产出其证据、粒度单一、写路径冲突有显式串行归属。
+   - TASK-EXECUTABILITY：跑 `go run ./cmd/loop-harness tasks check --root .` 消费机检结论（覆盖双向/DAG 无环机器已判，不重算），再审机器判不了的**四问**（代入 builder 视角——"我拿到这个任务单能顺利干完吗"）：
+     1. **单一职责**：一句话测试——说不成交付物、跨层混拆（FE+BE+SYNC 同任务）、收尾契约 assert 超四行，都是拆分信号；
+     2. **单窗口可行**：**builder 中途 compact 丢任务信息是灾难性表现**——按 §2 清单量与 §4 写路径量判断会不会撞上（`tasks check` 输出的 reference load 是参考数字不是门槛）；能拆小/裁清单的都不是"设计如此"而是缺陷；
+     3. **语义连贯**：地基（类型/schema/迁移）先于依赖者？有没有 B 用 A 产物却没声明依赖的缺失边？有没有复制粘贴来的假边？
+     4. **自包含**：任务单给的是精确锚点（路径+条款号）还是"自己去理解模块"？builder 要 grep 找活干 = 任务书写得不合格。
 3. **收口（登记 + 回填）**：信封回填 `conclusion`（pass / fix_required / req_change_required——与 gate 同词，全流程没有第二套枚举）与 `requested_event`（仅 fix_required 填 document_fix_required；req_change_required 留空走人闸）；然后按 REV-template §0 注 2 的命令行把信封**登记进 runtime**（`runtime evidence add`，`--kind document_review` 与信封同词）——未登记的信封 gate 看不见；**重签（fix 回路第二轮起）须用带 `-r2` 后缀的新 ID**（同 ID 会被拒——旧条目即使已 invalid 也占 ID）。此后不调用任何 transition 命令——PreToolUse 按你的 conclusion 自动路由。
 4. **触发——有 finding 才写 REV 报告**：按 `REV-template.md` §1-§5 写（findings 表带 P0-P3/定位/预期/实测/证据；N/A 须记理由与证据）。双 pass 不产报告——没有人读"都挺好"。
 
