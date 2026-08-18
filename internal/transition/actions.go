@@ -121,6 +121,7 @@ func InitActionRegistry() {
 		"record_bug_review_feedback":                    actionRecordBugReviewFeedback,
 		"record_repair_activation":                      actionRecordRepairActivation,
 		"invalidate_affected_evidence":                  actionInvalidateAffectedEvidence,
+		"invalidate_consumed_review_evidence":          actionInvalidateConsumedReviewEvidence,
 		"record_repair_completion":                      actionRecordRepairCompletion,
 		"record_targeted_reverification":                actionRecordTargetedReverification,
 		"record_finding_batch":                          actionRecordFindingBatch,
@@ -844,4 +845,55 @@ func actionRegisterDesignDocuments(state map[string]any, ctx *ActionContext) (Ac
 	}
 	return ActionResult{Status: "committed", MutationApplied: true,
 		Detail: fmt.Sprintf("registered %d locked design document(s)", registered)}, nil
+}
+
+// actionInvalidateConsumedReviewEvidence runs on TR-004: the fix_required
+// record that triggered the rework loop is consumed by this commit — it
+// stays valid forever otherwise, and a fix that touches no registered
+// document would re-select TR-004 on every subsequent PreToolUse (the
+// BUG-CX-11 livelock). Fingerprints still scope the *re-run* side (a
+// fix that changed documents already invalidates the old pass records by
+// subject mismatch); this action closes the no-drift half.
+func actionInvalidateConsumedReviewEvidence(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	items, _ := state["evidence"].([]any)
+	invalidated := 0
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item == nil || item["kind"] != "document_review" || item["status"] != "valid" {
+			continue
+		}
+		id, _ := item["id"].(string)
+		if !citedByTransition(ctx, id) {
+			continue
+		}
+		item["status"] = "invalid"
+		item["invalidated_by"] = ctx.Spec.ID
+		item["invalidation_rule"] = "consumed_fix_record"
+		item["invalidation_reason"] = "consumed by TR-004 (document fix routed back to planning); the affected responsibility re-runs on fresh fingerprints"
+		invalidated++
+	}
+	return ActionResult{
+		Status:          "committed",
+		MutationApplied: invalidated > 0,
+		Detail:          fmt.Sprintf("%d consumed review record(s) invalidated", invalidated),
+	}, nil
+}
+
+func citedByTransition(ctx *ActionContext, id string) bool {
+	if ctx == nil || ctx.Evidence == nil {
+		return false
+	}
+	for _, ref := range ctx.Evidence {
+		if ref == id {
+			return true
+		}
+	}
+	return false
+}
+
+func actorOf(ctx *ActionContext) string {
+	if ctx.Request != nil {
+		return ctx.Request.Actor
+	}
+	return ""
 }

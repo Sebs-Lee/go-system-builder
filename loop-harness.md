@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `6766092e78fd909599e3574fff2b99ec2dc8b170a7dd299bf01f88b5b1c8fa10`
+- **Loop definition SHA-256**: `3d66c35c6d40fa484bf139da3e76edfbc808e27fb7242ffcc038f9a770b80205`
 
 ---
 
@@ -145,17 +145,13 @@ _document_verification → building_
 Lock only the exact contract and task versions jointly verified.
 
 - `joint_document_pass` [evidence_attestation] — _no spec_
-- `verified_versions_current` [evidence_attestation] — Every document the joint review verified (REQ, contracts, tasks, design) still matches the fingerprints captured when the pass verdict was recorded, so the lock cannot advance on drifted inputs.
+- `verified_versions_current` [evidence_attestation] — Every current-generation registered document still matches its on-disk sha, so the lock cannot advance on drifted inputs. The real check runs in GATE-DOCUMENT-PASS's registered-document drift screen (a `document_drift:<path>` conflict blocks the gate); the guard body itself only rejects an empty evidence map.
 
-Evidence: `document_review_record`, `contract_set_record`, `task_batch_record`
+Evidence: `document_review_record`
 
 Evidence bindings (copy into `runtime transition`):
 
 - `document_review_record`: `--evidence document_review_record=<reference>`
-  Accepted kinds: `document_review`
-- `contract_set_record`: `--evidence contract_set_record=<reference>`
-  Accepted kinds: `document_review`
-- `task_batch_record`: `--evidence task_batch_record=<reference>`
   Accepted kinds: `document_review`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-003` to inspect current candidates.

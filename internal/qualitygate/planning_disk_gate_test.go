@@ -189,3 +189,49 @@ func TestPlanningDesignGateReadsDiskDeclaredArchitecture(t *testing.T) {
 		t.Fatalf("BUG-CX-13: disk-declared locked architecture + registered req must satisfy the S2 exit gate; got status=%q missing=%#v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
+
+// TestDocumentPassGateFlagsRegisteredDocumentDrift pins BUG-CX-11 B3:
+// a registered document whose on-disk sha no longer matches must block
+// GATE-DOCUMENT-PASS with the path named — otherwise a document the
+// reviewers never saw can be re-registered from disk and locked into
+// building by TR-003's commit.
+func TestDocumentPassGateFlagsRegisteredDocumentDrift(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	contractData := []byte("# BE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	driftedData := []byte("# BE-001 (edited after review)\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	doc := func(data []byte) map[string]any {
+		return map[string]any{"id": "BE-001", "kind": "contract", "path": "docs/contracts/BE-001.md", "version": "v1.0.0", "sha256": sha256Hex(data), "status": "locked", "generation": float64(1)}
+	}
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 5,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "document_verification", "phase": nil, "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				// registered with the ORIGINAL sha; disk carries the edited bytes
+				"documents": []any{doc(contractData)},
+				"evidence":  []any{},
+			},
+		},
+		TransitionID: "TR-003",
+		GateID:       "GATE-DOCUMENT-PASS",
+		Files: listingFiles{
+			"docs/contracts/BE-001.md": driftedData,
+		},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	blocked := false
+	for _, conflict := range result.Conflicts {
+		if strings.Contains(conflict, "document_drift:docs/contracts/BE-001.md") {
+			blocked = true
+		}
+	}
+	if !blocked {
+		t.Fatalf("BUG-CX-11: a registered document drifting on disk must produce a document_drift conflict naming the path; got status=%q conflicts=%v missing=%v", result.Status, result.Conflicts, result.Missing)
+	}
+}

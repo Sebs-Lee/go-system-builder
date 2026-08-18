@@ -144,6 +144,19 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 	if input.GateID == "GATE-PLANNING-DESIGN-COMPLETE" {
 		return evaluatePlanningDesign(input, result, spec), nil
 	}
+	if input.GateID == "GATE-DOCUMENT-PASS" {
+		// Registered-document drift check (BUG-CX-11 B3): every current-
+		// generation registered document must still match its disk sha.
+		// Without this, exactSubjects compares against the verified subset
+		// only and a document the reviewers never saw can be re-registered
+		// from disk and locked into building by TR-003's commit.
+		if conflicts := registeredDocumentDrift(input); len(conflicts) > 0 {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = conflicts
+			return result, nil
+		}
+	}
 	if input.GateID == "GATE-PLANNING-CONTRACTS-COMPLETE" {
 		return evaluatePlanningArtifact(input, result, spec, documents, "contract", "locked", "document:contract:locked"), nil
 	}
@@ -554,6 +567,12 @@ func qualifiedEvidence(
 }
 
 func applyDocumentPassIndependence(input Input, result *Evaluation, documents []documentFact) {
+	// Reviewer-vs-author is data-driven: it only fires when documents carry
+	// a real author_agent_id. On the organic path registrations record
+	// hook_controller (the commit actor, not the drafting agent), so this
+	// layer is dormant there — independence rests on separation_edges
+	// (dispatch) + distinct producers (below) + the reviewer discipline in
+	// the document-verifier card (L3-S5 §2, honestly recorded).
 	envelopes := evidenceEnvelopesByID(input, result.EvidenceRefs)
 	producers := make(map[string]struct{}, len(envelopes))
 	authors := make(map[string]struct{})
@@ -899,4 +918,26 @@ func diskArtifactHome(kind string) (dir string, prefix string) {
 	default:
 		return "docs/contracts", ""
 	}
+}
+
+// registeredDocumentDrift names every current-generation registered
+// document whose on-disk bytes no longer match the registered sha (or
+// whose file is unreadable) — one `document_drift:<path>` conflict each.
+func registeredDocumentDrift(input Input) []string {
+	if input.Files == nil {
+		return nil
+	}
+	documents := currentDocuments(input.Snapshot.State, nestedInt(input.Snapshot.State, "baseline", "generation"))
+	var conflicts []string
+	for _, document := range documents {
+		if document.Path == "" || document.SHA256 == "" {
+			continue
+		}
+		data, err := input.Files.ReadFile(document.Path)
+		if err != nil || sha256Hex(data) != document.SHA256 {
+			conflicts = append(conflicts, "document_drift:"+document.Path)
+		}
+	}
+	sort.Strings(conflicts)
+	return conflicts
 }

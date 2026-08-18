@@ -285,7 +285,7 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"verified_versions_current": {
 		ID:    "verified_versions_current",
-		Check: "Every document the joint review verified (REQ, contracts, tasks, design) still matches the fingerprints captured when the pass verdict was recorded, so the lock cannot advance on drifted inputs.",
+		Check: "Every current-generation registered document still matches its on-disk sha, so the lock cannot advance on drifted inputs. The real check runs in GATE-DOCUMENT-PASS's registered-document drift screen (a `document_drift:<path>` conflict blocks the gate); the guard body itself only rejects an empty evidence map.",
 	},
 	"write_scope_enforced": {
 		ID:    "write_scope_enforced",

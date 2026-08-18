@@ -1088,13 +1088,10 @@
         "verified_versions_current"
       ],
       "actions": [
-        "register_execution_batch",
-        "record_document_result"
+        "register_execution_batch"
       ],
       "required_evidence": [
-        "document_review_record",
-        "contract_set_record",
-        "task_batch_record"
+        "document_review_record"
       ],
       "on_guard_failure": "reject",
       "auto_trigger": {
@@ -1126,7 +1123,7 @@
         "req_baseline_unchanged"
       ],
       "actions": [
-        "record_document_result"
+        "invalidate_consumed_review_evidence"
       ],
       "required_evidence": [
         "document_review_record"
