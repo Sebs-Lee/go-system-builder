@@ -826,7 +826,7 @@ func firstLegalUIImpact(cell string) string {
 // appendDocument appends a document entry unless a same-id entry of the
 // same baseline generation already exists — that one is replaced in place.
 // Same-generation re-registration happens when S6→S5 rework re-locks a
-// revised contract: stacking entries would break subject fingerprint matching matching
+// revised contract: stacking entries would break subject fingerprint matching
 // forever (each stale sha poisons the manifest).
 func appendDocument(value any, document map[string]any) []any {
 	documents, _ := value.([]any)
