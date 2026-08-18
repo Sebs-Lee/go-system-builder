@@ -100,7 +100,11 @@ win.
    references, and the full AC bridge (every AC reaches a CASE or carries
    an endorsed N/A: a declared NFR id or an explicit §A4 negative-space
    pointer — §A4 is the REQ's "明确不做" table; free text is rejected as a
-   silent removal from the verification denominator).
+   silent removal from the verification denominator). Then close the
+   architecture side: flip `ARCHITECTURE-<id>.md`'s top `状态` to `locked`
+   and register the design evidence (`runtime evidence add --kind
+   planning_design --responsibility Architect` — Architect is you, the
+   main session owning the design; PTR-PLAN-01 consumes both).
 
 **S3/S4 steps:**
 10. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
@@ -122,9 +126,12 @@ win.
     **拆分纪律（builder 视角）**：一句话说不成交付物、或出现"以及/然后"→ 拆；FE+BE+SYNC 不混进同一任务；类型/schema/迁移是地基，下游任务必须声明对它的依赖。**compact 警示：尽量避免 subagent 中途 compact——builder 丢任务信息是灾难性表现**。宁可多拆一个任务，也不要让 builder 读着读着上下文被压缩；每个任务的 §2 清单只引用它真正需要的条款切片，不是整份文档。规模直觉锚：必读合计 ~30KB / 触碰 ~8 文件 / 改动 ~400 行——超了先想想能不能拆。
 12. Run `loop-harness tasks check` before requesting `TR-002`: batch
     completeness, clause coverage against the index, DAG acyclicity, and
-    closing contracts are machine-checked there. Request `TR-002` (its
-    `planning_complete` + `tasks_checked` guards re-run the same checks)
-    only when the self-check is green.
+    closing contracts are machine-checked there — and it prints per-task
+    reference loads (~KB, whole-file basis; clause slicing is not
+    accounted). Hold the numbers against step 11's ~30KB anchor: a task
+    far over → split it now, don't wait for S5 to catch it. Request
+    `TR-002` (its `planning_complete` + `tasks_checked` guards re-run the
+    same checks) only when the self-check is green.
 13. If document verification returns `document_fix_required` (`TR-004`),
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is
@@ -142,6 +149,7 @@ win.
 
 ## Exit Conditions
 - The planning checkpoint is committed and the Loop transitioned to `document_verification`.
+- Next (NOT your job): dispatch two document-verifier subagents per `docs/agent-protocol.md #s5` — planning does not continue into S5; the activation envelopes should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
 
 ## Stop Conditions
 Stop immediately and surface to the human if any of:

@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `3d66c35c6d40fa484bf139da3e76edfbc808e27fb7242ffcc038f9a770b80205`
+- **Loop definition SHA-256**: `b828124ac1c3962e1f25487685294e75f3563cb26c990e7a1ed16b060a4fc700`
 
 ---
 
@@ -793,7 +793,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _design → contracts_
 
-Advance formal planning from design to contracts after the design quality gate passes.
+Advance formal planning from design to contracts after the design quality gate passes. Gate readiness facts: an ARCHITECTURE-*.md declaring `Status: locked` on disk plus valid planning_design evidence (responsibility Architect) — the missing tokens `document:design:locked` / `evidence:planning_design_record` mean one of these is absent; flip the architecture document's top Status field and register the evidence.
 
 - `ui_impact_resolved` [semantic_check] — runtime.bound_req.metadata.ui_impact is not `unknown`, so the planning phase is not paused on the SM-003 gate waiting for §11 of the REQ to clarify UI impact.
 

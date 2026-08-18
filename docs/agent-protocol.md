@@ -208,12 +208,14 @@ These hold across every stage:
 - **actions**:
   1. draft or update `docs/design/architecture/ARCHITECTURE-<id>.md` (system track)
   2. if UI impact = `changed`: run the dual-track convergence per `skills: specification-planning` — user track first lands `stories.md`; convergence-1 fills the hand-written `cross-matrix.json` carrier (fact×FR×story cells: covering branch or no-branch reason) and produces `scenario-model.json` + `fixture-contract.json`; convergence-2 lands `flows.md`, page HTML, and `index.html`. The current implementation IS the baseline; no separate capture is required.
-  3. at close: run `go run ./cmd/loop-harness scenario generate --module <module> --root .` then `scenario validate --module <module>` — validate runs the full AC↔CASE bridge
-  4. record decisions that the contracts will need (state, data, integration, migration)
+  3. at close: run `go run ./cmd/loop-harness scenario generate --module <module> --root .` then `scenario validate --module <module> --root .` — validate runs the full AC↔CASE bridge
+  4. flip the architecture document's top `状态` field to `locked`（PTR-PLAN-01 只登记 locked 的 ARCHITECTURE-*.md——留在 draft 会被 gate 拒，missing `document:design:locked`），并登记设计证据：`go run ./cmd/loop-harness runtime evidence add --id design-pass --kind planning_design --responsibility Architect --path <ADR 或设计结论文件> --produced-by <主会话 agent id>`（缺它 gate 报 `evidence:planning_design_record`——Architect 即承担 S2 设计的主会话本身）
+  5. record decisions that the contracts will need (state, data, integration, migration)
 - **done_when**:
   - architecture document covers every decision the contract stage needs
   - if UI impact = `changed`: the **nine-file package** exists at `docs/design/prototypes/<module>/` (5 hand-maintained + page HTML + 2 generated; `scenario generate` writes the two generated files — never hand-edit them) — `index.html` + page HTML files (4-field header per `docs/rules/ui-prototype.md` §5/§6/§7), `stories.md` (≥1 `S-NNN` citing its REQ-id), `flows.md` (≥1 `F-NNN` + `PATH-*`), `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`, plus the generated `cases.json` and `scenario-coverage.json`
   - `scenario generate` + `scenario validate` exit green, and the AC↔CASE bridge reports every acceptance criterion of the bound REQ reached (or carrying an endorsed N/A: an NFR id or a §A4 negative-space pointer — free text is rejected)
+  - the architecture document's top `状态` is `locked` and a `planning_design` evidence (responsibility=Architect, conclusion=pass) is registered
 - **next**: S3. Produce any missing architecture/prototype deliverable and qualified design evidence; the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `PTR-PLAN-01` when satisfied.
 - **failure_route**: if a design decision changes REQ semantics, surface `req_amendment`; otherwise iterate the design document. Bridge failures are S2 gaps even when they surface at S3's gate — return here.
 - **human_gateway**: `req_amendment`, `unrecoverable_business_decision`, and the ADR direction sign-off (the single S2 human gate of `skills: specification-planning`). The sign-off package = the REQ's `docs/design/decisions/ADR-<id>.md`, whose `## Depth Self-Review` and `## Endorsed N/A` sections (see `docs/design/decisions/ADR-template.md`) carry the three-role self-review conclusion and the endorsed N/A list.
@@ -277,12 +279,12 @@ These hold across every stage:
   两条不变量：修复不重开已定的设计决策（只改被标记的条款，同 S9 纪律）；S5 的**基线代际锁**（TR-003 指纹登记）≠ 文件 `Status` 字段——契约/TASK 文件在 S3/S4 定稿时就声明 locked/complete（PTR-PLAN-02/TR-002 消费磁盘声明），TR-003 只是把精确指纹冻结为 S6 起的基线边界。
 
 - **done_when**:
-  - both mandatory responsibilities (S5.2 + S5.3) PASS
+  - both mandatory responsibilities PASS
   - no open finding
   - machine checks pass (`loop-harness validate --all`, `loop-harness doctor`)
-  - execution batch is atomically locked (S5.5 complete)
+  - execution batch is atomically locked (TR-003 committed)
 - **next**: S6. Produce any missing independent review or machine-check evidence; the next `PreToolUse` lets the Controller evaluate the document gate and auto-commit `TR-003` when satisfied, including its atomic-lock actions.
-- **failure_route**: if a finding reveals a REQ-level ambiguity, surface `req_amendment`; otherwise rework S2/S3/S4 and rerun the affected responsibility (S5.4 loop).
+- **failure_route**: if a finding reveals a REQ-level ambiguity, surface `req_amendment`; otherwise rework S2/S3/S4 and rerun the affected responsibility（修复回路见 actions 第 3 步的 fix_required 分支）.
 - **human_gateway**: only `req_amendment`.
 - **primary_skill**: `document-verification`
 

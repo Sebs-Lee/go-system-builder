@@ -163,7 +163,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Advance formal planning from design to contracts after the design quality gate passes."
+          "description": "Advance formal planning from design to contracts after the design quality gate passes. Gate readiness facts: an ARCHITECTURE-*.md declaring `Status: locked` on disk plus valid planning_design evidence (responsibility Architect) — the missing tokens `document:design:locked` / `evidence:planning_design_record` mean one of these is absent; flip the architecture document's top Status field and register the evidence."
         },
         {
           "id": "PTR-PLAN-02",

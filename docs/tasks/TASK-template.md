@@ -16,6 +16,9 @@
 
 {One testable objective and user-visible value.}
 
+<!-- 一句话测试：能用一句话说出本任务的交付物吗？说不成一句、或出现"以及/然后"——回去拆。
+builder 应能在单个上下文区间内完成本任务（中途 compact 丢任务信息是灾难性表现；按 §2/§4 的量感觉会撞，拆小或裁清单）。拆分纪律全文见 specification-planning step 11。 -->
+
 ## 2. Document Manifest
 
 Read order for the builder. Fingerprints, versions, and lock state live in

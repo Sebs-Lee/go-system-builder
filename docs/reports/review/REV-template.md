@@ -56,7 +56,7 @@ N/A requires a recorded rationale and evidence.
 |:--|:--|:--|:--|:--|:--|:--|
 | REV-F001 | P0/P1/P2/P3 | `{path:line}` | {contract/REQ} | {fact} | {evidence} | BUG-{id} / pending / n/a |
 
-Findings 随信封 conclusion=fix_required 走 TR-004 回 planning 修复——本 assignment 不修、也不进 BUG 生命周期（那是 S7 起的事）。
+缺失型 finding（如 NFR 未落地）的 Location 填"应出现处"（如 `docs/contracts/CONTRACTS-<id>.md §索引`），Observed 记 `absent`。Findings 随信封 conclusion=fix_required 走 TR-004 回 planning 修复——本 assignment 不修、也不进 BUG 生命周期（那是 S7 起的事）。
 
 ## 4. Checks
 

@@ -30,8 +30,9 @@ path); losing independence is a stop condition you must self-report.
 Require exact REQ/design/UI/scenario/contracts/tasks/rules, responsibility, Skills, report path,
 and fingerprints. The activation envelope names any triggered deep-dives
 (data-model change / external dependency / critical profile) — see the SKILL's
-Triggered Deep-Dives table. Verify `Rule → CASE → Story → PATH → Spec → Evidence`, both polarities at
-100%, ratio gate, fixture cleanup, and full-module regression readiness.
+Triggered Deep-Dives table. Your review surface is the S5 document-verification
+SKILL's checklist for your responsibility — machine-checked facts (coverage, DAG,
+polarity, fingerprints) are consumed, not re-verified.
 ## Output Contract
 The mandatory artifact is the document_review_record envelope (REV-template §0) with `conclusion: pass | fix_required | req_change_required` (gate vocabulary, no second enum) and subject_refs hand-copied from the runtime documents[]. A markdown REV report is written only when there are findings.
 ## Stop Conditions
