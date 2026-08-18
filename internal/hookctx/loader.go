@@ -290,23 +290,7 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			docs = append(docs, doc)
 		}
 	}
-	if len(docs) > 0 {
-		sort.Slice(docs, func(i, j int) bool {
-			return docs[i].Path < docs[j].Path
-		})
-		context.LockedArtifacts = make([]policy.LockedArtifact, 0, len(docs))
-		for _, doc := range docs {
-			context.LockedArtifacts = append(context.LockedArtifacts, policy.LockedArtifact{
-				ID:                 doc.ID,
-				Kind:               doc.Kind,
-				Path:               doc.Path,
-				Version:            doc.Version,
-				SHA256:             doc.SHA256,
-				LockedFromStage:    lockedFromStageFor(doc.Kind),
-				BaselineGeneration: doc.Generation,
-			})
-		}
-	}
+	context.LockedArtifacts = LockedArtifactsFromSnapshot(snapshot)
 
 	// Assignments (BUG-039-04 §4.1). We walk runtime.entities.tasks[] and,
 	// for each row with a non-empty owner_agent_ids[0], attempt to read the
@@ -803,4 +787,67 @@ func loadActivation(root, ref string) (activationFile, error) {
 		return activationFile{}, fmt.Errorf("decode activation: %w", err)
 	}
 	return activation, nil
+}
+
+// LockedArtifactsFromState projects the runtime state's documents[] into
+// the policy.LockedArtifact list using the same selection rules as the
+// hook transport: status locked/active, non-req kinds only in the current
+// baseline generation, every locked req generation kept (immutable
+// history). Shared with the controller's final-safety input so the wire
+// path and the hook transport agree on what is locked.
+func LockedArtifactsFromSnapshot(snapshot runtime.Snapshot) []policy.LockedArtifact {
+	generation := 0
+	if baseline, ok := snapshot.State["baseline"].(map[string]any); ok {
+		switch v := baseline["generation"].(type) {
+		case float64:
+			generation = int(v)
+		case int:
+			generation = v
+		}
+	}
+	var docs []lockedDocument
+	if rawDocs, ok := snapshot.State["documents"].([]any); ok {
+		for _, entry := range rawDocs {
+			if entry == nil {
+				continue
+			}
+			buf, err := json.Marshal(entry)
+			if err != nil {
+				continue
+			}
+			var doc lockedDocument
+			if err := json.Unmarshal(buf, &doc); err != nil {
+				continue
+			}
+			if doc.Status != "locked" && doc.Status != "active" {
+				continue
+			}
+			if doc.Kind != "req" && doc.Generation != generation {
+				continue
+			}
+			if doc.ID == "" || doc.Kind == "" || doc.Path == "" ||
+				doc.Version == "" || doc.SHA256 == "" ||
+				doc.Generation == 0 {
+				continue
+			}
+			docs = append(docs, doc)
+		}
+	}
+	if len(docs) == 0 {
+		return nil
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Path < docs[j].Path })
+	artifacts := make([]policy.LockedArtifact, 0, len(docs))
+	for _, doc := range docs {
+		artifacts = append(artifacts, policy.LockedArtifact{
+			ID:                 doc.ID,
+			Kind:               doc.Kind,
+			Path:               doc.Path,
+			Version:            doc.Version,
+			SHA256:             doc.SHA256,
+			LockedFromStage:    lockedFromStageFor(doc.Kind),
+			BaselineGeneration: doc.Generation,
+		})
+	}
+	return artifacts
 }

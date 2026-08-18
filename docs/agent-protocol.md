@@ -271,7 +271,7 @@ These hold across every stage:
      - 有 finding 才写 REV 报告（带定位）；双 pass 不产报告。
   3. **收口三岔路**（信封回填 conclusion，由 PreToolUse 自动路由——agent 不调用任何 transition 命令）：
      - 双 `pass`：各自信封 conclusion=pass、subject_refs 手动从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意无自动命令），并按 REV-template §0 注 2 用 `runtime evidence add` 登记进 runtime（未登记 gate 看不见）→ gate（两证据 + 独立性）→ **TR-003 自动提交，批次锁定**，进 S6。
-     - 任一 `fix_required`：信封 conclusion=fix_required + requested_event=document_fix_required → TR-004 自动回 planning → 主会话修复被标记文档 → 受影响职责重新审查；**另一职责至少以新指纹重签信封**（任一文档变指纹，两份旧 pass 信封同时失配——subject 全量匹配不区分谁受影响）→ 回第 2 步。触发的 fix 记录由 TR-004 的失效动作消费。
+     - 任一 `fix_required`：信封 conclusion=fix_required + requested_event=document_fix_required → TR-004 自动回 planning → 主会话修复被标记文档 → 受影响职责重新审查；**另一职责至少以新指纹重签信封**（任一文档变指纹，两份旧 pass 信封同时失配——subject 全量匹配不区分谁受影响；重签用 `-r2` 起的递增后缀新 ID，见 REV-template §0 注 2）→ 回第 2 步。触发的 fix 记录由 TR-004 的失效动作消费。
      - `req_change_required`（REQ 级歧义，规格链写不出一致解读）：TR-005 → runtime paused（human_boundary）——交人裁决 amendment 或放弃。
 
   两条不变量：修复不重开已定的设计决策（只改被标记的条款，同 S9 纪律）；S5 的**基线代际锁**（TR-003 指纹登记）≠ 文件 `Status` 字段——契约/TASK 文件在 S3/S4 定稿时就声明 locked/complete（PTR-PLAN-02/TR-002 消费磁盘声明），TR-003 只是把精确指纹冻结为 S6 起的基线边界。

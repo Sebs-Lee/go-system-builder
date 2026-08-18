@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
@@ -878,6 +879,15 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 			rt.BoundREQUIImpact, _ = meta["ui_impact"].(string)
 		}
 	}
+	// The locked-artifact screen was previously only alive in unit tests —
+	// the wire path never threaded LockedArtifacts or the stage here, so
+	// lockedArtifactDecision never ran (S5 final-round F1). Project them
+	// with the same loader the hook transport uses.
+	rt.LockedArtifacts = hookctx.LockedArtifactsFromSnapshot(snapshot)
+	rt.CurrentStage = stageOf(snapshot.State)
+	if baseline, ok := snapshot.State["baseline"].(map[string]any); ok {
+		rt.CurrentBaselineGeneration = int(baseline["generation"].(float64))
+	}
 	return policy.Input{
 		SessionID: req.SessionID,
 		Event:     req.Event,
@@ -887,6 +897,16 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 		TargetID:  req.TargetID,
 		Runtime:   rt,
 	}
+}
+
+// stageOf reads the milestone projection's stage label.
+func stageOf(state map[string]any) string {
+	if milestone, ok := state["milestone"].(map[string]any); ok {
+		if stage, ok := milestone["stage"].(string); ok {
+			return stage
+		}
+	}
+	return ""
 }
 
 func allowDecision() policy.Decision {
