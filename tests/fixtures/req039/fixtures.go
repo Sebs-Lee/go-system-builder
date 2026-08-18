@@ -826,7 +826,7 @@ func SeedPlanningDesignComplete(t *testing.T, root string, state map[string]any)
 	t.Helper()
 	reqData := []byte("# REQ-039\n\n> 状态：locked\n> 版本：v2.0.0\n\n" +
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n")
-	archData := []byte("# ARCHITECTURE-039\n")
+	archData := []byte("# ARCHITECTURE-039\n\n> 状态：locked\n> 版本：v2.0.2\n")
 	for _, pair := range []struct {
 		path string
 		data []byte
@@ -855,10 +855,9 @@ func SeedPlanningDesignComplete(t *testing.T, root string, state map[string]any)
 		t.Fatal(err)
 	}
 	evPath := writeEvidenceFile(t, root, "ev-design.json", evData)
-	state["documents"] = []any{
-		map[string]any{"id": "REQ-039", "kind": "req", "path": "docs/requirements/REQ-039-loop-control-plane.md", "version": "v2.0.0", "sha256": Sha256Hex(reqData), "status": "locked", "generation": 1},
-		map[string]any{"id": "ARCH-039", "kind": "design", "path": "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "version": "v2.0.2", "sha256": Sha256Hex(archData), "status": "locked", "generation": 1},
-	}
+	// BUG-CX-13 A4: no hand-seeded documents[] — the disk declarations plus
+	// the gate's disk fallback (pre-commit) and PTR-PLAN-01's
+	// register_design_documents (at commit) carry the chain.
 	state["evidence"] = []any{
 		evidenceIndexEntry("ev-design", "planning_design", evPath, Sha256Hex(evData), 1, "architect-1", "Architect", []any{"docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md"}),
 	}

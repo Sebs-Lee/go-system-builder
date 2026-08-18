@@ -194,11 +194,26 @@ func evaluatePlanningDesign(input Input, result Evaluation, spec GateSpec) Evalu
 	relevant := make([]documentFact, 0, len(requiredKinds))
 	for _, kind := range requiredKinds {
 		document, ok := findCurrentDocument(documents, kind, input.Files)
-		if !ok {
-			result.Missing = append(result.Missing, "document:"+kind+":locked")
+		if ok {
+			relevant = append(relevant, document)
 			continue
 		}
-		relevant = append(relevant, document)
+		// Disk fallback (BUG-CX-13 A3, same family as the planning artifact
+		// gates): a locked REQ / ARCH document declared on disk satisfies
+		// the precondition — the registration into documents[] happens at
+		// PTR-PLAN-01's commit.
+		if diskFacts, listed := diskDeclaredArtifacts(input, kind, "locked"); listed {
+			for _, fact := range diskFacts {
+				if fact.Kind == kind {
+					relevant = append(relevant, fact)
+					ok = true
+					break
+				}
+			}
+		}
+		if !ok {
+			result.Missing = append(result.Missing, "document:"+kind+":locked")
+		}
 	}
 	if len(result.Missing) > 0 {
 		sort.Strings(result.Missing)
@@ -805,12 +820,7 @@ func diskDeclaredArtifacts(input Input, kind, status string) ([]documentFact, bo
 	if !ok || input.Files == nil {
 		return nil, false
 	}
-	dirRel := "docs/contracts"
-	filePrefix := ""
-	if kind == "task" {
-		dirRel = "docs/tasks"
-		filePrefix = "TASK-"
-	}
+	dirRel, filePrefix := diskArtifactHome(kind)
 	entries, err := lister.ReadDir(dirRel)
 	if err != nil {
 		return nil, false
@@ -873,4 +883,20 @@ func parseTopField(content string, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// diskArtifactHome maps a document kind to the directory and file prefix
+// whose on-disk Status declaration is the agent-producible fact for that
+// kind's gate precondition.
+func diskArtifactHome(kind string) (dir string, prefix string) {
+	switch kind {
+	case "task":
+		return "docs/tasks", "TASK-"
+	case "design":
+		return "docs/design/architecture", "ARCHITECTURE-"
+	case "req":
+		return "docs/requirements", "REQ-"
+	default:
+		return "docs/contracts", ""
+	}
 }

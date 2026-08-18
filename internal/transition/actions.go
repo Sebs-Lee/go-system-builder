@@ -91,6 +91,7 @@ func InitActionRegistry() {
 		"record_loop_authorization": actionRecordLoopAuthorization,
 		"update_bound_req":          actionUpdateBoundREQ,
 		"register_locked_contracts": actionRegisterLockedContracts,
+		"register_design_documents":   actionRegisterDesignDocuments,
 		"register_execution_batch":  actionRegisterExecutionBatch,
 		// BUG-PLANNING-SUBSTATE: only set_planning_phase_design remains
 		// from the planning phase-set family. The other six (initialize,
@@ -825,4 +826,22 @@ func invalidateHumanReleaseEvidence(state map[string]any, ctx *ActionContext, ki
 
 func actionRecordAbort(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "human abort")
+}
+
+// actionRegisterDesignDocuments runs on PTR-PLAN-01: the architecture
+// document is registered into documents[] the same way contracts (PTR-PLAN-02)
+// and tasks (TR-002) are — S5's review evidence needs a registered design
+// fact to sign over (BUG-CX-13: previously nothing registered kind=design,
+// so the S2 exit gate could never be satisfied on the organic path).
+func actionRegisterDesignDocuments(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	registered, err := registerDocumentsFromDisk(actionRoot(state, ctx), state, ctx, "docs/design/architecture", []string{"ARCHITECTURE-"}, "design", "locked")
+	if err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	if registered == 0 {
+		return ActionResult{Status: "failed",
+			Detail: "no locked architecture document under docs/design/architecture — the design stage produced nothing to register"}, fmt.Errorf("register_design_documents: no ARCHITECTURE-*.md with Status locked under docs/design/architecture — write the architecture document before advancing")
+	}
+	return ActionResult{Status: "committed", MutationApplied: true,
+		Detail: fmt.Sprintf("registered %d locked design document(s)", registered)}, nil
 }

@@ -22,7 +22,7 @@ import (
 // (replace, not stack).
 func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"docs/contracts", "docs/tasks", "docs/requirements", ".claude"} {
+	for _, rel := range []string{"docs/contracts", "docs/tasks", "docs/requirements", "docs/design/architecture", ".claude"} {
 		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -50,6 +50,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 
 	// Locked REQ (UI impact none skips the prototype gate) + clause universe
 	// in the CONTRACTS index + a locked contract + a complete two-task batch.
+	write("docs/design/architecture/ARCHITECTURE-600.md", "# ARCHITECTURE-600\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	write("docs/requirements/REQ-600.md", "# REQ-600\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-601 | wb6 | 提交 | A1 | Must |\n")
 	write("docs/contracts/BE-600.md", "# BE-600\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+

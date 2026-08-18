@@ -125,3 +125,67 @@ func TestPlanningGatesStillRefuseWhenDiskAlsoLacks(t *testing.T) {
 		t.Fatalf("gate must stay NOT_READY when neither disk nor documents[] declares the artifact, got %q", result.Status)
 	}
 }
+
+// TestPlanningDesignGateReadsDiskDeclaredArchitecture pins BUG-CX-13 A3:
+// the S2 exit gate must accept a disk-declared locked architecture document
+// without a pre-existing documents[] registration (the registration happens
+// at PTR-PLAN-01's commit; nothing produced it before, so the organic S2
+// exit was deadlocked).
+func TestPlanningDesignGateReadsDiskDeclaredArchitecture(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	archData := []byte("# ARCHITECTURE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	reqData := []byte("# REQ-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	envelope := map[string]any{
+		"schema_version":          "1.0.0",
+		"evidence_id":             "ev-design",
+		"kind":                    "planning_design",
+		"runtime_id":              "loop-test",
+		"baseline_generation":     1,
+		"producer_agent_id":       "architect-1",
+		"producer_responsibility": "Architect",
+		"subject_refs": []any{
+			map[string]any{"path": "docs/design/architecture/ARCHITECTURE-001.md", "version": "v1.0.0", "sha256": sha256Hex(archData)},
+			map[string]any{"path": "docs/requirements/REQ-001.md", "version": "v1.0.0", "sha256": sha256Hex(reqData)},
+		},
+		"conclusion": "pass",
+		"created_at": "2026-08-18T00:00:00Z",
+	}
+	envelopeData, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 2,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "planning", "phase": "design", "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				"documents": []any{ // req registered by bind; design NOT registered (organic pre-commit state)
+					map[string]any{"id": "REQ-001", "kind": "req", "path": "docs/requirements/REQ-001.md", "version": "v1.0.0", "sha256": sha256Hex(reqData), "status": "locked", "generation": float64(1)},
+				},
+				"evidence": []any{map[string]any{
+					"id": "ev-design", "kind": "planning_design", "path": "evidence/design.json",
+					"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": float64(1),
+					"review_round": nil, "produced_by": []any{"architect-1"}, "invalidated_by": nil,
+					"responsibility_id": "Architect", "scope_refs": []any{},
+				}},
+			},
+		},
+		TransitionID: "PTR-PLAN-01",
+		GateID:       "GATE-PLANNING-DESIGN-COMPLETE",
+		Files: listingFiles{
+			"docs/design/architecture/ARCHITECTURE-001.md": archData,
+			"docs/requirements/REQ-001.md":         reqData,
+			"evidence/design.json":                 envelopeData,
+		},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusSatisfied {
+		t.Fatalf("BUG-CX-13: disk-declared locked architecture + registered req must satisfy the S2 exit gate; got status=%q missing=%#v conflicts=%v", result.Status, result.Missing, result.Conflicts)
+	}
+}

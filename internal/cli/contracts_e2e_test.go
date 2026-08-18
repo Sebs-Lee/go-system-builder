@@ -20,7 +20,7 @@ import (
 // replace semantics (no stacking).
 func TestS3ContractPipelineE2E(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/prototypes/wb", ".claude"} {
+	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/architecture", "docs/design/prototypes/wb", ".claude"} {
 		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -47,6 +47,7 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 	}
 
 	// REQ with an FR; module package with CASE/S/F/PATH universe.
+	write("docs/design/architecture/ARCHITECTURE-500.md", "# ARCHITECTURE-500\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	write("docs/requirements/REQ-500.md", "# REQ-500\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：changed\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-501 | wb | 提交 | A1 | Must |\n")
 	write("docs/design/prototypes/wb/scenario-model.json", `{
   "module": "wb", "coverage_profile": "ordinary",
@@ -175,7 +176,7 @@ func intStr(n int) string { return fmt.Sprintf("%d", n) }
 // is a gate, not a voluntary command.
 func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"docs/contracts", "docs/requirements", ".claude"} {
+	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/architecture", ".claude"} {
 		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -200,6 +201,7 @@ func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 	write("docs/contracts/BE-700.md", "# BE-700\n\n> 状态：locked\n> 版本：v1.0.0\n\n"+
 		"| REQ source_ref | Rule/CASE/Story/PATH | 本合同条款§ | 验收标准 |\n|:--|:--|:--|:--|\n"+
 		"| REQ-700/FR-701 | — | BE-700 §1 | 可提交 |\n")
+	write("docs/design/architecture/ARCHITECTURE-700.md", "# ARCHITECTURE-700\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	write("docs/requirements/REQ-700.md", "# REQ-700\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-701 | wb7 | 提交 | A1 | Must |\n"+
 		"| 编号 | 验收标准 | 指向 |\n|:--|:--|:--|\n| AC-701 | 提交成功 | FR-701 |\n")
@@ -223,7 +225,7 @@ func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 // because scenario-model.json remains the authoritative CASE universe.
 func TestContractsReverseClosureUsesModelAsAuthority(t *testing.T) {
 	root := t.TempDir()
-	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/prototypes/wb", ".claude"} {
+	for _, rel := range []string{"docs/contracts", "docs/requirements", "docs/design/architecture", "docs/design/prototypes/wb", ".claude"} {
 		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
 			t.Fatal(err)
 		}

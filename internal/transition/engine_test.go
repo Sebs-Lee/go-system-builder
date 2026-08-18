@@ -291,9 +291,19 @@ func startLockedREQ(t *testing.T, root, statePath, journalPath string) {
 
 func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 	t.Helper()
+	tempRoot := filepath.Dir(statePath)
+	// PTR-PLAN-01's register_design_documents demands a locked architecture
+	// document on disk.
+	archDir := filepath.Join(tempRoot, "docs", "design", "architecture")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "ARCHITECTURE-test.md"),
+		[]byte("# ARCHITECTURE-test\n\n> 状态：locked\n> 版本：v1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// PTR-PLAN-02's contracts_checked guard demands at least one real
 	// contract on disk (the contractless-stage floor).
-	tempRoot := filepath.Dir(statePath)
 	contractsDir := filepath.Join(tempRoot, "docs", "contracts")
 	if err := os.MkdirAll(contractsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -405,6 +415,18 @@ func seedPlanningArtifactsLang(t *testing.T, statePath string, english bool) {
 	root := filepath.Dir(statePath)
 	contractsDir := filepath.Join(root, "docs", "contracts")
 	tasksDir := filepath.Join(root, "docs", "tasks")
+	archDir := filepath.Join(root, "docs", "design", "architecture")
+	if err := os.MkdirAll(archDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archStatus := "> 状态：locked"
+	if english {
+		archStatus = "> Status: locked"
+	}
+	if err := os.WriteFile(filepath.Join(archDir, "ARCHITECTURE-test.md"),
+		[]byte("# ARCHITECTURE-test\n\n"+archStatus+"\n> 版本：v1.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(contractsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

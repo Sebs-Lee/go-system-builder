@@ -150,7 +150,9 @@
           "guards": [
             "ui_impact_resolved"
           ],
-          "actions": [],
+          "actions": [
+            "register_design_documents"
+          ],
           "required_evidence": [],
           "on_guard_failure": "warn_and_retry",
           "auto_trigger": {
