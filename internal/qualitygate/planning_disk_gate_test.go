@@ -391,3 +391,90 @@ func TestREVTemplateEnvelopeFixRequiredVariant(t *testing.T) {
 		t.Fatalf("the taught fix_required envelope must satisfy GATE-DOCUMENT-FIX-REQUIRED; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
+
+// TestPlanningEnvelopeTeachesTheTruth pins the v4.5.4 fix: the JSON
+// skeleton taught in specification-planning's Planning Evidence Envelopes
+// section, filled with real values, must qualify the S2 design gate — a
+// markdown path or a missing --expected-revision-style mistake goes red.
+func TestPlanningEnvelopeTeachesTheTruth(t *testing.T) {
+	skill, err := os.ReadFile(filepath.Join("..", "..", "skills", "specification-planning", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read skill: %v", err)
+	}
+	content := string(skill)
+	start := strings.Index(content, "```json")
+	if start < 0 {
+		t.Fatalf("skill must carry a fenced JSON envelope skeleton")
+	}
+	body := content[start+7:]
+	end := strings.Index(body, "```")
+	if end < 0 {
+		t.Fatalf("envelope skeleton not closed")
+	}
+	block := body[:end]
+
+	archData := []byte("# ARCHITECTURE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	reqData := []byte("# REQ-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	replace := map[string]string{
+		`"planning-{design|contracts|tasks}-pass"`:            `"planning-design-pass"`,
+		`"planning_design | planning_contract | planning_task"`: `"planning_design"`,
+		`"从 .claude/loop-state.json 顶部复制"`:                `"loop-test"`,
+		`"{当前 baseline generation——数字，如 1}"`:            `1`,
+		`"你的 agent id"`:                                    `"architect-1"`,
+		`"Architect（S2）/ Contract Planner（S3）/ Task Planner（S4）——gate 按此词白名单，逐字匹配"`: `"Architect"`,
+	}
+	filled := block
+	for old, newVal := range replace {
+		filled = strings.ReplaceAll(filled, old, newVal)
+	}
+	if strings.Contains(filled, "{") && strings.Contains(filled, "替换") {
+		t.Fatalf("unfilled placeholder remains:\n%s", filled)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(filled), &envelope); err != nil {
+		t.Fatalf("taught skeleton is not valid JSON: %v\n%s", err, filled)
+	}
+	envelopeData, _ := json.Marshal(envelope)
+
+	evaluator := newTestEvaluator(t)
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 2,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "planning", "phase": "design", "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				"documents": []any{map[string]any{
+					"id": "REQ-001", "kind": "req", "path": "docs/requirements/REQ-001.md", "version": "v1.0.0", "sha256": sha256Hex(reqData), "status": "locked", "generation": float64(1),
+				}},
+				"evidence": []any{map[string]any{
+					"id": "planning-design-pass", "kind": "planning_design", "path": "evidence/design.json",
+					"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": float64(1),
+					"review_round": nil, "produced_by": []any{"architect-1"}, "invalidated_by": nil,
+					"responsibility_id": "Architect", "scope_refs": []any{},
+				}},
+			},
+		},
+		TransitionID: "PTR-PLAN-01",
+		GateID:       "GATE-PLANNING-DESIGN-COMPLETE",
+		Files: listingFiles{
+			"docs/design/architecture/ARCHITECTURE-001.md": archData,
+			"docs/requirements/REQ-001.md":                 reqData,
+			"evidence/design.json":                          envelopeData,
+		},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	qualified := false
+	for _, ref := range result.EvidenceRefs {
+		if ref == "planning-design-pass" {
+			qualified = true
+		}
+	}
+	if !qualified {
+		t.Fatalf("the taught planning envelope must qualify the S2 design gate; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
+	}
+}

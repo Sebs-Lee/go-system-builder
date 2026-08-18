@@ -209,7 +209,7 @@ These hold across every stage:
   1. draft or update `docs/design/architecture/ARCHITECTURE-<id>.md` (system track)
   2. if UI impact = `changed`: run the dual-track convergence per `skills: specification-planning` — user track first lands `stories.md`; convergence-1 fills the hand-written `cross-matrix.json` carrier (fact×FR×story cells: covering branch or no-branch reason) and produces `scenario-model.json` + `fixture-contract.json`; convergence-2 lands `flows.md`, page HTML, and `index.html`. The current implementation IS the baseline; no separate capture is required.
   3. at close: run `go run ./cmd/loop-harness scenario generate --module <module> --root .` then `scenario validate --module <module> --root .` — validate runs the full AC↔CASE bridge
-  4. flip the architecture document's top `状态` field to `locked`（PTR-PLAN-01 只登记 locked 的 ARCHITECTURE-*.md——留在 draft 会被 gate 拒，missing `document:design:locked`），并登记设计证据：`go run ./cmd/loop-harness runtime evidence add --id design-pass --kind planning_design --responsibility Architect --path <ADR 或设计结论文件> --produced-by <主会话 agent id>`（缺它 gate 报 `evidence:planning_design_record`——Architect 即承担 S2 设计的主会话本身）
+  4. flip the architecture document's top `状态` field to `locked`（PTR-PLAN-01 只登记 locked 的 ARCHITECTURE-*.md——留在 draft 会被 gate 拒，missing `document:design:locked`），并按 specification-planning SKILL「Planning Evidence Envelopes」节登记 JSON 信封证据（kind=planning_design、responsibility=Architect——主会话本身；缺它 gate 报 `evidence:planning_design_record`，信封不合格报 `evidence:<id>:schema`）
   5. record decisions that the contracts will need (state, data, integration, migration)
 - **done_when**:
   - architecture document covers every decision the contract stage needs
@@ -231,7 +231,7 @@ These hold across every stage:
   2. draft the contracts in order `FE-<id>.md` → `BE-<id>.md` → `SYNC-<id>.md` (FE first: its API expectations feed BE and SYNC)
   3. ensure contracts jointly cover every REQ acceptance criterion
   4. add bottom-up references and a coverage matrix
-  5. on finalization follow `skills: specification-planning` step 10 exactly: flip each contract's top `Status` to `locked`, then run `go run ./cmd/loop-harness contracts check --root .` (the single detailed home for the machine-checked close; PTR-PLAN-02 registers only locked contracts)
+  5. on finalization follow `skills: specification-planning` step 10 exactly: flip each contract's top status line（模板中的「状态」行）to `locked`, then run `go run ./cmd/loop-harness contracts check --root .` (the single detailed home for the machine-checked close; PTR-PLAN-02 registers only locked contracts), and register the JSON planning envelope (kind=planning_contract, responsibility=Contract Planner — see the SKILL's Planning Evidence Envelopes section; the gate also requires this evidence, missing `evidence:planning_contract_record`)
 - **done_when**:
   - the contract set covers the entire REQ
   - every contract has stability metadata (status, version, owner)
@@ -254,7 +254,7 @@ These hold across every stage:
   - every contract clause has TASK coverage
   - every TASK has a verifiable Closing Contract
   - write-path overlaps have explicit sequential ownership
-- **next**: S5. Produce any missing TASK/DAG deliverable or qualified task evidence; the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `TR-002` when satisfied.
+- **next**: S5. Produce any missing TASK/DAG deliverable or qualified task evidence — including the S4 planning envelope (kind=planning_task, responsibility=Task Planner; the SKILL's Planning Evidence Envelopes section; missing token `evidence:planning_task_record`); the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `TR-002` when satisfied.
 - **failure_route**: if a TASK reveals a contract gap, return to S3.
 - **human_gateway**: none for ordinary work.
 - **primary_skill**: `specification-planning`

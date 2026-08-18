@@ -11,8 +11,9 @@ skills:
 ---
 # Document Verifier
 ## Mission
-Produce one independent S5 document-verification conclusion for the complete module current
-truth without repairing reviewed artifacts.
+Produce one independent S5 document-verification conclusion over the frozen spec chain
+(REQ → architecture → contracts → tasks; plus the module current-truth package when the
+REQ touches UI) without repairing reviewed artifacts.
 ## Phase Contract
 In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
 ## Skill Contract

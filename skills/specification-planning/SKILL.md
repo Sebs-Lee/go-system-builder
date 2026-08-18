@@ -102,9 +102,10 @@ win.
    pointer — §A4 is the REQ's "明确不做" table; free text is rejected as a
    silent removal from the verification denominator). Then close the
    architecture side: flip `ARCHITECTURE-<id>.md`'s top `状态` to `locked`
-   and register the design evidence (`runtime evidence add --kind
-   planning_design --responsibility Architect` — Architect is you, the
-   main session owning the design; PTR-PLAN-01 consumes both).
+   and register the JSON design envelope per the Planning Evidence
+   Envelopes section below (kind=planning_design, responsibility=
+   Architect — you, the main session owning the design; PTR-PLAN-01
+   consumes both).
 
 **S3/S4 steps:**
 10. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
@@ -113,11 +114,12 @@ win.
     current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
     universe — one `{id} §{n}` cell per clause, and each `§n` must match
     the clause number the target contract itself declares in any of its
-    「本合同条款」 columns. On finalization set each contract's top `Status`
-    field to `locked` (PTR-PLAN-02 registers only locked contracts), and
-    run `go run ./cmd/loop-harness contracts check --root .` — token
-    references, clause cells, and fingerprint columns are machine-checked
-    there and again at PTR-PLAN-02.
+    「本合同条款」 columns. On finalization set each contract's top status line
+    （模板中的「状态」行）to `locked` (PTR-PLAN-02 registers only locked contracts),
+    register the planning_contract envelope (Planning Evidence Envelopes
+    section), and run `go run ./cmd/loop-harness contracts check --root .`
+    — token references, clause cells, and fingerprint columns are
+    machine-checked there and again at PTR-PLAN-02.
 11. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
     Contract (§7 four assert lines), and obeys single-responsibility.
@@ -136,6 +138,33 @@ win.
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is
     invalid; otherwise keep rework bounded to the flagged contract or TASK.
+
+## Planning Evidence Envelopes（S2/S3/S4 收口登记——三个阶段同款，一个居所）
+
+每个 planning gate（design/contracts/tasks）在磁盘事实之外还要求一条** JSON 信封证据**（登记成 markdown 报告 gate 读不出 `conclusion`，会报 `evidence:<id>:schema`）。骨架（三个 kind 通用，`{...}` 处按阶段替换）：
+
+```json
+{
+  "schema_version": "1.0.0",
+  "evidence_id": "planning-{design|contracts|tasks}-pass",
+  "kind": "planning_design | planning_contract | planning_task",
+  "runtime_id": "从 .claude/loop-state.json 顶部复制",
+  "baseline_generation": "{当前 baseline generation——数字，如 1}",
+  "producer_agent_id": "你的 agent id",
+  "producer_responsibility": "Architect（S2）/ Contract Planner（S3）/ Task Planner（S4）——gate 按此词白名单，逐字匹配",
+  "subject_refs": [],
+  "conclusion": "pass",
+  "created_at": "ISO 时间戳"
+}
+```
+
+`subject_refs` 留空即合法（planning 门不要求钉指纹——磁盘 Status 是事实载体）；`review_round` 不写。落盘为 `docs/reports/planning/{id}.json` 后登记：
+
+```text
+go run ./cmd/loop-harness runtime evidence add --id planning-design-pass   --kind planning_design --path docs/reports/planning/planning-design-pass.json   --produced-by <你的 agent id> --responsibility Architect   --expected-revision <当前 revision，.claude/loop-state.json 顶部>
+```
+
+（S3/S4 同款换 `--kind planning_contract --responsibility "Contract Planner"` / `--kind planning_task --responsibility "Task Planner"`，id 对应 `planning-contracts-pass` / `planning-tasks-pass`。）**重签规则**：同 ID 会被拒（invalid 条目也占 ID）——返工第二轮起用 `-r2` 后缀新 ID（`planning-design-pass-r2`）。missing token 对照：`evidence:planning_design_record` / `evidence:planning_contract_record` / `evidence:planning_task_record` = 该阶段信封未登记或不合格；`evidence:<id>:schema` = 信封字段与登记不互证（多为 path 指向了 markdown 或 conclusion 拼错）。
 
 ## Outputs
 - Architecture and ADR records (with the depth self-review paragraph and
