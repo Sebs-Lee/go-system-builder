@@ -375,31 +375,42 @@ type docSeed struct {
 	data                    []byte
 }
 
-// SeedDocumentPassS5 writes locked documents and dual independent PASS review
-// evidence for GATE-DOCUMENT-PASS / TR-003 (CT-039-11).
-func SeedDocumentPassS5(t *testing.T, root string, state map[string]any, specAgent, taskAgent string) {
+// ensureS5DocumentBaseline returns the subject list the DV envelopes must
+// sign over. On the organic path (documents[] already registered by
+// bind/PTR-PLAN-01/PTR-PLAN-02/TR-002) it derives subjects from the current
+// registrations and writes nothing — the organic chain owns the files. On a
+// compressed precondition (empty documents[]) it writes the four files with
+// proper status headers and registers them, as a precondition seed (the
+// documented compressed-seed pattern).
+func ensureS5DocumentBaseline(t *testing.T, root string, state map[string]any) []any {
 	t.Helper()
-	round := reviewRoundFromState(state)
-	if round < 1 {
-		round = 1
-		review, _ := state["review"].(map[string]any)
-		if review == nil {
-			review = map[string]any{}
+	if existing, _ := state["documents"].([]any); len(existing) > 0 {
+		var subjects []any
+		for _, raw := range existing {
+			doc, _ := raw.(map[string]any)
+			if doc == nil {
+				continue
+			}
+			path, _ := doc["path"].(string)
+			version, _ := doc["version"].(string)
+			sha, _ := doc["sha256"].(string)
+			if path == "" || sha == "" {
+				continue
+			}
+			subjects = append(subjects, map[string]any{"path": path, "version": version, "sha256": sha})
 		}
-		review["round"] = round
-		if _, ok := review["clean_round"]; !ok {
-			review["clean_round"] = nil
+		if len(subjects) == 0 {
+			t.Fatal("ensureS5DocumentBaseline: documents[] present but carries no path/sha entries")
 		}
-		state["review"] = review
+		return subjects
 	}
 	docs := []docSeed{
-		{"REQ-039", "req", "docs/requirements/REQ-039-loop-control-plane.md", "v2.0.0", []byte("# REQ-039\n")},
-		{"ARCH-039", "design", "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "v2.0.2", []byte("# ARCH\n")},
-		{"BE-039", "contract", "docs/contracts/BE-039-loop-controller.md", "v1.0.2", []byte("# BE\n")},
-		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK-039-01\n\n> 状态：complete\n")},
+		{"REQ-039", "req", "docs/requirements/REQ-039-loop-control-plane.md", "v2.0.0", []byte("# REQ-039\n\n> 状态：locked\n> 版本：v2.0.0\n")},
+		{"ARCH-039", "design", "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "v2.0.2", []byte("# ARCH\n\n> 状态：locked\n> 版本：v2.0.2\n")},
+		{"BE-039", "contract", "docs/contracts/BE-039-loop-controller.md", "v1.0.2", []byte("# BE\n\n> 状态：locked\n> 版本：v1.0.2\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")},
+		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK-039-01\n\n> 状态：complete\n> 版本：v1.0.2\n> Primary contract: BE-039-loop-controller\n")},
 	}
-	var documents []any
-	var subjects []any
+	var documents, subjects []any
 	for _, d := range docs {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, d.path)), 0o755); err != nil {
 			t.Fatal(err)
@@ -415,34 +426,53 @@ func SeedDocumentPassS5(t *testing.T, root string, state map[string]any, specAge
 			"path": d.path, "version": d.version, "sha256": Sha256Hex(d.data),
 		})
 	}
-	var evidence []any
+	state["documents"] = documents
+	return subjects
+}
+
+// appendEvidence adds entries to the existing evidence index (organic chain
+// evidence stays; the old seeds replaced the whole index).
+func appendEvidence(state map[string]any, entries []any) {
+	existing, _ := state["evidence"].([]any)
+	state["evidence"] = append(existing, entries...)
+}
+
+// SeedDocumentPassS5 writes locked documents and dual independent PASS review
+// evidence for GATE-DOCUMENT-PASS / TR-003 (CT-039-11).
+func SeedDocumentPassS5(t *testing.T, root string, state map[string]any, specAgent, taskAgent string) {
+	t.Helper()
+	// Derive from the current baseline (organic registrations win; the seed
+	// never replaces them) and keep the production round semantics (S5 is
+	// round 0 — no forcing to 1, which used to mask the round-0 behavior).
+	subjects := ensureS5DocumentBaseline(t, root, state)
+	round := reviewRoundFromState(state)
 	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	var entries []any
 	addReview := func(id, responsibility, agent string) {
 		envelope := map[string]any{
 			"schema_version": "1.0.0", "evidence_id": id, "kind": "document_review",
-			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1, "review_round": round,
+			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1,
 			"producer_agent_id": agent, "producer_responsibility": responsibility,
 			"subject_refs": subjects, "conclusion": "pass", "created_at": "2026-07-30T00:00:00Z",
+		}
+		if round > 0 {
+			envelope["review_round"] = round
 		}
 		data, err := json.Marshal(envelope)
 		if err != nil {
 			t.Fatal(err)
 		}
 		rel := "evidence/" + id + ".json"
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
-			t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		evidence = append(evidence, evidenceIndexEntry(id, "document_review", rel, Sha256Hex(data), round, agent, responsibility, []any{}))
+		entries = append(entries, evidenceIndexEntry(id, "document_review", rel, Sha256Hex(data), round, agent, responsibility, []any{}))
 	}
 	addReview("ev-dv-spec", "DV-SPEC-CONSISTENCY", specAgent)
 	addReview("ev-dv-task", "DV-TASK-EXECUTABILITY", taskAgent)
-	state["documents"] = documents
-	state["evidence"] = evidence
+	appendEvidence(state, entries)
 	state["lifecycle"] = map[string]any{"state": "document_verification", "phase": nil, "phase_revision": 0}
 	state["milestone"].(map[string]any)["stage"] = "S5"
 	state["milestone"].(map[string]any)["lifecycle_state"] = "document_verification"
@@ -494,12 +524,16 @@ func SeedBuilderBatchReady(t *testing.T, root string, state map[string]any) {
 	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	round := reviewRoundFromState(state) // TR-006 commits the FIRST round bump — its pre-commit evidence is round 0
 	add := func(id, wireKind, responsibility, conclusion, taskID string) {
 		envelope := map[string]any{
 			"schema_version": "1.0.0", "evidence_id": id, "kind": wireKind,
-			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1, "review_round": 1,
+			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1,
 			"producer_agent_id": "builder-1", "producer_responsibility": responsibility,
 			"subject_refs": subjects, "conclusion": conclusion, "created_at": "2026-07-30T00:00:00Z",
+		}
+		if round > 0 {
+			envelope["review_round"] = round
 		}
 		if taskID != "" {
 			envelope["task_id"] = taskID
@@ -509,7 +543,7 @@ func SeedBuilderBatchReady(t *testing.T, root string, state map[string]any) {
 			t.Fatal(err)
 		}
 		rel := writeEvidenceFile(t, root, id+".json", data)
-		evidence = append(evidence, evidenceIndexEntry(id, wireKind, rel, Sha256Hex(data), 1, "builder-1", responsibility, []any{}))
+		evidence = append(evidence, evidenceIndexEntry(id, wireKind, rel, Sha256Hex(data), round, "builder-1", responsibility, []any{}))
 	}
 	add("ev-completion-1", "agent_completion", "BUILD-WORK-PACKAGE", "completed", "TASK-039-01")
 	add("ev-completion-2", "agent_completion", "BUILD-WORK-PACKAGE", "completed", "TASK-039-02")
@@ -547,78 +581,39 @@ func SeedDualDVSameAgent(t *testing.T, root string, state map[string]any) {
 // GATE-DOCUMENT-FIX-REQUIRED).
 func SeedDocumentFixRequired(t *testing.T, root string, state map[string]any, specAgent, taskAgent string) {
 	t.Helper()
+	subjects := ensureS5DocumentBaseline(t, root, state)
 	round := reviewRoundFromState(state)
-	if round < 1 {
-		round = 1
-		review, _ := state["review"].(map[string]any)
-		if review == nil {
-			review = map[string]any{}
-		}
-		review["round"] = round
-		if _, ok := review["clean_round"]; !ok {
-			review["clean_round"] = nil
-		}
-		state["review"] = review
-	}
-	docs := []docSeed{
-		{"REQ-039", "req", "docs/requirements/REQ-039-loop-control-plane.md", "v2.0.0", []byte("# REQ-039\n")},
-		{"ARCH-039", "design", "docs/design/architecture/ARCHITECTURE-039-loop-control-plane.md", "v2.0.2", []byte("# ARCH\n")},
-		{"BE-039", "contract", "docs/contracts/BE-039-loop-controller.md", "v1.0.2", []byte("# BE\n")},
-		{"TASK-039-01", "task", "docs/tasks/TASK-039-01-loop-definition.md", "v1.0.2", []byte("# TASK-039-01\n\n> 状态：complete\n")},
-	}
-	var documents []any
-	var subjects []any
-	for _, d := range docs {
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, d.path)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, d.path), d.data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		documents = append(documents, map[string]any{
-			"id": d.id, "kind": d.kind, "path": d.path, "version": d.version,
-			"sha256": Sha256Hex(d.data), "status": "locked", "generation": 1,
-		})
-		subjects = append(subjects, map[string]any{
-			"path": d.path, "version": d.version, "sha256": Sha256Hex(d.data),
-		})
-	}
-	var evidence []any
 	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	var entries []any
 	addReview := func(id, responsibility, agent string) {
 		envelope := map[string]any{
 			"schema_version": "1.0.0", "evidence_id": id, "kind": "document_review",
-			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1, "review_round": round,
+			"runtime_id": runtimeIDFromState(state), "baseline_generation": 1,
 			"producer_agent_id": agent, "producer_responsibility": responsibility,
 			"subject_refs": subjects, "conclusion": "fix_required",
 			"requested_event": "document_fix_required", "created_at": "2026-07-30T00:00:00Z",
+		}
+		if round > 0 {
+			envelope["review_round"] = round
 		}
 		data, err := json.Marshal(envelope)
 		if err != nil {
 			t.Fatal(err)
 		}
 		rel := "evidence/" + id + ".json"
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, rel)), 0o755); err != nil {
-			t.Fatal(err)
-		}
 		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		evidence = append(evidence, evidenceIndexEntry(id, "document_review", rel, Sha256Hex(data), round, agent, responsibility, []any{}))
+		entries = append(entries, evidenceIndexEntry(id, "document_review", rel, Sha256Hex(data), round, agent, responsibility, []any{}))
 	}
 	addReview("ev-dv-fix-spec", "DV-SPEC-CONSISTENCY", specAgent)
 	addReview("ev-dv-fix-task", "DV-TASK-EXECUTABILITY", taskAgent)
-	state["documents"] = documents
-	state["evidence"] = evidence
+	appendEvidence(state, entries)
 	state["lifecycle"] = map[string]any{"state": "document_verification", "phase": nil, "phase_revision": 0}
-	state["milestone"].(map[string]any)["stage"] = "S5"
-	state["milestone"].(map[string]any)["lifecycle_state"] = "document_verification"
-	state["milestone"].(map[string]any)["lifecycle_phase"] = nil
 }
 
-// SeedVerificationDelivery seeds verification.delivery cursor (CT-039-16 baseline).
 func SeedVerificationDelivery(t *testing.T, root string, state map[string]any) {
 	t.Helper()
 	state["lifecycle"] = map[string]any{"state": "verification", "phase": "delivery", "phase_revision": 0}
@@ -680,9 +675,15 @@ func evidenceIndexEntry(id, wireKind, path, sha string, round int, producer, res
 	if scope == nil {
 		scope = []any{}
 	}
+	// The schema requires review_round >= 1 when present; round 0 (the S5
+	// production semantics) is expressed as nil, matching RecordEvidence.
+	var roundValue any
+	if round > 0 {
+		roundValue = round
+	}
 	return map[string]any{
 		"id": id, "kind": wireKind, "path": path, "sha256": sha,
-		"status": "valid", "baseline_generation": 1, "review_round": round,
+		"status": "valid", "baseline_generation": 1, "review_round": roundValue,
 		"produced_by": []any{producer}, "invalidated_by": nil,
 		"invalidation_rule": nil, "invalidation_reason": nil,
 		"responsibility_id": responsibility, "scope_refs": scope,

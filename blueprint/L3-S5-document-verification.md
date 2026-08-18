@@ -1,6 +1,6 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.3.1（落地后首轮重走处置：登记步入教学链/requested_event 死值修正/锁定阶段感知/B2 测试兑现；v4.3.0 实施完成：四批次 A-D 落地并全量验证；v4.2.0 机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.3.2（S5 fixture 派生化：播种遗留清零；v4.3.1 落地后首轮重走处置：登记步入教学链/requested_event 死值修正/锁定阶段感知/B2 测试兑现；v4.3.0 实施完成：四批次 A-D 落地并全量验证；v4.2.0 机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
 
 ## 1. S5 是什么，为什么要有它
 
@@ -113,7 +113,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 1. author 纪律层无机器数据支撑（见 §6 防自审行）——若未来要真挡，需 REQ 登记写真实作者；
 2. 独立性是程序性的（同模型同卡片、不同上下文与职责透镜），不是认识论双盲——如实声明，不虚称；
 3. S5 证据 review_round=0；S7 期间若产生新 document_review，注意轮次校验（模板已删该字段防误填）；
-4. S5 fixture（SeedDocumentPassS5/SeedDocumentFixRequired）仍手工播种且整体替换 documents[]/evidence——CX-13 A4 只改了 design 播种；spine 的 S5 段依赖它。待按 A4 模式改造（诚实记录，非已完成项）。
+~~4. S5 fixture 播种~~ **已改造（v4.3.2）**：SeedDocumentPassS5/SeedDocumentFixRequired 改为派生——有机链的 documents[] 注册优先（信封 subject 直接取当前注册指纹，不再替换注册）；仅压缩前置场景（documents[] 为空）才写文件+建注册；轮次不再强制为 1（S5=轮 0 的生产语义如实走，schema 层以 nil 表达 round 0）；证据索引追加而非整体替换。spine 的 S5 段由此从"播种"变为"派生自有机注册"。诚实边界：证据索引条目仍由 fixture 构造（内存态模式，gate 时全量校验）——与 design 播种的 A4 调整同款。
 5. 词汇映射（三个名字、两个命名空间，已在 REV-template §0 注 4 固化）：信封结论词 `req_change_required`（gate 词汇）＝ protocol 人闸名 `req_amendment`（= `req amend` 命令路径）＝机器事件名 `document_req_change_required`（loop-definition TR-005，机器名不进 agent 读物）。envelope 的 requested_event 在该分支留空（人闸不走自动路由）。
 
 ## 8. 落地规划（L4 批次——审查与复验对着本表逐行核对）
@@ -186,6 +186,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 | 2026-08-16 | v3.2.0 | S4 联动：审查消费 tasks check 机检结论；登记欠账划线 |
 | 2026-08-17 | v4.0.0 | 减法重做：删 TR-003 别名双槽与 TR-004 占位 action；REV 枚举与 gate 词汇合一；author 机器检查明示降级为纪律层；SKILL 砍到必做+触发 |
 | 2026-08-17 | v4.1.0 | v4.0.0 被判"改动说明而非设计"——按讲明白一件事重排叙事，设计内容与 v4.0.0 一致 |
+| 2026-08-18 | v4.3.2 | **遗留清零**：S5 双 seed 派生化（有机注册优先/压缩场景才建/轮次不再强制/索引追加）——连带把 SeedBuilderBatchReady 的硬编码轮次改为派生（TR-006 的 commit 才是首个轮次 bump，其门前证据是轮 0——改造中被 spine 当场暴露）；schema 层 round 0 以 nil 表达（evidenceIndexEntry）。spine S5→S11 全链 PASS 且 S5 证据派生自有机注册 |
 | 2026-08-18 | v4.3.1 | **落地后重走处置（两路 sub-agent + 主会话亲证全部条目）**：①H1 教学链补登记步（runtime evidence add 命令行入模板注 2/SKILL 步骤 3/protocol——此前照教学走必然卡死）；②requested_event 死值修正（req_change 分支留空走人闸；三名词汇映射入档 §7.5，机器事件名 document_req_change_required 不进 agent 读物）；③B2 复验测试兑现（TestTR004InvalidatesConsumedFixRecord——批次 D 台账曾虚记，本轮补齐）；④锁定时序实装阶段感知（policy 比较当前阶段与 LockedFromStage：登记即投影但 S6 前可写、旧代次恒锁——TR-004 修复回路不再被 hook 误挡）；⑤字段口径 12→11/10 如实（四处）；⑥M2 结论错配延迟冲突（有合格者不误报，全不合格才点名——直接版误伤 bug 双 requirement，测试现场抓出）+M3 exactSubjects 差集点名+空 path/sha 逃逸封堵；⑦M1 重跑口径如实（任一文档变指纹两份信封同失效，另一职责至少重签）；⑧spine "纯有机"如实限定 + S5 fixture 播种入缺口 4；⑨C5 补 fix_required 变体 |
 | 2026-08-18 | v4.3.0 | **实施完成**：四批次按 §8 逐行落地（A=6749b1d/B=daa7a07/C=9a97e58/D=本 commit），每行复验判据通过；§6 TR-004 行按批次 B 修正；执行中测试现场抓出并修正三处首版错误（裸字符串失效字段、ARCH- 前缀未对齐 protocol 命名、模板占位类型）；spine PASS——如实限定：S2→S4 段纯有机（去播种）；S5→S6 段转换由 hook 驱动但 DV 证据仍 fixture 播种（SeedDocumentPassS5 未改造，见 §7 缺口 4） |
 | 2026-08-18 | v4.2.1 | 新增 §8 落地规划（L4 四批次 A-D，含每行复验判据与全局禁区——审查与复验对着本表逐行核对）；设计修正预告：TR-004 需 `invalidate_consumed_review_evidence`（§6 该行随批次 B 修正） |
