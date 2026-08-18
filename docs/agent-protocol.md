@@ -262,27 +262,19 @@ These hold across every stage:
 - **purpose**: independent Document Verifier pass over the entire spec chain before any Builder activation.
 - **inputs**: locked REQ, architecture, contracts, candidate TASK batch.
 - **inputs_from**: [S2 (architecture + optional final UI design package), S3 (FE/BE/SYNC contracts), S4 (candidate TASK batch + DAG), S0 (locked REQ baseline)]
-- **actions** (sub-phases, see table below for full mapping):
-  1. **S5.1 workgroup_setup** — spawn Document Verifier Team with `DV-SPEC-CONSISTENCY` + `DV-TASK-EXECUTABILITY` responsibilities (+ risk-triggered ones)
-  2. **S5.2 spec_consistency_review** — `DV-SPEC-CONSISTENCY` responsibility: phase-one read-only + phase-two activated review of REQ↔design↔contracts consistency
-  3. **S5.3 task_executability_review** — `DV-TASK-EXECUTABILITY` responsibility: phase-one read-only + phase-two activated review of TASK coverage, links, scope, Closing Contracts
-  4. **S5.4 rework_loop** — if any finding: main session repairs S2/S3/S4 artifacts, rerun only the affected responsibility with fresh fingerprints
-  5. **S5.5 atomic_lock** — on PASS, atomically lock contracts + TASKs at their exact fingerprints
-- **sub-phases** (workflow-level):
+- **actions** — S5 is three moves (派活 → 审查 → 收口三岔路):
 
-  | Sub-phase | Role | Parallel? | Done when |
-  |:---|:---|:---|:---|
-  | S5.1 workgroup_setup | main session (via `team-planning`) | sequential entry | Document Verifier Team validated; two assignments ready for activation |
-  | S5.2 spec_consistency_review | Document Verifier (DV-SPEC-CONSISTENCY) | **parallel with S5.3** | REQ/design/contracts/UI consistency: every acceptance criterion mappable to a contract clause; cross-document references resolve at matching fingerprints |
-  | S5.3 task_executability_review | Document Verifier (DV-TASK-EXECUTABILITY) | **parallel with S5.2** | Clause coverage and DAG acyclicity already machine-gated (`tasks check` at TR-002) — DV consumes that verdict and judges the rest: every TASK has a verifiable Closing Contract; write-path overlaps have explicit sequential ownership |
-  | S5.4 rework_loop | main session (repairs) + affected DV responsibility (rerun) | triggered by finding | All findings addressed; affected responsibilities re-run with fresh fingerprints; no open finding remains |
-  | S5.5 atomic_lock | Controller via Transition Engine | sequential exit | Both independent current PASS records and exact fingerprints are available; the next `PreToolUse` auto-commits `TR-003`, whose actions atomically lock the contract + TASK batch; machine checks (`loop-harness validate --all`, `loop-harness doctor`) pass |
+  1. **派活**：主会话按 `team-planning` 建两职责任命——两个 document-verifier subagent 分别绑 `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY`，manifest 声明 separation_edges（independence），validator 拒共享 agent。各审查者走 two-phase-activation（readback → 激活信封）。
+  2. **审查**（两职责并行，任一出 finding 即可进第 3 步）：
+     - `DV-SPEC-CONSISTENCY`：激活后**第一件事**是把 `docs/reports/review/REV-template.md` §0 的证据信封骨架复制到 `docs/reports/review/REV-{runid}-{resp}.json`（12 字段每字段带填写指引——写骨架即读懂要交什么）；然后自底向上读 TASK→契约→REQ→设计，核对验收↔条款映射、跨文档引用指纹、契约间边界一致、场景映射。
+     - `DV-TASK-EXECUTABILITY`：同样先落信封骨架；跑 `loop-harness tasks check` 消费机检结论（覆盖/DAG 机器已判，不重算），再审机器判不了的三件——收尾契约可行性、粒度、写路径串行归属。
+     - 有 finding 才写 REV 报告（带定位）；双 pass 不产报告。
+  3. **收口三岔路**（信封回填 conclusion，由 PreToolUse 自动路由——agent 不调用任何 transition 命令）：
+     - 双 `pass`：各自信封 conclusion=pass、subject_refs 手动从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意无自动命令）→ gate（两证据 + 独立性）→ **TR-003 自动提交，批次锁定**，进 S6。
+     - 任一 `fix_required`：信封 conclusion=fix_required + requested_event=document_fix_required → TR-004 自动回 planning → 主会话修复被标记文档 → **仅受影响职责以新指纹重跑**（旧证据因 subject 指纹失配自动作废；触发的 fix 记录由 TR-004 的失效动作消费）→ 回第 2 步。
+     - `req_change_required`（REQ 级歧义，规格链写不出一致解读）：TR-005 → runtime paused（human_boundary）——交人裁决 amendment 或放弃。
 
-  Sub-phase invariants:
-
-  - S5.2 and S5.3 run **in parallel** (two independent responsibilities); S5.4 may be entered as soon as either returns a finding.
-  - S5.4 does **not** re-open settled design decisions — it applies corrections only to the flagged contract/TASK/design clause and re-runs the affected responsibility (compare S9 rework discipline).
-  - S5.5 is the only legal point at which contracts and TASKs receive their **baseline-generation lock** (fingerprint registration into runtime `documents[]` via TR-003's atomic actions). This is a different thing from the markdown `Status` field: contract and TASK **files** declare `Status: locked` / `Status: complete` at authoring/finalization time in S3/S4 (PTR-PLAN-02 and TR-002 consume those on-disk declarations); S5.5 then freezes the exact fingerprints as the baseline-generation boundary for S6 onward.
+  两条不变量：修复不重开已定的设计决策（只改被标记的条款，同 S9 纪律）；S5 的**基线代际锁**（TR-003 指纹登记）≠ 文件 `Status` 字段——契约/TASK 文件在 S3/S4 定稿时就声明 locked/complete（PTR-PLAN-02/TR-002 消费磁盘声明），TR-003 只是把精确指纹冻结为 S6 起的基线边界。
 
 - **done_when**:
   - both mandatory responsibilities (S5.2 + S5.3) PASS

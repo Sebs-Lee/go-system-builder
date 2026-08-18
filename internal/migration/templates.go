@@ -77,8 +77,13 @@ func ValidateTemplates(root string) error {
 			},
 		},
 		{
-			path:     "docs/reports/review/REV-template.md",
-			required: []string{"Review round:", "Workgroup manifest:", "Responsibility:", "Evidence Validity"},
+			path: "docs/reports/review/REV-template.md",
+			required: []string{
+				// v4.2 findings-only design: the §0 envelope skeleton is the
+				// mandatory artifact; the markdown report is findings-only.
+				"document_review", "subject_refs", "conclusion",
+				"requested_event", "Findings",
+			},
 		},
 		{
 			path:      "docs/reports/qa/QA-template.md",

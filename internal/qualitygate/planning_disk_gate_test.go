@@ -2,6 +2,7 @@ package qualitygate_test
 
 import (
 	"context"
+	"path/filepath"
 	"encoding/json"
 	"os"
 	"strings"
@@ -233,5 +234,102 @@ func TestDocumentPassGateFlagsRegisteredDocumentDrift(t *testing.T) {
 	}
 	if !blocked {
 		t.Fatalf("BUG-CX-11: a registered document drifting on disk must produce a document_drift conflict naming the path; got status=%q conflicts=%v missing=%v", result.Status, result.Conflicts, result.Missing)
+	}
+}
+
+// TestREVTemplateEnvelopeTeachesTheTruth pins BUG-CX-12 C5: the §0
+// envelope skeleton in REV-template.md, filled with real values, must
+// pass the evaluator's full field validation — if the template drifts
+// from what the machine checks (field renamed, conclusion vocabulary
+// changed), this test goes red.
+func TestREVTemplateEnvelopeTeachesTheTruth(t *testing.T) {
+	template, err := os.ReadFile(filepath.Join("..", "..", "docs", "reports", "review", "REV-template.md"))
+	if err != nil {
+		t.Fatalf("read REV-template: %v", err)
+	}
+	content := string(template)
+	start := strings.Index(content, "```json")
+	if start < 0 {
+		t.Fatalf("template §0 must carry a fenced JSON skeleton")
+	}
+	body := content[start+7:]
+	end := strings.Index(body, "```")
+	if end < 0 {
+		t.Fatalf("template §0 JSON block is not closed")
+	}
+	block := body[:end]
+
+	contractData := []byte("# BE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
+	replace := map[string]string{
+		`"填写 REV-{runid}-{resp}（与文件名一致，机器互证）"`: `"ev-dv-spec"`,
+		`"document_review"`:                         `"document_review"`,
+		`"填写当前 runtime id（从 .claude/loop-state.json 顶部复制）"`: `"loop-test"`,
+		`"填写当前 baseline generation（同上）"`: `1`,
+		`"填写你的 agent id（你是谁就写谁——独立性机器核对两条证据互异）"`: `"dv-spec-1"`,
+		`"填写 DV-SPEC-CONSISTENCY 或 DV-TASK-EXECUTABILITY（激活信封指定的职责，错值 gate 直接 Unknown）"`: `"DV-SPEC-CONSISTENCY"`,
+		`"审查完成后回填，三选一：pass / fix_required / req_change_required（与 gate 同词，全流程没有第二套枚举）"`: `"pass"`,
+		`"仅 fix_required 时填 document_fix_required（触发 TR-004 回 planning）；pass 留空；req_change_required 时填 req_change_required"`: `""`,
+		`"填写 ISO 时间戳"`: `"2026-08-18T00:00:00Z"`,
+	}
+	filled := block
+	for old, newVal := range replace {
+		filled = strings.ReplaceAll(filled, old, newVal)
+	}
+	// subject_refs placeholder row → the real current documents set
+	manualNote := "手动从 .claude/loop-state.json 的 documents[] 逐条复制 {path, version, sha256}——多一少一都拒。故意没有自动命令：逐条抄写就是'我签的是哪一版'的对峙，这一步的笨拙是审查的锚"
+	filled = strings.ReplaceAll(filled,
+		`[`+"\n    "+`"`+manualNote+`"`+"\n  ]",
+		`[{"path": "docs/contracts/BE-001.md", "version": "v1.0.0", "sha256": "`+sha256Hex(contractData)+`"}]`)
+	if strings.Contains(filled, "填写") || strings.Contains(filled, "手动从") {
+		t.Fatalf("test does not know how to fill the template anymore — template placeholders changed:\n%q", filled)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(filled), &envelope); err != nil {
+		t.Fatalf("filled template envelope is not valid JSON: %v\n%s", err, filled)
+	}
+	envelopeData, _ := json.Marshal(envelope)
+
+	evaluator := newTestEvaluator(t)
+	input := qualitygate.Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 5,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "document_verification", "phase": nil, "phase_revision": float64(1)},
+				"baseline":   map[string]any{"generation": float64(1)},
+				"review":     map[string]any{"round": float64(0)},
+				"documents": []any{map[string]any{
+					"id": "BE-001", "kind": "contract", "path": "docs/contracts/BE-001.md",
+					"version": "v1.0.0", "sha256": sha256Hex(contractData), "status": "locked", "generation": float64(1),
+				}},
+				"evidence": []any{map[string]any{
+					"id": "ev-dv-spec", "kind": "document_review", "path": "evidence/dv-spec.json",
+					"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": float64(1),
+					"review_round": nil, "produced_by": []any{"dv-spec-1"}, "invalidated_by": nil,
+					"responsibility_id": "DV-SPEC-CONSISTENCY", "scope_refs": []any{},
+				}},
+			},
+		},
+		TransitionID: "TR-003",
+		GateID:       "GATE-DOCUMENT-PASS",
+		Files: listingFiles{
+			"docs/contracts/BE-001.md": contractData,
+			"evidence/dv-spec.json":    envelopeData,
+		},
+	}
+	// A single responsibility passes only its own requirement; the gate
+	// stays not_ready for the other one — assert OUR evidence qualified.
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	qualified := false
+	for _, ref := range result.EvidenceRefs {
+		if ref == "ev-dv-spec" {
+			qualified = true
+		}
+	}
+	if !qualified {
+		t.Fatalf("BUG-CX-12: the template-taught envelope must qualify at the gate; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
