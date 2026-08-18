@@ -130,10 +130,15 @@ win.
     completeness, clause coverage against the index, DAG acyclicity, and
     closing contracts are machine-checked there — and it prints per-task
     reference loads (~KB, whole-file basis; clause slicing is not
-    accounted). Hold the numbers against step 11's ~30KB anchor: a task
-    far over → split it now, don't wait for S5 to catch it. Request
-    `TR-002` (its `planning_complete` + `tasks_checked` guards re-run the
-    same checks) only when the self-check is green.
+    accounted; manifest rows naming a directory — the module package,
+    rules dirs — count as 0 KB: self-estimate their real weight). Hold
+    the numbers against step 11's ~30KB anchor: a task far over → split
+    it now, don't wait for S5 to catch it. Then flip each TASK's top
+    Status line to `complete`, register the planning_task envelope
+    (Planning Evidence Envelopes section — the gate also requires it;
+    missing `evidence:planning_task_record`), and request `TR-002`
+    (its `planning_complete` + `tasks_checked` guards re-run the same
+    checks) only when the self-check is green.
 13. If document verification returns `document_fix_required` (`TR-004`),
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is

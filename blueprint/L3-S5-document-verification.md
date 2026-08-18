@@ -1,6 +1,6 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.5.4（验证性重走处置：planning 信封命令层修复+S3/S4 姊妹雷；v4.5.3 S2-S5 终审处置；v4.5.2 8 角度全采落地；v4.5.1 兼容态度裁定入档；v4.5.0 审查角度全景：8 角度盘点+处置分类+2 暂缓入档；v4.4.1 compact 警示定为提示词+审查要点形态，机器统计降为参考；v4.4.0 可执行性深挖：四问标准 + 机器预算地板；v4.3.3 终轮零遗留：wire 级锁接线/重签 ID 规则/字段口径残句；v4.3.2 S5 fixture 派生化：播种遗留清零；v4.3.1 落地后首轮重走处置：登记步入教学链/requested_event 死值修正/锁定阶段感知/B2 测试兑现；v4.3.0 实施完成：四批次 A-D 落地并全量验证；v4.2.0 机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 版本 v4.5.5（第三轮重走处置：四契约模板解析器雷/step12 半步残留/清扫；v4.5.4 验证性重走处置：planning 信封命令层修复+S3/S4 姊妹雷；v4.5.3 S2-S5 终审处置；v4.5.2 8 角度全采落地；v4.5.1 兼容态度裁定入档；v4.5.0 审查角度全景：8 角度盘点+处置分类+2 暂缓入档；v4.4.1 compact 警示定为提示词+审查要点形态，机器统计降为参考；v4.4.0 可执行性深挖：四问标准 + 机器预算地板；v4.3.3 终轮零遗留：wire 级锁接线/重签 ID 规则/字段口径残句；v4.3.2 S5 fixture 派生化：播种遗留清零；v4.3.1 落地后首轮重走处置：登记步入教学链/requested_event 死值修正/锁定阶段感知/B2 测试兑现；v4.3.0 实施完成：四批次 A-D 落地并全量验证；v4.2.0 机制复杂度/收益二次审计：REV 降为 findings-only / 卡片预载 9 skill 砍到 2 / S5.x 子阶段编号删除 / review_round 出模板 / subject_refs 手动复制的"故意不做命令"入档）
 
 ## 1. S5 是什么，为什么要有它
 
@@ -227,6 +227,7 @@ TR-003 提交后，documents[] 中这批条目被 hook 投影为 LockedArtifacts
 | 2026-08-16 | v3.2.0 | S4 联动：审查消费 tasks check 机检结论；登记欠账划线 |
 | 2026-08-17 | v4.0.0 | 减法重做：删 TR-003 别名双槽与 TR-004 占位 action；REV 枚举与 gate 词汇合一；author 机器检查明示降级为纪律层；SKILL 砍到必做+触发 |
 | 2026-08-17 | v4.1.0 | v4.0.0 被判"改动说明而非设计"——按讲明白一件事重排叙事，设计内容与 v4.0.0 一致 |
+| 2026-08-18 | v4.5.5 | **第三轮重走处置**（三路 sub-agent + 主会话亲证）：S5 判过；S2 链路通但四契约模板埋着与 ARCHITECTURE 同款的 gate 截断/commit 严格相等解析器雷——注记移独立行×4；step 12 目录行计 0 注明+planning_task 信封内联指针（上轮该注记又一次静默未落，本轮每补丁 grep 即验）；SKILL v2.2.0 版本链对齐；PTR-PLAN-02 措辞「状态/Status」；exactSubjects 死注释改真（实现是 subjectsMatch+missingSubjects 组合） |
 | 2026-08-18 | v4.5.4 | **验证性重走处置**（三路 sub-agent + 主会话亲证；上轮修复被判定"文本落地但命令层坏"）：①planning 证据信封统一教学居所（specification-planning 新节：JSON 骨架+三条登记命令含 --expected-revision+重签 -r2+missing/schema token 对照——原教学 path 指 ADR markdown 永过不了 gate 且缺必填 flag）；②S3/S4 姊妹雷补齐（planning_contract/planning_task 同款——上轮只修 S2 症状未修病类）；③ARCHITECTURE 模板注记移独立行（消 gate 截断/commit 严格相等的双解析器分歧）；④PTR-PLAN-01 description 补 schema 分支与状态行措辞；⑤"四问"残句清零（SKILL/§3.1 引言/角色表/机制表四处）；⑥卡片 Mission 去 current-truth 主语错位；⑦reference load 目录行少算口径注明；⑧step 10 契约「状态」措辞同 S2 标准 |
 | 2026-08-18 | v4.5.3 | **S2-S5 终审处置**（三路 sub-agent + 主会话亲证）：S2 出口补链（ARCHITECTURE 翻 locked + planning_design 证据登记入 protocol/SKILL/loop-definition 解码——BUG-CX-07 模式第三次复发的堵截）；兑现 f7be9d3 虚记的 TASK 模板 §1 警示；step 12 接 reference load 消费+whole-file 口径；卡片去 S7 残片；SKILL 孤儿编号改 bullet；触发段补归属（全归 B）与信封指名/自查自救；§3.1 升五问+半问；protocol S5.x 残句清零；缺失型 finding 的 Location 填法入模板 |
 | 2026-08-18 | v4.5.2 | **8 角度全采落地**（owner 裁决）：#1/#2/#3 入 SKILL 职责 A 深挖三项（AC→assert 抽样/NFR 落地追踪/负向三方对账）；#4 入 B 第五问（可测性前向+reference load 联动）、#7 入批次节奏半问（关键路径/假依赖）；#5/#6/#8 为 SKILL Triggered Deep-Dives 触发式附加段（形态裁决：不设第三任命——防职责表膨胀；触发条件表+激活信封指名；#5 含兼容态度审查：无登记的兼容直接 finding）。protocol #s5 两职责行同步；卡片 Required Inputs 增触发段指名 |

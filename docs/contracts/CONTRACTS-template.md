@@ -1,7 +1,8 @@
 # 开发合同总览
 
 > 需求：REQ-{id}
-> 状态：draft / reviewed / locked（机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
+> 状态：draft / reviewed / locked
+> （机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
 > PM / Architect：{name}
 > Contractor：{Contractor}

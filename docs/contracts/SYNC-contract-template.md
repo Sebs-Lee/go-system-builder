@@ -1,6 +1,7 @@
 # 联调合同：SYNC-{id}
 
-> 状态：draft / reviewed / locked（机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
+> 状态：draft / reviewed / locked
+> （机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
 > 前端合同：FE-{id}
 > 后端合同：BE-{id}

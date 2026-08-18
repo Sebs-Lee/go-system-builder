@@ -402,7 +402,7 @@ func actionRegisterPlanningTasks(state map[string]any, ctx *ActionContext) (Acti
 // status field matches; each is registered into documents[] with the current
 // baseline generation and the registering actor as author. Status mismatch
 // on a filename-matching file FAILS (skip would silently starve the
-// exactSubjects manifest downstream — axiom five).
+// subject fingerprint matching manifest downstream — axiom five).
 func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionContext, dirRel string, prefixes []string, kind, wantStatus string) (int, error) {
 	if root == "" {
 		root = "."
@@ -459,7 +459,7 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 		}
 		if status != wantStatus {
 			// Declares a different state: a real partial batch (e.g. a draft
-			// contract at TR-003). Failing here keeps exactSubjects honest.
+			// contract at TR-003). Failing here keeps subject fingerprint matching honest.
 			return registered, fmt.Errorf("%s status is %q, want %q — register refuses partial batches (fix the file or finish the batch)", rel, status, wantStatus)
 		}
 		version := ParseMarkdownField(string(data), "版本", "Version")

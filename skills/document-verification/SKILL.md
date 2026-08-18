@@ -2,7 +2,7 @@
 name: document-verification
 description: Use when S5 document verification assigns you one review responsibility — write the envelope first (REV-template §0), findings only when found
 category: methodology
-version: 2.1.0
+version: 2.2.0
 ---
 # Document Verification
 

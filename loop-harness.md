@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `6984ac75164d32a6a9a52c80919ca13fa51fc8b4c684bf1f812518716a4af36f`
+- **Loop definition SHA-256**: `a68261695616afdde7978a814910eaa3412a2b5da89fd2b6cb40be1aff7d1b54`
 
 ---
 
@@ -801,7 +801,7 @@ Advance formal planning from design to contracts after the design quality gate p
 
 _contracts → tasks_
 
-Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top Status field to locked.
+Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top status line（状态/Status）to locked.
 
 - `contracts_checked` [semantic_check] — S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.
 - `scenario_bridge_checked` [semantic_check] — S2's AC↔CASE bridge (scenario.GuardBridgeChecked) runs at PTR-PLAN-02: every AC of the bound REQ reaches a rule via FR source_refs (with branches), or carries an endorsed N/A (NFR id / §A4). With no module packages at all, only fully N/A-endorsed REQs pass — an AC pointing at FR- with nothing citing it is a broken denominator.

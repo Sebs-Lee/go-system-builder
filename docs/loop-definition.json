@@ -196,7 +196,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top Status field to locked."
+          "description": "Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top status line（状态/Status）to locked."
         }
       ]
     },
