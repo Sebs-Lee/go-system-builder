@@ -28,7 +28,9 @@ authored — this is a discipline-layer rule (the machine cannot see real author
 path); losing independence is a stop condition you must self-report.
 ## Required Inputs
 Require exact REQ/design/UI/scenario/contracts/tasks/rules, responsibility, Skills, report path,
-and fingerprints. Verify `Rule → CASE → Story → PATH → Spec → Evidence`, both polarities at
+and fingerprints. The activation envelope names any triggered deep-dives
+(data-model change / external dependency / critical profile) — see the SKILL's
+Triggered Deep-Dives table. Verify `Rule → CASE → Story → PATH → Spec → Evidence`, both polarities at
 100%, ratio gate, fixture cleanup, and full-module regression readiness.
 ## Output Contract
 The mandatory artifact is the document_review_record envelope (REV-template §0) with `conclusion: pass | fix_required | req_change_required` (gate vocabulary, no second enum) and subject_refs hand-copied from the runtime documents[]. A markdown REV report is written only when there are findings.
