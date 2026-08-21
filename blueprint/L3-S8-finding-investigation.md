@@ -1,398 +1,776 @@
-# L3-S8 — 发现调查（Finding Investigation）
+# L3-S8 — 表象调查与根因推导（Finding Investigation & Diagnosis）
 
-> 层：第三层 ｜ 上游：L2 §S8 ｜ 前置：S7 TR-008 或 S11 TR-027 已进入 `bug_resolution.investigation` ｜ 下游：S9 修复、S7 新完整轮、S2 规格重做或 paused 人闸
+> 层：第三层 ｜ Macro-stage：S7 Discovery → **S8 Diagnosis** → S9 Remediation ｜ 上游：S7 sealed ObservationBatch 或其他受控 finding source ｜ 下游：S9 Repair、S2 specification rework、paused 或 S7 新完整轮
 >
-> 阅读顺序：§1～§3 先回答“为什么 finding 不能直接派修、如何从反例收敛到可裁决 BUG”；§4 再映射 BUG entity、调查方法、canonical report、Closing Contract、batch gate 与六类路由；§5～§8 审计职责、当前真实强制力、出口和易错点。S6～S11 尚未完成机制优化，本文会如实区分目标设计、文本方法与现有代码能力。
+> 横切机制：[L4 Agent 调度与治理](./L4-agent-dispatch-governance.md)。L4 负责 Assignment、PLAN_REPORT、连续执行、Hook、idle/stop 和恢复；本文只定义 S8 特有的 Observation ingest、InvestigationCase、Hypothesis、CausalModel、RepairContract 与路由。
+>
+> 设计状态：本文以目标机制为主；§13 单列当前实现差距。目标中的 ObservationBatch/encounter ingest、InvestigationCase、HypothesisResult、RepairContract 和 case-level 事务在 L5 实现前，不得被描述为既有代码能力。
 
-## 1. 第一层：S8 的立意与目标
+## 0. 一句话结论与阶段关系
 
-### 1.1 为什么需要 S8
+S7 证明“某些可观察事实与权威预期冲突”，并保存当时实际发生的操作现场；S8 从已冻结的 `last-good → wall-action → first-bad` 边界出发，证明“什么机制导致这些冲突、同一机制还影响哪里、恢复哪个架构不变量才能完整解决”；S9 才负责实施。
 
-finding 只说明“某个观察与预期冲突”，并没有回答为什么冲突、真正需要改什么、同一机制还影响哪里、修复后怎样证明问题消失。若跳过这层直接让 Builder 看 diff 修症状，系统会反复进入“修一个表现、留下同一根因、再制造新回归”的 Fixes that Fail 回路。
-
-S8 的职责是把 observation 转成 decision-ready defect model：
-
-1. 先固定一个可重复或确定性的反例，避免在不可复现噪声上归因；
-2. 用证据排除假设，确定问题类别、根因和影响范围；
-3. 只在“同一用户可见矛盾、同一根因、兼容 Closing Contract”同时成立时合并 findings；
-4. 在修复前写清允许范围、禁止范围、before-fix evidence 和重验断言；
-5. 由主会话逐项裁决 accepted、报告退回、最终无修复否决、duplicate、spec rework 或 REQ change。
-
-因此 S8 不修代码。它的完成定义是**每个 finding 都有显式、证据支撑且可路由的 disposition；每个 accepted BUG 已足够让 S9 Builder 在不重新猜需求的情况下执行**。
-
-### 1.2 阶段目标与完成定义
-
-| 项目 | 定义 |
-|:--|:--|
-| 输入 | S7/S11 finding evidence；当前 review round 与 baseline generation；锁定规格链、当前实现和原始测试/浏览器证据；现有 BUG entities；repair limits；original finder 身份 |
-| 要搞清楚 | finding 是否真实且可复现；属于实现、测试、规格、REQ、环境/依赖还是 duplicate；根因机制与 blast radius；哪些 findings 可合并；修复边界和重验证明是什么 |
-| 核心工作 | 对齐 finding/BUG inventory → 固化 before-fix 反例 → 假设驱动根因调查 → 归类和语义去重 → 写 canonical BUG/Closing Contract → 主会话裁决并路由 |
-| 输出 | finding disposition ledger；root-cause evidence；canonical BUG report；BUG entity 状态；batch gate envelope；spec/REQ change impact 或 no-repair 说明 |
-| 目标完成 | 每个阻断 finding 恰有一个最终归宿；accepted BUG 均有证据根因、影响范围、repair/forbidden scope、before-fix evidence、retest contract 和 original finder |
-| 下一阶段 | accepted → PTR-BUG-02 → S9；整批无 repair → TR-022 → S7 新轮；spec rework → TR-023 → planning.design；REQ change → TR-024 → paused |
-
-### 1.3 Overview：输入、主步骤与输出
+> **S8 的交付物不是 BUG 列表，也不是几个修改建议，更不是重新跑一遍 S7；它无损消费 Findings 的 encounter 与 raw evidence，通过可证伪假设建立因果模型，将同根表象归入 InvestigationCase，并输出 Main/Architect 批准的 RepairContract。中间调查记录必须收敛在 Case 内，不再扩张为一组互相同步的顶层控制面。**
 
 ```mermaid
 flowchart LR
-    subgraph INPUT["Input"]
-        I1["blocking finding evidence"]
-        I2["locked spec chain"]
-        I3["current implementation + raw evidence"]
-        I4["review round + baseline"]
-        I5["existing BUGs + repair limits"]
-        I6["original finder identity"]
-    end
-
-    subgraph S8["S8 Finding Investigation"]
-        T1["T1 对齐 finding 与 BUG inventory"] --> T2["T2 固化可复现反例"]
-        T2 --> T3["T3 根因调查与问题分类"]
-        T3 --> T4["T4 语义合并与 Closing Contract"]
-        T4 --> T5["T5 主会话逐项裁决"]
-        T5 --> T6["T6 聚合 disposition 并路由"]
-    end
-
-    subgraph OUTPUT["Output"]
-        O1["accepted canonical BUG → S9"]
-        O2["insufficient report → investigate again"]
-        O3["no repair → new S7 round"]
-        O4["spec rework → planning.design"]
-        O5["REQ change → paused"]
-        O6["root-cause + before-fix evidence"]
-    end
-
-    I1 --> T1
-    I2 --> T2
-    I3 --> T2
-    I4 --> T1
-    I5 --> T1
-    I6 --> T1
-    T2 --> O6
-    T6 --> O1
-    T6 --> O2
-    T6 --> O3
-    T6 --> O4
-    T6 --> O5
+    S7["S7 Discovery<br/>Findings + encounter"] --> OB["ObservationBatch<br/>exact set + frozen baseline"]
+    OB --> S8["S8 Diagnosis<br/>failure boundary + hypotheses + causal model"]
+    S8 --> RC["Approved RepairContract<br/>root-cause-level correction"]
+    RC --> S9["S9 Remediation<br/>minimum complete repair"]
+    S9 --> R7["S7 new full round"]
 ```
 
-### 1.4 S8 的边界与当前保证
+阅读顺序：
 
-- **S8 的机器边界**：`bug_resolution.investigation` 与 `.bug_report_review`；从 `.repair_readback` 起属于 S9；
-- **实际入口**：Loop Definition 只有 S7 TR-008 和 S11 人工驳回缺陷 TR-027 直接进入 S8；协议/L2 提到的“S10 finding 进 S8”目前没有对应 top-level transition；
-- **不负责**：写产品代码、分配未被接受的修复、修改 locked 规格、执行 targeted re-verification、关闭 clean round；
-- **双状态链**：top-level phase 与每个 `entities.bugs[].state` 由不同命令/transition 修改，当前没有自动同步；
-- **调查方法主要是文本约束**：`bug-resolution` 方法、BUG 模板与 R-P06 能引导深查，但 phase gate 不解析这些内容；
-- **当前机器地板**：BUG event 能要求若干非空参数并维持实体状态枚举；quality gate 能要求指纹匹配的通用 envelopes；它们尚不能证明根因正确、全 batch 已处置或 Closing Contract 真正 Builder-ready。
+1. §1～§3：理解职责边界和权威对象；
+2. §4～§8：理解 intake、聚类、假设调查、因果证明和 RepairContract；
+3. §9～§11：理解路由、S9 handoff 和工具必经路径；
+4. §13～§15：维护者按迁移顺序实现并验收。
 
-## 2. 第二层：S8 的任务分解
+## 1. S8 的立意、目标与不变量
 
-| 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
-|:--|:--|:--|:--|
-| T1 对齐 finding 与 BUG inventory | 进入 S8 的 findings 是否都可追踪；BUG entity 是否存在；original finder 是谁 | 枚举当前轮 finding evidence；核对 source path、reporter、severity、现有 live BUG 和 repair counters；补齐登记缺口 | finding ledger、BUG/entity mapping、investigation queue |
-| T2 固化可复现反例 | 观察是真缺陷、测试问题还是环境噪声 | 从锁定预期出发复现；保存 before-fix output/trace/screenshot/data；记录最小触发输入与环境；E2E finding 反查为何原测试未拦住 | reproduction record、before-fix evidence、coverage-gap hypothesis |
-| T3 根因调查与分类 | 什么机制导致反例；影响哪里；应该走哪一层修正 | 假设表逐条证伪/证实；沿 write/read/retry/fallback/data path 追踪；分类 implementation/test/spec/REQ/environment/dependency/duplicate | evidence-supported root cause、impact/blast radius、proposed disposition |
-| T4 语义合并与 Closing Contract | 哪些 finding 属于一个 canonical BUG；修复授权边界是什么 | 用三条件合并；分配 canonical ID；写 affected clauses、repair/forbidden scope、before-fix evidence、retest assertions、Skills | canonical BUG report、duplicate map、Closing Contract |
-| T5 主会话逐项裁决 | 报告是否足以派修；每个 finding 的最终归宿是什么 | 复核证据链、根因、边界和 contract；更新 BUG entity；形成 accepted/rejected/duplicate/spec/REQ disposition | per-BUG decision、entity events、review feedback |
-| T6 聚合 disposition 并路由 | 整批下一步是修复、无修复回归、规格重做还是人闸 | 生成唯一 batch envelope；避免互斥 requested events 同时有效；让 PreToolUse 选择一个出口 | PTR-BUG-02/03 或 TR-022/023/024 handoff |
+### 1.1 为什么 Finding 不能直接派修
 
-T2～T4 应按 canonical root-cause group 组织，而不是机械地“一条 finding 一个调查者”。T5 是主会话的裁决责任；T6 只聚合已经存在的逐项事实，不能用一条 batch 结论补造遗漏的 disposition。
+Finding 只说明“观察与预期冲突”。例如：
 
-## 3. 从 finding 到可路由 canonical BUG 的完整工作流
+- 表单填报后内容不能正常显示；
+- 同一表单无法正常保存；
+- 页面刷新后字段丢失；
+- 后端日志出现反序列化告警。
+
+这些表象可能是四个缺陷，也可能都来自一条 FE/BE 数据契约漂移。若每个表象独立派一个 Builder，最容易得到四个局部补丁：UI 默认值、保存重试、刷新缓存、后端字段别名。系统看似变绿，真正的双重 schema 仍存在，下一次变化会产生更多分叉。
+
+S8 用独立调查层切断这种 Fixes that Fail 回路：
+
+1. 保留每个原始表象，不在 intake 时语义去重；
+2. 建立可证伪的候选假设，而不是从最近 diff 猜原因；
+3. 用证据证明 trigger → violated invariant → faulty mechanism → propagation → symptoms；
+4. 搜索同一机制的 blast radius 和未出现但可能出现的同类风险；
+5. 将修复目标写成需要恢复的系统不变量，而不是需要消失的一个页面报错；
+6. 冻结 RepairContract 后才允许 S9 修改系统。
+
+### 1.2 阶段目标与完成定义
+
+| 项目 | 目标定义 |
+|:--|:--|
+| 输入 | S7 ObservationBatch/FindingSupplement；运行型与 QA/DV `code_inspection` Findings 的 encounter/failure boundary；frozen baseline；权威 REQ/design/contracts/TASK/CASE/PATH；实现、测试和 raw evidence；历史 BUG/impact；original finder routes |
+| 要搞清楚 | 从已确认现场看，偏差最早出现在哪个边界；哪些表象可由同一因果链解释；primary root cause 与 contributing factors；blast radius；属于实现、测试、规格、REQ、环境/依赖哪一层；如何完整恢复系统不变量 |
+| 核心工作 | intake → investigation-readiness 校验 → 提取 failure boundary/trace window → 可逆候选聚类 → 假设驱动调查 → 因果模型 → blast radius/detection gap → RepairContract → case-level disposition/route |
+| 最小工程权威 | immutable Findings；一组 InvestigationCases；每个 Case 的 HypothesisResults/CausalModel；accepted case 的一份 RepairContract |
+| 目标完成 | ObservationBatch 中每个 Finding 都有明确解释/拆分/false-positive/duplicate/spec/REQ disposition；所有去 S9 的 Case 有证据支持的因果模型和批准 RepairContract |
+| 下一阶段 | repairable case → S9；spec 错误 → S2；REQ 变化 → paused；无需任何 artifact 变化且证据充分 → S7 新完整轮；报告不足留 S8 |
+
+### 1.3 S8 负责与不负责
+
+S8 负责：
+
+- 无损接收 S7 的每个表象和原始证据；
+- 将设计边界、模式/惯用法错配、逻辑闭环和维护风险等 `code_inspection` Finding 作为一等调查输入，而不是等待 E2E 症状后再受理；
+- 消费 S7 已保存的 encounter、状态差异和跨层 evidence；
+- 仅在现有证据不能区分竞争假设时，请求 original finder 做受控补充观察；
+- 聚类、拆分、建立并验证假设；
+- 识别 primary root cause、contributing factors、传播路径和 blast radius；
+- 识别为何现有测试/审查没有提前拦截；
+- 确定正确修复层级和恢复的不变量；
+- 形成并批准 RepairContract。
+
+S8 不负责：
+
+- 修改产品代码、测试、规格或环境；
+- 将调查中的假设写成已确认根因；
+- 因为多个 Finding 位于同一文件就合并；
+- 给 Builder 一个“先试着改改”的开放任务；
+- 以最少代码行、最快变绿或单一表象消失作为修复目标；
+- 执行 targeted re-verification 或生成 clean round；
+- 把重新复现已确认症状作为默认调查步骤，或用“没有再复现”推翻 S7 的 immutable observation。
+
+### 1.4 不可退让的不变量
+
+1. **表象不丢失**：S7 Findings immutable；聚类、合并和 duplicate 只增加关系，不删除 source facts。
+2. **聚类可逆**：candidate group 可以 split/merge，并保留理由和 revision；canonicalization 发生在因果模型成立之后。
+3. **根因必须因果化**：根因能解释触发条件、传播路径和所有归入 Case 的表象；只相关、不因果的事实不能收口。
+4. **重要替代假设必须处理**：supported/refuted/inconclusive 均有证据；不能因一个看似合理的解释停止调查。
+5. **调查不改系统**：S8 任何产品写入都会污染 before-fix baseline 和因果判断，必须 hard deny。
+6. **现场已经由 S7 建立**：S8 不重复执行用户旅程来证明 Finding 存在；调查从 evidence-backed failure boundary 开始。新 observation 必须绑定某个 discriminator，而不是笼统“再试一次”。
+7. **修复目标是恢复不变量**：RepairContract 必须覆盖 root cause、所有 source Findings、detection gap 和 blast radius，禁止局部症状补丁。
+8. **层级授权正确**：implementation/test/tooling 可进入 S9；spec 错回 S2；REQ 变化交人；S8 不跨层授权。
+9. **静态审查结论不是现成根因**：QA/DV 提交的模式缺失、边界混乱或维护性风险是需要解释的 observed contradiction；S8 必须证明被破坏的不变量、形成机制、扩散/变更风险和正确修复层级，不能把“应该用 Strategy/Factory/某惯用法”直接复制成 CausalModel 或 RepairContract。
+
+## 2. S7→S8 的无损 Intake
+
+### 2.1 ObservationBatch 是入口权威
+
+S8 入口消费一份 sealed ObservationBatch，而不是聊天摘要或单条 generic finding envelope。Intake 必须验证：
+
+- batch revision、frozen baseline digest 和当前 handoff 一致；
+- `finding_ids[]` exact set 可解析且每个 Finding hash 匹配；
+- Finding 的 expected/authority、observed、observation mode、encounter、failure boundary、evidence 和 original finder 完整；
+- 按 observation mode，`last_good_checkpoint → wall_action → first_bad_checkpoint` 或 inspection/call/data-flow failure boundary 可解析，每个 material checkpoint 有 step-bound evidence 或显式 safety capture gap；
+- encounter runtime context、occurrence time window、actor/data refs 与 frozen baseline 可关联且敏感值已脱敏；
+- initial/terminal state、state deltas、side effects、correlation/time window 和 cleanup state 足以定位当次 occurrence；
+- 同一 batch 的 Findings 均来自同一 frozen baseline；
+- raw evidence refs 可读取且未被改写；
+- `claim_coverage_summary` 与 final ReviewPlan revision 一致；ordinary batch 的 required Claim set 已完整 disposition；静态、E2E、Discovery 只是该 summary 的筛选视图，不再各自形成 handoff 权威；
+- 每个由工具投影为 `blocked_by_confirmed_finding` 的 Claim 都能解析 `blocking_finding_ids[]`、failed precondition、evidence 和 `after_repair_required=true`；它进入 evidence-gap/blast-radius 视图，不能被当成已验证行为；
+- ordinary batch 的 `unobserved_claim_ids[]` 为空；只有 P0/安全/数据破坏 immediate-stop 可以携带 exact safety gaps、cancelled assignments 和未观察 Claims，不能接受因 Reviewer/token 上限提前交卷；
+- `investigation_readiness` 为 `ready`，或高危场景为带完整停止理由的 `ready_with_safety_gaps`；
+- original finder 可寻址，或 Finding 已足以让 replacement 继续因果调查；不能因 Agent 失联就要求重新证明症状；
+- S7 没有预写 authoritative root cause、repair scope 或 canonical BUG。
+
+Intake 失败时不丢弃 batch，也不新建 BUG。工具返回缺失 Finding ID、字段和唯一补充动作。
+
+### 2.2 FindingSupplement 与澄清
+
+S8 可向 original finder 发送两类请求：
+
+| 请求 | 用途 | 输出 |
+|:--|:--|:--|
+| `CLARIFICATION_REQUEST` | 解释已有 encounter step、capture gap、环境、期望来源或 evidence 含义；不重新执行旅程 | FindingSupplement 文本/refs |
+| `FOLLOWUP_OBSERVATION` | 在同一 frozen baseline/可重建 snapshot 上，为某个已登记 Hypothesis discriminator 执行一次受控、只读/非变更型观察 | FindingSupplement + fresh evidence + `hypothesis_id/discriminator_id` |
+
+Supplement 追加到原 Finding，不覆盖 `observed` 或原 encounter。若原 Agent 已失联，Scheduler 从 Finding + Assignment checkpoint 派 replacement；S8 不能把“联系不上 original finder”当作丢失表象的理由。
+
+Follow-up observation 只补判别事实，不允许 original finder 在 S8 里修改产品或宣布根因。没有 `hypothesis_id + discriminator + expected distinguishing outcomes` 的“再复现一次”请求应被工具拒绝。
+
+### 2.3 Encounter 消费与复杂度控制
+
+S8 不创建独立 Failure Episode entity，也不把 encounter 复制进 InvestigationCase。Finding 是现场索引的唯一权威；raw timeline、trace、截图、请求/响应和状态快照继续作为 content-addressed typed evidence。S8 只计算三个工作视图：
+
+1. **Failure boundary view**：各 Finding 的 last-good、wall-action、first-bad、terminal state；
+2. **Cross-layer trace view**：UI/command → request/event → service/domain → persistence/cache 的已观察节点与断点；
+3. **Evidence gap view**：哪些因果边已有证据，哪些缺口需要 read-only inspection 或 discriminator。
+
+这种设计的收益是让 Investigator 直接从最小异常边界开始读代码/契约/trace，而不是从入口重新点击；成本只增加 Finding 的嵌套字段和 capture adapter，不增加新的 ID、生命周期、Markdown 报告、Agent 角色或审批门。
+
+`journey_summary` 只帮助快速理解，不能替代 timeline/evidence；timeline 只陈述当次事实，不能自动推导根因。S8 可以将多条 encounter 的共同边界作为 grouping/hypothesis 线索，但不能把“撞在同一步”当作同根证明。
+
+QA/DV `code_inspection` Finding 不要求伪造用户旅程。它的 encounter 应给出 inspection entry、symbol/call/data-flow trail、最后仍成立的质量/架构不变量、首个违反点与代码证据。S8 围绕这个 failure boundary 调查“为何形成、影响哪些变化路径、与其他运行型 Findings 是否同根”；Reviewer 提议的设计模式最多是候选修复线索，不是权威根因，也不能跳过竞争假设和 pattern-fit 论证。
+
+### 2.4 Intact Finding Ledger
+
+Intake 后生成机器投影的 ledger。Ledger 只用于查阅，不成为第四套生命周期：
+
+| Finding | Baseline | Failure Boundary | Readiness | Candidate Case | Original Finder | Supplements | Disposition |
+|:--|:--|:--|:--|:--|:--|:--|:--|
+| F-001 | g4/digest | form-valid → save → payload-missing-field | ready | CASE-A? | assignment-e2e-1 | FS-001 | investigating |
+| F-002 | g4/digest | response-200 → refresh → rendered-empty | ready | CASE-A? | assignment-delivery-1 | none | investigating |
+
+Ledger 是 ObservationBatch、InvestigationCase 和 disposition 的计算视图，不要求 Orchestrator 再手写一份独立状态文件。
+
+## 3. S8 的权威对象模型
+
+### 3.1 最小对象链
+
+```mermaid
+flowchart LR
+    F1["Finding F1"] --> IC["InvestigationCase"]
+    F2["Finding F2"] --> IC
+    F3["Finding F3"] --> IC2["InvestigationCase 2"]
+    IC --> H1["Hypothesis H1"]
+    IC --> H2["Hypothesis H2"]
+    H1 --> HR1["HypothesisResult refuted"]
+    H2 --> HR2["HypothesisResult supported"]
+    HR2 --> CM["CausalModel"]
+    CM --> RC["RepairContract"]
+```
+
+只维护三个长期权威：Finding、InvestigationCase、RepairContract。Hypothesis/HypothesisResult、CausalModel、blast radius 和 detection gap 都是 Case 内可审计工作记录或计算字段；ledger、看板和 canonical BUG entity 都从它们投影或在批准时生成。不得为每个 Hypothesis、Failure Episode、frontier 或摘要再建立独立生命周期。
+
+### 3.2 InvestigationCase
+
+| 字段 | 含义 |
+|:--|:--|
+| `case_id / revision / status` | 调查身份、CAS 和生命周期 |
+| `observation_batch_id / baseline_digest` | 来源与 before-fix 世界 |
+| `source_finding_ids[]` | 当前 Case 尝试解释的表象 exact set |
+| `failure_boundary_refs[]` | 从 source Findings 计算的 last-good/wall/first-bad 视图，不复制 encounter |
+| `cross_layer_trace / evidence_gaps` | 已观察传播节点、断点和待判别缺口 |
+| `normalized_contradiction` | 多表象共同违反的可观察事实，不写修复方案 |
+| `grouping_rationale` | 为什么可能同根；允许 provisional |
+| `hypotheses[]` | 互斥或竞争的机制解释 |
+| `hypothesis_results[]` | supported/refuted/inconclusive 及证据 |
+| `causal_model` | trigger、invariant、mechanism、propagation、symptom mapping |
+| `primary_root_cause / contributing_factors[]` | 主根因与必要条件 |
+| `blast_radius` | 同机制影响的组件、数据、用户、路径和历史 evidence |
+| `detection_gap` | 为什么 S5/S6/测试/监控/S7 之前没有拦住 |
+| `classification` | implementation/test/tooling/spec/REQ/environment/dependency/duplicate/false_positive |
+| `split_merge_history[]` | 所有可逆聚类变化及理由 |
+| `unexplained_finding_ids[]` | 未解释完时禁止收口 |
+| `disposition` | investigate_more / repair / spec_rework / req_change / no_change / duplicate |
+
+### 3.3 Hypothesis 与 HypothesisResult
+
+Hypothesis 必须写成可证伪陈述：
+
+```text
+如果 FE/BE payload schema 在 field_name/type/nullability 上发生漂移，
+那么同一请求 trace 中应出现客户端字段、服务端 DTO 与持久化模型的不一致，
+且该不一致能够同时解释 display 与 save Findings。
+```
+
+HypothesisResult：
+
+| 字段 | 含义 |
+|:--|:--|
+| `hypothesis_id / assignment_id / revision` | 责任和版本 |
+| `method` | 如何判别，不复制整份 Case |
+| `evidence_refs[]` | 命令、trace、schema diff、数据 snapshot、控制实验 |
+| `source_boundary_refs[]` | 使用了哪些 Finding encounter steps/checkpoints，防止调查脱离原现场 |
+| `observed` | 实际事实 |
+| `counterfactual_or_discriminator` | 什么结果能区分该假设和竞争假设 |
+| `result` | `supported / refuted / inconclusive` |
+| `explains_finding_ids[]` | 能解释哪些表象 |
+| `does_not_explain[]` | 残余事实 |
+| `new_hypotheses[]` | 新线索；加入 Case revision 后才可派发 |
+
+Agent final text 不是 HypothesisResult；产品代码 diff 更不是调查证据。
+
+### 3.4 CausalModel
+
+根因收口必须形成可读也可校验的因果链：
+
+```text
+trigger
+→ violated authority / invariant
+→ faulty mechanism
+→ propagation path
+→ observable symptoms (Finding IDs)
+→ blast radius
+→ detection gap
+```
+
+根因不是“某文件第 42 行写错”，而是能解释为何会错、为何扩散、为何未被拦住的机制。代码位置只是 mechanism evidence。
+
+### 3.5 RepairContract
+
+RepairContract 是 accepted InvestigationCase 给 S9 的唯一授权输入，详见 §8。它冻结架构修复意图、范围、禁止补丁和验证合同；S9 可以设计代码实现步骤，但不能重新定义该意图。
+
+## 4. 从表象到根因的完整工作流
 
 ```mermaid
 flowchart TD
-    IN["TR-008 / TR-027<br/>bug_resolution.investigation"] --> INV["T1 枚举当前轮 findings<br/>核对 BUG entities 与 original finder"]
-    INV --> ENTITY{"每个 finding 有 BUG entity？"}
-    ENTITY -->|"否"| GAP["登记接口缺口<br/>自动 TR-008 可能未携带 Params<br/>当前无公开 register-bug CLI"]
-    GAP --> INV
-    ENTITY -->|"是"| START["bug-event investigation_started<br/>draft → investigating"]
-
-    START --> REPRO["T2 对照锁定条款复现<br/>保存 before-fix evidence"]
-    REPRO --> REAL{"可复现或有确定性证据？"}
-    REAL -->|"否"| ENV["记录环境 / 测试 / 瞬态假设<br/>不得猜根因"]
-    ENV --> REPRO
-    REAL -->|"是"| RCA["T3 假设驱动调查<br/>根因 + 影响范围 + 分类"]
-    RCA --> E2E{"来自 E2E 或 contracted behavior 未变红？"}
-    E2E -->|"是"| COV["反查 CASE / PATH / inventory<br/>Closing Contract 加 coverage-gap 项"]
-    E2E -->|"否"| GROUP
-    COV --> GROUP["T4 按三条件语义合并"]
-    GROUP --> BUG["写 canonical BUG<br/>repair scope / forbidden scope<br/>before-fix / retest contract"]
-    BUG --> SUBMIT["bug-event bug_report_submitted<br/>root_cause_evidence + closing_contract refs"]
-    SUBMIT --> EVID["登记 finding + root-cause gate envelopes"]
-    EVID --> PTR1["PTR-BUG-01<br/>bug_report_review"]
-
-    PTR1 --> REVIEW["T5 主会话逐项审查"]
-    REVIEW --> DECISION{"Disposition"}
-    DECISION -->|"报告不足"| FEEDBACK["bug batch rejected<br/>PTR-BUG-03 → investigation"]
-    DECISION -->|"confirmed implementation defect"| ACCEPT["bug-event bug_accepted<br/>batch accepted"]
-    DECISION -->|"final no-product-change"| REJECT["bug-event bug_rejected<br/>batch no_repair"]
-    DECISION -->|"duplicate"| DUP["bug-event duplicate_linked<br/>决定是否仍跟随 open canonical"]
-    DECISION -->|"spec rework"| SPEC["bug batch spec_change_required<br/>change-impact"]
-    DECISION -->|"REQ change"| REQ["bug batch req_change_required<br/>pause evidence"]
-
-    ACCEPT --> PTR2["PTR-BUG-02 → S9 repair_readback"]
-    REJECT --> TR22["TR-022 → verification.delivery<br/>new full round"]
-    DUP --> OPEN{"canonical 仍需 repair？"}
-    OPEN -->|"是"| PTR2
-    OPEN -->|"否"| TR22
-    SPEC --> TR23["TR-023 → planning.design"]
-    REQ --> TR24["TR-024 → paused"]
-    FEEDBACK --> REPRO
+    IN["Sealed ObservationBatch"] --> INGEST["Validate exact Findings + baseline + encounter"]
+    INGEST --> COMPLETE{"Investigation-ready?"}
+    COMPLETE -->|"no"| CLARIFY["Clarify existing refs<br/>or route legacy/safety gap"]
+    CLARIFY --> INGEST
+    COMPLETE -->|"yes"| BOUND["Extract failure boundaries<br/>cross-layer trace + evidence gaps"]
+    BOUND --> GROUP["Create provisional InvestigationCases"]
+    GROUP --> HYP["Form discriminating hypotheses"]
+    HYP --> DISPATCH["Dispatch hypothesis Assignments<br/>WIP=2"]
+    DISPATCH --> RESULTS["Consume HypothesisResults"]
+    RESULTS --> CONVERGE{"Causal model explains exact set?"}
+    CONVERGE -->|"no: missing evidence"| NEED{"New occurrence needed<br/>to discriminate?"}
+    NEED -->|"no: inspect existing facts"| HYP
+    NEED -->|"yes: registered discriminator"| FOLLOW["Controlled Follow-up Observation<br/>append FindingSupplement"]
+    FOLLOW --> HYP
+    CONVERGE -->|"no: mixed causes"| SPLIT["Split/merge Case with history"]
+    SPLIT --> HYP
+    CONVERGE -->|"yes"| BLAST["Search blast radius + detection gap"]
+    BLAST --> CLASSIFY{"Correct authority layer"}
+    CLASSIFY -->|"implementation/test/tooling/environment repair"| CONTRACT["Draft RepairContract"]
+    CLASSIFY -->|"spec wrong, REQ unchanged"| SPEC["S2 specification rework"]
+    CLASSIFY -->|"REQ must change"| REQ["paused / human"]
+    CLASSIFY -->|"no artifact change"| NOCHANGE["Evidence-backed no-change disposition"]
+    CONTRACT --> REVIEW["Main/Architect contract review"]
+    REVIEW -->|"insufficient"| HYP
+    REVIEW -->|"approved"| S9["S9 Remediation"]
 ```
 
-图中的 GAP 是真实断点，不是建议性分支：TR-008 的自动 Controller 不会把 finding 内容放入 `Params.findings`，TR-027 也没有创建 BUG entity 的 action；而内部 `assignment.RegisterBug` 没有公开 CLI。进入 S8 后若 entity 缺失，当前正式用户操作面没有闭合的补登记命令。
+正常新路径不应频繁进入 `Investigation-ready=no`：普通 Finding 在 S7 seal 前就必须 ready。`ready_with_safety_gaps` 仍走 yes，并把缺口带入 evidence-gap view，不能要求重做危险操作；no 分支主要兼容旧 batch、不合法字段或不可恢复的 evidence ref。能通过解释已有证据解决时只发 CLARIFICATION；只有进入假设调查后发现明确 discriminator 缺口，才允许 FOLLOWUP_OBSERVATION。
 
-## 4. 第三层：每项任务如何被引导和承载
+## 5. 可逆聚类：一因多果，不丢原始表象
 
-### 4.1 T1 — finding inventory、BUG 登记与双状态链
+### 5.1 Candidate grouping 只是假设
 
-进入 S8 后先建立一张不可沉默的 finding ledger，至少记录 finding evidence ID/path、当前 round/generation、producer agent/responsibility、severity、被违反条款、BUG entity ID、original finder 和当前 disposition。原因是现有 Runtime 不会替 batch 做这张映射。
+Intake 可以根据以下线索建立 provisional Case：
 
-仓库里实际存在两套 BUG 创建逻辑：
+- 相同 baseline、时间窗、账号、entity、request/trace ID；
+- encounter 显示相同 last-good/wall/first-bad 边界或相邻 cross-layer 断点；
+- 相同 violated contract/invariant；
+- 相同 write/read/serialization/state propagation path；
+- 相同触发输入或前置状态；
+- 一个控制实验能同时改变多个表象；
+- 历史 BUG 显示同一机制曾产生类似症状。
 
-| 路径 | 输入与检查 | 持久化结果 | 现状问题 |
-|:--|:--|:--|:--|
-| TR-008 `record_finding_batch` | `Params.findings` 中 reporter/body/path；severity 缺省为 P0 | 自动分配 BUG-NNN，state=draft，path 中编码 fingerprint，记录 original finder | 自动 Controller 不传 Params；指纹是 reporter + sorted body lines + path；对所有历史状态都去重 |
-| 内部 `assignment.RegisterBug` | 显式 ID/severity；finding source 与 evidence files 必须存在；reporter 必填 | 同样只写精简 runtime entity | 没有 CLI；指纹是 source + sorted evidence refs，且只对 live BUG 去重；request 的 RootCause/Reproduction/ClosingContractHints 实际不落盘 |
+以下不是充分合并条件：
 
-两套指纹既不同，也都只是“同一输入是否重复登记”的机械去重，不实现 S8 的语义合并三条件。TR-008 还在调查前就分配 canonical-looking ID，因此该 ID 只是 runtime identity，不代表根因已经 canonicalized。
+- 在同一个页面；
+- 报错字符串相似；
+- 修改同一个文件；
+- 同一个 Reviewer 发现；
+- 都发生在前端或后端；
+- 自动 fingerprint 相同；
+- 都在同一个 UI step“撞墙”；相同 failure boundary 只是候选线索，不是共同根因证明。
 
-单个 BUG entity 必须另走 `runtime bug-event`：draft → investigating → pending_approval → accepted/rejected/duplicate。phase machine 则由 PTR/TR 修改 `bug_resolution.investigation/bug_report_review`。PTR-BUG-01/02/03 的 actions 只记录 evidence context，不推进任何 BUG entity；bug-event 也不检查 top-level 当前是否真的位于 S8/S9。两条链可以彼此矛盾，例如 phase 已进 S9 而某些 BUG 仍是 draft。
+### 5.2 合并和拆分条件
 
-### 4.2 T2 — 复现、before-fix evidence 与“为什么测试没拦住”
+多个 Findings 只有在以下条件同时满足时才进入同一个 accepted Case：
 
-调查应从 locked expected behavior 开始，而不是从最近 diff 开始。最小记录应包含：
+1. 同一被破坏的不变量或权威契约；
+2. 同一证据支持的 faulty mechanism；
+3. 因果链能解释每个 source Finding；
+4. blast radius 和 repair boundary 兼容；
+5. Closing assertions 可以组成一个一致 RepairContract。
 
-- 触发输入、身份/权限、环境和前置数据；
-- 逐步 reproduction 与实际 terminal state；
-- 精确 expected/actual，以及用户、数据和系统影响；
-- 命令输出、HTTP/console/network、trace/screenshot/JSONL 或历史样本；
-- 如果是数据修复类问题，目标行、dry-run、apply/rollback 约束和 before/after assertions；
-- 原测试为何没有失败：CASE/PATH 缺失、fidelity 太低、oracle 太弱、执行路径绕过，还是证据本身不可信。
+若一个 Finding 需要两个独立根因共同解释，允许它关联 primary Case 和 contributing Case；不能为追求一对一账目强行选择一个。
 
-`bug-resolution` 方法要求在存在 inventory 时运行 `e2e-coverage` 并把 coverage gap 写进 Closing Contract。但如 S7 所述，该 CLI 评分的是 REQ-039 风格的独立 scenario inventory，不自动读取产品 CASE/PATH 或本轮浏览器 evidence；项目若没有建立两者映射，命令只能提供辅助线索，不能替代实际反查。
+### 5.3 Canonical ID 何时生成
 
-当前没有 machine gate 读取 reproduction steps、before-fix evidence 或 coverage-gap 项。BUG event 的 `root_cause_evidence` 可以只是任意非空字符串，甚至不要求引用文件存在；因此可复现性仍靠调查者方法与主会话审查。
+Finding ID 在 S7 生成；InvestigationCase ID 在 S8 intake/grouping 生成；canonical BUG/Problem ID 只在 CausalModel 通过审查、Case disposition=`repair` 时生成。调查前预分配 BUG-NNN 会把“有表象”误传成“已确认根因”，目标机制应删除这种语义。
 
-### 4.3 T3 — 假设驱动根因、问题分类与重试信号
+## 6. 假设驱动调查与 Sub-agent 派发
 
-根因不是“哪一行错了”，而是能解释触发条件、传播路径和同类风险的机制。调查至少要沿这些层面排除假设：状态机、数据模型、write/read path、retry/fallback、接口契约、权限/信任边界、测试 oracle、环境/依赖。
+### 6.1 按假设派发，不按 Finding 或文件派发
 
-目标分类至少区分：
+Main/Investigation Lead 先建立最小竞争假设集，再创建 Assignment。以“无法显示 + 无法保存”为例：
 
-| 类别 | 含义 | 正确下一步 |
-|:--|:--|:--|
-| implementation defect | 当前规格明确，实现违背它 | accepted BUG → S9 |
-| test defect / coverage gap | 产品行为可能正确，但验证实现或 oracle 错；是否要改产品需另判 | 无产品变更时 final rejection；测试修正需明确范围，不能伪装产品 BUG |
-| spec conflict | design/prototype/contract/TASK 本身不一致或错误，REQ 不变 | TR-023 → planning.design |
-| REQ change | 正确行为需要改变 locked REQ | TR-024 → paused |
-| environment/dependency | 外部条件或瞬态造成，且无需产品/spec 修正 | 有证据的 no-product-change disposition |
-| duplicate | 已由同一 canonical root cause/contract 覆盖 | link canonical；是否进 S9 取决于 canonical 是否仍需 repair |
-
-L2 要求根因是可检索的“类别”并表达影响范围；当前 `review-evidence.schema` 只有自由文本 `root_cause` 和字符串数组 `impact`，没有 mechanism vocabulary 或结构化 blast radius。BUG Markdown 模板的 hypothesis table 是良好逼问，但 phase gate 不解析它。
-
-`investigation_started` 和 failed retest 回 investigation 会增加 `attempt_count`。然而现有 retry-limit 路径有三处断裂：BUG lifecycle 使用自己的非 typed 检查，超过阈值只返回错误；typed `CheckRepairLimit` 与 GTR-004 adapter 没有被生产调用链自动接上；`same_contract_failure_count` 从未自增。因此“达到上限自动 pause、同一 contract 连续失败触发重查”目前不是完整机器保证。
-
-### 4.4 T4 — canonicalization 与 Closing Contract
-
-语义合并只在以下三项同时成立时进行：
-
-1. 同一用户可见或系统可观察矛盾；
-2. 同一证据支撑的根因；
-3. repair boundary 与 retest assertions 兼容。
-
-“碰了同一个文件”“报错字符串相同”或“同一个 reviewer 发现”都不是充分条件。机械 fingerprint 只能阻止相同输入重复登记，不能代替这个判断。
-
-一个 Builder-ready canonical BUG 至少要承载：
-
-- source finding IDs/reports 与 violated clauses；
-- actual/expected behavior、reproduction evidence、root cause、impact；
-- repair scope 与 forbidden scope；
-- before-fix evidence；
-- 可执行的 Closing Contract：旧矛盾消失、目标字段/状态正确、回归用例先红后绿、数据修复不变量；
-- original assignment/responsibility/finder；
-- required Skills、attempt counters 和主会话审查信息。
-
-当前载体分成三种互不自动同步的形状：
-
-| 载体 | 能表达什么 | 当前消费者/限制 |
-|:--|:--|:--|
-| `BUG-template.md` | 人类可读的指纹链、假设表、四段 Closing Contract、历史 | Runtime/gate 不解析；状态词 `reported/verifying` 与 entity 的 `pending_approval/retesting` 不一致 |
-| `review-evidence.schema.json#canonicalBug` | 丰富结构化 canonical record | 与 quality-gate 通用 envelope 不兼容；没有 adapter |
-| runtime BUG entity | ID/state/path/severity/counters/finder，加 event 写入的若干 string refs | 不保存完整 clauses/impact/scopes/assertions；root-cause/contract 只存字符串引用 |
-
-PTR-BUG-01 的 gate 只要求当前轮一条 blocking finding envelope 和一条 Investigator/Orchestrator `complete` root-cause envelope；它不要求每个 finding/BUG 都具备根因。transition 又禁止一个 evidence ref 同时绑定 finding/root-cause 两个 slot，因此即使两者都使用 kind=`bug`，仍需两条独立 envelope。仓库没有专门的 Investigator agent 卡或 team kind，实际通常只能由 Orchestrator 承担或临时组织，但这种单职责调查没有 runtime workgroup 支撑。
-
-### 4.5 T5 — 主会话裁决与每条路由的真实强度
-
-| 裁决 | 目标动作 | 当前真实机制与缺口 |
-|:--|:--|:--|
-| 报告不足 | 拒绝“报告”并回 investigation，保留 finding 未决 | `bug_batch/rejected` 可触发 PTR-BUG-03；但 BUG entity 没有 pending_approval → investigating 事件，容易仍卡在 pending_approval 或被误用 `bug_rejected` 终结 |
-| accepted | entity 进入 accepted；完整 accepted batch 进 S9 | `bug_accepted` 只检查 ID 非空；PTR-BUG-02 只看一条 Orchestrator/accepted envelope，`canonical_bug_mapping_complete` 和 `bug_closing_contracts_complete` 是 evidence-attestation stubs，不枚举全部 findings/entities |
-| final no-product-change | entity rejected，理由与证据完整；整批无 repair 才回 S7 | `bug_rejected` 只要求非空 reason；TR-022 只看 `bug_batch/no_repair`，`no_accepted_bugs` 与 `bug_report_review_complete` 也是 stubs，不实际扫描 accepted BUG 或全部 findings |
-| duplicate | 指向存在且语义匹配的 canonical；open canonical 跟 S9，closed/no repair 才可 TR-022 | `duplicate_linked` 只要求非空 `duplicate_of`；schema 只检查 BUG-NNN 格式，不验证目标存在、非 self、仍 live 或三条件成立 |
-| spec rework | 记录 batch + change impact，REQ 不变，失效受影响 evidence | TR-023 可从任意 bug_resolution phase 触发；`req_baseline_unchanged` 是 stub；action 按当前工具的 affected paths 算影响，不读取 rich changeImpact 内容，空 paths 可导致零失效 |
-| REQ change | 记录 batch，暂停并等待人修订 | TR-024 同样不要求先到 bug_report_review；quality gate 先要持久化 pause 类 envelope，transition 再用生成式 checkpoint，载体分裂 |
-
-spec/REQ disposition 也没有对应 BUG entity state/event；rich canonical schema 有 `spec_rework_required/req_change_required` status，但 runtime entity 只能停在 pending_approval、转 rejected 或保持其他状态。phase 路由与 entity 历史因此无法天然对齐。
-
-所有 bug_resolution 顶层自动出口与当前 phase transition 共用 `SEL-BUG-OUTCOME`。若 state 中同时存在两个有效 requested events，或 accepted phase gate 与 spec/no-repair 等顶层 gate 同时满足，Controller 会报告 `LOOP_TRIGGER_CONFLICT`，不会按优先级选一个。混合 disposition batch 必须先明确如何分批/聚合；当前没有自动 batch partition 或 precedence。
-
-### 4.6 T6 — batch 出口不是 per-BUG 状态的替代品
-
-S8 的出口应先完成逐 finding ledger，再形成一个 batch-level routing fact：
-
-- 至少一个 accepted canonical BUG 且没有更高层 spec/REQ 路由时，形成 `bug_batch/accepted`，PTR-BUG-02 进入 S9；
-- 所有 findings 都是 final no-product-change 或指向不再需要 repair 的 canonical，形成 `bug_batch/no_repair`，TR-022 新开 S7 round；
-- 任一 finding 证明 specification 必须更正，形成单一 spec-change requested event 与 change impact，TR-023 回 planning；
-- 任一 finding 证明 locked REQ 必须改变，形成单一 req-change event 与 pause evidence，TR-024 交人；
-- 报告本身不足时形成 review feedback，PTR-BUG-03 回 investigation，而不是给 finding 一个最终 rejected disposition。
-
-当前这些 batch envelopes 都是通用 quality-gate JSON，不是 rich canonical BUG record。PTR/TR actions 除 change invalidation/pause/start-round 外，大多只确认 evidence map 非空，不会同步 individual BUG state。因此“phase 已离开 S8”不能作为“所有 BUG 已正确裁决”的替代证据。
-
-## 5. 职责分布与覆盖审计
-
-### 5.1 职能落点
-
-| 职能 | 主责 | 承载位置 | 当前消费者 |
-|:--|:--|:--|:--|
-| finding 事实与原始证据 | S7 reviewer / S11 human | finding envelope + report/trace | S8 investigator、GATE-BUG-DRAFTS-READY |
-| finding ledger 与 batch 完整性 | Orchestrator | 当前无正式模板；应由 S8 工作记录承载 | 主会话裁决、batch route |
-| 可复现反例 | Investigator/Orchestrator | BUG report、raw evidence | 根因调查、S9 before/after |
-| 根因与影响判断 | 单职责 Investigator 或主会话 | hypothesis table、root-cause evidence | canonical BUG、PTR-BUG-01 |
-| canonicalization | Orchestrator/Architect | BUG report + duplicate map | BUG entities、S9 |
-| Closing Contract | Investigator 提案，主会话批准 | BUG Markdown/rich canonical record | S9 Builder、original-finder retest |
-| BUG entity 生命周期 | Orchestrator | `runtime bug-event` | runtime state、repair limits |
-| phase/batch 路由 | quality gate + Controller | generic bug/root-cause/change/pause envelopes | PTR-BUG-01/02/03、TR-022/023/024 |
-| REQ 最终变更决策 | Human | pause + human decision/amendment | S11/控制面 |
-
-### 5.2 应有的分工与重叠控制
-
-- 原 reviewer 提供观察和 original-finder continuity；Investigator 建立因果模型；主会话批准 canonical BUG；S9 Builder 只执行已批准边界；
-- 调查者可以读实现和运行诊断，但不能借调查直接修改产品；否则 before-fix evidence 和独立因果判断都会被污染；
-- canonical ID 分配与语义合并属于主会话，不由并行 reviewers 各自抢号；
-- root-cause evidence 解释“为什么”，Closing Contract 定义“修后必须真什么”，change impact 决定“哪些旧 PASS 失效”；三者互相引用但不互相替代；
-- “报告退回”与“finding 最终无修复否决”必须是两个不同事实；前者仍未决，后者需要证据证明产品与规格已经一致；
-- duplicate 只复用 canonical repair chain，不复用未证实的根因判断；open duplicate 不能走 no-repair 快捷出口。
-
-### 5.3 如实现状与未闭合缺口
-
-1. **自动 S7→S8 可能没有 BUG entity**：Controller 不传 `Params.findings`；TR-027 也不创建 entity；
-2. **内部 RegisterBug 无 CLI**：正式用户操作面无法在已进入 S8 后补齐 entity；
-3. **两套去重指纹不一致**：TR-008 与 RegisterBug 的输入、终态处理不同；都不实现语义三条件；
-4. **phase 与 BUG entity 不同步**：PTR/TR 不推进 individual BUG，bug-event 也不约束当前 S8/S9 phase；
-5. **没有 Investigator agent/workgroup 类型**：gate 虽接受 `Investigator`，但 agents/team-manifest 没有对应注册路径；
-6. **根因/contract 只做非空参数检查**：bug-event 不验证引用存在、指纹、内容或 assertion 完整性；
-7. **PTR-BUG-01 不检查 batch 完整**：一条 finding + 一条 root-cause envelope 即可把整批推进 review；
-8. **PTR-BUG-02 的两个关键 guards 是 stubs**：不检查 finding→canonical mapping、所有 accepted BUG 的 Closing Contract 或 entity state；
-9. **rich canonical BUG 与 gate envelope 分裂**：Markdown、review-evidence JSON、runtime entity、generic gate JSON 四套事实无 adapter；
-10. **状态词不一致**：BUG template 的 reported/verifying 与 runtime pending_approval/retesting 不对齐；
-11. **报告退回没有 entity 回路**：PTR-BUG-03 回 phase investigation，但 pending_approval BUG 无对应回 investigating event；
-12. **duplicate guard 过弱**：不验证 canonical 存在、live、自引用或根因/contract 兼容；
-13. **spec/REQ disposition 无 entity 状态**：路由后 BUG 历史可能悬在 pending_approval；
-14. **TR-022 的安全 guards 是 stubs**：一条 no_repair envelope 可绕过实际 accepted BUG 与未处置 findings；
-15. **TR-023 影响失效不消费 changeImpact 内容**：依赖触发工具 affected paths；`req_baseline_unchanged` 也非实算；
-16. **混合 batch 无 partition/优先级**：多个有效 route 会触发 selector conflict；
-17. **retry-limit 自动桥未接通**：BUG lifecycle 返回普通错误，typed adapter 需外部显式调用且还要已有 bug_batch evidence；
-18. **`same_contract_failure_count` 是死字段**：未在 failed retest 路径自增；
-19. **original finder 只存 agent IDs**：runtime entity 不保存 original responsibility；后续“原职责重验”的身份链较弱；
-20. **S10→S8 缺 top-level route**：协议与 L2 的失败路由没有 Loop Definition 对应 transition。
-
-### 5.4 关键取舍
-
-| 问题 | 设计选择 | 原因与当前代价 |
-|:--|:--|:--|
-| finding 是否直接修 | 必须先调查并接受 canonical BUG | 防治标和越界；当前 gate 对根因深度的机器检查很弱 |
-| 调查组织 | 按根因候选/责任单元，而非按文件或 finding 数量 | 能合并一因多果；当前没有 Investigator team type |
-| 去重 | machine fingerprint 防重复登记 + human 三条件做语义合并 | 边界正确；两套 machine fingerprint 漂移造成不一致 |
-| Closing Contract | 修复前冻结边界和可执行断言 | S9 有明确授权；当前三种载体不自动同步 |
-| no-repair 出口 | 整批无 accepted repair 才回新 S7 round | 防吞 finding；当前 TR-022 guards 未实算 |
-| spec/REQ 分路 | specification 回 planning；REQ 交 human | 保持授权边界；entity 没有对应 disposition state |
-| batch selector | 多个有效出口 fail closed | 不猜优先级；混合 batch 目前缺少正式拆分方法 |
-
-## 6. L1 准则如何嵌入 S8
-
-| L1 准则 | S8 中的实际落点 |
+| Hypothesis | 判别检查 |
 |:--|:--|
-| D1 权威外置 | finding、BUG entity、root cause、Closing Contract、batch envelope 和 journal 落盘；多载体不同步削弱权威唯一性 |
-| D2 自然路径观测 | PreToolUse 评 PTR/TR；bug-event 记录实体变化；复现沿真实系统路径而非只看 diff |
-| D3 门是顾问 | missing finding/root-cause/batch evidence 可指向补项；当前不能指出具体哪个 finding/contract 沉默 |
-| D4 引导性产物 | hypothesis table、actual/expected、repair/forbidden scope、before-fix、retest assertions 迫使深查 |
-| D5 三级强制 | Skill/规则引导调查；schema/entity 限制形状；gate/selector 控制路由——根因语义和 batch completeness 强制仍弱 |
-| D6 三方收敛 | reviewer 提供观察、Investigator 建因果、Orchestrator 裁决；REQ 变化交 human |
-| D7 收敛可观测 | attempt counters、BUG states、phase 与 disposition 可显示回路；死计数器和双状态链会制造假收敛 |
-| 公理一 原型 | 对应现实中的 defect triage、root-cause analysis、canonical issue、repair contract 与 retry budget |
-| 公理二 分工 | finding owner、Investigator、approver、Builder、retester 分开；当前 Investigator 缺正式角色载体 |
-| 公理三 消费 | 根因供 scope/同类检索，Closing Contract 供 S9，disposition 供 route；未被 gate 消费的丰富字段被列为缺口 |
-| 公理四 成本 | 同根因 findings 合并调查；风险触发深度按问题类型加载；避免每条 finding 重复读全仓 |
-| 公理五 传达 | 报告不足、final rejection、duplicate、spec、REQ、accepted 使用不同词和去向，不以一个“rejected”覆盖全部 |
+| H1 前端 form state→payload 映射错误 | 对比 form state、network payload 与 generated client type |
+| H2 FE/BE contract 字段名/类型/nullability 漂移 | 对比 authoritative schema、request trace、DTO decode 和 response encode |
+| H3 DTO→domain/persistence 映射丢字段 | 跟踪 handler→service→repository→DB before/after |
+| H4 保存成功但 response/cache 回填覆盖 | 对比 DB、response、client cache 和 render state |
 
-## 7. 产出、出口门槛与失败路由
+上述检查首先消费 S7 encounter 已保存的 form state、payload、response、refresh、render checkpoint 和 correlation refs；只有某个必要节点完全没有证据且能区分 H1～H4 时，才追加受控 observation。不同 Agent 调查能够区分这些机制的证据，而不是四个 Agent 分别重现/修复四个症状。
 
-### 7.1 正式产出
+对于纯 `code_inspection` Case，假设应围绕结构形成机制和可证伪风险展开，例如“重复分支是否来自缺失的稳定扩展边界”“双重 source-of-truth 是否会使两个写路径产生不同结果”“现有项目惯用 registry 是否已定义该变化轴”。不能按设计模式名称派发 Agent，也不能把 QA Reviewer 的重构偏好当作唯一假设。
 
-- 当前 round 的 finding disposition ledger 与 finding→canonical BUG mapping；
-- 每个有效反例的 reproduction、before-fix raw evidence 和环境说明；
-- 假设表、evidence-supported root cause、问题类别与 impact/blast radius；
-- 每个 accepted BUG 的 canonical report、repair/forbidden scope、Closing Contract、original finder 与 required Skills；
-- 每个 final rejection 的 no-product-change rationale，或 duplicate 的 canonical link；
-- runtime BUG entity events 与 counters；
-- phase/batch gate 可消费的 finding、root-cause、bug_batch、change-impact、pause envelopes；
-- PTR-BUG-02/03 或 TR-022/023/024 handoff。
+### 6.2 Assignment 分组
 
-### 7.2 目标出口判定与当前机器地板
+一个 Hypothesis Assignment 可以覆盖多个紧密相关的假设，当它们共享：
 
-| 维度 | 目标判定 | 当前机器实际检查 |
-|:--|:--|:--|
-| Finding 覆盖 | 每个 blocking finding 恰有一个 disposition | 无全量 ledger/schema；phase gates 最少只需一条相关 envelope |
-| Reproduction | 可重复或有确定性原始 evidence；before-fix 已冻结 | 不读取步骤/原始内容；主要靠报告审查 |
-| Root cause | 证据支持、类别明确、可解释 blast radius | 一条 Investigator/Orchestrator `complete` envelope；bug-event 只要非空 ref |
-| Canonicalization | 三条件成立才合并；每个 duplicate 指向有效 canonical | 两套机械 fingerprint；duplicate 只校验非空/pattern |
-| Closing Contract | repair/forbidden scope + before-fix + executable retest 全齐 | bug-event 只保存一个非空 string；PTR-BUG-02 guard 不解析 |
-| Accepted batch | 所有 accepted entities 与 rich reports 一致，其他 findings 已处置 | 一条 Orchestrator/accepted envelope；不枚举 entities |
-| No-repair batch | 无 accepted/open repair，所有 findings final | 一条 Orchestrator/no_repair envelope；两个 transition guards 是 stubs |
-| Spec/REQ route | 正确层级、impact 完整、互斥出口唯一 | requested-event envelope；spec invalidation 依赖 affected paths；多出口冲突 |
-| Retry safety | 达 limit 自动 pause；same-contract failure 可观测 | counters/typed helper 部分存在，但生产桥和 same-contract 自增未闭合 |
+- 同一数据/调用传播路径；
+- 相同 read-only 工具和 Skills；
+- 相同 evidence destination；
+- 不会因合并失去竞争假设的独立判别。
 
-### 7.3 失败路由
+必须拆分：不同信任边界、需要独立安全判断、不兼容环境/工具、会争用破坏性诊断资源，或同一 Agent 会同时提出并批准 RepairContract。
 
-| 情况 | 去向 |
+### 6.3 拓扑与连续执行
+
+| 工作 | 默认拓扑/模式 |
 |:--|:--|
-| BUG entity 缺失 | 留 S8，报告 integration gap；当前需补公开登记能力或经受控内部路径修复，不能直改 loop-state |
-| finding 不可复现且无确定性证据 | 留 investigation，补环境/数据/trace；不得猜根因后派修 |
-| root cause/impact/Closing Contract 不足 | PTR-BUG-03 退报告；同时注意 entity 没有自动回 investigating |
-| 确认实现缺陷 | accepted entity + accepted batch → PTR-BUG-02 → S9 |
-| false positive/test-only/transient 且无产品/spec 变更 | final rejection；整批无 repair 后 TR-022 → S7 新完整轮 |
-| duplicate 指向 open canonical | 跟随 canonical 进入/继续 S9；不得走 TR-022 |
-| design/prototype/contract/TASK 错误，REQ 不变 | TR-023 → planning.design，重新走 S2～S5 |
-| locked REQ 必须变化 | TR-024 → paused → human amendment |
-| repair attempt 达上限 | 目标为 GTR-004 pause；当前自动桥未接通，必须显式保留现场并升级 |
-| 同时出现多个 requested routes | `LOOP_TRIGGER_CONFLICT`；先拆清 batch/撤销冲突 evidence，不猜优先级 |
+| 独立代码/契约/数据路径调查 | Agent Team teammate + `plan_checkpoint` |
+| 多个互斥假设并行取证 | 多 teammate，初始 WIP=2 |
+| 需要隔离运行实验但不改产品 | 自定义 Sub-agent + 隔离环境/worktree；控制面共享 |
+| 高风险生产式数据/破坏性实验 | `plan_approval_required` 或 human gateway |
+| CausalModel/RepairContract 集成 | Main/Investigation Lead；不得由单个假设 Worker 自动批准 |
 
-## 8. 易错点与渐进披露
+PLAN_REPORT 至少包含 hypothesis coverage、source failure-boundary refs、read/command scope、discriminator、expected evidence、risks，以及是否需要新 observation。发送后连续调查；Main 对齐时保持沉默，偏移、无 discriminator 却准备重跑用户旅程，或开始设计补丁时发送 CORRECTION。
 
-### 8.1 易错点
+### 6.4 调查停止条件
 
-1. 看到 finding 就给 Builder 派修；finding 还没有授权边界和完成判据；
-2. 假设 TR-008 一定创建 draft BUG；自动 Controller 路径没有 `Params.findings`；
-3. 进入 S8 后调用不存在的 `runtime register-bug`；代码只有未暴露的内部函数；
-4. 把 BUG-NNN 已分配当成语义 canonicalization 已完成；ID 可在调查前生成；
-5. 按“同文件”合并 findings；必须同时满足可见矛盾、根因和 Closing Contract 三条件；
-6. 从 diff 猜根因，未先保存 before-fix 反例；修后将失去可验证的因果基线；
-7. 把 `bug_reports_rejected` 当作 finding final rejection；PTR-BUG-03 的语义是报告不足回查；
-8. 用 `bug_rejected` 退回调查；它会把 entity 置为 terminal rejected，且没有回 investigating 事件；
-9. duplicate 只填一个 BUG-NNN 就相信 machine 已核实 canonical；当前没有存在/live/语义检查；
-10. 同时登记 accepted、spec-change、req-change/no-repair 等互斥 batch facts；selector 会 fail closed；
-11. 认为 PTR-BUG-02 会把所有 entities 置 accepted；它只推进 phase；
-12. 认为 TR-022 会实际扫描无 accepted BUG；当前 guards 只做 evidence attestation；
-13. 把 rich canonical BUG JSON 直接当 quality-gate envelope；两种 schema 不兼容；
-14. 认为 repair limits 与 same-contract counter 已自动防振荡；生产桥和计数仍未闭合；
-15. 调查时顺手改实现；这会污染 before-fix evidence，并绕开 S9 activation/invalidation/retest。
+Case 只有满足以下条件才停止调查：
 
-### 8.2 阅读预算
+- source Finding exact set 全被解释，或显式 split/false-positive disposition；
+- 每个 source encounter 的 wall/first-bad 和 terminal symptom 都能映射到 causal model；
+- primary root cause 有支持证据，不只是未被证伪；
+- 关键竞争假设已 refuted 或将 residual uncertainty 明确列为 blocker；
+- causal model 的每条边有 evidence ref；
+- blast radius 和 detection gap 已搜索；
+- 修复层级明确；
+- RepairContract 可以逐 Finding 定义修后断言。
 
-- **只想理解 S8 主线**：读 §1.1～§1.3、§2、§3、§7.3；
-- **正在调查某个 finding**：重点读 §4.2～§4.4，再加载 `bug-resolution` 方法和对应风险 Skill；
-- **正在做主会话裁决**：读 §4.5～§4.6、§7.2，不必重做调查方法；
-- **正在维护 harness**：必须读 §4.1、§5.3，并对照 RegisterBug、BUG lifecycle、quality-gate registry、selector 与 actions；
-- **S9 Builder/Verifier**：只消费 accepted canonical BUG、当前指纹链、repair/forbidden scope、Closing Contract、original finder 和剩余风险，不重解释 finding。
+“找到一行看起来可疑的代码”“改一下可能就好”不满足停止条件。
+
+## 7. 根因、blast radius 与 detection gap
+
+### 7.1 根因证明标准
+
+一个 root cause 至少满足：
+
+1. **必要解释**：能说明为何在给定 trigger/condition 下出现症状；
+2. **传播解释**：能从机制走到所有归入 Case 的 Findings；
+3. **判别证据**：存在区分它与主要竞争假设的 observation/control evidence；
+4. **反事实**：若恢复该不变量，症状应消失；必要时通过 mock、schema validation 或 controlled probe 证明，不能在 S8 改产品验证；
+5. **权威对齐**：指出哪个实现/测试/spec/环境事实偏离哪个 authority；
+6. **范围解释**：说明同类机制还能影响哪里，以及为什么某些邻近路径未受影响；
+7. **检测解释**：说明现有测试、类型、契约、监控或流程为何未拦住。
+
+这些证明可以来自 S7 已冻结的 occurrence、静态契约/代码读取、日志/数据 trace、schema comparison、mock 或只读 controlled probe；不要求在 S8 再次执行原用户旅程。重新复现只可用于缺失 occurrence 的 legacy 输入，且必须确认可安全重建、获得对应风险批准并绑定明确 discriminator；`ready_with_safety_gaps` 本身绝不是重做危险操作的理由。
+
+### 7.2 根因与 contributing factor
+
+不要把触发条件、传播媒介、受害组件都称为 root cause：
+
+| 类型 | 示例 |
+|:--|:--|
+| Primary root cause | FE 与 BE 分别维护 DTO，缺少单一权威 schema，字段语义发生漂移 |
+| Trigger | 新字段加入 FE form，但 BE DTO 未同步 |
+| Contributing factor | decode 对 unknown/missing 字段静默降级，没有 contract validation |
+| Propagation | 请求丢字段 → 持久化空值 → response/cache 渲染为空 |
+| Symptoms | 无法保存、保存后不显示、刷新丢失 |
+| Detection gap | 没有 FE/BE contract test，E2E 只断言请求 2xx |
+
+RepairContract 必须处理 primary root cause；是否同时处理 contributing factor 由其对复发风险的必要性决定，并写出理由。
+
+### 7.3 Blast radius 搜索
+
+Blast radius 不是“改了几个文件”，而是同一机制可能污染的：
+
+- 其他 endpoint/DTO/serializer；
+- 历史数据与 migration；
+- client cache、消息、异步任务；
+- 权限、审计、日志和监控；
+- 其他 CASE/PATH 和 personas；
+- 已登记 PASS evidence；
+- 生成器、shared type、contract tooling；
+- rollback/compatibility 边界。
+
+S8 只提出影响模型和修复预期；S9 根据实际 diff 生成最终 change impact 并失效证据。
+
+## 8. RepairContract：从根因到架构修复思路
+
+### 8.1 RepairContract 的内容
+
+| 字段 | 要求 |
+|:--|:--|
+| `repair_contract_id / case_id / canonical_problem_id / revision` | 唯一身份和批准版本 |
+| `source_finding_ids[]` | 原始表象 exact set，一个都不能丢 |
+| `root_cause_statement` | primary mechanism，不写模糊“逻辑问题” |
+| `violated_authority/invariant` | 需要恢复的契约、所有权或状态不变量 |
+| `causal_model_ref` | 证据支持的完整因果链 |
+| `architecture_intent` | 正确 source-of-truth、边界所有权和交互方向 |
+| `repair_units[]` | 可执行但不绑定具体代码行的修复单元和 DAG |
+| `prospective_scope / forbidden_scope` | 允许调查所得的边界与禁止局部补丁 |
+| `compatibility/migration/rollout/rollback` | 数据和运行安全要求 |
+| `symptom_assertions[]` | 每个 Finding 的 before/after 断言 |
+| `root_invariant_assertions[]` | 直接证明根因机制被消除的 contract/integration assertions |
+| `detection_gap_assertions[]` | 新 oracle 必须能在回退补丁时变红 |
+| `regression_surfaces[]` | S9 targeted 与下一 S7 full round 的范围 |
+| `impact_expectations` | 哪些旧 evidence 预计 invalid/superseded/reverify |
+| `required_skills/tools` | S9 计划输入 |
+| `stop/escalation_conditions` | 发现根因错误、scope 扩大、spec/REQ 冲突时返回哪里 |
+| `approved_by/at/hash` | Main/Architect 的授权事实 |
+
+### 8.2 Minimum Complete Root-Cause Repair
+
+S8 不追求 smallest diff，而是定义 **Minimum Complete Root-Cause Repair**：能够完整恢复被破坏不变量、覆盖全部 source Findings、补上检测缺口，并处理必要兼容/迁移的最小一致变更集。
+
+对于数据契约漂移，合理的 repair units 可能包括：
+
+1. 确立一个 authoritative schema/owner；
+2. 让 FE client、BE DTO、domain mapping 和 response 从该权威同步或受 contract test 约束；
+3. 处理已有数据/兼容窗口；
+4. 增加 schema/contract/integration assertions；
+5. 用真实 E2E 同时覆盖显示、保存、刷新和负向行为；
+6. 删除或迁移重复定义，避免继续双写。
+
+### 8.3 禁止的 symptom patches
+
+RepairContract 必须显式列出不能接受的捷径，例如：
+
+- UI 用默认值掩盖字段丢失；
+- 保存失败却显示成功；
+- 每个页面各自添加字段 alias；
+- 后端临时兼容一个 endpoint，但保留双重 schema；
+- 只修改测试预期让错误行为变绿；
+- 捕获异常后静默吞掉；
+- 只修第一个 Finding，不验证同根其他表象。
+
+### 8.4 S9 Definition of Ready
+
+Case 只有同时满足以下条件才能进入 S9：
+
+- source Findings exact set 完整；
+- captured occurrence/before-fix evidence 可用；
+- CausalModel 通过 Main/Architect 审查；
+- root cause、blast radius、detection gap 明确；
+- RepairContract 无 unexplained Finding；
+- repair units、依赖、prospective/forbidden scope 和 assertions 完整；
+- classification 属于当前 authority 下可修；
+- contract revision/hash 已批准；
+- original finder/independent targeted verifier 路径可恢复。
+
+## 9. Disposition 与路由
+
+### 9.1 Case-level 分类
+
+| 分类 | 说明 | 路由 |
+|:--|:--|:--|
+| `implementation` | 当前规格正确，实现机制违背它 | RepairContract → S9 |
+| `test/tooling` | 产品 authority 正确，但测试、fixture、harness、oracle 或生成机制需改 | RepairContract → S9 的 verification repair；不能简单 final reject |
+| `environment/dependency` | 项目内配置/依赖/环境机制需持久修复 | RepairContract → S9；纯外部人工条件则 paused/operational route |
+| `spec` | design/prototype/contract/TASK 错，REQ 不变 | S2 specification rework；当前 baseline 失效 |
+| `REQ` | 正确行为必须改变 locked requirement | paused → human amendment |
+| `duplicate` | 已由同一已证实 CausalModel/RepairContract 覆盖 | link canonical Case；跟随其 route |
+| `false_positive/no_change` | observation 或环境噪声已有确定性解释，且无需任何 artifact 变化 | 记录证据；整批无其他工作时回 S7 新完整轮 |
+
+测试缺陷不能因为“不改产品”就一律 no-repair。只要验证 artifact 需要变化，就必须进入 S9，随后重新执行 S7；否则同一假 finding 或漏检仍会再次发生。
+
+### 9.2 Mixed batch 的确定性优先级
+
+ObservationBatch 可以拆成多个 Cases，不要求一条 batch envelope 强迫所有 Case 走同一路由。Macro-stage 聚合规则：
+
+1. 任一 Case 需要 REQ change：pause 整个受影响 baseline，其他 repair 不得在过期 authority 上继续；
+2. 否则任一 Case 需要 specification rework：先回 S2，重新生成/验证规格，再重建 repair/discovery 计划；
+3. 否则所有 `repair` Cases 可按 RepairContract DAG 进入 S9；
+4. duplicate 跟随 canonical Case；
+5. 只有全部 Cases 均为 evidence-backed no-change，才回 S7 新完整轮。
+
+优先级由 Case classifications 和 authority 层级计算，不由多个 requested events 竞争，也不由 Controller 猜测。
+
+### 9.3 报告不足不是最终否决
+
+`investigate_more` 表示根因、证据或 RepairContract 不够，Case 留在 S8；它与 `false_positive/no_change` 完全不同。前者仍未决，后者需要确定性证据证明无需改变任何 artifact。
+
+## 10. S8→S9 的原子 Handoff
+
+Main/Architect 批准 RepairContract 时，一个事务必须：
+
+1. 校验 Case revision、source Finding exact set 和 baseline；
+2. 校验 CausalModel、root cause、blast radius、detection gap；
+3. 校验无 unexplained Findings；
+4. 校验 contract assertions 覆盖每个 source Finding 和根因不变量；
+5. 校验 classification/authority route；
+6. 生成 canonical Problem/BUG ID；
+7. 持久化 approved RepairContract hash；
+8. 将 original Finding relationships 写入 canonical mapping；
+9. 生成 S9 repair work-package inputs/Assignment candidates；
+10. 更新 Case `contract_approved` 并返回唯一下一动作；
+11. 只有所有受当前 route 约束的 Cases 都 ready，才推进 Macro-stage。
+
+不再要求 Investigator 手写 rich BUG、runtime entity、generic root-cause envelope 和 batch wrapper 四份独立事实。人读 BUG 报告、Runtime entity 和 gate 由 InvestigationCase/RepairContract 投影。
+
+## 11. 指引和控制必须埋在必经路径
+
+| 必经位置 | S8 特有内容 | 控制方式 |
+|:--|:--|:--|
+| `investigation ingest` | exact Findings、baseline、encounter/failure-boundary、step evidence、readiness/finder 完整性 | 缺项指向 Finding/Supplement，不创建 BUG |
+| Encounter viewer | 从 Finding refs 计算 failure-boundary、cross-layer trace、evidence-gap 三个只读视图 | 自动投影，不复制 raw evidence/新增状态 |
+| InvestigationCase schema | source set、failure-boundary refs、group rationale、hypotheses、causal model、unexplained set | create/revise/split/merge 时验证 |
+| Hypothesis Assignment generator | hypothesis、source boundary refs、discriminator、read/command scope、expected evidence | 派发前生成，按 L4 plan_checkpoint |
+| Agent Definition | Investigator 只读产品、可运行受控诊断、禁止修复 | 长期角色边界 |
+| PostToolUse(SendMessage) | PLAN_REPORT/BLOCKER/CLARIFICATION | 调查消息必经路径 |
+| Follow-up observation request | 必须有 hypothesis/discriminator、可区分结果、最小只读 scope 和安全条件 | 拒绝无目的“再复现一次” |
+| PreToolUse Write/Edit/Bash/diagnostic runner | 产品/规格写入 hard deny；诊断命令按风险控制；新 observation 必须绑定 discriminator | 每次 mutation/command/实验必经路径 |
+| `hypothesis result submit` | supported/refuted/inconclusive、evidence、residual facts | 调查结果唯一入口 |
+| `case split/merge` | 可逆 grouping history 与 exact source set | 不删除 Finding |
+| `causal-model evaluate` | 因果边、Finding coverage、竞争假设、blast/detection gap | 不判断业务优劣，只查完整性 |
+| `repair-contract approve` | authority、root cause、repair units、forbidden patches、assertions | Main/Architect 唯一批准入口 |
+| TeammateIdle/SubagentStop | 计划不能当结论；缺 HypothesisResult 不能结束 | 停止前必经路径 |
+| SessionStart/PreCompact | open Cases、in-flight hypotheses、unexplained Findings、唯一下一步 | 跨会话恢复 |
+
+Hook 反馈只给一个缺失事实和下一动作，不把整份调查方法反复注入 Agent。
+
+## 12. 生命周期与状态投影
+
+### 12.1 Case lifecycle
+
+```text
+ingested
+→ grouping
+→ investigating
+→ causal_model_ready
+→ contract_review
+→ contract_approved → S9
+                 ├→ spec_rework → S2
+                 ├→ req_change → paused
+                 ├→ no_change → S7 new round
+                 └→ investigate_more → investigating
+```
+
+Hypothesis 的 running/idle/stopped 是执行事实；`supported/refuted/inconclusive` 是 Case 内判断。它们不应被写成另一套 BUG lifecycle。
+
+### 12.2 Macro-stage board
+
+S8 状态页至少展示：
+
+- ObservationBatch exact Finding 数；
+- final required Claim set completeness、final ReviewPlan revision 与 claim coverage summary；
+- ingested/needs-supplement Findings；
+- `ready / ready_with_safety_gaps`、failure boundaries 和 evidence gaps；
+- clarification 与 discriminator-bound follow-up 数；
+- provisional Cases 与 split/merge history；
+- in-flight Hypothesis Assignments/WIP；
+- unexplained Findings；
+- supported/refuted/inconclusive hypotheses；
+- CausalModel/RepairContract readiness；
+- case-level routes 和 Macro-stage 唯一下一步。
+
+## 13. 当前实现差距与迁移清单
+
+### 13.1 当前事实
+
+| 当前位置 | 如实现状 | 与目标差距 |
+|:--|:--|:--|
+| S7→S8 TR-008 | 可能只切 cursor，finding Params/BUG entity 丢失 | 应传 sealed ObservationBatch exact set，不在 S7 创建 canonical BUG |
+| Runtime BUG creation | 调查前分配 BUG-looking ID，存在两套不同 fingerprint | canonical Problem 只在 RepairContract approve 时创建；Finding 不语义去重 |
+| S8 入口 | 通用 finding envelope + 手工 inventory | 缺 ObservationBatch ingest、FindingSupplement 和 completeness gate |
+| S7 discovery completeness | 旧 handoff 可能在首个 Finding 后留下未执行 DV/QA/E2E Claims | ingest 校验单一 `claim_coverage_summary`；ordinary batch 必须完成最终 Claim set 且 `unobserved=0` |
+| Finding 现场消费 | 复现步骤、trace、截图可能分散，未形成 failure boundary/readiness | 直接消费 S7 nested encounter；投影 boundary/trace/gap，不另建 Failure Episode entity |
+| 调查默认动作 | Investigator 容易重新跑症状来理解现场 | 已确认症状不默认复现；新 observation 必须服务于 hypothesis discriminator |
+| BUG entity/phase | 两套状态链不同步 | 以 InvestigationCase 为 S8 authority，Runtime BUG 仅作批准后的投影 |
+| Investigator role/team | gate 接受 Investigator 文本，但无正式 Agent/workgroup | 增加只读 Investigator Definition/Assignment topology |
+| Root cause | non-empty string/envelope 即可过部分 gate | 需要 HypothesisResults、CausalModel、Finding coverage 和证据 |
+| Dedup | reporter/body/path 或 source/evidence fingerprint | 只防重复输入；语义 grouping 通过可逆 Case 和因果模型 |
+| Rich BUG/Markdown/generic envelope | 四套事实无 adapter | InvestigationCase/RepairContract 单一权威，其他自动投影 |
+| Closing Contract | 自由文本或非空 ref | 改为 RepairContract 的 symptom/root/detection assertions |
+| Batch selector | mixed routes 互相冲突 | case-level disposition + authority precedence 确定性聚合 |
+| Product write scope | 调查只读主要靠文本 | S8 Investigator product/spec writes hard deny |
+| S9 input | accepted BUG 仍需 Builder 重读和猜修复思路 | S9 只消费 approved RepairContract，不重新定义 root cause |
+
+### 13.2 P0：先闭合信息链和权限
+
+1. 定义 Finding nested encounter、FindingSupplement、ObservationBatch investigation-readiness + Claim coverage ingest contract；
+2. 定义 InvestigationCase/HypothesisResult/CausalModel/RepairContract schema；
+3. TR-008 原子 handoff exact Finding set、failure-boundary refs、readiness 和 capture gaps；
+4. 增加 Investigator role、Assignment 和产品写 hard deny；
+5. Case/Result/Contract 使用共享控制面与 CAS；
+6. 从 Finding/evidence refs 计算 failure-boundary/cross-layer/evidence-gap 视图，不复制成新实体；
+7. canonical Problem ID 延后到 contract approval。
+
+### 13.3 P1：建立假设调查与因果收口
+
+1. 实现 `investigation ingest/case create/revise/split/merge`；
+2. 实现 hypothesis Assignment/Result；
+3. 实现 Finding coverage、unexplained set 和 causal model completeness；
+4. 支持 original finder clarification/supplement；
+5. follow-up observation 必须绑定 hypothesis/discriminator，删除默认 symptom re-reproduction；
+6. blast radius/detection gap 成为 contract 前置；
+7. 删除按 finding 一条一 Investigator 的默认叙事。
+
+### 13.4 P2：RepairContract 和 S9 handoff
+
+1. 实现 contract scaffold/approve 事务；
+2. 自动投影 canonical BUG、人读报告、repair work-package inputs；
+3. case-level disposition 和 authority precedence；
+4. 删除 generic batch wrapper 和 root-cause attestation stub；
+5. S9 改为消费 contract revision/hash。
+
+### 13.5 P3：观测、去旧与防振荡
+
+1. Macro-stage board/status；
+2. retry/inconclusive budget 和 human escalation；
+3. 删除旧 dedup/双状态/双枚举/未消费模板；
+4. 追踪 symptom-patch rejection、root-cause escape 和 reopened cases；
+5. `agent-protocol.md` 只保留入口/出口索引。
+
+每个阶段必须声明旧/新权威切换点，禁止长期双写 InvestigationCase 与旧 BUG batch 后让 Gate 猜测。
+
+## 14. 系统测试与运营指标
+
+### 14.1 必须有的系统测试
+
+| 场景 | 期望 |
+|:--|:--|
+| ObservationBatch 缺一个 Finding/坏 hash/混 baseline | ingest 原子失败并指出 exact ID |
+| ordinary ObservationBatch 的 E2E Claim coverage 未完成或仍有 unobserved required Claim | ingest 拒绝并指回 S7；不能让 S8 接手遗漏的 discovery |
+| E2E Claim 因 confirmed build/start/entry Finding 无法执行 | 接受工具从 `blocked` 投影出的、证据完整的 `blocked_by_confirmed_finding`，将未观察行为纳入 blast radius 和 RepairContract after-repair assertions |
+| `blocked_by_confirmed_finding` 只写“时间/token 不足” | ingest 拒绝；资源不足不是产品因果 blocker，且不能创建该投影 |
+| critical immediate-stop batch 有 safety gaps/unobserved Claims | 在停止理由、exact IDs 和既有安全证据完整时接受，并把缺口投影到 evidence-gap view |
+| 普通 Finding 缺 wall/first-bad/step evidence | ingest 拒绝并指回 S7 encounter gap，不创建 Case/BUG |
+| 高危 Finding 为 `ready_with_safety_gaps` | 接受已保存现场和停止理由；不要求重做危险操作，缺口进入 evidence-gap view |
+| code-inspection Finding | 消费 inspection/call/data-flow trail 和 violated quality/architecture invariant，不要求 user journey |
+| QA Finding 只写“应该使用 Strategy/Factory” | ingest/causal review 拒绝把模式名当根因；要求 observed structure、violated invariant、maintenance/change risk 和 code evidence |
+| QA structural Finding 没有对应 E2E symptom | 仍可建立 InvestigationCase；按结构形成机制、blast radius 和 detection gap 调查，不等待用户撞墙 |
+| original finder 失联 | 从 Finding/Assignment/encounter 继续调查，事实不丢，不默认重现症状 |
+| Investigator 请求“再试一次”但无 discriminator | follow-up request 拒绝 |
+| discriminator 需要区分 H1/H2 | 允许最小只读 observation，并将新事实追加为 Supplement |
+| 两个表象疑似同根 | provisional Case 保留两个 Findings，未证实时可 split |
+| 只因同文件/同报错尝试合并 | case validator 要求因果/contract grouping rationale |
+| 一个 Finding 两个 contributing causes | 允许多 Case 关系，不强制一对一 |
+| Hypothesis Worker 发送计划后等待 | 提示连续执行；无业务批准门 |
+| Investigator 尝试写产品代码 | PreToolUse hard deny |
+| HypothesisResult 只写“看起来是”无证据 | submit 拒绝 |
+| supported hypothesis 不能解释一个 source Finding | Case 保留 unexplained，不能进入 contract review |
+| 竞争假设未处理 | causal model incomplete |
+| 根因只是代码位置 | contract review 拒绝，要求 invariant/mechanism/propagation |
+| test defect 需要改 test | route S9 verification repair，不错误 no-repair |
+| spec 与 implementation cases 混合 | authority precedence 先 S2，不产生冲突 requested events |
+| RepairContract 只修一个症状 | assertion coverage 拒绝 |
+| RepairContract 缺 detection gap/forbidden patch | approve 拒绝 |
+| contract approved | canonical Problem、mapping、S9 inputs 同事务创建 |
+| session 恢复 | open Cases/hypotheses/unexplained/next action 可重建 |
+
+### 14.2 运营指标
+
+| 指标 | 目的 |
+|:--|:--|
+| Observation intake completeness | S7→S8 信息传递质量，目标 100% |
+| S7 Claim completeness at ingest | ordinary batch 的最终 Claim exact disposition 完整率，目标 100%；static/E2E/discovery 只做分组视图 |
+| investigation-ready on first ingest | 无需补基础现场即可建 Case 的比例，目标趋近 100% |
+| time from ingest to first hypothesis | encounter 是否真正降低理解现场成本 |
+| symptom re-reproduction rate in S8 | 为重新确认既有 Finding 而重跑的比例，目标趋近 0 |
+| discriminator-bound follow-up ratio | 新 observation 中绑定 hypothesis/discriminator 的比例，目标 100% |
+| evidence-gap source | 区分 S7 capture gap、legacy artifact、权限/安全限制与 S8 新判别需求 |
+| code-inspection Finding diagnosis completeness | QA/DV 静态 Findings 具有 invariant/mechanism/blast/detection 解释的比例，目标 100% |
+| findings per confirmed root cause | 识别一因多果；不作为 finding 数量 KPI |
+| clarification round count | 评估 S7 Finding scaffold 是否充分 |
+| hypothesis discrimination rate | 评估调查任务是否高信息量 |
+| time to first causal model / contract approval | 诊断 lead time |
+| unexplained finding aging | 防止 batch 用总结掩盖遗漏 |
+| case split/merge after approval | 过高说明过早 canonicalization |
+| root-cause escape/reopen rate | S9 后仍出现同机制问题，目标趋近 0 |
+| symptom-patch plan rejection count | 观察局部修补倾向，不追求绝对为 0 |
+| contract revision during S9 | 衡量 S8 是否给出可执行且正确的架构意图 |
+| no-change false disposition | 回 S7 后再次出现同 Finding，目标为 0 |
+
+## 15. Definition of Done
+
+S8 目标机制只有在以下条件全部成立时才算落地：
+
+- ObservationBatch/Finding exact set 可无损 ingest；
+- ordinary ObservationBatch 只有在最终 required Claim set 达到 exact disposition 且 `unobserved_claim_ids=[]` 时才能进入调查；`blocked_by_confirmed_finding` 必须是有证据的工具投影并进入修后断言，critical safety exception 必须逐项携带 gap；
+- encounter 的 last-good/wall/first-bad、状态差异、step evidence 和 capture gaps 可被确定性消费；
+- QA/DV `code_inspection` Finding 即使没有 E2E symptom，也能以 inspection/data-flow boundary 进入假设和因果调查；
+- 设计模式名称或 Reviewer 重构偏好不能直接满足 root-cause/RepairContract gate；
+- original finder 在线或失联时都能继续调查，而不是重新证明症状；
+- Findings immutable，Supplement 追加不覆盖；
+- S8 不新增 Failure Episode 顶层实体/人工报告，只投影 boundary/trace/gap 视图；
+- 无 discriminator 的 symptom re-reproduction 被工具拒绝；
+- InvestigationCase grouping 可逆且不丢 source facts；
+- 调查按假设和判别证据派发，不按表象机械派修；
+- Investigator 产品/spec 写入被真实 hard deny；
+- CausalModel 解释全部 source Findings、blast radius 和 detection gap；
+- Case 可表达一因多果、多个 contributing causes 和 split/merge history；
+- RepairContract 定义架构不变量、最小完整根因修复、禁止局部补丁和三层 assertions；
+- Main/Architect approve 是 canonical Problem 和 S9 handoff 的唯一入口；
+- mixed routes 按 authority precedence 确定性处理；
+- S9 不再需要从 Findings 重新猜根因或修复思路；
+- §14.1 系统测试通过，Finding 丢失、未解释收口、调查写产品和 symptom-only contract 为 0。
+
+## 16. 易错点与渐进披露
+
+### 16.1 易错点
+
+1. 进入 S8 就给每个 Finding 分配 BUG-NNN；canonical Problem 应在根因与 contract 批准后生成；
+2. 用自动 fingerprint 做语义去重；fingerprint 只能防重复输入；
+3. 把同页面、同文件、同报错当成同根；必须有因果与 repair contract 兼容证据；
+4. 合并后删除原 Findings；source facts 永不丢失；
+5. 原 finder 补充时改写 observed；应追加 FindingSupplement；
+6. 把 journey summary 当完整现场；它只用于速读，timeline/state/evidence 才是调查依据；
+7. 进入 S8 后先重新跑一遍用户流程；应从已冻结 failure boundary 和 cross-layer trace 开始；
+8. 没有竞争假设/discriminator 就请求 follow-up observation；这是把 S7 工作重复到 S8；
+9. 因同一 wall action 合并 Findings；相同撞墙点只是线索，不是同根证明；
+10. 为 encounter 新建独立 Case-like 状态机或人工报告；只需 Finding 内嵌事实与计算视图；
+11. 按每个 Finding 派一个 Investigator；应围绕可证伪假设和传播路径派发；
+12. 把“尚未证伪”写成 supported；supported 需要判别证据；
+13. 根因只写某行代码；必须解释 authority、mechanism、propagation、blast 和 detection gap；
+14. 调查者顺手提交补丁验证猜想；用 read-only trace/mock/control probe，产品修改只在 S9；
+15. 将 test defect 直接 final reject；测试 artifact 需要变化时仍应进入 S9；
+16. RepairContract 指定具体代码行，却没有架构不变量；S9 可以选择实现细节，但不能缺修复意图；
+17. 以最小 diff 代替最小完整修复；必须覆盖根因、所有表象和检测缺口；
+18. 一条 accepted batch envelope 代替逐 Case readiness；Macro-stage 必须 exact-set 聚合；
+19. 同时发 accepted/spec/REQ/no-repair requested events；应按 authority precedence 计算唯一 route；
+20. 只更新文档却没有 schema/Hook/CLI，就声称因果调查已被机器强制。
+
+### 16.2 阅读预算
+
+- **理解 S7/S8/S9 大闭环**：读 §0、§1、§4、§8、§10；
+- **正在 intake/补充 Finding**：读 §2、§3.2；先消费 encounter/boundary/gap，不默认复现；
+- **正在规划调查**：读 §5、§6、§7；
+- **正在审查根因**：读 §3.4、§7；
+- **正在批准 RepairContract**：读 §8～§10；
+- **实现 Harness**：读 §11～§15，并对照 assignment、schema、hook、controller、transition 与现有 BUG lifecycle；
+- **S9 Builder**：只消费 approved RepairContract、CausalModel ref、before-fix evidence、repair units、scope/assertions 和 stop conditions，不重解释 S7 Findings。
+
+## 变更记录
+
+| 日期 | 版本 | 变更 | 原因 |
+|:--|:--|:--|:--|
+| 2026-08-20 | v0.6.0 | Intake 改为校验单一 `claim_coverage_summary` 与最终 Claim exact disposition；static/E2E/discovery 降为查询视图；`blocked_by_confirmed_finding` 改为工具从 blocked Claim 投影；仅 critical immediate-stop 接受显式 safety gaps | 消除 S7→S8 handoff 的重复 summary 和独立 blocker 状态，保留完整发现与产品客观不可执行面的表达能力 |
+| 2026-08-20 | v0.4.0 | 将 QA/DV `code_inspection` Finding 明确为一等入口；按 observation mode 消费 inspection/data-flow boundary；禁止把设计模式名称或 Reviewer 重构偏好直接当根因，并补充结构性 Case 的假设、测试、指标和 DoD | 接住 S7 Static Quality Frontier 一次发现的设计债、边界和维护风险，同时防止静态审查意见未经因果证明就演变为模式化重构 |
+| 2026-08-20 | v0.3.0 | S8 intake 改为消费 S7 Finding encounter、failure boundary、cross-layer trace 和 capture gaps；新增 investigation readiness、计算型 boundary/trace/gap 视图与 discriminator-bound follow-up；明确 S8 不默认重新复现症状，也不新增 Failure Episode 顶层实体 | 让 S8 直接开展因果调查，避免重复 S7 的复现成本；只增加嵌套字段、投影视图和一个 follow-up validator，使收益高于机制复杂度 |
+| 2026-08-20 | v0.2.0 | 将 S8 重构为 Macro-stage 的 Diagnosis 步骤；新增 ObservationBatch intake、FindingSupplement、InvestigationCase、HypothesisResult、CausalModel、可逆聚类、因果证明、RepairContract、case-level route 与 S9 原子 handoff | 确保 S7 多个表象无损进入 S8，推导共同根因和架构级修复思路，禁止局部症状修补 |

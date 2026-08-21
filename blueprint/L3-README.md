@@ -1,6 +1,6 @@
 # L3 README — 第三层：各 Stage 详细设计（索引与共用词表）
 
-> 层结构（以 L1 §六 为准）：第一层哲学蓝图 → 第二层生命周期实战目标 → **第三层 = 每个 stage 的详细落地设计**（含该环节的内容→工具映射与门禁逻辑）→ 第四层实现规格（REQ/架构/契约/任务）→ 第五层实现 → 第六层运营回灌。
+> 层结构（以 L1 §六 为准）：第一层哲学蓝图 → 第二层生命周期实战目标 → **第三层 = 每个 stage 的详细落地设计**（含该环节的内容→工具映射与门禁逻辑）→ 第四层跨 Stage 工具机制与治理设计 → 第五层实现规格与实现 → 第六层运营回灌。
 
 ## 文件索引
 
@@ -12,9 +12,9 @@
 | L3-S3-contracts.md | S3 契约 | 分端执行契约与双向追溯 |
 | L3-S4-task-split.md | S4 任务拆分 | 单职责任务 + 可判定收尾契约 |
 | L3-S5-document-verification.md | S5 文档验证 | 独立双路审查 + 原子锁定 |
-| L3-S6-build.md | S6 构建 | 两阶段授权下的实现与如实报告 |
-| L3-S7-verification-round.md | S7 完整验证轮 | 三组正交 + 用例粒度 + 双重背书 |
-| L3-S8-finding-investigation.md | S8 发现调查 | 深查七步与规范缺陷处置 |
+| L3-S6-build.md | S6 构建 | 计划回执后的连续实现、隔离集成与如实报告 |
+| L3-S7-verification-round.md | S7 完整验证轮 | 单一 required Claim set + DV/QA/E2E 1..N 派发 + CleanRound/ObservationBatch |
+| L3-S8-finding-investigation.md | S8 发现调查 | Finding encounter → InvestigationCase → CausalModel → RepairContract |
 | L3-S9-repair.md | S9 修复 | 边界约束修复 + 证据失效 + 定向重验 |
 | L3-S10-acceptance-audit.md | S10 验收与审计 | 验收汇编 + 系统不变量审计 + 债务登记 |
 | L3-S11-release-gate.md | S11 人工发布闸 | 不可默认的人闸与回滚路 |
@@ -31,8 +31,9 @@
 | `PreToolUse` | **状态切换主力**：控制循环→质量门评估→满足则自动迁移（CAS）→安全决策（越界写拦截/锁定产物阻断） |
 | `PreToolUse`（子代理派发匹配） | **派发前预检提醒**：单人 vs 团队？角色模板选对没？worktree 隔离？team_name 带了吗？ |
 | `SubagentStart` | 派发瞬间提醒（预检答案落地、任务简报要求） |
-| `SubagentStop` | 要求完成报告 + worktree→develop 集成检查清单 + completion_ack |
-| `TeammateIdle` | 重唤醒**同一**队友（禁换人） |
+| `PostToolUse`（`SendMessage`） | 捕获 PLAN_REPORT/BLOCKER/COMPLETION，写入 Assignment checkpoint；计划不是 final response |
+| `SubagentStop` | 按 L4 判定是否已有 canonical Result、结果是否待消费，以及应允许停止、阻止停止还是进入恢复路由 |
+| `TeammateIdle` | 按 L4 区分正常交卷、计划缺失、异常 idle 与阻塞；只在责任仍可继续时唤醒同一 Worker，不自动派发下一任务 |
 | `PreCompact` | 持久化可恢复检查点（给下一个 SessionStart） |
 
 ### B. Harness（`loop-harness` 二进制——确定性引擎）
@@ -40,7 +41,7 @@
 | 能力 | 关键命令/机制 |
 |:--|:--|
 | 状态机迁移（唯一写者，CAS） | `req bind` / `runtime transition --id TR-xxx` |
-| 两阶段授权三事件 | `runtime agent-event`（readback_submitted → understanding_approved → activated） |
+| 当前两阶段授权三事件（待迁移） | `runtime agent-event`（readback_submitted → understanding_approved → activated）；目标态由 L4 Assignment 状态机替代 |
 | 证据登记+指纹 | `runtime evidence add`（登记 id/kind/path/sha256/produced_by） |
 | 读回信封生成 | `team launch --manifest --request-template`（指纹化读回请求） |
 | 门禁/健康 | `ready`（门清单）/ `doctor` / `validate --all` |
@@ -56,7 +57,9 @@ frontend/backend/test-builder（构建者）；document/delivery-verifier、qa�
 
 ### E. 技能（`skills/*/SKILL.md`——方法论按需加载）
 
-`two-phase-activation`（两阶段流程）/ `team-planning`（组队）/ `loop-orchestration`（驱动）/ `bug-resolution`（深查）/ `clean-round-evaluation` 等。
+`two-phase-activation`（当前两阶段流程，待按 L4 迁移）/ `team-planning`（组队）/ `loop-orchestration`（驱动）/ `bug-resolution`（深查）/ `clean-round-evaluation` 等。
+
+Agent 调度是首个进入 L4 的共用机制。S5/S6/S7/S8/S9 只声明消费 `one_shot`、`plan_checkpoint` 或 `plan_approval_required` 及本阶段完成条件；派发对象、计划回执、消息、等待、idle/stop、恢复和结果消费统一以 [L4 Agent 调度与治理机制](L4-agent-dispatch-governance.md) 为目标态。上表中的两阶段事件与 Skill 是现状和迁移入口，不再代表最终设计。
 
 **编排三原则**：①模板负责"声明结构"（字段逼问），harness 负责"事实求值"（指纹/门/迁移），hook 负责"在自然事件上执法与提醒"；②同一职责多机制必须声明主备；③优先写机制的真实命令/事件名。
 
@@ -91,9 +94,9 @@ L3 文档自身也必须遵循漏斗思考。读者应先理解这个 stage 为�
 7. **产出、出口门槛与失败路由**：明确最终交付物、可判定出口、失败归因和返回哪一层，避免只写“未通过”。
 8. **易错点与渐进披露**：集中整理最容易忽视的语义、边界和时序；按角色/时机给最小阅读集，机制已承载的内容不要求背诵。
 
-**迁移状态**：S0～S1 已完成迁移，其中 S0 是首个重构样板；S2～S11 将按 stage 逐份迁移。在迁移完成前，旧文档的“手头有什么→选了什么→怎么编排”只能作为事实素材，不能继续作为新文档范式。
+**迁移状态**：S0～S11 已完成按“阶段立意→任务分解→完整工作流→逐步机制承载→职责审计→准则嵌入→出口路由→易错点/渐进披露”的统一迁移；其中 S6～S11 保留当前未优化机制、正文未被 gate 消费的字段及路由/实体不同步等事实边界，不将设计意图表述成已有能力。
 
-**减法纪律**：每个机制的选择都要过"复杂度 vs 收益"；优先复用现有机制；说不出收益的机制不进编排。字段级规格不写在 L3（活在模板/实现里，属第四层），L3 只讲清"为什么这样安排"。
+**减法纪律**：每个机制的选择都要过"复杂度 vs 收益"；优先复用现有机制；说不出收益的机制不进编排。横跨多个 Stage 的统一机制契约不写在 L3（属第四层）；具体字段、模板和代码实现不写在 L3（属第五层）。L3 只讲清该 Stage 为什么消费机制、消费哪种模式、如何进入与如何收口。
 
 ## 纪律
 
@@ -112,3 +115,5 @@ L3 文档自身也必须遵循漏斗思考。读者应先理解这个 stage 为�
 | 2026-08-14 | 骨架改为五问叙事（目标/手头工具/选择含否决/编排/期望效果）；确立减法纪律；字段级规格移至第四层 | owner 复核：讲清楚一件事 > 机制堆砌 |
 | 2026-08-15 | 新增「注意力分配原则」共用判定尺（载体三问 + 渐进披露三原则 + 载体词表）；文档骨架增第六节「注意力预算与渐进披露」，12 份 L3-Sn 同步新增 §6 | owner 指示：渐进披露、以机制承载规范、削减平白叙述 |
 | 2026-08-18 | 文档骨架改为“阶段立意→任务分解→完整工作流→逐步设计与机制承载→职责审计→准则嵌入→出口路由→易错点/渐进披露”的漏斗结构；S0 作为首个迁移样板 | owner 指示：L3 文档自身必须形成体系化逻辑，不能以机制盘点代替 stage 设计 |
+| 2026-08-20 | S2～S11 完成统一漏斗结构迁移；S6～S11 对当前未闭合机制、正文未被 gate 消费的字段及路由/实体不同步等现状做显式标注 | owner 指示：串行完成 S2～S11 |
+| 2026-08-20 | L4 建立后收敛层级边界：Agent 调度细节上移至跨 Stage 机制层，L3 只保留各 Stage 的消费模式和完成条件；两阶段授权标为迁移入口 | owner 指示：统一治理 Sub-agent / Agent Team，不在每个 L3 重复协议 |
