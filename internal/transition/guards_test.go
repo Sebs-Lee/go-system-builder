@@ -16,7 +16,9 @@ import (
 // registered. A re-introduction would silently re-enable the stub behavior
 // the new angle_complete guards are explicitly replacing. The four TR-001
 // stub guards were removed for the same reason (L3-S1 v4.x): their
-// semantics live in the bind prechecks and the human lock.
+// semantics live in the bind prechecks and the human lock. L3-S6 P0-4
+// removed the three TR-006 batch stubs the same way — the exact-set
+// evaluation lives in GATE-BUILDER-BATCH-READY.
 func TestLegacyEvidenceBackedStubsRemoved(t *testing.T) {
 	legacy := []string{
 		"delivery_team_complete", "delivery_round_passed",
@@ -24,6 +26,8 @@ func TestLegacyEvidenceBackedStubsRemoved(t *testing.T) {
 		"e2e_team_complete", "e2e_round_passed",
 		"req_exists", "req_locked", "req_questions_non_blocking",
 		"pm_context_matches_req",
+		"all_builder_tasks_in_review", "builder_reports_complete",
+		"verification_team_manifest_complete",
 	}
 	for _, name := range legacy {
 		if _, ok := transition.LookupGuard(name); ok {
@@ -40,9 +44,8 @@ func TestLegacyEvidenceBackedStubsRemoved(t *testing.T) {
 func TestEvidenceBackedGuardHelperPreserved(t *testing.T) {
 	declarativeGuards := []string{
 		"joint_document_pass",
-		"verified_versions_current", "req_baseline_unchanged",
-		"all_builder_tasks_in_review", "builder_reports_complete",
-		"verification_team_manifest_complete", "blocking_findings_present",
+		"verified_versions_current",
+		"blocking_findings_present",
 		"acc_complete", "release_audit_approved",
 		"task_manifest_complete", "task_closing_contract_passed",
 	}

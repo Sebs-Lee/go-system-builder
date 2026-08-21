@@ -11,6 +11,7 @@
 package transition
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -121,13 +122,18 @@ func InitGuardRegistry() {
 		"tasks_checked":        guardTasksCheckedFn,
 		// BUG-PLANNING-SUBSTATE: planning_phase_ready / contracts_reviewed /
 		// candidate_tasks_complete are replaced by the single direct-check guard below.
-		"planning_complete":                     guardPlanningCompleteFn,
-		"joint_document_pass":                   evidenceBackedGuard("joint_document_pass"),
-		"verified_versions_current":             evidenceBackedGuard("verified_versions_current"),
-		"req_baseline_unchanged":                evidenceBackedGuard("req_baseline_unchanged"),
-		"all_builder_tasks_in_review":           evidenceBackedGuard("all_builder_tasks_in_review"),
-		"builder_reports_complete":              evidenceBackedGuard("builder_reports_complete"),
-		"verification_team_manifest_complete":   evidenceBackedGuard("verification_team_manifest_complete"),
+		"planning_complete":         guardPlanningCompleteFn,
+		"joint_document_pass":       evidenceBackedGuard("joint_document_pass"),
+		"verified_versions_current": evidenceBackedGuard("verified_versions_current"),
+		// L3-S6 P0-4: req_baseline_unchanged now compares the bound REQ's
+		// registered sha256 against the on-disk file (real body below) —
+		// TR-004/TR-007 previously accepted any non-empty evidence map.
+		"req_baseline_unchanged": guardReqBaselineUnchangedFn,
+		// L3-S6 P0-4: the three former evidenceBackedGuard stubs on TR-006
+		// are deleted — their names promised batch semantics the bodies
+		// never computed. The real evaluation lives in
+		// GATE-BUILDER-BATCH-READY's applyBuilderBatchCompleteness (exact
+		// TR-003 set, per-task completion + verified integration).
 		"blocking_findings_present":             evidenceBackedGuard("blocking_findings_present"),
 		"same_review_round":                     evidenceBackedGuard("same_review_round"),
 		"all_required_dimensions_passed":        evidenceBackedGuard("all_required_dimensions_passed"),
@@ -206,7 +212,7 @@ func InitGuardRegistry() {
 		// BUG-PLANNING-SUBSTATE: ui_impact_resolved stays (real body in
 		// guardUIIImpactResolvedFn). The seven entries that used to live under
 		// "Planning phase." in this block are deleted (see comment above).
-		"ui_impact_resolved": guardUIIImpactResolvedFn,
+		"ui_impact_resolved":      guardUIIImpactResolvedFn,
 		"scenario_bridge_checked": guardScenarioBridgeCheckedFn,
 	}
 	semanticChecks := map[string]bool{
@@ -217,6 +223,7 @@ func InitGuardRegistry() {
 		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
 		"planning_complete": true, "all_targeted_reverification_passed": true,
 		"ui_impact_resolved": true, "scenario_bridge_checked": true,
+		"req_baseline_unchanged": true,
 		// REQ-003 TASK-003-C: the three angle_complete guards run semantic
 		// checks against on-disk angle_declaration + team_manifest evidence
 		// (FR-002 + FR-003 + FR-004 + FR-010). They are not declarative
@@ -280,6 +287,41 @@ func evidenceBackedGuard(name string) GuardFn {
 func requireFreshInactiveRuntime(state map[string]any) error {
 	if err := loopruntime.ValidateFreshInactiveState(state); err != nil {
 		return fmt.Errorf("requires a fresh inactive runtime: %w", err)
+	}
+	return nil
+}
+
+// guardReqBaselineUnchangedFn is the real body behind the
+// req_baseline_unchanged guard on TR-004/TR-007 (L3-S6 §11.2): the bound
+// REQ's sha256 recorded in runtime.bound_req must still match the file at
+// bound_req.path. Formerly this name was an evidenceBackedGuard stub that
+// accepted any non-empty evidence map — a reworked REQ could slip through
+// a "return to planning" transition that is only legal for non-REQ
+// findings.
+func guardReqBaselineUnchangedFn(state map[string]any, _ map[string]string) error {
+	bound, ok := state["bound_req"].(map[string]any)
+	if !ok || bound == nil {
+		return fmt.Errorf("req_baseline_unchanged: runtime has no bound REQ — rebind before transitioning")
+	}
+	reqPath, _ := bound["path"].(string)
+	registeredSHA, _ := bound["sha256"].(string)
+	if reqPath == "" || registeredSHA == "" {
+		return fmt.Errorf("req_baseline_unchanged: bound REQ records no path/sha256 fingerprint")
+	}
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	data, err := os.ReadFile(filepath.Join(root, reqPath))
+	if err != nil {
+		return fmt.Errorf("req_baseline_unchanged: bound REQ %s unreadable: %w", reqPath, err)
+	}
+	sum := sha256.Sum256(data)
+	actual := fmt.Sprintf("%x", sum[:])
+	if actual != registeredSHA {
+		return fmt.Errorf(
+			"req_baseline_unchanged: bound REQ %s drifted (registered %s…, on disk %s…) — the REQ baseline changed since bind; REQ-affecting findings must go through the human amendment boundary, not TR-004/TR-007",
+			reqPath, registeredSHA[:12], actual[:12])
 	}
 	return nil
 }

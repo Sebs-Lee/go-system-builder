@@ -121,8 +121,15 @@ type workgroupManifest struct {
 		AgentID            string   `json:"agent_id"`
 		AgentDefinitionRef string   `json:"agent_definition_ref"`
 		SkillRefs          []string `json:"skill_refs"`
-		WritePaths         []string `json:"write_paths"`
-		Status             string   `json:"status"`
+		// Scope is the manifest's declared write surface; WritePaths is the
+		// schema-required binding (L3-S6 write-scope audit reads the real
+		// diff against this). We accept both names so legacy manifests that
+		// only carried `scope` still feed the audit instead of silently
+		// declaring no scope.
+		Scope          []string `json:"scope"`
+		WritePaths     []string `json:"write_paths"`
+		RequiredChecks []string `json:"required_checks"`
+		Status         string   `json:"status"`
 		// Worktree coordinates are optional extensions on the workgroup
 		// assignment row (BUG-039-37 / BUG-039-04 residual). When present
 		// the loader surfaces them; when absent they stay blank — never
@@ -447,7 +454,8 @@ func buildAssignmentRow(root string, agent buildAgentRow, idx loadedTask) *Assig
 			}
 			row.AssignmentID = a.AssignmentID
 			row.ResponsibilityIDs = append(row.ResponsibilityIDs, a.ResponsibilityID)
-			row.WritePaths = append(row.WritePaths, a.WritePaths...)
+			row.WritePaths = append(row.WritePaths, assignmentWritePaths(a.WritePaths, a.Scope)...)
+			row.RequiredChecks = append(row.RequiredChecks, a.RequiredChecks...)
 			row.ReportStatus = a.Status
 			applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
 			break
@@ -459,7 +467,8 @@ func buildAssignmentRow(root string, agent buildAgentRow, idx loadedTask) *Assig
 			a := manifest.Assignments[0]
 			row.AssignmentID = a.AssignmentID
 			row.ResponsibilityIDs = append(row.ResponsibilityIDs, a.ResponsibilityID)
-			row.WritePaths = append(row.WritePaths, a.WritePaths...)
+			row.WritePaths = append(row.WritePaths, assignmentWritePaths(a.WritePaths, a.Scope)...)
+			row.RequiredChecks = append(row.RequiredChecks, a.RequiredChecks...)
 			row.ReportStatus = a.Status
 			applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
 		}
@@ -494,7 +503,8 @@ func buildAssignmentRowFromTask(root, taskID, ownerAgentID string) *AssignmentCo
 			State:             "in_progress",
 			ManifestRef:       ".claude/workgroups/" + reqIDFromRuntime(root) + "/" + taskID + "/manifest.json",
 			ReportStatus:      a.Status,
-			WritePaths:        append([]string(nil), a.WritePaths...),
+			WritePaths:        assignmentWritePaths(a.WritePaths, a.Scope),
+			RequiredChecks:    append([]string(nil), a.RequiredChecks...),
 			ResponsibilityIDs: []string{a.ResponsibilityID},
 		}
 		applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
@@ -548,6 +558,17 @@ type assignmentCoordFile struct {
 	WorktreePath string `json:"worktree_path"`
 	Branch       string `json:"branch"`
 	TargetBranch string `json:"target_branch"`
+}
+
+// assignmentWritePaths resolves the write-scope binding for a manifest
+// row: schema-required write_paths first, with the legacy `scope` field as
+// the declared fallback (a scope-only manifest must still feed the L3-S6
+// write-scope audit instead of declaring no scope).
+func assignmentWritePaths(writePaths, scope []string) []string {
+	if len(writePaths) > 0 {
+		return append([]string(nil), writePaths...)
+	}
+	return append([]string(nil), scope...)
 }
 
 func loadAssignmentSidecar(root, assignmentID string) (assignmentCoordFile, bool) {

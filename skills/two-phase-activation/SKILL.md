@@ -25,10 +25,16 @@ Only the main session approves understanding and runtime activation. Message sch
 
 ## Message envelope (SYNC-003 §7)
 
-Every message in the activation chain carries the same envelope shape:
+Every message in the activation chain carries the same envelope shape. The
+list below is the conceptual view; the persisted field names live in the
+embedded `agent-message.schema.json` (`message_id`, `correlation_id`,
+`runtime_id`, `expected_runtime_revision`, `agent_id`, `task_id`,
+`team_id`, `occurred_at`, …). The concept `previous_message_sha256` lands
+concretely as the activation envelope's `approved_readback_sha256` — the
+sha256 of the readback message file bytes.
 
 ```text
-runtime_id, runtime_revision
+runtime_id, expected_runtime_revision
 workgroup_id, assignment_id, role, responsibility_id
 spec_chain[]: {kind, path, version, sha256}
 allowed_tools[], allowed_read_paths[], allowed_write_paths[], allowed_command_classes[]
@@ -37,19 +43,23 @@ previous_message_id, previous_message_sha256
 output_contract (the canonical schema for this message type)
 ```
 
-The chain is fixed:
+The runtime event chain (exact `runtime agent-event` event names):
 
 ```text
-phase_one_request
-  -> readback_response
-  -> main_session_approval
-  -> phase_two_activation
-  -> progress | finding | completion_report
+readback_started -> readback_submitted
+  -> understanding_approved | understanding_rejected | document_conflict_reported
+  -> activation_sent -> work_started
+  -> completion_reported (register via `runtime task-complete`)
+  -> completion_acknowledged
 ```
 
-`previous_message_sha256` is required on every message after the
-`phase_one_request`. Any message that breaks the chain (missing prior hash,
-stale revision, drifted spec hash) is rejected without side effect.
+`activation_sent` is verified against the registered readback: the runtime
+compares the envelope's `approved_readback_sha256` with the byte hash of
+the readback file recorded at `readback_submitted` (compute with
+`shasum -a 256 <readback-file>` on macOS, `sha256sum <file>` on Linux),
+and the `approved_readback_message_id` with that file's `message_id`. A
+mismatch (stale hash, wrong message, drifted revision) is rejected without
+side effect.
 
 A `finding` message is **not** a repair assignment. It enters the canonical
 BUG lifecycle owned by `bug-resolution` (root-cause investigation -> main-
@@ -83,16 +93,17 @@ subcommand as absent when `--help` itself returns "unknown command" or
 "requires <...>" without listing the requested subcommand.
 
 ## Procedure
-1. Generate a `phase_one_request` envelope per assignment: the full envelope above (with `previous_message_*` empty for the first message), plus fingerprinted document paths in reading order, forbidden paths, required outputs, stop conditions.
+1. Generate a `phase_one_request` envelope per assignment: the full envelope above (with `previous_message_*` empty for the first message), plus fingerprinted document paths in reading order, forbidden paths, required outputs, stop conditions. `loop-harness team launch --manifest <path>` renders these from the manifest.
 2. Launch the Agent in phase one (read-only). The Agent reads the chain in order and returns a `readback_response`: `ready`, `conflict`, or `missing`. The response must include `previous_message_sha256` of the `phase_one_request` it answers.
 3. Treat the open read-back as the current Driver action. The main session must not self-execute the delegated responsibility while this assignment is in phase one; if the work should return to the main session, revoke or reassign it first.
 4. Compare the Agent's readback against the current document versions and fingerprints. Verify the Agent understood the responsibility, the Closing Contract, and the forbidden paths.
-5. If `ready` and fingerprints match: request `understanding_approved` via `loop-harness runtime agent-event`, committing a runtime revision. The `main_session_approval` message carries the prior `readback_response` hash and the runtime revision of the approval.
-6. Construct the `phase_two_activation` envelope: agent ID, approved readback hash (chained), allowed tools, allowed write paths, allowed command classes, activation expiry, the runtime revision it binds to, and the output contract for `completion_report`.
-7. Request `activated` via `loop-harness runtime agent-event`. The Hook policy now permits writes within the activation scope.
-8. Monitor the activated Agent's writes. The Hook evaluates scope on every PreToolUse; an out-of-scope action surfaces in the Recovery Packet's `missing[]` and the Quality Gate returns `not_ready` rather than denying the tool. The main session narrows, extends, or revokes the activation envelope, waits for the next Hook to re-evaluate, and confirms the scope is valid before continuing.
-9. On Agent completion, collect the `completion_report` (chained to the `phase_two_activation` hash) and route to the consuming Skill (e.g. Verifier results to `clean-round-evaluation`).
-10. If `conflict` or `missing`: request `understanding_rejected`, return the Agent to `reading`, and surface the conflict to the Orchestrator.
+5. If `ready` and fingerprints match: request `understanding_approved` via `loop-harness runtime agent-event`, committing a runtime revision. The approval carries the prior `readback_response` hash and the runtime revision of the approval.
+6. Construct the activation envelope: agent ID, approved readback message ID and byte-hash (`approved_readback_sha256` — the runtime verifies it at commit). The readback file is the one written and registered at `readback_submitted`; compute the hash from that exact file after it is registered (not from a draft), with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux). Before sending, create the assignment worktree (`git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop`) and record `worktree_path`/`branch`/`target_branch` on the manifest row — SubagentStop integration requires them.
+7. Request `activation_sent` via `loop-harness runtime agent-event`. The Hook policy now permits writes within the activation scope.
+8. When the Builder starts writing, advance `work_started` — it is the required predecessor of any completion.
+9. Monitor the activated Agent's writes. The Hook evaluates scope on every PreToolUse; an out-of-scope action surfaces in the Recovery Packet's `missing[]` and the Quality Gate returns `not_ready` rather than denying the tool. The main session narrows, extends, or revokes the activation envelope, waits for the next Hook to re-evaluate, and confirms the scope is valid before continuing.
+10. On Agent completion, register the Builder Result with `loop-harness runtime task-complete` (one atomic command: validates the completion message, derives the evidence envelope, advances Agent and TASK, registers evidence). The legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope.
+11. If `conflict` or `missing`: request `understanding_rejected`, return the Agent to `reading`, and surface the conflict to the Orchestrator.
 
 ## Outputs
 - Readback request and response envelopes (evidence of phase one).

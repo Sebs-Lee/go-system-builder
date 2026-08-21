@@ -403,6 +403,20 @@ func TestTR004InvalidatesConsumedFixRecord(t *testing.T) {
 	state := inactiveState(5)
 	state["lifecycle"] = map[string]any{"state": "document_verification", "phase": nil, "phase_revision": float64(1)}
 	state["baseline"] = map[string]any{"generation": float64(1), "captured_at": "2026-08-18T00:00:00Z"}
+	// req_baseline_unchanged is a real fingerprint guard now — seed a bound
+	// REQ whose on-disk bytes match the registered sha256.
+	reqData := []byte("# REQ\n> Status: locked\n")
+	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "requirements", "REQ-001.md"), reqData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state["bound_req"] = map[string]any{
+		"id": "REQ-001", "path": "docs/requirements/REQ-001.md", "version": "v1",
+		"sha256": transition.SHA256(reqData), "status": "locked",
+		"approved_by": "pm-1", "approved_at": "2026-08-18T00:00:00Z",
+	}
 	writeFullState(t, root, state)
 	// The consumed fix record: valid document_review with requested_event.
 	fixEnvelope := map[string]any{

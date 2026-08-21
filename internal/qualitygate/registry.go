@@ -167,8 +167,12 @@ var semanticRequirements = map[string][]EvidenceRequirement{
 		requestedRequirement("document_review_record", []string{"DV-SPEC-CONSISTENCY", "DV-TASK-EXECUTABILITY"}, []string{"fix_required"}, "document_fix_required"),
 	},
 	"GATE-BUILDER-BATCH-READY": {
+		// L3-S6 §8.3: the S6 exit no longer demands team_manifest_record —
+		// the S7 workgroup can only be registered after TR-006 lands in
+		// verification.delivery, so requiring its evidence here forced
+		// placeholder records. Verification planning now starts from the
+		// real integrated diff at the S7 entry.
 		requirement("completion_report", []string{"BUILD-WORK-PACKAGE", "Builder"}, []string{"completed"}),
-		requirement("team_manifest_record", []string{"Orchestrator"}, []string{"complete"}),
 	},
 	"GATE-EXECUTION-SPEC-CHANGE-REQUIRED": {
 		requestedRequirement("change_impact_record", []string{"Builder", "BUILD-WORK-PACKAGE"}, []string{"spec_change_required"}, "execution_spec_change_required"),

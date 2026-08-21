@@ -26,9 +26,11 @@
 package assignment
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -52,7 +54,12 @@ type agentMessage struct {
 	ExpectedRuntimeRevision int    `json:"expected_runtime_revision"`
 	AgentID                 string `json:"agent_id"`
 	TaskID                  string `json:"task_id"`
-	Body                    string `json:"body,omitempty"`
+	// Activation chain fields (verified at activation_sent — L3-S6
+	// complexity pass: previously schema-required but never checked, pure
+	// ceremony; now fail-closed against the registered readback file).
+	ApprovedReadbackMessageID string `json:"approved_readback_message_id,omitempty"`
+	ApprovedReadbackSHA256    string `json:"approved_readback_sha256,omitempty"`
+	Body                      string `json:"body,omitempty"`
 }
 
 // expectedAgentMessageType returns the canonical message_type expected for a
@@ -186,7 +193,7 @@ func AdvanceAgent(
 						"Agent event %s is not legal from state %s (canonical Agent states: spawned, reading, understanding_submitted, understanding_approved, activated, working, reported, done, blocked, stopped)",
 						request.Event, currentState)
 				}
-				if err := applyAgentEventParams(agent, request, message); err != nil {
+				if err := applyAgentEventParams(root, agent, request, message); err != nil {
 					return err
 				}
 				agent["state"] = resolvedTo
@@ -204,7 +211,7 @@ func AdvanceAgent(
 
 // applyAgentEventParams applies event-specific param checks. These mirror
 // the prior implementation for the original 3 events and extend to all 12.
-func applyAgentEventParams(agent map[string]any, request AgentEventRequest, message agentMessage) error {
+func applyAgentEventParams(root string, agent map[string]any, request AgentEventRequest, message agentMessage) error {
 	switch request.Event {
 	case "readback_submitted":
 		if agent["state"] != "reading" {
@@ -220,6 +227,9 @@ func applyAgentEventParams(agent map[string]any, request AgentEventRequest, mess
 		}
 		if message.ExpectedRuntimeRevision != request.ExpectedRevision {
 			return fmt.Errorf("activation expected revision is stale")
+		}
+		if err := verifyActivationReadbackChain(root, agent, message); err != nil {
+			return err
 		}
 		agent["activation_revision"] = request.ExpectedRevision + 1
 	case "understanding_rejected":
@@ -254,6 +264,49 @@ func applyAgentEventParams(agent map[string]any, request AgentEventRequest, mess
 		if agent["state"] != "blocked" {
 			return fmt.Errorf("shutdown_approved requires blocked state")
 		}
+	}
+	return nil
+}
+
+// verifyActivationReadbackChain fail-closes the activation envelope's
+// hash-chain fields against the registered readback file: the envelope's
+// approved_readback_sha256 must equal the byte hash of the file recorded at
+// readback_submitted, and approved_readback_message_id must equal that
+// file's message_id. The fields were schema-required before but never
+// checked — ceremony; this makes them a guarantee.
+func verifyActivationReadbackChain(root string, agent map[string]any, message agentMessage) error {
+	ref, _ := agent["readback_ref"].(string)
+	if ref == "" {
+		return fmt.Errorf("activation chain: agent has no registered readback_ref — submit readback_submitted first")
+	}
+	path := ref
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("activation chain: registered readback %s unreadable: %w", ref, err)
+	}
+	sum := sha256.Sum256(data)
+	actual := fmt.Sprintf("%x", sum[:])
+	if message.ApprovedReadbackSHA256 == "" {
+		return fmt.Errorf("activation chain: approved_readback_sha256 is empty — set it to the sha256 of the readback message file (%s)", ref)
+	}
+	if message.ApprovedReadbackSHA256 != actual {
+		return fmt.Errorf(
+			"activation chain: approved_readback_sha256 %s… does not match registered readback %s (actual %s…) — recompute the hash of the readback message file and resubmit",
+			message.ApprovedReadbackSHA256[:12], ref, actual[:12])
+	}
+	var readback struct {
+		MessageID string `json:"message_id"`
+	}
+	if err := json.Unmarshal(data, &readback); err != nil {
+		return fmt.Errorf("activation chain: registered readback %s is not valid JSON: %w", ref, err)
+	}
+	if message.ApprovedReadbackMessageID == "" || message.ApprovedReadbackMessageID != readback.MessageID {
+		return fmt.Errorf(
+			"activation chain: approved_readback_message_id %q does not match registered readback message_id %q",
+			message.ApprovedReadbackMessageID, readback.MessageID)
 	}
 	return nil
 }

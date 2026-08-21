@@ -130,8 +130,14 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 				return fmt.Errorf("workgroup %s is already registered", value.WorkgroupID)
 			}
 			task := map[string]any{
-				"id":              request.TaskID,
-				"state":           "reviewed",
+				"id": request.TaskID,
+				// Registering a workgroup in S6 dispatches the TASK: the
+				// document is already `complete` and locked, the owner is
+				// named, and the Builder is expected to start — landing
+				// straight in `in_progress` keeps `runtime task-complete`
+				// (which requires that state) reachable without a manual
+				// lifecycle hop (L3-S6 complexity pass).
+				"state":           "in_progress",
 				"path":            taskRef,
 				"sha256":          transition.SHA256(taskData),
 				"owner_agent_ids": agentIDs,

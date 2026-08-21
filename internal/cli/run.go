@@ -170,6 +170,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runScenario(args[1:], stdout, stderr)
 	case "contracts":
 		return runContracts(args[1:], stdout, stderr)
+	case "s6":
+		return runS6Command(args[1:], stdout, stderr)
 	case "tasks":
 		return runTasks(args[1:], stdout, stderr)
 	default:
@@ -478,7 +480,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "document_verification":
 		return "S5", "document-verification", "complete independent document verification"
 	case "building":
-		return "S6", "two-phase-activation", "complete Builder assignments"
+		return "S6", "two-phase-activation", "complete Builder assignments (register each result via `runtime task-complete`; SubagentStop integrates the worktree)"
 	case "verification":
 		switch phase {
 		case "delivery":
@@ -921,7 +923,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|task-complete|task-integrate|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -1020,9 +1022,14 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		if *transitionID == "" || *expectedRevision < 0 || *actor == "" {
-			fmt.Fprintln(stderr, "runtime transition requires --id, --expected-revision and --actor")
+		if *transitionID == "" || *actor == "" {
+			fmt.Fprintln(stderr, "runtime transition requires --id and --actor")
 			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime transition", err))
+			return 1
 		}
 		evidenceMap, err := parseEvidence(evidence)
 		if err != nil {
@@ -1045,7 +1052,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		next, err := transition.Apply(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), transition.Request{
-			TransitionID: *transitionID, ExpectedRevision: *expectedRevision,
+			TransitionID: *transitionID, ExpectedRevision: resolvedRevision,
 			Actor: *actor, Evidence: evidenceMap, REQ: req, OccurredAt: occurredAt,
 			Params: params,
 		})
@@ -1077,12 +1084,16 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		if *expectedRevision < 0 || *manifestPath == "" || *taskID == "" || *taskPath == "" {
-			fmt.Fprintln(stderr, "runtime register-workgroup requires --expected-revision, --manifest, --task-id and --task")
+		if *manifestPath == "" || *taskID == "" || *taskPath == "" {
+			fmt.Fprintln(stderr, "runtime register-workgroup requires --manifest, --task-id and --task")
 			return 2
 		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime register-workgroup", err))
+			return 1
+		}
 		var occurredAt time.Time
-		var err error
 		if *occurredAtValue != "" {
 			occurredAt, err = time.Parse(time.RFC3339Nano, *occurredAtValue)
 			if err != nil {
@@ -1091,7 +1102,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		next, err := assignment.Register(*root, *statePath, *journalPath, assignment.Request{
-			ExpectedRevision: *expectedRevision,
+			ExpectedRevision: resolvedRevision,
 			ManifestPath:     resolveRootPath(*root, *manifestPath),
 			TaskID:           *taskID,
 			TaskPath:         resolveRootPath(*root, *taskPath),
@@ -1121,12 +1132,16 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		if *expectedRevision < 0 || *agentID == "" || *event == "" || *messagePath == "" {
-			fmt.Fprintln(stderr, "runtime agent-event requires --expected-revision, --agent-id, --event and --message")
+		if *agentID == "" || *event == "" || *messagePath == "" {
+			fmt.Fprintln(stderr, "runtime agent-event requires --agent-id, --event and --message")
 			return 2
 		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime agent-event", err))
+			return 1
+		}
 		var occurredAt time.Time
-		var err error
 		if *occurredAtValue != "" {
 			occurredAt, err = time.Parse(time.RFC3339Nano, *occurredAtValue)
 			if err != nil {
@@ -1135,7 +1150,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		next, err := assignment.AdvanceAgent(*root, *statePath, *journalPath, assignment.AgentEventRequest{
-			ExpectedRevision: *expectedRevision,
+			ExpectedRevision: resolvedRevision,
 			AgentID:          *agentID,
 			Event:            *event,
 			MessagePath:      resolveRootPath(*root, *messagePath),
@@ -1145,8 +1160,153 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, formatFailure("runtime agent-event", err))
 			return 1
 		}
+		// The activation moment is where the worktree discipline is needed
+		// next; print the next actions instead of letting the agent discover
+		// them from a late SubagentStop failure (L3-S6 complexity pass).
+		if *event == "activation_sent" {
+			fmt.Fprintln(stderr, "activated. next: (1) create the worktree if absent — `git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop` — and record worktree_path/branch/target_branch on the assignment's workgroup manifest row (or .claude/assignments/<assignment-id>.json); (2) advance `work_started` when the Builder begins writing; (3) register completion with `runtime task-complete`")
+		}
 		if err := json.NewEncoder(stdout).Encode(next); err != nil {
 			fmt.Fprintf(stderr, "encode Agent event: %v\n", err)
+			return 1
+		}
+		return 0
+	case "task-complete":
+		// Canonical S6 Builder Result registration (L3-S6 §7.3): one
+		// command validates the completion message, derives the
+		// completion_report evidence envelope, advances the Agent and
+		// TASK, and registers the evidence — atomically. This replaces
+		// the agent-event + evidence-add dual write.
+		flags := flag.NewFlagSet("runtime task-complete", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime task-complete")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+		agentID := flags.String("agent-id", "", "Builder Agent ID")
+		messagePath := flags.String("message", "", "completion_report message path")
+		occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *agentID == "" || *messagePath == "" {
+			fmt.Fprintln(stderr, "runtime task-complete requires --agent-id and --message")
+			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime task-complete", err))
+			return 1
+		}
+		var occurredAt time.Time
+		if *occurredAtValue != "" {
+			occurredAt, err = time.Parse(time.RFC3339Nano, *occurredAtValue)
+			if err != nil {
+				fmt.Fprintf(stderr, "runtime task-complete: invalid --occurred-at: %v\n", err)
+				return 2
+			}
+		}
+		next, err := assignment.CompleteTask(*root, *statePath, *journalPath, assignment.CompletionRequest{
+			ExpectedRevision: resolvedRevision,
+			AgentID:          *agentID,
+			MessagePath:      resolveRootPath(*root, *messagePath),
+			OccurredAt:       occurredAt,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime task-complete", err))
+			return 1
+		}
+		if err := json.NewEncoder(stdout).Encode(next); err != nil {
+			fmt.Fprintf(stderr, "encode Builder Result: %v\n", err)
+			return 1
+		}
+		return 0
+	case "task-integrate":
+		// Explicit S6 integration verb (L3-S6 §7.4 / N1 complexity pass):
+		// runs the same Inspect → non-squash merge → verified checkpoint
+		// chain as the SubagentStop hook, without depending on the
+		// platform payload carrying the assignment identification.
+		flags := flag.NewFlagSet("runtime task-integrate", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime task-integrate")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		assignmentID := flags.String("assignment-id", "", "assignment to integrate")
+		agentID := flags.String("agent-id", "", "owning agent ID (optional, aids lookup)")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *assignmentID == "" {
+			fmt.Fprintln(stderr, "runtime task-integrate requires --assignment-id")
+			return 2
+		}
+		resolvedRoot := *root
+		if !filepath.IsAbs(resolvedRoot) {
+			if abs, err := filepath.Abs(resolvedRoot); err == nil {
+				resolvedRoot = abs
+			}
+		}
+		resolvedState := resolveRootPath(resolvedRoot, *statePath)
+		resolvedJournal := resolveRootPath(resolvedRoot, *journalPath)
+		snapshot, err := runtime.NewStore(resolvedState, resolvedJournal).Snapshot()
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime task-integrate", err))
+			return 1
+		}
+		loaded, err := hookctx.LoadFull(resolvedRoot, *agentID)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime task-integrate", err))
+			return 1
+		}
+		matched := false
+		known := make([]string, 0, len(loaded.Assignments))
+		for i := range loaded.Assignments {
+			row := loaded.Assignments[i]
+			if row.AssignmentID != "" {
+				known = append(known, row.AssignmentID)
+			}
+			if row.AssignmentID == *assignmentID || (*agentID != "" && row.OwnerAgentID == *agentID) {
+				matched = true
+			}
+		}
+		if !matched {
+			fmt.Fprintf(stderr, "runtime task-integrate: assignment %q is not registered (worktree coordinates or agent row missing); known assignments: %s\n",
+				*assignmentID, strings.Join(known, ", "))
+			return 1
+		}
+		input := policy.Input{
+			Event:    "SubagentStop",
+			AgentID:  *agentID,
+			TargetID: *assignmentID,
+			Facts:    map[string]bool{"agent_report_complete": true},
+		}
+		guidance, updated, err := HandleSubagentStopForController(context.Background(), resolvedRoot, snapshot, loaded, "SubagentStop", input)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime task-integrate", err))
+			return 1
+		}
+		state := ""
+		if guidance.Blocked {
+			state = "preserved/blocked"
+		} else {
+			state = "integrated"
+		}
+		fmt.Fprintf(stderr, "task-integrate: %s — %s\n", state, guidance.Action)
+		if len(guidance.Integration) > 0 {
+			fmt.Fprintf(stderr, "integration facts: %s\n", strings.Join(guidance.Integration, "; "))
+		}
+		payload := map[string]any{
+			"assignment_id": *assignmentID,
+			"state":         state,
+			"blocked":       guidance.Blocked,
+			"blocker":       guidance.Blocker,
+			"integration":   guidance.Integration,
+			"revision":      updated.Revision,
+		}
+		if err := json.NewEncoder(stdout).Encode(payload); err != nil {
+			fmt.Fprintf(stderr, "encode task-integrate result: %v\n", err)
 			return 1
 		}
 		return 0
@@ -1165,9 +1325,14 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		if *expectedRevision < 0 || *bugID == "" || *event == "" {
-			fmt.Fprintln(stderr, "runtime bug-event requires --expected-revision, --bug-id and --event")
+		if *bugID == "" || *event == "" {
+			fmt.Fprintln(stderr, "runtime bug-event requires --bug-id and --event")
 			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime bug-event", err))
+			return 1
 		}
 		var params map[string]any
 		if *paramsRaw != "" {
@@ -1177,7 +1342,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		next, err := assignment.AdvanceBug(*root, *statePath, *journalPath, assignment.BugEventRequest{
-			ExpectedRevision: *expectedRevision,
+			ExpectedRevision: resolvedRevision,
 			BugID:            *bugID,
 			Event:            *event,
 			MessagePath:      resolveRootPath(*root, *messagePath),
@@ -1679,6 +1844,21 @@ func resolveRootPath(root, path string) string {
 		return path
 	}
 	return filepath.Join(root, path)
+}
+
+// resolveExpectedRevision reads the current runtime revision when the
+// caller omitted `--expected-revision` (value -1). CAS still applies to
+// the write itself — the flag just removes the hand-shake step of reading
+// the state first (L3-S6 E2E pass).
+func resolveExpectedRevision(root, statePath string, provided int) (int, error) {
+	if provided >= 0 {
+		return provided, nil
+	}
+	snapshot, err := runtime.NewStore(resolveRootPath(root, statePath), resolveRootPath(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil {
+		return 0, fmt.Errorf("read current runtime revision (omit --expected-revision or read it with `status`): %w", err)
+	}
+	return snapshot.Revision, nil
 }
 
 type stringListFlag []string

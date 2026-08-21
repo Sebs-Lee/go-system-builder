@@ -302,6 +302,15 @@
         "write_paths": {
           "$ref": "#/$defs/paths"
         },
+        "required_checks": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Integration-check commands the Integrator must actually execute before this assignment may reach the verified checkpoint state (L3-S6 §7.4). Entries prefixed with \"locked:\" declare locked-artifact paths instead of commands.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "output_paths": {
           "$ref": "#/$defs/paths"
         },
@@ -333,6 +342,21 @@
             "blocked",
             "stale"
           ]
+        },
+        "worktree_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional worktree coordinates (L3-S6 worktree discipline). Record them before the Builder starts writing: the SubagentStop integrator reads them to inspect/merge. Create with `git worktree add <path> -b <branch> <target_branch>`."
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Source branch of the assignment worktree (e.g. wt/<assignment-id>)."
+        },
+        "target_branch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Integration branch the worktree merges back into (e.g. develop)."
         }
       }
     },

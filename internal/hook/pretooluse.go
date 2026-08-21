@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/controller"
+	"github.com/entroforge/go-system-builder/internal/missingtokens"
 	"github.com/entroforge/go-system-builder/internal/policy"
 )
 
@@ -153,6 +154,14 @@ func formatPreToolUseRecoveryPacket(decision policy.Decision, qg controller.Qual
 	if len(qg.Missing) > 0 {
 		b.WriteString(" Missing: ")
 		b.WriteString(strings.Join(qg.Missing, "; "))
+		// L3-S6 §9.3: the token legend turns bare missing tokens into
+		// executable next actions instead of leaving the agent to guess.
+		if qg.Status == controller.StatusNotReady {
+			if legend := missingtokens.RenderMissingTokenLegend(qg.GateID, qg.Missing); legend != "" {
+				b.WriteString("\n\n")
+				b.WriteString(legend)
+			}
+		}
 		b.WriteString(".")
 	}
 

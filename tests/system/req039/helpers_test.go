@@ -17,6 +17,8 @@ package req039_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"os"
@@ -123,14 +125,19 @@ func systemPlanningState(t *testing.T, root, phase string, revision int) map[str
 	}
 	// The bound REQ must exist on disk (hook-protected path; the AC bridge
 	// and reachability read it) — a minimal locked REQ with no AC rows.
+	// req_baseline_unchanged is a real fingerprint guard (L3-S6 P0-4), so
+	// the pinned sha must match these exact bytes.
 	reqPath := filepath.Join(root, "docs", "requirements", "REQ-039.md")
 	if err := os.MkdirAll(filepath.Dir(reqPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(reqPath, []byte("# REQ-039\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
-		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n"), 0o644); err != nil {
+	reqBytes := []byte("# REQ-039\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
+		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n")
+	if err := os.WriteFile(reqPath, reqBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	reqSum := sha256.Sum256(reqBytes)
+	reqSHA := hex.EncodeToString(reqSum[:])
 	return map[string]any{
 		"schema_version": "1.1.0",
 		"runtime_id":     "loop-system-test",
@@ -180,7 +187,7 @@ func systemPlanningState(t *testing.T, root, phase string, revision int) map[str
 			"id":          "REQ-039",
 			"path":        "docs/requirements/REQ-039.md",
 			"version":     "v1.0.0",
-			"sha256":      zeroSHA,
+			"sha256":      reqSHA,
 			"status":      "locked",
 			"approved_by": "user",
 			"approved_at": "2026-07-30T00:00:00Z",

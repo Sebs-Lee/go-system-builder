@@ -468,19 +468,22 @@ sequenceDiagram
     alt ready and fingerprints match
         Main->>RT: agent-event understanding_approved (CAS rev+1)
         Main->>Agent: send activation envelope
-        Main->>RT: agent-event activated (CAS rev+1)
+        Main->>RT: agent-event activation_sent (CAS rev+1; runtime verifies approved_readback_sha256)
     else conflict or missing
         Main->>Agent: understanding_rejected -> back to reading
     end
     rect rgb(232, 245, 233)
-        Note over Agent: Phase two: bounded write
-        Agent->>Out: write assigned report
+        Note over Agent: Phase two: bounded write (in the assignment worktree)
+        Main->>RT: agent-event work_started
+        Agent->>Out: write assigned output
         Agent->>Hook: PreToolUse Write
-        Hook->>RT: Agent=activated AND path in scope AND fingerprint matches
+        Hook->>RT: Agent=working AND path in scope AND fingerprint matches
         Hook-->>Agent: allow
         Agent-->>Main: completion_report
     end
-    Main->>RT: consume completion -> decide TR-003 / TR-004 / TR-005
+    Main->>RT: runtime task-complete (one atomic Builder Result: envelope + Agent reported + TASK review + evidence)
+    Main->>Hook: SubagentStop -> Inspect (scope/locked/merge-tree/required checks) -> non-squash merge -> verified checkpoint (or `runtime task-integrate` explicitly when the payload cannot identify the assignment)
+    Main->>RT: the stage's own gate evaluates the batch (S6: TR-006 / TR-007)
 ```
 
 The effective activation scope is the intersection of six conditions:
@@ -759,8 +762,7 @@ register. For example, TR-006 can be recovered with:
 ```bash
 .claude/bin/loop-harness runtime transition \
   --id TR-006 --expected-revision N --actor orchestrator \
-  --evidence builder_report_record=<builder-report-id-or-path> \
-  --evidence team_manifest_record=<team-manifest-id-or-path>
+  --evidence builder_report_record=<builder-report-id-or-path>
 ```
 
 If a binding is missing, retry with the command shape shown in the error and
@@ -769,6 +771,10 @@ accepted registered kinds and current candidate evidence. Do not register the
 `*_record` slot name; use one of the accepted persisted kinds shown by the
 Manual or explain command.
 
-Other runtime verbs: `register-workgroup`, `agent-event`, `bug-event`, and
-`human-decision`. Run
-`loop-harness runtime` with no subcommand to list them.
+Other runtime verbs: `register-workgroup`, `agent-event`, `task-complete`
+(canonical Builder Result registration — one command replaces the
+`agent-event completion_reported` + `evidence add` dual write),
+`task-integrate` (explicit worktree integration: Inspect → non-squash
+merge → verified checkpoint, identical to the SubagentStop path),
+`bug-event`, `evidence`, `transition`, `change`, and `human-decision`.
+Run `loop-harness runtime` with no subcommand for the full list.

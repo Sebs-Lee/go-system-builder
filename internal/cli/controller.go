@@ -53,7 +53,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		Automation: []string{
 			"do not call loop-harness for normal continuation",
 			"treat this Hook packet as the Controller checkpoint",
-			"use loop-harness manually only for initialization/binding, runtime reconcile after integrity failure, rollback/rollover, or release Gateway",
+			"use loop-harness manually only for initialization/binding, runtime reconcile after integrity failure, rollback/rollover, release Gateway, or the explicit worktree integration follow-up (`runtime task-integrate`)",
 		},
 		HumanRequired: next.HumanRequired,
 		Recovery:      []string{"continue from this packet's Stage and Next", "read " + next.ProtocolRef, "if blocked or unclear read " + loopManualRef},
@@ -878,6 +878,12 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 	}
 	inspectResult, err := integration.Inspect(ctx, inspectReq, integration.InspectConfig{
 		SkipCompletionCheck: false,
+		// L3-S6 §7.4: required checks come from the assignment's manifest
+		// declaration and run for real via the shell runner — a `verified`
+		// checkpoint without an executed check set is no longer reachable
+		// from this wiring.
+		CheckRunner:    integration.CommandCheckRunner,
+		RequiredChecks: assignment.RequiredChecks,
 	})
 	if err != nil {
 		guidance := buildGuidance(root, snapshot.State, event, input)
@@ -945,6 +951,11 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 		Root:      root,
 		GitRoot:   root,
 		RuntimeID: loaded.PolicyContext.RuntimeID,
+		// Same real-check wiring as Inspect — the verified transition in
+		// the checkpoint state machine runs the assignment's declared
+		// checks instead of advancing on an empty list.
+		CheckRunner:    integration.CommandCheckRunner,
+		RequiredChecks: assignment.RequiredChecks,
 	})
 	if err != nil {
 		// Dirty / conflict preserve paths still return a checkpoint; surface
@@ -1578,12 +1589,17 @@ func persistSubagentCheckpoint(root, statePath, journalPath string, snapshot run
 	// strings so the durable Milestone projection stays schema-valid
 	// while still preserving the worktree + branch identity.
 	integrationEntries := []string{
+		fmt.Sprintf("assignment_id=%s", inspection.AssignmentID),
+		fmt.Sprintf("task_id=%s", inspection.TaskID),
 		fmt.Sprintf("worktree=%s", inspection.WorktreePath),
 		fmt.Sprintf("branch=%s", inspection.SourceBranch),
 		fmt.Sprintf("target_branch=%s", targetBranch),
 		fmt.Sprintf("status=%s", integratedState),
 		fmt.Sprintf("source_head=%s", inspection.SourceHead),
 		fmt.Sprintf("merge_base=%s", inspection.MergeBase),
+	}
+	if len(inspection.OutOfScopeDiff) > 0 {
+		integrationEntries = append(integrationEntries, fmt.Sprintf("out_of_scope=%s", strings.Join(inspection.OutOfScopeDiff, ",")))
 	}
 	if len(inspection.LockedDiff) > 0 {
 		integrationEntries = append(integrationEntries, fmt.Sprintf("locked_paths=%s", strings.Join(inspection.LockedDiff, ",")))

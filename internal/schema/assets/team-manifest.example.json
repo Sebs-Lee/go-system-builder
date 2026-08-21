@@ -121,11 +121,18 @@
       "skill_refs": ["code-quality"],
       "read_paths": [".claude/hooks/", "tests/"],
       "write_paths": ["docs/reports/qa/QA-001.md"],
+      "required_checks": [
+        "go test ./internal/... ./tests/...",
+        "locked:docs/contracts/BE-002-runtime-validator.md"
+      ],
       "output_paths": ["docs/reports/qa/QA-001.md"],
       "depends_on": [],
       "reuse_decision": "create",
       "grouping_rationale": "One module and one code-quality conclusion.",
-      "status": "planned"
+      "status": "planned",
+      "worktree_path": ".worktrees/assignment-qa-module-code",
+      "branch": "wt/assignment-qa-module-code",
+      "target_branch": "develop"
     },
     {
       "assignment_id": "assignment-qa-reuse",

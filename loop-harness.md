@@ -4,9 +4,9 @@
 > relevant section before calling `forward`; verify each bullet
 > before requesting the harness to advance.
 
-- **Path**: `loop-harness.md`
+- **Path**: `.claude/bin/loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `a68261695616afdde7978a814910eaa3412a2b5da89fd2b6cb40be1aff7d1b54`
+- **Loop definition SHA-256**: `31bd9f558e818c78ea927863fe28e65ba338fd69609ff330251517f6e23930c5`
 
 ---
 
@@ -18,8 +18,9 @@ The Hook is an event trigger for the Loop Controller, not only a guard. On `Sess
 2. Read the linked `docs/agent-protocol.md#sN` section before acting.
 3. If blocked or the Runtime is unclear, read this Manual. Use `runtime reconcile` only when the Hook reports an integrity/CAS recovery condition; do not call `status`/`next` during normal continuation. When the live Quality Gate checklist is unclear, run `loop-harness ready` (diagnostics; never hand-push a Transition from it). `doctor` is schema/manual/policy_ref/metrics only — not stage readiness.
 4. Execute the one missing deliverable/evidence named by Hook/`ready` `missing[]`; do not invent a parallel lifecycle.
-5. For `SubagentStop`, complete the report, worktree review, merge-back to the current `develop` integration branch and `completion_ack` checklist before acknowledging the stop. For `TeammateIdle`, re-wake the same teammate.
-6. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
+5. For `SubagentStop`, complete the report, worktree review, merge-back to the current `develop` integration branch and `completion_ack` checklist before acknowledging the stop. For `TeammateIdle`, re-wake the same teammate. The identical integration chain is available explicitly via `runtime task-integrate --assignment-id <id>` when the automatic SubagentStop payload cannot identify the assignment.
+6. Builder completion is registered with `runtime task-complete` — one atomic command (message validation + evidence envelope derivation + Agent/TASK advance + evidence registration); the legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope. Before the Builder writes, create its worktree (`git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop`) and record `worktree_path`/`branch`/`target_branch` on the manifest row — SubagentStop integration requires them.
+7. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
 
 The persisted `.claude/loop-state.json` `milestone` is a recovery cache, not a second state machine. `docs/loop-definition.json` and the Transition Engine remain the authority for legal lifecycle changes.
 
@@ -49,7 +50,7 @@ Human approval records release authorization only. Harness has no squash merge, 
 - [`TR-003`](#tr-003) document_verification → building — Lock only the exact contract and task versions jointly verified.
 - [`TR-004`](#tr-004) document_verification → planning — Non-REQ document findings return to planning.
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
-- [`TR-006`](#tr-006) building → verification — Start a complete review round after all activated Builders report.
+- [`TR-006`](#tr-006) building → verification — Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint.
 - [`TR-007`](#tr-007) building → planning — Non-REQ execution conflicts return through planning and document verification.
 - [`TR-008`](#tr-008) verification → bug_resolution — Any blocking Delivery, QA, or E2E Browser finding means the REQ batch is incomplete and must enter S8 investigation before repair.
 - [`TR-009`](#tr-009) verification → acceptance — Acceptance requires one complete, current and blocker-free review round.
@@ -162,7 +163,7 @@ _document_verification → planning_
 
 Non-REQ document findings return to planning.design for reworking the failing artifacts.
 
-- `req_baseline_unchanged` [evidence_attestation] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
+- `req_baseline_unchanged` [semantic_check] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
 
 Evidence: `document_review_record`
 
@@ -196,20 +197,16 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _building → verification_
 
-Start a complete review round after all activated Builders report.
+Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint. S7 verification planning starts from the real integrated diff at its own entry; the building stage no longer demands S7 team-manifest evidence it cannot legitimately produce.
 
-- `all_builder_tasks_in_review` [evidence_attestation] — Every TASK assignment in the current Builder workgroup has reached at least the `reported` state in runtime.entities.tasks[].state.
-- `builder_reports_complete` [evidence_attestation] — Each Builder assignment's runtime record references a valid completion_report evidence item with a matching fingerprint.
-- `verification_team_manifest_complete` [evidence_attestation] — A Delivery Verifier team manifest is registered in runtime.entities.teams[] with all mandatory responsibilities (VER-REQ-GAP, VER-SPEC-GAP, VER-MODULE-COMPLETE) plus any risk-triggered responsibilities.
+_No guards._
 
-Evidence: `builder_report_record`, `team_manifest_record`
+Evidence: `builder_report_record`
 
 Evidence bindings (copy into `runtime transition`):
 
 - `builder_report_record`: `--evidence builder_report_record=<reference>`
   Accepted kinds: `builder_report`, `agent_completion`
-- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
-  Accepted kinds: `builder_report`, `team_manifest`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-006` to inspect current candidates.
 
@@ -219,7 +216,7 @@ _building → planning_
 
 Non-REQ execution conflicts return through planning and document verification.
 
-- `req_baseline_unchanged` [evidence_attestation] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
+- `req_baseline_unchanged` [semantic_check] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
 
 Evidence: `change_impact_record`
 
@@ -331,7 +328,7 @@ _bug_resolution → planning_
 
 Repair-driven specification changes return through planning and document verification.
 
-- `req_baseline_unchanged` [evidence_attestation] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
+- `req_baseline_unchanged` [semantic_check] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
 
 Evidence: `change_impact_record`, `repair_record`
 
@@ -522,7 +519,7 @@ _bug_resolution → planning_
 
 Finding-level specification rework (S8) routes back to planning.design for a new TR-002 cycle; complements TR-013 which handles repair-level spec change.
 
-- `req_baseline_unchanged` [evidence_attestation] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
+- `req_baseline_unchanged` [semantic_check] — The locked REQ's sha256 recorded in runtime.bound_req still matches the file at runtime.bound_req.path, so the rework loop cannot silently advance on a changed REQ.
 
 Evidence: `bug_batch_record`, `change_impact_record`
 

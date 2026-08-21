@@ -1,13 +1,13 @@
 package qualitygate
 
 import (
-	"os"
-	"path"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path"
 	"sort"
 	"strings"
 
@@ -196,6 +196,19 @@ type evidenceEnvelope struct {
 	RequestedEvent         string       `json:"requested_event"`
 	InvalidatedBy          string       `json:"invalidated_by"`
 	TaskID                 string       `json:"task_id"`
+	// Builder-result content (L3-S6 §7.3): the gate consumes the completion
+	// facts instead of counting envelopes by task_id alone.
+	Checks          []envelopeCheck `json:"checks,omitempty"`
+	ChangedPaths    []string        `json:"changed_paths,omitempty"`
+	ScopeDeviations []string        `json:"scope_deviations,omitempty"`
+}
+
+// envelopeCheck mirrors the completion-report checkResult shape
+// (name/command/result/evidence_ref) the Builder submits.
+type envelopeCheck struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Result  string `json:"result"`
 }
 
 func evaluatePlanningDesign(input Input, result Evaluation, spec GateSpec) Evaluation {
@@ -331,7 +344,11 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 	if result.Status == StatusSatisfied && result.GateID == "GATE-DOCUMENT-PASS" {
 		applyDocumentPassIndependence(input, &result, documents)
 	}
-	if result.Status == StatusSatisfied && result.GateID == "GATE-BUILDER-BATCH-READY" {
+	if result.GateID == "GATE-BUILDER-BATCH-READY" {
+		// Unconditional: the exact-set evaluation runs even when the base
+		// requirements are short, so the missing matrix names each
+		// unproven TASK (and a lost/empty batch registry) instead of only
+		// the aggregate evidence token.
 		applyBuilderBatchCompleteness(input, &result)
 	}
 	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, documents, result.EvidenceRefs)
@@ -668,23 +685,51 @@ func evidenceEnvelopesByID(input Input, ids []string) []evidenceEnvelope {
 	return envelopes
 }
 
+// applyBuilderBatchCompleteness evaluates GATE-BUILDER-BATCH-READY over the
+// TR-003 exact execution batch — the current-generation task documents
+// registered by register_execution_batch — instead of scanning runtime task
+// states (L3-S6 §8.2). A task registered straight into `reviewed` (or left
+// in `candidate`) is inside the registered batch and therefore cannot slip
+// the completeness check. Per TASK the gate proves:
+//
+//  1. a qualified completion_report envelope bound to that task exists;
+//  2. every check recorded in the envelope passed (non-pass results block);
+//  3. the envelope declares no scope deviations;
+//  4. a durable worktree integration checkpoint with task_id bound to that
+//     task reached `verified` or beyond.
+//
+// An empty registered batch is itself not_ready: TR-003 refuses to lock an
+// empty batch, so reaching building without one means the batch registry
+// was lost, not that zero work suffices.
 func applyBuilderBatchCompleteness(input Input, result *Evaluation) {
-	completed := make(map[string]struct{})
+	batch := executionBatchTasks(input.Snapshot.State)
+	if len(batch) == 0 {
+		result.Missing = append(result.Missing, "batch:execution_batch_empty")
+		result.Status = StatusNotReady
+		return
+	}
+	completions := make(map[string]evidenceEnvelope)
 	for _, envelope := range evidenceEnvelopesByID(input, result.EvidenceRefs) {
 		if evidenceKindsEqual("completion_report", envelope.Kind) && envelope.TaskID != "" {
-			completed[envelope.TaskID] = struct{}{}
+			completions[envelope.TaskID] = envelope
 		}
 	}
-	entities, _ := input.Snapshot.State["entities"].(map[string]any)
-	tasks, _ := entities["tasks"].([]any)
-	for _, item := range tasks {
-		task, _ := item.(map[string]any)
-		if task == nil || !activatedTaskState(stringValue(task["state"])) {
-			continue
-		}
-		taskID := stringValue(task["id"])
-		if _, ok := completed[taskID]; !ok {
+	integrated := verifiedIntegrationTaskIDs(input)
+	for _, taskID := range batch {
+		envelope, ok := completions[taskID]
+		if !ok {
 			result.Missing = append(result.Missing, "evidence:completion_report:"+taskID)
+		}
+		if ok {
+			if failing := failingEnvelopeChecks(envelope); len(failing) > 0 {
+				result.Missing = append(result.Missing, "checks:"+taskID+":"+strings.Join(failing, ","))
+			}
+			if len(envelope.ScopeDeviations) > 0 {
+				result.Missing = append(result.Missing, "scope_deviations:"+taskID+":"+strings.Join(envelope.ScopeDeviations, ","))
+			}
+		}
+		if !integrated[taskID] {
+			result.Missing = append(result.Missing, "integration_checkpoint:"+taskID)
 		}
 	}
 	result.Missing = sortedUnique(result.Missing)
@@ -693,13 +738,84 @@ func applyBuilderBatchCompleteness(input Input, result *Evaluation) {
 	}
 }
 
-func activatedTaskState(state string) bool {
-	switch state {
-	case "in_progress", "review", "done":
-		return true
-	default:
-		return false
+// executionBatchTasks returns the TR-003 exact execution batch: the task
+// documents registered at the current baseline generation. Order is the
+// registration order so the missing matrix is reproducible.
+func executionBatchTasks(state map[string]any) []string {
+	generation := nestedInt(state, "baseline", "generation")
+	raw, _ := state["documents"].([]any)
+	var batch []string
+	for _, item := range raw {
+		document, _ := item.(map[string]any)
+		if document == nil || stringValue(document["kind"]) != "task" {
+			continue
+		}
+		if intValue(document["generation"]) != generation {
+			continue
+		}
+		if id := stringValue(document["id"]); id != "" {
+			batch = append(batch, id)
+		}
 	}
+	return batch
+}
+
+// verifiedIntegrationTaskIDs loads every durable worktree checkpoint for
+// the current runtime + generation and returns the task IDs whose state
+// reached `verified` or beyond. The checkpoint files are the Integrator's
+// authoritative record; a FileView without directory listing makes them
+// unobservable, which is surfaced as missing per task by the caller (fail
+// closed, not silently skipped).
+func verifiedIntegrationTaskIDs(input Input) map[string]bool {
+	integrated := make(map[string]bool)
+	lister, ok := input.Files.(fileDirLister)
+	if !ok || input.Files == nil {
+		return integrated
+	}
+	runtimeID, _ := input.Snapshot.State["runtime_id"].(string)
+	generation := nestedInt(input.Snapshot.State, "baseline", "generation")
+	dir := path.Join(".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation), "worktree")
+	entries, err := lister.ReadDir(dir)
+	if err != nil {
+		return integrated
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		data, err := input.Files.ReadFile(path.Join(dir, entry.Name(), "checkpoint.json"))
+		if err != nil {
+			continue
+		}
+		var checkpoint struct {
+			TaskID string `json:"task_id"`
+			State  string `json:"state"`
+		}
+		if json.Unmarshal(data, &checkpoint) != nil || checkpoint.TaskID == "" {
+			continue
+		}
+		switch checkpoint.State {
+		case "verified", "acknowledged", "cleanup_pending", "complete":
+			integrated[checkpoint.TaskID] = true
+		}
+	}
+	return integrated
+}
+
+// failingEnvelopeChecks names the envelope checks whose result is not pass
+// (fail / blocked / not_run all leave the closing contract unproven).
+func failingEnvelopeChecks(envelope evidenceEnvelope) []string {
+	var failing []string
+	for _, check := range envelope.Checks {
+		if check.Result != "pass" {
+			label := check.Name
+			if label == "" {
+				label = check.Command
+			}
+			failing = append(failing, label+"="+check.Result)
+		}
+	}
+	return failing
 }
 
 func sortedUnique(values []string) []string {

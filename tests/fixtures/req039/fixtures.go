@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -192,7 +193,21 @@ func envelopeReviewRound(envelope map[string]any) int {
 // BaseState returns a schema-valid loop-state skeleton for Hook-driven tests.
 func BaseState(t *testing.T, root, lifecycleState, phase string, revision int) map[string]any {
 	t.Helper()
-	const zeroSHA = "0000000000000000000000000000000000000000000000000000000000000000"
+	// req_baseline_unchanged is a real fingerprint guard (L3-S6 P0-4): the
+	// bound REQ file must exist with bytes matching the pinned sha. Write
+	// a stub REQ when the fixture root has none so every seeded state is
+	// fingerprint-consistent.
+	reqRel := "docs/requirements/REQ-039-loop-control-plane.md"
+	reqBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reqRel)))
+	if err != nil {
+		reqBytes = []byte("# REQ-039\n> Status: locked\n> Version: v2.0.0\n")
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, filepath.FromSlash(reqRel))), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(reqRel)), reqBytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	defSHA, policySHA := definitionRefs(t, root)
 	stage := stageFor(lifecycleState, phase)
 	return map[string]any{
@@ -242,9 +257,9 @@ func BaseState(t *testing.T, root, lifecycleState, phase string, revision int) m
 		},
 		"bound_req": map[string]any{
 			"id":          "REQ-039",
-			"path":        "docs/requirements/REQ-039-loop-control-plane.md",
+			"path":        reqRel,
 			"version":     "v2.0.0",
-			"sha256":      zeroSHA,
+			"sha256":      Sha256Hex(reqBytes),
 			"status":      "locked",
 			"approved_by": "user",
 			"approved_at": "2026-07-30T00:00:00Z",
@@ -548,6 +563,36 @@ func SeedBuilderBatchReady(t *testing.T, root string, state map[string]any) {
 	add("ev-completion-1", "agent_completion", "BUILD-WORK-PACKAGE", "completed", "TASK-039-01")
 	add("ev-completion-2", "agent_completion", "BUILD-WORK-PACKAGE", "completed", "TASK-039-02")
 	add("ev-team", "builder_report", "Orchestrator", "complete", "")
+	// L3-S6 P0-1: GATE-BUILDER-BATCH-READY verifies a durable integration
+	// checkpoint per batch TASK (task_id + state>=verified) — seed both so
+	// the satisfied path reflects the real gate contract.
+	runtimeID := runtimeIDFromState(state)
+	for index, taskID := range []string{"TASK-039-01", "TASK-039-02"} {
+		assignmentID := fmt.Sprintf("assignment-batch-%02d", index+1)
+		checkpointDir := filepath.Join(root, ".claude", "evidence", runtimeID, "g1", "worktree", assignmentID)
+		if err := os.MkdirAll(checkpointDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		checkpoint := map[string]any{
+			"assignment_id":       assignmentID,
+			"task_id":             taskID,
+			"source_branch":       "wt/" + assignmentID,
+			"target_branch":       "develop",
+			"baseline_generation": 1,
+			"state":               "verified",
+			"revision":            1,
+			"worktree_path":       filepath.Join(root, ".worktrees", assignmentID),
+			"idempotency_key":     assignmentID + "|src|develop|1",
+			"updated_at":          "2026-07-30T00:00:00Z",
+		}
+		data, err := json.Marshal(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(checkpointDir, "checkpoint.json"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	state["documents"] = documents
 	state["evidence"] = evidence
 	state["entities"] = map[string]any{

@@ -495,7 +495,8 @@
             },
             "approved_readback_sha256": {
               "type": "string",
-              "pattern": "^[a-f0-9]{64}$"
+              "pattern": "^[a-f0-9]{64}$",
+              "description": "sha256 of the exact readback message file bytes registered at readback_submitted — compute with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux). The runtime verifies this against the registered file at activation_sent; mismatch rejects the activation. In the bundled examples the value is the hash of the readback_response example serialized as compact JSON (encoding/json default)."
             },
             "approval_evidence_id": {
               "type": "string",

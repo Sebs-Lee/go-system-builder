@@ -1181,18 +1181,13 @@
         "orchestrator",
         "hook_controller"
       ],
-      "guards": [
-        "all_builder_tasks_in_review",
-        "builder_reports_complete",
-        "verification_team_manifest_complete"
-      ],
+      "guards": [],
       "actions": [
         "start_review_round",
         "set_verification_phase_delivery"
       ],
       "required_evidence": [
-        "builder_report_record",
-        "team_manifest_record"
+        "builder_report_record"
       ],
       "on_guard_failure": "warn_and_retry",
       "auto_trigger": {
@@ -1203,7 +1198,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Start a complete review round after all activated Builders report."
+      "description": "Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint. S7 verification planning starts from the real integrated diff at its own entry; the building stage no longer demands S7 team-manifest evidence it cannot legitimately produce."
     },
     {
       "id": "TR-007",

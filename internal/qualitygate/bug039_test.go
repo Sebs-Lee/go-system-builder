@@ -149,7 +149,7 @@ func TestGatesSatisfyWithEmptySubjectRefs(t *testing.T) {
 	}
 }
 
-func TestBuilderBatchGateAcceptsShortKindTeamManifest(t *testing.T) {
+func TestBuilderBatchGateDropsTeamManifestRequirement(t *testing.T) {
 	catalog, err := transition.LoadCatalog("../..")
 	if err != nil {
 		t.Fatalf("LoadCatalog: %v", err)
@@ -168,8 +168,12 @@ func TestBuilderBatchGateAcceptsShortKindTeamManifest(t *testing.T) {
 	if result.Status != StatusNotReady {
 		t.Fatalf("status = %q, want not_ready (missing second task completion)", result.Status)
 	}
-	if len(result.EvidenceRefs) != 2 {
-		t.Fatalf("evidence refs = %#v, want team_manifest + completion", result.EvidenceRefs)
+	// L3-S6 §8.3: the S6 exit consumes completion evidence only. The
+	// team_manifest_record requirement is gone — building cannot
+	// legitimately register the S7 workgroup, so demanding its evidence
+	// here forced placeholder records.
+	if len(result.EvidenceRefs) != 1 || result.EvidenceRefs[0] != "ev-completion-1" {
+		t.Fatalf("evidence refs = %#v, want only the completion envelope", result.EvidenceRefs)
 	}
 }
 

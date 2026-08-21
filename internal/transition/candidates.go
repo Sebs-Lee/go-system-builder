@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/missingtokens"
 )
 
 // EvidenceCandidate is a current Runtime evidence artifact that can satisfy
@@ -26,16 +27,25 @@ type EvidenceCandidate struct {
 // opens or writes the Runtime pair; callers decide how the state was loaded.
 func RenderTransitionWithCandidates(def *LoopDefinition, id, root string, state map[string]any) string {
 	body := RenderTransition(def, id)
-	if body == "" || state == nil {
-		return body
-	}
 	spec, ok := findTransitionSpec(def, id)
-	if !ok || len(spec.RequiredEvidence) == 0 {
+	if !ok || state == nil {
 		return body
 	}
 
 	var out strings.Builder
 	out.WriteString(body)
+	// Gates with tokenized missing matrices get their legend up front, so
+	// the agent can read the vocabulary before the first not_ready packet
+	// (L3-S6 §9.3).
+	if spec.AutoTrigger != nil && spec.AutoTrigger.QualityGateID != "" {
+		if legend := missingtokens.RenderGateTokenLegend(spec.AutoTrigger.QualityGateID); legend != "" {
+			out.WriteString(legend)
+			out.WriteString("\n\n")
+		}
+	}
+	if len(spec.RequiredEvidence) == 0 {
+		return out.String()
+	}
 	out.WriteString("Current Runtime evidence candidates:\n\n")
 	catalog := evidence.DefaultCatalog()
 	for _, slot := range spec.RequiredEvidence {

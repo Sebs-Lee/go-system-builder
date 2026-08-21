@@ -158,18 +158,32 @@ func TestExplainListsEligibleCurrentEvidenceCandidates(t *testing.T) {
 		"status: valid",
 		"baseline_generation: 2",
 		"review_round: 3",
-		"team_manifest_record",
-		"ev-team-current",
-		teamPath,
-		"team_manifest",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("explain output must contain %q, got:\n%s", want, output)
 		}
 	}
-	for _, unwanted := range []string{"ev-builder-stale", "ev-builder-invalid"} {
+	// L3-S6 §8.3: TR-006 no longer requires team_manifest_record — the S7
+	// workgroup cannot be registered during building, so demanding its
+	// evidence here forced placeholder records.
+	if strings.Contains(output, "team_manifest_record") {
+		t.Fatalf("explain output must not list team_manifest_record for TR-006, got:\n%s", output)
+	}
+	for _, unwanted := range []string{"ev-builder-stale", "ev-builder-invalid", "ev-team-current"} {
 		if strings.Contains(output, unwanted) {
 			t.Fatalf("ineligible candidate %q must not be listed, got:\n%s", unwanted, output)
+		}
+	}
+	// L3-S6 complexity pass: explain carries the gate's missing-token
+	// legend up front so the vocabulary is readable before the first
+	// not_ready packet.
+	for _, want := range []string{
+		"GATE MISSING-TOKEN LEGEND (GATE-BUILDER-BATCH-READY):",
+		"`integration_checkpoint:<TASK>`",
+		"run `runtime task-integrate --assignment-id <id>`",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("explain TR-006 must carry the token legend (%q missing), got:\n%s", want, output)
 		}
 	}
 }

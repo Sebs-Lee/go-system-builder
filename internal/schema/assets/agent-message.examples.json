@@ -195,7 +195,7 @@
     "occurred_at": "2026-06-20T00:02:00Z",
     "activation_id": "act-agent-builder-001",
     "approved_readback_message_id": "msg-readback-response-001",
-    "approved_readback_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "approved_readback_sha256": "82e24104abf2f831d9800dafc752c4f40ea6984f28e57c1b878cbcd47f029eb9",
     "approval_evidence_id": "evidence-understanding-001",
     "documents": [
       {
