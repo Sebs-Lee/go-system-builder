@@ -179,7 +179,7 @@ func TestExplainListsEligibleCurrentEvidenceCandidates(t *testing.T) {
 	// not_ready packet.
 	for _, want := range []string{
 		"GATE MISSING-TOKEN LEGEND (GATE-BUILDER-BATCH-READY):",
-		"`integration_checkpoint:<TASK>`",
+		"`integration_checkpoint:<id>`",
 		"run `runtime task-integrate --assignment-id <id>`",
 	} {
 		if !strings.Contains(output, want) {

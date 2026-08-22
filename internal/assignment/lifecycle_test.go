@@ -18,7 +18,7 @@ func TestAdvanceAgentRequiresReadbackApprovalBeforeActivation(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
-	state := activeState(t, root, "verification", "delivery", 7)
+	state := activeState(t, root, "verification", "running", 7)
 	entities := state["entities"].(map[string]any)
 	entities["agents"] = []any{map[string]any{
 		"id": "agent-ver-1", "role": "delivery-verifier", "state": "reading",
@@ -64,7 +64,7 @@ func TestAdvanceAgentRejectsActivationBeforeApproval(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
-	state := activeState(t, root, "verification", "delivery", 7)
+	state := activeState(t, root, "verification", "running", 7)
 	state["entities"].(map[string]any)["agents"] = []any{map[string]any{
 		"id": "agent-ver-1", "role": "delivery-verifier", "state": "reading",
 		"task_ids": []any{"TASK-012"}, "team_id": "workgroup-delivery-round-1",

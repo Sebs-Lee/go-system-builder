@@ -257,7 +257,6 @@ var defaultRegisteredKinds = []string{
 	"agent_activation",
 	"agent_completion",
 	"agent_readback",
-	"angle_declaration",
 	"bug",
 	"builder_report",
 	"change_impact",
@@ -272,6 +271,9 @@ var defaultRegisteredKinds = []string{
 	"planning_task",
 	"qa_review",
 	"release_audit",
+	"review_result",
+	"finding",
+	"observation_batch",
 	"team_manifest",
 	"targeted_reverification",
 }
@@ -281,7 +283,6 @@ var defaultRegisteredKinds = []string{
 // does not silently make untrusted external evidence importable.
 var defaultImportableKinds = []string{
 	"acceptance",
-	"angle_declaration",
 	"bug",
 	"builder_report",
 	"change_impact",
@@ -296,6 +297,9 @@ var defaultImportableKinds = []string{
 	"planning_task",
 	"qa_review",
 	"release_audit",
+	"review_result",
+	"finding",
+	"observation_batch",
 	"targeted_reverification",
 }
 
@@ -358,10 +362,14 @@ var defaultSlots = map[string]SlotSpec{
 		AcceptedKinds: []string{"e2e_review", "e2e_review_record"},
 	},
 	"review_result_record": {
-		AcceptedKinds: []string{"delivery_review", "qa_review", "e2e_review", "review_result_record"},
+		AcceptedKinds:  []string{"review_result", "delivery_review", "qa_review", "e2e_review", "review_result_record"},
+		PreferredKinds: []string{"review_result"},
 	},
 	"finding_record": {
-		AcceptedKinds: []string{"bug", "finding_record"},
+		AcceptedKinds: []string{"finding", "bug", "finding_record"},
+	},
+	"observation_batch_record": {
+		AcceptedKinds: []string{"observation_batch", "observation_batch_record"},
 	},
 	"bug_batch_record": {
 		AcceptedKinds: []string{"bug", "bug_batch_record"},

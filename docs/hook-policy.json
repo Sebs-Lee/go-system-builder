@@ -7,7 +7,7 @@
     "enforce": {"default": true, "description": "Default deterministic guardrails."},
     "audit": {"default": false, "description": "Explicit local development diagnostics."}
   },
-  "protected_events": ["PreToolUse", "SessionStart", "SubagentStart", "SubagentStop", "TeammateIdle", "PreCompact"],
+  "protected_events": ["PreToolUse", "SessionStart", "SubagentStart", "SubagentStop", "TeammateIdle", "PreCompact", "PostToolUse"],
   "protected_paths": [
     ".claude/settings.json", ".claude/agents/", "docs/hook-policy.json",
     "docs/loop-definition.json"

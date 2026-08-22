@@ -26,6 +26,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/releasegraph"
+	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -109,7 +110,6 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  impact      Evidence invalidation analysis")
 	fmt.Fprintln(stdout, "  verification Verification round evaluators")
 	fmt.Fprintln(stdout, "  release-graph Release-graph topological assertions")
-	fmt.Fprintln(stdout, "  angles      Module-level angles registry (list/commit/retract/revive/audit)")
 	fmt.Fprintln(stdout, "  e2e-coverage  Score E2E scenario inventory fidelity (REQ-039)")
 	fmt.Fprintln(stdout, "  scenario      Generate and validate module fact-driven scenario packages")
 	fmt.Fprintln(stdout, "  manual      Render the gate-level manual")
@@ -120,7 +120,7 @@ func printTopLevelUsage(stdout io.Writer) {
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|angles|e2e-coverage|scenario|contracts|manual|explain>")
+		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|capture|e2e-coverage|scenario|contracts|manual|explain>")
 		fmt.Fprintln(stderr, "manual:  see .claude/bin/loop-harness.md (gate-level specification)")
 		fmt.Fprintln(stderr, "explain: loop-harness explain <TR-xxx> (per-transition details)")
 		return 2
@@ -162,8 +162,6 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runManual(args[1:], stdout, stderr)
 	case "explain":
 		return runExplain(args[1:], stdout, stderr)
-	case "angles":
-		return runAngles(args[1:], stdout, stderr)
 	case "e2e-coverage":
 		return runE2ECoverage(args[1:], stdout, stderr)
 	case "scenario":
@@ -172,6 +170,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runContracts(args[1:], stdout, stderr)
 	case "s6":
 		return runS6Command(args[1:], stdout, stderr)
+	case "capture":
+		return runCapture(args[1:], stdout, stderr)
+	case "s7":
+		return runS7Command(args[1:], stdout, stderr)
 	case "tasks":
 		return runTasks(args[1:], stdout, stderr)
 	default:
@@ -480,21 +482,19 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "document_verification":
 		return "S5", "document-verification", "complete independent document verification"
 	case "building":
-		return "S6", "two-phase-activation", "complete Builder assignments (register each result via `runtime task-complete`; SubagentStop integrates the worktree)"
+		return "S6", "agent-dispatch", "complete Builder assignments (register each result via `runtime task-complete`; SubagentStop integrates the worktree)"
 	case "verification":
 		switch phase {
-		case "delivery":
-			return "S7", "team-planning", "complete Delivery Verifier responsibilities"
-		case "qa":
-			return "S7", "team-planning", "complete QA responsibilities"
-		case "e2e_browser":
-			return "S7", "e2e-browser-testing", "complete E2E browser responsibilities via the e2e-browser workgroup"
-		case "clean_round_evaluation":
-			return "S7", "clean-round-evaluation", "evaluate the complete clean round (guards + evidence)"
-		case "clean_round_passed":
-			return "S7", "acceptance-and-handoff", "promote clean round into acceptance per TR-009"
+		case "planned":
+			return "S7", "loop-orchestration", "scaffold the ReviewPlan via `loop-harness s7 draft --out plan.json`, fill the TODO oracles, and register via `runtime review-plan --file plan.json`"
+		case "running", "cannot_clean", "discovery_draining":
+			return "S7", "team-planning", "dispatch reviewer workgroups via `runtime register-workgroup` and consume each Assignment's Canonical ReviewResult via `runtime review-result submit` (see `loop-harness s7 status`)"
+		case "observation_sealed":
+			return "S7", "bug-resolution", "hand the sealed ObservationBatch to S8 via `runtime transition --id TR-008`"
+		case "clean":
+			return "S7", "acceptance-and-handoff", "promote the machine CleanRound into acceptance via `runtime transition --id TR-009`"
 		}
-		return "S7", "loop-orchestration", "recover the verification sub-phase"
+		return "S7", "loop-orchestration", "recover the verification round (see `loop-harness s7 status`)"
 	case "bug_resolution":
 		switch phase {
 		case "investigation":
@@ -923,7 +923,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|task-complete|task-integrate|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|task-complete|task-integrate|review-plan|review-result|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -1160,11 +1160,17 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, formatFailure("runtime agent-event", err))
 			return 1
 		}
-		// The activation moment is where the worktree discipline is needed
-		// next; print the next actions instead of letting the agent discover
-		// them from a late SubagentStop failure (L3-S6 complexity pass).
+		// The activation moment is where the next-step discipline is needed;
+		// print role-aware next actions instead of letting the agent discover
+		// them from a late failure (L3-S6/S7 complexity passes). Reviewers
+		// have no worktree and submit via review-result; Builders integrate
+		// via worktree + task-complete.
 		if *event == "activation_sent" {
-			fmt.Fprintln(stderr, "activated. next: (1) create the worktree if absent — `git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop` — and record worktree_path/branch/target_branch on the assignment's workgroup manifest row (or .claude/assignments/<assignment-id>.json); (2) advance `work_started` when the Builder begins writing; (3) register completion with `runtime task-complete`")
+			if reviewerRole(next.State, *agentID) {
+				fmt.Fprintln(stderr, "activated. next: (1) advance `work_started` when you begin; (2) write the Canonical ReviewResult (claim_results must equal the assignment's Claim set exactly; every fail Claim needs one Finding with a real encounter — see review-result.example.json) and submit via `runtime review-result submit --assignment-id <id> --result <file>`")
+			} else {
+				fmt.Fprintln(stderr, "activated. next: (1) create the worktree if absent — `git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop` — and record worktree_path/branch/target_branch on the assignment's workgroup manifest row (or .claude/assignments/<assignment-id>.json); (2) advance `work_started` when the Builder begins writing; (3) register completion with `runtime task-complete`")
+			}
 		}
 		if err := json.NewEncoder(stdout).Encode(next); err != nil {
 			fmt.Fprintf(stderr, "encode Agent event: %v\n", err)
@@ -1305,12 +1311,158 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			"integration":   guidance.Integration,
 			"revision":      updated.Revision,
 		}
-		if err := json.NewEncoder(stdout).Encode(payload); err != nil {
-			fmt.Fprintf(stderr, "encode task-integrate result: %v\n", err)
-			return 1
-		}
-		return 0
-	case "bug-event":
+			if err := json.NewEncoder(stdout).Encode(payload); err != nil {
+				fmt.Fprintf(stderr, "encode task-integrate result: %v\n", err)
+				return 1
+			}
+			return 0
+		case "review-plan":
+			// S7 entry verb (L3-S7 §4.1): validates and pins the ReviewPlan,
+			// initializes claim/assignment projections, phase -> running.
+			// `revise` is the one controlled revision per round (§5.3).
+			revise := len(args) > 1 && args[1] == "revise"
+			flags := flag.NewFlagSet("runtime review-plan", flag.ContinueOnError)
+			flags.SetOutput(stderr)
+			bindUsage(flags, "runtime review-plan")
+			root := flags.String("root", ".", "repository root")
+			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+			expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+			planPath := flags.String("file", "", "ReviewPlan JSON path")
+			sourceRef := flags.String("source-ref", "", "revise: triggering Result/Finding evidence id")
+			affectedSurface := flags.String("affected-surface", "", "revise: path surface the revision may touch")
+			parseArgs := args[1:]
+			if revise {
+				parseArgs = args[2:]
+			}
+			if err := flags.Parse(parseArgs); err != nil {
+				return 2
+			}
+			if revise {
+				resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+				if err != nil {
+					fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
+					return 1
+				}
+				next, err := review.RevisePlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.ReviseRequest{
+					ExpectedRevision: resolvedRevision,
+					PlanPath:         resolveRootPath(*root, *planPath),
+					SourceRef:        *sourceRef,
+					AffectedSurface:  *affectedSurface,
+				})
+				if err != nil {
+					fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
+					return 1
+				}
+				ptr := review.PlanPointerFromState(next.State)
+				fmt.Fprintf(stderr, "review-plan revise: %s now at revision %d (status %s); changed claims returned to planned\n", ptr.PlanID, ptr.Revision, ptr.Status)
+				return encodeJSON(stdout, map[string]any{
+					"plan_id":  ptr.PlanID,
+					"revision": ptr.Revision,
+					"status":   ptr.Status,
+				})
+			}
+			if *planPath == "" {
+				fmt.Fprintln(stderr, "runtime review-plan requires --file <plan.json>")
+				return 2
+			}
+			resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+				return 1
+			}
+			next, err := review.RegisterPlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.PlanRequest{
+				ExpectedRevision: resolvedRevision,
+				PlanPath:         resolveRootPath(*root, *planPath),
+			})
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+				return 1
+			}
+			ptr := review.PlanPointerFromState(next.State)
+			fmt.Fprintf(stderr, "review-plan: registered %s for round %d (status %s); dispatch reviewers via `runtime register-workgroup`, then consume results via `runtime review-result submit`\n",
+				ptr.PlanID, ptr.ReviewRound, ptr.Status)
+			return encodeJSON(stdout, map[string]any{
+				"plan_id":      ptr.PlanID,
+				"review_round": ptr.ReviewRound,
+				"status":       ptr.Status,
+				"revision":     next.Revision,
+			})
+		case "review-result":
+			// S7 Canonical ReviewResult submit (L3-S7 §9.1): one CAS consumes
+			// the result, registers immutable Findings, updates claim
+			// dispositions, and runs the round consumer (seal / clean / pause).
+			// The documented invocation carries the `submit` verb word.
+			verbArgs := args[1:]
+			if len(verbArgs) > 0 && verbArgs[0] == "submit" {
+				verbArgs = verbArgs[1:]
+			}
+			flags := flag.NewFlagSet("runtime review-result", flag.ContinueOnError)
+			flags.SetOutput(stderr)
+			bindUsage(flags, "runtime review-result")
+			root := flags.String("root", ".", "repository root")
+			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+			expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+			assignmentID := flags.String("assignment-id", "", "plan assignment the result answers")
+			resultPath := flags.String("result", "", "ReviewResult JSON path")
+			captureDir := flags.String("captures", "", "capture buffer dir; empty encounter timelines absorb buffered steps")
+			if err := flags.Parse(verbArgs); err != nil {
+				return 2
+			}
+			if *assignmentID == "" || *resultPath == "" {
+				fmt.Fprintln(stderr, "runtime review-result requires --assignment-id <id> and --result <result.json>")
+				return 2
+			}
+			resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
+				return 1
+			}
+			resolvedCaptures := ""
+			if *captureDir != "" {
+				resolvedCaptures = resolveRootPath(*root, *captureDir)
+			}
+			next, err := review.SubmitResult(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SubmitRequest{
+				ExpectedRevision: resolvedRevision,
+				AssignmentID:     *assignmentID,
+				ResultPath:       resolveRootPath(*root, *resultPath),
+				CaptureDir:       resolvedCaptures,
+			})
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
+				return 1
+			}
+			ptr := review.PlanPointerFromState(next.State)
+			status := ""
+			if ptr != nil {
+				status = ptr.Status
+			}
+			switch status {
+			case "observation_sealed":
+				fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — hand off to S8 via `runtime transition --id TR-008`")
+			case "clean":
+				fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — promote via `runtime transition --id TR-009`")
+			case "paused":
+				fmt.Fprintln(stderr, "review-result: consumed; pause checkpoint recorded — route via TR-010 (req change) or TR-011 (release blocked)")
+			case "cannot_clean", "discovery_draining":
+				fmt.Fprintf(stderr, "review-result: consumed; round is %s — %d required claim(s) still need results before the batch seals\n",
+					status, len(review.UndispositionedRequired(next.State)))
+			default:
+				fmt.Fprintf(stderr, "review-result: consumed; round running — %d required claim(s) remaining\n",
+					len(review.UndispositionedRequired(next.State)))
+			}
+			pending := review.UndispositionedRequired(next.State)
+			if pending == nil {
+				pending = []string{}
+			}
+			return encodeJSON(stdout, map[string]any{
+				"assignment_id":  *assignmentID,
+				"plan_status":    status,
+				"pending_claims": pending,
+				"revision":       next.Revision,
+			})
+		case "bug-event":
 		flags := flag.NewFlagSet("runtime bug-event", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		bindUsage(flags, "runtime bug-event")
@@ -2040,6 +2192,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "Hook argument event %q does not match input event %q\n", expectedEvent, request.Event)
 		return 1
 	}
+	// PostToolUse(SendMessage) is a pure observer (L3-S7 §8, L4 §7.4): it
+	// never runs the Quality Gate, never persists a gate milestone, and
+	// never denies. It short-circuits here so no control-cycle machinery
+	// runs for it.
+	if request.Event == "PostToolUse" {
+		return runPostToolUseHook(root, request, stdout, stderr)
+	}
 	if request.Runtime.RuntimeID == "" {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
@@ -2145,6 +2304,89 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 2
 	}
 	return code
+}
+
+// runPostToolUseHook handles the PostToolUse(SendMessage) observation path:
+// identify the sender, and when a PLAN_REPORT is observed for the first
+// time, CAS-write agent.plan_reported_ref so the first-write barrier has a
+// durable fact. Everything about this path is fail-open: identification
+// gaps produce a silent observation, never a block and never an error.
+func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Writer) int {
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	if err != nil {
+		// No runtime → nothing to observe into; still emit the envelope.
+		fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(hook.PostToolUseObservation{Reason: "runtime unreadable"}))
+		return 0
+	}
+	entities, _ := snapshot.State["entities"].(map[string]any)
+	rawAgents, _ := entities["agents"].([]any)
+	rows := make([]hook.AgentRow, 0, len(rawAgents))
+	for _, raw := range rawAgents {
+		agent, _ := raw.(map[string]any)
+		if agent == nil {
+			continue
+		}
+		id, _ := agent["id"].(string)
+		state, _ := agent["state"].(string)
+		rows = append(rows, hook.AgentRow{ID: id, State: state})
+	}
+	obs := hook.HandlePostToolUse(request, rows)
+	if obs.Recorded && obs.Message == "plan_report" {
+		recordPlanCheckpoint(root, statePath, journalPath, snapshot, obs.AgentID, request, stderr)
+	}
+	fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
+	return 0
+}
+
+// recordPlanCheckpoint writes agent.plan_reported_ref once (idempotent).
+// The ref is symbolic (the SendMessage message id) because the platform
+// payload does not carry a verifiable file path; the authoritative,
+// schema-validated registration remains `runtime agent-event
+// --event readback_submitted` with the plan file.
+func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.Snapshot, agentID string, request policy.Input, stderr io.Writer) {
+	ref, _ := request.ToolInput["message_id"].(string)
+	if ref == "" {
+		ref, _ = request.ToolInput["message_ref"].(string)
+	}
+	if ref == "" {
+		ref = "plan_report:observed"
+	}
+	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	_, err := store.Update(snapshot.Revision, runtime.Mutation{
+		EventID:        fmt.Sprintf("evt-plan-observed-%s-r%d", agentID, snapshot.Revision+1),
+		TransitionID:   "PLAN-OBSERVATION",
+		Event:          "plan_report_observed",
+		Actor:          "hook_controller",
+		IdempotencyKey: fmt.Sprintf("hook:plan-observed:%s", agentID),
+		RuntimeID:      runtimeIDString(snapshot.State),
+		OccurredAt:     time.Now().UTC(),
+		Apply: func(state map[string]any) error {
+			entities, _ := state["entities"].(map[string]any)
+			for _, raw := range entities["agents"].([]any) {
+				agent, _ := raw.(map[string]any)
+				if agent == nil || agent["id"] != agentID {
+					continue
+				}
+				if existing, _ := agent["plan_reported_ref"].(string); existing != "" {
+					return nil // already recorded — idempotent
+				}
+				agent["plan_reported_ref"] = ref
+				return nil
+			}
+			return fmt.Errorf("agent %s not found", agentID)
+		},
+	})
+	if err != nil {
+		// Observation must never fail the tool call.
+		fmt.Fprintf(stderr, "note: plan_report observation not persisted (%v)\n", err)
+	}
+}
+
+func runtimeIDString(state map[string]any) string {
+	id, _ := state["runtime_id"].(string)
+	return id
 }
 
 // runControlCycleForHook adapts the policy.Input the Hook transport emits
@@ -2723,4 +2965,23 @@ func runExplain(args []string, stdout, stderr io.Writer) int {
 // sites terse.
 func schemaValidate(root, schemaName string, data []byte) error {
 	return schema.NewValidator(root).ValidateBytes(schemaName, data)
+}
+
+// reviewerRole reports whether the agent's registered role is one of the S7
+// reviewer families (delivery-verifier / qa / e2e-tester role_family).
+func reviewerRole(state map[string]any, agentID string) bool {
+	entities, _ := state["entities"].(map[string]any)
+	for _, raw := range entities["agents"].([]any) {
+		agent, _ := raw.(map[string]any)
+		if agent == nil || agent["id"] != agentID {
+			continue
+		}
+		role, _ := agent["role"].(string)
+		switch role {
+		case "delivery-verifier", "qa", "e2e-tester":
+			return true
+		}
+		return false
+	}
+	return false
 }

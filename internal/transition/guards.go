@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/entroforge/go-system-builder/internal/review"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/verification"
 )
@@ -140,17 +141,21 @@ func InitGuardRegistry() {
 		"no_invalidated_pass_evidence":          evidenceBackedGuard("no_invalidated_pass_evidence"),
 		"no_open_blocking_bugs":                 evidenceBackedGuard("no_open_blocking_bugs"),
 		"verification_phase_clean_round_passed": evidenceBackedGuard("verification_phase_clean_round_passed"),
-		// REQ-003 TASK-003-C (FR-009): the three legacy evidenceBackedGuard
-		// stubs on the DV/QA/E2E phase transitions are replaced by the
-		// dedicated angle_complete guards. The legacy ids are intentionally
-		// REMOVED from the registry (no longer wired into any transition);
-		// the evidenceBackedGuard helper itself is preserved for the
-		// remaining declarative guards above.
-		"delivery_angle_complete":                 guardDeliveryAngleCompleteFn,
-		"qa_angle_complete":                       guardQAAngleCompleteFn,
-		"e2e_angle_complete":                      guardE2EAngleCompleteFn,
-		"acc_complete":                            evidenceBackedGuard("acc_complete"),
-		"clean_round_still_valid":                 evidenceBackedGuard("clean_round_still_valid"),
+		// L3-S7 P0: the S7 exit guards are real semantic checks over the
+		// ReviewPlan projection — TR-008 requires the sealed ObservationBatch
+		// carrying the exact Finding set; TR-009 recomputes the machine
+		// CleanRound over the exact Claim set.
+		"observation_batch_sealed": guardObservationBatchSealedFn,
+		"clean_round_valid":        guardCleanRoundValidFn,
+		// L3-S7 P1: the angle_complete guards are retired with the whole
+		// angle lifecycle — their intent lives in ReviewPlan Claims
+		// (claim.source_refs), enforced by the plan validator.
+		"acc_complete":            evidenceBackedGuard("acc_complete"),
+		"clean_round_still_valid": evidenceBackedGuard("clean_round_still_valid"),
+		// L3-S7: TR-010/TR-011 no longer capture the checkpoint themselves —
+		// the review verdict transaction did. This guard proves the single
+		// authoritative checkpoint exists before the cursor moves.
+		"pause_checkpoint_recorded":               evidenceBackedGuard("pause_checkpoint_recorded"),
 		"release_audit_approved":                  evidenceBackedGuard("release_audit_approved"),
 		"resume_checkpoint_valid":                 evidenceBackedGuard("resume_checkpoint_valid"),
 		"baselines_unchanged":                     evidenceBackedGuard("baselines_unchanged"),
@@ -221,14 +226,11 @@ func InitGuardRegistry() {
 		"same_review_round": true, "all_required_dimensions_passed": true,
 		"no_invalidated_pass_evidence": true, "no_open_blocking_bugs": true,
 		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
-		"planning_complete": true, "all_targeted_reverification_passed": true,
+		"pause_checkpoint_recorded": true,
+		"planning_complete":         true, "all_targeted_reverification_passed": true,
 		"ui_impact_resolved": true, "scenario_bridge_checked": true,
-		"req_baseline_unchanged": true,
-		// REQ-003 TASK-003-C: the three angle_complete guards run semantic
-		// checks against on-disk angle_declaration + team_manifest evidence
-		// (FR-002 + FR-003 + FR-004 + FR-010). They are not declarative
-		// attestation guards.
-		"delivery_angle_complete": true, "qa_angle_complete": true, "e2e_angle_complete": true,
+		"req_baseline_unchanged":   true,
+		"observation_batch_sealed": true, "clean_round_valid": true,
 	}
 	newReg := make(map[string]GuardRegistration, len(newFns))
 	for name, fn := range newFns {
@@ -256,7 +258,7 @@ func InitGuardRegistry() {
 // this switch (`no_other_active_loop`, `resume_checkpoint_valid`, plus the
 // clean-round names delegated to `verification.EvaluateCleanRound`) and in
 // the dedicated guard*Fn functions registered outside it (contracts/tasks/
-// planning/bridge/UI-impact/angles/reverification, and the transition-layer
+// planning/bridge/UI-impact/reverification, and the transition-layer
 // human_decision scope validation in validateRequest);
 // every other name lands in the final `len(evidence) == 0` check, which
 // is not a guard — it is a request validator.
@@ -267,7 +269,7 @@ func evidenceBackedGuard(name string) GuardFn {
 			if err := requireFreshInactiveRuntime(state); err != nil {
 				return fmt.Errorf("%s: %w", name, err)
 			}
-		case "resume_checkpoint_valid":
+		case "resume_checkpoint_valid", "pause_checkpoint_recorded":
 			if pause, ok := state["pause"].(map[string]any); !ok || pause == nil {
 				return fmt.Errorf("%s: pause checkpoint missing", name)
 			}
@@ -289,6 +291,98 @@ func requireFreshInactiveRuntime(state map[string]any) error {
 		return fmt.Errorf("requires a fresh inactive runtime: %w", err)
 	}
 	return nil
+}
+
+// guardCleanRoundValidFn is the real body behind TR-009's clean_round_valid
+// guard (L3-S7 §10): the machine CleanRound is recomputed over the current
+// ReviewPlan's exact Claim set by verification.EvaluateCleanRound — an
+// agent hand-written aggregate PASS is not a substitute.
+func guardCleanRoundValidFn(state map[string]any, _ map[string]string) error {
+	result := verification.EvaluateCleanRound(state)
+	if !result.Passed {
+		return fmt.Errorf("clean_round_valid: %v", result.Reasons)
+	}
+	return nil
+}
+
+// guardObservationBatchSealedFn is the real body behind TR-008's
+// observation_batch_sealed guard (L3-S7 §3.7): the sealed ObservationBatch
+// must exist for the current round, its finding_ids must equal the exact
+// current-round Finding set, and an ordinary batch (complete_required_claims)
+// must seal with every required Claim dispositioned — unobserved Claims are
+// only legal on a critical immediate-stop batch.
+func guardObservationBatchSealedFn(state map[string]any, _ map[string]string) error {
+	reviewMap, _ := state["review"].(map[string]any)
+	if reviewMap == nil {
+		return fmt.Errorf("observation_batch_sealed: runtime review section missing")
+	}
+	plan, _ := reviewMap["plan"].(map[string]any)
+	if plan == nil {
+		return fmt.Errorf("observation_batch_sealed: no ReviewPlan registered for this round")
+	}
+	if status, _ := plan["status"].(string); status != "observation_sealed" {
+		return fmt.Errorf("observation_batch_sealed: ReviewPlan status is %s; the batch seals automatically when the final required Claim disposition lands", status)
+	}
+	batch, _ := reviewMap["observation_batch"].(map[string]any)
+	if batch == nil {
+		return fmt.Errorf("observation_batch_sealed: no sealed ObservationBatch in the runtime")
+	}
+	batchRound := currentRoundOf(reviewMap)
+	if round := intFrom(batch["review_round"]); round != 0 && round != batchRound {
+		return fmt.Errorf("observation_batch_sealed: batch belongs to round %d, current round is %d", round, batchRound)
+	}
+	batchIDs := map[string]bool{}
+	if raw, ok := batch["finding_ids"].([]any); ok {
+		for _, value := range raw {
+			if id, _ := value.(string); id != "" {
+				batchIDs[id] = true
+			}
+		}
+	}
+	if len(batchIDs) == 0 {
+		// The state pointer only carries ids; fall back to the schema-level
+		// invariant that a sealed batch never has an empty exact set.
+		return fmt.Errorf("observation_batch_sealed: sealed batch carries no finding ids")
+	}
+	// Exact-set check: batch finding_ids == current-round Finding entities.
+	roundFindings := review.RoundFindings(state)
+	actual := map[string]bool{}
+	for _, row := range roundFindings {
+		if id, ok := row["finding_id"].(string); ok {
+			actual[id] = true
+		}
+	}
+	for id := range batchIDs {
+		if !actual[id] {
+			return fmt.Errorf("observation_batch_sealed: batch references finding %s which is not a current-round Finding entity", id)
+		}
+	}
+	for id := range actual {
+		if !batchIDs[id] {
+			return fmt.Errorf("observation_batch_sealed: current-round finding %s is missing from the sealed batch; the handoff must carry the exact set (L3-S7 §3.7)", id)
+		}
+	}
+	if policy, _ := batch["drain_policy"].(string); policy != "immediate_stop" {
+		if pending := review.UndispositionedRequired(state); len(pending) > 0 {
+			return fmt.Errorf("observation_batch_sealed: ordinary batch sealed with unobserved required claims %v; only a critical immediate-stop batch may carry safety gaps", pending)
+		}
+	}
+	return nil
+}
+
+func currentRoundOf(reviewMap map[string]any) int {
+	return intFrom(reviewMap["round"])
+}
+
+func intFrom(value any) int {
+	switch n := value.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	default:
+		return 0
+	}
 }
 
 // guardReqBaselineUnchangedFn is the real body behind the

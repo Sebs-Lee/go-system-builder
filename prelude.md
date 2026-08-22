@@ -196,7 +196,7 @@ Load procedures only when their trigger applies:
 | start, recovery, pause, resume, next action | `loop-orchestration` |
 | design, UI, contracts, candidate tasks | `specification-planning` |
 | contract/task batch review | `document-verification` |
-| teammate spawn or reactivation | `two-phase-activation` |
+| teammate spawn or reactivation | `agent-dispatch` |
 | workgroup planning | `team-planning` |
 | blocking finding and repair | `bug-resolution` |
 | changed artifact or stale evidence | `impact-analysis` |

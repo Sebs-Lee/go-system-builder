@@ -85,7 +85,7 @@ func TestHOOK_PostCompact_SessionStartFallback(t *testing.T) {
 
 // TestHOOK_SubagentStart_DelegationPreflightViaHookCLI covers HOOK-SubagentStart
 // at L3: real Hook CLI emits delegation preflight questions (worktree / team /
-// two-phase activation) without requiring a manual transition CLI.
+// agent dispatch) without requiring a manual transition CLI.
 func TestHOOK_SubagentStart_DelegationPreflightViaHookCLI(t *testing.T) {
 	root := freshRoot(t)
 	state := systemPlanningState(t, root, "tasks", 7)
@@ -108,7 +108,7 @@ func TestHOOK_SubagentStart_DelegationPreflightViaHookCLI(t *testing.T) {
 		}
 	}
 	if !strings.Contains(out, "readback") && !strings.Contains(out, "activation") && !strings.Contains(out, "phase") {
-		t.Fatalf("SubagentStart must mention two-phase readback/activation, got %s", stdout)
+		t.Fatalf("SubagentStart must mention the dispatch plan/readback flow, got %s", stdout)
 	}
 }
 

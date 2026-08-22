@@ -6,7 +6,7 @@
 
 - **Path**: `.claude/bin/loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `31bd9f558e818c78ea927863fe28e65ba338fd69609ff330251517f6e23930c5`
+- **Loop definition SHA-256**: `7a8d25d4165a2f4da1a92ae88f8e673447c2f18ea636cacd0a99e7647bbb3dd9`
 
 ---
 
@@ -52,10 +52,10 @@ Human approval records release authorization only. Harness has no squash merge, 
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
 - [`TR-006`](#tr-006) building → verification — Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint.
 - [`TR-007`](#tr-007) building → planning — Non-REQ execution conflicts return through planning and document verification.
-- [`TR-008`](#tr-008) verification → bug_resolution — Any blocking Delivery, QA, or E2E Browser finding means the REQ batch is incomplete and must enter S8 investigation before repair.
-- [`TR-009`](#tr-009) verification → acceptance — Acceptance requires one complete, current and blocker-free review round.
-- [`TR-010`](#tr-010) verification → paused — A required REQ change pauses automation.
-- [`TR-011`](#tr-011) verification → paused — Security, compliance or equivalent blockers require human intervention.
+- [`TR-008`](#tr-008) verification → bug_resolution — A sealed ObservationBatch carries the exact immutable Finding set (with encounters and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default.
+- [`TR-009`](#tr-009) verification → acceptance — Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time.
+- [`TR-010`](#tr-010) verification → paused — A ReviewResult verdict of req_change_required pauses the loop for a human REQ decision.
+- [`TR-011`](#tr-011) verification → paused — A ReviewResult verdict of release_blocked pauses the loop for a human release decision.
 - [`TR-012`](#tr-012) bug_resolution → verification — Only the ready_for_full_review handoff checkpoint may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round.
 - [`TR-013`](#tr-013) bug_resolution → planning — Repair-driven specification changes return through planning and document verification.
 - [`TR-014`](#tr-014) bug_resolution → paused — Repair work cannot modify the locked REQ.
@@ -78,10 +78,10 @@ Human approval records release authorization only. Harness has no squash merge, 
 
 _Phase: bug_resolution_
 
-- [`PTR-BUG-01`](#ptr-bug-01) investigation → bug_report_review — A finding cannot become repair work before root-cause evidence exists.
+- [`PTR-BUG-01`](#ptr-bug-01) investigation → bug_report_review — A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists.
 - [`PTR-BUG-02`](#ptr-bug-02) bug_report_review → repair_readback — The orchestrator approves canonical BUGs and duplicate mappings.
 - [`PTR-BUG-03`](#ptr-bug-03) bug_report_review → investigation — Insufficient BUG reports return to investigation.
-- [`PTR-BUG-04`](#ptr-bug-04) repair_readback → fixing — Repair execution uses the same two-phase activation gate.
+- [`PTR-BUG-04`](#ptr-bug-04) repair_readback → fixing — Repair execution uses the same agent dispatch gate (plan_checkpoint by default).
 - [`PTR-BUG-05`](#ptr-bug-05) fixing → targeted_reverification — Every repair invalidates affected historical PASS evidence before recheck.
 - [`PTR-BUG-06`](#ptr-bug-06) targeted_reverification → ready_for_full_review — A targeted pass never substitutes for the full review round; it records the S9-to-S7 handoff checkpoint.
 - [`PTR-BUG-07`](#ptr-bug-07) targeted_reverification → investigation — Failed repair verification restarts root-cause investigation.
@@ -90,14 +90,6 @@ _Phase: planning_
 
 - [`PTR-PLAN-01`](#ptr-plan-01) design → contracts — Advance formal planning from design to contracts after the design quality gate passes.
 - [`PTR-PLAN-02`](#ptr-plan-02) contracts → tasks — Advance formal planning from contracts to tasks after the contract quality gate passes.
-
-_Phase: verification_
-
-- [`PTR-VERIFY-01`](#ptr-verify-01) delivery → qa — QA cannot start until all required delivery dimensions pass.
-- [`PTR-VERIFY-02`](#ptr-verify-02) qa → e2e_browser — Real-browser E2E follows complete QA evidence.
-- [`PTR-VERIFY-03`](#ptr-verify-03) e2e_browser → clean_round_evaluation — Clean-round evaluation follows complete real-browser E2E evidence.
-- [`PTR-VERIFY-04`](#ptr-verify-04) clean_round_evaluation → clean_round_passed — Only one complete, current and blocker-free round passes.
-- [`PTR-VERIFY-05`](#ptr-verify-05) clean_round_evaluation → delivery — Mixed, incomplete or stale evidence restarts the full review.
 
 _Global_
 
@@ -231,16 +223,16 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → bug_resolution_
 
-Any blocking Delivery, QA, or E2E Browser finding means the REQ batch is incomplete and must enter S8 investigation before repair.
+A sealed ObservationBatch carries the exact immutable Finding set (with encounters and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One BUG draft is created per Finding, deduplicated by finding content hash.
 
-- `blocking_findings_present` [evidence_attestation] — At least one finding evidence item with severity=blocking exists for the current review round, referencing a canonical BUG.
+- `observation_batch_sealed` [semantic_check] — _no spec_
 
-Evidence: `finding_record`
+Evidence: `observation_batch_record`
 
 Evidence bindings (copy into `runtime transition`):
 
-- `finding_record`: `--evidence finding_record=<reference>`
-  Accepted kinds: `bug`
+- `observation_batch_record`: `--evidence observation_batch_record=<reference>`
+  Accepted kinds: `observation_batch`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-008` to inspect current candidates.
 
@@ -248,12 +240,9 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → acceptance_
 
-Acceptance requires one complete, current and blocker-free review round.
+Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time.
 
-- `verification_phase_clean_round_passed` [semantic_check] — verification.EvaluateCleanRound reports that runtime.review.clean_round equals runtime.review.round, i.e. a complete clean round has just been recorded for the active round.
-- `same_review_round` [semantic_check] — verification.EvaluateCleanRound reports that every `pass` evidence item under consideration was recorded against runtime.review.round, so the round cannot close on stale evidence from a prior round.
-- `no_invalidated_pass_evidence` [semantic_check] — verification.EvaluateCleanRound reports no `pass` evidence in runtime.evidence[] carries an `invalidated_at` stamp for the active review round.
-- `no_open_blocking_bugs` [semantic_check] — No BUG with severity=P0 in runtime.entities.bugs[] remains in an open state (`investigating`, `accepted`, `assigned`, `fixing`, `retesting`) for the current review round.
+- `clean_round_valid` [semantic_check] — _no spec_
 
 Evidence: `clean_round_record`
 
@@ -268,18 +257,16 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → paused_
 
-A required REQ change pauses automation.
+A ReviewResult verdict of req_change_required pauses the loop for a human REQ decision. The verdict transaction (runtime review-result submit) already created the single authoritative pause checkpoint; this transition only moves the cursor.
 
-_No guards._
+- `pause_checkpoint_recorded` [semantic_check] — _no spec_
 
-Evidence: `review_result_record`, `pause_record`
+Evidence: `review_result_record`
 
 Evidence bindings (copy into `runtime transition`):
 
 - `review_result_record`: `--evidence review_result_record=<reference>`
-  Accepted kinds: `delivery_review`, `qa_review`, `e2e_review`
-- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
-  Accepted kinds: `human_decision`
+  Accepted kinds: `review_result`, `delivery_review`, `qa_review`, `e2e_review`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-010` to inspect current candidates.
 
@@ -287,18 +274,16 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → paused_
 
-Security, compliance or equivalent blockers require human intervention.
+A ReviewResult verdict of release_blocked pauses the loop for a human release decision. The verdict transaction (runtime review-result submit) already created the single authoritative pause checkpoint; this transition only moves the cursor.
 
-_No guards._
+- `pause_checkpoint_recorded` [semantic_check] — _no spec_
 
-Evidence: `review_result_record`, `pause_record`
+Evidence: `review_result_record`
 
 Evidence bindings (copy into `runtime transition`):
 
 - `review_result_record`: `--evidence review_result_record=<reference>`
-  Accepted kinds: `delivery_review`, `qa_review`, `e2e_review`
-- `pause_record`: `--evidence pause_record=generated:pause_checkpoint` (generated pause checkpoint)
-  Accepted kinds: `human_decision`
+  Accepted kinds: `review_result`, `delivery_review`, `qa_review`, `e2e_review`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-011` to inspect current candidates.
 
@@ -602,7 +587,7 @@ Evidence bindings (copy into `runtime transition`):
 - `human_decision_record`: `--evidence human_decision_record=<reference>`
   Accepted kinds: `human_decision`
 - `finding_record`: `--evidence finding_record=<reference>`
-  Accepted kinds: `bug`
+  Accepted kinds: `finding`, `bug`
 
 If a binding is missing, retry with the command above; run `loop-harness explain TR-027` to inspect current candidates.
 
@@ -663,16 +648,16 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _investigation → bug_report_review_
 
-A finding cannot become repair work before root-cause evidence exists.
+A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists.
 
 - `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
 
-Evidence: `finding_record`, `root_cause_record`
+Evidence: `observation_batch_record`, `root_cause_record`
 
 Evidence bindings (copy into `runtime transition`):
 
-- `finding_record`: `--evidence finding_record=<reference>`
-  Accepted kinds: `bug`
+- `observation_batch_record`: `--evidence observation_batch_record=<reference>`
+  Accepted kinds: `observation_batch`
 - `root_cause_record`: `--evidence root_cause_record=<reference>`
   Accepted kinds: `bug`
 
@@ -717,7 +702,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _repair_readback → fixing_
 
-Repair execution uses the same two-phase activation gate.
+Repair execution uses the same agent dispatch gate (plan_checkpoint by default).
 
 - `repair_understanding_approved` [evidence_attestation] — An understanding-approval evidence item is referenced from runtime.evidence[] confirming the assigned Builder understood the root-cause writeup before activation.
 - `repair_activation_recorded` [evidence_attestation] — A repair-activation evidence item is referenced from runtime.evidence[] confirming the assigned Builder has started the repair task recorded in runtime.entities.tasks[].
@@ -802,102 +787,6 @@ Advance formal planning from contracts to tasks after the contract quality gate 
 
 - `contracts_checked` [semantic_check] — S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.
 - `scenario_bridge_checked` [semantic_check] — S2's AC↔CASE bridge (scenario.GuardBridgeChecked) runs at PTR-PLAN-02: every AC of the bound REQ reaches a rule via FR source_refs (with branches), or carries an endorsed N/A (NFR id / §A4). With no module packages at all, only fully N/A-endorsed REQs pass — an AC pointing at FR- with nothing citing it is a broken denominator.
-
-## Phase transitions: verification
-
-### `PTR-VERIFY-01` {#ptr-verify-01}
-
-_delivery → qa_
-
-QA cannot start until all required delivery dimensions pass.
-
-- `delivery_angle_complete` [semantic_check] — _no spec_
-
-Evidence: `team_manifest_record`, `delivery_review_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
-  Accepted kinds: `builder_report`, `team_manifest`
-- `delivery_review_record`: `--evidence delivery_review_record=<reference>`
-  Accepted kinds: `delivery_review`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-01` to inspect current candidates.
-
-### `PTR-VERIFY-02` {#ptr-verify-02}
-
-_qa → e2e_browser_
-
-Real-browser E2E follows complete QA evidence.
-
-- `qa_angle_complete` [semantic_check] — _no spec_
-
-Evidence: `team_manifest_record`, `qa_review_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
-  Accepted kinds: `builder_report`, `team_manifest`
-- `qa_review_record`: `--evidence qa_review_record=<reference>`
-  Accepted kinds: `qa_review`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-02` to inspect current candidates.
-
-### `PTR-VERIFY-03` {#ptr-verify-03}
-
-_e2e_browser → clean_round_evaluation_
-
-Clean-round evaluation follows complete real-browser E2E evidence.
-
-- `e2e_angle_complete` [semantic_check] — _no spec_
-
-Evidence: `team_manifest_record`, `e2e_review_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `team_manifest_record`: `--evidence team_manifest_record=<reference>`
-  Accepted kinds: `builder_report`, `team_manifest`
-- `e2e_review_record`: `--evidence e2e_review_record=<reference>`
-  Accepted kinds: `e2e_review`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-03` to inspect current candidates.
-
-### `PTR-VERIFY-04` {#ptr-verify-04}
-
-_clean_round_evaluation → clean_round_passed_
-
-Only one complete, current and blocker-free round passes.
-
-- `same_review_round` [semantic_check] — verification.EvaluateCleanRound reports that every `pass` evidence item under consideration was recorded against runtime.review.round, so the round cannot close on stale evidence from a prior round.
-- `all_required_dimensions_passed` [semantic_check] — verification.EvaluateCleanRound reports that every required verification dimension (delivery, qa, and any risk-triggered dimensions) has a current `pass` verdict for the active review round.
-- `no_invalidated_pass_evidence` [semantic_check] — verification.EvaluateCleanRound reports no `pass` evidence in runtime.evidence[] carries an `invalidated_at` stamp for the active review round.
-- `no_open_blocking_bugs` [semantic_check] — No BUG with severity=P0 in runtime.entities.bugs[] remains in an open state (`investigating`, `accepted`, `assigned`, `fixing`, `retesting`) for the current review round.
-
-Evidence: `clean_round_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `clean_round_record`: `--evidence clean_round_record=<reference>`
-  Accepted kinds: `clean_round`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-04` to inspect current candidates.
-
-### `PTR-VERIFY-05` {#ptr-verify-05}
-
-_clean_round_evaluation → delivery_
-
-Mixed, incomplete or stale evidence restarts the full review.
-
-_No guards._
-
-Evidence: `clean_round_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `clean_round_record`: `--evidence clean_round_record=<reference>`
-  Accepted kinds: `clean_round`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-VERIFY-05` to inspect current candidates.
 
 ## Global transitions
 

@@ -26,7 +26,7 @@ var projectionContracts = map[string]stageContract{
 	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/contracts/", "docs/tasks/"}, []string{"complete_task_batch"}, []string{"at least one TASK is complete and every contract clause has TASK coverage"}},
 	"S5":                 {"independently verify and atomically lock the specification chain", []string{"bound REQ", "docs/design/", "docs/contracts/", "docs/tasks/"}, []string{"joint_document_pass"}, []string{"document-verification responsibilities pass with current fingerprints"}},
 	"S6":                 {"implement the locked TASK batch", []string{"bound REQ", "locked contracts", "locked TASKs", "docs/agent-protocol.md#s6"}, []string{"builder_completion_reports", "verified_integration_checkpoints"}, []string{"every TASK in the TR-003 batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint (register results via `runtime task-complete`; no team manifest is required)"}},
-	"S7":                 {"complete one current full verification round", []string{"bound REQ", "locked specification chain", "Builder evidence"}, []string{"current_clean_round"}, []string{"all required verification dimensions pass in the same round"}},
+	"S7":                 {"complete one current full verification round", []string{"bound REQ", "locked specification chain", "Builder evidence", "docs/agent-protocol.md#s7"}, []string{"review_plan"}, []string{"every required Claim of the registered ReviewPlan has a consumed pass Result; findings seal into the ObservationBatch (TR-008), otherwise the machine CleanRound closes the round (TR-009)"}},
 	"S8":                 {"turn blocking findings into evidence-backed dispositions", []string{"blocking findings", "locked specification chain", "implementation"}, []string{"finding_dispositions"}, []string{"every finding has a supported disposition and every accepted BUG has a Closing Contract"}},
 	"S9":                 {"repair accepted BUGs and target-reverify them", []string{"accepted BUGs", "locked specification chain", "implementation"}, []string{"targeted_reverification"}, []string{"repair evidence is current and targeted reverification passes"}},
 	"S10":                {"complete acceptance and release audit", []string{"bound REQ", "current clean round", "valid evidence"}, []string{"acceptance_record", "release_audit"}, []string{"acceptance and release audit are complete with no open action"}},
@@ -218,18 +218,27 @@ func lifecyclePhase(state map[string]any) string {
 	return value
 }
 
+// verificationMissingItem names the single missing S7 fact for the
+// projection. The ReviewPlan status drives the token: no plan -> register
+// one; running/draining -> consume the pending Claim results; sealed ->
+// TR-008; clean -> TR-009 (L3-S7 §11.1).
 func verificationMissingItem(state map[string]any) string {
-	switch lifecyclePhase(state) {
-	case "delivery":
-		return "delivery_round"
-	case "qa":
-		return "qa_round"
-	case "e2e_browser":
-		return "e2e_browser_round"
-	case "clean_round_passed":
-		return "acceptance_transition"
+	reviewMap, _ := state["review"].(map[string]any)
+	plan, _ := reviewMap["plan"].(map[string]any)
+	if plan == nil {
+		return "review_plan"
+	}
+	switch status, _ := plan["status"].(string); status {
+	case "running", "cannot_clean", "discovery_draining":
+		return "claim_results"
+	case "observation_sealed":
+		return "tr008_observation_handoff"
+	case "clean":
+		return "tr009_acceptance_transition"
+	case "paused":
+		return "pause_resolution"
 	default:
-		return "current_clean_round"
+		return "review_plan"
 	}
 }
 

@@ -30,7 +30,7 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 	state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 	state["pause"] = map[string]any{
 		"from_state":               "verification",
-		"from_phase":               "delivery",
+		"from_phase":               "running",
 		"phase_revision":           float64(1),
 		"baseline_generation":      float64(1),
 		"review_round":             float64(1),
@@ -80,7 +80,7 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 	state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 	state["pause"] = map[string]any{
 		"from_state":               "verification",
-		"from_phase":               "delivery",
+		"from_phase":               "running",
 		"phase_revision":           float64(1),
 		"baseline_generation":      float64(1),
 		"review_round":             float64(1),

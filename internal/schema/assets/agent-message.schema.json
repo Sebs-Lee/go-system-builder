@@ -10,6 +10,9 @@
       "$ref": "#/$defs/readbackResponse"
     },
     {
+      "$ref": "#/$defs/planReport"
+    },
+    {
       "$ref": "#/$defs/activation"
     },
     {
@@ -44,6 +47,7 @@
           "enum": [
           "readback_request",
           "readback_response",
+          "plan_report",
           "activation",
           "completion_report",
           "work_start",
@@ -305,6 +309,107 @@
             },
             "readback_fields": {
               "$ref": "#/$defs/uniqueStrings"
+            }
+          }
+        }
+      ]
+    },
+    "planReport": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "L4 plan_checkpoint PLAN_REPORT (dispatch_mode=plan_checkpoint): one structured plan the Worker sends before touching the work surface; sending it IS the checkpoint — the Worker continues immediately, and Main stays silent when aligned. The activation envelope's hash chain binds to this file exactly like the approval-mode readback.",
+          "required": [
+            "schema_version",
+            "message_type",
+            "message_id",
+            "correlation_id",
+            "runtime_id",
+            "expected_runtime_revision",
+            "agent_id",
+            "agent_definition_ref",
+            "task_id",
+            "bug_id",
+            "team_id",
+            "occurred_at",
+            "assignment_id",
+            "assignment_revision",
+            "objective",
+            "planned_paths",
+            "steps",
+            "assertion_checks",
+            "dependencies",
+            "risks_blockers"
+          ],
+          "properties": {
+            "schema_version": {},
+            "message_type": {
+              "const": "plan_report"
+            },
+            "message_id": {},
+            "correlation_id": {},
+            "runtime_id": {},
+            "expected_runtime_revision": {},
+            "agent_id": {},
+            "agent_definition_ref": {},
+            "task_id": {},
+            "bug_id": {},
+            "team_id": {},
+            "occurred_at": {},
+            "assignment_id": {
+              "type": "string",
+              "pattern": "^assignment-[A-Za-z0-9._-]+$"
+            },
+            "assignment_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "objective": {
+              "type": "string",
+              "minLength": 8
+            },
+            "planned_paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "steps": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["description"],
+                "properties": {
+                  "description": { "type": "string", "minLength": 4 },
+                  "target": { "type": "string" }
+                }
+              }
+            },
+            "assertion_checks": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["assertion", "oracle"],
+                "properties": {
+                  "assertion": { "type": "string", "minLength": 4 },
+                  "oracle": { "type": "string", "minLength": 4 }
+                }
+              }
+            },
+            "dependencies": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "risks_blockers": {
+              "type": "array",
+              "items": { "type": "string" }
             }
           }
         }

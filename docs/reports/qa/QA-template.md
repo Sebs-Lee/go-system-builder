@@ -1,6 +1,6 @@
 # QA Evidence: QA-{id}
 
-> Status: draft / PASS / FIX_REQUIRED / RELEASE_BLOCKED / invalidated
+> Status: draft / pass / finding / req_change_required / release_blocked / invalidated (ReviewResult verdict vocabulary; submit via `runtime review-result submit`)
 > Runtime ref: `{runtime-id}@{revision}`
 > Review round: {n}
 > Workgroup manifest: `{team-manifest-path}`
@@ -71,7 +71,7 @@ Targeted re-verification does not satisfy a complete clean round.
 ## 7. Result
 
 ```text
-PASS / FIX_REQUIRED / RELEASE_BLOCKED
+pass / finding / req_change_required / release_blocked
 ```
 
 Requested lifecycle event: `{event}`

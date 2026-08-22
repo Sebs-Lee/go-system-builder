@@ -42,11 +42,13 @@ type responsibilityStatus struct {
 }
 
 type assignment struct {
-	AssignmentID       string `json:"assignment_id"`
-	ResponsibilityID   string `json:"responsibility_id"`
-	RoleFamily         string `json:"role_family"`
-	AgentID            string `json:"agent_id"`
-	AgentDefinitionRef string `json:"agent_definition_ref"`
+	AssignmentID       string   `json:"assignment_id"`
+	ResponsibilityID   string   `json:"responsibility_id"`
+	RoleFamily         string   `json:"role_family"`
+	AgentID            string   `json:"agent_id"`
+	AgentDefinitionRef string   `json:"agent_definition_ref"`
+	ClaimIDs           []string `json:"claim_ids"`
+	DispatchMode       string   `json:"dispatch_mode"`
 }
 
 func Register(root, statePath, journalPath string, request Request) (loopruntime.Snapshot, error) {
@@ -122,6 +124,11 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 			if err := validateWorkgroupState(value.WorkgroupKind, lifecycle); err != nil {
 				return err
 			}
+			// L3-S7: reviewer workgroups bind to the registered ReviewPlan —
+			// exact Claim set, lens match, static-before-behavior wave gate.
+			if err := bindReviewPlanAssignments(root, state, value); err != nil {
+				return err
+			}
 			entities, ok := state["entities"].(map[string]any)
 			if !ok {
 				return fmt.Errorf("runtime entities must be an object")
@@ -162,6 +169,12 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 				if containsEntity(agents, item.AgentID) {
 					return fmt.Errorf("Agent %s is already registered", item.AgentID)
 				}
+				dispatchMode := item.DispatchMode
+				if dispatchMode == "" {
+					// L4 §3.3: continuous execution is the default; the
+					// two-round approval is the exception for high-risk work.
+					dispatchMode = "plan_checkpoint"
+				}
 				agents = append(agents, map[string]any{
 					"id":                  item.AgentID,
 					"role":                item.RoleFamily,
@@ -170,6 +183,7 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 					"team_id":             value.WorkgroupID,
 					"definition_ref":      item.AgentDefinitionRef,
 					"prompt_ref":          manifestRef + "#" + item.AssignmentID,
+					"dispatch_mode":       dispatchMode,
 					"readback_ref":        nil,
 					"activation_ref":      nil,
 					"activation_revision": nil,
@@ -214,17 +228,17 @@ func validateWorkgroupState(kind string, lifecycle map[string]any) error {
 		if state != "document_verification" {
 			return fmt.Errorf("document verifier workgroup requires document_verification state")
 		}
-	case "delivery_verifier":
-		if state != "verification" || phase != "delivery" {
-			return fmt.Errorf("delivery verifier workgroup requires verification.delivery")
+	case "delivery_verifier", "qa", "e2e_browser":
+		// L3-S7: reviewers dispatch behind a registered ReviewPlan. The
+		// phase machine is a plan-status projection; ordinary findings
+		// (cannot_clean / discovery_draining) never stop safe discovery.
+		if state != "verification" {
+			return fmt.Errorf("%s workgroup requires verification state", kind)
 		}
-	case "qa":
-		if state != "verification" || phase != "qa" {
-			return fmt.Errorf("QA workgroup requires verification.qa")
-		}
-	case "e2e_browser":
-		if state != "verification" || phase != "e2e_browser" {
-			return fmt.Errorf("E2E browser workgroup requires verification.e2e_browser")
+		switch phase {
+		case "running", "cannot_clean", "discovery_draining":
+		default:
+			return fmt.Errorf("%s workgroup requires a registered ReviewPlan (phase running/cannot_clean/discovery_draining, current %s); register the plan via `runtime review-plan` first", kind, phase)
 		}
 	case "builder":
 		if state != "building" && state != "bug_resolution" {

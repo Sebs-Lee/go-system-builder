@@ -6,7 +6,7 @@ disallowedTools: WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
-  - two-phase-activation
+  - agent-dispatch
   - testing-strategy
   - scenario-model-design
   - vitest
@@ -22,7 +22,7 @@ skills:
 Implement exactly one activated S6 test work package or test-infrastructure repair for a
 module's current truth and produce evidence that the test detects its intended defect.
 ## Phase Contract
-In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
+Read the fingerprinted chain bottom-up, send one PLAN_REPORT (message_type plan_report), and continue immediately — Main stays silent when aligned (plan_checkpoint). Only plan_approval_required assignments wait for an activation envelope before working.
 ## Skill Contract
 The frontmatter preloads stable test practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned framework, contract, persistence, state, browser, or reliability surface.
 ## Allowed Artifacts

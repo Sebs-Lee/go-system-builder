@@ -127,14 +127,7 @@
     "dispatched_at": {
       "type": ["string", "null"],
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$",
-      "description": "REQ-003 FR-013: timestamp written by the team-dispatch CLI; used by the angle_declared_before_dispatch guard to enforce pre-review angle declaration. Null until dispatch fires."
-    },
-    "inherited_angles": {
-      "type": "array",
-      "description": "REQ-003 FR-013: baseline angles aggregated from docs/design/angles/{module}.yaml across the Change Record's scope.include modules. Populated by `loop-harness angles list --baseline-for <req>`. Empty when no active angles exist for the scope. The manifest validator checks len(inherited_angles) == sum of active angles across scope.include modules.",
-      "items": {
-        "$ref": "#/$defs/inheritedAngle"
-      }
+      "description": "Timestamp of the workgroup dispatch (register-workgroup). Serves as the dispatch-time fact for recovery and audit; the angle machinery that consumed it is retired (L3-S7). Null until dispatch fires."
     }
   },
   "$defs": {
@@ -258,6 +251,31 @@
         },
         "responsibility_id": {
           "$ref": "#/$defs/responsibilityId"
+        },
+        "claim_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "S7 reviewer assignments: the exact Claim set from the registered ReviewPlan this Assignment answers (L3-S7 section 3.4). Required for delivery-verifier/qa/e2e-tester role families; register-workgroup rejects mismatches.",
+          "items": {
+            "type": "string",
+            "pattern": "^claim-[A-Za-z0-9._-]+$"
+          }
+        },
+        "dispatch_mode": {
+          "enum": ["plan_checkpoint", "plan_approval_required", "one_shot"],
+          "description": "L4 dispatch mode. plan_checkpoint (default): the Worker sends one PLAN_REPORT and continues immediately — Main stays silent when aligned. plan_approval_required: two-round readback -> approval -> activation for high-risk or irreversible work. one_shot: no plan checkpoint; only for idempotent single-action tasks."
+        },
+        "focus_keys": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Round-local professional focus keys copied from the ReviewPlan assignment.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "non_overlap_boundary": {
+          "type": "string",
+          "description": "What this Assignment owns and what adjacent Reviewers must not redo (L3-S7 section 3.4)."
         },
         "role_family": {
           "enum": [
@@ -436,34 +454,6 @@
         "E2E-USER-FLOW",
         "E2E-CONSOLE-NETWORK"
       ]
-    },
-    "inheritedAngle": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "module", "statement", "target", "last_applied_in"],
-      "description": "REQ-003 FR-013: snapshot of an active angle in a module's angles registry, frozen at team dispatch time so reviewers see a stable baseline.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^ANG-[A-Z0-9]+-[0-9]{3,}$"
-        },
-        "module": {
-          "type": "string",
-          "minLength": 1
-        },
-        "statement": {
-          "type": "string",
-          "minLength": 1
-        },
-        "target": {
-          "type": "string",
-          "minLength": 1
-        },
-        "last_applied_in": {
-          "type": "string",
-          "pattern": "^REQ-[0-9]{3,}$"
-        }
-      }
     },
     "paths": {
       "type": "array",

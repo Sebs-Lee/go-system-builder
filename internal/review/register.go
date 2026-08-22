@@ -1,0 +1,205 @@
+package review
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/semantic"
+)
+
+// PlanRequest drives `runtime review-plan` registration.
+type PlanRequest struct {
+	ExpectedRevision int
+	PlanPath         string
+	OccurredAt       time.Time
+}
+
+// RegisterPlan is the S7 entry verb: it schema-validates the Planner's
+// ReviewPlan, proves exact-set Claim coverage (ValidatePlan), pins the plan
+// into the shared control plane under one CAS, initializes the claim /
+// assignment disposition projections, and moves the verification phase to
+// running (L3-S7 §4.1, §11.1). One round has one plan; the controlled
+// revision path is P2 (L3-S7 §13.4).
+func RegisterPlan(
+	root, statePath, journalPath string,
+	request PlanRequest,
+) (loopruntime.Snapshot, error) {
+	if request.PlanPath == "" {
+		return loopruntime.Snapshot{}, fmt.Errorf("--file is required")
+	}
+	data, err := os.ReadFile(request.PlanPath)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("read ReviewPlan: %w", err)
+	}
+	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan schema: %w", err)
+	}
+	var plan Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("decode ReviewPlan: %w", err)
+	}
+	if err := ValidatePlan(&plan); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan coverage: %w", err)
+	}
+
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
+	}
+	var current map[string]any
+	if err := json.Unmarshal(stateData, &current); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+	}
+	lifecycle, _ := current["lifecycle"].(map[string]any)
+	if state, _ := lifecycle["state"].(string); state != "verification" {
+		return loopruntime.Snapshot{}, fmt.Errorf("a ReviewPlan can only be registered in the verification stage (current state: %s); enter S7 via TR-006/TR-012 first", lifecycle["state"])
+	}
+	round := currentReviewRound(current)
+	if round < 1 {
+		return loopruntime.Snapshot{}, fmt.Errorf("no active review round; TR-006/TR-012 start the round")
+	}
+	if plan.ReviewRound != round {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan declares review_round %d but the runtime is at round %d", plan.ReviewRound, round)
+	}
+	if generation := baselineGeneration(current); plan.BaselineGeneration != generation {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan declares baseline_generation %d but the runtime is at generation %d", plan.BaselineGeneration, generation)
+	}
+	if existing := PlanPointerFromState(current); existing != nil && existing.ReviewRound == round {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan %s is already registered for round %d (status %s); revise it via `runtime review-plan revise` (one controlled revision per round, L3-S7 §5.3) or start a new round", existing.PlanID, round, existing.Status)
+	}
+	// Coverage diff at registration (L3-S7 §4.4): every current-generation
+	// TASK must be claimed by at least one Claim's source_refs.
+	if err := ValidatePlanTaskCoverage(current, &plan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	// E2E cold start: create and fingerprint the isolated write surface so
+	// result submit / round close can bind it exactly (L3-S7 §1.4.1).
+	artifactDigest, err := prepareVerificationWorkspace(root, &plan)
+	if err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+
+	// Pin the plan into the shared control plane directory; the runtime
+	// stores path+sha256 and every consumer hash-verifies on load.
+	planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", plan.ReviewPlanID+".json"))
+	planAbs := filepath.Join(root, filepath.FromSlash(planRel))
+	if err := os.MkdirAll(filepath.Dir(planAbs), 0o755); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("create review plan dir: %w", err)
+	}
+	planBytes := append(canonicalJSON(data), '\n')
+	if err := os.WriteFile(planAbs, planBytes, 0o644); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("write ReviewPlan: %w", err)
+	}
+	planSHA := sha256Of(planBytes)
+
+	runtimeID, _ := current["runtime_id"].(string)
+	occurredAt := request.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
+	workspace := ""
+	if plan.VerificationArtifactWorkspace != nil {
+		workspace = *plan.VerificationArtifactWorkspace
+	}
+
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
+		EventID:        fmt.Sprintf("evt-review-plan-%s-r%d", plan.ReviewPlanID, request.ExpectedRevision+1),
+		TransitionID:   "REVIEW-PLAN",
+		Event:          "review_plan_registered",
+		Actor:          "orchestrator",
+		IdempotencyKey: fmt.Sprintf("runtime:review-plan:%s:%d", plan.ReviewPlanID, request.ExpectedRevision),
+		RuntimeID:      runtimeID,
+		From:           cursor,
+		To:             map[string]any{"state": "verification", "phase": "running"},
+		Message: fmt.Sprintf("Registered ReviewPlan %s for round %d (%d claims, %d assignments, e2e=%s)",
+			plan.ReviewPlanID, round, len(plan.Claims), len(plan.Assignments), plan.E2ECoverageState),
+		OccurredAt: occurredAt,
+		Apply: func(state map[string]any) error {
+			reviewMap, ok := state["review"].(map[string]any)
+			if !ok {
+				return fmt.Errorf("runtime review section must be an object")
+			}
+			reviewMap["plan"] = map[string]any{
+				"plan_id":                         plan.ReviewPlanID,
+				"path":                            planRel,
+				"sha256":                          planSHA,
+				"revision":                        1,
+				"review_round":                    round,
+				"status":                          "running",
+				"e2e_coverage_state":              plan.E2ECoverageState,
+				"verification_artifact_workspace": workspace,
+				"verification_artifact_digest":    artifactDigestOrNil(artifactDigest),
+				"submitted_at":                    occurredAt.UTC().Format(time.RFC3339Nano),
+			}
+			claimsProjection := map[string]any{}
+			assignmentsProjection := map[string]any{}
+			ownerByClaim := map[string]string{}
+			for _, assignment := range plan.Assignments {
+				claimIDs := make([]any, 0, len(assignment.ClaimIDs))
+				for _, claimID := range assignment.ClaimIDs {
+					claimIDs = append(claimIDs, claimID)
+					ownerByClaim[claimID] = assignment.AssignmentID
+				}
+				assignmentsProjection[assignment.AssignmentID] = map[string]any{
+					"lens":       assignment.Lens,
+					"claim_ids":  claimIDs,
+					"status":     "planned",
+					"agent_id":   nil,
+					"result_ref": nil,
+				}
+			}
+			for _, claim := range plan.Claims {
+				disposition := "planned"
+				if claim.Applicability == "not_applicable" {
+					// N/A is a plan-level disposition with source and
+					// rationale; it is never dispatched (L3-S7 §9.3).
+					disposition = "not_applicable"
+				}
+				claimsProjection[claim.ClaimID] = map[string]any{
+					"lens":          claim.Lens,
+					"applicability": claim.Applicability,
+					"disposition":   disposition,
+					"assignment_id": ownerByClaim[claim.ClaimID],
+					"result_id":     nil,
+					"finding_ids":   []any{},
+				}
+			}
+			reviewMap["claims"] = claimsProjection
+			reviewMap["assignments"] = assignmentsProjection
+			reviewMap["observation_batch"] = nil
+			// The Finding index starts empty for the round; rows are
+			// immutable once appended by review-result submit.
+			if entities, ok := state["entities"].(map[string]any); ok {
+				if _, present := entities["findings"]; !present {
+					entities["findings"] = []any{}
+				}
+			}
+			if lc, ok := state["lifecycle"].(map[string]any); ok {
+				lc["phase"] = "running"
+				lc["phase_revision"] = intField(lc["phase_revision"]) + 1
+			}
+			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
+			return nil
+		},
+	})
+}
+
+// canonicalJSON re-marshals the plan so the pinned bytes are stable.
+func canonicalJSON(data []byte) []byte {
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return data
+	}
+	out, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return data
+	}
+	return out
+}

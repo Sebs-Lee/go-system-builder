@@ -32,7 +32,9 @@ func TestEvidenceKindsEqualRequirementEnvelopeAliases(t *testing.T) {
 		{"completion_report", "completion_report", true},
 		{"bug_batch_record", "bug", true},
 		{"finding_record", "bug", true},
-		{"finding_record", "finding", false},
+		// L3-S7: finding_record now accepts the immutable Finding kind
+		// registered by review-result submit.
+		{"finding_record", "finding", true},
 		{"root_cause_record", "bug", true},
 		{"root_cause_record", "root_cause", false},
 		{"repair_record", "bug", true},
@@ -115,12 +117,6 @@ func TestGatesSatisfyWithEmptySubjectRefs(t *testing.T) {
 		responsibility string
 		conclusion     string
 	}{
-		{
-			name: "clean round incomplete", gateID: "GATE-CLEAN-ROUND-INCOMPLETE",
-			transitionID: "PTR-VERIFY-05", state: "verification", phase: "clean_round_evaluation",
-			reviewRound: 2, evidenceKind: "clean_round", responsibility: "Clean Round Evaluator",
-			conclusion: "incomplete",
-		},
 		{
 			name: "bug reports rejected", gateID: "GATE-BUG-REPORTS-REJECTED",
 			transitionID: "PTR-BUG-03", state: "bug_resolution", phase: "bug_report_review",
@@ -265,8 +261,10 @@ func bugDraftsReadyShortKindInput(t *testing.T) Input {
 		}
 		return idx
 	}
+	// L3-S7: S8 starts from the sealed ObservationBatch (exact Finding set),
+	// not a hand-carried finding envelope.
 	evidence := []any{
-		add("ev-finding", "bug", "Delivery Verifier", "blocking", 1),
+		add("ev-batch", "observation_batch", "Orchestrator", "sealed", 1),
 		add("ev-root-cause", "bug", "Investigator", "complete", 0),
 	}
 	return Input{

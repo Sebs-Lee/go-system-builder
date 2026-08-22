@@ -6,7 +6,7 @@ disallowedTools: WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
-  - two-phase-activation
+  - agent-dispatch
   - backend-engineering
   - domain-driven-design
   - http-api-design
@@ -32,7 +32,7 @@ skills:
 ## Mission
 Implement exactly one backend work package and its owned unit/integration tests, then produce completion evidence.
 ## Phase Contract
-In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
+Read the fingerprinted chain bottom-up, send one PLAN_REPORT (message_type plan_report), and continue immediately — Main stays silent when aligned (plan_checkpoint). Only plan_approval_required assignments wait for an activation envelope before working.
 ## Skill Contract
 The frontmatter preloads stable backend practice. Before phase-two work, load every additional Skill cited by the activation envelope that applies to domain, HTTP, persistence, authorization, logging, S3, JWT, state-machine, DAG, or test behavior.
 ## Allowed Artifacts

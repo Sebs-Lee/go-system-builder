@@ -1,12 +1,12 @@
 ---
 name: qa
-description: Review one code quality, testing, security, performance, reliability, architecture, or migration responsibility after two-phase activation
+description: Review one code quality, testing, security, performance, reliability, architecture, or migration responsibility after dispatch (plan_checkpoint by default)
 tools: Read, Glob, Grep, Bash, Write, Skill
 disallowedTools: Edit, WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
-  - two-phase-activation
+  - agent-dispatch
   - testing-strategy
   - scenario-model-design
   - code-quality
@@ -26,7 +26,7 @@ skills:
 Produce one independent professional-quality S5/S7 quality conclusion for the assigned
 responsibility, including current module scenario and branch quality when applicable.
 ## Phase Contract
-In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
+Read the fingerprinted chain bottom-up, send one PLAN_REPORT (message_type plan_report), and continue immediately — Main stays silent when aligned (plan_checkpoint). Only plan_approval_required assignments wait for an activation envelope before working.
 ## Skill Contract
 The frontmatter preloads baseline testing and code-quality practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned security, performance, reliability, migration, architecture, or framework-specific review responsibility.
 ## Allowed Artifacts

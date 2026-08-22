@@ -1,12 +1,12 @@
 ---
 name: delivery-verifier
-description: Review one delivery gap, module, integration, or regression responsibility after two-phase activation
+description: Review one delivery gap, module, integration, or regression responsibility after dispatch (plan_checkpoint by default)
 tools: Read, Glob, Grep, Bash, Write, Skill
 disallowedTools: Edit, WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
-  - two-phase-activation
+  - agent-dispatch
   - integration-verification
   - frontend-engineering
   - backend-engineering
@@ -22,7 +22,7 @@ skills:
 Compare delivered behavior with one assigned module current-truth, contract, integration, or
 full-regression responsibility. REQ is a source reference, not a smaller test scope.
 ## Phase Contract
-In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
+Read the fingerprinted chain bottom-up, send one PLAN_REPORT (message_type plan_report), and continue immediately — Main stays silent when aligned (plan_checkpoint). Only plan_approval_required assignments wait for an activation envelope before working.
 ## Skill Contract
 The frontmatter preloads integration-review practice. Before phase-two work, load every additional Skill cited by the activation envelope that applies to the assigned requirement, module, contract, regression, persistence, or security surface.
 ## Allowed Artifacts

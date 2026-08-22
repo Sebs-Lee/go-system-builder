@@ -14,13 +14,18 @@ import (
 
 // Minimal Safety Policy — REQ-039 v2.0.0 §14 / BE-039 v1.0.2 §6.
 //
-// The enforce path produces exactly two block reasons:
+// The enforce path produces exactly three block reasons:
 //
 //   - locked_artifact_write  — the affected path matches a LockedArtifact
 //     manifest entry whose identity is complete (ID/kind/path/version/
 //     sha256/locked_from_stage/baseline_generation).
 //   - squash_merge           — tokenized resolver proves the command is a
 //     git merge --squash or gh pr merge --squash.
+//   - reviewer_product_write — during the verification stage a write targets
+//     a path outside the control plane (.claude/), the report projections
+//     (docs/reports/) and the ReviewPlan's verification artifact workspace;
+//     the frozen product baseline tolerates no in-stage writes (L3-S7
+//     §1.4.1, §8).
 //
 // All other predicates (activation, scope, Team, UI prototype, clean round,
 // policy tamper, runtime integrity, subagent report, teammate idle report,
@@ -31,6 +36,16 @@ import (
 const (
 	RuleLockedArtifactWrite = "locked_artifact_write"
 	RuleSquashMerge         = "squash_merge"
+	// RuleReviewerProductWrite enforces the S7 frozen-baseline invariant:
+	// during the verification stage, Write/Edit/MultiEdit/NotebookEdit may
+	// only target the control plane, report projections, and the ReviewPlan's
+	// declared verification artifact workspace (L3-S7 §1.4.1, §8).
+	RuleReviewerProductWrite = "reviewer_product_write"
+	// RuleAssignmentWriteBeforePlan enforces the L4 first-write barrier: a
+	// dispatched Worker may not write into the product surface before its
+	// PLAN_REPORT is recorded (plan_checkpoint mode). The main session (no
+	// Agent context) is unaffected.
+	RuleAssignmentWriteBeforePlan = "assignment_write_before_plan"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -42,6 +57,12 @@ type AgentContext struct {
 	AllowedTools          []string `json:"allowed_tools"`
 	AllowedWritePaths     []string `json:"allowed_write_paths"`
 	AllowedCommandClasses []string `json:"allowed_command_classes"`
+	// DispatchMode is the L4 dispatch mode stamped at register-workgroup
+	// (plan_checkpoint default). PlanReportedRef is set by the
+	// PostToolUse(SendMessage) observer (or the authoritative
+	// readback_submitted event) once the plan checkpoint is recorded.
+	DispatchMode     string `json:"dispatch_mode,omitempty"`
+	PlanReportedRef  string `json:"plan_reported_ref,omitempty"`
 }
 
 // TeamSummary is a lightweight view of a registered team manifest consumed by
@@ -91,6 +112,11 @@ type RuntimeContext struct {
 	CurrentStage       string           `json:"current_stage,omitempty"`
 	CurrentBaselineGeneration int       `json:"current_baseline_generation,omitempty"`
 	LockedArtifacts    []LockedArtifact `json:"locked_artifacts,omitempty"`
+	// VerificationWorkspace is the S7 ReviewPlan's verification artifact
+	// write surface (E2E cold-start spec/fixture/evidence). The reviewer
+	// product-write deny allows writes only inside it plus the control-plane
+	// and report directories (L3-S7 §8).
+	VerificationWorkspace string `json:"verification_workspace,omitempty"`
 }
 
 type Input struct {
@@ -237,7 +263,97 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 	if decision, blocked := squashMergeDecision(input); blocked {
 		return decision, nil
 	}
+	if decision, blocked := reviewerProductWriteDecision(input); blocked {
+		return decision, nil
+	}
+	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
+		return decision, nil
+	}
 	return Decision{Decision: "allow"}, nil
+}
+
+// assignmentWriteBeforePlanDecision is the L4 first-write barrier: a
+// dispatched Worker in a pre-plan state (spawned/reading, i.e. before its
+// PLAN_REPORT checkpoint) may not mutate the product surface yet. The rule
+// fires only when the Hook payload identifies a specific Agent — the main
+// session (no Agent context) is out of scope.
+func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
+	if input.Runtime.Agent == nil {
+		return Decision{}, false
+	}
+	switch input.ToolName {
+	case "Write", "Edit", "MultiEdit", "NotebookEdit":
+	default:
+		return Decision{}, false
+	}
+	agent := input.Runtime.Agent
+	if agent.State != "spawned" && agent.State != "reading" {
+		return Decision{}, false
+	}
+	if agent.PlanReportedRef != "" {
+		return Decision{}, false
+	}
+	if agent.DispatchMode == "one_shot" {
+		return Decision{}, false
+	}
+	return Decision{
+		Decision: "block",
+		RuleID:   RuleAssignmentWriteBeforePlan,
+		Reason: fmt.Sprintf("Agent %s is %s with no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", agent.ID, agent.State),
+		Recovery: []string{
+			"write the plan report JSON and register it: `runtime agent-event --event readback_submitted --message <plan.json>`",
+			"then continue — no approval wait in plan_checkpoint mode",
+		},
+	}, true
+}
+
+// reviewerProductWriteDecision enforces the S7 frozen-baseline invariant
+// (L3-S7 §1.4.1, §8): during the verification stage nobody writes product
+// code or locked specs in the main checkout — any such write is baseline
+// drift. The only allowed surfaces are the control plane (.claude/), the
+// human-readable report projections (docs/reports/) and the ReviewPlan's
+// declared verification artifact workspace (E2E cold-start spec/fixture).
+func reviewerProductWriteDecision(input Input) (Decision, bool) {
+	if input.Runtime.CurrentState != "verification" {
+		return Decision{}, false
+	}
+	switch input.ToolName {
+	case "Write", "Edit", "MultiEdit", "NotebookEdit":
+	default:
+		return Decision{}, false
+	}
+	rawPath, _ := input.ToolInput["file_path"].(string)
+	if rawPath == "" {
+		return Decision{}, false
+	}
+	rel := strings.TrimPrefix(filepath.ToSlash(rawPath), "./")
+	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
+		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
+			if r, err := filepath.Rel(rootAbs, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
+				rel = filepath.ToSlash(r)
+			}
+		}
+	}
+	allowed := []string{".claude/", "docs/reports/"}
+	if workspace := strings.TrimSuffix(input.Runtime.VerificationWorkspace, "/"); workspace != "" {
+		allowed = append(allowed, workspace+"/")
+	}
+	for _, prefix := range allowed {
+		if strings.HasPrefix(rel, prefix) {
+			return Decision{}, false
+		}
+	}
+	return Decision{
+		Decision:     "block",
+		RuleID:       RuleReviewerProductWrite,
+		Reason:       fmt.Sprintf("verification stage freezes the product baseline; %s is outside the reviewer write surfaces (.claude/, docs/reports/, and the ReviewPlan verification_artifact_workspace)", rel),
+		AffectedPath: rel,
+		Recovery: []string{
+			"write review evidence and result drafts under .claude/ or docs/reports/",
+			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
+			"if the product implementation must change, submit a ReviewResult with verdict=finding instead (L3-S7: Reviewers never repair)",
+		},
+	}, true
 }
 
 func squashMergeDecision(input Input) (Decision, bool) {

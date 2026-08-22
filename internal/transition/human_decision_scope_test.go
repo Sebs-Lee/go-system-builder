@@ -15,7 +15,7 @@ func TestHumanDecisionScopeBinding(t *testing.T) {
 		state := stateAtVerificationMap(5)
 		state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 		state["pause"] = map[string]any{
-			"from_state": "verification", "from_phase": "delivery", "phase_revision": float64(1),
+			"from_state": "verification", "from_phase": "running", "phase_revision": float64(1),
 			"baseline_generation": float64(1), "review_round": nil, 			"reason": "fixture", "required_human_action": "fixture",
 			"document_fingerprints": []any{}, 			"paused_at": "2026-01-01T00:00:00Z",
 		}

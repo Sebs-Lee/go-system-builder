@@ -39,6 +39,13 @@ type stateFile struct {
 		Document   any `json:"document_round,omitempty"`
 		Build      any `json:"build_round,omitempty"`
 		Verify     any `json:"verify_round,omitempty"`
+		// L3-S7: the registered ReviewPlan pointer carries the verification
+		// artifact workspace — the only product-adjacent write surface the
+		// reviewer hard-deny rule allows during the verification stage.
+		Plan *struct {
+			Status                        string `json:"status"`
+			VerificationArtifactWorkspace string `json:"verification_artifact_workspace"`
+		} `json:"plan"`
 	} `json:"review"`
 	Pause *struct {
 		Reason string `json:"reason,omitempty"`
@@ -47,6 +54,8 @@ type stateFile struct {
 		Agents []struct {
 			ID                    string   `json:"id"`
 			State                 string   `json:"state"`
+			DispatchMode          string   `json:"dispatch_mode"`
+			PlanReportedRef       *string  `json:"plan_reported_ref"`
 			ActivationRef         *string  `json:"activation_ref"`
 			TaskIDs               []string `json:"task_ids"`
 			TeamID                *string  `json:"team_id"`
@@ -225,6 +234,9 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 	if state.Review != nil {
 		context.CurrentReviewRound = state.Review.Round
 		context.CleanRound = state.Review.CleanRound
+		if state.Review.Plan != nil {
+			context.VerificationWorkspace = state.Review.Plan.VerificationArtifactWorkspace
+		}
 	}
 	for _, ev := range state.Evidence {
 		if ev.Status == "valid" {
@@ -377,7 +389,10 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			if agent.ID != agentID {
 				continue
 			}
-			context.Agent = &policy.AgentContext{ID: agent.ID, State: agent.State}
+			context.Agent = &policy.AgentContext{ID: agent.ID, State: agent.State, DispatchMode: agent.DispatchMode}
+			if agent.PlanReportedRef != nil {
+				context.Agent.PlanReportedRef = *agent.PlanReportedRef
+			}
 			if agent.ActivationRef == nil {
 				break
 			}

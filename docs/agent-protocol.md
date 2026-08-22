@@ -270,7 +270,7 @@ These hold across every stage:
 - **inputs_from**: [S2 (architecture + optional final UI design package), S3 (FE/BE/SYNC contracts), S4 (candidate TASK batch + DAG), S0 (locked REQ baseline)]
 - **actions** — S5 is three moves (派活 → 审查 → 收口三岔路):
 
-  1. **派活**：主会话按 `team-planning` 建两职责任命——两个 document-verifier subagent 分别绑 `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY`，manifest 声明 separation_edges（independence），validator 拒共享 agent。各审查者走 two-phase-activation（readback → 激活信封）。
+  1. **派活**：主会话按 `team-planning` 建两职责任命——两个 document-verifier subagent 分别绑 `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY`，manifest 声明 separation_edges（independence），validator 拒共享 agent。各审查者默认走 agent-dispatch 的 plan_checkpoint（PLAN_REPORT → 立即继续）；高风险任命才用 plan_approval_required（readback → 激活信封）。
   2. **审查**（两职责并行，任一出 finding 即可进第 3 步）：
      - `DV-SPEC-CONSISTENCY`：激活后**第一件事**是把 `docs/reports/review/REV-template.md` §0 的证据信封骨架复制到 `docs/reports/review/REV-{runid}-{resp}.json`（11 字段每字段带填写指引——写骨架即读懂要交什么）；然后自底向上读 TASK→契约→REQ→设计，核对验收↔条款映射、跨文档引用指纹、契约间边界一致、场景映射，并深挖三项——AC→assert 端到端抽样、NFR 落地追踪、负向错误路径三方对账（详见 document-verification SKILL）。
      - `DV-TASK-EXECUTABILITY`：同样先落信封骨架；跑 `loop-harness tasks check` 消费机检结论（覆盖/DAG 机器已判，不重算），再审五问——单一职责/单窗口（compact 是灾难性表现）/语义连贯/自包含锚点/可测性前向，外加批次节奏半问（关键路径与假依赖）。**触发式专项**（数据模型变更→迁移处置与兼容债务审查；外部依赖→集成韧性；critical profile→风险验证就位）由激活信封按条件指名，见 SKILL Triggered Deep-Dives。
@@ -397,27 +397,27 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
 
 ## S7 — full_verification_round {#s7}
 
-- **purpose**: run a full same-round discovery pass over correctness, engineering quality, and real browser behavior.
+- **purpose**: run a full same-round discovery pass over correctness, engineering quality, and real browser behavior, on one frozen baseline, under a machine-computed exit.
 - **inputs**: S6 integrated baseline, REQ/contracts/TASKs, Builder Result, project rules, risk tags, CASE/PATH, runnable app/test environment.
 - **inputs_from**: [S6 (integrated implementation + Result/check evidence), S5 (locked spec chain), S0 (REQ acceptance criteria)]
 - **actions**:
-  1. `verification plan` freezes baseline, creates one required Claim set, derives DV/QA focus and E2E coverage views, and groups Claims into 1..N Assignments; no Reviewer/token hard cap may delete required coverage
-  2. dispatch independent Assignments through L4; use `plan_checkpoint` by default, and `plan_approval_required` only for high-risk or irreversible work
-  3. execute static DV/QA Claims before behavior E2E Claims when a real dependency exists; E2E cold start first creates bounded flow packs rather than assigning the whole blank matrix to one Agent
-  4. each Worker sends one PLAN_REPORT through SendMessage and continues; Main stays silent when aligned and only sends CORRECTION on semantic drift
-  5. each Assignment submits one Canonical ReviewResult; a failed Claim atomically freezes the encounter and immutable Finding, then ordinary safe discovery continues
-  6. after a concrete `source_ref + affected_surface`, allow at most one controlled ReviewPlan revision; otherwise complete the final required Claim set and close the round
-  7. let the round consumer generate CleanRound or seal ObservationBatch; never ask an Agent to hand-write aggregate PASS
+  1. plan the round: `loop-harness s7 draft` scaffolds a ReviewPlan from the current facts (one DV traceability claim per TASK, QA static focus claims, E2E coverage state from the REQ's ui_impact); the Planner fills the TODO oracles/methods, then registers with `loop-harness runtime review-plan --file <plan.json>`. The validator rejects: required Claims without an owning Assignment, one Claim in two Assignments, mixed-lens Assignments, dispatched not_applicable Claims, dependency cycles, zero DV or QA Claims without a coverage justification, any current-generation TASK missing from all source_refs, and any capacity policy other than `coverage_complete`. A concrete `source_ref + affected_surface` from a consumed Result or Finding permits exactly one controlled revision: `runtime review-plan revise --file <v2.json> --source-ref <id> --affected-surface <path>`
+  2. dispatch reviewers: `runtime register-workgroup` per Assignment. The manifest row must carry `claim_ids` exactly matching the plan Assignment; registration flips the covered Claims to `running`. Behavior-wave (E2E/specialty) workgroups register only after every required static Claim has a disposition
+  3. each Reviewer writes their result per `review-result.example.json` (claim_results must equal the Assignment's Claim set exactly; every fail Claim references one immutable Finding with a real `encounter` — journey_summary, wall_action, first_bad_checkpoint, plus the per-observation-mode minimum fields) and submits it with `loop-harness runtime review-result submit --assignment-id <id> --result <result.json>`. One CAS: result evidence + Findings + claim dispositions + reviewer agent state; `subject_digest` mismatch means the baseline drifted — the round is stale, not submittable
+  4. a finding verdict flips the round to `cannot_clean` but ordinary safe discovery continues (`drain_policy=complete_required_claims`); only a P0 finding seals the batch immediately with explicit capture gaps. The pause verdicts (`req_change_required` / `release_blocked`) create the single authoritative pause checkpoint inside the submit transaction; TR-010/TR-011 then only move the cursor
+  5. the round consumer runs inside the same submit: when the final required Claim lands with findings, the ObservationBatch seals (exact Finding set, coverage summary, finder routes); with no findings, the machine CleanRound snapshot is registered. Never hand-write an aggregate PASS or a clean_round record
+  6. exits are hook-driven: TR-008 consumes the sealed batch (one BUG draft per Finding, deduplicated by finding content hash — S8 never re-reproduces symptoms by default); TR-009 recomputes the CleanRound over the exact Claim set before acceptance. `loop-harness s7 status` is the read-only board for the whole round
+- **reviewer write rule**: during the verification stage the PreToolUse hook hard-denies Write/Edit/MultiEdit/NotebookEdit outside `.claude/`, `docs/reports/`, and the ReviewPlan's `verification_artifact_workspace` (created at registration for `e2e_coverage_state=cold_start`; E2E results must bind the workspace digest, and the close recomputes it) — the frozen baseline tolerates no product writes. Reviewers never repair; a product problem is a Finding. Execution wrappers append sanitized timeline steps via `loop-harness capture step --assignment <id> --action ... --observed ...`; `review-result submit --captures <dir>` merges them into findings whose encounter timeline is empty. Secrets are rejected at capture time
 - **done_when**:
   - every applicable Claim has a current disposition and every required Claim has a consumed Result
-  - DV, QA and E2E coverage views are complete; no overloaded generic Assignment or unresolved duplicate oracle remains
+  - no overloaded generic Assignment or unresolved duplicate oracle remains in the coverage views
   - E2E evidence is bound to the declared flow/entry/oracle and includes material state, console/network and trace evidence where applicable
   - every runtime Finding has the actual encounter: short journey, last-good, wall action, first-bad, terminal state, state/side-effect delta and evidence refs
   - if clean, one machine-generated CleanRound exists; otherwise a sealed ObservationBatch carries the Finding exact set and claim coverage summary
 - **next**: S10 if CleanRound passes; S8 if ObservationBatch is sealed. Produce the most-forward missing Claim Result, encounter field or handoff fact; do not manually invoke a transition.
-- **failure_route**: any blocking finding → S8 finding investigation; incomplete/stale evidence restarts S7.
-- **human_gateway**: none for ordinary work.
-- **primary_skill**: L4 dispatch governance, then focus-specific QA/DV/E2E Skills; clean-round evaluation is machine-owned.
+- **failure_route**: any blocking finding → S8 finding investigation; incomplete/stale evidence restarts S7 with a new round.
+- **human_gateway**: none for ordinary work; verdict pauses (TR-010/TR-011) surface the human gateway.
+- **primary_skill**: L4 dispatch governance, then focus-specific QA/DV/E2E Skills; the round exit (CleanRound / ObservationBatch) is machine-owned.
 
 ## S8 — finding_investigation {#s8}
 

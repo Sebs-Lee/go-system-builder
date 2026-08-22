@@ -13,9 +13,9 @@ func TestLegendCoversPresentTokensOnly(t *testing.T) {
 	})
 	for _, want := range []string{
 		"MISSING TOKENS:",
-		"`evidence:completion_report:<TASK>`",
+		"`evidence:completion_report:<id>`",
 		"run `runtime task-complete` for the named TASK",
-		"`integration_checkpoint:<TASK>`",
+		"`integration_checkpoint:<id>`",
 		"run `runtime task-integrate --assignment-id <id>`",
 	} {
 		if !strings.Contains(legend, want) {
@@ -56,10 +56,10 @@ func TestFullLegendListsEveryFamily(t *testing.T) {
 	for _, want := range []string{
 		"`batch:execution_batch_empty`",
 		"`evidence:completion_report`",
-		"`evidence:completion_report:<TASK>`",
-		"`checks:<TASK>`",
-		"`scope_deviations:<TASK>`",
-		"`integration_checkpoint:<TASK>`",
+		"`evidence:completion_report:<id>`",
+		"`checks:<id>`",
+		"`scope_deviations:<id>`",
+		"`integration_checkpoint:<id>`",
 	} {
 		if !strings.Contains(legend, want) {
 			t.Fatalf("full legend missing %q:\n%s", want, legend)

@@ -967,7 +967,9 @@ func SeedAcceptanceReady(t *testing.T, root string, state map[string]any) {
 		"teams":  teamEntries,
 	}
 	state["lifecycle"] = map[string]any{"state": "acceptance", "phase": nil, "phase_revision": 0}
-	state["review"] = map[string]any{"round": 1, "clean_round": 1}
+	// L3-S7: the clean_round_still_valid guard (TR-015/TR-017) recomputes the
+	// machine CleanRound from the ReviewPlan projection.
+	SeedCleanRoundProjection(t, root, state)
 	state["milestone"].(map[string]any)["stage"] = "S10"
 	state["milestone"].(map[string]any)["lifecycle_state"] = "acceptance"
 }
@@ -1027,7 +1029,9 @@ func SeedReleaseAuditReady(t *testing.T, root string, state map[string]any) {
 		"teams":  teamEntries,
 	}
 	state["lifecycle"] = map[string]any{"state": "release_audit", "phase": nil, "phase_revision": 0}
-	state["review"] = map[string]any{"round": 1, "clean_round": 1}
+	// L3-S7: the clean_round_still_valid guard (TR-015/TR-017) recomputes the
+	// machine CleanRound from the ReviewPlan projection.
+	SeedCleanRoundProjection(t, root, state)
 	state["milestone"].(map[string]any)["stage"] = "S10"
 	state["milestone"].(map[string]any)["lifecycle_state"] = "release_audit"
 }

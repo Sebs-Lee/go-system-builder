@@ -1,6 +1,6 @@
 # E2E Tester Evidence: E2E-{id}
 
-> Status: draft / PASS / FIX_REQUIRED / BLOCKED / invalidated
+> Status: draft / pass / finding / req_change_required / release_blocked / invalidated (ReviewResult verdict vocabulary; submit via `runtime review-result submit`)
 > Runtime ref: `{runtime-id}@{revision}`
 > Review round: {n}
 > Workgroup manifest: `{team-manifest-path}`
@@ -168,7 +168,7 @@ ls docs/reports/e2e/screenshots/*.png
 ## Result
 
 ```text
-PASS / FIX_REQUIRED / BLOCKED
+pass / finding / req_change_required / release_blocked
 ```
 
 Requested lifecycle event: `{event}`

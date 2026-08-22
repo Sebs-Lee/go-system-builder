@@ -14,7 +14,7 @@ import (
 // `delivery_team_complete`, `delivery_round_passed`, `qa_team_complete`,
 // `qa_round_passed`, `e2e_team_complete`, `e2e_round_passed` are NOT
 // registered. A re-introduction would silently re-enable the stub behavior
-// the new angle_complete guards are explicitly replacing. The four TR-001
+// the retired angle_complete guards once replaced. The four TR-001
 // stub guards were removed for the same reason (L3-S1 v4.x): their
 // semantics live in the bind prechecks and the human lock. L3-S6 P0-4
 // removed the three TR-006 batch stubs the same way — the exact-set
@@ -62,18 +62,13 @@ func TestEvidenceBackedGuardHelperPreserved(t *testing.T) {
 	}
 }
 
-// TestAngleCompleteEnforcementIsSemantic locks the registration strength
-// asserted by FR-009: the three angle_complete guards are NOT stubs; they
-// run semantic checks against on-disk evidence. Their enforcement must
-// be GuardSemanticCheck, matching the README note in guards.go.
-func TestAngleCompleteEnforcementIsSemantic(t *testing.T) {
+// TestAngleLifecycleRemoved locks the L3-S7 retirement: the angle_complete
+// guards (and their vocabulary) must stay out of the registry — their intent
+// lives in ReviewPlan Claims, enforced by the plan validator.
+func TestAngleLifecycleRemoved(t *testing.T) {
 	for _, name := range []string{"delivery_angle_complete", "qa_angle_complete", "e2e_angle_complete"} {
-		registration, ok := transition.LookupGuardRegistration(name)
-		if !ok {
-			t.Fatalf("guard %s must be registered", name)
-		}
-		if registration.Enforcement != transition.GuardSemanticCheck {
-			t.Errorf("guard %s enforcement = %q, want semantic_check", name, registration.Enforcement)
+		if _, ok := transition.LookupGuard(name); ok {
+			t.Errorf("retired angle guard %s must not be registered", name)
 		}
 	}
 }

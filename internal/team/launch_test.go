@@ -55,7 +55,7 @@ func TestGenerateReadbackRequestsCreatesOneSchemaValidPackagePerAssignment(t *te
 		}
 		if request.RoleFamily == "qa" {
 			for _, name := range []string{
-				"two-phase-activation", "testing-strategy", "code-quality", "security-review",
+				"agent-dispatch", "testing-strategy", "code-quality", "security-review",
 				"performance-review", "reliability-review", "database-change", "state-machine-design",
 			} {
 				if !hasSkill(request, name) {

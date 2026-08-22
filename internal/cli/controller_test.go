@@ -24,7 +24,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 		"revision":   12,
 		"lifecycle": map[string]any{
 			"state": "verification",
-			"phase": "qa",
+			"phase": "running",
 		},
 		"bound_req": map[string]any{
 			"path": "docs/requirements/REQ-039-loop-control-plane.md",
@@ -36,7 +36,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.Stage != "S7" {
 		t.Fatalf("expected S7 guidance, got %#v", guidance)
 	}
-	if guidance.LifecycleState != "verification" || guidance.LifecyclePhase != "qa" {
+	if guidance.LifecycleState != "verification" || guidance.LifecyclePhase != "running" {
 		t.Fatalf("unexpected lifecycle cursor: %#v", guidance)
 	}
 	if guidance.ProtocolRef != "docs/agent-protocol.md#s7" {
@@ -48,7 +48,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.PrimarySkill != "team-planning" {
 		t.Fatalf("unexpected primary skill: %q", guidance.PrimarySkill)
 	}
-	if guidance.Action != "complete QA responsibilities" {
+	if !strings.Contains(guidance.Action, "review-result submit") {
 		t.Fatalf("unexpected next action: %q", guidance.Action)
 	}
 	if !strings.Contains(guidance.Instruction, "docs/agent-protocol.md#s7") {
@@ -66,7 +66,7 @@ func TestBuildGuidanceDefinesRecoveryReadOrderAndNoCliNormalPath(t *testing.T) {
 		"revision":   12,
 		"lifecycle": map[string]any{
 			"state": "verification",
-			"phase": "qa",
+			"phase": "running",
 		},
 		"bound_req": map[string]any{
 			"path": "docs/requirements/REQ-039-loop-control-plane.md",
@@ -325,7 +325,7 @@ func TestRunControlCycleHelperWrappersAreExposed(t *testing.T) {
 	state := map[string]any{
 		"runtime_id": "loop-REQ-039",
 		"revision":   12,
-		"lifecycle":  map[string]any{"state": "verification", "phase": "qa"},
+		"lifecycle":  map[string]any{"state": "verification", "phase": "running"},
 	}
 	internal := buildGuidance(root, state, "PreToolUse", policy.Input{})
 	exported := BuildGuidanceForState(root, state, "PreToolUse", policy.Input{})

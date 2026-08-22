@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/transition"
@@ -43,7 +44,7 @@ func stateAtVerification(t *testing.T, root string) {
 		"revision": 5,
 		"lifecycle": map[string]any{
 			"state":          "verification",
-			"phase":          "delivery",
+			"phase":          "running",
 			"phase_revision": 1,
 		},
 		"authorization": map[string]any{
@@ -165,13 +166,44 @@ func readState(t *testing.T, root string) map[string]any {
 	return state
 }
 
+// seedPauseCheckpoint writes the authoritative pause checkpoint the way the
+// S7 verdict transaction (runtime review-result submit) creates it — TR-010/
+// TR-011 then only move the cursor (L3-S7 §9.2 single-carrier).
+func seedPauseCheckpoint(t *testing.T, root string) {
+	t.Helper()
+	state := readState(t, root)
+	lifecycle := state["lifecycle"].(map[string]any)
+	state["pause"] = map[string]any{
+		"from_state":            lifecycle["state"],
+		"from_phase":            lifecycle["phase"],
+		"phase_revision":        lifecycle["phase_revision"],
+		"baseline_generation":   1,
+		"review_round":          1,
+		"reason":                "S7 review verdict: release_blocked",
+		"required_human_action": "review the blocking finding or REQ change, then resume or re-lock the REQ",
+		"document_fingerprints": []any{},
+		"paused_at":             "2026-01-02T00:00:00Z",
+	}
+	writeState(t, root, state)
+}
+
 func TestTR010CapturePauseCheckpoint(t *testing.T) {
 	root := t.TempDir()
 	stateAtVerification(t, root)
+
+	// L3-S7: TR-011 refuses to move without the verdict-created checkpoint.
 	err := applyTransition(t, root, "TR-011", 5, map[string]string{
-		"human_decision_record": "docs/reports/human/decision.md",
-		"review_result_record":  "docs/reports/qa/QA-1.md",
-		"pause_record":          "generated:pause_checkpoint",
+		"review_result_record": "docs/reports/qa/QA-1.md",
+	})
+	if err == nil || !strings.Contains(err.Error(), "pause checkpoint missing") {
+		t.Fatalf("TR-011 without a checkpoint must fail, got %v", err)
+	}
+
+	// With the checkpoint in place, TR-011 moves the cursor and the
+	// checkpoint survives untouched (single writer).
+	seedPauseCheckpoint(t, root)
+	err = applyTransition(t, root, "TR-011", 5, map[string]string{
+		"review_result_record": "docs/reports/qa/QA-1.md",
 	})
 	if err != nil {
 		t.Fatalf("TR-011 failed: %v", err)
@@ -179,7 +211,7 @@ func TestTR010CapturePauseCheckpoint(t *testing.T) {
 	state := readState(t, root)
 	pause, ok := state["pause"].(map[string]any)
 	if !ok {
-		t.Fatal("expected pause checkpoint to be captured")
+		t.Fatal("expected pause checkpoint to survive the transition")
 	}
 	requiredFields := []string{
 		"from_state", "from_phase", "phase_revision", "baseline_generation",
@@ -195,8 +227,8 @@ func TestTR010CapturePauseCheckpoint(t *testing.T) {
 	if pause["from_state"] != "verification" {
 		t.Errorf("expected from_state=verification, got %v", pause["from_state"])
 	}
-	if pause["baseline_generation"] != float64(1) {
-		t.Errorf("expected baseline_generation=1, got %v", pause["baseline_generation"])
+	if pause["paused_at"] != "2026-01-02T00:00:00Z" {
+		t.Errorf("checkpoint was rewritten (paused_at=%v); the verdict transaction is the single writer", pause["paused_at"])
 	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	if lifecycle["state"] != "paused" {
@@ -207,11 +239,11 @@ func TestTR010CapturePauseCheckpoint(t *testing.T) {
 func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 	root := t.TempDir()
 	stateAtVerification(t, root)
-	// First pause.
+	// First pause: the verdict transaction creates the checkpoint, TR-011
+	// moves the cursor (L3-S7 single-carrier).
+	seedPauseCheckpoint(t, root)
 	if err := applyTransition(t, root, "TR-011", 5, map[string]string{
-		"human_decision_record": "docs/reports/human/decision.md",
-		"review_result_record":  "docs/reports/qa/QA-1.md",
-		"pause_record":          "generated:pause_checkpoint",
+		"review_result_record": "docs/reports/qa/QA-1.md",
 	}); err != nil {
 		t.Fatal(err)
 	}

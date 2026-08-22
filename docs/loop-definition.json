@@ -43,10 +43,10 @@
     "verification": {
       "stage": "S7",
       "category": "review",
-      "description": "Delivery Verifier, QA, and E2E Browser teams run a complete review round; findings are investigated before repair.",
+      "description": "One frozen baseline, one ReviewPlan with an exact required Claim set, 1..N DV/QA/E2E reviewer Assignments, one Canonical ReviewResult per Assignment, and a machine-computed CleanRound or sealed ObservationBatch.",
       "phase_machine": "verification",
-      "entry_condition": "Builder or repair output is ready for a full review round.",
-      "exit_condition": "A valid clean round passes, a finding enters BUG resolution, or the Loop pauses."
+      "entry_condition": "S6 builder results are integrated and consumed (or S9 targeted re-verification passed) and a new review round is open.",
+      "exit_condition": "The machine CleanRound passes (TR-009), a sealed ObservationBatch hands the exact Finding set to S8 (TR-008), or the Loop pauses on a verdict (TR-010/TR-011)."
     },
     "bug_resolution": {
       "stage": "S8/S9",
@@ -202,219 +202,47 @@
     },
     "verification": {
       "owner_state": "verification",
-      "initial_phase": "delivery",
+      "initial_phase": "planned",
       "entry_phases": [
-        "delivery"
+        "planned"
       ],
       "terminal_phases": [
-        "clean_round_passed"
+        "clean",
+        "observation_sealed"
       ],
       "phases": {
-        "delivery": {
-          "description": "Run every required Delivery Verifier responsibility for the current round.",
-          "entry_condition": "A complete team manifest and Builder/repair evidence exist.",
-          "exit_condition": "All dimensions pass or findings leave the top-level state."
+        "planned": {
+          "description": "A review round is open but no ReviewPlan is registered yet.",
+          "entry_condition": "TR-006/TR-012/TR-016 opened a new review round.",
+          "exit_condition": "A schema-valid ReviewPlan with an exactly-partitioned required Claim set is registered via runtime review-plan."
         },
-        "qa": {
-          "description": "Run every required QA responsibility for the same review round.",
-          "entry_condition": "All Delivery Verifier dimensions pass.",
-          "exit_condition": "All QA dimensions pass or findings leave the top-level state."
+        "running": {
+          "description": "The ReviewPlan is registered; static DV/QA Claims and (after they settle) behavior E2E Claims are dispatched and consumed.",
+          "entry_condition": "ReviewPlan registered for the current round.",
+          "exit_condition": "Every required Claim has a consumed disposition; a finding flips the round to cannot_clean."
         },
-        "e2e_browser": {
-          "description": "Run real-browser E2E user flows for the same review round.",
-          "entry_condition": "Delivery Verifier and QA dimensions pass.",
-          "exit_condition": "All required E2E browser responsibilities pass or findings leave the top-level state."
+        "cannot_clean": {
+          "description": "At least one confirmed Finding exists; the clean path is closed but ordinary safe discovery continues.",
+          "entry_condition": "A consumed ReviewResult carried a Finding.",
+          "exit_condition": "The remaining required Claims complete (discovery_draining) or a P0 finding seals the batch immediately."
         },
-        "clean_round_evaluation": {
-          "description": "Validate same-round completeness, evidence freshness and closed blocking BUGs.",
-          "entry_condition": "Delivery, QA, and E2E Browser all report PASS for one round.",
-          "exit_condition": "The round passes or review restarts at delivery."
+        "discovery_draining": {
+          "description": "The remaining required Claims are being completed after a confirmed ordinary finding (drain_policy=complete_required_claims).",
+          "entry_condition": "cannot_clean with undispositioned required Claims still being consumed.",
+          "exit_condition": "The final required Claim disposition lands and the ObservationBatch seals."
         },
-        "clean_round_passed": {
-          "description": "One complete and current review round satisfies the acceptance gate.",
-          "entry_condition": "Clean-round guards all pass.",
-          "exit_condition": "The top-level Loop enters acceptance."
+        "observation_sealed": {
+          "description": "The final required Claim set is dispositioned and the ObservationBatch carries the exact Finding set for S8.",
+          "entry_condition": "Round consumer sealed the ObservationBatch.",
+          "exit_condition": "TR-008 hands the batch to bug_resolution."
+        },
+        "clean": {
+          "description": "Every applicable Claim was consumed without findings; the machine CleanRound snapshot is registered.",
+          "entry_condition": "Round consumer computed the CleanRound over the exact Claim set.",
+          "exit_condition": "TR-009 promotes the clean round into acceptance."
         }
       },
-      "transitions": [
-        {
-          "id": "PTR-VERIFY-01",
-          "from": "delivery",
-          "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {
-            "eligible": true,
-            "human_boundary": false
-          },
-          "event": "delivery_pass",
-          "to": "qa",
-          "actors": [
-            "delivery_verifier",
-            "orchestrator",
-            "hook_controller"
-          ],
-          "guards": [
-            "delivery_angle_complete"
-          ],
-          "actions": [
-            "record_delivery_result"
-          ],
-          "required_evidence": [
-            "team_manifest_record",
-            "delivery_review_record"
-          ],
-          "on_guard_failure": "warn_and_retry",
-          "auto_trigger": {
-            "enabled": true,
-            "event": "PreToolUse",
-            "actor": "hook_controller",
-            "quality_gate_id": "GATE-VERIFY-DELIVERY-PASS",
-            "max_per_event": 1,
-            "human_required": false
-          },
-          "description": "QA cannot start until all required delivery dimensions pass."
-        },
-        {
-          "id": "PTR-VERIFY-02",
-          "from": "qa",
-          "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {
-            "eligible": true,
-            "human_boundary": false
-          },
-          "event": "qa_pass",
-          "to": "e2e_browser",
-          "actors": [
-            "qa",
-            "orchestrator",
-            "hook_controller"
-          ],
-          "guards": [
-            "qa_angle_complete"
-          ],
-          "actions": [
-            "record_qa_result"
-          ],
-          "required_evidence": [
-            "team_manifest_record",
-            "qa_review_record"
-          ],
-          "on_guard_failure": "warn_and_retry",
-          "auto_trigger": {
-            "enabled": true,
-            "event": "PreToolUse",
-            "actor": "hook_controller",
-            "quality_gate_id": "GATE-VERIFY-QA-PASS",
-            "max_per_event": 1,
-            "human_required": false
-          },
-          "description": "Real-browser E2E follows complete QA evidence."
-        },
-        {
-          "id": "PTR-VERIFY-03",
-          "from": "e2e_browser",
-          "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {
-            "eligible": true,
-            "human_boundary": false
-          },
-          "event": "e2e_browser_pass",
-          "to": "clean_round_evaluation",
-          "actors": [
-            "e2e_tester",
-            "orchestrator",
-            "hook_controller"
-          ],
-          "guards": [
-            "e2e_angle_complete"
-          ],
-          "actions": [
-            "record_e2e_result"
-          ],
-          "required_evidence": [
-            "team_manifest_record",
-            "e2e_review_record"
-          ],
-          "on_guard_failure": "warn_and_retry",
-          "auto_trigger": {
-            "enabled": true,
-            "event": "PreToolUse",
-            "actor": "hook_controller",
-            "quality_gate_id": "GATE-VERIFY-E2E-PASS",
-            "max_per_event": 1,
-            "human_required": false
-          },
-          "description": "Clean-round evaluation follows complete real-browser E2E evidence."
-        },
-        {
-          "id": "PTR-VERIFY-04",
-          "from": "clean_round_evaluation",
-          "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {
-            "eligible": true,
-            "human_boundary": false
-          },
-          "event": "clean_round_valid",
-          "to": "clean_round_passed",
-          "actors": [
-            "orchestrator",
-            "hook_controller"
-          ],
-          "guards": [
-            "same_review_round",
-            "all_required_dimensions_passed",
-            "no_invalidated_pass_evidence",
-            "no_open_blocking_bugs"
-          ],
-          "actions": [
-            "record_clean_round"
-          ],
-          "required_evidence": [
-            "clean_round_record"
-          ],
-          "on_guard_failure": "warn_and_retry",
-          "auto_trigger": {
-            "enabled": true,
-            "event": "PreToolUse",
-            "actor": "hook_controller",
-            "quality_gate_id": "GATE-VERIFY-CLEAN-ROUND-VALID",
-            "max_per_event": 1,
-            "human_required": false
-          },
-          "description": "Only one complete, current and blocker-free round passes."
-        },
-        {
-          "id": "PTR-VERIFY-05",
-          "from": "clean_round_evaluation",
-          "selector": "SEL-VERIFICATION-OUTCOME",
-          "automation": {
-            "eligible": true,
-            "human_boundary": false
-          },
-          "event": "clean_round_incomplete",
-          "to": "delivery",
-          "actors": [
-            "orchestrator",
-            "hook_controller"
-          ],
-          "guards": [],
-          "actions": [
-            "start_new_review_round"
-          ],
-          "required_evidence": [
-            "clean_round_record"
-          ],
-          "on_guard_failure": "warn_and_retry",
-          "auto_trigger": {
-            "enabled": true,
-            "event": "PreToolUse",
-            "actor": "hook_controller",
-            "quality_gate_id": "GATE-CLEAN-ROUND-INCOMPLETE",
-            "max_per_event": 1,
-            "human_required": false
-          },
-          "description": "Mixed, incomplete or stale evidence restarts the full review."
-        }
-      ]
+      "transitions": []
     },
     "bug_resolution": {
       "owner_state": "bug_resolution",
@@ -479,7 +307,7 @@
             "record_bug_drafts"
           ],
           "required_evidence": [
-            "finding_record",
+            "observation_batch_record",
             "root_cause_record"
           ],
           "on_guard_failure": "warn_and_retry",
@@ -491,7 +319,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "A finding cannot become repair work before root-cause evidence exists."
+          "description": "A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists."
         },
         {
           "id": "PTR-BUG-02",
@@ -593,7 +421,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Repair execution uses the same two-phase activation gate."
+          "description": "Repair execution uses the same agent dispatch gate (plan_checkpoint by default)."
         },
         {
           "id": "PTR-BUG-05",
@@ -762,6 +590,14 @@
         },
         {
           "from": "understanding_approved",
+          "event": "activation_sent",
+          "to": "activated",
+          "guards": [
+            "activation_scope_valid"
+          ]
+        },
+        {
+          "from": "understanding_submitted",
           "event": "activation_sent",
           "to": "activated",
           "guards": [
@@ -1184,7 +1020,7 @@
       "guards": [],
       "actions": [
         "start_review_round",
-        "set_verification_phase_delivery"
+        "set_verification_phase_planned"
       ],
       "required_evidence": [
         "builder_report_record"
@@ -1255,14 +1091,14 @@
         "hook_controller"
       ],
       "guards": [
-        "blocking_findings_present"
+        "observation_batch_sealed"
       ],
       "actions": [
         "record_finding_batch",
         "set_bug_phase_investigation"
       ],
       "required_evidence": [
-        "finding_record"
+        "observation_batch_record"
       ],
       "on_guard_failure": "reject",
       "auto_trigger": {
@@ -1273,12 +1109,13 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Any blocking Delivery, QA, or E2E Browser finding means the REQ batch is incomplete and must enter S8 investigation before repair."
+      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One BUG draft is created per Finding, deduplicated by finding content hash.",
+      "from_phase": "observation_sealed"
     },
     {
       "id": "TR-009",
       "from": "verification",
-      "from_phase": "clean_round_passed",
+      "from_phase": "clean",
       "selector": "SEL-VERIFICATION-OUTCOME",
       "automation": {
         "eligible": true,
@@ -1291,10 +1128,7 @@
         "hook_controller"
       ],
       "guards": [
-        "verification_phase_clean_round_passed",
-        "same_review_round",
-        "no_invalidated_pass_evidence",
-        "no_open_blocking_bugs"
+        "clean_round_valid"
       ],
       "actions": [
         "record_clean_round"
@@ -1311,7 +1145,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Acceptance requires one complete, current and blocker-free review round."
+      "description": "Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time."
     },
     {
       "id": "TR-010",
@@ -1330,13 +1164,12 @@
         "orchestrator",
         "hook_controller"
       ],
-      "guards": [],
-      "actions": [
-        "capture_pause_checkpoint"
+      "guards": [
+        "pause_checkpoint_recorded"
       ],
+      "actions": [],
       "required_evidence": [
-        "review_result_record",
-        "pause_record"
+        "review_result_record"
       ],
       "on_guard_failure": "reject",
       "auto_trigger": {
@@ -1347,7 +1180,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "A required REQ change pauses automation."
+      "description": "A ReviewResult verdict of req_change_required pauses the loop for a human REQ decision. The verdict transaction (runtime review-result submit) already created the single authoritative pause checkpoint; this transition only moves the cursor."
     },
     {
       "id": "TR-011",
@@ -1364,13 +1197,12 @@
         "orchestrator",
         "hook_controller"
       ],
-      "guards": [],
-      "actions": [
-        "capture_pause_checkpoint"
+      "guards": [
+        "pause_checkpoint_recorded"
       ],
+      "actions": [],
       "required_evidence": [
-        "review_result_record",
-        "pause_record"
+        "review_result_record"
       ],
       "on_guard_failure": "reject",
       "auto_trigger": {
@@ -1381,7 +1213,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Security, compliance or equivalent blockers require human intervention."
+      "description": "A ReviewResult verdict of release_blocked pauses the loop for a human release decision. The verdict transaction (runtime review-result submit) already created the single authoritative pause checkpoint; this transition only moves the cursor."
     },
     {
       "id": "TR-012",
@@ -1407,7 +1239,7 @@
       ],
       "actions": [
         "start_review_round",
-        "set_verification_phase_delivery"
+        "set_verification_phase_planned"
       ],
       "required_evidence": [
         "targeted_reverification_record",
@@ -1555,7 +1387,7 @@
       "actions": [
         "invalidate_affected_evidence",
         "start_review_round",
-        "set_verification_phase_delivery"
+        "set_verification_phase_planned"
       ],
       "required_evidence": [
         "acceptance_record",

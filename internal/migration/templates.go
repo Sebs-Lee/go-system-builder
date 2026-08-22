@@ -44,7 +44,7 @@ func ValidateTemplates(root string) error {
 		{
 			path: "prelude.md",
 			required: []string{
-				"loop-orchestration", "team-planning", "two-phase-activation",
+				"loop-orchestration", "team-planning", "agent-dispatch",
 				"bug-resolution", "clean-round-evaluation",
 			},
 			forbidden: []string{"## 3. Core Gates"},
@@ -137,14 +137,16 @@ func ValidateTemplates(root string) error {
 	}
 	for _, value := range []string{
 		`"PreToolUse"`, `"SubagentStart"`, `"SubagentStop"`,
-		`"TeammateIdle"`, `"SessionStart"`, `"PreCompact"`,
+		`"TeammateIdle"`, `"SessionStart"`, `"PreCompact"`, `"PostToolUse"`,
 		`.claude/bin/loop-harness hook --event`,
 	} {
 		if !strings.Contains(string(settingsData), value) {
 			return fmt.Errorf("%s: missing migrated field or route %q", settingsLabel, value)
 		}
 	}
-	for _, removed := range []string{`"PostToolUse"`, `"PermissionRequest"`, `"TaskCompleted"`, `"ConfigChange"`} {
+	// PostToolUse is a live observation event (L3-S7/L4 PLAN_REPORT capture);
+	// the remaining three stay retired.
+	for _, removed := range []string{`"PermissionRequest"`, `"TaskCompleted"`, `"ConfigChange"`} {
 		if strings.Contains(string(settingsData), removed) {
 			return fmt.Errorf("%s: obsolete Hook event %s", settingsLabel, removed)
 		}

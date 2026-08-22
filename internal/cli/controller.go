@@ -140,7 +140,7 @@ func addDelegationPreflight(guidance *policy.Guidance, input policy.Input) {
 		"Is a single subagent necessary, or should this responsibility use an Agent Team?",
 		"Which predefined agent template under .claude/agents/ is being used?",
 		"Is the assignment isolated in a worktree?",
-		"Does the spawn carry an explicit team_name and a two-phase readback/activation envelope?",
+		"Does the spawn carry an explicit team_name and a dispatch envelope (plan report / activation)?",
 	}
 	if subType, _ := input.ToolInput["subagent_type"].(string); subType != "" {
 		guidance.ReadOrder = insertReadOrder(guidance.ReadOrder, ".claude/agents/"+subType+".md", 2)

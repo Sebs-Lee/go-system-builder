@@ -50,7 +50,7 @@ Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or
 5. Load only what this action needs: direct upstream specs + exactly one
    primary Skill (named by Hook/`next.primary_skill`) + risk-triggered Best Practices.
 6. Execute the action (self, or one single-responsibility subagent assignment
-   via `two-phase-activation`).
+   via `agent-dispatch`).
 7. Verify the artifact; write the deliverable and the evidence.
 8. If stage done_when flipped to true: wait for the next PreToolUse to
    auto-commit the advance. Do not hand-push `runtime transition`.
@@ -94,7 +94,7 @@ Prefer the predefined role-bearing agents over `general-purpose`. Each
 frontmatter-loaded Skills, and a stable `model:` (opus for review and test
 work, sonnet for implementation). Routing a Builder / Verifier
 responsibility through `general-purpose` skips those bindings and the
-two-phase activation gate, and the resulting agent runs without Hook scope
+agent dispatch gate, and the resulting agent runs without Hook scope
 checks, message envelope discipline, or the role-specific Skills preload.
 
 Use `general-purpose` only when:
@@ -102,13 +102,13 @@ Use `general-purpose` only when:
 - The work is genuinely outside every predefined role (one-off research,
   ad-hoc scaffolding that no role owns).
 - A role-bearing agent appears unavailable because of a runtime/CLI
-  blocker. **First** verify the blocker per `.claude/skills/two-phase-activation/SKILL.md`
+  blocker. **First** verify the blocker per `.claude/skills/agent-dispatch/SKILL.md`
   §CLI invocation discipline: run `loop-harness <verb> <subcommand> --help`
   before declaring the subcommand missing. Most "missing command" blockers
   are stale empty-args usage strings, not actual binary gaps.
 
 If a role-bearing agent gets stuck mid-assignment (no readback, no
-completion report), follow the `two-phase-activation` Skill's stop
+completion report), follow the `agent-dispatch` Skill's stop
 conditions: surface the blocker to the human or revoke/reassign the
 assignment. Do **not** silently swap to `general-purpose` to bypass the
 activation envelope — that hides the real cause and breaks the audit

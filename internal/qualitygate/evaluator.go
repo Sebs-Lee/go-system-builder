@@ -351,6 +351,16 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 		// the aggregate evidence token.
 		applyBuilderBatchCompleteness(input, &result)
 	}
+	if result.GateID == "GATE-VERIFY-CLEAN-ROUND-PASSED" {
+		// L3-S7 §10: recompute the machine CleanRound over the ReviewPlan's
+		// exact Claim set; an evidence-only pass is not sufficient.
+		applyCleanRoundGate(input, &result)
+	}
+	if result.GateID == "GATE-VERIFY-BLOCKING-FINDING" {
+		// L3-S7 §3.7: the sealed ObservationBatch must carry the exact
+		// current-round Finding set with the drain policy respected.
+		applyObservationBatchGate(input, &result)
+	}
 	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, documents, result.EvidenceRefs)
 	return result
 }
@@ -389,18 +399,40 @@ func unauthorizedProducerConflicts(
 			currentRoundKinds[requirement.Kind] = true
 		}
 	}
+	kindCurrentRound := func(kind string) bool {
+		for requirementKind := range currentRoundKinds {
+			if evidenceKindsEqual(requirementKind, kind) {
+				return true
+			}
+		}
+		return false
+	}
 	runtimeID, _ := input.Snapshot.State["runtime_id"].(string)
 	raw, _ := input.Snapshot.State["evidence"].([]any)
 	var conflicts []string
 	for _, item := range raw {
 		index, _ := item.(map[string]any)
+		if index == nil {
+			continue
+		}
 		kind := stringValue(index["kind"])
-		responsibilities, relevant := allowed[kind]
-		if index == nil || !relevant ||
+		// Requirements name catalog slots; the persisted kind may be a
+		// legacy alias (review_result vs review_result_record), so the
+		// lookup goes through the alias-aware comparison.
+		var responsibilities map[string]struct{}
+		relevant := false
+		for requirementKind, resp := range allowed {
+			if evidenceKindsEqual(requirementKind, kind) {
+				responsibilities = resp
+				relevant = true
+				break
+			}
+		}
+		if !relevant ||
 			stringValue(index["status"]) != "valid" ||
 			intValue(index["baseline_generation"]) != generation ||
 			index["invalidated_by"] != nil ||
-			(currentRoundKinds[kind] && intValue(index["review_round"]) != currentRound) ||
+			(kindCurrentRound(kind) && intValue(index["review_round"]) != currentRound) ||
 			input.Files == nil {
 			continue
 		}
@@ -581,11 +613,15 @@ func qualifiedEvidence(
 		// only when nothing ends up qualifying (BUG-CX-12 M2, without the
 		// false alarms).
 		if !containsString(requirement.Conclusions, envelope.Conclusion) {
-			mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":conclusion_mismatch:"+envelope.Conclusion)
+			if !requirement.RoutingVerdict {
+				mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":conclusion_mismatch:"+envelope.Conclusion)
+			}
 			continue
 		}
 		if requirement.RequestedEvent != "" && envelope.RequestedEvent != requirement.RequestedEvent {
-			mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":requested_event_mismatch:"+envelope.RequestedEvent)
+			if !requirement.RoutingVerdict {
+				mismatched = append(mismatched, "evidence:"+stringValue(index["id"])+":requested_event_mismatch:"+envelope.RequestedEvent)
+			}
 			continue
 		}
 		if !subjectsMatch(envelope.SubjectRefs, documents) {

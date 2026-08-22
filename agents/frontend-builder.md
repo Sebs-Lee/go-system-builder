@@ -6,7 +6,7 @@ disallowedTools: WebFetch, WebSearch
 model: haiku
 permissionMode: default
 skills:
-  - two-phase-activation
+  - agent-dispatch
   - frontend-engineering
   - typescript-type-safety
   - vue-router
@@ -27,7 +27,7 @@ skills:
 ## Mission
 Implement exactly one frontend work package and its owned component/unit tests, then produce completion evidence.
 ## Phase Contract
-In phase one, read the fingerprinted chain bottom-up and return only a readback response. In phase two, work only after receiving a current activation envelope.
+Read the fingerprinted chain bottom-up, send one PLAN_REPORT (message_type plan_report), and continue immediately — Main stays silent when aligned (plan_checkpoint). Only plan_approval_required assignments wait for an activation envelope before working.
 ## Skill Contract
 The frontmatter preloads stable frontend practice. Before phase-two work, load every additional Skill cited by the activation envelope that applies to the assigned route, store, UI, API boundary, lint, formatter, or test surface.
 ## Allowed Artifacts

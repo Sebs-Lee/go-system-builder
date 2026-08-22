@@ -28,6 +28,11 @@ type EvidenceRequirement struct {
 	MinCount           int
 	CurrentReviewRound bool
 	RequestedEvent     string
+	// RoutingVerdict marks gates that wait for one rare routing verdict among
+	// many ordinary results (S7 pause verdicts). A current-round envelope
+	// whose conclusion is a different verdict is a normal state, not a
+	// naming error — mismatch never escalates to a conflict.
+	RoutingVerdict bool
 }
 
 // Registry is the deterministic set of automatic Quality Gates declared by
@@ -178,33 +183,23 @@ var semanticRequirements = map[string][]EvidenceRequirement{
 		requestedRequirement("change_impact_record", []string{"Builder", "BUILD-WORK-PACKAGE"}, []string{"spec_change_required"}, "execution_spec_change_required"),
 	},
 	"GATE-VERIFY-BLOCKING-FINDING": {
-		currentRoundRequestedRequirement("finding_record", []string{"Delivery Verifier", "QA", "E2E Browser"}, []string{"blocking"}, "blocking_findings_reported"),
+		// L3-S7 P0: TR-008 binds the sealed ObservationBatch (the exact
+		// Finding set), not a hand-carried finding envelope. The evaluator's
+		// applyObservationBatchGate recomputes the set against the runtime.
+		currentRoundRequirement("observation_batch_record", []string{"Orchestrator"}, []string{"sealed"}),
 	},
 	"GATE-VERIFY-CLEAN-ROUND-PASSED": {
 		currentRoundRequirement("clean_round_record", []string{"Clean Round Evaluator", "Orchestrator"}, []string{"pass"}),
 	},
 	"GATE-VERIFY-REQ-CHANGE-REQUIRED": {
-		currentRoundRequestedRequirement("review_result_record", []string{"Delivery Verifier", "QA", "E2E Browser"}, []string{"req_change_required"}, "verification_req_change_required"),
-		requirement("pause_record", []string{"Orchestrator"}, []string{"recorded"}),
+		// L3-S7 P0: the verdict transaction already created the single
+		// authoritative pause checkpoint; the gate consumes the ReviewResult
+		// verdict alone (no dual pause carrier). RoutingVerdict: ordinary
+		// pass/finding results are a normal state, not a naming conflict.
+		currentRoundRoutingRequirement("review_result_record", []string{"Delivery Verifier", "QA", "E2E Browser"}, []string{"req_change_required"}),
 	},
 	"GATE-VERIFY-RELEASE-BLOCKED": {
-		currentRoundRequestedRequirement("review_result_record", []string{"QA", "Orchestrator"}, []string{"release_blocked"}, "verification_release_blocked"),
-		requirement("pause_record", []string{"Orchestrator"}, []string{"recorded"}),
-	},
-	"GATE-VERIFY-DELIVERY-PASS": {
-		currentRoundRequirement("delivery_review_record", []string{"Delivery Verifier"}, []string{"pass"}),
-	},
-	"GATE-VERIFY-QA-PASS": {
-		currentRoundRequirement("qa_review_record", []string{"QA"}, []string{"pass"}),
-	},
-	"GATE-VERIFY-E2E-PASS": {
-		currentRoundRequirement("e2e_review_record", []string{"E2E Browser"}, []string{"pass"}),
-	},
-	"GATE-VERIFY-CLEAN-ROUND-VALID": {
-		currentRoundRequirement("clean_round_record", []string{"Clean Round Evaluator", "Orchestrator"}, []string{"pass"}),
-	},
-	"GATE-CLEAN-ROUND-INCOMPLETE": {
-		currentRoundRequirement("clean_round_record", []string{"Clean Round Evaluator", "Orchestrator"}, []string{"incomplete", "stale"}),
+		currentRoundRoutingRequirement("review_result_record", []string{"Delivery Verifier", "QA", "E2E Browser"}, []string{"release_blocked"}),
 	},
 	"GATE-TARGETED-REVERIFICATION-COMPLETE": {
 		currentRoundRequirement("targeted_reverification_record", []string{"Original Finder"}, []string{"pass"}),
@@ -246,7 +241,9 @@ var semanticRequirements = map[string][]EvidenceRequirement{
 		requirement("pause_record", []string{"Orchestrator"}, []string{"recorded"}),
 	},
 	"GATE-BUG-DRAFTS-READY": {
-		currentRoundRequirement("finding_record", []string{"Delivery Verifier", "QA", "E2E Browser"}, []string{"blocking"}),
+		// L3-S7: S8 starts from the sealed ObservationBatch (the exact
+		// Finding set), not a hand-carried finding envelope.
+		currentRoundRequirement("observation_batch_record", []string{"Orchestrator"}, []string{"sealed"}),
 		requirement("root_cause_record", []string{"Investigator", "Orchestrator"}, []string{"complete"}),
 	},
 	"GATE-CANONICAL-BUGS-ACCEPTED": {
@@ -288,6 +285,15 @@ func currentRoundRequirement(kind string, responsibilities, conclusions []string
 func requestedRequirement(kind string, responsibilities, conclusions []string, event string) EvidenceRequirement {
 	result := requirement(kind, responsibilities, conclusions)
 	result.RequestedEvent = event
+	return result
+}
+
+// currentRoundRoutingRequirement builds a routing-verdict requirement: the
+// gate fires only when the rare verdict appears; ordinary results of the
+// same kind are silently skipped.
+func currentRoundRoutingRequirement(kind string, responsibilities, conclusions []string) EvidenceRequirement {
+	result := currentRoundRequirement(kind, responsibilities, conclusions)
+	result.RoutingVerdict = true
 	return result
 }
 

@@ -444,7 +444,7 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 	}
 }
 
-func TestNextProjectsCleanRoundEvaluationAsS7(t *testing.T) {
+func TestNextProjectsCleanRoundAsS7(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestNextProjectsCleanRoundEvaluationAsS7(t *testing.T) {
 	state["runtime_id"] = "loop-REQ-099"
 	state["revision"] = float64(43)
 	state["lifecycle"].(map[string]any)["state"] = "verification"
-	state["lifecycle"].(map[string]any)["phase"] = "clean_round_evaluation"
+	state["lifecycle"].(map[string]any)["phase"] = "clean"
 	writeJSONFile(t, filepath.Join(root, ".claude", "loop-state.json"), state)
 
 	var stdout, stderr bytes.Buffer
@@ -470,10 +470,13 @@ func TestNextProjectsCleanRoundEvaluationAsS7(t *testing.T) {
 	}
 	out := stdout.String()
 	if !strings.Contains(out, `"stage":"S7"`) {
-		t.Fatalf("clean-round evaluation should remain in S7: %s", out)
+		t.Fatalf("a clean round should remain in S7 until TR-009: %s", out)
 	}
-	if !strings.Contains(out, `"primary_skill":"clean-round-evaluation"`) {
+	if !strings.Contains(out, `"primary_skill":"acceptance-and-handoff"`) {
 		t.Fatalf("unexpected primary skill: %s", out)
+	}
+	if !strings.Contains(out, "TR-009") {
+		t.Fatalf("clean round should point at TR-009: %s", out)
 	}
 }
 
@@ -538,7 +541,7 @@ func TestRuntimeAgentEventCommandRecordsReadback(t *testing.T) {
 	state["revision"] = float64(7)
 	state["runtime_id"] = "loop-REQ-002"
 	state["lifecycle"].(map[string]any)["state"] = "verification"
-	state["lifecycle"].(map[string]any)["phase"] = "delivery"
+	state["lifecycle"].(map[string]any)["phase"] = "running"
 	state["journal"] = map[string]any{
 		"path":          ".claude/loop-events.jsonl",
 		"last_sequence": 0,

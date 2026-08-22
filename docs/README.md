@@ -35,7 +35,7 @@ The whole loop has one simple control shape:
 ```mermaid
 graph LR
     H1["**Human**<br/>locks REQ"]:::human
-    M["**Loop automation**<br/>prototype gate → design → contracts<br/>→ TASK → Team → two-phase activation<br/>→ specialized Builder → Verifier → QA → E2E Tester<br/>→ BUG repair → full re-review<br/>→ ACC → Release Architecture Audit"]:::auto
+    M["**Loop automation**<br/>prototype gate → design → contracts<br/>→ TASK → Team → agent dispatch (plan_checkpoint)<br/>→ specialized Builder → Verifier → QA → E2E Tester<br/>→ BUG repair → full re-review<br/>→ ACC → Release Architecture Audit"]:::auto
     G["**Human**<br/>S11 decision gateway"]:::human
     H2["**Human**<br/>squash merge + formal release"]:::human
     H1 ==> M ==> G ==> H2
@@ -102,7 +102,7 @@ human locks REQ
 -> design and contracts
 -> TASK decomposition
 -> Agent Team creation
--> two-phase activation
+-> agent dispatch (plan_checkpoint)
 -> specialized Builder development
 -> Delivery Verifier + QA + E2E Tester
 -> finding investigation and canonical BUG reports
@@ -287,8 +287,8 @@ Correction loops:
 document_verification -> planning.design
 building              -> planning.design
 bug_resolution        -> planning.design
-verification          -> bug_resolution -> verification.delivery
-acceptance            -> verification.delivery
+verification          -> bug_resolution -> verification.planned
+acceptance            -> verification.planned
 ```
 
 Any state can pause (GTR-001). Runtime integrity failure always pauses
@@ -313,12 +313,16 @@ stateDiagram-v2
         design --> document_verification: TR-002 planning_complete
     }
     state verification {
-        [*] --> delivery
-        delivery --> qa: PTR-VERIFY-01
-        qa --> e2e_browser: PTR-VERIFY-02
-        e2e_browser --> clean_round_evaluation: PTR-VERIFY-03
-        clean_round_evaluation --> clean_round_passed: PTR-VERIFY-04
-        clean_round_evaluation --> delivery: PTR-VERIFY-05 restart round
+        [*] --> planned
+        planned --> running: runtime review-plan
+        running --> cannot_clean: finding verdict
+        cannot_clean --> discovery_draining
+        running --> clean
+        discovery_draining --> observation_sealed
+        cannot_clean --> observation_sealed: P0 stop-the-line
+        running --> observation_sealed
+        observation_sealed --> bug_resolution: TR-008 sealed batch
+        clean --> acceptance: TR-009 machine CleanRound
     }
     state bug_resolution {
         [*] --> investigation
@@ -338,9 +342,18 @@ the REQ is locked and before the development contract is locked**, because
 FE/BE/SYNC contracts link to the locked package. Skipping the gate when UI
 impact is `changed` is forbidden by INV-004.
 
+The verification machine is a ReviewPlan status projection (L3-S7): `planned`
+waits for a registered ReviewPlan with an exactly-partitioned required Claim
+set; `running` consumes static DV/QA Claims first, then behavior E2E; a finding
+flips the round to `cannot_clean` but ordinary safe discovery continues
+(`discovery_draining`); only a P0 finding seals the ObservationBatch
+immediately. The exit transitions are machine-guarded: TR-008 consumes the
+sealed batch (exact Finding set), TR-009 recomputes the CleanRound over the
+exact Claim set.
+
 Targeted re-verification never creates a clean round. It only permits returning
-to `verification.delivery`, where a complete Delivery + QA + E2E Browser round
-must run again.
+to `verification.planned`, where a complete review round — a fresh ReviewPlan
+with every required Claim consumed — must run again.
 
 ---
 
@@ -363,13 +376,14 @@ On-demand Methodology Skills route by state and event:
 | `inactive`, startup, recovery, `paused` | `loop-orchestration` |
 | `planning.*` | `specification-planning` |
 | `document_verification` | `document-verification` |
-| Agent `spawned` through `activated` | `two-phase-activation` |
+| Agent `spawned` through `activated` | `agent-dispatch` |
 | `building` after activation | none; TASK plus selected Best Practices |
 | team creation, reuse, reconstruction | `team-planning` |
-| `verification.delivery`, `verification.qa`, `verification.e2e_browser` after activation | none; team responsibility plus Best Practices |
+| `verification.planned` | `loop-orchestration` (ReviewPlan authoring) |
+| `verification.running` / `cannot_clean` / `discovery_draining` | `team-planning` (Claim-bound reviewer dispatch; see `loop-harness s7 status`) |
 | `bug_resolution.*` | `bug-resolution` |
 | any committed change requiring evidence recalculation | `impact-analysis` |
-| `verification.clean_round_evaluation` | `clean-round-evaluation` |
+| `verification.clean` / `verification.observation_sealed` | `acceptance-and-handoff` (TR-009) / `bug-resolution` (TR-008) |
 | `acceptance`, `release_audit` | `acceptance-and-handoff` |
 
 Routing order:
@@ -381,7 +395,7 @@ current runtime state and phase
 -> Agent Definition kind
 -> task artifact and risk tags
 -> smallest applicable Best-practice set
--> two-phase activation when a subagent is involved
+-> agent dispatch when a subagent is involved
 ```
 
 Forbidden Skill designs: a role-as-Skill (`builder`, `verifier`, `qa`); a Skill
@@ -540,7 +554,7 @@ AND no referenced evidence is invalidated
 
 All of this must hold for one same review round. Targeted re-verification, no
 matter how many dimensions it covers, can never satisfy the clean-round gate;
-it only authorizes returning to `verification.delivery` to run a complete round.
+it only authorizes returning to `verification.planned` to run a complete round.
 
 ---
 
@@ -626,7 +640,7 @@ round passes, or any blocking Delivery Verifier, QA, or E2E Browser finding
 forces S8 finding investigation through `bug_resolution` (TR-008). The finding
 is reproduced, root cause is investigated, a canonical BUG is written and
 accepted, a Builder reads the BUG plus the original specification chain, the fix
-is two-phase activated, the **original finding responsibility** re-verifies,
+is dispatched (plan_checkpoint), the **original finding responsibility** re-verifies,
 affected historical PASS evidence is invalidated, and a complete Delivery,
 QA, and E2E Browser round runs again. Local re-verification alone never ends
 the Loop.

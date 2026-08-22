@@ -917,6 +917,60 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 
 ## 13. 当前实现差距与迁移清单
 
+> **2026-08-18 审计（P0+强耦合 P1 落地）**：批次 A+B 已实施。控制面已迁为 ReviewPlan 模型 ——
+> `review-plan.schema.json`（单一 required Claim set + Assignment 精确分割 + `dispatch_capacity_policy=coverage_complete` 固定值）、
+> `review-result.schema.json`（Canonical ReviewResult + verdict 枚举 + fail-Claim→Finding 绑定）、
+> `finding.schema.json`（discriminated `encounter`，按 `observation_mode` 分模式必填字段，含 capture gaps）、
+> `observation-batch.schema.json`（exact Finding set + coverage summary + investigation readiness）四个嵌入 schema 落地；
+> `internal/review` 实现两个动词：`runtime review-plan --file`（校验精确分割/lens 分离/N/A 不派发/依赖无环/DV-QA 最小覆盖后钉入共享控制面，phase→running）
+> 与 `runtime review-result submit --assignment-id --result`（单 CAS：result evidence + immutable Findings + claim disposition 投影 + reviewer agent working→reported
+> + cannot_clean/draining 状态机 + 事务内 round consumer——普通 finding drain 完成后 seal ObservationBatch、P0 立即 seal、无 finding 生成机器 CleanRound、
+> pause verdict 在事务内创建唯一 checkpoint）。phase machine 重写为 ReviewPlan 状态投影（planned/running/cannot_clean/discovery_draining/observation_sealed/clean，
+> PTR-VERIFY-01..05 删除）；TR-006/012/016 落 planned；TR-008 改绑 sealed ObservationBatch（guard `observation_batch_sealed` 做 exact-set 校验，
+> `record_finding_batch` 从 state 读 Finding 实体、按 finding 内容哈希去重建 BUG 草稿）；TR-009 guard 换 `clean_round_valid`（重算
+> `verification.EvaluateCleanRound`：plan clean + 逐 Claim consumed pass + 无本轮 Finding + 无 invalid 本轮 review 证据 + 无 open blocking BUG + 快照已注册）；
+> TR-010/011 单载体化（verdict 事务建 checkpoint，transition 只移 cursor，guard `pause_checkpoint_recorded`）。gate 侧 GATE-VERIFY-DELIVERY/QA/E2E-PASS
+> 与 GATE-CLEAN-ROUND-INCOMPLETE 删除；GATE-VERIFY-CLEAN-ROUND-PASSED/BLOCKING-FINDING 接 exact-set 求值（missing token 进 `cleanround:`/`batch:` 族，
+> missingtokens 图例覆盖四个 S7 gate）；PTR-BUG-01 与 GATE-BUG-DRAFTS-READY 改消费 `observation_batch_record`（S8 从 sealed batch 起步）。
+> reviewer 写路径 hard deny 落地（policy engine 第三条 block reason `reviewer_product_write`：verification 阶段 Write/Edit/MultiEdit/NotebookEdit
+> 仅允许 `.claude/`、`docs/reports/` 与 plan 声明的 `verification_artifact_workspace`）。register-workgroup 绑定 ReviewPlan（manifest assignment
+> 携带 `claim_ids[]`/`focus_keys[]`/`non_overlap_boundary`，精确集校验 + lens 匹配 + behavior 波次等 static 求齐，dispatcher 写入 agent 并翻 Claims→running；
+> 阶段校验放宽为 running/cannot_clean/draining）。指引层：agent-protocol #s7 改为动词驱动序列、`docs/reports/review/RESULT-template.md` 统一投影模板、
+> QA/E2E 模板 verdict 枚举对齐、README 状态图/进度表/叙事更新、clean-round-evaluation skill 改为机器 CleanRound 只读检查、
+> `loop-harness s7 status` 只读看板（claim disposition / assignment 消费 / finding / 出口）。证据目录新增 `review-result`/`finding`/`observation_batch`
+> 三个 registered kind（`review_result_record`/`finding_record`/`observation_batch_record` slot 别名兼容旧词汇）。
+> 未做（按 §13.3-§13.5 排期）：angle 生命周期正式退役（guards 仍在注册表但已无 transition 引用，P1 第 3 项余留——schema/CLI/registry 文件删除）、
+> two-phase-activation→plan_checkpoint 切换、PostToolUse(SendMessage) 计划回执捕获（仍被 migration 模板显式禁止，需先反转禁令）、
+> Claim 自动生成与 coverage 求差、ReviewPlan 受控 revision、E2E cold-start 写面隔离、encounter 自动采集 wrapper。§13.1 下表保留为历史差距记录。
+>
+> **2026-08-18 审计（批次 C：P1 余项 + P2 落地，§13.3/§13.4 全清）**：
+> - **angle 生命周期删除**：8 个整文件移除（transition angle_complete_guard、runtime/angles、cli/angles_command、两份 schema）；guards 注册表与 semanticChecks、
+>   evidence catalog kind、loop-state 枚举、team-manifest 的 `inherited_angles`/`$defs.inheritedAngle`、run.go dispatcher 全清；fixtures 死代码（WriteVerificationDimensionPass 等）删除；
+>   有效意图由 Claim.source_refs 承接（§3.3）。`dispatched_at` 字段保留（WS2 的派发时间戳）。
+> - **plan_checkpoint 连续执行**：team-manifest assignment 增 `dispatch_mode`（plan_checkpoint 默认 / plan_approval_required / one_shot），register-workgroup 写入 agent 行；
+>   `entity_lifecycles.agent` 增 `understanding_submitted --activation_sent--> activated` 直通；activation 哈希链语义保留（plan_checkpoint 下绑定 PLAN_REPORT 文件字节）；
+>   `plan_report` 消息类型入 agent-message schema（assignment_id/revision/objective/planned_paths/steps/assertion_checks/dependencies/risks_blockers）；
+>   `skills/agent-dispatch` 取代 two-phase-activation；agents/*.md Phase Contract 全部改写。
+> - **PostToolUse(SendMessage)**：migration 禁令反转（白名单 7 事件、黑名单删 PostToolUse、测试翻转）；settings.json + hook-policy 注册；
+>   `internal/hook/posttooluse.go` 观察者（三级识别：payload agent_id → teammate_name → 唯一等待 agent 兜底；识别失败静默）；CAS 幂等写 `plan_reported_ref`；
+>   policy engine 第四条 block reason `assignment_write_before_plan`（spawned/reading + 无 plan checkpoint + 可识别 agent → block；主会话天然豁免）。
+> - **ReviewPlan 增值闭环**：`runtime review-plan revise --file --source-ref --affected-surface`（每轮至多一次受控 revision；变更必须绑定触发证据与受影响面；
+>   已消费 result 自动 invalidate）；`loop-harness s7 draft` 只读生成器（TASK→DV 追溯 claim、QA focus 桩、E2E 状态评估）；注册时 TASK 覆盖 block（当前 generation 每个 TASK
+>   必须出现在 ≥1 claim.source_refs）；E2E cold-start 写面（注册时创建 `e2e-workspace/<plan-id>/` 并钉 digest，submit 按 digest 绑定，收口重算拒绝漂移）；
+>   capture buffer（`loop-harness capture step` 追加脱敏 JSONL，秘密模式硬拒绝；`review-result submit --captures` 并入空 timeline 的 finding）。
+> - **平台边界（如实声明）**：PostToolUse 子代理 payload 不带 agent_id 时识别静默跳过（观察冗余，权威注册仍走 runtime 动词）；浏览器/runner 注入式 encounter
+>   采集属产品侧 wrapper，harness 提供 capture buffer + 脱敏 gate + 并入绑定；L4 其余 P0（官方 payload 字段接入 teammate_name/transcript_path 等）不在本批。
+>
+> §13.2–§13.5 的 P0/P1/P2 项至此全部落地；§13.1 下表保留为历史差距记录。
+>
+> **2026-08-18 审计（复杂度审查批次：沙箱代入驱动）**：在沙箱中完整驱动了 planned→draft→注册→派发→plan_report→直通 activation→submit→seal→TR-008 链，修复了 5 个真实缺陷并记录 2 个已知摩擦：
+> - **路由 verdict gate 误伤**（正确性）：TR-010/011 的 gate 把当前轮普通 pass/finding 结果当作 naming-error conflict（BUG-CX-12 的 deferred-conflict 机制误用于"等待稀有 verdict"的 gate），导致健康 round 期间每次 PreToolUse 都显示 gate unknown。新增 `EvidenceRequirement.RoutingVerdict`：路由 gate 的 conclusion 不匹配静默跳过。
+> - **sealed 产物缺 envelope 身份字段**（正确性，被上一条掩盖）：机器生成的 ObservationBatch / CleanRound 文件缺 evidence_id/kind/runtime_id/producer 字段，gate 的信封一致性检查必然 :schema——真实流必然失败。两处构建器 + schema 已补齐。
+> - **doc/CLI 断链**：协议写 `review-result submit` 而 CLI 不消化动词词，flag 静默不解析。已修。
+> - **draft 可用性**：`s7 draft` 缺 created_at 导致注册即 schema 拒绝；`next` 在 planned 阶段不提 draft。已修。
+> - **角色错配提示**：activation 成功消息给 reviewer 也打印 worktree/task-complete 引导；已改为按 role_family 分流。
+> - 已知摩擦（记录未修）：reviewer manifest 仍 19 个必填顶层字段，写作负担重（候选：`s7 manifest-draft` 生成器，后续批次评估）；schema oneOf 错误信息冗长（santhosh 枚举所有分支），靠 examples 缓解。
+
 ### 13.1 当前事实
 
 目标机制尚未落地。当前仓库仍有以下差距：

@@ -104,9 +104,7 @@ func SkipIfProductBlocker(t *testing.T, combined, bugID string) {
 		needle string
 		id     string
 	}{
-		{"angle_declaration", "loop-state.schema.json evidence.kind enum"},
 		{"team_manifest evidence is required", "loop-state.schema.json evidence.kind enum"},
-		{"delivery_angle_complete", "loop-state.schema.json evidence.kind enum"},
 		{"planning_design_record", "loop-state.schema.json evidence.kind enum"},
 		{"evidence:planning_design_record", "loop-state.schema.json evidence.kind enum"},
 		{"finding_record", "BUG-039-22"},

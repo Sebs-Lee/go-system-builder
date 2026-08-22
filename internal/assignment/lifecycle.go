@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -66,13 +67,20 @@ type agentMessage struct {
 // given Agent event. The mapping is the engine's contract; mismatched
 // message types are rejected with a typed error.
 //
+// readback_submitted accepts BOTH the plan_checkpoint plan_report and the
+// approval-mode readback_response — applyAgentEventParams enforces the
+// dispatch-mode-specific choice once the agent row is in hand (the message
+// is validated before the agent is located).
+//
 // readback_started / understanding_rejected / document_conflict_reported /
-// activation_sent / work_started / completion_reported / completion_acknowledged /
-// work_blocked / blocker_resolved / shutdown_approved all use their own
-// message_type suffix matching the loop-definition.json event name.
+// understanding_approved / activation_sent / work_started / completion_reported /
+// completion_acknowledged / work_blocked / blocker_resolved /
+// shutdown_approved all use their own message_type.
 func expectedAgentMessageType(event string) string {
 	switch event {
-	case "readback_submitted", "understanding_approved", "understanding_rejected",
+	case "readback_submitted":
+		return "plan_report|readback_response"
+	case "understanding_approved", "understanding_rejected",
 		"readback_started", "document_conflict_reported":
 		return "readback_response"
 	case "activation_sent":
@@ -126,8 +134,17 @@ func AdvanceAgent(
 			"unsupported Agent event %q; canonical 12 events: readback_started, readback_submitted, understanding_approved, understanding_rejected, document_conflict_reported, activation_sent, work_started, completion_reported, completion_acknowledged, work_blocked, blocker_resolved, shutdown_approved",
 			request.Event)
 	}
-	if message.MessageType != expectedType || message.AgentID != request.AgentID {
-		return loopruntime.Snapshot{}, fmt.Errorf("Agent message does not match event or Agent")
+	typeMatches := message.MessageType == expectedType
+	if !typeMatches && strings.Contains(expectedType, "|") {
+		for _, candidate := range strings.Split(expectedType, "|") {
+			if message.MessageType == candidate {
+				typeMatches = true
+				break
+			}
+		}
+	}
+	if !typeMatches || message.AgentID != request.AgentID {
+		return loopruntime.Snapshot{}, fmt.Errorf("Agent message does not match event or Agent (event %q expects message_type %q, got %q)", request.Event, expectedType, message.MessageType)
 	}
 
 	stateData, err := os.ReadFile(statePath)
@@ -217,13 +234,42 @@ func applyAgentEventParams(root string, agent map[string]any, request AgentEvent
 		if agent["state"] != "reading" {
 			return fmt.Errorf("readback submission requires reading state")
 		}
+		// The plan_checkpoint flow submits a plan_report message type; the
+		// approval flow submits the classic readback_response. The message
+		// type is validated against the agent's dispatch mode here, where
+		// the agent row is in hand (expectedAgentMessageType accepts both).
+		// Agents registered before the dispatch_mode field (legacy states)
+		// keep the approval semantics — register-workgroup stamps every new
+		// agent with an explicit mode.
+		mode, _ := agent["dispatch_mode"].(string)
+		switch mode {
+		case "plan_checkpoint":
+			if message.MessageType != "plan_report" {
+				return fmt.Errorf("dispatch_mode %s requires a plan_report message (PLAN_REPORT then continue); readback_response belongs to plan_approval_required", mode)
+			}
+		case "plan_approval_required", "":
+			if message.MessageType != "readback_response" {
+				return fmt.Errorf("dispatch_mode %q requires a readback_response message", mode)
+			}
+		default:
+			return fmt.Errorf("unknown dispatch_mode %q (canonical: plan_checkpoint, plan_approval_required, one_shot)", mode)
+		}
 	case "understanding_approved":
 		if agent["state"] != "understanding_submitted" {
 			return fmt.Errorf("approval requires submitted understanding")
 		}
 	case "activation_sent":
-		if agent["state"] != "understanding_approved" {
-			return fmt.Errorf("activation requires approved understanding")
+		mode, _ := agent["dispatch_mode"].(string)
+		// L4 §3.3: plan_checkpoint agents activate straight off the plan
+		// report (continuous execution); approval-mode (and legacy) agents
+		// must wait for understanding_approved.
+		legalFrom := map[string]bool{"understanding_approved": true}
+		if mode == "plan_checkpoint" {
+			legalFrom["understanding_submitted"] = true
+		}
+		currentState, _ := agent["state"].(string)
+		if !legalFrom[currentState] {
+			return fmt.Errorf("activation from %s requires dispatch_mode plan_checkpoint with a submitted plan report (or understanding_approved first)", currentState)
 		}
 		if message.ExpectedRuntimeRevision != request.ExpectedRevision {
 			return fmt.Errorf("activation expected revision is stale")
@@ -358,6 +404,13 @@ func agentEntityTransitions(catalog *transition.Catalog) agentEntityTransitionsR
 		res[t.From+"|"+t.Event] = t.To
 	}
 	return agentEntityTransitionsResolver{m: res}
+}
+
+// ResolveAgentTransition exposes the catalog-driven (from, event) -> to
+// resolution to sibling packages (the S7 review submit advances reviewer
+// agents with the same completion_reported event).
+func ResolveAgentTransition(catalog *transition.Catalog, from, event string) (string, bool) {
+	return agentEntityTransitions(catalog).resolve(from, event)
 }
 
 // canonicalAgentEventList returns the canonical 12 Agent events, ordered.

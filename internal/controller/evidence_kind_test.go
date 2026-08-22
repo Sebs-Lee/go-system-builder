@@ -15,7 +15,8 @@ func TestEvidenceKindCompatibleRequirementEnvelopeAliases(t *testing.T) {
 		want             bool
 	}{
 		{"finding_record", "bug", true},
-		{"finding_record", "finding", false},
+		{"finding_record", "finding", true}, // L3-S7: immutable Finding kind
+
 		{"finding_record", "bug_batch_record", false},
 		{"root_cause_record", "bug", true},
 		{"root_cause_record", "root_cause", false},

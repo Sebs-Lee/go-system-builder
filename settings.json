@@ -5,6 +5,18 @@
     "SubagentStart": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event SubagentStart --root \"$CLAUDE_PROJECT_DIR\"","timeout":10}]}],
     "SubagentStop": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event SubagentStop --root \"$CLAUDE_PROJECT_DIR\"","timeout":10}]}],
     "TeammateIdle": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event TeammateIdle --root \"$CLAUDE_PROJECT_DIR\"","timeout":10}]}],
+    "PostToolUse": [
+      {
+        "matcher": "SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event PostToolUse --root \"$CLAUDE_PROJECT_DIR\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreCompact": [{"hooks":[{"type":"command","command":"\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event PreCompact --root \"$CLAUDE_PROJECT_DIR\"","timeout":10}]}]
   }
 }

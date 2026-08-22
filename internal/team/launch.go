@@ -135,7 +135,7 @@ func GenerateReadbackRequests(root string, data []byte, options LaunchOptions) (
 	teamID := value.PlatformTeamID
 	requests := make([]ReadbackRequest, 0, len(value.Assignments))
 	for _, item := range value.Assignments {
-		skillNames := append([]string{"two-phase-activation"}, roleDefaultSkills[item.RoleFamily]...)
+		skillNames := append([]string{"agent-dispatch"}, roleDefaultSkills[item.RoleFamily]...)
 		skillNames = append(skillNames, item.SkillRefs...)
 		skills, err := resolveSkills(root, skillNames)
 		if err != nil {

@@ -107,8 +107,8 @@ func TestCT03907_OrdinaryGitOpsAllowSystem(t *testing.T) {
 func TestCT03916_ConflictingEventsUnknownConflictSystem(t *testing.T) {
 	root := freshRoot(t)
 	runner := &req039fixtures.CLIRunner{}
-	state := req039fixtures.BaseState(t, root, "verification", "delivery", 32)
-	req039fixtures.SeedConflictingDeliveryEvents(t, root, state)
+	state := req039fixtures.BaseState(t, root, "verification", "running", 32)
+	req039fixtures.SeedConflictingPauseVerdicts(t, root, state)
 	writeSystemState(t, root, state)
 
 	body := req039fixtures.PreToolUseBody("session-ct-039-16-sys", "Bash", map[string]any{

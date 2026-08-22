@@ -105,6 +105,9 @@ func InitActionRegistry() {
 		"set_verification_phase_e2e_browser":            actionSetVerificationPhase("e2e_browser"),
 		"set_verification_phase_clean_round_evaluation": actionSetVerificationPhase("clean_round_evaluation"),
 		"set_verification_phase_clean_round_passed":     actionSetVerificationPhase("clean_round_passed"),
+		// L3-S7 P0: S7 entry now lands on `planned`; the phase machine is a
+		// ReviewPlan status projection, not a per-lens serial pipeline.
+		"set_verification_phase_planned": actionSetVerificationPhase("planned"),
 		"set_bug_phase_investigation":                   actionSetBugPhase("investigation"),
 		"set_bug_phase_bug_report_review":               actionSetBugPhase("bug_report_review"),
 		"set_bug_phase_repair_readback":                 actionSetBugPhase("repair_readback"),
@@ -253,12 +256,24 @@ func actionStartNewReviewRound(state map[string]any, ctx *ActionContext) (Action
 // and it rejects a second capture within the same transition. A nil value
 // (the schema-default for "no active checkpoint") is treated as absent.
 func actionCapturePauseCheckpoint(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	if err := CapturePauseCheckpoint(state, ctx.Spec.Description, ctx.OccurredAt); err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	return ActionResult{Status: "committed", MutationApplied: true, Detail: "pause checkpoint captured"}, nil
+}
+
+// CapturePauseCheckpoint writes the authoritative pause checkpoint into
+// state["pause"] and refuses to overwrite an existing one. The S7
+// review-result submit uses it to create the pause checkpoint inside the
+// verdict transaction (L3-S7 §9.2: one authoritative checkpoint, no dual
+// carrier); TR-010/TR-011 then only move the cursor.
+func CapturePauseCheckpoint(state map[string]any, reason string, occurredAt time.Time) error {
 	if existing, ok := state["pause"]; ok && existing != nil {
-		return ActionResult{Status: "failed", Detail: "pause checkpoint already exists"}, fmt.Errorf("capture_pause_checkpoint: pause checkpoint already exists; would overwrite")
+		return fmt.Errorf("capture_pause_checkpoint: pause checkpoint already exists; would overwrite")
 	}
 	lifecycle, ok := state["lifecycle"].(map[string]any)
 	if !ok {
-		return ActionResult{Status: "failed", Detail: "lifecycle missing"}, fmt.Errorf("capture_pause_checkpoint: lifecycle missing")
+		return fmt.Errorf("capture_pause_checkpoint: lifecycle missing")
 	}
 	fromState, _ := lifecycle["state"].(string)
 	fromPhase := lifecycle["phase"]
@@ -277,17 +292,17 @@ func actionCapturePauseCheckpoint(state map[string]any, ctx *ActionContext) (Act
 	documents := documentFingerprints(state)
 
 	state["pause"] = map[string]any{
-		"from_state":                 fromState,
-		"from_phase":                 fromPhase,
-		"phase_revision":             phaseRevision,
-		"baseline_generation":        baselineGeneration,
-		"review_round":               reviewRound,
-		"reason":                     ctx.Spec.Description,
-		"required_human_action":      pauseRequiredAction(fromState),
-		"document_fingerprints":      documents,
-		"paused_at":                  ctx.OccurredAt.UTC().Format(time.RFC3339Nano),
+		"from_state":            fromState,
+		"from_phase":            fromPhase,
+		"phase_revision":        phaseRevision,
+		"baseline_generation":   baselineGeneration,
+		"review_round":          reviewRound,
+		"reason":                reason,
+		"required_human_action": pauseRequiredAction(fromState),
+		"document_fingerprints": documents,
+		"paused_at":             occurredAt.UTC().Format(time.RFC3339Nano),
 	}
-	return ActionResult{Status: "committed", MutationApplied: true, Detail: "pause checkpoint captured"}, nil
+	return nil
 }
 
 // actionRestoreFromPause re-hashes every document referenced in the pause
@@ -573,23 +588,12 @@ func actionRecordTargetedReverification(state map[string]any, ctx *ActionContext
 
 // actionRecordFindingBatch implements TR-008's record_finding_batch action.
 //
-// Per BUG-003 §4b.2(e) this action consumes the `findings` payload from
-// ctx.Params (set by the orchestrator when TR-008 fires), creates one
-// canonical BUG entity per finding with deduplication by finding
-// fingerprint, then returns the count of newly registered vs. deduplicated
-// findings. The follow-up `set_bug_phase_investigation` action runs via the
-// engine's action chain — this function does not invoke it directly.
-//
-// Inputs (ctx.Params):
-// - "findings": []any of map[string]any. Each finding has keys:
-// reporter_agent_id (string, required)
-// finding_body (string, required)
-// finding_path (string, required — must exist on disk)
-// severity (string, optional; defaults to "P0")
-//
-// Outputs:
-// - Status: "committed" with Detail containing the registered/dedup counts.
-// - MutationApplied: true when at least one new BUG was appended.
+// L3-S7 P0: the batch source is the sealed ObservationBatch in
+// state.review.observation_batch — the exact Finding set the round consumer
+// sealed — not a free-form ctx.Params payload. For every Finding entity in
+// the batch this creates one canonical BUG draft with deduplication by
+// finding content hash, so S8 starts from immutable observation facts
+// (finding file + encounter) instead of a hand-carried summary.
 //
 // BUG schema constraints (loop-state.schema.json §bug):
 // - additionalProperties: false; only the 7 canonical keys are allowed.
@@ -597,72 +601,71 @@ func actionRecordTargetedReverification(state map[string]any, ctx *ActionContext
 // - id: pattern ^BUG-[0-9]{3,}$.
 // - state: enum {draft, investigating, ...}; new BUGs land in "draft".
 //
-// Finding fingerprint: sha256 of reporter_agent_id + sorted(finding_body lines)
-// + finding_path. The fingerprint is encoded in the BUG's path field as
-// `<finding_path>#fp=<sha256>` so dedup can be re-computed by walking all
-// existing BUGs and parsing the suffix — no extra state field required.
+// Dedup fingerprint: the finding entity's sha256 (the finding is immutable,
+// so its content hash is a stable identity), encoded as `<path>#fp=<sha256>`.
 func actionRecordFindingBatch(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	rawFindings, _ := ctx.Params["findings"].([]any)
-	if len(rawFindings) == 0 {
-		return ActionResult{Status: "skipped", Detail: "no findings in batch"}, nil
+	reviewMap, _ := state["review"].(map[string]any)
+	batch, _ := reviewMap["observation_batch"].(map[string]any)
+	if batch == nil {
+		return ActionResult{Status: "failed", Detail: "observation batch missing"}, fmt.Errorf("record_finding_batch: no sealed ObservationBatch — the S7 round consumer seals it when the final required Claim disposition lands")
+	}
+	batchIDs, _ := batch["finding_ids"].([]any)
+	if len(batchIDs) == 0 {
+		return ActionResult{Status: "failed", Detail: "observation batch carries no findings"}, fmt.Errorf("record_finding_batch: sealed ObservationBatch has an empty finding set")
 	}
 	entities, ok := state["entities"].(map[string]any)
 	if !ok {
 		return ActionResult{Status: "failed", Detail: "entities missing"}, fmt.Errorf("record_finding_batch: entities missing")
+	}
+	findings, _ := entities["findings"].([]any)
+	byID := map[string]map[string]any{}
+	for _, raw := range findings {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		if id, _ := row["finding_id"].(string); id != "" {
+			byID[id] = row
+		}
 	}
 	bugs, _ := entities["bugs"].([]any)
 
 	registered := 0
 	deduplicated := 0
 	registeredIDs := make([]string, 0)
-	for _, raw := range rawFindings {
-		finding, ok := raw.(map[string]any)
-		if !ok {
-			continue
+	for _, rawID := range batchIDs {
+		findingID, _ := rawID.(string)
+		row := byID[findingID]
+		if row == nil {
+			return ActionResult{Status: "failed", Detail: "finding entity missing"}, fmt.Errorf("record_finding_batch: batch references finding %s which has no entity row", findingID)
 		}
-		reporter, _ := finding["reporter_agent_id"].(string)
-		body, _ := finding["finding_body"].(string)
-		path, _ := finding["finding_path"].(string)
-		if reporter == "" || path == "" {
-			// Skip malformed entries; the orchestrator is expected to
-			// validate the batch shape before invoking TR-008.
-			continue
+		path, _ := row["path"].(string)
+		sha, _ := row["sha256"].(string)
+		finder, _ := row["original_finder"].(string)
+		severity, _ := row["severity"].(string)
+		if path == "" || sha == "" || finder == "" || severity == "" {
+			return ActionResult{Status: "failed", Detail: "finding row incomplete"}, fmt.Errorf("record_finding_batch: finding %s row is missing path/sha256/original_finder/severity", findingID)
 		}
-		fp := computeFindingFingerprint(reporter, body, path)
-		// Dedupe: look for any existing BUG whose path ends with the same
-		// fingerprint.
-		if existing := findBugByFingerprint(bugs, fp); existing != "" {
+		if existing := findBugByFingerprint(bugs, sha); existing != "" {
 			deduplicated++
 			continue
 		}
-		severity, _ := finding["severity"].(string)
-		if severity == "" {
-			severity = "P0"
-		}
-		// Allocate the next BUG id. We scan entities.bugs for the highest
-		// existing numeric suffix and increment. This is intentionally
-		// simple — collision-free allocation is not the dedup mechanism
-		// (the fingerprint is); id reuse after deletion is out of scope for
-		// TASK-015.
 		nextID := nextBugID(bugs)
 		newBug := map[string]any{
 			"id":                          nextID,
 			"state":                       "draft",
-			"path":                        path + "#fp=" + fp,
+			"path":                        path + "#fp=" + sha,
 			"severity":                    severity,
 			"attempt_count":               0,
 			"same_contract_failure_count": 0,
-			"original_finder_agent_ids":   []any{reporter},
+			"original_finder_agent_ids":   []any{finder},
 		}
 		bugs = append(bugs, newBug)
 		registered++
 		registeredIDs = append(registeredIDs, nextID)
 	}
 	entities["bugs"] = bugs
-	detail := fmt.Sprintf("finding batch processed: registered=%d deduplicated=%d ids=%v", registered, deduplicated, registeredIDs)
-	if registered == 0 && deduplicated == 0 {
-		return ActionResult{Status: "skipped", Detail: detail}, nil
-	}
+	detail := fmt.Sprintf("finding batch processed from sealed ObservationBatch: registered=%d deduplicated=%d ids=%v", registered, deduplicated, registeredIDs)
 	return ActionResult{Status: "committed", MutationApplied: registered > 0, Detail: detail}, nil
 }
 

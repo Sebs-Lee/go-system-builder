@@ -96,17 +96,31 @@ func TestValidateTemplatesRejectsForbiddenField(t *testing.T) {
 }
 
 // TestValidateTemplatesRejectsObsoleteHookEvent covers the
-// "obsolete Hook event" branch (templates.go:141-145). When the
-// settings.json still registers a removed event like PostToolUse,
-// ValidateTemplates must surface a clear error.
+// "obsolete Hook event" branch (templates.go:147-151). PostToolUse is a live
+// observation event since L3-S7/L4 (PLAN_REPORT capture); the retired events
+// (PermissionRequest / TaskCompleted / ConfigChange) must still fail closed.
 func TestValidateTemplatesRejectsObsoleteHookEvent(t *testing.T) {
 	dir := t.TempDir()
-	// A settings.json with the obsolete PostToolUse event present.
-	bad := []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreToolUse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SessionStart"}]}],"SubagentStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStart"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStop"}]}],"TeammateIdle":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event TeammateIdle"}]}],"PreCompact":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreCompact"}]}],"PostToolUse":[{"hooks":[]}]}}`)
+	// A settings.json with the obsolete PermissionRequest event present.
+	bad := []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreToolUse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SessionStart"}]}],"SubagentStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStart"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStop"}]}],"TeammateIdle":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event TeammateIdle"}]}],"PreCompact":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreCompact"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PostToolUse"}]}],"PermissionRequest":[{"hooks":[]}]}}`)
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), bad, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := migration.ValidateTemplates(dir); err == nil {
-		t.Fatal("ValidateTemplates must fail when settings.json registers the obsolete PostToolUse event")
+		t.Fatal("ValidateTemplates must fail when settings.json registers the obsolete PermissionRequest event")
+	}
+}
+
+// TestValidateTemplatesRequiresPostToolUse flips the L3-S7 requirement:
+// PostToolUse(SendMessage) is the PLAN_REPORT capture path and must be
+// registered.
+func TestValidateTemplatesRequiresPostToolUse(t *testing.T) {
+	dir := t.TempDir()
+	missing := []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreToolUse"}]}],"SessionStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SessionStart"}]}],"SubagentStart":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStart"}]}],"SubagentStop":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event SubagentStop"}]}],"TeammateIdle":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event TeammateIdle"}]}],"PreCompact":[{"hooks":[{"type":"command","command":".claude/bin/loop-harness hook --event PreCompact"}]}]}}`)
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), missing, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := migration.ValidateTemplates(dir); err == nil {
+		t.Fatal("ValidateTemplates must fail when settings.json lacks PostToolUse")
 	}
 }

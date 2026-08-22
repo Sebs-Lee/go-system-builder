@@ -733,7 +733,7 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 	envelope := map[string]any{
 		"schema_version":          "1.0.0",
 		"evidence_id":             "ev-qa",
-		"kind":                    "qa_review_record",
+		"kind":                    "review_result",
 		"runtime_id":              "loop-test",
 		"baseline_generation":     1,
 		"review_round":            evidenceRound,
@@ -745,7 +745,7 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 				"sha256": sha256Hex(taskData),
 			},
 		},
-		"conclusion": "pass",
+		"conclusion": "req_change_required",
 		"created_at": "2026-07-29T00:00:00Z",
 	}
 	envelopeData, err := json.Marshal(envelope)
@@ -772,7 +772,7 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 				},
 				"evidence": []any{
 					map[string]any{
-						"id": "ev-qa", "kind": "qa_review_record", "path": "evidence/qa.json",
+						"id": "ev-qa", "kind": "review_result", "path": "evidence/qa.json",
 						"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": 1,
 						"review_round": evidenceRound, "produced_by": []any{"qa-1"}, "invalidated_by": nil,
 						"responsibility_id": "QA", "scope_refs": []any{"docs/tasks/TASK-TEST.md"},
@@ -780,8 +780,8 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 				},
 			},
 		},
-		GateID:       "GATE-VERIFY-QA-PASS",
-		TransitionID: "PTR-VERIFY-02",
+		GateID:       "GATE-VERIFY-REQ-CHANGE-REQUIRED",
+		TransitionID: "TR-010",
 		Files:        files,
 	}
 }

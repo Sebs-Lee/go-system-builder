@@ -18,7 +18,7 @@ var Skills = []SkillSpec{
 	{"requirement-funnel", "methodology"},
 	{"specification-planning", "methodology"},
 	{"document-verification", "methodology"},
-	{"two-phase-activation", "methodology"},
+	{"agent-dispatch", "methodology"},
 	{"team-planning", "methodology"},
 	{"bug-resolution", "methodology"},
 	{"impact-analysis", "methodology"},
@@ -168,7 +168,9 @@ func ValidateAgents(root string) error {
 			}
 		}
 		for _, phrase := range []string{
-			"phase one", "phase two", "activation", ".claude/loop-state.json",
+			// L4 dispatch vocabulary: every definition states the plan
+			// checkpoint flow and the activation exception.
+			"PLAN_REPORT", "plan_checkpoint", "plan_approval_required", ".claude/loop-state.json",
 			"squash merge", "## Mission", "## Allowed Artifacts", "## Output Contract", "## Stop Conditions",
 		} {
 			if !strings.Contains(body, phrase) {
