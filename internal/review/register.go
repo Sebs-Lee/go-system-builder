@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -147,12 +149,21 @@ func RegisterPlan(
 					claimIDs = append(claimIDs, claimID)
 					ownerByClaim[claimID] = assignment.AssignmentID
 				}
+				// Resource locks are the declared shared-resource keys
+				// (account, port, spec file, dataset, worktree, ...). The
+				// union of assignment-level and claim-level locks is what
+				// the runtime consults for conflict detection at dispatch
+				// and for queueing when a lock is already held (L3-S7
+				// §4.5 + L4 §6.2).
+				locks := mergedResourceLocks(assignment.ResourceLocks, &plan, assignment.ClaimIDs)
 				assignmentsProjection[assignment.AssignmentID] = map[string]any{
-					"lens":       assignment.Lens,
-					"claim_ids":  claimIDs,
-					"status":     "planned",
-					"agent_id":   nil,
-					"result_ref": nil,
+					"lens":           assignment.Lens,
+					"claim_ids":      claimIDs,
+					"status":         "planned",
+					"agent_id":       nil,
+					"result_ref":     nil,
+					"resource_locks": locks,
+					"queue_reason":   nil,
 				}
 			}
 			for _, claim := range plan.Claims {
@@ -202,4 +213,45 @@ func canonicalJSON(data []byte) []byte {
 		return data
 	}
 	return out
+}
+
+// mergedResourceLocks returns the sorted unique non-empty union of the
+// assignment's declared resource_locks and the resource_locks declared on
+// each of its Claims. Duplicate entries collapse; the result is the keys
+// the runtime uses for conflict detection at dispatch (L3-S7 §4.5, L4
+// §6.2). The function tolerates a nil plan and unknown claim IDs (defensive
+// against rev that runs before the claim map is rebuilt).
+func mergedResourceLocks(assignmentLocks []string, plan *Plan, claimIDs []string) []any {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	for _, lock := range assignmentLocks {
+		add(lock)
+	}
+	if plan != nil {
+		byID := map[string]Claim{}
+		for _, claim := range plan.Claims {
+			byID[claim.ClaimID] = claim
+		}
+		for _, claimID := range claimIDs {
+			if claim, ok := byID[claimID]; ok {
+				for _, lock := range claim.ResourceLocks {
+					add(lock)
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	result := make([]any, len(out))
+	for i, value := range out {
+		result[i] = value
+	}
+	return result
 }

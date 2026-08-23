@@ -14,16 +14,44 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
-// runS7Command is the `loop-harness s7` dispatcher. Currently only
-// `status` exists: a read-only board of the current review round.
+// runS7Command is the `loop-harness s7` dispatcher: `status` is the
+// read-only board, `draft` scaffolds a ReviewPlan, `manifest-draft`
+// scaffolds the reviewer team-manifest for one plan Assignment, and
+// `workspace-digest` prints the current verification-artifact digest an
+// E2E cold-start ReviewResult must bind (L3-S7 §3.5).
 func runS7Command(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "status" && args[0] != "draft") {
-		fmt.Fprintln(stderr, "s7 requires <status|draft>")
+	if len(args) == 0 || (args[0] != "status" && args[0] != "draft" && args[0] != "manifest-draft" && args[0] != "workspace-digest") {
+		fmt.Fprintln(stderr, "s7 requires <status|draft|manifest-draft|workspace-digest>")
 		return 2
+	}
+	if args[0] == "workspace-digest" {
+		flags := flag.NewFlagSet("s7 workspace-digest", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		root := flags.String("root", ".", "repository root")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		return runS7WorkspaceDigest(*root, stdout)
+	}
+	if args[0] == "manifest-draft" {
+		flags := flag.NewFlagSet("s7 manifest-draft", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		root := flags.String("root", ".", "repository root")
+		assignmentID := flags.String("assignment", "", "ReviewPlan Assignment id to dispatch (required)")
+		out := flags.String("out", "", "write the draft manifest JSON here (default stdout)")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *assignmentID == "" {
+			fmt.Fprintln(stderr, "s7 manifest-draft requires --assignment <assignment-id>")
+			return 2
+		}
+		return runS7ManifestDraft(*root, *assignmentID, *out, stdout)
 	}
 	if args[0] == "draft" {
 		flags := flag.NewFlagSet("s7 draft", flag.ContinueOnError)
@@ -135,16 +163,23 @@ func runS7Status(root string, stdout io.Writer) int {
 		}
 	}
 
+	// S7 operational metrics summary (L3-S7 §14.2 machine-collectible
+	// subset). Read-only: the runtime verbs record these series.
+	if summary, err := metrics.FormatS7(root, round); err == nil {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, summary)
+	}
+
 	// Exit state and the single next action.
 	fmt.Fprintln(stdout, "")
 	pending := review.UndispositionedRequired(state)
 	if batch, _ := reviewMap["observation_batch"].(map[string]any); batch != nil {
-		fmt.Fprintf(stdout, "observation_batch: sealed as %s (%d findings) — next: `runtime transition --id TR-008`\n",
+		fmt.Fprintf(stdout, "observation_batch: sealed as %s (%d findings) — the next PreToolUse auto-commits TR-008 (do not invoke the transition CLI)\n",
 			batch["batch_id"], len(batchFindingIDs(batch)))
 		return 0
 	}
 	if ptr.Status == "clean" {
-		fmt.Fprintln(stdout, "clean round: machine CleanRound registered — next: `runtime transition --id TR-009`")
+		fmt.Fprintln(stdout, "clean round: machine CleanRound registered — the next PreToolUse auto-commits TR-009 (do not invoke the transition CLI)")
 		return 0
 	}
 	if len(pending) > 0 {
@@ -160,9 +195,32 @@ func batchFindingIDs(batch map[string]any) []any {
 	return ids
 }
 
+// readLifecycleCursor reports the active lifecycle state/phase for
+// disclosure messages; both default to "unknown" so an absent lifecycle
+// block never silently produces a stage-less error.
+func readLifecycleCursor(state map[string]any) (string, string) {
+	stage, phase := "unknown", "unknown"
+	lc, _ := state["lifecycle"].(map[string]any)
+	if value, _ := lc["state"].(string); value != "" {
+		stage = value
+	}
+	if value, _ := lc["phase"].(string); value != "" {
+		phase = value
+	}
+	return stage, phase
+}
+
 // runS7Draft scaffolds a ReviewPlan from the current runtime facts
 // (L3-S7 §4.2 planner assist). Read-only: it never mutates state; the
 // planner reviews the TODO markers before registering.
+//
+// Gating rationale (L3-S7 §11.1, blue/L3-S7-verification-round.md): the
+// review round is opened by the S6→S7 transition, not by handcrafting
+// `review.round`. A draft emitted outside the verification stage would
+// be register-rejected (state != verification) and a Planner encouraged
+// to fix the stage instead of the plan. We surface this disclosure with
+// the current stage, the legal entry path (TR-006/TR-012/TR-016), and one
+// next action so the agent does not invent a parallel lifecycle.
 func runS7Draft(root, out string, stdout io.Writer) int {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
@@ -178,7 +236,16 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 		}
 	}
 	if round < 1 {
-		fmt.Fprintln(stdout, "no review round open — enter S7 via TR-006/TR-012 first")
+		stage, phase := readLifecycleCursor(snapshot.State)
+		fmt.Fprintf(stdout,
+			"current stage is %s (phase=%s); S7 enters automatically when S6 commits a TASK batch via TR-006 (bug_resolution re-entry: TR-012; acceptance re-entry: TR-016) — complete the current stage's missing work (see `loop-harness next` / `loop-harness ready`) instead of handcrafting a ReviewPlan\n",
+			stage, phase)
+		return 1
+	}
+	if stage, _ := readLifecycleCursor(snapshot.State); stage != "verification" {
+		fmt.Fprintf(stdout,
+			"current stage is %s; S7 (verification) ReviewPlan drafting is only legal while the lifecycle stage is `verification` — round=%d is open but the ReviewPlan register-verb (`runtime review-plan --file <plan.json>`) will reject with `a ReviewPlan can only be registered in the verification stage`. Finish the current stage's missing work first.\n",
+			stage, round)
 		return 1
 	}
 	plan, notes := review.DraftPlan(snapshot.State, round)
@@ -199,5 +266,31 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 	for _, note := range notes {
 		fmt.Fprintf(stdout, "note: %s\n", note)
 	}
+	return 0
+}
+
+// runS7WorkspaceDigest prints the current verification-artifact digest of
+// the registered plan's cold-start workspace. An E2E ReviewResult must bind
+// exactly this value as verification_artifact_digest (L3-S7 §3.5); computing
+// it by hand is error-prone, so the submit-time error message points here.
+func runS7WorkspaceDigest(root string, stdout io.Writer) int {
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	if err != nil {
+		fmt.Fprintf(stdout, "read runtime: %v\n", err)
+		return 1
+	}
+	ptr := review.PlanPointerFromState(snapshot.State)
+	if ptr == nil || ptr.VerificationArtifactWorkspace == "" {
+		fmt.Fprintln(stdout, "no verification artifact workspace is pinned (the plan is not registered or e2e_coverage_state is not cold_start); E2E results do not bind a workspace digest")
+		return 0
+	}
+	digest, err := review.WorkspaceDigest(root, ptr.VerificationArtifactWorkspace)
+	if err != nil {
+		fmt.Fprintf(stdout, "compute workspace digest: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s  %s\n", digest, ptr.VerificationArtifactWorkspace)
 	return 0
 }

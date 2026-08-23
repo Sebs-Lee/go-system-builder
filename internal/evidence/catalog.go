@@ -273,6 +273,7 @@ var defaultRegisteredKinds = []string{
 	"release_audit",
 	"review_result",
 	"finding",
+	"finding_supplement",
 	"observation_batch",
 	"team_manifest",
 	"targeted_reverification",
@@ -281,6 +282,16 @@ var defaultRegisteredKinds = []string{
 // defaultImportableKinds is an explicit recovery trust boundary. Keep this
 // list separate from defaultRegisteredKinds so adding a new persisted kind
 // does not silently make untrusted external evidence importable.
+//
+// finding_supplement is deliberately absent: the kind is registered (the
+// loop-state schema evidence.kind enum admits it and review.SubmitSupplement
+// persists it) but pipeline-owned. runtime.RecordEvidence rejects manual
+// `finding_supplement` registration so the entities.finding_supplements row
+// and the evidence entry never split, and the recovery import trust boundary
+// stays conservative — operators cannot import supplements from an untrusted
+// external evidence set and the only authorized producer is the in-CAS
+// review.SubmitSupplement path. Add `finding_supplement` here only when the
+// import boundary is intentionally widened.
 var defaultImportableKinds = []string{
 	"acceptance",
 	"bug",
@@ -328,6 +339,11 @@ var defaultSlots = map[string]SlotSpec{
 		AcceptedKinds: []string{"builder_report", "agent_completion"},
 	},
 	"team_manifest_record": {
+		// The self-named alias is deliberately retained: catalog_test.go
+		// asserts the legacy in-memory compatibility contract. No transition
+		// references this slot since L3-S6 §8.3; authority for a dispatched
+		// workgroup is kind team_manifest. Slot + alias become deletable
+		// when the controller/transition compatibility tests migrate.
 		AcceptedKinds:  []string{"builder_report", "team_manifest", "team_manifest_record"},
 		PreferredKinds: []string{"team_manifest", "team_manifest_record"},
 	},
@@ -335,41 +351,65 @@ var defaultSlots = map[string]SlotSpec{
 		AcceptedKinds: []string{"agent_completion", "completion_report"},
 	},
 	"document_review_record": {
+		// Authority: kind document_review. The self-named alias stays for
+		// the qualitygate evaluator fixtures that persist it as the evidence
+		// kind; deletable once those fixtures use the canonical kind.
 		AcceptedKinds: []string{"document_review", "document_review_record"},
 	},
 	"contract_set_record": {
+		// No transition or gate references this slot; kept only for the
+		// transition/controller compatibility tests. Authority for a locked
+		// contract set is kind document_review via document_review_record.
 		AcceptedKinds: []string{"document_review", "document_review_record"},
 	},
 	"task_batch_record": {
+		// Same status as contract_set_record: compatibility-test consumer
+		// only. The TR-003 batch authority is the documents[] registration.
 		AcceptedKinds: []string{"document_review", "document_review_record"},
 	},
 	"planning_design_record": {
+		// Authority: kind planning_design. The self-named alias is consumed
+		// by the qualitygate planning-gate fixtures.
 		AcceptedKinds: []string{"planning_design", "planning_design_record"},
 	},
 	"planning_contract_record": {
+		// Authority: kind planning_contract; alias consumed by qualitygate
+		// fixtures (same status as planning_design_record).
 		AcceptedKinds: []string{"planning_contract", "planning_contract_record"},
 	},
 	"planning_task_record": {
+		// Authority: kind planning_task; alias consumed by qualitygate
+		// fixtures (same status as planning_design_record).
 		AcceptedKinds: []string{"planning_task", "planning_task_record"},
 	},
 	"delivery_review_record": {
-		AcceptedKinds: []string{"delivery_review", "delivery_review_record"},
-	},
-	"qa_review_record": {
-		AcceptedKinds: []string{"qa_review", "qa_review_record"},
-	},
-	"e2e_review_record": {
-		AcceptedKinds: []string{"e2e_review", "e2e_review_record"},
+		// Kept for the Controller preference tests; no transition or gate
+		// references this slot. Authority for a delivery verdict is the
+		// Canonical ReviewResult (kind review_result) — see L3-S7 §3.5.
+		AcceptedKinds: []string{"delivery_review"},
 	},
 	"review_result_record": {
-		AcceptedKinds:  []string{"review_result", "delivery_review", "qa_review", "e2e_review", "review_result_record"},
+		// Authority: kind review_result, written by review.SubmitResult
+		// (L3-S7 §9). delivery_review/qa_review/e2e_review are pre-S7
+		// per-lens kinds still consumed by transition/controller tests and
+		// REQ-039 fixtures; the slot's self-named alias was removed
+		// (2026-08-22 audit: zero producers, and the loop-state schema
+		// evidence.kind enum makes it unpersistable). The lens kinds become
+		// deletable once those fixtures migrate to review_result.
+		AcceptedKinds:  []string{"review_result", "delivery_review", "qa_review", "e2e_review"},
 		PreferredKinds: []string{"review_result"},
 	},
 	"finding_record": {
-		AcceptedKinds: []string{"finding", "bug", "finding_record"},
+		// Authority: kind finding (immutable Finding, review.SubmitResult)
+		// and kind bug (S8). The self-named alias was removed (2026-08-22
+		// audit: zero producers/consumers).
+		AcceptedKinds: []string{"finding", "bug"},
 	},
 	"observation_batch_record": {
-		AcceptedKinds: []string{"observation_batch", "observation_batch_record"},
+		// Authority: kind observation_batch, sealed by the S7 round
+		// consumer. The self-named alias was removed (2026-08-22 audit:
+		// zero producers/consumers).
+		AcceptedKinds: []string{"observation_batch"},
 	},
 	"bug_batch_record": {
 		AcceptedKinds: []string{"bug", "bug_batch_record"},
@@ -381,6 +421,8 @@ var defaultSlots = map[string]SlotSpec{
 		AcceptedKinds: []string{"bug", "repair_record"},
 	},
 	"targeted_reverification_record": {
+		// Authority: kind targeted_reverification; the self-named alias is
+		// consumed by the qualitygate evaluator fixtures.
 		AcceptedKinds: []string{"targeted_reverification", "targeted_reverification_record"},
 	},
 	"clean_round_record": {

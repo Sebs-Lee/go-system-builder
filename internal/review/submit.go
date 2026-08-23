@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -21,12 +23,30 @@ type SubmitRequest struct {
 	ResultPath       string
 	// CaptureDir optionally points at a captures directory; findings with an
 	// empty encounter timeline absorb the buffered steps (L3-S7 §3.6).
-	CaptureDir       string
-	OccurredAt       time.Time
+	CaptureDir string
+	OccurredAt time.Time
 }
 
 // SubmitResult is the single entry point for a Canonical ReviewResult
-// (L3-S7 §9.1). One CAS transaction:
+// (L3-S7 §9.1). It wraps submitResult with the first-pass success metric
+// (§14.2): stale-revision CAS conflicts are concurrency retries, not submit
+// friction, so only real validation/consumption failures count as rejected.
+func SubmitResult(
+	root, statePath, journalPath string,
+	request SubmitRequest,
+) (loopruntime.Snapshot, error) {
+	snapshot, err := submitResult(root, statePath, journalPath, request)
+	switch {
+	case err == nil:
+		_ = metrics.RecordS7ResultSubmit(root, "accepted")
+	case errors.Is(err, loopruntime.ErrStaleRevision):
+	default:
+		_ = metrics.RecordS7ResultSubmit(root, "rejected")
+	}
+	return snapshot, err
+}
+
+// submitResult consumes one Canonical ReviewResult in one CAS transaction:
 //
 //  1. validates the result against review-plan coordinates, the Assignment's
 //     exact Claim set, producer identity and Builder/Reviewer independence;
@@ -40,7 +60,7 @@ type SubmitRequest struct {
 //     no findings -> machine CleanRound;
 //  6. pause verdicts (req_change_required / release_blocked) create the one
 //     authoritative pause checkpoint here; TR-010/TR-011 only move the cursor.
-func SubmitResult(
+func submitResult(
 	root, statePath, journalPath string,
 	request SubmitRequest,
 ) (loopruntime.Snapshot, error) {
@@ -50,6 +70,14 @@ func SubmitResult(
 	data, err := os.ReadFile(request.ResultPath)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read ReviewResult: %w", err)
+	}
+	// verdict=fail is a common authoring mistake (Reviewers try to record a
+	// per-Claim "fail" verdict on the result envelope). The schema's enum
+	// rejection is accurate but uninformative; surface the actionable
+	// verdict=finding path before the schema validator buries the error
+	// under "value must be one of …" (L3-S7 §3.5).
+	if hint, ok := verdictHint(data); ok {
+		return loopruntime.Snapshot{}, hint
 	}
 	if err := schema.NewValidator(root).ValidateBytes("review-result.schema.json", data); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult schema: %w", err)
@@ -114,6 +142,18 @@ func SubmitResult(
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateFindings(plan, assignment, &result); err != nil {
+		// Site-lost path (L3-S7 §9.1 step 12): an ordinary Finding whose
+		// encounter cannot be completed AND is declared unrecoverable records
+		// an Assignment BLOCKER that stays in S7 instead of a bare rejection.
+		if readiness := asReadinessError(err); readiness != nil && len(result.SiteLost) > 0 {
+			return submitSiteLostBlocker(root, statePath, journalPath, request, current, assignment, &result, readiness)
+		}
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateSiteLostDeclarations(&result); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateBlockedClaims(current, plan, assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateProducerIndependence(current, &result); err != nil {
@@ -151,6 +191,7 @@ func SubmitResult(
 		"assignment_id":           result.AssignmentID,
 		"subject_digest":          result.SubjectDigest,
 		"claim_results":           result.ClaimResults,
+		"blocked_claims":          blockedClaimsOrEmpty(&result),
 		"checks":                  result.Checks,
 		"deviations":              result.Deviations,
 		"verdict":                 result.Verdict,
@@ -207,7 +248,7 @@ func SubmitResult(
 	}
 	if sealNow {
 		batchID = fmt.Sprintf("observation-batch-r%d", round)
-		batch, err := buildObservationBatch(state_view{current}, plan, ptr, projected, &result, complete, occurredAt)
+		batch, err := buildObservationBatch(state_view{state: current, root: root}, plan, ptr, projected, &result, complete, occurredAt)
 		if err != nil {
 			return loopruntime.Snapshot{}, err
 		}
@@ -245,7 +286,7 @@ func SubmitResult(
 	resultRepoPath := repositoryPath(root, request.ResultPath)
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
-	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
+	snapshot, err := store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-result-%s-r%d", result.ResultID, request.ExpectedRevision+1),
 		TransitionID:   "REVIEW-RESULT",
 		Event:          "review_result_submitted",
@@ -306,6 +347,45 @@ func SubmitResult(
 			return nil
 		},
 	})
+	if err != nil {
+		return snapshot, err
+	}
+	recordRoundMetrics(root, current, plan, ptr, &result, round, occurredAt, sealNow, cleanNow)
+	return snapshot, nil
+}
+
+// recordRoundMetrics captures the L3-S7 §14.2 machine-collectible facts of
+// one consumed result: round shape gauges, per-Claim planned -> dispositioned
+// lead time, finding count, first-finding -> seal duration and clean rounds.
+// Metrics are best-effort observability and never fail the verb.
+func recordRoundMetrics(root string, state map[string]any, plan *Plan, ptr *PlanPointer, result *Result, round int, occurredAt time.Time, sealed, clean bool) {
+	_ = metrics.RecordS7RoundShape(root, round, len(plan.Assignments), len(plan.Claims), ptr.Revision)
+	if plannedAt, err := time.Parse(time.RFC3339Nano, ptr.SubmittedAt); err == nil {
+		for _, claimResult := range result.ClaimResults {
+			_ = metrics.RecordS7ClaimLeadTime(root, round, claimResult.ClaimID, occurredAt.Sub(plannedAt).Milliseconds())
+		}
+	}
+	_ = metrics.RecordS7Findings(root, round, len(result.Findings))
+	if sealed {
+		_ = metrics.RecordS7FirstFindingToSeal(root, round, occurredAt.Sub(firstFindingAt(state, occurredAt)).Milliseconds())
+	}
+	if clean {
+		_ = metrics.RecordS7CleanRound(root, round)
+	}
+}
+
+// firstFindingAt returns the earliest finding creation time in the round.
+// Findings from the just-consumed result are created at occurredAt, which
+// bounds the scan from above.
+func firstFindingAt(state map[string]any, occurredAt time.Time) time.Time {
+	earliest := occurredAt
+	for _, row := range RoundFindings(state) {
+		created, err := time.Parse(time.RFC3339Nano, stringField(row["created_at"]))
+		if err == nil && created.Before(earliest) {
+			earliest = created
+		}
+	}
+	return earliest
 }
 
 // ---------------------------------------------------------------------------
@@ -330,8 +410,10 @@ func planAssignmentIDs(plan *Plan) []string {
 	return ids
 }
 
-// validateClaimResultSet proves claim_results == the Assignment's exact
-// Claim set: no missing, no extras, no duplicates (L3-S7 §3.5).
+// validateClaimResultSet proves claim_results + blocked_claims == the
+// Assignment's exact Claim set: every Claim is answered exactly once, either
+// by a pass/fail conclusion or by a blocked_by_confirmed_finding declaration;
+// no missing, no extras, no duplicates (L3-S7 §3.5).
 func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 	want := map[string]bool{}
 	for _, claimID := range assignment.ClaimIDs {
@@ -347,9 +429,18 @@ func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 		}
 		seen[claimResult.ClaimID] = true
 	}
+	for _, blocked := range result.BlockedClaims {
+		if !want[blocked.ClaimID] {
+			return fmt.Errorf("blocked_claims contains %s which is not part of assignment %s; a Reviewer never adds Claims (L3-S7 §3.5)", blocked.ClaimID, assignment.AssignmentID)
+		}
+		if seen[blocked.ClaimID] {
+			return fmt.Errorf("claim %s is answered by both claim_results and blocked_claims; a Claim gets exactly one disposition", blocked.ClaimID)
+		}
+		seen[blocked.ClaimID] = true
+	}
 	for claimID := range want {
 		if !seen[claimID] {
-			return fmt.Errorf("claim_results is missing %s; the Assignment's Claim set must be answered exactly (L3-S7 §3.5)", claimID)
+			return fmt.Errorf("claim_results is missing %s; the Assignment's Claim set must be answered exactly (pass/fail or a blocked_by_confirmed_finding declaration, L3-S7 §3.5)", claimID)
 		}
 	}
 	return nil
@@ -375,12 +466,18 @@ func validateVerdictConsistency(result *Result) error {
 		if failures > 0 || len(result.Findings) > 0 || failedChecks > 0 {
 			return fmt.Errorf("verdict=pass contradicts %d fail claim(s), %d finding(s), %d failed check(s)", failures, len(result.Findings), failedChecks)
 		}
+		if len(result.BlockedClaims) > 0 {
+			return fmt.Errorf("verdict=pass contradicts %d blocked claim(s); blocked_by_confirmed_finding is not a pass (L3-S7 §3.5)", len(result.BlockedClaims))
+		}
 		if len(result.Deviations) > 0 {
 			return fmt.Errorf("verdict=pass contradicts %d recorded deviation(s)", len(result.Deviations))
 		}
 	case "finding":
-		if failures == 0 || len(result.Findings) == 0 {
-			return fmt.Errorf("verdict=finding requires at least one fail claim and one Finding with a real encounter")
+		if failures == 0 && len(result.BlockedClaims) == 0 {
+			return fmt.Errorf("verdict=finding requires at least one fail claim and one Finding with a real encounter (or a blocked_by_confirmed_finding projection bound to a confirmed Finding of this round)")
+		}
+		if failures > 0 && len(result.Findings) == 0 {
+			return fmt.Errorf("verdict=finding with %d fail claim(s) requires at least one Finding with a real encounter", failures)
 		}
 	case "req_change_required", "release_blocked":
 		// Pause verdicts route to the human gateway; claim results still
@@ -389,6 +486,35 @@ func validateVerdictConsistency(result *Result) error {
 		return fmt.Errorf("unknown verdict %q", result.Verdict)
 	}
 	return nil
+}
+
+// verdictHint inspects a raw ReviewResult payload for the verdict value and
+// returns an actionable error when the verdict is a string the schema will
+// reject — the most common authoring mistake is "verdict=fail", which is not
+// a result-level verdict in this model (per-Claim failures live in
+// claim_results[].conclusion; the result-level verdict for blocked Claims is
+// "finding" with findings[] populated). The function only returns a hint
+// when it can confidently recognize the offending value; other schema errors
+// fall through to the regular validator. The bool reports whether a hint was
+// returned so the caller can short-circuit before schema validation.
+func verdictHint(data []byte) (error, bool) {
+	var probe struct {
+		Verdict any `json:"verdict"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, false
+	}
+	raw, ok := probe.Verdict.(string)
+	if !ok || raw == "" {
+		return nil, false
+	}
+	switch raw {
+	case "pass", "finding", "req_change_required", "release_blocked":
+		return nil, false
+	case "fail":
+		return fmt.Errorf("ReviewResult verdict=%q is not a valid result-level verdict; per-Claim failures belong in claim_results[].conclusion, and the result-level verdict for blocked Claims is \"finding\" with findings[] populated (one Finding per fail Claim, each with a real encounter). Valid values: pass, finding, req_change_required, release_blocked (L3-S7 §3.5)", raw), true
+	}
+	return nil, false
 }
 
 // validateFindings binds every fail Claim to exactly one Finding, validates
@@ -423,7 +549,14 @@ func validateFindings(plan *Plan, assignment *PlanAssignment, result *Result) er
 			return fmt.Errorf("finding %s lens %q contradicts the assignment/claim lens %q", finding.FindingID, finding.Lens, assignment.Lens)
 		}
 		if err := validateInvestigationReadiness(finding); err != nil {
-			return err
+			if finding.Severity == "P0" {
+				return err
+			}
+			return &ReadinessError{
+				FindingID: finding.FindingID,
+				Severity:  finding.Severity,
+				Err:       fmt.Errorf("%w; complete the scene in place from the capture buffer / read-only state, or — if it is unrecoverable — declare site_lost for this finding to record an Assignment BLOCKER that stays in S7 (L3-S7 §9.1)", err),
+			}
 		}
 	}
 	for claimID := range failByClaim {
@@ -549,6 +682,9 @@ func applyResultConsumption(
 		}
 		claimRow["finding_ids"] = ids
 	}
+	if err := applyBlockedDispositions(claims, result); err != nil {
+		return err
+	}
 	row["status"] = "consumed"
 	row["result_ref"] = resultRel
 	if result.VerificationArtifactDigest != nil && *result.VerificationArtifactDigest != "" {
@@ -655,7 +791,7 @@ func advanceReviewerAgent(state map[string]any, result *Result, resultRepoPath s
 			return nil
 		}
 		if currentState != "working" {
-			return fmt.Errorf("reviewer Agent %s is %s; a ReviewResult requires working state (canonical Agent states: spawned, reading, understanding_submitted, understanding_approved, activated, working, reported, done, blocked, stopped)", result.ProducerAgentID, currentState)
+			return fmt.Errorf("reviewer Agent %s is %s; a ReviewResult requires working state. On the plan_checkpoint path the PostToolUse(SendMessage) auto-chain advances reading -> understanding_submitted -> activated -> working automatically when PLAN_REPORT carries plan_ref pointing at the plan file; if the auto-chain did not fire (Worker omitted plan_ref, hook failed, or this is a plan_approval_required assignment), recover with `runtime agent-begin --agent-id %s --plan <plan-report.json>` and resubmit", result.ProducerAgentID, currentState, result.ProducerAgentID)
 		}
 		agent["state"] = "reported"
 		if resultRepoPath != "" {
@@ -780,6 +916,7 @@ func projectDispositions(state map[string]any, assignment *PlanAssignment, resul
 		}
 		dispositions[claimResult.ClaimID] = disp
 	}
+	projectBlockedDispositions(dispositions, result)
 	return dispositions
 }
 
@@ -814,9 +951,11 @@ func findingIDs(findings []Finding) []string {
 	return ids
 }
 
-// state_view exposes the pre-transaction state to the batch builder.
+// state_view exposes the pre-transaction state to the batch builder; root
+// lets it recover blocked-projection details from persisted result envelopes.
 type state_view struct {
 	state map[string]any
+	root  string
 }
 
 // buildObservationBatch assembles the sealed handoff document (L3-S7 §3.7).
@@ -889,6 +1028,14 @@ func buildObservationBatch(
 	}
 	summary["total_required"] = total
 	summary["plan_revision"] = ptr.Revision
+	// blocked_by_confirmed_finding bindings ride the sealed batch so S8 sees
+	// exactly which Claims were objectively non-executable, by which confirmed
+	// Findings, and that the repaired round owes them (L3-S7 §3.7).
+	blockedClaims, err := batchBlockedClaims(view, projected, result)
+	if err != nil {
+		return nil, err
+	}
+	summary["blocked_claims"] = blockedClaims
 
 	drainPolicy := drainPolicyOf(result.Findings)
 	unobserved := []string{}
@@ -911,31 +1058,31 @@ func buildObservationBatch(
 
 	runtimeID, _ := state["runtime_id"].(string)
 	return map[string]any{
-		"schema_version":        "1.0.0",
-		"observation_batch_id":  fmt.Sprintf("observation-batch-r%d", round),
-		"conclusion":            "sealed",
-		"evidence_id":           fmt.Sprintf("observation-batch-r%d", round),
-		"kind":                  "observation_batch",
-		"runtime_id":            runtimeID,
-		"producer_agent_id":     "round-consumer",
-		"producer_responsibility": "Orchestrator",
-		"review_plan_id":        plan.ReviewPlanID,
-		"review_round":          round,
-		"baseline_generation":   baselineGeneration(state),
-		"subject_digest":        SubjectDigest(plan),
-		"finding_ids":           batchFindingIDs,
-		"drained_assignment_ids": drainedAssignments(state),
-		"drain_policy":          drainPolicy,
-		"claim_coverage_summary": summary,
+		"schema_version":                         "1.0.0",
+		"observation_batch_id":                   fmt.Sprintf("observation-batch-r%d", round),
+		"conclusion":                             "sealed",
+		"evidence_id":                            fmt.Sprintf("observation-batch-r%d", round),
+		"kind":                                   "observation_batch",
+		"runtime_id":                             runtimeID,
+		"producer_agent_id":                      "round-consumer",
+		"producer_responsibility":                "Orchestrator",
+		"review_plan_id":                         plan.ReviewPlanID,
+		"review_round":                           round,
+		"baseline_generation":                    baselineGeneration(state),
+		"subject_digest":                         SubjectDigest(plan),
+		"finding_ids":                            batchFindingIDs,
+		"drained_assignment_ids":                 drainedAssignments(state),
+		"drain_policy":                           drainPolicy,
+		"claim_coverage_summary":                 summary,
 		"cancelled_or_non_gating_assignment_ids": []any{},
-		"unobserved_claim_ids": unobserved,
-		"original_finder_routes": routes,
-		"investigation_readiness": readiness,
-		"severity_summary":      severitySummary(state, result.Findings),
-		"stop_reason":           stopReason,
-		"sealed_at":             occurredAt.UTC().Format(time.RFC3339Nano),
-		"sealed_by":             "round-consumer",
-		"revision":              1,
+		"unobserved_claim_ids":                   unobserved,
+		"original_finder_routes":                 routes,
+		"investigation_readiness":                readiness,
+		"severity_summary":                       severitySummary(state, result.Findings),
+		"stop_reason":                            stopReason,
+		"sealed_at":                              occurredAt.UTC().Format(time.RFC3339Nano),
+		"sealed_by":                              "round-consumer",
+		"revision":                               1,
 	}, nil
 }
 
@@ -1015,24 +1162,24 @@ func buildCleanRoundSnapshot(
 	})
 	runtimeID, _ := state["runtime_id"].(string)
 	return map[string]any{
-		"schema_version":      "1.0.0",
-		"clean_round_id":      fmt.Sprintf("clean-round-r%d", round),
+		"schema_version": "1.0.0",
+		"clean_round_id": fmt.Sprintf("clean-round-r%d", round),
 		// envelope identity fields: the gate verifies the persisted document
 		// against the evidence index row (same contract as the batch).
-		"evidence_id":           fmt.Sprintf("clean-round-r%d", round),
-		"kind":                  "clean_round",
-		"runtime_id":            runtimeID,
-		"producer_agent_id":     "round-consumer",
+		"evidence_id":             fmt.Sprintf("clean-round-r%d", round),
+		"kind":                    "clean_round",
+		"runtime_id":              runtimeID,
+		"producer_agent_id":       "round-consumer",
 		"producer_responsibility": "Clean Round Evaluator",
-		"review_plan_id":      plan.ReviewPlanID,
-		"review_round":        round,
-		"baseline_generation": baselineGeneration(state),
-		"subject_digest":      SubjectDigest(plan),
-		"result_refs":         resultRefs,
-		"conclusion":          "pass",
-		"evaluated_at":        occurredAt.UTC().Format(time.RFC3339Nano),
-		"evaluated_by":        "round-consumer",
-		"evaluator_version":   "review.SubmitResult/1",
+		"review_plan_id":          plan.ReviewPlanID,
+		"review_round":            round,
+		"baseline_generation":     baselineGeneration(state),
+		"subject_digest":          SubjectDigest(plan),
+		"result_refs":             resultRefs,
+		"conclusion":              "pass",
+		"evaluated_at":            occurredAt.UTC().Format(time.RFC3339Nano),
+		"evaluated_by":            "round-consumer",
+		"evaluator_version":       "review.SubmitResult/1",
 	}
 }
 

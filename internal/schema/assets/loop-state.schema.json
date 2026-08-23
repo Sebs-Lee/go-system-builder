@@ -262,6 +262,16 @@
                 "type": ["string", "null"],
                 "pattern": "^[a-f0-9]{64}$",
                 "description": "The verification workspace digest the consumed E2E result ran against (L3-S7 §10.1.6)."
+              },
+              "resource_locks": {
+                "type": ["array", "null"],
+                "description": "Sorted unique non-empty union of the Assignment's declared locks plus the locks declared on each of its Claims (computed via mergedResourceLocks); consulted for dispatch conflict detection and queueing (L3-S7 §4.5, L4 §6.2). Absent/null when no claim/assignment in this round declares any lock.",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
+              },
+              "queue_reason": {
+                "type": ["string", "null"],
+                "description": "Recorded queue-cause identifier when the scheduler queues this Assignment behind a held resource lock; null when the Assignment is ready or already consumed (L3-S7 §4.5)."
               }
             }
           }
@@ -411,6 +421,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/findingEntity"
+          }
+        },
+        "finding_supplements": {
+          "description": "Append-only FindingSupplement index rows (L3-S7 §3.6, L3-S8 §2.2). Each row is the control-plane pointer to one persisted supplement artifact hanging under an immutable Finding; rows are never mutated after creation. Written exclusively by `runtime finding-supplement` in the main runtime CAS transaction.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/findingSupplementEntity"
           }
         }
       }
@@ -1365,6 +1382,61 @@
         "created_at": {"type": "string"}
       }
     },
+    "findingSupplementEntity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "supplement_id",
+        "supplements_finding_id",
+        "author",
+        "path",
+        "sha256",
+        "review_round",
+        "baseline_generation",
+        "created_at",
+        "appended_at"
+      ],
+      "properties": {
+        "supplement_id": {
+          "type": "string",
+          "pattern": "^supplement-[A-Za-z0-9._-]+$"
+        },
+        "supplements_finding_id": {
+          "type": "string",
+          "pattern": "^finding-[A-Za-z0-9._-]+$",
+          "description": "The immutable Finding this supplement hangs under. The Finding row and the sealed ObservationBatch finding_ids set never change."
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authorized_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Scheduler identity that authorized a replacement finder when author != the Finding's original_finder (L3-S8 §2.2). Absent when the original finder authored the supplement."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "review_round": {"type": "integer", "minimum": 1},
+        "baseline_generation": {"type": "integer", "minimum": 0},
+        "hypothesis_id": {
+          "type": "string",
+          "description": "Registered S8 Hypothesis the discriminator distinguishes. Present exactly on discriminator-bound follow-up observations; S7 in-round notes never carry it."
+        },
+        "discriminator": {
+          "type": "string",
+          "description": "The S8 discriminator this observation answers (L3-S8 §2.1/§8). Present exactly on discriminator-bound follow-up observations."
+        },
+        "created_at": {"type": "string"},
+        "appended_at": {"type": "string"}
+      }
+    },
     "bug": {
       "type": "object",
       "additionalProperties": false,
@@ -1636,6 +1708,7 @@
             "completion_report",
             "review_result",
             "finding",
+            "finding_supplement",
             "observation_batch"
           ]
         },

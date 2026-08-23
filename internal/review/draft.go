@@ -84,9 +84,9 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 		id := nextClaim("dv", "traceability")
 		claims = append(claims, Claim{
 			ClaimID: id, Lens: "delivery", Target: task.path,
-			Assertion: task.id + " is delivered as locked: every acceptance obligation lands in the implementation",
-			Oracle:    "TODO(planner): the observable fact proving delivery for " + task.id,
-			Method:    "requirement traceability review",
+			Assertion:     task.id + " is delivered as locked: every acceptance obligation lands in the implementation",
+			Oracle:        "TODO(planner): the observable fact proving delivery for " + task.id,
+			Method:        "requirement traceability review",
 			Applicability: "required",
 			SourceRefs:    []string{task.id, task.path},
 			FocusKey:      "requirement-traceability",
@@ -103,14 +103,22 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 
 	// QA static baseline claims (L3-S7 §4.2 step 5): the standard focus set
 	// over the changed surface.
+	//
+	// Target disclosure: the QA claim's `target` is the user-facing label
+	// that names what the reviewer must look at. Without a real changed
+	// surface the original "the current change surface" placeholder was
+	// fiction — a QA reviewer reading it cannot tell what to review.
+	// We project from the fingerprinted frozen subjects first (the same
+	// authoritative surface the runtime validates against); if even that
+	// is empty, emit an explicit TODO marker so registration can flag it.
 	changedList := make([]string, 0, len(changed))
 	for path := range changed {
 		changedList = append(changedList, path)
 	}
 	sort.Strings(changedList)
-	qaSurface := "the current change surface"
-	if len(changedList) > 0 {
-		qaSurface = strings.Join(changedList, ", ")
+	qaSurface, qaSurfaceIsPlaceholder := qaChangeSurface(changedList, frozen)
+	if qaSurfaceIsPlaceholder {
+		notes = append(notes, "QA claim `target` is a TODO marker (no current-generation completion envelopes and no frozen subjects); replace it with the real change surface before registration — the registration-time check rejects a fabricated target that names nothing")
 	}
 	var qaClaimIDs []string
 	for _, focus := range []struct{ key, assertion string }{
@@ -119,11 +127,22 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 		{"test-oracle", "behavior (not implementation detail) is asserted; negative/boundary paths carry valid oracles"},
 	} {
 		id := nextClaim("qa", focus.key)
+		target := qaSurface
+		method := "static code review"
+		if qaSurfaceIsPlaceholder {
+			// When the surface is unknown, keep the focus-specific oracle
+			// TODO so the Planner must replace it during plan authoring
+			// (registration will reject a literal `TODO(planner)` literal
+			// with "TODO marker must be replaced"; surfacing it in `target`
+			// as well makes the gap visible at draft time).
+			target = "TODO(planner): path(s) to review for " + focus.key
+			method = "TODO(planner): the QA method (e.g. static code review, design walk) for " + focus.key
+		}
 		claims = append(claims, Claim{
-			ClaimID: id, Lens: "qa", Target: qaSurface,
-			Assertion: focus.assertion,
-			Oracle:    "TODO(planner): the observable fact proving " + focus.key,
-			Method:    "static code review",
+			ClaimID: id, Lens: "qa", Target: target,
+			Assertion:     focus.assertion,
+			Oracle:        "TODO(planner): the observable fact proving " + focus.key,
+			Method:        method,
 			Applicability: "required",
 			SourceRefs:    taskIDs(tasks),
 			FocusKey:      focus.key,
@@ -144,9 +163,9 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 		e2eState = "not_applicable"
 		claims = append(claims, Claim{
 			ClaimID: "claim-e2e-na-1", Lens: "e2e", Target: "n/a",
-			Assertion: "no user-observable behavior changed",
-			Oracle:    "impact analysis shows no user-visible surface",
-			Method:    "impact analysis",
+			Assertion:     "no user-observable behavior changed",
+			Oracle:        "impact analysis shows no user-visible surface",
+			Method:        "impact analysis",
 			Applicability: "not_applicable",
 			NARationale:   "bound REQ declares no UI impact; no entry point or browser-observable behavior is in scope",
 			SourceRefs:    []string{"bound_req"},
@@ -158,9 +177,9 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 		id := nextClaim("e2e", "flows")
 		claims = append(claims, Claim{
 			ClaimID: id, Lens: "e2e", Target: "TODO(planner): persona/flow surface",
-			Assertion: "declared entry points produce the expected user-observable behavior",
-			Oracle:    "TODO(planner): the flow-level oracle with console/network evidence",
-			Method:    "real-browser execution",
+			Assertion:     "declared entry points produce the expected user-observable behavior",
+			Oracle:        "TODO(planner): the flow-level oracle with console/network evidence",
+			Method:        "real-browser execution",
 			Applicability: "required",
 			SourceRefs:    taskIDs(tasks),
 			FocusKey:      "user-flow",
@@ -177,17 +196,17 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	}
 
 	plan := &Plan{
-		SchemaVersion:       "1.0.0",
-		ReviewPlanID:        fmt.Sprintf("review-plan-draft-r%d", round),
-		ReviewRound:         round,
-		BaselineGeneration:  generation,
-		FrozenSubjects:      frozen,
-		Claims:              claims,
-		Assignments:         assignments,
-		E2ECoverageState:    e2eState,
+		SchemaVersion:          "1.0.0",
+		ReviewPlanID:           fmt.Sprintf("review-plan-draft-r%d", round),
+		ReviewRound:            round,
+		BaselineGeneration:     generation,
+		FrozenSubjects:         frozen,
+		Claims:                 claims,
+		Assignments:            assignments,
+		E2ECoverageState:       e2eState,
 		DispatchCapacityPolicy: "coverage_complete",
-		CreatedBy:           "orchestrator",
-		CreatedAt:           time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedBy:              "orchestrator",
+		CreatedAt:              time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return plan, notes
 }
@@ -198,6 +217,33 @@ func taskIDs(tasks []taskDoc) []string {
 		ids = append(ids, task.id)
 	}
 	return ids
+}
+
+// qaChangeSurface derives the QA claim `target` string. The Builder's
+// completion envelopes are the authoritative record of the change
+// surface; when those are missing the fingerprinted frozen subjects
+// (the runtime-pinned REV/TASK paths) are the next-best projection so
+// the QA reviewer at least knows the same files the rest of the round
+// is reading. Only when both are empty do we emit a TODO marker — the
+// `isPlaceholder` flag tells the caller to attach a planner note that
+// the surface must be replaced before registration.
+func qaChangeSurface(changedList []string, frozen []FrozenSubject) (string, bool) {
+	if len(changedList) > 0 {
+		return strings.Join(changedList, ", "), false
+	}
+	if len(frozen) > 0 {
+		paths := make([]string, 0, len(frozen))
+		for _, subject := range frozen {
+			if subject.Path != "" {
+				paths = append(paths, subject.Path)
+			}
+		}
+		if len(paths) > 0 {
+			sort.Strings(paths)
+			return strings.Join(paths, ", "), false
+		}
+	}
+	return "TODO(planner): change surface (no completion envelopes and no frozen subjects available)", true
 }
 
 func boundREQUIImpact(state map[string]any) string {

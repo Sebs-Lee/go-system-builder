@@ -179,9 +179,28 @@ func RevisePlan(
 					}
 					resultRef = nil
 				}
+				// Carry the declared resource_locks forward; a plan
+				// revision may declare different locks, in which case the
+				// recompute wins (L3-S7 §4.5).
+				locks := mergedResourceLocks(assignment.ResourceLocks, &next, assignment.ClaimIDs)
+				queueReason := any(nil)
+				if existing != nil {
+					if touched {
+						// A revision resets the queue so the post-revision
+						// scheduler re-evaluates conflicts from scratch.
+						queueReason = nil
+					} else {
+						queueReason = existing["queue_reason"]
+					}
+				}
 				newAssignments[assignment.AssignmentID] = map[string]any{
-					"lens": assignment.Lens, "claim_ids": claimIDs,
-					"status": status, "agent_id": agentID, "result_ref": resultRef,
+					"lens":           assignment.Lens,
+					"claim_ids":      claimIDs,
+					"status":         status,
+					"agent_id":       agentID,
+					"result_ref":     resultRef,
+					"resource_locks": locks,
+					"queue_reason":   queueReason,
 				}
 			}
 			newClaims := map[string]any{}

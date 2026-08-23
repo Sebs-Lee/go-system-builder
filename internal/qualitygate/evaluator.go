@@ -417,8 +417,9 @@ func unauthorizedProducerConflicts(
 		}
 		kind := stringValue(index["kind"])
 		// Requirements name catalog slots; the persisted kind may be a
-		// legacy alias (review_result vs review_result_record), so the
-		// lookup goes through the alias-aware comparison.
+		// legacy alias (review_result vs the pre-S7 per-lens kinds
+		// delivery_review/qa_review/e2e_review), so the lookup goes through
+		// the alias-aware comparison.
 		var responsibilities map[string]struct{}
 		relevant := false
 		for requirementKind, resp := range allowed {

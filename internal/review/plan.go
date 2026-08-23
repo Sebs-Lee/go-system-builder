@@ -193,7 +193,190 @@ func ValidatePlan(plan *Plan) error {
 	default:
 		return fmt.Errorf("unknown e2e_coverage_state %q", plan.E2ECoverageState)
 	}
+	if err := validateAssignmentOverlap(plan, claims); err != nil {
+		return err
+	}
+	if err := validateColdStartE2EOverload(plan, claims); err != nil {
+		return err
+	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// §14.1 overlap / cold-start overload validators (L3-S7 §3.4, §4.3, §4.4).
+// Both are deterministic mechanical gates: they only fire on facts the plan
+// itself declares, and every rejection names the gap plus the next action.
+// ---------------------------------------------------------------------------
+
+// validateAssignmentOverlap is the §14.1 overlap validator ("三个 QA Agents
+// 都执行全量代码 review"). Deterministic suspicion rule — a pair of
+// Assignments is a suspected duplicated generic review when ALL hold:
+//
+//  1. same lens (a different lens/persona is NEVER a merge reason, even when
+//     the read set overlaps — L3-S7 §4.4);
+//  2. identical non-empty target set: the sorted distinct claim.target
+//     values of both Assignments are equal (the same read set);
+//  3. identical method set: the sorted distinct claim.method values are
+//     equal (the same inspection method).
+//
+// A suspected pair is still RELEASED (never force-merged) when either:
+//
+//   - the sorted distinct claim.oracle sets differ — a different oracle is
+//     an independent perspective that must be preserved (§3.4); or
+//   - both Assignments carry non-empty, mutually distinct
+//     non_overlap_boundary values — the written independent-question /
+//     non-overlap reason the blueprint demands.
+//
+// Otherwise registration is rejected: the pair is duplicated labor and must
+// be merged into one Assignment, or each side must write a distinct
+// non_overlap_boundary (and, where applicable, a distinct oracle).
+func validateAssignmentOverlap(plan *Plan, claims map[string]Claim) error {
+	type signature struct {
+		targets []string
+		methods []string
+		oracles []string
+	}
+	sigOf := func(assignment PlanAssignment) signature {
+		var sig signature
+		for _, claimID := range assignment.ClaimIDs {
+			claim, ok := claims[claimID]
+			if !ok {
+				continue
+			}
+			sig.targets = append(sig.targets, claim.Target)
+			sig.methods = append(sig.methods, claim.Method)
+			sig.oracles = append(sig.oracles, claim.Oracle)
+		}
+		sig.targets = sortedDistinct(sig.targets)
+		sig.methods = sortedDistinct(sig.methods)
+		sig.oracles = sortedDistinct(sig.oracles)
+		return sig
+	}
+	equal := func(a, b []string) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+	for i := 0; i < len(plan.Assignments); i++ {
+		for j := i + 1; j < len(plan.Assignments); j++ {
+			a, b := plan.Assignments[i], plan.Assignments[j]
+			if a.Lens != b.Lens {
+				continue
+			}
+			sa, sb := sigOf(a), sigOf(b)
+			if len(sa.targets) == 0 || !equal(sa.targets, sb.targets) || !equal(sa.methods, sb.methods) {
+				continue
+			}
+			if !equal(sa.oracles, sb.oracles) {
+				// Different oracle: an independent view over the same read
+				// set is explicitly preserved, never merged (L3-S7 §4.4).
+				continue
+			}
+			if strings.TrimSpace(a.NonOverlapBoundary) != "" && strings.TrimSpace(b.NonOverlapBoundary) != "" &&
+				a.NonOverlapBoundary != b.NonOverlapBoundary {
+				// Both sides wrote a distinct non-overlap boundary: the
+				// required independent-question reason exists.
+				continue
+			}
+			return fmt.Errorf("assignments %s and %s (lens %s) are a duplicated generic review: identical target set %s, identical methods %s and identical oracles %s (L3-S7 §3.4/§4.4). Merge them into one Assignment, or give each a mutually distinct non_overlap_boundary stating the independent question it answers — reading the same files is never a reason to merge different lenses/personas/oracles",
+				a.AssignmentID, b.AssignmentID, a.Lens,
+				strings.Join(sa.targets, ", "), strings.Join(sa.methods, ", "), strings.Join(sa.oracles, ", "))
+		}
+	}
+	return nil
+}
+
+// validateColdStartE2EOverload is the §14.1 cold-start overload validator
+// ("E2E cold_start，多个 persona/入口/状态/负向路径却只生成一个全需求
+// Assignment"). Deterministic threshold — registration is rejected when ALL
+// hold:
+//
+//  1. e2e_coverage_state == cold_start;
+//  2. exactly one Assignment owns every required e2e Claim (the whole blank
+//     matrix rides on a single E2E Agent);
+//  3. that Assignment owns >= 2 required e2e Claims;
+//  4. those Claims plus the Assignment's focus_keys express >= 2 distinct
+//     non-empty focus dimensions — focus_key is the plan's declared carrier
+//     for persona / entry / flow-cluster / negative-path dimensions.
+//
+// A small scope passes: a single required e2e Claim, or several Claims
+// sharing one focus dimension (单一 persona 单一 flow cluster), or any plan
+// that already split e2e coverage across 2+ Assignments. Plans whose e2e
+// Claims declare no focus keys cannot be judged mechanically and pass —
+// the validator only removes overload it can prove from declared facts.
+func validateColdStartE2EOverload(plan *Plan, claims map[string]Claim) error {
+	if plan.E2ECoverageState != "cold_start" {
+		return nil
+	}
+	var owners []PlanAssignment
+	for _, assignment := range plan.Assignments {
+		if assignment.Lens != "e2e" {
+			continue
+		}
+		for _, claimID := range assignment.ClaimIDs {
+			if claim, ok := claims[claimID]; ok && claim.Applicability != "not_applicable" {
+				owners = append(owners, assignment)
+				break
+			}
+		}
+	}
+	if len(owners) != 1 {
+		return nil
+	}
+	owner := owners[0]
+	dimensions := map[string]bool{}
+	required := 0
+	for _, claimID := range owner.ClaimIDs {
+		claim, ok := claims[claimID]
+		if !ok || claim.Applicability == "not_applicable" {
+			continue
+		}
+		required++
+		if key := strings.TrimSpace(claim.FocusKey); key != "" {
+			dimensions[key] = true
+		}
+	}
+	for _, key := range owner.FocusKeys {
+		if key = strings.TrimSpace(key); key != "" {
+			dimensions[key] = true
+		}
+	}
+	if required < 2 || len(dimensions) < 2 {
+		return nil
+	}
+	return fmt.Errorf("e2e_coverage_state=cold_start but %s is the only E2E Assignment and spans %d discriminable focus dimensions (%s) across %d required e2e Claims: the blank coverage matrix is compressed into one generic Agent (L3-S7 §4.3/§4.4). Expand the coverage matrix first (persona/entry/flow cluster/negative path/state/side effect), then split into one behavior-wave E2E Assignment per recoverable flow context inside the verification_artifact_workspace",
+		owner.AssignmentID, len(dimensions), strings.Join(sortedKeys(dimensions), ", "), required)
+}
+
+// sortedDistinct returns the sorted unique non-empty values.
+func sortedDistinct(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedKeys returns the sorted keys of a string set.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // findClaimCycle returns a claim id participating in a dependency cycle.

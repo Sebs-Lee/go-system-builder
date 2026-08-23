@@ -57,8 +57,7 @@
     },
     "claim_results": {
       "type": "array",
-      "minItems": 1,
-      "description": "Exactly the Assignment's Claim set — no missing entries, no extras. not_applicable is a ReviewPlan disposition, never a Reviewer conclusion.",
+      "description": "The pass/fail answers. Together with blocked_claims this must equal the Assignment's Claim set exactly — no missing entries, no extras, no Claim answered twice. not_applicable is a ReviewPlan disposition, never a Reviewer conclusion.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -78,6 +77,55 @@
             "type": "array",
             "items": {"type": "string"}
           }
+        }
+      }
+    },
+    "blocked_claims": {
+      "type": "array",
+      "description": "Required Claims the Reviewer objectively cannot execute because a confirmed product Finding of this round breaks a build/start/entry/precondition (L3-S7 §3.5 blocked_by_confirmed_finding). The tool projects these to disposition=blocked; they are never a pass and never satisfy the repaired round's Claim. Token/time/Agent shortage has no confirmed Finding to bind and is rejected.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim_id", "blocking_finding_ids", "failed_precondition", "evidence_refs", "after_repair_required"],
+        "properties": {
+          "claim_id": {"type": "string"},
+          "blocking_finding_ids": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Confirmed Findings of this review round (consumed earlier or confirmed by this same result) that make the Claim non-executable.",
+            "items": {"type": "string"}
+          },
+          "failed_precondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "detail"],
+            "properties": {
+              "kind": {"enum": ["build", "start", "entry", "precondition"]},
+              "detail": {"type": "string", "minLength": 1}
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          },
+          "after_repair_required": {
+            "const": true,
+            "description": "Invariant: the repaired round owes this Claim a real execution."
+          }
+        }
+      }
+    },
+    "site_lost": {
+      "type": "array",
+      "description": "Explicit Reviewer declarations that an ordinary Finding's encounter scene is unrecoverable (L3-S7 §9.1 step 12). When the named Finding also fails investigation readiness, submit records an Assignment BLOCKER and stays in S7 instead of consuming the result; P0/security/data-destructive findings never use this path (they seal with capture_gaps).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "reason"],
+        "properties": {
+          "finding_id": {"type": "string"},
+          "reason": {"type": "string", "minLength": 1}
         }
       }
     },
@@ -113,13 +161,26 @@
     },
     "verdict": {
       "enum": ["pass", "finding", "req_change_required", "release_blocked"],
-      "description": "Drives automatic routing: pass/finding continue the round; req_change_required/release_blocked create one authoritative pause checkpoint in the submit transaction (L3-S7 §9.2)."
+      "description": "Use 'finding' for blocked Claims (with findings[]), 'pass' for all pass, 'req_change_required' / 'release_blocked' for human-pause verdicts. 'fail' is not a valid verdict — there is no per-Claim verdict that maps to it; submit verdict=finding with findings[] populated (one Finding per fail Claim, each with a real encounter)."
     }
   },
   "allOf": [
     {
       "if": {"properties": {"verdict": {"const": "finding"}}},
-      "then": {"properties": {"findings": {"minItems": 1}}}
+      "then": {
+        "description": "verdict=finding needs at least one Finding with a real encounter, or a blocked_by_confirmed_finding projection bound to a confirmed Finding of this round.",
+        "anyOf": [
+          {"properties": {"findings": {"minItems": 1}}},
+          {"properties": {"blocked_claims": {"minItems": 1}}}
+        ]
+      }
+    },
+    {
+      "description": "Every Claim is answered exactly once: at least one of claim_results / blocked_claims must be non-empty (an Assignment whose Claims are all blocked still submits one result).",
+      "anyOf": [
+        {"properties": {"claim_results": {"minItems": 1}}},
+        {"properties": {"blocked_claims": {"minItems": 1}}}
+      ]
     }
   ]
 }

@@ -47,6 +47,9 @@ type assignment struct {
 	RoleFamily         string   `json:"role_family"`
 	AgentID            string   `json:"agent_id"`
 	AgentDefinitionRef string   `json:"agent_definition_ref"`
+	SkillRefs          []string `json:"skill_refs"`
+	WritePaths         []string `json:"write_paths"`
+	OutputPaths        []string `json:"output_paths"`
 	ClaimIDs           []string `json:"claim_ids"`
 	DispatchMode       string   `json:"dispatch_mode"`
 }
@@ -175,6 +178,27 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 					// two-round approval is the exception for high-risk work.
 					dispatchMode = "plan_checkpoint"
 				}
+				// Pre-stage the activation envelope for plan_checkpoint
+				// agents (L4 §3.3 auto-activation). The envelope's
+				// hash-chain fields are placeholders; the PostToolUse
+				// auto-chain or the runtime agent-begin fallback verb
+				// rewrite the file with the real plan bytes before
+				// submitting activation_sent (so
+				// verifyActivationReadbackChain stays fail-closed).
+				activationRef, envelopeErr := PreStageActivationEnvelope(root, value.WorkgroupID, request.TaskID, item.AgentID, dispatchMode, ActivationSourceEntry{
+					AgentID:            item.AgentID,
+					AgentDefinitionRef: item.AgentDefinitionRef,
+					SkillRefs:          item.SkillRefs,
+					WritePaths:         item.WritePaths,
+					OutputPaths:        item.OutputPaths,
+				})
+				if envelopeErr != nil {
+					return envelopeErr
+				}
+				var activationRefValue any
+				if activationRef != "" {
+					activationRefValue = activationRef
+				}
 				agents = append(agents, map[string]any{
 					"id":                  item.AgentID,
 					"role":                item.RoleFamily,
@@ -185,7 +209,7 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 					"prompt_ref":          manifestRef + "#" + item.AssignmentID,
 					"dispatch_mode":       dispatchMode,
 					"readback_ref":        nil,
-					"activation_ref":      nil,
+					"activation_ref":      activationRefValue,
 					"activation_revision": nil,
 					"updated_at":          occurredAt.UTC().Format(time.RFC3339Nano),
 				})
