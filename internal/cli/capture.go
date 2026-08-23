@@ -19,9 +19,16 @@ import (
 )
 
 // runCapture is the `loop-harness capture` dispatcher.
-func runCapture(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "step" {
-		fmt.Fprintln(stderr, "capture requires <step>")
+func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "capture requires <step|exec>")
+		return 2
+	}
+	if args[0] == "exec" {
+		return runCaptureExec(args[1:], stdin, stdout, stderr)
+	}
+	if args[0] != "step" {
+		fmt.Fprintln(stderr, "capture requires <step|exec>")
 		return 2
 	}
 	flags := flag.NewFlagSet("capture step", flag.ContinueOnError)

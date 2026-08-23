@@ -879,3 +879,247 @@ Evidence bindings (copy into `runtime transition`):
 
 If a binding is missing, retry with the command above; run `loop-harness explain GTR-005` to inspect current candidates.
 
+---
+
+## `capture` — automatic encounter timeline collection
+
+The `capture` verb is the harness-side half of the §3.6 / §6.3 / §8
+capture-buffer 必经路径: any wrapper that the E2E Reviewer (or a test
+runner, browser harness, CLI helper) calls writes sanitized timeline
+steps into the Assignment's capture buffer, and `verification result
+submit --captures` merges the buffer into Findings whose encounter
+timeline is empty. There are two forms:
+
+- `loop-harness capture step` — manual single-step append for the
+  Reviewer. Use it when the agent already ran the action by hand and
+  needs to record the sanitized action / observed / evidence refs.
+- `loop-harness capture exec` — automatic collection around a wrapped
+  command. Use it for the E2E command_flow observation mode (§3.6):
+  the wrapper runs the command once, collects every timeline field
+  the spec requires, and freezes the evidence window on a non-zero
+  exit so the Reviewer can label the failure boundary in the Finding.
+
+The two forms share the same buffer file (one JSONL line per step) and
+the same redaction gate; the manual form is for human-written steps,
+the exec form is for wrapper-driven steps.
+
+### `loop-harness capture exec` — auto-collect a command_flow step
+
+```text
+loop-harness capture exec --assignment <id> [flags] -- <command...>
+```
+
+Runs the wrapped command once and appends one command_flow step to the
+Assignment's capture buffer. The wrapper never swallows the child's
+exit code: a non-zero exit freezes the evidence window and is passed
+straight back to the caller (the harness fails the same way the
+command did).
+
+Flags:
+
+| Flag | Default | Meaning |
+|:--|:--|:--|
+| `--assignment` | (required) | Plan Assignment the step belongs to. The capture buffer is addressed by `(runtime_id, baseline.generation, assignment_id)`. |
+| `--cwd` | `$PWD` | Working directory for the wrapped command. The wrapper records the resolved absolute path on the step. |
+| `--summary-bytes` | 4096 | Per-stream bytes kept inline in the buffered step (head summary). The full stream is persisted as a typed evidence file. |
+| `--max-evidence-bytes` | 1 MiB | Hard cap on each persisted stream evidence file. Overflow is truncated and the truncation is recorded honestly in the ref (`truncated=true, bytes=N`). |
+| `--max-artifacts` | 20 | Maximum produced / modified / deleted artifact refs recorded per step. Overflow is reported as `+K more artifact(s) omitted by --max-artifacts` on the step. |
+| `--artifact-depth` | 3 | Directory depth scanned under `cwd` for the before/after artifact digest diff. `.git`, `.claude`, `node_modules` are always skipped. |
+| `--root` | `.` | Repository root (used to address the capture buffer). |
+
+The wrapper always records the following fields on the step:
+
+- `sequence` — auto-numbered starting at 1, derived from the current
+  buffer length so two wrappers do not collide.
+- `captured_at` — UTC RFC3339Nano, taken at command start.
+- `action` — `exec: <rendered command> (cwd: <abs>) (tool: <name> — <version>)`.
+  The command is rendered with `strconv.Quote` for any arg that
+  contains whitespace or quotes; the rendered string is what passes
+  the redaction gate, never raw environment.
+- `observed` — `exit=<code> duration=<d>; stdout: <head>; stderr: <head>`
+  for a clean run, or `FAILED (wall-action candidate; evidence window
+  frozen — Reviewer: annotate last_good_checkpoint / wall_action /
+  first_bad_checkpoint) exit=<code> duration=<d>; ...` for a non-zero
+  exit.
+- `evidence_refs[]` — one ref per recorded artifact:
+  - `command_output:<rel>#sha256=<hex> (bytes=<n>, truncated=<t>)`
+    for the full stdout stream, persisted at
+    `.claude/evidence/<runtime>/g<n>/captures/<assignment>/exec/step-NNN-stdout.log`.
+  - the same shape for the stderr stream.
+  - `artifact:<rel>#sha256=<hex> (bytes=<n>, new|modified)` for each
+    file the wrapped command produced or modified under `cwd`.
+  - `artifact:<rel> (deleted)` for each file the command removed.
+  - `env:<NAME> (present; value never captured)` for every environment
+    variable whose *name* matches the sensitive-name pattern
+    (`token|password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?key|credential`).
+    The presence is recorded; the value never is.
+
+Redaction (§6.3宁拒勿放): two gates run on the wrapper's input/output.
+The pre-exec gate refuses to spawn the command if the rendered
+command line matches a secret pattern
+(`password=`, `secret=`, `api_key=`, `bearer <token>`, `token=<value>`,
+etc.); the command is not executed, no buffer file is written, and
+the wrapper exits with code 2. The post-exec gate runs over the
+persisted stream: if the stream's bytes match a secret pattern, the
+evidence file is replaced by a placeholder
+(`[capture withheld: stream matched a secret redaction pattern; full
+output not persisted (L3-S7 §6.3)]`) and the ref records a capture
+gap. The buffer step's `observed` field never includes the redacted
+value in either case.
+
+Evidence window freeze: a non-zero exit writes
+`failure.json` next to the buffer with the assignment, sequence,
+captured_at, command, exit code, `wall_action_candidate=true`, and
+`evidence_window_frozen=true`. The buffered step is also annotated
+with the `FAILED` prefix. The Reviewer's only remaining work is to
+open the Finding, label `last_good_checkpoint` (the last clean step
+before this one), `wall_action` (this step), and
+`first_bad_checkpoint` (the next clean step after, or "no recovery
+yet" if the run ended here). The wrapper does not attempt to
+recover, retry, or fix — that is the S8 Investigator's job.
+
+Memory and size invariants: the wrapper does not hold the full
+stream in memory. The stream recorder caps the persisted evidence
+file at `--max-evidence-bytes`, hashes only the persisted bytes,
+and remembers the total stream length so the truncation is recorded
+honestly. The artifact walk caps the number of files digested
+(`execWalkEntriesMax`), the directory depth (`--artifact-depth`),
+and the number of refs persisted (`--max-artifacts`), so a runaway
+tree diff cannot flood the buffer.
+
+### Product-side wrappers (browser, Playwright, test runner, trace collector)
+
+The harness provides the buffer file format, the redaction gate, and
+the `verification result submit --captures` merge binding. The
+injection half — the wrapper that observes a Playwright action, a
+test-runner invocation, or a network/console event and decides when
+to call `loop-harness capture` — belongs to the product side. The
+boundary is intentional: the harness stays runtime-agnostic and the
+product keeps ownership of its own observation surfaces.
+
+The contract a product-side wrapper must satisfy to be drop-in
+compatible with the harness:
+
+1. The wrapper is invoked once per material action (browser step,
+   test-runner call, network/console event). It assembles one
+   capture step and calls the appropriate `loop-harness capture`
+   form. For CLI-like actions, `loop-harness capture exec -- <cmd>`
+   is the reference: sequence/time, cwd, tool version, sanitized
+   command, exit code, bounded stdout/stderr summaries bound to
+   typed evidence files, and the produced/modified artifact digest
+   diff. For browser actions, the equivalent step is
+   `loop-harness capture step --assignment <id> --action
+   "navigate: <route>" --observed "<url, title, status>" --evidence
+   shot.png,trace.json,net-3.har`. For test runner actions, the
+   equivalent step is `loop-harness capture step --action "test:
+   <name>" --observed "<pass|fail, duration>" --evidence
+   junit.xml,coverage.json`. The shape — sanitized action, observed
+   checkpoint, evidence refs — is identical across all forms.
+2. The wrapper runs the redaction gate *before* persisting: any
+   field matching a secret pattern
+   (`password=`, `secret=`, `api_key=`, `bearer <token>`,
+   `token=<value>`) is withheld, replaced by a redacted ref
+   (`env:<NAME> (present; value never captured)`,
+   `command_output:<rel> (withheld: secret pattern matched; full
+   output not persisted)`). When in doubt, refuse to record the
+   value (宁拒勿放).
+3. Sensitive env var *names* are recorded as presence-only refs;
+   values are never captured. The naming list is the same regex
+   the harness uses:
+   `(?i)(token|password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?key|credential)`.
+4. On a non-zero outcome (test failure, network 5xx, console error
+   block, exception), the wrapper writes the equivalent of
+   `failure.json` next to the buffer with the step's sequence and a
+   `wall_action_candidate=true` flag, and annotates the buffered
+   step with the `FAILED` prefix. The wrapper does not retry, fix,
+   or skip — those are S8/S9 work.
+5. The wrapper does not need to read the runtime; the harness
+   resolves the buffer path from `(runtime_id, baseline.generation,
+   assignment_id)`. The product side just passes `--assignment` and
+   lets the harness do the addressing.
+6. Long outputs are bounded: the wrapper caps any inline summary
+   (~4 KiB) and persists the full stream as a typed evidence file
+   with its own size cap. The reference implementation for a CLI
+   command is `loop-harness capture exec` itself; a Playwright
+   wrapper should follow the same pattern with `--summary-bytes`
+   mapped to the JSONL step field and the full network/console
+   trace persisted as `<assignment>/exec/step-NNN-<kind>.json`.
+
+The harness provides the buffer file format, the redaction gate, and
+the merge into the Finding's encounter timeline. The product
+provides the observation trigger and the typed evidence files
+behind each ref. The two halves meet at the buffer file; no other
+integration is required.
+
+---
+
+## Sandbox: entering S7 directly (test/demo only)
+
+S7 is normally entered automatically: `building → verification` is
+TR-006 (`runtime transition --id TR-006`), triggered by the Hook
+when every TASK in the TR-003 exact execution batch has a Builder
+Result with passing checks. `bug_resolution → verification` is
+TR-012, and `acceptance → verification` is TR-016. The state
+machine is the only authority for these transitions; the harness
+deliberately has no seed/back-door that flips the lifecycle to
+`verification` outside a registered transition.
+
+But sandboxed test/demo work (an E2E tester, a recovery rehearsal,
+a doc walk-through) sometimes needs the S7 ReviewPlan scaffold
+without driving a real builder batch. The recommended path is:
+
+1. Use a Go test helper that builds a real runtime via the
+   published verbs. The fixture helpers in
+   `internal/review/review_test.go` are the canonical reference:
+   `baseVerificationState()` returns a complete, schema-valid
+   `verification` runtime with `round=1`, and
+   `registerFixturePlan(t, root, statePath, journalPath)` calls
+   `RegisterPlan` exactly the way production does, so the harness
+   emits the right CAS/transition events and the round starts in
+   the same shape an E2E user would see. **Mirror that pattern;
+   don't handcraft `loop-state.json` if you can avoid it.**
+2. When a real harness verb is not appropriate (a one-off screencast
+   on a clone that never runs `go test`), the minimum viable
+   `loop-state.json` shape that lets `loop-harness s7 draft` and
+   `runtime review-plan --file` proceed is documented below. Every
+   required field is enforced by `internal/schema/assets/loop-state.schema.json`;
+   the runtime's semantic validator
+   (`internal/runtime/store.go:validateLifecycle`) rejects unknown
+   state/phase combinations.
+
+Minimum viable `loop-state.json` for a sandbox S7 run (test/demo
+ONLY; never use in a real product release path):
+
+| Top-level path | Required shape | Why it matters |
+|:--|:--|:--|
+| `lifecycle.state` | `"verification"` | `internal/review/register.go` rejects any plan registration whose lifecycle state is not `verification`; `s7 draft` itself now exits with a stage-specific hint when this is wrong (see the `runS7Draft` disclosure). |
+| `lifecycle.phase` | `"planned"` or `"running"` | Phase must be one of the names registered in `docs/loop-definition.json` under the `verification` owner_state. |
+| `lifecycle.phase_revision` | integer `>= 0` | Required by the loop-state schema; bumped under CAS by every transition. |
+| `review.round` | integer `>= 1` | A round value of 0 is the "no S7 round yet" sentinel; `s7 draft` refuses to scaffold below round 1. |
+| `review.clean_round` | `null` | Must be null while the round is open; `clean_round_valid` recomputes it at TR-009 promotion time. |
+| `bound_req.id` / `path` / `sha256` / `version` | non-empty | The bound REQ is the round's identity anchor: every TASK claim's `source_refs`, the manifest's `documents[]`, and the `verification_artifact_digest` all derive from it. |
+| `documents[]` (TASK rows) | one entry per current-generation TASK, each with `kind=task`, `id`, `path`, `sha256`, `generation == baseline.generation`, `version` | `ValidatePlanTaskCoverage` (L3-S7 §4.4) refuses to register a plan whose `Claims[].source_refs` doesn't cover every current-generation TASK; without these rows the draft has no DV claim to begin with. |
+| `entities.tasks[]` | a row per TASK referenced by `documents[]` | The Hook, the runtime transition guard, and the manifest validator all read this projection. |
+| `baseline.generation` | integer `> 0` | `register.go` rejects a plan whose `baseline_generation` does not match the runtime's; the draft reads it for the DV/QA pivot. |
+| `baseline.{unit_test_status, integration_test_status, build_status, integration_checkpoint_verified}` | the exact keys the S6 hook writes | These are the fields TR-006 consults; if you skip S6 to enter S7 directly, populate the keys whose values are `passed` so the on-disk evidence envelope is honest about being faked. |
+
+Two warnings before you ship this anywhere besides a sandboxed
+clone:
+
+- CleanRound / acceptance consume the **full** evidence chain. A
+  handcrafted `verification` runtime will pass plan registration,
+  ReviewResult submission, and ObservationBatch sealing, but
+  `clean_round_valid` and the release-audit guard read the
+  builder-result history directly — they will reject any release
+  whose history was manufactured rather than produced. Treat the
+  table above as a way to exercise the S7 surface, not to bypass
+  S6.
+- The five E2E tester harnesses (`tests/system/req039/...`) and
+  the recovery regression in `internal/cli/controller_s7_recovery_test.go`
+  all drive S7 through `registerFixturePlan` rather than handcrafted
+  JSON. New test files should do the same: the helpers
+  (`baseVerificationState` + `registerFixturePlan` in
+  `internal/review/review_test.go`, `writeManifestDraftFixture` in
+  `internal/cli/s7_manifest_draft_test.go`) are the supported way
+  to land in S7 deterministically.
+

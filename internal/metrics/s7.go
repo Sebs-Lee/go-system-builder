@@ -1,0 +1,195 @@
+package metrics
+
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// s7.go records the machine-collectible subset of the L3-S7 §14.2 operational
+// metrics. Only facts the harness can decide mechanically are captured here:
+// round shape (Assignment/Claim counts, plan revision), per-Claim lead time,
+// Result submit first-pass success, finding counts and the first-finding ->
+// seal duration, and clean rounds. Human-judgment metrics from §14.2
+// (pattern-fit quality, escape-rate attribution, ...) are intentionally not
+// collected.
+
+const (
+	metricS7Assignments        = "loop_s7_assignments"
+	metricS7Claims             = "loop_s7_claims"
+	metricS7PlanRevision       = "loop_s7_plan_revision"
+	metricS7ResultSubmits      = "loop_s7_result_submits_total"
+	metricS7ClaimLeadTime      = "loop_s7_claim_lead_time_ms"
+	metricS7Findings           = "loop_s7_findings_total"
+	metricS7FirstFindingToSeal = "loop_s7_first_finding_to_seal_ms"
+	metricS7CleanRounds        = "loop_s7_clean_rounds_total"
+)
+
+// RecordS7RoundShape pins the round's plan shape gauges: Assignment count,
+// Claim count and the current plan revision. Gauges are idempotent — callers
+// may record them on every verb that loads the plan.
+func RecordS7RoundShape(root string, round, assignments, claims, planRevision int) error {
+	if round < 1 {
+		return nil
+	}
+	label := strconv.Itoa(round)
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		snap.S7Assignments[label] = int64(assignments)
+		snap.S7Claims[label] = int64(claims)
+		if int64(planRevision) > snap.S7PlanRevision[label] {
+			snap.S7PlanRevision[label] = int64(planRevision)
+		}
+	})
+}
+
+// RecordS7ResultSubmit increments loop_s7_result_submits_total{outcome};
+// outcome is "accepted" or "rejected" (first-pass success rate, §14.2).
+func RecordS7ResultSubmit(root, outcome string) error {
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		snap.S7ResultSubmits[normalizeLabel(outcome, "unknown")]++
+	})
+}
+
+// RecordS7ClaimLeadTime records one planned -> dispositioned sample per Claim
+// under loop_s7_claim_lead_time_ms{claim="r<round>:<claim_id>"}.
+func RecordS7ClaimLeadTime(root string, round int, claimID string, durationMS int64) error {
+	if round < 1 || strings.TrimSpace(claimID) == "" {
+		return nil
+	}
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	label := fmt.Sprintf("r%d:%s", round, claimID)
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		stats := snap.S7ClaimLeadTime[label]
+		stats.Count++
+		stats.SumMS += durationMS
+		snap.S7ClaimLeadTime[label] = stats
+	})
+}
+
+// RecordS7Findings adds count findings to loop_s7_findings_total{round}.
+func RecordS7Findings(root string, round, count int) error {
+	if round < 1 || count == 0 {
+		return nil
+	}
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		snap.S7Findings[strconv.Itoa(round)] += int64(count)
+	})
+}
+
+// RecordS7FirstFindingToSeal records the first-finding -> ObservationBatch
+// seal duration once per round (§14.2 "first finding -> final Claim set ->
+// batch seal time"); later seals in the same round do not overwrite it.
+func RecordS7FirstFindingToSeal(root string, round int, durationMS int64) error {
+	if round < 1 {
+		return nil
+	}
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	label := strconv.Itoa(round)
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		if _, recorded := snap.S7FirstFindingToSeal[label]; recorded {
+			return
+		}
+		snap.S7FirstFindingToSeal[label] = DurationStats{Count: 1, SumMS: durationMS}
+	})
+}
+
+// RecordS7CleanRound increments loop_s7_clean_rounds_total{round}; a machine
+// CleanRound is generated at most once per round.
+func RecordS7CleanRound(root string, round int) error {
+	if round < 1 {
+		return nil
+	}
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		snap.S7CleanRounds[strconv.Itoa(round)]++
+	})
+}
+
+// FormatS7 renders the S7 §14.2 machine-collectible metrics for
+// `loop-harness s7 status`. round > 0 filters round-scoped series to that
+// round; round <= 0 renders every recorded round.
+func FormatS7(root string, round int) (string, error) {
+	snap, err := NewStore(root).Read()
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("metrics (S7 §14.2 machine-collectible):\n")
+	writeRoundGauge(&b, metricS7Assignments, snap.S7Assignments, round)
+	writeRoundGauge(&b, metricS7Claims, snap.S7Claims, round)
+	writeRoundGauge(&b, metricS7PlanRevision, snap.S7PlanRevision, round)
+	writeLabeledCounter(&b, metricS7ResultSubmits, "outcome", snap.S7ResultSubmits)
+	writeRoundGauge(&b, metricS7Findings, snap.S7Findings, round)
+	writeClaimLeadTime(&b, snap.S7ClaimLeadTime, round)
+	writeRoundDuration(&b, metricS7FirstFindingToSeal, snap.S7FirstFindingToSeal, round)
+	writeRoundGauge(&b, metricS7CleanRounds, snap.S7CleanRounds, round)
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func roundLabelVisible(label string, round int) bool {
+	if round <= 0 {
+		return true
+	}
+	return label == strconv.Itoa(round)
+}
+
+func writeRoundGauge(b *strings.Builder, name string, values map[string]int64, round int) {
+	labels := make([]string, 0, len(values))
+	for label := range values {
+		if roundLabelVisible(label, round) {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		fmt.Fprintf(b, "  %s (no samples)\n", name)
+		return
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		fmt.Fprintf(b, "  %s{round=%q} %d\n", name, label, values[label])
+	}
+}
+
+func writeRoundDuration(b *strings.Builder, name string, values map[string]DurationStats, round int) {
+	labels := make([]string, 0, len(values))
+	for label := range values {
+		if roundLabelVisible(label, round) {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		fmt.Fprintf(b, "  %s (no samples)\n", name)
+		return
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		stats := values[label]
+		fmt.Fprintf(b, "  %s{round=%q} count=%d sum_ms=%d\n", name, label, stats.Count, stats.SumMS)
+	}
+}
+
+func writeClaimLeadTime(b *strings.Builder, values map[string]DurationStats, round int) {
+	prefix := ""
+	if round > 0 {
+		prefix = fmt.Sprintf("r%d:", round)
+	}
+	labels := make([]string, 0, len(values))
+	for label := range values {
+		if prefix == "" || strings.HasPrefix(label, prefix) {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		fmt.Fprintf(b, "  %s (no samples)\n", metricS7ClaimLeadTime)
+		return
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		stats := values[label]
+		fmt.Fprintf(b, "  %s{claim=%q} count=%d sum_ms=%d\n", metricS7ClaimLeadTime, label, stats.Count, stats.SumMS)
+	}
+}

@@ -43,6 +43,16 @@ type Snapshot struct {
 	MilestoneRefreshFailures int64                    `json:"loop_milestone_refresh_failures_total"`
 	RecoveryPackets          int64                    `json:"loop_recovery_packets_total"`
 	IntegrationDuration      map[string]DurationStats `json:"loop_integration_duration_ms"`
+	// S7 verification-round series (L3-S7 §14.2 machine-collectible subset;
+	// see s7.go).
+	S7Assignments        map[string]int64         `json:"loop_s7_assignments,omitempty"`
+	S7Claims             map[string]int64         `json:"loop_s7_claims,omitempty"`
+	S7PlanRevision       map[string]int64         `json:"loop_s7_plan_revision,omitempty"`
+	S7ResultSubmits      map[string]int64         `json:"loop_s7_result_submits_total,omitempty"`
+	S7ClaimLeadTime      map[string]DurationStats `json:"loop_s7_claim_lead_time_ms,omitempty"`
+	S7Findings           map[string]int64         `json:"loop_s7_findings_total,omitempty"`
+	S7FirstFindingToSeal map[string]DurationStats `json:"loop_s7_first_finding_to_seal_ms,omitempty"`
+	S7CleanRounds        map[string]int64         `json:"loop_s7_clean_rounds_total,omitempty"`
 }
 
 // Store persists metrics for one repository root.
@@ -66,9 +76,17 @@ func (s *Store) Path() string { return s.path }
 
 func emptySnapshot() Snapshot {
 	return Snapshot{
-		GateEvaluations:     map[string]int64{},
-		TransitionCommits:   map[string]int64{},
-		IntegrationDuration: map[string]DurationStats{},
+		GateEvaluations:      map[string]int64{},
+		TransitionCommits:    map[string]int64{},
+		IntegrationDuration:  map[string]DurationStats{},
+		S7Assignments:        map[string]int64{},
+		S7Claims:             map[string]int64{},
+		S7PlanRevision:       map[string]int64{},
+		S7ResultSubmits:      map[string]int64{},
+		S7ClaimLeadTime:      map[string]DurationStats{},
+		S7Findings:           map[string]int64{},
+		S7FirstFindingToSeal: map[string]DurationStats{},
+		S7CleanRounds:        map[string]int64{},
 	}
 }
 
@@ -96,6 +114,30 @@ func (s *Store) Read() (Snapshot, error) {
 	}
 	if snap.IntegrationDuration == nil {
 		snap.IntegrationDuration = map[string]DurationStats{}
+	}
+	if snap.S7Assignments == nil {
+		snap.S7Assignments = map[string]int64{}
+	}
+	if snap.S7Claims == nil {
+		snap.S7Claims = map[string]int64{}
+	}
+	if snap.S7PlanRevision == nil {
+		snap.S7PlanRevision = map[string]int64{}
+	}
+	if snap.S7ResultSubmits == nil {
+		snap.S7ResultSubmits = map[string]int64{}
+	}
+	if snap.S7ClaimLeadTime == nil {
+		snap.S7ClaimLeadTime = map[string]DurationStats{}
+	}
+	if snap.S7Findings == nil {
+		snap.S7Findings = map[string]int64{}
+	}
+	if snap.S7FirstFindingToSeal == nil {
+		snap.S7FirstFindingToSeal = map[string]DurationStats{}
+	}
+	if snap.S7CleanRounds == nil {
+		snap.S7CleanRounds = map[string]int64{}
 	}
 	return snap, nil
 }
