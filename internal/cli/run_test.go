@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/cli"
+	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
@@ -211,7 +212,13 @@ func TestRuntimeReconcileCommandRestoresMissingJournalEvent(t *testing.T) {
 }
 
 func TestRuntimeTransitionCommandStartsLockedREQ(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := func() string {
+		abs, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return abs
+	}()
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -481,7 +488,13 @@ func TestNextProjectsCleanRoundAsS7(t *testing.T) {
 }
 
 func TestRuntimeRegisterWorkgroupCommand(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := func() string {
+		abs, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return abs
+	}()
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -525,8 +538,215 @@ func TestRuntimeRegisterWorkgroupCommand(t *testing.T) {
 	}
 }
 
+// TestRuntimeRegisterWorkgroupCommandAnchorsAgainstRoot locks in the
+// regression fixed by the resolveRootPath(state|journal) pass: when the
+// caller's cwd is not the project root (e.g. a sandboxed dispatch shell),
+// every invocation form of `runtime register-workgroup` must anchor the
+// state, journal, manifest and task paths against --root instead of the
+// process cwd. Without anchoring, resolveExpectedRevision reads a
+// different (or empty) state file than the writer opens and the verb
+// aborts with a stale-revision gate even when the runtime is unchanged.
+//
+// Strategy: reuse the real project root so the semantic runtime validator
+// has its docs/, agents/, skills/, etc. trees in place. The runtime
+// schema constrains journal.path to .claude/loop-events.jsonl, so we save
+// and restore .claude/loop-state.json and .claude/loop-events.jsonl
+// around the test, plant a fresh state file with a unique manifest_id,
+// and chdir to an unrelated temp dir so cwd != --root.
+func TestRuntimeRegisterWorkgroupCommandAnchorsAgainstRoot(t *testing.T) {
+	root := func() string {
+		abs, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return abs
+	}()
+
+	stateDir := filepath.Join(root, ".claude")
+	canonicalState := filepath.Join(stateDir, "loop-state.json")
+	canonicalJournal := filepath.Join(stateDir, "loop-events.jsonl")
+
+	// Save and restore the canonical runtime state + journal so the
+	// test cannot corrupt the operator's runtime.
+	origState, err := os.ReadFile(canonicalState)
+	if err != nil {
+		t.Fatalf("snapshot canonical state: %v", err)
+	}
+	origJournal, err := os.ReadFile(canonicalJournal)
+	if err != nil {
+		// A fresh test run may not have a journal yet; treat missing as
+		// empty bytes and only restore if the file exists pre-test.
+		origJournal = nil
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(canonicalState, origState, 0o644)
+		if origJournal != nil {
+			_ = os.WriteFile(canonicalJournal, origJournal, 0o644)
+		} else {
+			_ = os.Remove(canonicalJournal)
+		}
+	})
+
+	suffix := fmt.Sprintf("anchor-%d", os.Getpid())
+	stateBytes, err := schema.ReadAsset("loop-state.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runtimeState map[string]any
+	if err := json.Unmarshal(stateBytes, &runtimeState); err != nil {
+		t.Fatal(err)
+	}
+	runtimeState["revision"] = float64(6)
+	runtimeState["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
+	runtimeState["lifecycle"].(map[string]any)["state"] = "document_verification"
+	runtimeState["lifecycle"].(map[string]any)["phase"] = nil
+	encoded, err := json.Marshal(runtimeState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonicalState, encoded, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Start the journal empty so the registration appends cleanly.
+	if err := os.WriteFile(canonicalJournal, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Manifest + task paths are project-relative (fixtures already live
+	// under internal/cli/testdata/). We rewrite manifest ids so this
+	// registration counts as a fresh entity — using the shared fixture
+	// ids would collide on repeat runs.
+	manifestSrc, err := os.ReadFile(filepath.Join("testdata", "document-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestSrc, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest["manifest_id"] = fmt.Sprintf("team-manifest-%s", suffix)
+	manifest["workgroup_id"] = fmt.Sprintf("workgroup-%s", suffix)
+	manifest["runtime_id"] = fmt.Sprintf("loop-REQ-%s", suffix)
+	for _, asg := range manifest["assignments"].([]any) {
+		entry := asg.(map[string]any)
+		entry["agent_id"] = fmt.Sprintf("agent-%s-%s", entry["responsibility_id"], suffix)
+	}
+	manifestOut := filepath.Join(stateDir, fmt.Sprintf("document-manifest-%s.json", suffix))
+	t.Cleanup(func() { _ = os.Remove(manifestOut) })
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestOut, manifestBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sandbox contract: cwd is intentionally NOT the project root.
+	t.Chdir(t.TempDir())
+
+	relManifest, err := filepath.Rel(root, manifestOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{
+			// Operator / sandbox use-case: caller hands the verb
+			// generic relative state/journal paths. The verb must
+			// resolve them against --root, not the cwd, otherwise
+			// resolveExpectedRevision sees a different (or empty)
+			// file than the writer and aborts with stale revision.
+			name: "explicit relative state and journal",
+			args: []string{
+				"runtime", "register-workgroup",
+				"--root", root,
+				"--state", ".claude/loop-state.json",
+				"--journal", ".claude/loop-events.jsonl",
+				"--expected-revision", "6",
+				"--manifest", relManifest,
+				"--task-id", "TASK-001",
+				"--task", "internal/cli/testdata/task-fixture.md",
+			},
+		},
+		{
+			// Default invocation: --state / --journal omitted, so
+			// the verb falls back to .claude/loop-state.json +
+			// .claude/loop-events.jsonl. The fix ensures those
+			// defaults are also anchored against --root.
+			name: "default state and journal paths",
+			args: []string{
+				"runtime", "register-workgroup",
+				"--root", root,
+				"--expected-revision", "6",
+				"--manifest", relManifest,
+				"--task-id", "TASK-001",
+				"--task", "internal/cli/testdata/task-fixture.md",
+			},
+		},
+	}
+
+	reset := func(t *testing.T) {
+		t.Helper()
+		// Re-seed the canonical state to revision 6 with an empty
+		// journal so each subtest runs against a fresh runtime. This
+		// also keeps the post-mutation journal consistent across
+		// subtests without leaking into the operator's real runtime.
+		fresh := runtimeState
+		fresh["revision"] = float64(6)
+		encoded, err := json.Marshal(fresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(canonicalState, encoded, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(canonicalJournal, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			reset(t)
+			var stdout, stderr bytes.Buffer
+			code := cli.Run(tc.args, strings.NewReader(""), &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("register-workgroup failed (code=%d): stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+			}
+			if !strings.Contains(stdout.String(), `"Revision":7`) {
+				t.Fatalf("register-workgroup did not bump revision: stdout=%s", stdout.String())
+			}
+			// The journal written at <root>/.claude/loop-events.jsonl
+			// must carry the ENTITY-REGISTER transition — proving the
+			// writer hit the --root-anchored journal, not a
+			// cwd-relative default.
+			journalBytes, err := os.ReadFile(canonicalJournal)
+			if err != nil {
+				t.Fatalf("read journal: %v", err)
+			}
+			if !strings.Contains(string(journalBytes), `"transition_id":"ENTITY-REGISTER"`) {
+				t.Fatalf("journal missing ENTITY-REGISTER transition: %s", string(journalBytes))
+			}
+		})
+	}
+}
+
 func TestRuntimeAgentEventCommandRecordsReadback(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := func() string {
+		abs, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return abs
+	}()
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -717,43 +937,54 @@ func copyDir(src, dst string) error {
 	return os.WriteFile(dst, data, 0o644)
 }
 
-// TestDryRunAllowsUnactivatedWriteInMinimalMode rewrites the legacy
-// HOOK_AGENT_NOT_ACTIVATED assertion. Under the minimal safety model
-// (BE-039 §6.3 / REQ-039 §14.3) Agent activation is no longer a Hook-level
-// permission verdict; an unactivated Agent performing a PreToolUse must
-// produce permissionDecision="allow" plus an audit envelope that exposes the
-// Controller's quality_gate progress. The "dry-run" entrypoint still routes
-// through the full evaluate() pipeline, so the wire envelope schema stays
-// consistent with the production hook payload.
-func TestDryRunAllowsUnactivatedWriteInMinimalMode(t *testing.T) {
+// TestDryRunEnforcesFirstWriteBarrier pins the L4 §7.6 first-write barrier
+// on the wire path. The fixture carries an Agent in the `reading`
+// pre-plan state and an Edit on a product path (`src/app.go`) — neither
+// the control plane (`.claude/`), the reviewer report projections
+// (`docs/reports/`), nor a ReviewPlan verification workspace exempt the
+// path, so the dry-run envelope must surface the
+// `assignment_write_before_plan` block (REPLACE the previous
+// "minimal safety model allows unactivated write" assertion, which was
+// pinned before the L4 P1 rollout). `dry-run` always returns 0 — the
+// decision is JSON-encoded into the envelope on stdout.
+func TestDryRunEnforcesFirstWriteBarrier(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	root := filepath.Join("..", "..")
+	root := func() string {
+		abs, err := filepath.Abs(filepath.Join("..", ".."))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return abs
+	}()
 	fixture := filepath.Join(root, "tests", "fixtures", "hook", "pretool-unactivated-write.json")
 
 	code := cli.Run([]string{"dry-run", "--root", root, "--fixture", fixture}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("dry-run failed: code=%d stderr=%s", code, stderr.String())
+		t.Fatalf("dry-run always returns 0 (envelope-only), code=%d stderr=%s", code, stderr.String())
 	}
-	// The Minimal Safety Policy lets the call through.
-	if !strings.Contains(stdout.String(), `"decision":"allow"`) {
-		t.Fatalf("minimal policy must allow unactivated writes, got %s", stdout.String())
+	if !strings.Contains(stdout.String(), policy.RuleAssignmentWriteBeforePlan) {
+		t.Fatalf("dry-run envelope must surface the first-write barrier rule id, got %s", stdout.String())
 	}
-	// The Controller-driven Hook must surface a quality_gate projection,
-	// never the legacy rule_id strings that the minimal model retired.
+	if !strings.Contains(stdout.String(), `"decision":"block"`) {
+		t.Fatalf("dry-run envelope must carry decision=block on a pre-plan product write, got %s", stdout.String())
+	}
 	if strings.Contains(stdout.String(), "HOOK_AGENT_NOT_ACTIVATED") {
 		t.Fatalf("legacy predicate HOOK_AGENT_NOT_ACTIVATED must not appear: %s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), `"rule_id":"locked_artifact_write"`) {
-		t.Fatalf("dry-run must not pin a locked_artifact rule_id without a locked path: %s", stdout.String())
+		t.Fatalf("dry-run must not pin a locked_artifact rule_id on a pre-plan product write: %s", stdout.String())
 	}
 }
 
-// TestHookCommandAllowsUnactivatedPreToolUse rewrites
-// TestHookCommandDeniesUnactivatedPreToolUse against the minimal safety
-// model. The hook policy only blocks (a) locked-artifact writes and (b)
-// squash-merge calls — there is no HOOK_AGENT_NOT_ACTIVATED legacy deny
-// anymore. Agent activation moved into Guidance (REQ-039 §13.5 / §14.3).
-func TestHookCommandAllowsUnactivatedPreToolUse(t *testing.T) {
+// TestHookCommandBlocksFirstWriteBarrier pins the wire-path enforcement
+// of L4 §7.6: a dispatched Worker in `reading` (pre-plan) state writing
+// to a product path (`src/app.go`) must receive
+// permissionDecision=deny with `assignment_write_before_plan` as the
+// rule id. The legacy "minimal safety model never blocks an unactivated
+// write" assertion was retired with the L4 P1 rollout — see
+// `TestHookCommandAllowsFirstWriteBarrierExemptedSurfaces` for the
+// allowed-surface exemptions.
+func TestHookCommandBlocksFirstWriteBarrier(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root := copyPolicyToTempRoot(t)
 	input := `{
@@ -769,15 +1000,60 @@ func TestHookCommandAllowsUnactivatedPreToolUse(t *testing.T) {
 	}`
 
 	code := cli.Run([]string{"hook", "--event", "PreToolUse", "--root", root}, strings.NewReader(input), &stdout, &stderr)
-	if code == 2 {
-		t.Fatalf("minimal safety model must never block an unactivated write: code=2 stdout=%s stderr=%s", stdout.String(), stderr.String())
+	if code != 2 {
+		t.Fatalf("first-write barrier must deny a pre-plan product write: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	out := stdout.String()
-	if strings.Contains(out, `"permissionDecision":"deny"`) {
-		t.Fatalf("unactivated write must NOT render a deny: %s", out)
+	if !strings.Contains(out, policy.RuleAssignmentWriteBeforePlan) {
+		t.Fatalf("pre-plan product write must surface the first-write barrier rule id, got %s", out)
+	}
+	if !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Fatalf("pre-plan product write must render a deny: %s", out)
 	}
 	if strings.Contains(out, "HOOK_AGENT_NOT_ACTIVATED") {
 		t.Fatalf("legacy HOOK_AGENT_NOT_ACTIVATED predicate must not surface: %s", out)
+	}
+}
+
+// TestHookCommandAllowsFirstWriteBarrierExemptedSurfaces confirms the
+// reviewer-allowed surfaces that L3-S7 §8 / L4 §10.4 carve out: writes to
+// the control plane (`.claude/`), reviewer report projections
+// (`docs/reports/`) and a ReviewPlan verification workspace are NOT
+// blocked by the first-write barrier — those are the surfaces a
+// dispatched Worker (and a reviewer) is expected to write before the
+// plan checkpoint.
+func TestHookCommandAllowsFirstWriteBarrierExemptedSurfaces(t *testing.T) {
+	root := copyPolicyToTempRoot(t)
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"control_plane", ".claude/loop-state.json"},
+		{"reviewer_reports", "docs/reports/BUG-039-15.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := `{
+				"session_id":"session-1",
+				"hook_event_name":"PreToolUse",
+				"tool_name":"Edit",
+				"tool_input":{"file_path":"` + tc.path + `"},
+				"runtime_context":{
+					"runtime_id":"loop-REQ-002",
+					"revision":4,
+					"agent":{"id":"agent-1","state":"reading"}
+				}
+			}`
+			var stdout, stderr bytes.Buffer
+			code := cli.Run([]string{"hook", "--event", "PreToolUse", "--root", root}, strings.NewReader(input), &stdout, &stderr)
+			if code == 2 {
+				t.Fatalf("first-write barrier must allow %s: code=2 stdout=%s stderr=%s", tc.path, stdout.String(), stderr.String())
+			}
+			out := stdout.String()
+			if strings.Contains(out, policy.RuleAssignmentWriteBeforePlan) {
+				t.Fatalf("%s must not surface the first-write barrier, got %s", tc.path, out)
+			}
+		})
 	}
 }
 

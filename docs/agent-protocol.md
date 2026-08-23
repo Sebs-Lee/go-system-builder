@@ -397,24 +397,26 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
 
 ## S7 — full_verification_round {#s7}
 
-- **purpose**: run a full same-round discovery pass over correctness, engineering quality, and real browser behavior, on one frozen baseline, under a machine-computed exit.
+- **purpose**: run one full same-round verification pass over a frozen baseline, under a machine-computed exit. Design authority: `blueprint/L3-S7-verification-round.md`; dispatch mechanics: `blueprint/L4-agent-dispatch-governance.md`.
 - **inputs**: S6 integrated baseline, REQ/contracts/TASKs, Builder Result, project rules, risk tags, CASE/PATH, runnable app/test environment.
 - **inputs_from**: [S6 (integrated implementation + Result/check evidence), S5 (locked spec chain), S0 (REQ acceptance criteria)]
+- **lenses**: one required Claim set per round, partitioned into 1..N single-lens Assignments —
+  - `delivery`: traceability — every current-generation TASK appears in at least one Claim's source_refs;
+  - `qa`: static engineering quality (pattern-fit, logic/boundary, maintainability oracles);
+  - `e2e`: real browser behavior over the declared coverage; a cold start gets an isolated verification-artifact workspace pinned at registration.
 - **actions**:
-  1. plan the round: `loop-harness s7 draft` scaffolds a ReviewPlan from the current facts (one DV traceability claim per TASK, QA static focus claims, E2E coverage state from the REQ's ui_impact); the Planner fills the TODO oracles/methods, then registers with `loop-harness runtime review-plan --file <plan.json>`. The validator rejects: required Claims without an owning Assignment, one Claim in two Assignments, mixed-lens Assignments, dispatched not_applicable Claims, dependency cycles, zero DV or QA Claims without a coverage justification, any current-generation TASK missing from all source_refs, and any capacity policy other than `coverage_complete`. A concrete `source_ref + affected_surface` from a consumed Result or Finding permits exactly one controlled revision: `runtime review-plan revise --file <v2.json> --source-ref <id> --affected-surface <path>`
-  2. dispatch reviewers: `runtime register-workgroup` per Assignment. The manifest row must carry `claim_ids` exactly matching the plan Assignment; registration flips the covered Claims to `running`. Behavior-wave (E2E/specialty) workgroups register only after every required static Claim has a disposition
-  3. each Reviewer writes their result per `review-result.example.json` (claim_results must equal the Assignment's Claim set exactly; every fail Claim references one immutable Finding with a real `encounter` — journey_summary, wall_action, first_bad_checkpoint, plus the per-observation-mode minimum fields) and submits it with `loop-harness runtime review-result submit --assignment-id <id> --result <result.json>`. One CAS: result evidence + Findings + claim dispositions + reviewer agent state; `subject_digest` mismatch means the baseline drifted — the round is stale, not submittable
-  4. a finding verdict flips the round to `cannot_clean` but ordinary safe discovery continues (`drain_policy=complete_required_claims`); only a P0 finding seals the batch immediately with explicit capture gaps. The pause verdicts (`req_change_required` / `release_blocked`) create the single authoritative pause checkpoint inside the submit transaction; TR-010/TR-011 then only move the cursor
-  5. the round consumer runs inside the same submit: when the final required Claim lands with findings, the ObservationBatch seals (exact Finding set, coverage summary, finder routes); with no findings, the machine CleanRound snapshot is registered. Never hand-write an aggregate PASS or a clean_round record
-  6. exits are hook-driven: TR-008 consumes the sealed batch (one BUG draft per Finding, deduplicated by finding content hash — S8 never re-reproduces symptoms by default); TR-009 recomputes the CleanRound over the exact Claim set before acceptance. `loop-harness s7 status` is the read-only board for the whole round
-- **reviewer write rule**: during the verification stage the PreToolUse hook hard-denies Write/Edit/MultiEdit/NotebookEdit outside `.claude/`, `docs/reports/`, and the ReviewPlan's `verification_artifact_workspace` (created at registration for `e2e_coverage_state=cold_start`; E2E results must bind the workspace digest, and the close recomputes it) — the frozen baseline tolerates no product writes. Reviewers never repair; a product problem is a Finding. Execution wrappers append sanitized timeline steps via `loop-harness capture step --assignment <id> --action ... --observed ...`; `review-result submit --captures <dir>` merges them into findings whose encounter timeline is empty. Secrets are rejected at capture time
-- **done_when**:
-  - every applicable Claim has a current disposition and every required Claim has a consumed Result
-  - no overloaded generic Assignment or unresolved duplicate oracle remains in the coverage views
-  - E2E evidence is bound to the declared flow/entry/oracle and includes material state, console/network and trace evidence where applicable
-  - every runtime Finding has the actual encounter: short journey, last-good, wall action, first-bad, terminal state, state/side-effect delta and evidence refs
-  - if clean, one machine-generated CleanRound exists; otherwise a sealed ObservationBatch carries the Finding exact set and claim coverage summary
-- **next**: S10 if CleanRound passes; S8 if ObservationBatch is sealed. Produce the most-forward missing Claim Result, encounter field or handoff fact; do not manually invoke a transition.
+  1. plan: `loop-harness s7 draft --out plan.json`, fill the TODO oracles, register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
+  2. dispatch: `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle)
+  3. submit: each Reviewer writes one Canonical ReviewResult per `review-result.example.json` and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; record sanitized execution steps with `loop-harness capture step` and merge them with `--captures <dir>`
+  4. observe: `loop-harness s7 status` is the read-only board (Claim dispositions, assignment consumption, findings, exit state)
+- **reviewer write rule**: the PreToolUse hook hard-denies product/locked-spec writes during verification and names the allowed surfaces in its block reason; Reviewers never repair — a product problem is a Finding.
+- **exits** (all machine/hook-driven; never hand-write an aggregate PASS, a clean_round record, or invoke a transition manually):
+  1. no findings — the machine CleanRound is registered inside the final submit → TR-009 to S10
+  2. findings — ordinary findings drain the remaining required Claims (a P0 seals immediately), the ObservationBatch seals with the exact Finding set → TR-008 to S8
+  3. verdict `req_change_required` — the submit transaction creates the single pause checkpoint → TR-010
+  4. verdict `release_blocked` — same single-checkpoint route → TR-011
+- **done_when**: the round is clean (machine CleanRound registered) or the ObservationBatch is sealed; both are computed by the round consumer inside the final `review-result submit` and re-verified by the exit gates over the exact Claim set.
+- **next**: S10 if CleanRound passes; S8 if ObservationBatch is sealed. Produce the most-forward missing Claim Result or encounter field; do not manually invoke a transition.
 - **failure_route**: any blocking finding → S8 finding investigation; incomplete/stale evidence restarts S7 with a new round.
 - **human_gateway**: none for ordinary work; verdict pauses (TR-010/TR-011) surface the human gateway.
 - **primary_skill**: L4 dispatch governance, then focus-specific QA/DV/E2E Skills; the round exit (CleanRound / ObservationBatch) is machine-owned.

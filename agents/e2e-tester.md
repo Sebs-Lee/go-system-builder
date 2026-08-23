@@ -27,9 +27,17 @@ and produce one independent E2E conclusion with BUG drafts for any failure.
 ## Phase Contract
 Read the assigned module's complete current package (scenario four-pack,
 `flows.md` / `stories.md` / `*.html`), existing specs under `web/e2e/<module>/`, and the
-Closing Contract; send one PLAN_REPORT covering the module, CASE/PATH IDs in scope (ALL for
-full-module regression), and evidence destination — then continue immediately (plan_checkpoint).
-Only plan_approval_required assignments wait for an activation envelope before working.
+Closing Contract; write the PLAN_REPORT JSON to a stable path
+(`.claude/evidence/<req>/<task>/plan-<agent>.json`) and send one PLAN_REPORT
+covering the module, CASE/PATH IDs in scope (ALL for full-module regression),
+and evidence destination with plan_ref=<that path>. The
+PostToolUse(SendMessage) observer auto-activates plan_checkpoint agents —
+the same hook observation chains reading -> understanding_submitted ->
+activated -> working with the activation envelope's hash chain bound to the
+captured plan bytes — so continue immediately. Only plan_approval_required
+assignments wait for an activation envelope before working. If the auto-chain
+did not fire, recover with `runtime agent-begin --agent-id <id> --plan <plan.json>`
+and continue.
 ## Skill Contract
 The frontmatter preloads the stable E2E method and Playwright practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned API, authentication, storage, or other test boundary.
 ## Allowed Artifacts

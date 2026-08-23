@@ -21,8 +21,8 @@ func TestHookRegistrationCoversDelegationTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"Write|Edit|MultiEdit|Bash|NotebookEdit|Task|Agent"`) {
-		t.Fatalf("PreToolUse must invoke the controller before Agent/Task delegation: %s", data)
+	if !strings.Contains(string(data), `"Write|Edit|MultiEdit|Bash|NotebookEdit|Task|TaskUpdate|Agent"`) {
+		t.Fatalf("PreToolUse must invoke the controller before Agent/Task/TaskUpdate delegation: %s", data)
 	}
 }
 

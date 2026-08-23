@@ -71,7 +71,7 @@ scope, activation, runtime state, and Hook policy.
 
 | Skill | Category | Source | Version | Applicability |
 |:---|:---|:---|:---|:---|
-| two-phase-activation | methodology | `.claude/skills/two-phase-activation/SKILL.md` | 1.0.0 | teammate activation |
+| agent-dispatch | methodology | `.claude/skills/agent-dispatch/SKILL.md` | 1.0.0 | teammate dispatch (plan_checkpoint) |
 | {skill} | best-practice | `.claude/skills/{skill}/SKILL.md` | {version} | {risk/responsibility} |
 
 ## 6. Outputs And Evidence

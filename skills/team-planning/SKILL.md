@@ -34,11 +34,11 @@ The manifest proposes assignments; Hooks and runtime enforce activation. Runtime
 7. Compute Agent count from: modules × contracts × scenario coverage risk × migration × concurrency × security × BUG history. Do not use a fixed team size.
 8. Produce one assignment per responsibility with: agent ID, role, responsibility ID, allowed read paths, allowed write paths, task-specific Skills, message template, stop conditions. Harness merges these with the role's default Skill profile before launch.
 9. Validate the manifest via `loop-harness validate --all --root .` (schema + team-manifest schema).
-10. Emit launch packages: one `readback_request` per assignment, ready for `two-phase-activation`.
+10. Emit launch packages: one assignment brief per assignment, ready for `agent-dispatch` (plan_checkpoint).
 
 ## Outputs
 - A schema-valid team manifest with assignments, count rationale, and coverage result.
-- One readback_request launch package per assignment.
+- One assignment brief (launch package) per assignment.
 
 ## Exit Conditions
 - Coverage is complete (all mandatory responsibilities assigned or justified N/A).

@@ -41,7 +41,7 @@
 | 能力 | 关键命令/机制 |
 |:--|:--|
 | 状态机迁移（唯一写者，CAS） | `req bind` / `runtime transition --id TR-xxx` |
-| 当前两阶段授权三事件（待迁移） | `runtime agent-event`（readback_submitted → understanding_approved → activated）；目标态由 L4 Assignment 状态机替代 |
+| Agent 生命周期事件（12 事件，L4 plan_checkpoint 直通已落地） | `runtime agent-event`（readback_started/readback_submitted → activation_sent → … → shutdown_approved）；默认 dispatch_mode=`plan_checkpoint` 下 understanding_submitted 绑计划回执直通 activated；`plan_approval_required` 仍走 understanding_approved 中间态（受支持的兼容路径，非"待迁移"） |
 | 证据登记+指纹 | `runtime evidence add`（登记 id/kind/path/sha256/produced_by） |
 | 读回信封生成 | `team launch --manifest --request-template`（指纹化读回请求） |
 | 门禁/健康 | `ready`（门清单）/ `doctor` / `validate --all` |
@@ -57,9 +57,9 @@ frontend/backend/test-builder（构建者）；document/delivery-verifier、qa�
 
 ### E. 技能（`skills/*/SKILL.md`——方法论按需加载）
 
-`two-phase-activation`（当前两阶段流程，待按 L4 迁移）/ `team-planning`（组队）/ `loop-orchestration`（驱动）/ `bug-resolution`（深查）/ `clean-round-evaluation` 等。
+`agent-dispatch`（L4 plan_checkpoint 派发；旧 `two-phase-activation` 已删除）/ `team-planning`（组队）/ `loop-orchestration`（驱动）/ `bug-resolution`（深查）/ `clean-round-evaluation` 等。
 
-Agent 调度是首个进入 L4 的共用机制。S5/S6/S7/S8/S9 只声明消费 `one_shot`、`plan_checkpoint` 或 `plan_approval_required` 及本阶段完成条件；派发对象、计划回执、消息、等待、idle/stop、恢复和结果消费统一以 [L4 Agent 调度与治理机制](L4-agent-dispatch-governance.md) 为目标态。上表中的两阶段事件与 Skill 是现状和迁移入口，不再代表最终设计。
+Agent 调度是首个进入 L4 的共用机制。S5/S6/S7/S8/S9 只声明消费 `one_shot`、`plan_checkpoint` 或 `plan_approval_required` 及本阶段完成条件；派发对象、计划回执、消息、等待、idle/stop、恢复和结果消费统一以 [L4 Agent 调度与治理机制](L4-agent-dispatch-governance.md) 为目标态。两阶段授权事件（readback_submitted → understanding_approved → activated）仍是 `plan_approval_required` 模式下的真实代码路径（internal/assignment/lifecycle.go 的 12 事件生命周期），并非待迁移的死代码；`two-phase-activation` Skill 已被 `agent-dispatch` 取代并删除。
 
 **编排三原则**：①模板负责"声明结构"（字段逼问），harness 负责"事实求值"（指纹/门/迁移），hook 负责"在自然事件上执法与提醒"；②同一职责多机制必须声明主备；③优先写机制的真实命令/事件名。
 

@@ -42,6 +42,13 @@ import (
 // convention already enforced for hook payloads in
 // `internal/hook/adapter.go` `message()`.
 //
+// A `runtime.ErrStaleRevision` (or any error wrapping it) is enriched with a
+// concrete next-action so the caller can recover instead of doing
+// half-experiments: read the current revision with `loop-harness status --root
+// <root>` and retry with `--expected-revision <N>`. Repeated divergence means
+// an actor is committing concurrently; the durable cure is
+// `loop-harness runtime reconcile`.
+//
 // Recognized rule-id sources (in order of preference):
 //   - `guard <NAME> failed: ...`         → id = NAME.
 //   - `guard <NAME> is not registered`   → id = NAME.
@@ -51,6 +58,9 @@ func formatFailure(cmd string, err error) string {
 	msg := err.Error()
 	if id := extractRuleID(msg); id != "" {
 		return fmt.Sprintf("%s: %s See %s#%s.", cmd, msg, transition.ManualTargetPath(), strings.ToLower(id))
+	}
+	if errors.Is(err, runtime.ErrStaleRevision) {
+		return fmt.Sprintf("%s: %s. Next: run `loop-harness status --root <root>` to read the current revision and retry with `--expected-revision <N>`. If revisions diverge repeatedly, an actor is committing concurrently; resolve with `loop-harness runtime reconcile`.", cmd, msg)
 	}
 	return fmt.Sprintf("%s: %s", cmd, msg)
 }
@@ -171,7 +181,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "s6":
 		return runS6Command(args[1:], stdout, stderr)
 	case "capture":
-		return runCapture(args[1:], stdout, stderr)
+		return runCapture(args[1:], stdin, stdout, stderr)
 	case "s7":
 		return runS7Command(args[1:], stdout, stderr)
 	case "tasks":
@@ -490,9 +500,9 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "running", "cannot_clean", "discovery_draining":
 			return "S7", "team-planning", "dispatch reviewer workgroups via `runtime register-workgroup` and consume each Assignment's Canonical ReviewResult via `runtime review-result submit` (see `loop-harness s7 status`)"
 		case "observation_sealed":
-			return "S7", "bug-resolution", "hand the sealed ObservationBatch to S8 via `runtime transition --id TR-008`"
+			return "S7", "bug-resolution", "ObservationBatch sealed; the next PreToolUse auto-commits TR-008 to hand the batch to S8 — do not call the transition CLI"
 		case "clean":
-			return "S7", "acceptance-and-handoff", "promote the machine CleanRound into acceptance via `runtime transition --id TR-009`"
+			return "S7", "acceptance-and-handoff", "machine CleanRound recorded; the next PreToolUse auto-commits TR-009 to advance into S10 — do not call the transition CLI"
 		}
 		return "S7", "loop-orchestration", "recover the verification round (see `loop-harness s7 status`)"
 	case "bug_resolution":
@@ -923,7 +933,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-event|task-complete|task-integrate|review-plan|review-result|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -1088,7 +1098,15 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "runtime register-workgroup requires --manifest, --task-id and --task")
 			return 2
 		}
-		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		// Anchor --state / --journal relative paths against --root so the
+		// verb works from any cwd (e.g. a sandboxed shell whose cwd is not
+		// the project root). resolveExpectedRevision must read the same
+		// resolved state file as assignment.Register, otherwise the
+		// resolved revision diverges from the file the writer opens and
+		// Register aborts with a stale-revision error.
+		resolvedState := resolveRootPath(*root, *statePath)
+		resolvedJournal := resolveRootPath(*root, *journalPath)
+		resolvedRevision, err := resolveExpectedRevision(*root, resolvedState, *expectedRevision)
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime register-workgroup", err))
 			return 1
@@ -1101,7 +1119,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		next, err := assignment.Register(*root, *statePath, *journalPath, assignment.Request{
+		next, err := assignment.Register(*root, resolvedState, resolvedJournal, assignment.Request{
 			ExpectedRevision: resolvedRevision,
 			ManifestPath:     resolveRootPath(*root, *manifestPath),
 			TaskID:           *taskID,
@@ -1114,6 +1132,61 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		}
 		if err := json.NewEncoder(stdout).Encode(next); err != nil {
 			fmt.Fprintf(stderr, "encode workgroup registration: %v\n", err)
+			return 1
+		}
+		return 0
+	case "agent-begin":
+		// L4 §3.3 plan_checkpoint recovery verb. Performs the same
+		// readback_submitted -> activation_sent -> work_started chain as
+		// the PostToolUse(SendMessage) auto-chain, driven explicitly when
+		// the auto-chain could not (e.g. Worker omitted plan_ref, hook
+		// failed). One CAS-bound AdvanceAgent call per step so the
+		// existing dispatch-mode / state / hash-chain guards stay in force.
+		flags := flag.NewFlagSet("runtime agent-begin", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime agent-begin")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+		agentID := flags.String("agent-id", "", "Agent ID")
+		planPath := flags.String("plan", "", "plan_report message path")
+		occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *agentID == "" || *planPath == "" {
+			fmt.Fprintln(stderr, "runtime agent-begin requires --agent-id and --plan")
+			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime agent-begin", err))
+			return 1
+		}
+		var occurredAt time.Time
+		if *occurredAtValue != "" {
+			occurredAt, err = time.Parse(time.RFC3339Nano, *occurredAtValue)
+			if err != nil {
+				fmt.Fprintf(stderr, "runtime agent-begin: invalid --occurred-at: %v\n", err)
+				return 2
+			}
+		}
+		next, outcome, err := assignment.AgentBegin(*root, *statePath, *journalPath, assignment.AgentBeginRequest{
+			ExpectedRevision: resolvedRevision,
+			AgentID:          *agentID,
+			PlanPath:         resolveRootPath(*root, *planPath),
+			OccurredAt:       occurredAt,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime agent-begin", err))
+			return 1
+		}
+		if outcome.Chained {
+			fmt.Fprintf(stderr, "auto-chain: %s advanced to %s (activation_id=%s)\n", outcome.AgentID, outcome.FinalState, outcome.ActivationID)
+		}
+		if err := json.NewEncoder(stdout).Encode(next); err != nil {
+			fmt.Fprintf(stderr, "encode agent-begin snapshot: %v\n", err)
 			return 1
 		}
 		return 0
@@ -1440,9 +1513,9 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 			switch status {
 			case "observation_sealed":
-				fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — hand off to S8 via `runtime transition --id TR-008`")
+				fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — the next PreToolUse will auto-commit TR-008 to hand off to S8 (do not invoke the transition CLI)")
 			case "clean":
-				fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — promote via `runtime transition --id TR-009`")
+				fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — the next PreToolUse will auto-commit TR-009 to advance into S10 (do not invoke the transition CLI)")
 			case "paused":
 				fmt.Fprintln(stderr, "review-result: consumed; pause checkpoint recorded — route via TR-010 (req change) or TR-011 (release blocked)")
 			case "cannot_clean", "discovery_draining":
@@ -1461,6 +1534,50 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				"plan_status":    status,
 				"pending_claims": pending,
 				"revision":       next.Revision,
+			})
+		case "finding-supplement":
+			// S7/S8 FindingSupplement append (L3-S7 §3.6, L3-S8 §2.2): the
+			// original finder — or a scheduler-authorized replacement — appends
+			// new observation/evidence/correlation refs under an immutable
+			// Finding without rewriting it or the sealed ObservationBatch. The
+			// discriminator gate (L3-S7 §14.1) requires hypothesis_id +
+			// discriminator + expected_outcomes unless the submission is an S7
+			// in-round note declared with --in-round-note.
+			flags := flag.NewFlagSet("runtime finding-supplement", flag.ContinueOnError)
+			flags.SetOutput(stderr)
+			bindUsage(flags, "runtime finding-supplement")
+			root := flags.String("root", ".", "repository root")
+			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+			findingID := flags.String("finding", "", "finding id the supplement extends")
+			filePath := flags.String("file", "", "FindingSupplement JSON path")
+			authorizedBy := flags.String("authorized-by", "", "scheduler identity authorizing a replacement finder (required when author != original finder)")
+			inRoundNote := flags.Bool("in-round-note", false, "declare an S7 in-round note from the original finder (exempt from the hypothesis_id + discriminator + expected_outcomes gate; must not carry hypothesis_id)")
+			if err := flags.Parse(args[1:]); err != nil {
+				return 2
+			}
+			if *findingID == "" || *filePath == "" {
+				fmt.Fprintln(stderr, "runtime finding-supplement requires --finding <id> and --file <supplement.json>")
+				return 2
+			}
+			receipt, err := review.SubmitSupplement(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SupplementRequest{
+				FindingID:    *findingID,
+				FilePath:     resolveRootPath(*root, *filePath),
+				AuthorizedBy: *authorizedBy,
+				InRoundNote:  *inRoundNote,
+			})
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime finding-supplement", err))
+				return 1
+			}
+			fmt.Fprintf(stderr, "finding-supplement: %s appended to %s (state revision %d); the Finding and ObservationBatch are unchanged\n",
+				receipt.SupplementID, receipt.FindingID, receipt.Revision)
+			return encodeJSON(stdout, map[string]any{
+				"supplement_id":          receipt.SupplementID,
+				"supplements_finding_id": receipt.FindingID,
+				"path":                   receipt.Path,
+				"sha256":                 receipt.SHA256,
+				"revision":               receipt.Revision,
 			})
 		case "bug-event":
 		flags := flag.NewFlagSet("runtime bug-event", flag.ContinueOnError)
@@ -1519,7 +1636,11 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		result, err := runtime.NewWriter(*statePath, *journalPath, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root)
+		// Anchor --state / --journal against --root so the verb works
+		// from any cwd (L3-S7 sandbox contract).
+		resolvedState := resolveRootPath(*root, *statePath)
+		resolvedJournal := resolveRootPath(*root, *journalPath)
+		result, err := runtime.NewWriter(resolvedState, resolvedJournal, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root)
 		if err != nil {
 			fmt.Fprintf(stderr, "runtime fingerprint failed: %v\n", err)
 			return 1
@@ -1631,7 +1752,11 @@ func runRuntimeReconcilePolicyRef(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	store := runtime.NewStore(*statePath, *journalPath)
+	// Anchor --state / --journal against --root so the verb works
+	// from any cwd (L3-S7 sandbox contract).
+	resolvedState := resolveRootPath(*root, *statePath)
+	resolvedJournal := resolveRootPath(*root, *journalPath)
+	store := runtime.NewStore(resolvedState, resolvedJournal)
 	before, err := store.InspectPolicyRef(*root)
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime reconcile-policy-ref", err))
@@ -1654,7 +1779,7 @@ func runRuntimeReconcilePolicyRef(args []string, stdout, stderr io.Writer) int {
 			before.Path, before.RecordedVersion, before.OnDiskVersion, before.RecordedSHA256, before.OnDiskSHA256)
 		return 1
 	}
-	if _, err := runtime.NewWriter(*statePath, *journalPath, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root); err != nil {
+	if _, err := runtime.NewWriter(resolvedState, resolvedJournal, *root, semantic.RuntimeCandidateValidator{}).RefreshFingerprints(*root); err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime reconcile-policy-ref", err))
 		return 1
 	}
@@ -2192,6 +2317,14 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "Hook argument event %q does not match input event %q\n", expectedEvent, request.Event)
 		return 1
 	}
+	// Official TeammateIdle payloads carry teammate_name instead of agent_id
+	// (Claude Code 2.1.218). Normalize once so hookctx resolution, the
+	// Controller and the audit envelope all identify the same teammate
+	// instead of guessing (L4 §15.2 P0-1); the original payload fields stay
+	// on the Input untouched.
+	if request.AgentID == "" {
+		request.AgentID = request.TeammateName
+	}
 	// PostToolUse(SendMessage) is a pure observer (L3-S7 §8, L4 §7.4): it
 	// never runs the Quality Gate, never persists a gate milestone, and
 	// never denies. It short-circuits here so no control-cycle machinery
@@ -2233,6 +2366,36 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	controlResult := runControlCycleForHook(root, request)
 	decision := projectControlDecision(controlResult)
 	refreshGuidanceFromController(root, &request, &decision, controlResult)
+	// L4 §15.2 P0-5: the PreToolUse(TaskUpdate) self-claim guard needs an
+	// identified agent; the Controller cycle's safety input carries no Agent
+	// context, so the agent-scoped rule is evaluated here against the
+	// hookctx-resolved runtime.
+	if decision.Decision == "allow" && request.Event == "PreToolUse" {
+		if agentDecision, blocked := policy.EvaluateAgentScoped(request); blocked {
+			decision = agentDecision
+		}
+	}
+	// L4 §15.2 P0-2: TeammateIdle/SubagentStop use the real platform
+	// control — a block decision exits 2 with the feedback on stderr so the
+	// platform continues the same agent (render branch below).
+	//
+	// Order contract: StopIdleDecision must always run when the event is a
+	// stop/idle event AND the controller cycle did NOT return a real
+	// block. The legacy gate `decision.Decision == "allow"` was correct on
+	// the verification lifecycle (where the Controller's projection also
+	// surfaces the S7 report-complete check), but it falls open on every
+	// non-verification lifecycle — S8 bug_resolution.investigation,
+	// acceptance, paused, etc. The Controller cycle on those phases
+	// returns StatusSatisfied + allow, and the stop/idle gate is the only
+	// authority that can block the platform from letting an agent go
+	// idle before it has registered its PLAN_REPORT or Result. We
+	// therefore always call StopIdleDecision on stop/idle events here; a
+	// real controller block above is preserved unchanged.
+	if hook.IsStopIdleEvent(request.Event) && !isDenyingHookDecision(decision.Decision) {
+		if stopDecision, blocked := hook.StopIdleDecision(root, request); blocked {
+			decision = stopDecision
+		}
+	}
 	envelope := buildEnvelopeFromController(root, request, decision, controlResult, time.Now())
 	// envelopeWithQualityGate carries the layered Controller projection
 	// alongside the legacy hook-policy envelope fields. On PreToolUse the
@@ -2270,6 +2433,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	}
 	if request.Event == "PreToolUse" || decision.Guidance != nil {
 		_ = metrics.RecordRecoveryPacket(root)
+	}
+	// TeammateIdle/SubagentStop block: the official Claude Code control is
+	// exit code 2 with the feedback on stderr (routed back to that same
+	// agent); no stdout payload is emitted for the blocked stop/idle.
+	if hook.IsStopIdleEvent(request.Event) && isDenyingHookDecision(decision.Decision) {
+		fmt.Fprintln(stderr, hook.RenderStopBlockFeedback(decision))
+		return 2
 	}
 	// PreToolUse uses the layered Controller-driven render path
 	// (PreToolUseWithQualityGate) so the wire envelope carries the
@@ -2311,6 +2481,14 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 // time, CAS-write agent.plan_reported_ref so the first-write barrier has a
 // durable fact. Everything about this path is fail-open: identification
 // gaps produce a silent observation, never a block and never an error.
+//
+// plan_checkpoint dispatch_mode triggers the L4 §3.3 auto-activation
+// chain: readback_submitted -> activation_sent -> work_started, with the
+// activation envelope's hash chain bound to the plan_report file bytes
+// (assignable.AutoAdvanceToWorking). The chain is driven by the plan
+// SendMessage payload's `plan_ref` field; if the field is absent the
+// observation degrades to the legacy plan_reported_ref-only behavior and
+// the recovery verb is named in the stderr note.
 func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Writer) int {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
@@ -2330,14 +2508,57 @@ func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Wri
 		}
 		id, _ := agent["id"].(string)
 		state, _ := agent["state"].(string)
-		rows = append(rows, hook.AgentRow{ID: id, State: state})
+		mode, _ := agent["dispatch_mode"].(string)
+		rows = append(rows, hook.AgentRow{ID: id, State: state, DispatchMode: mode})
 	}
 	obs := hook.HandlePostToolUse(request, rows)
 	if obs.Recorded && obs.Message == "plan_report" {
 		recordPlanCheckpoint(root, statePath, journalPath, snapshot, obs.AgentID, request, stderr)
+		// Auto-chain for plan_checkpoint agents. plan_ref is the plan file
+		// path the Worker wrote before SendMessage. Gating happens twice:
+		// once here (avoid the call entirely for plan_approval_required /
+		// one_shot), and again inside AutoAdvanceToWorking as defense in
+		// depth.
+		dispatchMode := dispatchModeOf(rows, obs.AgentID)
+		planRef, _ := request.ToolInput["plan_ref"].(string)
+		if planRef == "" {
+			planRef, _ = request.ToolInput["plan_path"].(string)
+		}
+		if dispatchMode == "plan_checkpoint" && planRef != "" {
+			outcome, err := assignment.AutoAdvanceToWorking(assignment.AutoChainInput{
+				Root:        root,
+				StatePath:   statePath,
+				JournalPath: journalPath,
+				AgentID:     obs.AgentID,
+				PlanPath:    planRef,
+			})
+			if err != nil {
+				fmt.Fprintf(stderr, "note: plan_checkpoint auto-chain failed (%v); fall back to `runtime agent-begin --agent-id %s --plan %s`\n", err, obs.AgentID, planRef)
+			} else if outcome.Chained {
+				fmt.Fprintf(stderr, "auto-chain: %s advanced to %s (activation_id=%s)\n", outcome.AgentID, outcome.FinalState, outcome.ActivationID)
+			} else if outcome.Reason != "" {
+				// Skip is informational (e.g. dispatch_mode changed between
+				// rows read and AutoAdvanceToWorking's snapshot). Surface
+				// only when the agent is still in reading so the agent-begin
+				// fallback verb is called out as the next step.
+				fmt.Fprintf(stderr, "note: plan_checkpoint auto-chain skipped for %s: %s\n", obs.AgentID, outcome.Reason)
+			}
+		}
 	}
 	fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
 	return 0
+}
+
+// dispatchModeOf returns the dispatch_mode for the given agent from the rows
+// the observer already loaded. Returns "" when the agent is not in the row
+// set (the caller already recorded a silent observation in that case).
+func dispatchModeOf(rows []hook.AgentRow, agentID string) string {
+	for _, r := range rows {
+		if r.ID == agentID {
+			return r.DispatchMode
+		}
+	}
+	return ""
 }
 
 // recordPlanCheckpoint writes agent.plan_reported_ref once (idempotent).

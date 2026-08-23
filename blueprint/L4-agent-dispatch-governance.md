@@ -815,6 +815,23 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 
 ## 15. 当前实现差距与 L5 迁移清单
 
+> **2026-08-22 状态**：P0 第 1、2、5、6 项已落地——官方 payload 字段（teammate_name/team_name/transcript_path/
+> agent_transcript_path/last_assistant_message/stop_hook_active）无损进入 `policy.Input`；TeammateIdle/SubagentStop 的 block
+> 决策走真实 exit 2 + stderr（`internal/hook/stopidle.go`，fail-open 边界见代码注释）；PreToolUse(TaskUpdate) self-claim 门
+> （`unauthorized_task_self_claim`）接入 settings.json matcher 与 `policy.EvaluateAgentScoped`；端到端测试改用官方 payload 形状。
+> P0 第 3、4 项未闭环：测试基于 2.1.218 文档记载形状而非真实平台 doctor（环境无 Claude Code 运行时），"Runtime activated 即平台
+> 已唤醒"的假设在 Controller 的 idle handler 中仍在（resume 分支 CAS activated、idle 中分配下一 TASK——属 P2 收敛范围）。
+> P1 已于更早批次落地（dispatch_mode、PostToolUse(SendMessage)、首写屏障、Agent Definitions）；首写屏障尚未接入 wire 路径
+> （与 pinned 的 unactivated-write 测试契约冲突，待 P1 收尾时一并裁决）。P3 第 4 项完成：`two-phase-activation` Skill 已由
+> `agent-dispatch` 取代并删除，loop-orchestration 等 5 处残留引用已清理。§15.1 下表保留为历史差距记录。
+>
+> **2026-08-22 批次二**：P0-4 与 P2-5 收敛——Controller 的 TeammateIdle handler 不再 CAS activated、不再在 idle 中分配下一 TASK
+> （真实唤醒由 stopidle.go exit 2 承担）；buildGuidance 的自造 Facts 判定替换为控制面事实源；首写屏障裁决后接入 wire 路径
+> （豁免面 = reviewer 允许面），P1 至此全清。§15.2 P2 余项：Assignment 唯一权威化与 Team task 投影合并尚未整体推进。
+> 仍未做：真实平台 doctor（环境限制）。
+>
+> 缺口分类汇总见 [L3-S7 §13.A](./L3-S7-verification-round.md#13a--待做缺口总表持续维护)（命令面拆分 / regression 指纹复用 / RegisterPlan 原子性 / fixture 同步 / 平台 doctor / 产品侧 wrapper / 长期演进信号）。
+
 ### 15.1 当前差距
 
 | 位置 | 当前机制 | 与目标的差距 |

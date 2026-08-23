@@ -102,7 +102,7 @@ func (v *Validator) ValidateBytes(schemaName string, data []byte) error {
 		return fmt.Errorf("decode data: %w", err)
 	}
 	if err := compiled.Validate(value); err != nil {
-		return fmt.Errorf("validate data: %w", err)
+		return fmt.Errorf("validate data: %w", pruneValidationError(err))
 	}
 	return nil
 }

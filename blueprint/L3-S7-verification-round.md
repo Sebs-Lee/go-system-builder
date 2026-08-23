@@ -970,6 +970,172 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 > - **draft 可用性**：`s7 draft` 缺 created_at 导致注册即 schema 拒绝；`next` 在 planned 阶段不提 draft。已修。
 > - **角色错配提示**：activation 成功消息给 reviewer 也打印 worktree/task-complete 引导；已改为按 role_family 分流。
 > - 已知摩擦（记录未修）：reviewer manifest 仍 19 个必填顶层字段，写作负担重（候选：`s7 manifest-draft` 生成器，后续批次评估）；schema oneOf 错误信息冗长（santhosh 枚举所有分支），靠 examples 缓解。
+>
+> **2026-08-22 审计（L4 P0 平台接线 + P3 余项 + 跨阶段接口，五工作包并行）**：
+> - **官方 payload 接入**：`policy.Input` 无损保留 TeammateIdle/SubagentStop 官方字段（teammate_name/team_name/transcript_path/
+>   agent_transcript_path/last_assistant_message/stop_hook_active）；TeammateIdle 无 agent_id 时在 hook 入口归一为 teammate_name，
+>   hookctx/controller/audit 全链路同一身份；PostToolUse 识别链插入官方顶层 teammate_name 一级。
+> - **TeammateIdle/SubagentStop 真实平台控制**（`internal/hook/stopidle.go`）：计划前 idle、计划后无 Result 的 idle/stop → block 并
+>   exit 2 + stderr 反馈送回同一 Agent；`stop_hook_active`、未识别 Agent、one_shot、已 reported/blocked 一律 fail-open allow（边界如实声明）。
+>   判定事实源与 Controller 的 idle/stop handler 相同（hookctx + assignment 行），未新造状态机。测试基于 2.1.218 文档记载 payload 形状；
+>   真实平台 doctor 未做（环境无 Claude Code 运行时）。
+> - **PreToolUse(TaskUpdate) self-claim 门**：新规则 `unauthorized_task_self_claim`（settings.json matcher + `policy.EvaluateAgentScoped`），
+>   队友不得把未派发的 Team task 认领给自己；自有任务的状态更新不受影响。规则与 `reviewer_product_write`/`assignment_write_before_plan`
+>   同样只作为代码规则存在——hook-policy.schema.json 把 rules 钉死为 minItems/maxItems=2，文档登记需先放宽 schema（或维持
+>   "文档只收两条最小安全规则"的既定设计）。
+> - **FindingSupplement 落地**：`finding-supplement.schema.json`（additionalProperties:false 封死 root_cause/repair 字段）+
+>   `runtime finding-supplement --finding --file [--authorized-by]`；校验 schema、独立内容 hash、Finding 存在且属当前 round、
+>   作者=original_finder 或经授权；原 Finding 与 sealed ObservationBatch 字节不变（测试逐一断言）。因 loop-state.schema.json 封闭，
+>   索引暂落独立控制面文档 `.claude/review/finding-supplements.json`（lock 序列化 CAS）；并入主状态需放宽 entities/evidence kind 枚举。
+> - **S7 运营指标机器可采集子集**（`internal/metrics/s7.go`，§14.2）：round shape（Assignment/Claim 数、plan revision gauge）、
+>   逐 Claim lead time、submit accepted/rejected（首次成功率）、finding 数、首个 finding→seal 时长、clean round 数；
+>   `s7 status` 追加只读摘要段。需人工判断的指标（pattern-fit 质量、逃逸归因）不采集。
+> - **`s7 manifest-draft`**：从控制面生成 register-workgroup 可用的 manifest 草稿；team-manifest schema 实际 20 个必填顶层字段
+>   （此前记录的 19 已漂移），草稿 20/20 预填，仅剩 agent_id 与 QA/DV skill_refs 两个 TODO。
+> - **schema 根级 oneOf 错误剪枝**（`internal/schema/errors.go`）：可判别时只报目标分支真实叶子错误，不可判别时给截断摘要；
+>   完整错误经 `LOOP_HARNESS_SCHEMA_VERBOSE=1` 恢复，errors.As 不受影响。
+> - **SessionStart/PreCompact S7 恢复投影**（§8 要求落地）：verification 阶段的恢复包含当前 round/plan 指针、
+>   running/queued/blocked Assignment 三桶、未消费 Result、required Claim 覆盖缺口和唯一下一动作，全部从共享控制面计算。
+> - **兼容别名审计**：删除零消费者的自名别名 kind 与 qa/e2e_review_record slot；有真实消费者（测试 fixture、REQ-039 兼容）的保留
+>   并逐条注释权威与删除条件。`docs/loop-definition.json` 引用均为保留的 slot 名，无需改动。
+> - **协议瘦身**：agent-protocol.md #s7 段重写为入口/三类 Lens/四种出口 + blueprint 链接（被 schema/CLI/hook 机械强制的细则删除）；
+>   loop-orchestration 的 Agent Activation Barrier 整节改写为 plan_checkpoint 现实；5 处 two-phase-activation 残留引用清理。
+> - **§14.1 测试矩阵补齐（30 个新测试，仅新建文件）**：plan validator（capacity policy/DV-QA N=0/TASK source_refs 覆盖/cold-start
+>   workspace）、submit 原子性（错 round/generation/digest、fail Claim↔Finding 绑定、裸 user-flow Finding、code_inspection 免 UI 步骤、
+>   P0 capture gaps、双 finder 同症状各自保留、drain→seal 链、seal 后迟到 Result、重复提交、capture 并入）、E2E workspace digest
+>   绑定与 stale、CleanRound 旧轮污染/无 result_ref/targeted reverify 不替代 full round、reviewer 写路径 hard deny、
+>   behavior-wave 解锁顺序。审计同时确认了 §14.1 中**机制未实现**的精确清单：overlap/泛审 validator（non_overlap_boundary 仅声明式）、
+>   cold-start overload validator、regression_available 指纹复用、平台并发槽/resource lock 排队调度、blocked_by_confirmed_finding
+>   投影（当前无任何 blocked 写入路径）、Finding 现场丢失的 BLOCKER 复用、S8 重跑默认拒绝 gate、worktree 共享控制面。
+> - **仍未做（下一批候选）**：Controller 的"假唤醒"（HandleTeammateIdleForController resume 分支 CAS activated、idle 中自动分配下一
+>   TASK，L4 P2 范围）；buildGuidance 的 Facts 自造字段（assignment_reported 等）在官方 payload 下恒真导致 guidance 误报 blocked；
+>   真实 2.1.218 平台 doctor；supplement 索引并入主 loop-state（需 schema 放宽）；浏览器/runner 注入式 encounter 采集 wrapper（产品侧）；
+>   §14.1 全量场景测试矩阵补齐（本批起持续补）。
+>
+> **2026-08-22 审计（机制缺口批次二，五工作包并行）**：
+> - **Controller idle 语义收敛（L4 P2）**：HandleTeammateIdleForController 删除 resume 分支的假唤醒 CAS 与 idle 中自动分配下一 TASK
+>   （十个死代码函数移除）；handler 只投影 guidance，真实唤醒由 stopidle.go 的 exit 2 承担。buildGuidance 不再读官方 payload 不存在的
+>   自造 Facts 字段，SubagentStop/TeammateIdle 的 blocked 判定改为与 stopidle.go 共用控制面事实源（hookctx + assignment 行）。
+>   首写屏障裁决落地：assignment_write_before_plan 接入 wire 路径（EvaluateAgentScoped），豁免面对齐 reviewer_product_write
+>   （.claude/、docs/reports/、verification workspace），9 个 pin 旧契约的测试逐条改写。
+> - **blocked_by_confirmed_finding 投影落地**（internal/review/blocked.go）：Result 可声明 blocked_claims，七步校验链
+>   （finding 本轮已确认 / failed_precondition ∈ build|start|entry|precondition / evidence_refs 必填 / after_repair_required 恒 true /
+>   与 claim_results 互斥 / 不得越出本 Assignment / N/A 不可 blocked）；seal 时 claim_coverage_summary.blocked_claims[] 携完整绑定；
+>   CleanRound exact-set 不把 blocked 当 pass。防滥用：无 confirmed Finding 的 blocked 声明直接拒绝。
+> - **现场丢失 BLOCKER 复用**：Result 显式声明 site_lost[] → 独立 CAS 把 Assignment 置 blocked 并绑 work_blocked_ref，不消费、不 seal、
+>   不伪装 ready；P0 禁止走 site_lost（仍走 capture_gaps + immediate seal）；readiness 拒绝信息提示 site_lost 出路。
+> - **overlap / cold-start overload validator**（plan.go）：overlap 确定性规则=同 lens + target/method/oracle 三集合全同才疑似重复，
+>   oracle 不同或双方 non_overlap_boundary 互异即放行；cold_start 下单 E2E Assignment 独占全部 required e2e Claims 且跨 ≥2 个
+>   focus 维度即拒绝。resource lock 排队落地：锁冲突不拒绝不裁减，queue_reason 记录持有的锁，holder Result 消费后重评估派发；
+>   loop-state schema 的 review.assignments 增 resource_locks/queue_reason。worktree 共享控制面核验通过（真实 git worktree 集成测试
+>   证明 --root 指向项目根时读写同一 .claude/ 控制面，不带 --root 不静默重锚）。
+> - **capture exec 自动采集 wrapper**：`loop-harness capture exec --assignment <id> -- <cmd>` 自动落 command_flow timeline step
+>   （cwd/工具版本/脱敏命令/exit code/截断摘要+全文 hash 引用/产物 digest 差集）；失败自动冻结 evidence window（failure.json +
+>   wall-action 候选标记），exit code 透传；双闸门脱敏（argv 执行前硬拒、stream 命中秘密模式改写为 withheld 占位符）；
+>   8MiB 级输出有界。手册新增 capture 章节与产品侧浏览器/runner 注入契约。
+> - **supplement 并入主 loop-state**：entities.finding_supplements 入 schema，SubmitSupplement 走主 runtime CAS；旧
+>   `.claude/review/finding-supplements.json` 首次写入时按 supplement_id 幂等迁移并删除，迁移前 runtime 仍可兜底读。
+>   discriminator 判别门落地：默认要求 hypothesis_id + discriminator + expected_outcomes 三件套（S8 重跑默认拒绝），
+>   `--in-round-note` 豁免轮内补充且与 hypothesis_id 互斥。manual `evidence add --kind finding_supplement` 被显式堵死
+>   （pipeline-owned，recovery 信任边界不入 importable kinds）。
+> - **仍未做（后续批次）**：真实 2.1.218 平台 doctor（环境限制）；浏览器/runner 注入式采集的产品侧 wrapper 实现（契约已写入手册）；
+>   regression_available 的 spec/selector/environment 指纹复用校验（当前 cold_start 与 regression 的区分已可计算，复用有效性判定未做）；
+>   qualitygate fixture 迁移后删除保留的旧 lens kind 别名（删除条件已逐条注释在 catalog.go）。
+>
+> **2026-08-22 审计（五视角 E2E 代入测试：Planner / QA Reviewer / E2E cold-start / 对抗犯错 / 恢复+复杂度）**：
+> 五个 tester 在独立沙箱用真实二进制黑盒实测，产出约 30 条发现。对抗性测试结论：**12 类攻击 11 类 D3 合规（缺什么+一个下一动作）、
+> 零误伤、零死胡同**——门体系整体健康。缺陷去重后分三档：
+> - **本批已修（3）**：① wire 路径不投影 `verification_artifact_workspace`（buildSafetyInput 缺口）——E2E cold-start Reviewer 唯一授权写面
+>   被 PreToolUse 真实 hard deny，P0 功能缺陷，已修并加回归测试；② 错误信息承诺的 `s7 workspace-digest` 子命令不存在——已实现；
+>   ③ "agent is reading/activated…"错误列十个状态不给下一步——改为给出 plan_report → activation_sent → work_started 的具体命令序列。
+> - **高优先（多视角交叉确认，未修）**：④ clean round 边界 `next`（让跑 TR-009）与 `ready`（禁止手调 transition）指引矛盾；
+>   ⑤ reading→working 推进无顺滑路径（三个 tester 独立撞墙，Reviewer 估计 70% 新人在此放弃；③的文案修复只缓解未根治）；
+>   ⑥ oneOf 错误剪枝在生产 CLI 路径休眠——review 系列 schema 用 anyOf 无根级 oneOf、agent-event 路径未走剪枝包装，单测绿但生产不生效；
+>   ⑦ 恢复包三缺陷：cannot_clean 不明说 drain 继续、sealed 后进 S8 丢 TR-008/batch id 来源、`Missing: claim_results` 噪音；
+>   ⑧ S7 前置状态无引导路径（五个 tester 全部靠手搓 loop-state.json 才能进入 S7——上手成本的第一放弃点）。
+> - **中低优先（记录待修）**：capture exec 子进程秘密 pass-through 到终端（证据文件安全但 UI 泄漏）；RegisterPlan 失败遗留 workspace
+>   目录（原子性缺口）；validateInvestigationReadiness 的引擎级必填字段（last_good_checkpoint 等）不在 example/schema 中披露；
+>   readiness 一次只报一个缺陷（应聚合）；supplement 判别门先于存在性校验；post-seal submit 不带 TR-008 指引；manifest-draft 不预填
+>   validation 五元组；`runtime review-plan` 单动词双语义（register/revise）；register-workgroup 泄漏 S6 词汇（--task/--task-id）；
+>   REQ 文件名即 ID 未提前披露；`validate --all` 被无关 skill frontmatter 卡住；journal cursor 错位无 reconcile 引导。
+> - **复杂度总结论（重点考察项）**：38 个概念中 22 个必须主动理解、11 个工具托管知名即可、5 个完全隐藏——隐藏层级健康。
+>   与旧世界（三段串行+手写聚合 PASS+手写 pause wrapper+S8 重现）相比**净复杂度持平**：操作层更简（六步链塌缩为一次 submit、
+>   零手写 transition），词汇层更重（exact-set、双 digest、encounter 判别联合），但每个概念对应 §2.1 一个具名失效模式，无镀金。
+>   测试员给出的 5 条削减建议全部是披露修复（恢复包补 TR-008/batch id、review-plan 拆动词、claim_results 改名、cannot_clean 明说
+>   drain、s7 status 预披露 workspace digest 要求），**不需要新机制**——视为设计未过度建构的信号。
+> - **虚假报警澄清**：cold-start tester 报告的 B7（未注册 agent 绕过 reviewer_product_write）经核实不成立——Controller 的
+>   buildSafetyInput 从已提交 snapshot 独立推导 CurrentState，reviewer_product_write 不需要 agent 身份，fake agent 仍被拦；
+>   hookctx 失败只使 agent 级规则（TaskUpdate 门、首写屏障）fail-open。
+>
+> **2026-08-22 审计（高优先缺口根因修复批次，四工作包并行）**：五个高优先缺口全部关闭——
+> - **next/ready 矛盾**：核验确认 TR-008/TR-009 均在 hook 自动提交路径（auto_trigger + 证据自动绑定），纯文案说谎；
+>   run.go 四处（next 提示 ×2 + submit 成功消息 ×2）统一改为"下一次 PreToolUse 自动提交，不要手调 CLI"。
+> - **恢复包三缺陷**：cannot_clean/draining 恢复包明说 drain_policy 与"≠结束"；S8 入口 SessionStart/PreCompact 投影补
+>   "entered via TR-008 with observation_batch <id>（N findings）"来源行；S7 语境下过滤裸 `claim_results` 噪音 token。
+> - **oneOf 剪枝休眠**：从"根级 oneOf"推广为"最浅判别型失败节点"（零匹配 oneOf/anyOf，causes≥2），anyOf 部分匹配不剪；
+>   实测真实 agent-event 错误 2974B→351B；verbose 逃生门脚注全覆盖。
+> - **reading→working 断点（最大放弃点）**：plan_checkpoint 自动激活链落地——register-workgroup 预生成激活信封，
+>   PostToolUse(SendMessage) 捕获 plan_report 后同事务链式推进 reading→understanding_submitted→activated→working
+>   （哈希链语义保留，不绕过 AdvanceAgent 守卫；plan_approval_required 不变）；新增兜底动词 `runtime agent-begin`；
+>   submit 错误文案指向一步恢复。集成审阅修复了兜底的环形死路（无预生成信封的 legacy agent 现在从 manifest 合成能力集恢复，
+>   含 schema 兼容性与测试）。
+> - **S7 入口引导**：`s7 draft` 非 verification 阶段给出当前阶段 + 合法入口（TR-006/012/016）+ 单一指引；QA claim target
+>   从真实 change surface 推导（占位文本消除）；manifest-draft 披露 validation 五元组；手册新增 sandbox recipe 节。
+> - 仍未做：真实 2.1.218 平台 doctor（环境限制）；产品侧浏览器 wrapper；regression_available 指纹复用校验；
+>   capture exec 终端 pass-through 秘密泄漏（证据文件安全）；RegisterPlan 失败遗留目录；readiness 多缺陷聚合；
+>   命令面拆分（review-plan register/revise、register-workgroup 的 S6 词汇）。
+>
+> **2026-08-23 审计（验证轮：五视角二次黑盒代入，确认修复不引入新缺陷）**：
+> 五个 tester 在独立沙箱用修复后代码盲测，结论对比第一轮：
+> - **第一轮缺陷全部回归**：B4 next/ready 矛盾、B2 workspace-digest 假命令、Reading→Working 断点三处都生效了；plan_checkpoint 自动激活链
+>   把新 Reviewer 从派发到 submit 的手工命令从 12-15 降到 3 个；冷启动 E2E 端到端走通到 sealed batch + TR-008 自动提交 + S8。
+> - **本轮新发现（修复引入/未覆盖的回归）**：
+>   - **R1（P0 回归，Reviewer）**：`cloneBundledActivationExample` 从**磁盘**读 `agent-message.examples.json`，但 schema 资产本应 go:embed；
+>     沙箱/目标项目里 agent-begin 必然失败且中途停在 understanding_submitted。**已修**：改读 `schema.ReadAsset`。
+>   - **R2（P0 回归，Reviewer）**：链中途失败后 agent 停在 understanding_submitted，重试 agent-begin 被"幂等"短路为
+>     "nothing to do"——链**永远无法恢复**。**已修**：识别当前状态从匹配步骤续推；带 TestAgentBeginResumesMidChainAfterFailure 回归测试。
+>   - **R3（文案残留，恢复+复杂度）**：recovery 包 `s7RecoveryNextAction` 在 observation_sealed/clean 两个分支仍说"手动跑
+>     `runtime transition --id TR-xxx`"，与上一轮 run.go 四处修复不统一。**已修**：所有 recovery/status/next 文案统一为"下一次 PreToolUse
+>     自动提交，不要手调 CLI"。
+>   - **R4（恢复包矛盾）**：当 planStatus 是 cannot_clean / discovery_draining 但 observation_batch 指针缺失时，recovery 包
+>     出现自相矛盾（"ObservationBatch is open" + "not yet opened"）。**已修**：检测指针缺失时给出诊断指引而不是占位行。
+>   - **R5（确定性问题，Planner）**：ready 在 verification.running 阶段非确定——连跑 5 次在两个 pause 门之间跳，
+>     Go map 迭代顺序泄漏到用户界面。**已修**：`projectZeroSelected` 按 candidate ID 排序后选。
+>   - **R6（真缺陷，对抗）**：`runtime register-workgroup --root <r>` 在 `--root` 不等于 cwd 时报"stale runtime revision"——
+>     `resolveExpectedRevision` 用 `resolveRootPath` 而 `assignment.Register` 不走同一根解析。绕路：必须显式 `--state` + `--journal`。
+>   - **R7（误伤，对抗）**：TeammateIdle/SubagentStop 在 lifecycle 不是 verification.running 时（如 bug_resolution），
+>     controller 路径先投影为 allow，stop-idle 控制门 fail-open。S8/S10 阶段 reviewer 漏发 PLAN_REPORT 时平台不再真留住他。
+>   - **R8（指引弱，对抗）**：`stale runtime revision` 错误缺 next-action；`verdict=fail`（非法枚举）schema 拒但不引导到
+>     `verdict=finding + findings[]`；supplement 判别门缺哪一字段不分项报错。
+>   - **R9（文档/schema 矛盾，Planner/Reviewer）**：sandbox recipe 推荐"populate baseline.{unit_test_status,
+>     integration_test_status, build_status, integration_checkpoint_verified}" 但 loop-state schema 是
+>     `additionalProperties: false`——键直接被拒。同时 `agents/*.md` 教 Worker 在 PLAN_REPORT JSON 体里写 `plan_ref=<path>`，
+>     schema `additionalProperties: false` 也拒；`plan_ref` 应是 SendMessage 的 tool_input 参数。**已部分修**：把 plan.json 改称
+>     plan-report.json 并在各 agent def 中澄清字段所在层；sandbox recipe 中的 baseline 错误键删除并替换为说明。
+> - **复杂度终判（多视角一致）**：38→22 个必须主动理解的概念；3 个手工命令 / 轮；16 个机制每个对应 §2.1 具名失效模式；5 条削减建议
+>   全部是披露/命名级，"不需要新机制"再被独立确认。**净复杂度持平**（操作简、词汇重、无镀金）不变。
+> - **仍待修复**：R6（CLI 路径解析）、R7（controller 抢停 stop-idle 门）、R8（错误信息 next-action 加强）、
+>   capture exec 终端 pass-through 秘密泄漏、RegisterPlan 失败遗留目录、命令面拆分、真实平台 doctor。
+>
+> **2026-08-23 审计（验证轮后续：四工作包修复 R6/R7/R8/R10）**：
+> - **R6（register-workgroup `--root` 路径不一致）已修**：所有走 `runtime.NewStore`/`runtime.NewWriter` 的入口在 `resolveExpectedRevision`
+>   与 verb 注册/写入之间统一 `resolveRootPath(root, statePath)`；同步修复同类 bug 的 `runtime fingerprint` 与 `runtime reconcile-policy-ref`，
+>   全文审计 `internal/cli/run.go` 的其他 17 个 verb 均已正确。回归测试 `TestRuntimeRegisterWorkgroupCommandAnchorsAgainstRoot`
+>   两个子测试覆盖 cwd ≠ root + 显式相对路径 + 默认路径三种场景。
+> - **R7（lifecycle ≠ verification.running 时 stop-idle 门被 controller 抢拍）已修**：evaluate 顺序改为"controller 未真 block 时永远跑
+>   StopIdleDecision"——controller 在 bug_resolution/acceptance/paused 阶段给的不是真控制而是通用 guidance，不应顶替真实平台控制。
+>   4 条回归测试覆盖各阶段下 TeammateIdle/SubagentStop；2 条保留测试确认 plan_approval_required/one_shot 仍 fail-open。
+> - **R8（三处错误信息 next-action 加强）已修**：
+>   - `stale runtime revision` 从单行扩为带 `loop-harness status --root <r>` + `--expected-revision <N>` + `runtime reconcile` 的完整指引
+>     （通过 `formatFailure` 识别 `ErrStaleRevision` 并加 next-action 尾注）
+>   - `verdict=fail` 在 submit 入口短路 hint 引导到 `verdict=finding + findings[]`，schema description 同步引导
+>   - finding-supplement 判别门从单条覆盖三类缺失改为按字段逐项列出（单缺只显示该字段）
+> - **R10（capture exec 秘密 pass-through 到终端）已修**：双闸门硬性替换——终端输出与证据文件共享同一 `review.SanitizeCapture` 闸门，
+>   头部 4 KiB 缓冲 + 模式命中则终端也写 `[withheld]` 占位符。3 条回归测试覆盖 secret 泄漏、正常透传、大输出+exit code。
+> - **跨批次依赖**：上一轮 R4 修改（recovery 包不能_clean 时不再说"not yet opened"）使批次 1 的 `TestBuildGuidanceS7RecoveryClaimsNoBatchOpen`
+>   测试断言过时——已同步更新为断言新逻辑（drain invariant + missing-pointer diagnostic + "not yet opened" 必须不出现）。
+> - **仍未做**：命令面拆分（review-plan register/revise、register-workgroup 的 S6 词汇）、RegisterPlan 失败遗留目录、真实 2.1.218 平台 doctor、
+>   产品侧浏览器 wrapper、regression_available 指纹复用校验。
 
 ### 13.1 当前事实
 
@@ -1233,3 +1399,50 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 | 2026-08-20 | v0.4.0 | 在 Finding 内新增 discriminated encounter、短 journey、last-good/wall/first-bad、状态差异、side effects、capture gaps 和 investigation readiness；增加撞墙时 evidence freeze、step-to-evidence binding、自动采集/脱敏和高危安全例外；明确 S8 不默认重新复现症状 | 保全最易丢失的操作现场，让 S8 可直接开展因果调查；采用内嵌事实 + typed raw evidence，避免新增独立报告和状态机造成复杂度失控 |
 | 2026-08-20 | v0.3.0 | 将 S7 定位为 Macro-stage 的 Discovery 步骤；新增 immutable Finding、FindingSupplement、bounded discovery window、ObservationBatch 和 S8 无损 handoff；明确 S7 只记录表象、不判断根因或修复思路 | 与 S8 Diagnosis、S9 Remediation 联合设计，确保多表象可被完整接收并推导共同根因 |
 | 2026-08-20 | v0.2.0 | 将 S7 重构为冻结基线、ReviewPlan Claims、Assignment DAG、两波调度、PLAN_REPORT 连续执行、Canonical ReviewResult、必经路径 Hook、原子 finding/pause 路由和机器 CleanRound；增加实现迁移、系统测试与指标 | 从软件工程和项目管理角度删除高复杂度低收益机制，并将指导下沉到工具自然路径 |
+
+---
+
+## 13.A · 待做缺口总表（持续维护）
+
+> 本节是把上面若干轮审计里反复出现的"仍未做"项集中到一处，便于下一个 agent 或人工拣选。每项标注：类别（机制/CLI/UX/环境/产品侧）+ 来源 + 落地时建议的第一步。
+
+### 机制层
+
+1. **命令面拆分**（CLI，§14.1 长期信号）
+   - `runtime review-plan` 单一动词承担 register / revise 两种语义；改为 `runtime review-plan register` 与 `runtime review-plan revise`。
+   - `runtime register-workgroup` 泄漏 S6 词汇（`--task` / `--task-id`）；S7 路径建议另起 `runtime dispatch-assignment --assignment-id --manifest`。
+   - 来源：批次 1 恢复+复杂度评审、批次 2 命令面复评。
+
+2. **`regression_available` 指纹复用校验**（机制）
+   - 当前 `e2e_coverage_state` 三态可计算，但 cold-start 与 regression 的**有效性判定**（已存在 spec/fixture 是否还能复用）未实现。
+   - 来源：L3-S7 §4.3、批次 2。
+
+3. **RegisterPlan 失败遗留目录的原子性**（机制）
+   - `prepareVerificationWorkspace` 在 RegisterPlan 失败前已 `mkdir -p e2e-workspace/<name>`，失败时目录被遗留。
+   - 来源：cold-start E2E 验证轮 B2（已与真正的 R6 修复合并报告）。
+
+### CLI/UX 层
+
+4. **第三方测试 fixture 同步**（CLI）
+   - `internal/qualitygate/evaluator_test.go` 与 fixtures 仍引用已被 catalog 删除的 `delivery_review_record` / `qa_review_record` / `e2e_review_record` 自名别名。
+   - 来源：catalog 别名审计。
+
+### 环境/平台层
+
+5. **真实 Claude Code 2.1.218 平台 doctor**（环境）
+   - 全程基于文档记载的 payload 形状与官方 `exit 2`/stderr 反馈语义。环境无 Claude Code 运行时，无法实测。
+   - 来源：L4 §15.2 P0-3/4、S7 批次 1 闭环条件。
+
+### 产品侧（依赖产品代码注入）
+
+6. **产品侧浏览器/Playwright wrapper 的注入式采集**（产品侧）
+   - harness 已提供 capture buffer + 脱敏 gate + 并入 binding（capture exec + capture step），产品侧 wrapper 需自行实现把 console/network/timeline 注入 buffer 的桥。
+   - 手册 `loop-harness.md §capture` 的 `### Product-side wrappers` 段已写契约。
+   - 来源：批次 2 §6.3/§8、批次 1 capture tester。
+
+### 长期演进信号（非缺口，是观察）
+
+- **readiness 多缺陷聚合**：当前 `validateInvestigationReadiness` 一次只报一个缺口，Reviewer 改完再触发第二个。改为聚合报告可减少 review iteration。
+  - 来源：批次 1 Reviewer tester。
+- **s7 status / next 视图合并**：当前 `status` / `next` / `s7 status` 三视图职责边界清晰但职责重合（白盒评审建议合并），评估时机待定。
+- **`runtime review-result` 与 `runtime review-result submit` 双形态并存**：保留是为了向后兼容；建议在某 major 版本统一为单动词。

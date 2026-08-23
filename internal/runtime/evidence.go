@@ -44,6 +44,14 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	if !catalog.IsRegisteredKind(request.Kind) {
 		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q; registered kinds: %s", request.Kind, strings.Join(catalog.RegisteredKinds(), ", "))
 	}
+	// finding_supplement is pipeline-owned: review.SubmitSupplement persists
+	// the entities.finding_supplements index row and the evidence entry in one
+	// runtime CAS transaction. A manual add would register an evidence row
+	// with no supplement index row — a half-registered supplement — so this
+	// entry point fails closed with the authoritative path.
+	if strings.TrimSpace(request.Kind) == "finding_supplement" {
+		return Snapshot{}, fmt.Errorf("evidence kind %q is pipeline-owned: persist supplements with `runtime finding-supplement` (appends the entities.finding_supplements row and the finding_supplement evidence entry in one CAS transaction); manual evidence registration would split the supplement index from the evidence log", request.Kind)
+	}
 	if len(request.ProducedBy) == 0 {
 		return Snapshot{}, fmt.Errorf("evidence produced_by is required")
 	}
