@@ -58,17 +58,30 @@ func HandlePostToolUse(input policy.Input, agents []AgentRow) PostToolUseObserva
 	}
 }
 
-// AgentRow is the minimal agent fact the observer reads.
+// AgentRow is the minimal agent fact the observer reads. DispatchMode is
+// populated by the CLI transport so the plan_checkpoint auto-chain gate
+// can run before any side-effecting CAS call. Keep the field optional so
+// the existing HandlePostToolUse ladder keeps its current contract.
 type AgentRow struct {
-	ID    string
-	State string
+	ID           string
+	State        string
+	DispatchMode string
 }
 
-// identifySender applies the three-level identification ladder.
+// identifySender applies the identification ladder: payload agent_id →
+// official top-level teammate_name (2.1.218 Agent Teams payloads) →
+// tool_input.teammate_name → the sole agent waiting on its plan checkpoint.
 func identifySender(input policy.Input, agents []AgentRow) string {
 	if input.AgentID != "" {
 		for _, a := range agents {
 			if a.ID == input.AgentID {
+				return a.ID
+			}
+		}
+	}
+	if input.TeammateName != "" {
+		for _, a := range agents {
+			if a.ID == input.TeammateName {
 				return a.ID
 			}
 		}

@@ -44,6 +44,10 @@ var auditMu sync.Mutex
 //	         protocol payload). Hook must not influence the tool caller.
 //	deny   → PreToolUse rejection with recovery instructions; no human Gateway.
 //	block  → PreToolUse rejection reserved for a human-only hard stop.
+//	         TeammateIdle/SubagentStop: the transport (cli evaluate) exits 2
+//	         with RenderStopBlockFeedback on stderr instead of using this
+//	         payload — the official platform control that continues the same
+//	         agent (L4 §15.2 P0-2; see stopidle.go).
 //
 // When decision.Decision is "audit" the partial audit record is appended to
 // <root>/.claude/hook-decisions.jsonl; when root is empty the call falls back
@@ -214,7 +218,10 @@ func renderPreToolUsePayload(body, permission string) ([]byte, error) {
 
 // renderSystemMessage renders the non-PreToolUse plain envelope for warn and
 // block decisions (the systemMessage-only shape used by SessionStart,
-// SubagentStop, TeammateIdle, etc.).
+// SubagentStop, TeammateIdle, etc.). Block decisions on
+// TeammateIdle/SubagentStop never reach this renderer from the CLI
+// transport — they exit 2 with stderr feedback (stopidle.go); this shape
+// remains for warn and for in-process/library callers.
 func renderSystemMessage(body string) ([]byte, error) {
 	return json.Marshal(map[string]any{"systemMessage": body})
 }

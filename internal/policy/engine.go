@@ -46,6 +46,11 @@ const (
 	// PLAN_REPORT is recorded (plan_checkpoint mode). The main session (no
 	// Agent context) is unaffected.
 	RuleAssignmentWriteBeforePlan = "assignment_write_before_plan"
+	// RuleUnauthorizedTaskSelfClaim enforces L4 §1.3 / §16.1: a teammate may
+	// not claim a Team task via TaskUpdate (owner=self or status=in_progress)
+	// unless the scheduler already dispatched that task to it. Ordinary
+	// status updates on the agent's own dispatched tasks stay allowed.
+	RuleUnauthorizedTaskSelfClaim = "unauthorized_task_self_claim"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -61,8 +66,17 @@ type AgentContext struct {
 	// (plan_checkpoint default). PlanReportedRef is set by the
 	// PostToolUse(SendMessage) observer (or the authoritative
 	// readback_submitted event) once the plan checkpoint is recorded.
-	DispatchMode     string `json:"dispatch_mode,omitempty"`
-	PlanReportedRef  string `json:"plan_reported_ref,omitempty"`
+	DispatchMode    string `json:"dispatch_mode,omitempty"`
+	PlanReportedRef string `json:"plan_reported_ref,omitempty"`
+	// TaskIDs is the scheduler-dispatched task set for this agent
+	// (entities.agents[].task_ids); the TaskUpdate self-claim guard reads it
+	// to tell an owned status update from an unauthorized claim. TeamID and
+	// CompletionReportedRef let the TeammateIdle/SubagentStop control path
+	// recognize the exact teammate and its registered Result without
+	// guessing from message text (L4 §15.2 P0-1).
+	TaskIDs               []string `json:"task_ids,omitempty"`
+	TeamID                string   `json:"team_id,omitempty"`
+	CompletionReportedRef string   `json:"completion_reported_ref,omitempty"`
 }
 
 // TeamSummary is a lightweight view of a registered team manifest consumed by
@@ -93,25 +107,25 @@ type LockedArtifact struct {
 // the two retained decisions. The remaining fields are data carriers for
 // downstream consumers and are preserved until BUG-02/03 migrate them away.
 type RuntimeContext struct {
-	RuntimeID          string           `json:"runtime_id"`
-	Revision           int              `json:"revision"`
-	BoundREQID         string           `json:"bound_req_id,omitempty"`
-	BoundREQPath       string           `json:"bound_req_path"`
-	BoundREQUIImpact   string           `json:"bound_req_ui_impact"`
-	Agent              *AgentContext    `json:"agent"`
-	CurrentState       string           `json:"current_state"`
-	CurrentPhase       string           `json:"current_phase"`
-	Paused             bool             `json:"paused"`
-	CleanRound         any              `json:"clean_round"`
-	CurrentReviewRound int              `json:"current_review_round"`
-	EvidenceValidCount int              `json:"evidence_valid_count"`
-	OpenBlockingBugs   int              `json:"open_blocking_bugs"`
-	Teams              []TeamSummary    `json:"teams,omitempty"`
-	LastActivityAt     string           `json:"last_activity_at,omitempty"`
-	ProjectRoot        string           `json:"project_root,omitempty"`
-	CurrentStage       string           `json:"current_stage,omitempty"`
-	CurrentBaselineGeneration int       `json:"current_baseline_generation,omitempty"`
-	LockedArtifacts    []LockedArtifact `json:"locked_artifacts,omitempty"`
+	RuntimeID                 string           `json:"runtime_id"`
+	Revision                  int              `json:"revision"`
+	BoundREQID                string           `json:"bound_req_id,omitempty"`
+	BoundREQPath              string           `json:"bound_req_path"`
+	BoundREQUIImpact          string           `json:"bound_req_ui_impact"`
+	Agent                     *AgentContext    `json:"agent"`
+	CurrentState              string           `json:"current_state"`
+	CurrentPhase              string           `json:"current_phase"`
+	Paused                    bool             `json:"paused"`
+	CleanRound                any              `json:"clean_round"`
+	CurrentReviewRound        int              `json:"current_review_round"`
+	EvidenceValidCount        int              `json:"evidence_valid_count"`
+	OpenBlockingBugs          int              `json:"open_blocking_bugs"`
+	Teams                     []TeamSummary    `json:"teams,omitempty"`
+	LastActivityAt            string           `json:"last_activity_at,omitempty"`
+	ProjectRoot               string           `json:"project_root,omitempty"`
+	CurrentStage              string           `json:"current_stage,omitempty"`
+	CurrentBaselineGeneration int              `json:"current_baseline_generation,omitempty"`
+	LockedArtifacts           []LockedArtifact `json:"locked_artifacts,omitempty"`
 	// VerificationWorkspace is the S7 ReviewPlan's verification artifact
 	// write surface (E2E cold-start spec/fixture/evidence). The reviewer
 	// product-write deny allows writes only inside it plus the control-plane
@@ -128,6 +142,28 @@ type Input struct {
 	TargetID  string          `json:"target_id"`
 	Facts     map[string]bool `json:"facts"`
 	Runtime   RuntimeContext  `json:"runtime_context"`
+	// Official Claude Code 2.1.218 TeammateIdle/SubagentStop payload fields
+	// (L4 §15.2 P0-1). TeammateIdle carries teammate_name/team_name and no
+	// agent_id; SubagentStop carries agent_id/agent_transcript_path/
+	// last_assistant_message/stop_hook_active. They are preserved verbatim
+	// so controller/policy rules can identify the exact teammate from the
+	// platform payload instead of guessing.
+	TeammateName         string `json:"teammate_name,omitempty"`
+	TeamName             string `json:"team_name,omitempty"`
+	TranscriptPath       string `json:"transcript_path,omitempty"`
+	AgentTranscriptPath  string `json:"agent_transcript_path,omitempty"`
+	LastAssistantMessage string `json:"last_assistant_message,omitempty"`
+	StopHookActive       bool   `json:"stop_hook_active,omitempty"`
+}
+
+// EffectiveAgentID resolves the platform-supplied agent identity: SubagentStop
+// payloads carry agent_id, TeammateIdle payloads carry teammate_name instead.
+// Returns "" when the payload identifies no agent (main session).
+func (input Input) EffectiveAgentID() string {
+	if input.AgentID != "" {
+		return input.AgentID
+	}
+	return input.TeammateName
 }
 
 // Decision is the per-rule outcome emitted by the policy engine. In the
@@ -269,7 +305,66 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
 		return decision, nil
 	}
+	if decision, blocked := taskUpdateSelfClaimDecision(input); blocked {
+		return decision, nil
+	}
 	return Decision{Decision: "allow"}, nil
+}
+
+// EvaluateAgentScoped exposes the rules that require a platform-identified
+// agent (Runtime.Agent resolved from agent_id/teammate_name). The Controller
+// cycle's safety input carries no Agent context, so the Hook transport calls
+// this after hookctx resolution. The first-write barrier
+// (assignment_write_before_plan) and the TaskUpdate self-claim guard both
+// run here — the wire path now enforces the L4 §7.6 first-write barrier
+// for any dispatched Worker that writes into the product surface before
+// its PLAN_REPORT is recorded (L4 §15.2 P1-3 close-out).
+func EvaluateAgentScoped(input Input) (Decision, bool) {
+	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
+		return decision, true
+	}
+	return taskUpdateSelfClaimDecision(input)
+}
+
+// taskUpdateSelfClaimDecision blocks a teammate that uses TaskUpdate to
+// claim a task the scheduler never dispatched to it (setting owner to itself
+// or flipping status to in_progress). Status updates on tasks already in the
+// agent's dispatched set — including marking them completed — are not
+// claims and pass through.
+func taskUpdateSelfClaimDecision(input Input) (Decision, bool) {
+	if input.ToolName != "TaskUpdate" {
+		return Decision{}, false
+	}
+	agent := input.Runtime.Agent
+	if agent == nil {
+		// Main session (no Agent context) owns scheduling; out of scope.
+		return Decision{}, false
+	}
+	taskID, _ := input.ToolInput["taskId"].(string)
+	if taskID == "" {
+		taskID, _ = input.ToolInput["task_id"].(string)
+	}
+	if taskID == "" {
+		return Decision{}, false
+	}
+	status, _ := input.ToolInput["status"].(string)
+	owner, _ := input.ToolInput["owner"].(string)
+	if status != "in_progress" && owner != agent.ID {
+		return Decision{}, false
+	}
+	if contains(agent.TaskIDs, taskID) {
+		return Decision{}, false
+	}
+	return Decision{
+		Decision: "block",
+		RuleID:   RuleUnauthorizedTaskSelfClaim,
+		Reason:   fmt.Sprintf("Agent %s used TaskUpdate to claim task %s without a scheduler-dispatched assignment; teammates must not self-assign Team tasks (L4 §1.3)", agent.ID, taskID),
+		Recovery: []string{
+			"wait for the scheduler/Main to dispatch an assignment for " + taskID,
+			"only update tasks bound to your own assignment; completing your own dispatched task stays allowed",
+		},
+		Retry: "after_dispatch",
+	}, true
 }
 
 // assignmentWriteBeforePlanDecision is the L4 first-write barrier: a
@@ -277,6 +372,17 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 // PLAN_REPORT checkpoint) may not mutate the product surface yet. The rule
 // fires only when the Hook payload identifies a specific Agent — the main
 // session (no Agent context) is out of scope.
+//
+// Exempt surfaces (the reviewer_product_write allow list, aligned with
+// L3-S7 §8 / L4 §10.4):
+//
+//   - .claude/ — the control plane; plan checkpoint writes live here.
+//   - docs/reports/ — reviewer report projections (BUG-039 / L3-S7 §8).
+//   - <ReviewPlan.verification_artifact_workspace> — E2E cold-start
+//     spec/fixture work the ReviewPlan declared.
+//
+// Any other product-surface write while the plan checkpoint is still
+// missing is blocked so the Worker must send PLAN_REPORT first.
 func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 	if input.Runtime.Agent == nil {
 		return Decision{}, false
@@ -296,15 +402,48 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 	if agent.DispatchMode == "one_shot" {
 		return Decision{}, false
 	}
+	if firstWriteSurfaceAllowed(input) {
+		return Decision{}, false
+	}
 	return Decision{
 		Decision: "block",
 		RuleID:   RuleAssignmentWriteBeforePlan,
-		Reason: fmt.Sprintf("Agent %s is %s with no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", agent.ID, agent.State),
+		Reason:   fmt.Sprintf("Agent %s is %s with no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", agent.ID, agent.State),
 		Recovery: []string{
-			"write the plan report JSON and register it: `runtime agent-event --event readback_submitted --message <plan.json>`",
+			"send the PLAN_REPORT via SendMessage with message_type=plan_report — the PostToolUse(SendMessage) observer records the plan checkpoint (plan_reported_ref) automatically",
 			"then continue — no approval wait in plan_checkpoint mode",
 		},
 	}, true
+}
+
+// firstWriteSurfaceAllowed mirrors reviewerProductWriteDecision's allow
+// list (the control plane, report projections, and the ReviewPlan's
+// verification artifact workspace) so the first-write barrier does not
+// block writes that the S7 frozen-baseline rule already exempts (L3-S7
+// §1.4.1 / §8 / L4 §10.4).
+func firstWriteSurfaceAllowed(input Input) bool {
+	rawPath, _ := input.ToolInput["file_path"].(string)
+	if rawPath == "" {
+		return false
+	}
+	rel := strings.TrimPrefix(filepath.ToSlash(rawPath), "./")
+	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
+		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
+			if r, err := filepath.Rel(rootAbs, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
+				rel = filepath.ToSlash(r)
+			}
+		}
+	}
+	allowed := []string{".claude/", "docs/reports/"}
+	if workspace := strings.TrimSuffix(input.Runtime.VerificationWorkspace, "/"); workspace != "" {
+		allowed = append(allowed, workspace+"/")
+	}
+	for _, prefix := range allowed {
+		if strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // reviewerProductWriteDecision enforces the S7 frozen-baseline invariant

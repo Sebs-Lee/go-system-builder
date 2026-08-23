@@ -661,6 +661,13 @@ func projectZeroSelected(
 	candidates []transition.TransitionSpec,
 	results []automaticGateEval,
 ) (gateID string, evaluation qualitygate.Evaluation, candidate *transition.TransitionSpec) {
+	// The projected candidate is user-facing guidance (ready / recovery
+	// packets): a tie between equally-eligible candidates must resolve
+	// deterministically regardless of upstream collection order, so sort
+	// by candidate ID before picking (2026-08-23 E2E dogfood: ready
+	// flapped between two pause gates in a running verification round).
+	results = append([]automaticGateEval(nil), results...)
+	sort.Slice(results, func(i, j int) bool { return results[i].candidate.ID < results[j].candidate.ID })
 	eventByID := make(map[string]string, len(candidates))
 	phaseLocal := make(map[string]bool, len(candidates))
 	for _, spec := range candidates {
@@ -885,6 +892,15 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 	// with the same loader the hook transport uses.
 	rt.LockedArtifacts = hookctx.LockedArtifactsFromSnapshot(snapshot)
 	rt.CurrentStage = stageOf(snapshot.State)
+	// The reviewer product-write rule allows the ReviewPlan's declared
+	// verification artifact workspace (E2E cold-start spec/fixture surface).
+	// Without this projection the wire path hard-denies the one write
+	// surface a cold-start E2E Reviewer is supposed to use (L3-S7 §8).
+	if reviewState, ok := snapshot.State["review"].(map[string]any); ok {
+		if plan, ok := reviewState["plan"].(map[string]any); ok {
+			rt.VerificationWorkspace, _ = plan["verification_artifact_workspace"].(string)
+		}
+	}
 	if baseline, ok := snapshot.State["baseline"].(map[string]any); ok {
 		rt.CurrentBaselineGeneration = int(baseline["generation"].(float64))
 	}

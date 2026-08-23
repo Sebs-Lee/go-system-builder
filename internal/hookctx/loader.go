@@ -393,6 +393,17 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			if agent.PlanReportedRef != nil {
 				context.Agent.PlanReportedRef = *agent.PlanReportedRef
 			}
+			// L4 §15.2 P0-1: surface the dispatched task set, team and
+			// registered completion ref so the TaskUpdate self-claim guard
+			// and the TeammateIdle/SubagentStop control path can recognize
+			// the exact teammate from runtime facts.
+			context.Agent.TaskIDs = append([]string(nil), agent.TaskIDs...)
+			if agent.TeamID != nil {
+				context.Agent.TeamID = *agent.TeamID
+			}
+			if agent.CompletionReportedRef != nil {
+				context.Agent.CompletionReportedRef = *agent.CompletionReportedRef
+			}
 			if agent.ActivationRef == nil {
 				break
 			}
