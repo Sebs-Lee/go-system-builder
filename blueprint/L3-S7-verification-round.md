@@ -467,6 +467,7 @@ S7 使用“先建立前置事实、再把所有必要验证做完”的流动�
 3. E2E coverage inventory、环境/账号/数据/入口/spec write-surface preflight 与 DV/QA 并行，避免静态 Claims 完成后才发现 E2E cold start 或环境空白；
 4. 所有 required DV/QA static Claims 必须先完整 disposition，再按真实依赖解锁行为 E2E，但普通 Finding 不取消后续安全 E2E；
 5. static Claims 完成后释放仍适用的 E2E 和专项 Assignment；`cannot_clean` 只决定最终去 S8，不降低 required coverage；
+   Assignment DAG 的依赖只有在上游 Result 已被消费并形成 terminal Claim disposition 后才进入 Ready；P0、pause、seal/clean 会先关闭 admission gate，不在同一事务里释放排队 Assignment；
 6. 不设置固定 WIP、Agent 数量上限或 token budget gate。所有依赖独立且 resource lock 不冲突的 ready Assignments 都可派发；平台并发槽不足时进入确定性队列，不能删 Claim、缩 oracle 或把多个过载 scope 强塞给一个 Agent；
 7. Assignment 拆分以“一个 Worker 能在一个可恢复上下文内完整理解并高质量交卷”为准。token 成本不能否决必要拆分；只有 read set、方法和 oracle 高度重合的真实重复工作才合并；
 8. 普通 Finding 后继续完成剩余 required Claims；只有 Result/Finding 携带 `source_ref + affected_surface` 时才触发一次受控 Claim revision，revision 后完成 exact disposition 即收口；
@@ -1117,6 +1118,101 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 > - **仍待修复**：R6（CLI 路径解析）、R7（controller 抢停 stop-idle 门）、R8（错误信息 next-action 加强）、
 >   capture exec 终端 pass-through 秘密泄漏、RegisterPlan 失败遗留目录、命令面拆分、真实平台 doctor。
 >
+> **2026-08-24 审计（复杂度审查第二轮：冷读引导链 + 沙箱 round-2 pause 链代入）**：
+> 方法 = 一个冷读 sub-agent 走完整引导链（manual/protocol/skill/agents/templates），同时沙箱重置 round-2
+> 实际驱动 dispatch→auto-chain→pause verdict→TR-010 全链并逐条记录 agent 可见输出。
+> - **冷读致命项核实（3 条全部为虚假报警）**：`scenario-model-design` skill 存在（子代理目录列表过期）；
+>   "RESULT/QA/E2E 三模板同称 Canonical 投影无选用规则"实为单一 RESULT-template + 三张口径一致的 agent 卡；
+>   e2e-tester 写面矛盾已在第一轮修复（cold_start 只写 verification_artifact_workspace）。
+> - **确认并修复（5）**：
+>   ① **manual 缺 S7 动词**（HIGH，冷读首要卡点）：恢复手册对 review-plan/review-result/capture/s7/register-workgroup
+>   零条目，而 CLI usage 页脚恰恰把用户指向它。manual 生成器 Controller recovery protocol 增第 7 条（S7 动词总目 +
+>   机器出口自动提交声明 + `s7 status` 板），两份 manual 重生成；
+>   ② **subject_digest 不可计算**（HIGH，沙箱实证）：submit 强校验该值但 agent 无可见来源（算法只在 schema 描述里）。
+>   `s7 status` 增 subject_digest 行，submit mismatch 错误与 RESULT-template 同步指向它；
+>   ③ **孤儿 artifact 死路**（HIGH，沙箱实证）：Apply 期拒绝（reviewer 非 working）后 staged bytes 被保守保留，
+>   纠正重交被 "file exists" 挡死且无恢复指引。CAS 失败后重读 state——revision 未变即未提交，清理 staged 文件；
+>   writeArtifact 的 ErrExist 分支给出删除/换 id 指引；回归测试覆盖"拒绝→清理→纠正→同 result_id 重交成功"全链；
+>   ④ **PLAN_REPORT 形状不可发现**（HIGH，沙箱实证）：合法 envelope 需 20 个必填字段（base 12 + plan 8，
+>   steps/assertion_checks 是对象），skill 只列内容字段——冷写者首交必败（本审查作者代入手写也第一遍失败）。
+>   agent-dispatch skill 增完整最小范例 + examples 文件指针，并澄清 plan_ref 是 SendMessage 参数不在 JSON 体内；
+>   ⑤ **QA-template §5 S8 残留**（MEDIUM）：首轮报告无 BUG 可填造成困惑，标注 repair-rounds-only。
+> - **平台边界如实声明（未修，设计权衡）**：首写屏障 `assignment_write_before_plan` 在 PreToolUse 只解析顶层
+>   agent_id/teammate_name——当前平台 payload 两者皆无，屏障在生产休眠（WS3 方案的"同上三级识别"未接入 PreToolUse：
+>   sole-reading 兜底若用于 PreToolUse 会把主会话写误归给唯一 reading agent，与"主会话豁免"矛盾）。安全底线不受影响——
+>   `reviewer_product_write` 不依赖身份，verification 阶段对所有人硬拒（沙箱实证）。真实接线仍等平台 payload 官方身份
+>   字段（13.A-5）。
+> - **沙箱 round-2 实证链**：s7 status（含新 digest 行）→ manifest-draft（TODO(planner) 标注 + 8 条 note）→
+>   register-workgroup → 故意首交失败（fail-claim-no-finding，拒绝信息点明规则）→ reading 态拒绝（含精确
+>   agent-begin 恢复命令）→ 合法 PLAN_REPORT 观察 auto-chain 至 working → pause verdict 提交（checkpoint 事务内建 +
+>   "route via TR-010" 指引）→ PreToolUse 自动提交 TR-010 → paused。capture 合并与 TR-008/TR-009 出口由既有确定性
+>   测试覆盖（TestSubmitResultMergesCaptureBufferIntoEmptyTimeline、TestCT03913* 系）。
+> - **错误信息抽检**：submit 六类拒绝（schema/round/generation/assignment_revision/digest/fail-claim）全部
+>   "缺什么 + 精确下一动作"合规；agent-message oneOf 剪枝在 planReport 分支实测生效（closest-branch + 缺字段清单）。
+> - **验证**：go test ./... 全绿、validate --all 通过、doctor 通过（manual current）。命令面拆分（review-plan
+>   register/revise、register-workgroup S6 词汇）维持 13.A 待做不动。
+>
+> **2026-08-24 审计（复杂度审查第三轮：完整冷启动全链代入 + 冷读链复核）**：
+> 方法 = 冷读 sub-agent 复核上轮修复后的完整引导链，同时两个全新沙盒从"TR-006 刚提交"的入口态完整驱动：
+> r3 finding 轮（入口→draft→注册→双 workgroup→auto-chain→capture→finding→drain→seal→TR-008→S8 入口包）与
+> r4 clean 轮（全 pass→机器 CleanRound→TR-009→acceptance）。加上 round-2 的 pause→TR-010，S7 四类出口全部沙盒实证。
+> - **引导链结论（改善显著）**：SessionStart 入口包把第一动作精确到命令（`s7 draft --out plan.json` → 填 TODO oracle →
+>   `runtime review-plan --file`）并附 S7 三桶投影（running/queued/blocked/unconsumed）；`s7 status` 是全程单点看板；
+>   submit 的各拒绝信息全部"缺什么+精确下一动作"。注册期构造错误（task 枚举、milestone 必填、顶层多余键）逐条点名。
+> - **修复（9 项）**：
+>   ① **`--captures` 目录/文件不匹配静默失效**（真缺陷，沙盒实测撞到）：flag 帮助写 "dir" 而实现读文件——传目录
+>   os.ReadFile 静默失败、零步骤并入、finding timeline 无声丢失。CLI 现归一目录→steps.jsonl + 帮助文案更新 +
+>   空缓冲提示；新增 CLI 级回归测试（目录传参→merge 生效）；
+>   ② **`capture step` 成功输出补 buffer 路径**（原先 agent 到 submit 时不知道 steps.jsonl 在哪）；
+>   ③ **TR-008 篡改检测缺口**（沙盒实测：删除已索引 finding 文件后 seal 与 TR-008 照常通过）：batch gate 现对每个
+>   batch finding 复验证据行存在 + 文件可读 + sha256 匹配（unindexed / unreadable / hash_mismatch 三个 missing
+>   token）；req039 fixture 同步补 finding 索引行（真实 submit 事务本就会写）；
+>   ④ 三张 reviewer 卡 Output Contract 补 subject_digest 来源（`s7 status` 复制；冷读确认卡内原先无此指引）；
+>   ⑤ protocol #s7 dispatch 步补 `s7 manifest-draft`（冷读报告的"幻影动词"实为 protocol 漏引）；
+>   ⑥ README §9"Two-Phase Agent Activation"整节重写为三模式（plan_checkpoint 默认 + auto-chain；两轮时序图保留为
+>   plan_approval_required 例外）；prelude.md 激活段同步改写；
+>   ⑦ agent-dispatch skill 补 SendMessage 包装示例（plan_ref 是 tool_input 参数——只给 JSON 体时冷读代理也判"易漏"）；
+>   ⑧ manual item 7 补 `runtime agent-begin` 兜底动词 + submit flag 顺序与 protocol 统一（--assignment-id 在前）；
+>   ⑨ journal cursor 错误补分方向指引（崩溃窗口→`runtime reconcile` 可回放；截断/手改→人工对齐）；
+>   writeArtifact 的 ErrExist 文案泛化（不再在 plan 注册语境说 result_id/finding_id）。
+> - **冷读卡点核实（3 条澄清非缺陷）**：AGENTS.md 在源仓库不存在但模板项目安装后存在（prelude 安装流复制）；
+>   "QA-template 与 schema 不匹配"实为 markdown 投影 vs JSON 权威的关系（模板头已补权威指针行）；
+>   "E2E 模板缺失"实为 RESULT-template 三 lens 通用（e2e 卡已补指针）。
+> - **过程教训**：沙盒二进制必须每轮重编——本轮陈旧二进制制造了一次假"孤儿 artifact 复现"（新二进制 + Go 探针
+>   双重确认 RegisterPlan 的失败清理在当前代码正确）；冷读 sub-agent 的目录列表可能过期（round-2 的
+>   scenario-model-design 误报同源），其 FATAL 声明须逐条对照仓库核实。
+> - **验证**：go test ./... 全绿（含新回归：captures 目录归一、batch 篡改检测）、validate --all、doctor（manual current）。
+>
+> **2026-08-24 审计（复杂度审查第四轮：E2E cold-start / revise / P0 三条未测路径代入）**：
+> 方法 = 冷读 sub-agent 以 E2E Tester 视角走引导链 + 沙盒 r5 从 cold_start 注册起完整驱动：
+> 注册（workspace 创建）→ **revise 一次成功/二次拒绝**（文案点名规则）→ **behavior-wave 门**（static 未结算时
+> 注册被拒并解释 L3-S7 §5.2；结算后解锁）→ 三 workgroup + 双 PLAN_REPORT auto-chain → workspace 写 spec →
+> `s7 workspace-digest` → 错 digest 提交 → 正确 digest **P0 finding** → immediate_stop seal → TR-008 自动提交 → S8。
+> - **修复（6 项）**：
+>   ① **digest 不匹配废轮死锁**（真缺陷，沙盒实测）：E2E 结果绑错 `verification_artifact_digest`（一次手误/晚存
+>   一次 fixture 即可触发）走了 frozen-subject 漂移同款 `staleReviewPlanAfterDrift`——整轮连同已消费的 static 结果
+>   全部作废，而错误信息却说"重跑后再交"，信息与后果矛盾。真实漂移威胁由 seal 时 `verifySealedArtifactDigests`
+>   独立兜底；submit 时 mismatch 改为纯拒绝 + 恢复指引（重算 digest、spec 变了就重跑、再交），既有测试只断言
+>   "拒绝"故不受影响；
+>   ② **`s7 workspace-digest` 在 E2E 引导面零指引**（冷读卡点）：动词存在（第一轮已建、submit 错误会指向它）但
+>   e2e 卡、e2e-browser-testing skill、manual item 7 全都没提。三处补齐；RESULT-template 同步；
+>   ③ **P0 `capture_gaps` 要求未写进 E2E 面**：P0 无 capture_gaps 会被 submit 拒（单测既有），但 E2E 卡/skill/模板
+>   都没说。三处补齐（"P0 stop-the-line：必须填 capture_gaps"）；
+>   ④ **E2E-template.md 实际存在**（第三轮冷读"无 E2E 模板"系目录列表不全的误报，本轮我险些覆盖它）：其 §7 已含
+>   七字段记账。但 §9 教 E2E 手写 BUG 草稿与机器自动建 BUG（TR-008 每 Finding 一份）矛盾，且缺 digest/capture_gaps
+>   指引——已改写为"机器负责 BUG 草稿，你负责 investigation-ready Finding + 幂等重跑指令"；并把该模板纳入
+>   migration 检查清单（required: 七字段、workspace-digest、capture_gaps）；
+>   ⑤ e2e 卡七字段记账与 finding schema 槽位不对齐（schema 无 recovery/rejection/expected_state 槽）：卡与模板
+>   补映射说明（写入 observed/timeline/terminal_state/side_effects/visible_impact 且可读）；
+>   ⑥ protocol 补 capture step 与 inline timeline 的分工（观察中录 capture step——输出带 buffer 路径；事后编写才
+>   inline；`--captures` 只并入空 timeline，接目录或文件均可）。
+> - **en route 记录**：manifest skill_refs 需裸名（错误信息可懂）；assignment 结构（non_overlap_boundary 必填、
+>   dependencies 在 claim 级）——`s7 manifest-draft` 生成器天然正确，手写者由 schema 错误兜底；P0-with-remaining-
+>   claims 形态由 submit matrix 单测覆盖（本轮 r5 static 已结算故 unobserved 为空）。
+> - **冷读误报澄清**：SendMessage 示例形状（teammate_name/message_type/plan_ref in tool_input）与观察者解析契约一致，
+>   保留；workspace 相对路径疑虑由注册错误文案兜底（"must live under e2e-workspace/"）。
+> - **验证**：go test ./... 全绿、validate --all、doctor（manual current）。
+>
 > **2026-08-23 审计（验证轮后续：四工作包修复 R6/R7/R8/R10）**：
 > - **R6（register-workgroup `--root` 路径不一致）已修**：所有走 `runtime.NewStore`/`runtime.NewWriter` 的入口在 `resolveExpectedRevision`
 >   与 verb 注册/写入之间统一 `resolveRootPath(root, statePath)`；同步修复同类 bug 的 `runtime fingerprint` 与 `runtime reconcile-policy-ref`，
@@ -1167,7 +1263,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 
 1. 定义 ReviewPlan/Claim/ReviewResult/Finding/FindingSupplement/ObservationBatch/CleanRound schema；ReviewPlan 只持有单一 required Claim set，静态/E2E/discovery 是计算视图；verification-artifact workspace 仅为 E2E cold start 可选能力，Finding 内含按 observation mode 判别的 encounter，不新增顶层 Failure Episode 状态机；
 2. 实现 `verification result init/submit`；
-3. Result submit 从 capture buffer 固化 encounter、校验 investigation readiness，并原子登记 Finding、pause checkpoint 和路由事实；实现 cannot-clean、剩余 Claim drain 与 batch seal；
+3. Result submit 从 capture buffer 固化 encounter、校验 investigation readiness，并原子登记 Finding、pause checkpoint 和路由事实；实现 cannot-clean、剩余 Claim drain 与 batch seal；冻结 subject、Pinned Plan 或 E2E workspace 漂移必须把 ReviewPlan 持久化为 `stale`，而不是只返回一次性错误；
 4. plan validator 校验 required DV/QA focus 与 E2E persona/flow/surface → Claim → Assignment → oracle coverage，将静态 Claim 设为行为 E2E 顺序前置，并拒绝 Agent/token 上限裁剪 required coverage或无 source 的范围扩张；
 5. clean evaluator 按当前 ReviewPlan exact set 核验 conclusion/producer/round/fingerprint；
 6. Reviewer 产品写路径 hard deny；
@@ -1376,6 +1472,9 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 28. 旧轮 evidence 仍在索引就让新轮失败，或用旧 ID 满足新轮；CleanRound 只读 exact current set；
 29. 只更新本文件却不改 Hook/Schema/CLI，就宣称机制已强制；§13 明确列出实现差距。
 
+30. 把 `PLAN_REPORT` 的 message_type 当成事实；PostToolUse 只有在 plan_ref/plan_path 指向当前 Assignment、当前 revision 且通过 agent-message schema 校验时，才会写入 `plan_reported_ref`；缺 ref 或错绑定只产生观察提示，不清除首写屏障。
+31. 在运行时检查点不可读时让变更型 PreToolUse 继续执行；控制器无法确认写入边界时，Write/Edit/Bash 等变更型工具 fail-closed，恢复运行时后再重试。
+
 ### 16.2 阅读预算
 
 - **理解 S7 主线**：读 §0、§1、§2、§5；
@@ -1416,10 +1515,6 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 2. **`regression_available` 指纹复用校验**（机制）
    - 当前 `e2e_coverage_state` 三态可计算，但 cold-start 与 regression 的**有效性判定**（已存在 spec/fixture 是否还能复用）未实现。
    - 来源：L3-S7 §4.3、批次 2。
-
-3. **RegisterPlan 失败遗留目录的原子性**（机制）
-   - `prepareVerificationWorkspace` 在 RegisterPlan 失败前已 `mkdir -p e2e-workspace/<name>`，失败时目录被遗留。
-   - 来源：cold-start E2E 验证轮 B2（已与真正的 R6 修复合并报告）。
 
 ### CLI/UX 层
 
