@@ -33,12 +33,26 @@ func TestS7StatusIncludesMetricsSummary(t *testing.T) {
 		"last_sequence": 0,
 		"last_event_id": nil,
 	}
+	subjectBytes := []byte("fixture baseline")
+	subjectSum := sha256.Sum256(subjectBytes)
+	subjectRel := "internal/example/service.go"
+	if err := os.MkdirAll(filepath.Join(root, "internal", "example"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, subjectRel), subjectBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digestLines := subjectRel + ":" + fmt.Sprintf("%x", subjectSum[:])
+	digestSum := sha256.Sum256([]byte(digestLines))
 	planBytes, err := json.MarshalIndent(map[string]any{
 		"schema_version": "1.0.0",
 		"review_plan_id": "review-plan-cli-1",
 		"review_round":   1,
-		"claims":         []any{},
-		"assignments":    []any{},
+		"frozen_subjects": []any{
+			map[string]any{"path": subjectRel, "sha256": fmt.Sprintf("%x", subjectSum[:]), "kind": "product_code"},
+		},
+		"claims":      []any{},
+		"assignments": []any{},
 	}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +114,7 @@ func TestS7StatusIncludesMetricsSummary(t *testing.T) {
 	}
 	for _, want := range []string{
 		"metrics (S7 §14.2 machine-collectible):",
+		fmt.Sprintf("subject_digest: %x", digestSum[:]),
 		`loop_s7_assignments{round="1"} 2`,
 		`loop_s7_claims{round="1"} 4`,
 		`loop_s7_result_submits_total{outcome="accepted"} 1`,

@@ -56,6 +56,15 @@ func worktreeProjectRoot(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Frozen subjects are verified against the shared project root even when
+	// the plan file is authored in a worktree. Seed the committed baseline so
+	// both checkouts describe the same bytes.
+	if err := os.MkdirAll(filepath.Join(root, "internal", "example"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "example", "service.go"), []byte("worktree baseline"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	stateBytes, err := schema.ReadAsset("loop-state.example.json")
 	if err != nil {
@@ -120,13 +129,21 @@ func runGit(t *testing.T, root string, args ...string) {
 
 func minimalReviewPlan(t *testing.T, dir, planID string) string {
 	t.Helper()
+	subjectPath := filepath.Join(dir, "internal", "example", "service.go")
+	if err := os.MkdirAll(filepath.Dir(subjectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	subjectBytes := []byte("worktree baseline")
+	if err := os.WriteFile(subjectPath, subjectBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	plan := map[string]any{
 		"schema_version":      "1.0.0",
 		"review_plan_id":      planID,
 		"review_round":        1,
 		"baseline_generation": 1,
 		"frozen_subjects": []any{
-			map[string]any{"path": "internal/example/service.go", "sha256": strings.Repeat("c", 64), "kind": "product_code"},
+			map[string]any{"path": "internal/example/service.go", "sha256": fmt.Sprintf("%x", sha256.Sum256(subjectBytes)), "kind": "product_code"},
 		},
 		"claims": []any{
 			map[string]any{
@@ -150,13 +167,13 @@ func minimalReviewPlan(t *testing.T, dir, planID string) string {
 		"assignments": []any{
 			map[string]any{
 				"assignment_id": "assignment-dv-1", "lens": "delivery",
-				"claim_ids": []string{"claim-dv-1"},
+				"claim_ids":            []string{"claim-dv-1"},
 				"non_overlap_boundary": "owns traceability",
 				"execution_wave":       "static",
 			},
 			map[string]any{
 				"assignment_id": "assignment-qa-1", "lens": "qa",
-				"claim_ids": []string{"claim-qa-1"},
+				"claim_ids":            []string{"claim-qa-1"},
 				"non_overlap_boundary": "owns error propagation",
 				"execution_wave":       "static",
 			},
@@ -295,6 +312,7 @@ func TestReviewResultFromWorktreeWritesToSharedControlPlane(t *testing.T) {
 		"schema_version":      "1.0.0",
 		"result_id":           "review-result-worktree",
 		"assignment_id":       "assignment-dv-1",
+		"assignment_revision": 1,
 		"review_plan_id":      "review-plan-worktree-result",
 		"review_round":        1,
 		"baseline_generation": 1,
@@ -302,9 +320,9 @@ func TestReviewResultFromWorktreeWritesToSharedControlPlane(t *testing.T) {
 		"subject_digest":      digest,
 		"claim_results": []any{
 			map[string]any{
-				"claim_id":     "claim-dv-1",
-				"conclusion":   "pass",
-				"observed":     "trace passes",
+				"claim_id":      "claim-dv-1",
+				"conclusion":    "pass",
+				"observed":      "trace passes",
 				"evidence_refs": []string{"ev/dv.md"},
 			},
 		},

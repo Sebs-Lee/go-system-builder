@@ -106,6 +106,6 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "capture step: append: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "captured step %d for %s\n", step.Sequence, *assignmentID)
+	fmt.Fprintf(stdout, "captured step %d for %s (buffer: %s; pass it to `runtime review-result submit --captures`)\n", step.Sequence, *assignmentID, bufferPath)
 	return 0
 }

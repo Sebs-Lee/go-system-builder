@@ -82,13 +82,33 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	case "SubagentStart":
 		addDelegationPreflight(&guidance, input)
 		if input.Runtime.Agent != nil {
+			approvalRequired := input.Runtime.Agent.DispatchMode == "plan_approval_required"
 			switch input.Runtime.Agent.State {
-			case "spawned", "reading", "understanding_submitted":
+			case "spawned", "reading":
+				if !approvalRequired {
+					guidance.Missing = appendUnique(guidance.Missing, "plan_report")
+					guidance.Action = "read the assignment, send one PLAN_REPORT via SendMessage(message_type=plan_report, plan_ref=<path>), then continue executing immediately; do not wait for Main approval"
+					guidance.Automation = append(guidance.Automation, "plan_checkpoint is the normal dispatch mode; PLAN_REPORT is a live checkpoint, not a final response or an idle barrier")
+					break
+				}
+				guidance.Blocked = true
+				guidance.Blocker = "phase-one readback is not yet approved"
+				guidance.Missing = appendUnique(guidance.Missing, "agent_readback")
+				guidance.Action = "complete the assigned readback and wait for phase-two activation"
+			case "understanding_submitted":
+				if !approvalRequired {
+					guidance.Automation = append(guidance.Automation, "PLAN_REPORT was submitted; the PostToolUse observer auto-activates the Agent, so continue without a second Main turn")
+					break
+				}
 				guidance.Blocked = true
 				guidance.Blocker = "phase-one readback is not yet approved"
 				guidance.Missing = appendUnique(guidance.Missing, "agent_readback")
 				guidance.Action = "complete the assigned readback and wait for phase-two activation"
 			case "understanding_approved":
+				if !approvalRequired {
+					guidance.Automation = append(guidance.Automation, "plan_checkpoint does not require an approval turn; continue through the recorded checkpoint")
+					break
+				}
 				guidance.Blocked = true
 				guidance.Blocker = "phase-two activation has not been committed"
 				guidance.Missing = appendUnique(guidance.Missing, "activation_envelope")
@@ -420,7 +440,7 @@ func addDelegationPreflight(guidance *policy.Guidance, input policy.Input) {
 	guidance.Automation = append(guidance.Automation,
 		"use TeamCreate plus team_name for parallel or role-bearing execution; read-only Explore/Plan research is the narrow exemption",
 		"isolate execution in a worktree before writing",
-		"do not write until phase-one readback is approved and phase-two activation is committed",
+		"default: send one PLAN_REPORT through SendMessage while the Worker is running, then continue; only plan_approval_required waits for activation",
 	)
 }
 

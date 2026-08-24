@@ -1182,12 +1182,9 @@ type erroringWriter struct{}
 
 func (erroringWriter) Write(p []byte) (int, error) { return 0, fmt.Errorf("synthetic stdout failure") }
 
-// TestHookCommandFailsWhenHookctxLoadMissing rewrites the legacy
-// HOOK_RUNTIME_INTEGRITY assertion. When the runtime snapshot cannot be
-// loaded the Controller returns quality_gate=unknown + LOOP_RUNTIME_INVALID
-// (BE-039 §9) which still allows the tool per FR-009 ("not_ready" /
-// "unknown" must not block). The legacy HOOK_RUNTIME_INTEGRITY deny no
-// longer exists because runtime integrity is no longer a permission verdict.
+// TestHookCommandFailsWhenHookctxLoadMissing keeps the quality gate honest
+// while making mutating PreToolUse fail closed: a missing runtime cannot
+// prove that an Edit is outside the frozen product surface.
 func TestHookCommandFailsWhenHookctxLoadMissing(t *testing.T) {
 	root := copyPolicyToTempRoot(t)
 	input := `{
@@ -1199,22 +1196,20 @@ func TestHookCommandFailsWhenHookctxLoadMissing(t *testing.T) {
 	}`
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"hook", "--event", "PreToolUse", "--root", root}, strings.NewReader(input), &stdout, &stderr)
-	// The Controller must continue to allow the tool (minimal safety
-	// model). It must not produce a "deny" verdict.
-	if code == 2 {
-		t.Fatalf("runtime-integrity failure must not block under the minimal safety model, got code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code != 2 {
+		t.Fatalf("missing runtime must block a mutating tool, got code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	out := stdout.String()
-	if strings.Contains(out, `"permissionDecision":"deny"`) {
-		t.Fatalf("runtime-integrity failure must not surface a deny: %s", out)
+	if !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Fatalf("missing runtime must surface a deny decision: %s", out)
 	}
-	if strings.Contains(out, "HOOK_RUNTIME_INTEGRITY") {
-		t.Fatalf("legacy HOOK_RUNTIME_INTEGRITY rule_id must not appear: %s", out)
+	if !strings.Contains(out, "runtime_unreadable") {
+		t.Fatalf("deny must name runtime_unreadable: %s", out)
 	}
-	// The Controller-driven envelope should report unknown quality
-	// status when the runtime is unreadable.
-	if !strings.Contains(out, `"status":"unknown"`) {
-		t.Fatalf("missing runtime must drive quality_gate.status=unknown: %s", out)
+	// The final safety projection is blocked because runtime facts are
+	// unreadable; the controller still records the recovery checkpoint.
+	if !strings.Contains(out, `"status":"blocked"`) {
+		t.Fatalf("missing runtime must drive quality_gate.status=blocked: %s", out)
 	}
 }
 

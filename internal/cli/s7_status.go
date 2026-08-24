@@ -100,6 +100,12 @@ func runS7Status(root string, stdout io.Writer) int {
 		ptr.PlanID, ptr.Status, ptr.Revision, ptr.E2ECoverageState)
 
 	plan, _, planErr := review.LoadPlan(root, state)
+	if planErr == nil {
+		// Every ReviewResult must bind this exact digest; printing it here
+		// saves the reviewer from re-deriving the frozen-baseline hash
+		// (the submit-time verifier rejects mismatches).
+		fmt.Fprintf(stdout, "subject_digest: %s (every review-result submit must bind exactly this value)\n", review.SubjectDigest(plan))
+	}
 	dispositions := review.Dispositions(state)
 
 	// Claims grouped by lens, in plan order when loadable.

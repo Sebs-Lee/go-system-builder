@@ -1384,202 +1384,210 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			"integration":   guidance.Integration,
 			"revision":      updated.Revision,
 		}
-			if err := json.NewEncoder(stdout).Encode(payload); err != nil {
-				fmt.Fprintf(stderr, "encode task-integrate result: %v\n", err)
-				return 1
-			}
-			return 0
-		case "review-plan":
-			// S7 entry verb (L3-S7 §4.1): validates and pins the ReviewPlan,
-			// initializes claim/assignment projections, phase -> running.
-			// `revise` is the one controlled revision per round (§5.3).
-			revise := len(args) > 1 && args[1] == "revise"
-			flags := flag.NewFlagSet("runtime review-plan", flag.ContinueOnError)
-			flags.SetOutput(stderr)
-			bindUsage(flags, "runtime review-plan")
-			root := flags.String("root", ".", "repository root")
-			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
-			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
-			expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
-			planPath := flags.String("file", "", "ReviewPlan JSON path")
-			sourceRef := flags.String("source-ref", "", "revise: triggering Result/Finding evidence id")
-			affectedSurface := flags.String("affected-surface", "", "revise: path surface the revision may touch")
-			parseArgs := args[1:]
-			if revise {
-				parseArgs = args[2:]
-			}
-			if err := flags.Parse(parseArgs); err != nil {
-				return 2
-			}
-			if revise {
-				resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
-				if err != nil {
-					fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
-					return 1
-				}
-				next, err := review.RevisePlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.ReviseRequest{
-					ExpectedRevision: resolvedRevision,
-					PlanPath:         resolveRootPath(*root, *planPath),
-					SourceRef:        *sourceRef,
-					AffectedSurface:  *affectedSurface,
-				})
-				if err != nil {
-					fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
-					return 1
-				}
-				ptr := review.PlanPointerFromState(next.State)
-				fmt.Fprintf(stderr, "review-plan revise: %s now at revision %d (status %s); changed claims returned to planned\n", ptr.PlanID, ptr.Revision, ptr.Status)
-				return encodeJSON(stdout, map[string]any{
-					"plan_id":  ptr.PlanID,
-					"revision": ptr.Revision,
-					"status":   ptr.Status,
-				})
-			}
-			if *planPath == "" {
-				fmt.Fprintln(stderr, "runtime review-plan requires --file <plan.json>")
-				return 2
-			}
+		if err := json.NewEncoder(stdout).Encode(payload); err != nil {
+			fmt.Fprintf(stderr, "encode task-integrate result: %v\n", err)
+			return 1
+		}
+		return 0
+	case "review-plan":
+		// S7 entry verb (L3-S7 §4.1): validates and pins the ReviewPlan,
+		// initializes claim/assignment projections, phase -> running.
+		// `revise` is the one controlled revision per round (§5.3).
+		revise := len(args) > 1 && args[1] == "revise"
+		flags := flag.NewFlagSet("runtime review-plan", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime review-plan")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+		planPath := flags.String("file", "", "ReviewPlan JSON path")
+		sourceRef := flags.String("source-ref", "", "revise: triggering Result/Finding evidence id")
+		affectedSurface := flags.String("affected-surface", "", "revise: path surface the revision may touch")
+		parseArgs := args[1:]
+		if revise {
+			parseArgs = args[2:]
+		}
+		if err := flags.Parse(parseArgs); err != nil {
+			return 2
+		}
+		if revise {
 			resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
 			if err != nil {
-				fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+				fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
 				return 1
 			}
-			next, err := review.RegisterPlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.PlanRequest{
+			next, err := review.RevisePlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.ReviseRequest{
 				ExpectedRevision: resolvedRevision,
 				PlanPath:         resolveRootPath(*root, *planPath),
+				SourceRef:        *sourceRef,
+				AffectedSurface:  *affectedSurface,
 			})
 			if err != nil {
-				fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+				fmt.Fprintln(stderr, formatFailure("runtime review-plan revise", err))
 				return 1
 			}
 			ptr := review.PlanPointerFromState(next.State)
-			fmt.Fprintf(stderr, "review-plan: registered %s for round %d (status %s); dispatch reviewers via `runtime register-workgroup`, then consume results via `runtime review-result submit`\n",
-				ptr.PlanID, ptr.ReviewRound, ptr.Status)
+			fmt.Fprintf(stderr, "review-plan revise: %s now at revision %d (status %s); changed claims returned to planned\n", ptr.PlanID, ptr.Revision, ptr.Status)
 			return encodeJSON(stdout, map[string]any{
-				"plan_id":      ptr.PlanID,
-				"review_round": ptr.ReviewRound,
-				"status":       ptr.Status,
-				"revision":     next.Revision,
+				"plan_id":  ptr.PlanID,
+				"revision": ptr.Revision,
+				"status":   ptr.Status,
 			})
-		case "review-result":
-			// S7 Canonical ReviewResult submit (L3-S7 §9.1): one CAS consumes
-			// the result, registers immutable Findings, updates claim
-			// dispositions, and runs the round consumer (seal / clean / pause).
-			// The documented invocation carries the `submit` verb word.
-			verbArgs := args[1:]
-			if len(verbArgs) > 0 && verbArgs[0] == "submit" {
-				verbArgs = verbArgs[1:]
+		}
+		if *planPath == "" {
+			fmt.Fprintln(stderr, "runtime review-plan requires --file <plan.json>")
+			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+			return 1
+		}
+		next, err := review.RegisterPlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.PlanRequest{
+			ExpectedRevision: resolvedRevision,
+			PlanPath:         resolveRootPath(*root, *planPath),
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime review-plan", err))
+			return 1
+		}
+		ptr := review.PlanPointerFromState(next.State)
+		fmt.Fprintf(stderr, "review-plan: registered %s for round %d (status %s); dispatch reviewers via `runtime register-workgroup`, then consume results via `runtime review-result submit`\n",
+			ptr.PlanID, ptr.ReviewRound, ptr.Status)
+		return encodeJSON(stdout, map[string]any{
+			"plan_id":      ptr.PlanID,
+			"review_round": ptr.ReviewRound,
+			"status":       ptr.Status,
+			"revision":     next.Revision,
+		})
+	case "review-result":
+		// S7 Canonical ReviewResult submit (L3-S7 §9.1): one CAS consumes
+		// the result, registers immutable Findings, updates claim
+		// dispositions, and runs the round consumer (seal / clean / pause).
+		// The documented invocation carries the `submit` verb word.
+		verbArgs := args[1:]
+		if len(verbArgs) > 0 && verbArgs[0] == "submit" {
+			verbArgs = verbArgs[1:]
+		}
+		flags := flag.NewFlagSet("runtime review-result", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime review-result")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
+		assignmentID := flags.String("assignment-id", "", "plan assignment the result answers")
+		resultPath := flags.String("result", "", "ReviewResult JSON path")
+		captureDir := flags.String("captures", "", "capture buffer dir (or the steps.jsonl file itself); empty encounter timelines absorb buffered steps")
+		if err := flags.Parse(verbArgs); err != nil {
+			return 2
+		}
+		if *assignmentID == "" || *resultPath == "" {
+			fmt.Fprintln(stderr, "runtime review-result requires --assignment-id <id> and --result <result.json>")
+			return 2
+		}
+		resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
+			return 1
+		}
+		resolvedCaptures := ""
+		if *captureDir != "" {
+			resolvedCaptures = resolveRootPath(*root, *captureDir)
+			// Accept both the buffer directory and the steps.jsonl file; a
+			// directory passed through silently loaded zero steps otherwise.
+			if info, statErr := os.Stat(resolvedCaptures); statErr == nil && info.IsDir() {
+				resolvedCaptures = filepath.Join(resolvedCaptures, "steps.jsonl")
 			}
-			flags := flag.NewFlagSet("runtime review-result", flag.ContinueOnError)
-			flags.SetOutput(stderr)
-			bindUsage(flags, "runtime review-result")
-			root := flags.String("root", ".", "repository root")
-			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
-			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
-			expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
-			assignmentID := flags.String("assignment-id", "", "plan assignment the result answers")
-			resultPath := flags.String("result", "", "ReviewResult JSON path")
-			captureDir := flags.String("captures", "", "capture buffer dir; empty encounter timelines absorb buffered steps")
-			if err := flags.Parse(verbArgs); err != nil {
-				return 2
+			if info, statErr := os.Stat(resolvedCaptures); statErr != nil || info.IsDir() {
+				fmt.Fprintf(stderr, "note: --captures buffer not found at %s; findings keep their own timelines\n", resolvedCaptures)
 			}
-			if *assignmentID == "" || *resultPath == "" {
-				fmt.Fprintln(stderr, "runtime review-result requires --assignment-id <id> and --result <result.json>")
-				return 2
-			}
-			resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
-			if err != nil {
-				fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
-				return 1
-			}
-			resolvedCaptures := ""
-			if *captureDir != "" {
-				resolvedCaptures = resolveRootPath(*root, *captureDir)
-			}
-			next, err := review.SubmitResult(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SubmitRequest{
-				ExpectedRevision: resolvedRevision,
-				AssignmentID:     *assignmentID,
-				ResultPath:       resolveRootPath(*root, *resultPath),
-				CaptureDir:       resolvedCaptures,
-			})
-			if err != nil {
-				fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
-				return 1
-			}
-			ptr := review.PlanPointerFromState(next.State)
-			status := ""
-			if ptr != nil {
-				status = ptr.Status
-			}
-			switch status {
-			case "observation_sealed":
-				fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — the next PreToolUse will auto-commit TR-008 to hand off to S8 (do not invoke the transition CLI)")
-			case "clean":
-				fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — the next PreToolUse will auto-commit TR-009 to advance into S10 (do not invoke the transition CLI)")
-			case "paused":
-				fmt.Fprintln(stderr, "review-result: consumed; pause checkpoint recorded — route via TR-010 (req change) or TR-011 (release blocked)")
-			case "cannot_clean", "discovery_draining":
-				fmt.Fprintf(stderr, "review-result: consumed; round is %s — %d required claim(s) still need results before the batch seals\n",
-					status, len(review.UndispositionedRequired(next.State)))
-			default:
-				fmt.Fprintf(stderr, "review-result: consumed; round running — %d required claim(s) remaining\n",
-					len(review.UndispositionedRequired(next.State)))
-			}
-			pending := review.UndispositionedRequired(next.State)
-			if pending == nil {
-				pending = []string{}
-			}
-			return encodeJSON(stdout, map[string]any{
-				"assignment_id":  *assignmentID,
-				"plan_status":    status,
-				"pending_claims": pending,
-				"revision":       next.Revision,
-			})
-		case "finding-supplement":
-			// S7/S8 FindingSupplement append (L3-S7 §3.6, L3-S8 §2.2): the
-			// original finder — or a scheduler-authorized replacement — appends
-			// new observation/evidence/correlation refs under an immutable
-			// Finding without rewriting it or the sealed ObservationBatch. The
-			// discriminator gate (L3-S7 §14.1) requires hypothesis_id +
-			// discriminator + expected_outcomes unless the submission is an S7
-			// in-round note declared with --in-round-note.
-			flags := flag.NewFlagSet("runtime finding-supplement", flag.ContinueOnError)
-			flags.SetOutput(stderr)
-			bindUsage(flags, "runtime finding-supplement")
-			root := flags.String("root", ".", "repository root")
-			statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
-			journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
-			findingID := flags.String("finding", "", "finding id the supplement extends")
-			filePath := flags.String("file", "", "FindingSupplement JSON path")
-			authorizedBy := flags.String("authorized-by", "", "scheduler identity authorizing a replacement finder (required when author != original finder)")
-			inRoundNote := flags.Bool("in-round-note", false, "declare an S7 in-round note from the original finder (exempt from the hypothesis_id + discriminator + expected_outcomes gate; must not carry hypothesis_id)")
-			if err := flags.Parse(args[1:]); err != nil {
-				return 2
-			}
-			if *findingID == "" || *filePath == "" {
-				fmt.Fprintln(stderr, "runtime finding-supplement requires --finding <id> and --file <supplement.json>")
-				return 2
-			}
-			receipt, err := review.SubmitSupplement(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SupplementRequest{
-				FindingID:    *findingID,
-				FilePath:     resolveRootPath(*root, *filePath),
-				AuthorizedBy: *authorizedBy,
-				InRoundNote:  *inRoundNote,
-			})
-			if err != nil {
-				fmt.Fprintln(stderr, formatFailure("runtime finding-supplement", err))
-				return 1
-			}
-			fmt.Fprintf(stderr, "finding-supplement: %s appended to %s (state revision %d); the Finding and ObservationBatch are unchanged\n",
-				receipt.SupplementID, receipt.FindingID, receipt.Revision)
-			return encodeJSON(stdout, map[string]any{
-				"supplement_id":          receipt.SupplementID,
-				"supplements_finding_id": receipt.FindingID,
-				"path":                   receipt.Path,
-				"sha256":                 receipt.SHA256,
-				"revision":               receipt.Revision,
-			})
-		case "bug-event":
+		}
+		next, err := review.SubmitResult(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SubmitRequest{
+			ExpectedRevision: resolvedRevision,
+			AssignmentID:     *assignmentID,
+			ResultPath:       resolveRootPath(*root, *resultPath),
+			CaptureDir:       resolvedCaptures,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime review-result", err))
+			return 1
+		}
+		ptr := review.PlanPointerFromState(next.State)
+		status := ""
+		if ptr != nil {
+			status = ptr.Status
+		}
+		switch status {
+		case "observation_sealed":
+			fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — the next PreToolUse will auto-commit TR-008 to hand off to S8 (do not invoke the transition CLI)")
+		case "clean":
+			fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — the next PreToolUse will auto-commit TR-009 to advance into S10 (do not invoke the transition CLI)")
+		case "paused":
+			fmt.Fprintln(stderr, "review-result: consumed; pause checkpoint recorded — route via TR-010 (req change) or TR-011 (release blocked)")
+		case "cannot_clean", "discovery_draining":
+			fmt.Fprintf(stderr, "review-result: consumed; round is %s — %d required claim(s) still need results before the batch seals\n",
+				status, len(review.UndispositionedRequired(next.State)))
+		default:
+			fmt.Fprintf(stderr, "review-result: consumed; round running — %d required claim(s) remaining\n",
+				len(review.UndispositionedRequired(next.State)))
+		}
+		pending := review.UndispositionedRequired(next.State)
+		if pending == nil {
+			pending = []string{}
+		}
+		return encodeJSON(stdout, map[string]any{
+			"assignment_id":  *assignmentID,
+			"plan_status":    status,
+			"pending_claims": pending,
+			"revision":       next.Revision,
+		})
+	case "finding-supplement":
+		// S7/S8 FindingSupplement append (L3-S7 §3.6, L3-S8 §2.2): the
+		// original finder — or a scheduler-authorized replacement — appends
+		// new observation/evidence/correlation refs under an immutable
+		// Finding without rewriting it or the sealed ObservationBatch. The
+		// discriminator gate (L3-S7 §14.1) requires hypothesis_id +
+		// discriminator + expected_outcomes unless the submission is an S7
+		// in-round note declared with --in-round-note.
+		flags := flag.NewFlagSet("runtime finding-supplement", flag.ContinueOnError)
+		flags.SetOutput(stderr)
+		bindUsage(flags, "runtime finding-supplement")
+		root := flags.String("root", ".", "repository root")
+		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
+		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+		findingID := flags.String("finding", "", "finding id the supplement extends")
+		filePath := flags.String("file", "", "FindingSupplement JSON path")
+		authorizedBy := flags.String("authorized-by", "", "scheduler identity authorizing a replacement finder (required when author != original finder)")
+		inRoundNote := flags.Bool("in-round-note", false, "declare an S7 in-round note from the original finder (exempt from the hypothesis_id + discriminator + expected_outcomes gate; must not carry hypothesis_id)")
+		if err := flags.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *findingID == "" || *filePath == "" {
+			fmt.Fprintln(stderr, "runtime finding-supplement requires --finding <id> and --file <supplement.json>")
+			return 2
+		}
+		receipt, err := review.SubmitSupplement(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.SupplementRequest{
+			FindingID:    *findingID,
+			FilePath:     resolveRootPath(*root, *filePath),
+			AuthorizedBy: *authorizedBy,
+			InRoundNote:  *inRoundNote,
+		})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime finding-supplement", err))
+			return 1
+		}
+		fmt.Fprintf(stderr, "finding-supplement: %s appended to %s (state revision %d); the Finding and ObservationBatch are unchanged\n",
+			receipt.SupplementID, receipt.FindingID, receipt.Revision)
+		return encodeJSON(stdout, map[string]any{
+			"supplement_id":          receipt.SupplementID,
+			"supplements_finding_id": receipt.FindingID,
+			"path":                   receipt.Path,
+			"sha256":                 receipt.SHA256,
+			"revision":               receipt.Revision,
+		})
+	case "bug-event":
 		flags := flag.NewFlagSet("runtime bug-event", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		bindUsage(flags, "runtime bug-event")
@@ -2335,11 +2343,10 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Runtime.RuntimeID == "" {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
-			// Unreadable runtime leaves the context empty: hook policy cannot
-			// evaluate runtime-derived checks (locked artifacts unknown →
-			// locked_artifact_write is effectively fail-open here — same
-			// behavior as before the dead fact removal, recorded honestly).
-			_ = context
+			// Keep the error until after the controller projection. A
+			// mutating PreToolUse must fail closed when the runtime facts
+			// needed to determine its write surface are unavailable.
+			request.Runtime = policy.RuntimeContext{}
 		} else {
 			request.Runtime = context
 		}
@@ -2365,6 +2372,17 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// auto-commits a single Transition before the safety verdict.
 	controlResult := runControlCycleForHook(root, request)
 	decision := projectControlDecision(controlResult)
+	if request.Event == "PreToolUse" && hookInputMayMutate(request) && request.Runtime.RuntimeID == "" && controlResult.Error != "" && runtimeCheckpointMissing(root) {
+		decision = policy.Decision{
+			Decision:       "block",
+			RuleID:         policy.RuleRuntimeUnreadable,
+			Reason:         "runtime facts are unreadable; mutating tools are blocked until the loop runtime is restored",
+			Recovery:       []string{"restore .claude/loop-state.json and .claude/loop-events.jsonl", "run `loop-harness runtime inspect --root .`", "retry the tool after the runtime becomes readable"},
+			Retry:          "after_runtime_recovery",
+			HumanRequired:  false,
+			MatchedRuleIDs: []string{policy.RuleRuntimeUnreadable},
+		}
+	}
 	refreshGuidanceFromController(root, &request, &decision, controlResult)
 	// L4 §15.2 P0-5: the PreToolUse(TaskUpdate) self-claim guard needs an
 	// identified agent; the Controller cycle's safety input carries no Agent
@@ -2476,6 +2494,20 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	return code
 }
 
+func hookInputMayMutate(request policy.Input) bool {
+	switch request.ToolName {
+	case "Write", "Edit", "MultiEdit", "NotebookEdit", "Bash":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeCheckpointMissing(root string) bool {
+	_, err := os.Stat(filepath.Join(root, ".claude", "loop-state.json"))
+	return os.IsNotExist(err)
+}
+
 // runPostToolUseHook handles the PostToolUse(SendMessage) observation path:
 // identify the sender, and when a PLAN_REPORT is observed for the first
 // time, CAS-write agent.plan_reported_ref so the first-write barrier has a
@@ -2513,6 +2545,14 @@ func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Wri
 	}
 	obs := hook.HandlePostToolUse(request, rows)
 	if obs.Recorded && obs.Message == "plan_report" {
+		planRef := planReportRef(request)
+		if err := validatePlanReportCheckpoint(root, snapshot, obs.AgentID, planRef); err != nil {
+			obs.Recorded = false
+			obs.Reason = "plan_report rejected: " + err.Error()
+			fmt.Fprintf(stderr, "note: %s\n", obs.Reason)
+			fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
+			return 0
+		}
 		recordPlanCheckpoint(root, statePath, journalPath, snapshot, obs.AgentID, request, stderr)
 		// Auto-chain for plan_checkpoint agents. plan_ref is the plan file
 		// path the Worker wrote before SendMessage. Gating happens twice:
@@ -2520,10 +2560,7 @@ func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Wri
 		// one_shot), and again inside AutoAdvanceToWorking as defense in
 		// depth.
 		dispatchMode := dispatchModeOf(rows, obs.AgentID)
-		planRef, _ := request.ToolInput["plan_ref"].(string)
-		if planRef == "" {
-			planRef, _ = request.ToolInput["plan_path"].(string)
-		}
+		planRef = planReportRef(request)
 		if dispatchMode == "plan_checkpoint" && planRef != "" {
 			outcome, err := assignment.AutoAdvanceToWorking(assignment.AutoChainInput{
 				Root:        root,
@@ -2561,18 +2598,81 @@ func dispatchModeOf(rows []hook.AgentRow, agentID string) string {
 	return ""
 }
 
+func planReportRef(request policy.Input) string {
+	ref, _ := request.ToolInput["plan_ref"].(string)
+	if strings.TrimSpace(ref) == "" {
+		ref, _ = request.ToolInput["plan_path"].(string)
+	}
+	return strings.TrimSpace(ref)
+}
+
+// validatePlanReportCheckpoint makes the PostToolUse observer's durable
+// checkpoint correspond to the current dispatched Assignment. The observer
+// remains non-blocking, but a malformed or unrelated plan report must not
+// clear the first-write barrier merely because it says message_type=plan_report.
+func validatePlanReportCheckpoint(root string, snapshot runtime.Snapshot, agentID, ref string) error {
+	if ref == "" {
+		return fmt.Errorf("plan_ref is required")
+	}
+	abs := ref
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(root, filepath.FromSlash(ref))
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve repository root: %w", err)
+	}
+	abs, err = filepath.Abs(abs)
+	if err != nil {
+		return fmt.Errorf("resolve plan_ref: %w", err)
+	}
+	rel, err := filepath.Rel(rootAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("plan_ref %q is outside the repository", ref)
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return fmt.Errorf("read plan_ref %q: %w", ref, err)
+	}
+	if err := schema.NewValidator(root).ValidateBytes("agent-message.schema.json", data); err != nil {
+		return fmt.Errorf("plan_ref schema: %w", err)
+	}
+	var message map[string]any
+	if err := json.Unmarshal(data, &message); err != nil {
+		return fmt.Errorf("decode plan_ref: %w", err)
+	}
+	if message["message_type"] != "plan_report" || message["agent_id"] != agentID {
+		return fmt.Errorf("plan_ref must be a plan_report for Agent %s", agentID)
+	}
+	if runtimeID, _ := snapshot.State["runtime_id"].(string); runtimeID != "" && message["runtime_id"] != runtimeID {
+		return fmt.Errorf("plan_ref runtime_id does not match the current runtime")
+	}
+	ptr := review.PlanPointerFromState(snapshot.State)
+	if ptr == nil {
+		return fmt.Errorf("no ReviewPlan is registered for the plan report")
+	}
+	if revision := integerValue(message["assignment_revision"]); revision != ptr.Revision {
+		return fmt.Errorf("plan_ref assignment_revision %d does not match ReviewPlan revision %d", revision, ptr.Revision)
+	}
+	assignmentID, _ := message["assignment_id"].(string)
+	reviewMap, _ := snapshot.State["review"].(map[string]any)
+	assignments, _ := reviewMap["assignments"].(map[string]any)
+	row, _ := assignments[assignmentID].(map[string]any)
+	if row == nil || row["agent_id"] != agentID {
+		return fmt.Errorf("plan_ref Assignment %s is not dispatched to Agent %s", assignmentID, agentID)
+	}
+	return nil
+}
+
 // recordPlanCheckpoint writes agent.plan_reported_ref once (idempotent).
 // The ref is symbolic (the SendMessage message id) because the platform
 // payload does not carry a verifiable file path; the authoritative,
 // schema-validated registration remains `runtime agent-event
 // --event readback_submitted` with the plan file.
 func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.Snapshot, agentID string, request policy.Input, stderr io.Writer) {
-	ref, _ := request.ToolInput["message_id"].(string)
+	ref := planReportRef(request)
 	if ref == "" {
-		ref, _ = request.ToolInput["message_ref"].(string)
-	}
-	if ref == "" {
-		ref = "plan_report:observed"
+		return
 	}
 	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	_, err := store.Update(snapshot.Revision, runtime.Mutation{

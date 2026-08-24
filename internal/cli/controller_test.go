@@ -59,6 +59,30 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	}
 }
 
+func TestPlanCheckpointSubagentStartDoesNotWaitForSecondTurn(t *testing.T) {
+	root := filepath.Join("..", "..")
+	state := map[string]any{
+		"runtime_id": "loop-REQ-plan-checkpoint",
+		"revision":   1,
+		"lifecycle":  map[string]any{"state": "building", "phase": "implementation"},
+	}
+	guidance := buildGuidance(root, state, "SubagentStart", policy.Input{
+		Runtime: policy.RuntimeContext{Agent: &policy.AgentContext{
+			ID: "agent-1", State: "reading", DispatchMode: "plan_checkpoint",
+		}},
+	})
+	if guidance.Blocked {
+		t.Fatalf("plan_checkpoint agent must not wait for a second approval turn: %#v", guidance)
+	}
+	joined := strings.Join(guidance.Automation, " ") + " " + guidance.Action
+	if !strings.Contains(joined, "PLAN_REPORT") || !strings.Contains(joined, "continue") {
+		t.Fatalf("guidance must route PLAN_REPORT directly into continuous execution: %q", joined)
+	}
+	if strings.Contains(strings.ToLower(joined), "phase-two activation") || strings.Contains(strings.ToLower(joined), "wait for phase-two") {
+		t.Fatalf("plan_checkpoint guidance still contains the retired approval wait: %q", joined)
+	}
+}
+
 func TestBuildGuidanceDefinesRecoveryReadOrderAndNoCliNormalPath(t *testing.T) {
 	root := filepath.Join("..", "..")
 	state := map[string]any{
