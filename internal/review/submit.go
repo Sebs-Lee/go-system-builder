@@ -103,13 +103,25 @@ func submitResult(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
+	// Reject a stale caller before producing any review artifacts. The CAS
+	// remains authoritative for races, but this early check prevents the
+	// common stale-submit path from leaving orphan evidence on disk.
+	if currentRevision := intField(current["revision"]); currentRevision != request.ExpectedRevision {
+		return loopruntime.Snapshot{}, loopruntime.ErrStaleRevision
+	}
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	if state, _ := lifecycle["state"].(string); state != "verification" {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResults can only be submitted in the verification stage (current state: %s)", lifecycle["state"])
 	}
 	plan, ptr, err := LoadPlan(root, current)
 	if err != nil {
+		if PlanPointerFromState(current) != nil {
+			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
+		}
 		return loopruntime.Snapshot{}, err
+	}
+	if err := verifyFrozenSubjects(root, plan); err != nil {
+		return staleReviewPlanAfterDrift(root, statePath, journalPath, current, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err))
 	}
 	round := currentReviewRound(current)
 	generation := baselineGeneration(current)
@@ -127,8 +139,11 @@ func submitResult(
 	if result.BaselineGeneration != generation {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult declares baseline_generation %d but the runtime is at generation %d", result.BaselineGeneration, generation)
 	}
+	if result.AssignmentRevision != ptr.Revision {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult declares assignment_revision %d but the registered ReviewPlan is at assignment_revision %d; re-read the current plan before submitting", result.AssignmentRevision, ptr.Revision)
+	}
 	if digest := SubjectDigest(plan); result.SubjectDigest != digest {
-		return loopruntime.Snapshot{}, fmt.Errorf("subject_digest mismatch: the result binds %s but the frozen baseline digests to %s; a drifted baseline makes the round stale, not submittable", result.SubjectDigest, digest)
+		return loopruntime.Snapshot{}, fmt.Errorf("subject_digest mismatch: the result binds %s but the frozen baseline digests to %s — copy the expected value from `loop-harness s7 status` (subject_digest line); a mismatch after copying means the frozen baseline drifted and the round is stale, not submittable", result.SubjectDigest, digest)
 	}
 
 	assignment := findPlanAssignment(plan, result.AssignmentID)
@@ -136,6 +151,9 @@ func submitResult(
 		return loopruntime.Snapshot{}, fmt.Errorf("assignment %s is not part of ReviewPlan %s (known: %s)", result.AssignmentID, plan.ReviewPlanID, strings.Join(planAssignmentIDs(plan), ", "))
 	}
 	if err := validateClaimResultSet(assignment, &result); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateClaimEvidenceRequirements(plan, assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateVerdictConsistency(&result); err != nil {
@@ -153,14 +171,22 @@ func submitResult(
 	if err := validateSiteLostDeclarations(&result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateBlockedClaims(current, plan, assignment, &result); err != nil {
+	if err := validateBlockedClaims(root, current, plan, assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateProducerIndependence(current, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := verifyResultArtifactDigest(root, plan, ptr, &result, assignment.Lens); err != nil {
-		return loopruntime.Snapshot{}, err
+		// A digest mismatch is a recoverable authoring state, not round
+		// drift: the workspace itself is intact and the seal-time
+		// verification (verifySealedArtifactDigests) independently guards
+		// post-consumption workspace drift. Marking the plan stale here
+		// would deadlock an otherwise viable round behind one stale digest
+		// (verified live in the S7 round-4 sandbox review), so this is a
+		// plain rejection with the recovery path. Only frozen-subject
+		// drift stales the plan.
+		return loopruntime.Snapshot{}, fmt.Errorf("%w; recompute with `loop-harness s7 workspace-digest`, re-run the flows if the spec/fixture changed, then resubmit", err)
 	}
 
 	runtimeID, _ := current["runtime_id"].(string)
@@ -173,6 +199,26 @@ func submitResult(
 
 	// Persist artifacts before the CAS (same pattern as the S6 Builder
 	// Result): bytes on disk are what the evidence index fingerprints.
+	artifactRels := []string{}
+	casAttempted := false
+	cleanupArtifacts := func() {
+		for _, rel := range artifactRels {
+			if path, err := repositoryContainedPath(root, rel); err == nil {
+				_ = os.Remove(path)
+			}
+		}
+	}
+	// Validation/build failures happen before the state CAS and must not leave
+	// evidence that the runtime never indexed. A stale CAS is the one race we
+	// can identify safely after attempting the write, so it receives the same
+	// cleanup. For an unknown CAS error keep the immutable bytes: the writer
+	// may have committed state before returning the error and deleting them
+	// would make the evidence index unverifiable.
+	defer func() {
+		if !casAttempted {
+			cleanupArtifacts()
+		}
+	}()
 	resultRel := filepath.ToSlash(filepath.Join(
 		".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
 		"reviews", result.ProducerAgentID, result.ResultID+".json"))
@@ -189,6 +235,7 @@ func submitResult(
 		"conclusion":              result.Verdict,
 		"review_plan_id":          plan.ReviewPlanID,
 		"assignment_id":           result.AssignmentID,
+		"assignment_revision":     result.AssignmentRevision,
 		"subject_digest":          result.SubjectDigest,
 		"claim_results":           result.ClaimResults,
 		"blocked_claims":          blockedClaimsOrEmpty(&result),
@@ -204,6 +251,7 @@ func submitResult(
 	if err := writeArtifact(root, resultRel, resultBytes); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
+	artifactRels = append(artifactRels, resultRel)
 	resultSHA := sha256Of(resultBytes)
 
 	findingArtifacts := make([]findingArtifact, 0, len(result.Findings))
@@ -218,6 +266,7 @@ func submitResult(
 		if err := writeArtifact(root, rel, bytes); err != nil {
 			return loopruntime.Snapshot{}, err
 		}
+		artifactRels = append(artifactRels, rel)
 		findingArtifacts = append(findingArtifacts, findingArtifact{finding: finding, rel: rel, sha: sha256Of(bytes)})
 	}
 
@@ -243,7 +292,7 @@ func submitResult(
 
 	if (sealNow || cleanNow) && ptr.VerificationArtifactWorkspace != "" {
 		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result)); err != nil {
-			return loopruntime.Snapshot{}, err
+			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
 		}
 	}
 	if sealNow {
@@ -265,6 +314,7 @@ func submitResult(
 		if err := writeArtifact(root, batchRel, batchBytes); err != nil {
 			return loopruntime.Snapshot{}, err
 		}
+		artifactRels = append(artifactRels, batchRel)
 		batchSHA = sha256Of(batchBytes)
 	}
 	if cleanNow {
@@ -279,6 +329,7 @@ func submitResult(
 		if err := writeArtifact(root, cleanRel, cleanBytes); err != nil {
 			return loopruntime.Snapshot{}, err
 		}
+		artifactRels = append(artifactRels, cleanRel)
 		cleanSHA = sha256Of(cleanBytes)
 	}
 
@@ -286,6 +337,7 @@ func submitResult(
 	resultRepoPath := repositoryPath(root, request.ResultPath)
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	casAttempted = true
 	snapshot, err := store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-result-%s-r%d", result.ResultID, request.ExpectedRevision+1),
 		TransitionID:   "REVIEW-RESULT",
@@ -305,6 +357,14 @@ func submitResult(
 			}
 			if err := applyFindings(state, &result, findingArtifacts, round, occurredAt); err != nil {
 				return err
+			}
+			// A stop verdict and both terminal round transitions close the
+			// admission gate before this CAS returns. Promoting a queued
+			// Assignment here would dispatch new work after P0/pause/seal.
+			if !sealNow && !cleanNow && result.Verdict != "req_change_required" && result.Verdict != "release_blocked" {
+				if err := releaseQueuedReviewAssignments(state); err != nil {
+					return err
+				}
 			}
 			if err := advanceReviewerAgent(state, &result, resultRepoPath, occurredAt); err != nil {
 				return err
@@ -348,6 +408,23 @@ func submitResult(
 		},
 	})
 	if err != nil {
+		if errors.Is(err, loopruntime.ErrStaleRevision) {
+			cleanupArtifacts()
+			return snapshot, err
+		}
+		// An Apply-time rejection (e.g. reviewer Agent not in working state)
+		// fails the CAS without committing. When the persisted revision is
+		// still the caller's expected revision the transaction definitively
+		// did not land, so the staged artifacts are orphans that would block
+		// the corrected resubmit with "file exists" — remove them. Only an
+		// advanced or unreadable revision keeps the bytes (the commit may
+		// have landed before the error surfaced).
+		if after, readErr := os.ReadFile(statePath); readErr == nil {
+			var post map[string]any
+			if json.Unmarshal(after, &post) == nil && intField(post["revision"]) == request.ExpectedRevision {
+				cleanupArtifacts()
+			}
+		}
 		return snapshot, err
 	}
 	recordRoundMetrics(root, current, plan, ptr, &result, round, occurredAt, sealNow, cleanNow)
@@ -441,6 +518,28 @@ func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 	for claimID := range want {
 		if !seen[claimID] {
 			return fmt.Errorf("claim_results is missing %s; the Assignment's Claim set must be answered exactly (pass/fail or a blocked_by_confirmed_finding declaration, L3-S7 §3.5)", claimID)
+		}
+	}
+	return nil
+}
+
+// validateClaimEvidenceRequirements turns a Claim's declared minimum
+// evidence into a submit-time gate. The Claim owns the minimum; the
+// ReviewResult owns the concrete evidence refs. Type-specific evidence
+// catalogs are intentionally not inferred here because refs may point to
+// immutable files that have not yet been indexed by the runtime.
+func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, result *Result) error {
+	claims := make(map[string]Claim, len(plan.Claims))
+	for _, claim := range plan.Claims {
+		claims[claim.ClaimID] = claim
+	}
+	for _, claimResult := range result.ClaimResults {
+		claim := claims[claimResult.ClaimID]
+		if len(claim.RequiredEvidence) == 0 {
+			continue
+		}
+		if len(claimResult.EvidenceRefs) == 0 {
+			return fmt.Errorf("claim %s in assignment %s declares required evidence %v, but the ReviewResult supplied no evidence_refs", claimResult.ClaimID, assignment.AssignmentID, claim.RequiredEvidence)
 		}
 	}
 	return nil
@@ -548,14 +647,25 @@ func validateFindings(plan *Plan, assignment *PlanAssignment, result *Result) er
 		if finding.Lens != assignment.Lens || claimLens[finding.ClaimID] != assignment.Lens {
 			return fmt.Errorf("finding %s lens %q contradicts the assignment/claim lens %q", finding.FindingID, finding.Lens, assignment.Lens)
 		}
-		if err := validateInvestigationReadiness(finding); err != nil {
-			if finding.Severity == "P0" {
+	}
+	// Validate every P0 before ordinary readiness failures are allowed to
+	// route into site_lost. A mixed result must not hide a safety-stop Finding
+	// behind the capture blocker path, regardless of Finding array order.
+	for _, finding := range result.Findings {
+		if finding.Severity == "P0" {
+			if err := validateInvestigationReadiness(finding); err != nil {
 				return err
 			}
-			return &ReadinessError{
-				FindingID: finding.FindingID,
-				Severity:  finding.Severity,
-				Err:       fmt.Errorf("%w; complete the scene in place from the capture buffer / read-only state, or — if it is unrecoverable — declare site_lost for this finding to record an Assignment BLOCKER that stays in S7 (L3-S7 §9.1)", err),
+		}
+	}
+	for _, finding := range result.Findings {
+		if finding.Severity != "P0" {
+			if err := validateInvestigationReadiness(finding); err != nil {
+				return &ReadinessError{
+					FindingID: finding.FindingID,
+					Severity:  finding.Severity,
+					Err:       fmt.Errorf("%w; complete the scene in place from the capture buffer / read-only state, or — if it is unrecoverable — declare site_lost for this finding to record an Assignment BLOCKER that stays in S7 (L3-S7 §9.1)", err),
+				}
 			}
 		}
 	}
@@ -655,6 +765,23 @@ func applyResultConsumption(
 	}
 	if agentID != result.ProducerAgentID {
 		return fmt.Errorf("ReviewResult producer %s does not match the dispatched Agent %s for assignment %s", result.ProducerAgentID, agentID, assignment.AssignmentID)
+	}
+	if status == "blocked" {
+		resolved := false
+		entities, _ := state["entities"].(map[string]any)
+		agents, _ := entities["agents"].([]any)
+		for _, raw := range agents {
+			agent, _ := raw.(map[string]any)
+			if stringField(agent["id"]) == result.ProducerAgentID && stringField(agent["blocker_resolved_ref"]) != "" {
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			return fmt.Errorf("assignment %s is blocked and cannot accept a ReviewResult until the canonical blocker_resolved Agent event records blocker_resolved_ref", assignment.AssignmentID)
+		}
+		row["blocker_ref"] = nil
+		row["blocked_at"] = nil
 	}
 
 	claims, _ := reviewMap["claims"].(map[string]any)
@@ -794,6 +921,7 @@ func advanceReviewerAgent(state map[string]any, result *Result, resultRepoPath s
 			return fmt.Errorf("reviewer Agent %s is %s; a ReviewResult requires working state. On the plan_checkpoint path the PostToolUse(SendMessage) auto-chain advances reading -> understanding_submitted -> activated -> working automatically when PLAN_REPORT carries plan_ref pointing at the plan file; if the auto-chain did not fire (Worker omitted plan_ref, hook failed, or this is a plan_approval_required assignment), recover with `runtime agent-begin --agent-id %s --plan <plan-report.json>` and resubmit", result.ProducerAgentID, currentState, result.ProducerAgentID)
 		}
 		agent["state"] = "reported"
+		agent["blocker_resolved_ref"] = nil
 		if resultRepoPath != "" {
 			agent["completion_reported_ref"] = resultRepoPath
 		}
@@ -877,6 +1005,116 @@ func appendEvidence(state map[string]any, entry map[string]any) error {
 	return nil
 }
 
+// releaseQueuedReviewAssignments is the small queue consumer that was
+// missing from the original resource-lock design. A conflicting workgroup is
+// registered with its Agent already present, but its Assignment remains
+// planned until the holder's Result is consumed. The consumer runs inside
+// that same CAS, so lock release and queued dispatch cannot interleave.
+func releaseQueuedReviewAssignments(state map[string]any) error {
+	reviewMap, _ := state["review"].(map[string]any)
+	assignments, _ := reviewMap["assignments"].(map[string]any)
+	claims, _ := reviewMap["claims"].(map[string]any)
+	if assignments == nil || claims == nil {
+		return fmt.Errorf("runtime review projection is missing assignments or claims")
+	}
+	ids := make([]string, 0, len(assignments))
+	for id := range assignments {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		row, _ := assignments[id].(map[string]any)
+		if row == nil || row["status"] != "planned" || stringField(row["queue_reason"]) == "" {
+			continue
+		}
+		agentID := stringField(row["queued_agent_id"])
+		if agentID == "" || reviewAssignmentLockConflict(id, row, assignments) {
+			continue
+		}
+		row["status"] = "dispatched"
+		row["agent_id"] = agentID
+		row["queued_agent_id"] = nil
+		row["queue_reason"] = nil
+		for _, rawClaimID := range stringSliceValue(row["claim_ids"]) {
+			claimRow, _ := claims[rawClaimID].(map[string]any)
+			if claimRow == nil {
+				return fmt.Errorf("queued assignment %s references missing claim %s", id, rawClaimID)
+			}
+			if claimRow["disposition"] == "planned" {
+				claimRow["disposition"] = "running"
+			}
+		}
+	}
+	return nil
+}
+
+func reviewAssignmentLockConflict(candidateID string, candidate map[string]any, assignments map[string]any) bool {
+	want := reviewAssignmentLocks(candidate["resource_locks"])
+	if len(want) == 0 {
+		return false
+	}
+	for id, raw := range assignments {
+		if id == candidateID {
+			continue
+		}
+		row, _ := raw.(map[string]any)
+		if row == nil || !reviewAssignmentLockHeld(row) {
+			continue
+		}
+		for lock := range reviewAssignmentLocks(row["resource_locks"]) {
+			if want[lock] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func reviewAssignmentLockHeld(row map[string]any) bool {
+	switch stringField(row["status"]) {
+	case "dispatched":
+		return row["result_ref"] == nil
+	case "result_submitted":
+		return true
+	default:
+		return false
+	}
+}
+
+func reviewAssignmentLocks(raw any) map[string]bool {
+	locks := map[string]bool{}
+	switch values := raw.(type) {
+	case []any:
+		for _, value := range values {
+			if lock, ok := value.(string); ok && strings.TrimSpace(lock) != "" {
+				locks[strings.TrimSpace(lock)] = true
+			}
+		}
+	case []string:
+		for _, lock := range values {
+			if strings.TrimSpace(lock) != "" {
+				locks[strings.TrimSpace(lock)] = true
+			}
+		}
+	}
+	return locks
+}
+
+func stringSliceValue(raw any) []string {
+	var out []string
+	switch values := raw.(type) {
+	case []any:
+		for _, value := range values {
+			if id, ok := value.(string); ok && id != "" {
+				out = append(out, id)
+			}
+		}
+	case []string:
+		out = append(out, values...)
+	}
+	return out
+}
+
 // setPlanStatus moves the ReviewPlan status and — when the status is also a
 // verification phase — the lifecycle phase projection (L3-S7 §11.1). paused
 // and stale are plan-only statuses: the cursor moves to the paused STATE via
@@ -892,6 +1130,63 @@ func setPlanStatus(reviewMap, lifecycleMap map[string]any, status string) {
 			lifecycleMap["phase_revision"] = intField(lifecycleMap["phase_revision"]) + 1
 		}
 	}
+}
+
+// staleReviewPlanAfterDrift records baseline/workspace drift before returning
+// the validation error. A bare error leaves the runtime advertising a
+// runnable round, so the next Agent keeps retrying against bytes that no
+// longer belong to the pinned review. The mutation is plan-only: lifecycle
+// phase remains the last valid verification phase and the scheduler's plan
+// status is the admission gate.
+func staleReviewPlanAfterDrift(
+	root, statePath, journalPath string,
+	current map[string]any,
+	driftErr error,
+) (loopruntime.Snapshot, error) {
+	plan := PlanPointerFromState(current)
+	if plan == nil {
+		return loopruntime.Snapshot{}, driftErr
+	}
+	if plan.Status == "stale" {
+		return loopruntime.Snapshot{}, driftErr
+	}
+	lifecycle, _ := current["lifecycle"].(map[string]any)
+	cursor := map[string]any{}
+	if lifecycle != nil {
+		cursor = map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
+	}
+	runtimeID, _ := current["runtime_id"].(string)
+	expectedRevision := intField(current["revision"])
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	snapshot, err := store.Update(expectedRevision, loopruntime.Mutation{
+		EventID:        fmt.Sprintf("evt-review-plan-stale-%s-r%d", plan.PlanID, expectedRevision+1),
+		TransitionID:   "REVIEW-PLAN-STALE",
+		Event:          "review_plan_stale",
+		Actor:          "orchestrator",
+		IdempotencyKey: fmt.Sprintf("runtime:review-plan-stale:%s:%d", plan.PlanID, expectedRevision),
+		RuntimeID:      runtimeID,
+		From:           cursor,
+		To:             cursor,
+		Message:        fmt.Sprintf("ReviewPlan %s marked stale: %v", plan.PlanID, driftErr),
+		OccurredAt:     time.Now().UTC(),
+		Apply: func(state map[string]any) error {
+			reviewMap, _ := state["review"].(map[string]any)
+			planMap, _ := reviewMap["plan"].(map[string]any)
+			if planMap == nil {
+				return fmt.Errorf("review plan pointer missing while marking stale")
+			}
+			status, _ := planMap["status"].(string)
+			if status != "running" && status != "cannot_clean" && status != "discovery_draining" && status != "stale" {
+				return fmt.Errorf("ReviewPlan %s is %s; cannot mark this round stale", plan.PlanID, status)
+			}
+			planMap["status"] = "stale"
+			return nil
+		},
+	})
+	if err != nil {
+		return snapshot, fmt.Errorf("%w; failed to persist ReviewPlan stale status: %v", driftErr, err)
+	}
+	return snapshot, fmt.Errorf("%w; ReviewPlan %s was marked stale and must be re-planned", driftErr, plan.PlanID)
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,12 +1535,28 @@ func marshalArtifact(value any) ([]byte, error) {
 }
 
 func writeArtifact(root, rel string, data []byte) error {
-	abs := filepath.Join(root, filepath.FromSlash(rel))
+	abs, err := repositoryContainedPath(root, rel)
+	if err != nil {
+		return fmt.Errorf("artifact path %s: %w", rel, err)
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return fmt.Errorf("create evidence dir: %w", err)
 	}
-	if err := os.WriteFile(abs, data, 0o644); err != nil {
+	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("evidence artifact %s already exists but was never indexed by the runtime (a previous failed attempt staged it); delete the stale file or change the artifact id (result_id / finding_id / review_plan_id), then retry", rel)
+		}
+		return fmt.Errorf("write %s without overwrite: %w", rel, err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(abs)
 		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(abs)
+		return fmt.Errorf("close %s: %w", rel, err)
 	}
 	return nil
 }

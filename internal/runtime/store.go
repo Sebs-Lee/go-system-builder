@@ -1170,7 +1170,7 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 		return Snapshot{}, fmt.Errorf("inspect existing runtime journal before mutation: %w", err)
 	}
 	if err := validateStateJournalPair(state, existingJournal); err != nil {
-		return Snapshot{}, fmt.Errorf("inspect runtime journal cursor before mutation: %w", err)
+		return Snapshot{}, fmt.Errorf("inspect runtime journal cursor before mutation (state journal.last_sequence must match the journal tail; if this followed a crash run `runtime reconcile` to replay the pending transition, otherwise the journal was truncated or the state hand-edited and needs manual realignment): %w", err)
 	}
 	if _, exists := existingJournal.EventIndex[mutation.EventID]; exists {
 		return Snapshot{}, fmt.Errorf("mutation event_id %q already exists in runtime journal", mutation.EventID)

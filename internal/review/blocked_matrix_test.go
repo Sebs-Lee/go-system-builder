@@ -30,11 +30,18 @@ func blockedClaimsPatch(claimID string, findingIDs []string, kind, detail string
 	for _, id := range findingIDs {
 		ids = append(ids, id)
 	}
+	evidenceRefs := []any{"ev/" + claimID + "-blocked.md"}
+	if len(findingIDs) > 0 {
+		// A blocked projection must bind to evidence that the runtime can
+		// resolve. The confirmed Finding itself is the minimal canonical
+		// evidence reference for these fixtures.
+		evidenceRefs = []any{findingIDs[0]}
+	}
 	return []any{map[string]any{
 		"claim_id":              claimID,
 		"blocking_finding_ids":  ids,
 		"failed_precondition":   map[string]any{"kind": kind, "detail": detail},
-		"evidence_refs":         []any{"ev/" + claimID + "-blocked.md"},
+		"evidence_refs":         evidenceRefs,
 		"after_repair_required": true,
 	}}
 }
@@ -238,6 +245,58 @@ func TestSubmitResultRejectsBlockedWithoutConfirmedFinding(t *testing.T) {
 	}
 }
 
+// Evidence refs on a blocked projection are not decorative strings: they
+// must resolve to a current-round evidence row with a valid artifact.
+func TestSubmitResultRejectsBlockedWithUnknownEvidence(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+
+	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
+		map[string]string{"claim-qa-1": "fail"},
+		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
+	patchResultField(t, qaPath, "blocked_claims", blockedClaimsPatch("claim-qa-2", []string{"finding-qa-1"}, "build", "the confirmed finding prevents the second claim from starting"))
+	// Keep the block declaration structurally valid, but point it at an
+	// evidence id that is neither a state row nor a finding in this result.
+	patchResultField(t, qaPath, "blocked_claims", []any{map[string]any{
+		"claim_id": "claim-qa-2", "blocking_finding_ids": []any{"finding-qa-1"},
+		"failed_precondition": map[string]any{"kind": "build", "detail": "the confirmed finding prevents the second claim from starting"},
+		"evidence_refs":       []any{"evidence-does-not-exist"}, "after_repair_required": true,
+	}})
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "evidence") {
+		t.Fatalf("unknown blocked evidence must be rejected, got %v", err)
+	}
+}
+
+// A mixed result must never let ordinary site_lost handling hide a P0. The
+// P0 safety path has precedence over the S7 capture blocker path.
+func TestSubmitResultRejectsSiteLostWhenResultAlsoContainsP0(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+
+	ordinary := codeInspectionFinding("finding-qa-1", "claim-qa-1")
+	ordinary.Encounter.LastGoodCheckpoint = ""
+	p0 := codeInspectionFinding("finding-p0-1", "claim-qa-2")
+	p0.Severity = "P0"
+	p0.Encounter.LastGoodCheckpoint = ""
+	p0.Encounter.CaptureGaps = []string{"capture stopped before the destructive path"}
+	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-mixed-p0", "agent-qa-1", "finding",
+		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "fail"}, []Finding{ordinary, p0})
+	patchResultField(t, qaPath, "site_lost", []any{map[string]any{
+		"finding_id": "finding-qa-1", "reason": "the ordinary finding scene cannot be recovered",
+	}})
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "P0") {
+		t.Fatalf("site_lost must not mask a mixed P0 result, got %v", err)
+	}
+}
+
 // §14.1 防滥用：blocking_finding_ids 为空没有任何产品因果绑定 —— 拒绝。
 func TestSubmitResultRejectsBlockedWithEmptyBlockingFindings(t *testing.T) {
 	root := t.TempDir()
@@ -426,6 +485,13 @@ func TestSubmitResultSiteLostRecordsAssignmentBlocker(t *testing.T) {
 			if agent["work_blocked_ref"] == nil || agent["work_blocked_ref"] == "" {
 				t.Fatalf("work_blocked_ref must bind the declaring result: %v", agent)
 			}
+			ref := agent["work_blocked_ref"].(string)
+			if !strings.HasPrefix(ref, ".claude/evidence/") || strings.Contains(ref, "site-lost") == false {
+				t.Fatalf("work_blocked_ref must bind the canonical blocker artifact, got %q", ref)
+			}
+			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(ref))); err != nil {
+				t.Fatalf("canonical blocker artifact must exist: %v", err)
+			}
 		}
 	}
 	// Nothing was consumed: no finding, no result, no seal; round stays S7.
@@ -433,8 +499,8 @@ func TestSubmitResultSiteLostRecordsAssignmentBlocker(t *testing.T) {
 		t.Fatalf("no Finding may be registered on the site-lost path: %v", findings)
 	}
 	row := snap.State["review"].(map[string]any)["assignments"].(map[string]any)["assignment-qa-1"].(map[string]any)
-	if row["status"] != "dispatched" {
-		t.Fatalf("assignment status = %v, want dispatched (result not consumed)", row["status"])
+	if row["status"] != "blocked" {
+		t.Fatalf("assignment status = %v, want blocked (site-lost blocker is an explicit assignment state)", row["status"])
 	}
 	if ptr := PlanPointerFromState(snap.State); ptr.Status != "running" {
 		t.Fatalf("plan status = %s, want running (round stays in S7)", ptr.Status)
@@ -454,6 +520,7 @@ func TestSubmitResultSiteLostRecordsAssignmentBlocker(t *testing.T) {
 				agent := raw.(map[string]any)
 				if agent["id"] == "agent-qa-1" {
 					agent["state"] = "working"
+					agent["blocker_resolved_ref"] = "evidence:blocker-resolved"
 				}
 			}
 			return nil

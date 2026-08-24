@@ -218,6 +218,9 @@ func SeedSealedObservationBatch(t *testing.T, root string, state map[string]any)
 	}
 	findingBytes := append(mustJSONIndent(t, findingBody), '\n')
 	findingRel := writeEvidenceFile(t, root, "finding-qa-1.json", findingBytes)
+	// The real submit transaction indexes the Finding evidence alongside the
+	// entities row; the TR-008 gate re-verifies these bytes (tamper detection).
+	AppendEvidence(state, evidenceIndexEntry("finding-qa-1", "finding", findingRel, Sha256Hex(findingBytes), round, "agent-qa-1", "QA", []any{}))
 	entities := state["entities"].(map[string]any)
 	entities["findings"] = []any{map[string]any{
 		"finding_id": "finding-qa-1", "path": findingRel, "sha256": Sha256Hex(findingBytes),

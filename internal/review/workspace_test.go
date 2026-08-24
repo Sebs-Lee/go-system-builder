@@ -45,6 +45,13 @@ func TestPrepareWorkspaceRejectsEscape(t *testing.T) {
 	if _, err := prepareVerificationWorkspace(t.TempDir(), plan); err == nil || !strings.Contains(err.Error(), "repository-relative") {
 		t.Fatalf("outside workspace must fail, got %v", err)
 	}
+	// A lexical prefix is not containment: this path starts with the allowed
+	// surface but escapes it after cleaning.
+	escape := "e2e-workspace/../../outside"
+	plan.VerificationArtifactWorkspace = &escape
+	if _, err := prepareVerificationWorkspace(t.TempDir(), plan); err == nil || !strings.Contains(err.Error(), "inside repository") {
+		t.Fatalf("traversal workspace must fail closed, got %v", err)
+	}
 	// A relative path outside e2e-workspace/ fails the surface rule.
 	out2 := "docs/reports/e2e"
 	plan.VerificationArtifactWorkspace = &out2
@@ -59,6 +66,68 @@ func TestPrepareWorkspaceRejectsEscape(t *testing.T) {
 	}
 	if digest == "" {
 		t.Fatal("registered workspace must carry a digest")
+	}
+}
+
+func TestWorkspaceDigestRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "e2e-workspace"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "e2e-workspace", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorkspaceDigest(root, "e2e-workspace/linked"); err == nil {
+		t.Fatal("workspace digest must reject a symlinked workspace outside the repository")
+	}
+
+	if err := os.Symlink(outside, filepath.Join(root, "e2e-workspace", "parent-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repositoryContainedPath(root, "e2e-workspace/parent-link/new-file.json"); err == nil {
+		t.Fatal("containment must reject a missing leaf below an escaping symlink parent")
+	}
+}
+
+func TestWorkspaceDigestRejectsSymlinkedFile(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "e2e-workspace", "plan-1")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, "linked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WorkspaceDigest(root, "e2e-workspace/plan-1"); err == nil {
+		t.Fatal("workspace digest must reject symlinked files")
+	}
+}
+
+func TestVerifyFrozenSubjectsBindsCurrentDiskContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "example", "service.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("baseline"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{FrozenSubjects: []FrozenSubject{{
+		Path: "internal/example/service.go", SHA256: sha256Of([]byte("baseline")), Kind: "product_code",
+	}}}
+	if err := verifyFrozenSubjects(root, plan); err != nil {
+		t.Fatalf("matching frozen subject must pass: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("drifted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyFrozenSubjects(root, plan); err == nil || !strings.Contains(err.Error(), "frozen subject") {
+		t.Fatalf("drifted frozen subject must fail closed, got %v", err)
 	}
 }
 

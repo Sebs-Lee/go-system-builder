@@ -173,10 +173,19 @@ func TestObservationBatchGateExactFindingSet(t *testing.T) {
 
 func TestObservationBatchGateSatisfied(t *testing.T) {
 	// The exact-set check is the subject; the base evidence requirement
-	// (envelope file readability) is covered by evaluator_test.go.
+	// (envelope file readability) is covered by evaluator_test.go. The
+	// finding's evidence row + readable hash-matching file are part of the
+	// satisfied shape (post-seal tamper detection).
+	files := memFiles{}
+	data := []byte(`{"finding_id":"finding-1","lens":"qa"}`)
+	files["evidence/finding-1.json"] = data
 	input := s7GateInput(t, "GATE-VERIFY-BLOCKING-FINDING", "TR-008", "observation_sealed",
 		sealedBatchReview(1, []string{"finding-1"}, []string{"finding-1"}, "complete_required_claims", "observation_sealed"),
-		[]any{})
+		[]any{map[string]any{
+			"id": "finding-1", "kind": "finding", "path": "evidence/finding-1.json",
+			"sha256": sha256HexLocal(data), "status": "valid", "baseline_generation": 1, "review_round": 1,
+		}})
+	input.Files = files
 	input.Snapshot.State["entities"].(map[string]any)["findings"] = findingRows("finding-1")
 	eval := &Evaluation{GateID: "GATE-VERIFY-BLOCKING-FINDING"}
 	applyObservationBatchGate(input, eval)
@@ -185,6 +194,41 @@ func TestObservationBatchGateSatisfied(t *testing.T) {
 	}
 	if eval.Status == StatusNotReady {
 		t.Fatal("matching sealed batch must stay satisfiable")
+	}
+}
+
+// A deleted or mutated Finding file must fail the TR-008 gate even though the
+// state projections still agree — post-seal tamper detection (verified as a
+// real gap in the S7 round-3 sandbox review).
+func TestObservationBatchGateDetectsFindingFileTampering(t *testing.T) {
+	data := []byte(`{"finding_id":"finding-1","lens":"qa"}`)
+
+	deleted := s7GateInput(t, "GATE-VERIFY-BLOCKING-FINDING", "TR-008", "observation_sealed",
+		sealedBatchReview(1, []string{"finding-1"}, []string{"finding-1"}, "complete_required_claims", "observation_sealed"),
+		[]any{map[string]any{
+			"id": "finding-1", "kind": "finding", "path": "evidence/finding-1.json",
+			"sha256": sha256HexLocal(data), "status": "valid", "baseline_generation": 1, "review_round": 1,
+		}})
+	deleted.Files = memFiles{} // file removed after sealing
+	deleted.Snapshot.State["entities"].(map[string]any)["findings"] = findingRows("finding-1")
+	eval := &Evaluation{GateID: "GATE-VERIFY-BLOCKING-FINDING"}
+	applyObservationBatchGate(deleted, eval)
+	if !containsToken(eval.Missing, "batch:finding_file:finding-1:unreadable") {
+		t.Fatalf("deleted finding file must be named, got %v", eval.Missing)
+	}
+
+	mutated := s7GateInput(t, "GATE-VERIFY-BLOCKING-FINDING", "TR-008", "observation_sealed",
+		sealedBatchReview(1, []string{"finding-1"}, []string{"finding-1"}, "complete_required_claims", "observation_sealed"),
+		[]any{map[string]any{
+			"id": "finding-1", "kind": "finding", "path": "evidence/finding-1.json",
+			"sha256": sha256HexLocal(data), "status": "valid", "baseline_generation": 1, "review_round": 1,
+		}})
+	mutated.Files = memFiles{"evidence/finding-1.json": []byte(`{"finding_id":"finding-1","severity":"P0"}`)}
+	mutated.Snapshot.State["entities"].(map[string]any)["findings"] = findingRows("finding-1")
+	eval = &Evaluation{GateID: "GATE-VERIFY-BLOCKING-FINDING"}
+	applyObservationBatchGate(mutated, eval)
+	if !containsToken(eval.Missing, "batch:finding_file:finding-1:hash_mismatch") {
+		t.Fatalf("mutated finding file must be named, got %v", eval.Missing)
 	}
 }
 

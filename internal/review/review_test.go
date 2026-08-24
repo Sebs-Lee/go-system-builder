@@ -67,9 +67,9 @@ func baseVerificationState() map[string]any {
 	state["baseline"].(map[string]any)["generation"] = 1
 	state["review"] = map[string]any{"round": 1, "clean_round": nil}
 	state["journal"] = map[string]any{
-		"path":           ".claude/loop-events.jsonl",
-		"last_sequence":  0,
-		"last_event_id":  nil,
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
 	}
 	agent := func(id, role string) map[string]any {
 		return map[string]any{
@@ -96,13 +96,23 @@ func baseVerificationState() map[string]any {
 // one N/A e2e claim; all static wave.
 func writePlanFile(t *testing.T, root string) string {
 	t.Helper()
+	// The registration/submit gates verify frozen_subjects against disk. Keep
+	// this fixture honest by creating the subject and pinning its real digest.
+	subjectPath := filepath.Join(root, "internal", "example", "service.go")
+	if err := os.MkdirAll(filepath.Dir(subjectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	subjectBytes := []byte("fixture baseline")
+	if err := os.WriteFile(subjectPath, subjectBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	plan := map[string]any{
 		"schema_version":      "1.0.0",
 		"review_plan_id":      "review-plan-t-1",
 		"review_round":        1,
 		"baseline_generation": 1,
 		"frozen_subjects": []any{
-			map[string]any{"path": "internal/example/service.go", "sha256": strings.Repeat("1", 64), "kind": "product_code"},
+			map[string]any{"path": "internal/example/service.go", "sha256": sha256Of(subjectBytes), "kind": "product_code"},
 		},
 		"claims": []any{
 			map[string]any{
@@ -204,16 +214,17 @@ func writeResultFile(t *testing.T, root string, plan *Plan, assignmentID, result
 		})
 	}
 	payload := map[string]any{
-		"schema_version":       "1.0.0",
-		"result_id":            resultID,
-		"assignment_id":        assignmentID,
-		"review_plan_id":       plan.ReviewPlanID,
-		"review_round":         plan.ReviewRound,
-		"baseline_generation":  plan.BaselineGeneration,
-		"producer_agent_id":    producer,
-		"subject_digest":       SubjectDigest(plan),
-		"claim_results":        claimResults,
-		"verdict":              verdict,
+		"schema_version":      "1.0.0",
+		"result_id":           resultID,
+		"assignment_id":       assignmentID,
+		"assignment_revision": 1,
+		"review_plan_id":      plan.ReviewPlanID,
+		"review_round":        plan.ReviewRound,
+		"baseline_generation": plan.BaselineGeneration,
+		"producer_agent_id":   producer,
+		"subject_digest":      SubjectDigest(plan),
+		"claim_results":       claimResults,
+		"verdict":             verdict,
 	}
 	if len(findings) > 0 {
 		payload["findings"] = findings
@@ -231,14 +242,14 @@ func writeResultFile(t *testing.T, root string, plan *Plan, assignmentID, result
 
 func codeInspectionFinding(findingID, claimID string) Finding {
 	return Finding{
-		SchemaVersion: "1.0.0",
-		FindingID:     findingID,
-		ClaimID:       claimID,
-		Lens:          "qa",
-		Severity:      "P1",
-		Expected:      "expected behavior per contract",
-		AuthorityRefs: []string{"CONTRACTS-001"},
-		Observed:      "observed deviation",
+		SchemaVersion:   "1.0.0",
+		FindingID:       findingID,
+		ClaimID:         claimID,
+		Lens:            "qa",
+		Severity:        "P1",
+		Expected:        "expected behavior per contract",
+		AuthorityRefs:   []string{"CONTRACTS-001"},
+		Observed:        "observed deviation",
 		ObservationMode: "code_inspection",
 		Encounter: Encounter{
 			JourneySummary:     "read code -> trace call -> found deviation",
@@ -292,6 +303,51 @@ func TestRegisterPlanRejectsWrongStage(t *testing.T) {
 	_, err := RegisterPlan(root, statePath, journalPath, PlanRequest{ExpectedRevision: 1, PlanPath: writePlanFile(t, root)})
 	if err == nil || !strings.Contains(err.Error(), "verification") {
 		t.Fatalf("expected stage rejection, got %v", err)
+	}
+}
+
+func TestRegisterPlanStaleRevisionDoesNotWritePinnedPlan(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	planPath := writePlanFile(t, root)
+	_, err := RegisterPlan(root, statePath, journalPath, PlanRequest{ExpectedRevision: 0, PlanPath: planPath})
+	if err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale plan registration must fail before writing control-plane artifact, got %v", err)
+	}
+	pinned := filepath.Join(root, ".claude", "review", "plans", "review-plan-t-1.json")
+	if _, statErr := os.Stat(pinned); !os.IsNotExist(statErr) {
+		t.Fatalf("stale registration must not leave a pinned plan, stat error=%v", statErr)
+	}
+}
+
+func TestQueuedAssignmentIsReleasedWhenLockHolderIsConsumed(t *testing.T) {
+	state := map[string]any{
+		"review": map[string]any{
+			"assignments": map[string]any{
+				"assignment-holder": map[string]any{
+					"status": "consumed", "resource_locks": []any{"port:8080"}, "result_ref": "result-holder",
+				},
+				"assignment-queued": map[string]any{
+					"status": "planned", "resource_locks": []any{"port:8080"}, "result_ref": nil,
+					"queued_agent_id": "agent-queued", "queue_reason": "resource_lock:port:8080",
+					"claim_ids": []any{"claim-queued"},
+				},
+			},
+			"claims": map[string]any{
+				"claim-queued": map[string]any{"disposition": "planned"},
+			},
+		},
+	}
+	if err := releaseQueuedReviewAssignments(state); err != nil {
+		t.Fatalf("release queued assignment: %v", err)
+	}
+	row := state["review"].(map[string]any)["assignments"].(map[string]any)["assignment-queued"].(map[string]any)
+	if row["status"] != "dispatched" || row["agent_id"] != "agent-queued" || row["queue_reason"] != nil {
+		t.Fatalf("queued assignment was not released: %v", row)
+	}
+	claim := state["review"].(map[string]any)["claims"].(map[string]any)["claim-queued"].(map[string]any)
+	if claim["disposition"] != "running" {
+		t.Fatalf("queued claim disposition = %v, want running", claim["disposition"])
 	}
 }
 
@@ -355,6 +411,21 @@ func TestValidatePlanCoverageRules(t *testing.T) {
 	plan.Claims[2].DependsOn = []string{"claim-qa-1"}
 	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("expected cycle rejection, got %v", err)
+	}
+	// A dependency cannot be satisfied by another Claim in the same
+	// Assignment: the Assignment has only one Result boundary, so there is no
+	// upstream Result to consume before it starts.
+	plan = load()
+	plan.Claims[1].DependsOn = []string{"claim-qa-2"}
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "same Assignment") {
+		t.Fatalf("expected same-Assignment dependency rejection, got %v", err)
+	}
+	// Execution waves are semantic, not just labels: white-box delivery/QA
+	// work is static and behavior work is reserved for E2E/specialty lenses.
+	plan = load()
+	plan.Assignments[1].ExecutionWave = "behavior"
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "behavior wave") {
+		t.Fatalf("expected QA behavior-wave rejection, got %v", err)
 	}
 }
 
@@ -426,13 +497,16 @@ func TestSubmitResultFindingSealsObservationBatch(t *testing.T) {
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-dv-1", "agent-dv-1")
 	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
-	plan, _, _ := LoadPlan(root, snap.State)
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// QA reports one fail claim with a finding (the second claim passes).
 	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
 		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "pass"},
 		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
-	snap, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+	snap, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
 	})
 	if err != nil {
@@ -480,6 +554,26 @@ func TestSubmitResultP0SealsImmediately(t *testing.T) {
 	statePath, journalPath := writeState(t, root, baseVerificationState())
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
+	// A queued Assignment is already registered in the runtime, but must not
+	// be promoted by the same transaction that seals an observation batch.
+	// P0 means stop new dispatch immediately; the queue must remain planned.
+	reviewMap := snap.State["review"].(map[string]any)
+	reviewMap["assignments"].(map[string]any)["assignment-queued"] = map[string]any{
+		"lens": "qa", "claim_ids": []any{"claim-queued"}, "status": "planned",
+		"agent_id": nil, "result_ref": nil, "queued_agent_id": "agent-queued",
+		"queue_reason": "resource_lock:port:8080", "resource_locks": []any{"port:8080"},
+	}
+	reviewMap["claims"].(map[string]any)["claim-queued"] = map[string]any{
+		"lens": "qa", "applicability": "required", "disposition": "planned",
+		"assignment_id": "assignment-queued", "result_id": nil, "finding_ids": []any{},
+	}
+	stateBytes, err := json.MarshalIndent(snap.State, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, append(stateBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	plan, _, _ := LoadPlan(root, snap.State)
 
 	p0 := codeInspectionFinding("finding-p0-1", "claim-qa-1")
@@ -488,7 +582,7 @@ func TestSubmitResultP0SealsImmediately(t *testing.T) {
 	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
 		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "pass"},
 		[]Finding{p0})
-	snap, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+	snap, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
 	})
 	if err != nil {
@@ -501,6 +595,10 @@ func TestSubmitResultP0SealsImmediately(t *testing.T) {
 	batch := snap.State["review"].(map[string]any)["observation_batch"].(map[string]any)
 	if batch["drain_policy"] != "immediate_stop" {
 		t.Fatalf("drain_policy = %v", batch["drain_policy"])
+	}
+	queued := snap.State["review"].(map[string]any)["assignments"].(map[string]any)["assignment-queued"].(map[string]any)
+	if queued["status"] != "planned" || queued["agent_id"] != nil {
+		t.Fatalf("P0 seal must not release queued dispatch: %v", queued)
 	}
 }
 
@@ -746,6 +844,46 @@ func TestRevisePlanRejectsMissingSourceRef(t *testing.T) {
 	}
 }
 
+func TestRevisePlanRechecksCurrentTaskCoverage(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A new S6 task may appear after registration but before the controlled
+	// revision. The v2 plan must not silently omit it.
+	snap.State["documents"] = []any{map[string]any{
+		"id": "TASK-099", "kind": "task", "generation": 1,
+	}}
+	stateBytes, err := json.MarshalIndent(snap.State, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, append(stateBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v2 := reviseFixturePlan(t, root, plan,
+		map[string]any{
+			"claim_id": "claim-qa-3", "lens": "qa", "target": "internal/example",
+			"assertion": "new surface covered", "oracle": "observed", "method": "review",
+			"applicability": "required",
+		},
+		map[string]any{
+			"assignment_id": "assignment-qa-2", "lens": "qa", "claim_ids": []string{"claim-qa-3"},
+			"non_overlap_boundary": "owns the new surface", "execution_wave": "static",
+		},
+		[]string{"review-result-qa-1"},
+	)
+	if _, err := RevisePlan(root, statePath, journalPath, ReviseRequest{
+		ExpectedRevision: snap.Revision, PlanPath: v2,
+		SourceRef: "review-result-qa-1", AffectedSurface: "internal/example",
+	}); err == nil || !strings.Contains(err.Error(), "TASK-099") {
+		t.Fatalf("revision must recheck current task coverage, got %v", err)
+	}
+}
+
 func TestRevisePlanInvalidatesConsumedResultsOnChangedClaims(t *testing.T) {
 	root := t.TempDir()
 	statePath, journalPath := writeState(t, root, baseVerificationState())
@@ -790,6 +928,10 @@ func TestRevisePlanInvalidatesConsumedResultsOnChangedClaims(t *testing.T) {
 	}
 	if dispositions["claim-qa-2"].Disposition != "pass" {
 		t.Fatalf("unchanged claim must keep pass, got %s", dispositions["claim-qa-2"].Disposition)
+	}
+	assignment := next.State["review"].(map[string]any)["assignments"].(map[string]any)["assignment-qa-1"].(map[string]any)
+	if assignment["status"] != "planned" || assignment["agent_id"] != nil {
+		t.Fatalf("changed assignment must be redispatched from planned with no stale Agent binding: %v", assignment)
 	}
 	for _, raw := range next.State["evidence"].([]any) {
 		entry := raw.(map[string]any)

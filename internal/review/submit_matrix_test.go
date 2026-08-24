@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,6 +87,88 @@ func TestSubmitResultRejectsSubjectDigestMismatch(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "subject_digest mismatch") {
 		t.Fatalf("wrong subject_digest must be rejected, got %v", err)
+	}
+}
+
+func TestSubmitResultRejectsAssignmentRevisionMismatch(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+	path := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-old-plan", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	patchResultField(t, path, "assignment_revision", 2)
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: path,
+	})
+	if err == nil || !strings.Contains(err.Error(), "assignment_revision") {
+		t.Fatalf("result from an old plan revision must be rejected, got %v", err)
+	}
+}
+
+func TestRequiredEvidenceMustBePresentOnClaimResult(t *testing.T) {
+	plan := &Plan{Claims: []Claim{{ClaimID: "claim-qa-1", RequiredEvidence: []string{"trace"}}}}
+	assignment := &PlanAssignment{AssignmentID: "assignment-qa-1", ClaimIDs: []string{"claim-qa-1"}}
+	result := &Result{ClaimResults: []ClaimResult{{ClaimID: "claim-qa-1", Conclusion: "pass"}}}
+	if err := validateClaimEvidenceRequirements(plan, assignment, result); err == nil || !strings.Contains(err.Error(), "required evidence") {
+		t.Fatalf("missing required evidence must be rejected, got %v", err)
+	}
+	result.ClaimResults[0].EvidenceRefs = []string{"ev/trace.md"}
+	if err := validateClaimEvidenceRequirements(plan, assignment, result); err != nil {
+		t.Fatalf("claim result with evidence must be accepted: %v", err)
+	}
+}
+
+func TestSubmitResultRejectsFrozenSubjectDrift(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+	path := filepath.Join(root, "internal", "example", "service.go")
+	if err := os.WriteFile(path, []byte("drifted after plan registration"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-drifted-baseline", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "frozen subject") {
+		t.Fatalf("drifted frozen baseline must reject submit, got %v", err)
+	}
+	snapshot, snapshotErr := loopruntime.NewStore(statePath, journalPath).Snapshot()
+	if snapshotErr != nil {
+		t.Fatal(snapshotErr)
+	}
+	if ptr := PlanPointerFromState(snapshot.State); ptr == nil || ptr.Status != "stale" {
+		t.Fatalf("frozen subject drift must persist plan status=stale, got %+v", ptr)
+	}
+}
+
+func TestSubmitResultMarksPlanStaleWhenPinnedPlanDrifts(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+	pinned := filepath.Join(root, ".claude", "review", "plans", plan.ReviewPlanID+".json")
+	data, err := os.ReadFile(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pinned, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-plan-drift", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	_, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("pinned plan drift must report stale, got %v", err)
+	}
+	snapshot, snapshotErr := loopruntime.NewStore(statePath, journalPath).Snapshot()
+	if snapshotErr != nil {
+		t.Fatal(snapshotErr)
+	}
+	if ptr := PlanPointerFromState(snapshot.State); ptr == nil || ptr.Status != "stale" {
+		t.Fatalf("pinned plan drift must persist stale status, got %+v", ptr)
 	}
 }
 
@@ -284,6 +369,99 @@ func TestSubmitResultRejectsTimelineStepWithoutEvidence(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "timeline step 2 has no evidence_refs") {
 		t.Fatalf("step without bound evidence must be rejected, got %v", err)
+	}
+}
+
+func TestSubmitResultStaleRevisionDoesNotCreateReviewArtifacts(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+	resultPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-stale", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision - 1, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale submit must fail with stale revision, got %v", err)
+	}
+	artifact := filepath.Join(root, ".claude", "evidence", "loop-REQ-TEST", "g1", "reviews", "agent-qa-1", "review-result-stale.json")
+	if _, statErr := os.Stat(artifact); !os.IsNotExist(statErr) {
+		t.Fatalf("stale submit must not leave a review artifact, stat error=%v", statErr)
+	}
+}
+
+// Apply-time rejection (reviewer Agent not in working state) fails the CAS
+// without committing; the staged result artifact must be cleaned up so the
+// corrected resubmit does not hit "file exists".
+func TestSubmitResultApplyRejectionCleansStagedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	revision, plan := dispatchedFixture(t, root, statePath, journalPath)
+
+	// Park the QA reviewer in `reading`: submit passes every pre-CAS check,
+	// stages artifacts, then the Apply-time agent-state check rejects.
+	setAgentState := func(agentState string, rev int) int {
+		store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+		next, err := store.Update(rev, loopruntime.Mutation{
+			EventID:        "evt-test-agent-state-" + agentState,
+			TransitionID:   "TEST",
+			Event:          "test_agent_state",
+			Actor:          "test",
+			IdempotencyKey: "test:agent-state:" + agentState,
+			Apply: func(state map[string]any) error {
+				for _, row := range state["entities"].(map[string]any)["agents"].([]any) {
+					if agent := row.(map[string]any); agent["id"] == "agent-qa-1" {
+						agent["state"] = agentState
+					}
+				}
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("setAgentState: %v", err)
+		}
+		return next.Revision
+	}
+	revision = setAgentState("reading", revision)
+
+	resultPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-orphan", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires working state") {
+		t.Fatalf("submit with a reading reviewer must be rejected, got %v", err)
+	}
+	artifact := filepath.Join(root, ".claude", "evidence", "loop-REQ-TEST", "g1", "reviews", "agent-qa-1", "review-result-qa-orphan.json")
+	if _, statErr := os.Stat(artifact); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected submit must clean its staged artifact, stat error=%v", statErr)
+	}
+
+	// The corrected resubmit (agent now working) must succeed on the same
+	// result_id — no orphan in the way.
+	revision = setAgentState("working", revision)
+	if _, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	}); err != nil {
+		t.Fatalf("resubmit after correction must succeed, got %v", err)
+	}
+}
+
+func TestWriteArtifactNeverOverwrites(t *testing.T) {
+	root := t.TempDir()
+	if err := writeArtifact(root, "evidence/immutable.json", []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeArtifact(root, "evidence/immutable.json", []byte("second")); err == nil {
+		t.Fatal("artifact writer must reject overwrite")
+	}
+	data, err := os.ReadFile(filepath.Join(root, "evidence", "immutable.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "first" {
+		t.Fatalf("artifact was overwritten: %q", data)
 	}
 }
 

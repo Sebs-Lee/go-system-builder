@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,6 +65,9 @@ func RevisePlan(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
+	if currentRevision := intField(current["revision"]); currentRevision != request.ExpectedRevision {
+		return loopruntime.Snapshot{}, loopruntime.ErrStaleRevision
+	}
 	currentPlan, ptr, err := LoadPlan(root, current)
 	if err != nil {
 		return loopruntime.Snapshot{}, err
@@ -82,6 +86,15 @@ func RevisePlan(
 	if next.ReviewRound != currentPlan.ReviewRound || next.BaselineGeneration != currentPlan.BaselineGeneration {
 		return loopruntime.Snapshot{}, fmt.Errorf("a revision keeps the review_round and baseline_generation; a changed baseline is a stale round, not a revision")
 	}
+	if err := verifyFrozenSubjects(root, &next); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan frozen subject baseline: %w", err)
+	}
+	if err := ValidatePlanTaskCoverage(current, &next); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if workspaceValue(next.VerificationArtifactWorkspace) != workspaceValue(currentPlan.VerificationArtifactWorkspace) {
+		return loopruntime.Snapshot{}, fmt.Errorf("a revision keeps the verification_artifact_workspace; changing the E2E write surface requires a new review round")
+	}
 
 	changed, err := diffClaims(currentPlan, &next, request.SourceRef, request.AffectedSurface)
 	if err != nil {
@@ -91,13 +104,20 @@ func RevisePlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("the revision changes no Claim; nothing to revise")
 	}
 
-	// Persist v2 over the pinned path; the pointer sha updates in the CAS.
+	// Persist v2 as a new immutable pinned artifact; the pointer path+sha
+	// updates in the CAS. Overwriting v1 before the CAS would let a stale
+	// revision silently rewrite evidence consumed by other readers.
 	planBytes := append(canonicalJSON(data), '\n')
-	planAbs := filepath.Join(root, filepath.FromSlash(ptr.Path))
-	if err := os.WriteFile(planAbs, planBytes, 0o644); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("write revised ReviewPlan: %w", err)
+	planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", next.ReviewPlanID+"-r2.json"))
+	if err := writeArtifact(root, planRel, planBytes); err != nil {
+		return loopruntime.Snapshot{}, err
 	}
 	planSHA := sha256Of(planBytes)
+	cleanupPlan := func() {
+		if path, err := repositoryContainedPath(root, planRel); err == nil {
+			_ = os.Remove(path)
+		}
+	}
 
 	runtimeID, _ := current["runtime_id"].(string)
 	occurredAt := request.OccurredAt
@@ -112,7 +132,7 @@ func RevisePlan(
 	}
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
-	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
+	snapshot, err := store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-revise-%s-r%d", next.ReviewPlanID, request.ExpectedRevision+1),
 		TransitionID:   "REVIEW-PLAN-REVISE",
 		Event:          "review_plan_revised",
@@ -134,6 +154,7 @@ func RevisePlan(
 				return fmt.Errorf("review plan pointer missing")
 			}
 			planMap["revision"] = 2
+			planMap["path"] = planRel
 			planMap["sha256"] = planSHA
 
 			claimsProjection, _ := reviewMap["claims"].(map[string]any)
@@ -157,10 +178,16 @@ func RevisePlan(
 				status := "planned"
 				agentID := any(nil)
 				resultRef := any(nil)
+				queuedAgentID := any(nil)
+				blockerRef := any(nil)
+				blockedAt := any(nil)
 				if existing != nil {
 					status, _ = existing["status"].(string)
 					agentID = existing["agent_id"]
 					resultRef = existing["result_ref"]
+					queuedAgentID = existing["queued_agent_id"]
+					blockerRef = existing["blocker_ref"]
+					blockedAt = existing["blocked_at"]
 				}
 				// An assignment containing a changed claim must produce a
 				// new result: reset consumption so review-result submit is
@@ -173,10 +200,12 @@ func RevisePlan(
 					}
 				}
 				if touched {
-					status = "dispatched"
-					if agentID == nil {
-						status = "planned"
-					}
+					// A changed Claim invalidates the old execution context. The
+					// scheduler must create a fresh Agent binding; retaining the
+					// old Agent would make the revised Assignment appear runnable
+					// while still accepting a result from the superseded context.
+					status = "planned"
+					agentID = nil
 					resultRef = nil
 				}
 				// Carry the declared resource_locks forward; a plan
@@ -189,18 +218,24 @@ func RevisePlan(
 						// A revision resets the queue so the post-revision
 						// scheduler re-evaluates conflicts from scratch.
 						queueReason = nil
+						queuedAgentID = nil
+						blockerRef = nil
+						blockedAt = nil
 					} else {
 						queueReason = existing["queue_reason"]
 					}
 				}
 				newAssignments[assignment.AssignmentID] = map[string]any{
-					"lens":           assignment.Lens,
-					"claim_ids":      claimIDs,
-					"status":         status,
-					"agent_id":       agentID,
-					"result_ref":     resultRef,
-					"resource_locks": locks,
-					"queue_reason":   queueReason,
+					"lens":            assignment.Lens,
+					"claim_ids":       claimIDs,
+					"status":          status,
+					"agent_id":        agentID,
+					"result_ref":      resultRef,
+					"queued_agent_id": queuedAgentID,
+					"blocker_ref":     blockerRef,
+					"blocked_at":      blockedAt,
+					"resource_locks":  locks,
+					"queue_reason":    queueReason,
 				}
 			}
 			newClaims := map[string]any{}
@@ -254,6 +289,20 @@ func RevisePlan(
 			return nil
 		},
 	})
+	if err != nil {
+		if errors.Is(err, loopruntime.ErrStaleRevision) {
+			cleanupPlan()
+		}
+		return snapshot, err
+	}
+	return snapshot, nil
+}
+
+func workspaceValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // diffClaims computes which claims changed between v1 and v2 and enforces

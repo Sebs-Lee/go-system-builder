@@ -24,7 +24,10 @@ func WorkspaceDigest(root, workspaceRel string) (string, error) {
 	if workspaceRel == "" {
 		return "", nil
 	}
-	abs := filepath.Join(root, filepath.FromSlash(workspaceRel))
+	abs, err := repositoryContainedPath(root, workspaceRel)
+	if err != nil {
+		return "", fmt.Errorf("workspace %s is outside repository: %w", workspaceRel, err)
+	}
 	entries, err := os.ReadDir(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -40,6 +43,9 @@ func WorkspaceDigest(root, workspaceRel string) (string, error) {
 		}
 		if info.IsDir() {
 			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("workspace contains symlink %s; symlinked evidence surfaces are not digestible", path)
 		}
 		rel, err := filepath.Rel(abs, path)
 		if err != nil {
@@ -73,7 +79,10 @@ func prepareVerificationWorkspace(root string, plan *Plan) (string, error) {
 	if !strings.HasPrefix(workspace, "e2e-workspace/") {
 		return "", fmt.Errorf("verification_artifact_workspace must live under e2e-workspace/ (got %q); the reviewer write-scope rule only knows that surface", workspace)
 	}
-	abs := filepath.Join(root, filepath.FromSlash(workspace))
+	abs, err := repositoryContainedPath(root, workspace)
+	if err != nil {
+		return "", fmt.Errorf("verification_artifact_workspace must stay inside repository: %w", err)
+	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", fmt.Errorf("create verification workspace: %w", err)
 	}
@@ -82,6 +91,78 @@ func prepareVerificationWorkspace(root string, plan *Plan) (string, error) {
 		return "", err
 	}
 	return digest, nil
+}
+
+// repositoryContainedPath resolves a repository-relative path and rejects
+// lexical traversal (and existing symlink escapes). Reviewer write surfaces
+// are security boundaries; a prefix check such as "e2e-workspace/" is not a
+// containment proof for paths containing "..".
+func repositoryContainedPath(root, rel string) (string, error) {
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path must be repository-relative")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root: %w", err)
+	}
+	abs := filepath.Join(rootAbs, filepath.FromSlash(rel))
+	relToRoot, err := filepath.Rel(rootAbs, abs)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) || filepath.IsAbs(relToRoot) {
+		return "", fmt.Errorf("path %q escapes repository", rel)
+	}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(rootAbs)
+	if rootErr != nil {
+		return "", fmt.Errorf("resolve repository root symlinks: %w", rootErr)
+	}
+	// EvalSymlinks(candidate) fails when the leaf is new. Walk upward until an
+	// existing ancestor is found so a symlinked parent cannot smuggle a future
+	// artifact outside the repository.
+	for current := abs; ; current = filepath.Dir(current) {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			resolvedRel, relErr := filepath.Rel(resolvedRoot, resolved)
+			if relErr != nil || resolvedRel == ".." || strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) || filepath.IsAbs(resolvedRel) {
+				return "", fmt.Errorf("path %q follows a symlink outside repository", rel)
+			}
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return abs, nil
+}
+
+// verifyFrozenSubjects proves that the registered ReviewPlan still describes
+// the bytes on disk. SubjectDigest only fingerprints the plan declarations;
+// it must not be mistaken for a disk-baseline check. A changed or missing
+// subject makes the round stale before any Reviewer Result is consumed.
+func verifyFrozenSubjects(root string, plan *Plan) error {
+	if plan == nil {
+		return fmt.Errorf("frozen subject verification requires a plan")
+	}
+	for _, subject := range plan.FrozenSubjects {
+		if strings.TrimSpace(subject.Path) == "" {
+			return fmt.Errorf("frozen subject has an empty path")
+		}
+		if len(subject.SHA256) != 64 {
+			return fmt.Errorf("frozen subject %s has an invalid sha256", subject.Path)
+		}
+		path, err := repositoryContainedPath(root, subject.Path)
+		if err != nil {
+			return fmt.Errorf("frozen subject %s is outside repository: %w", subject.Path, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("frozen subject %s is unreadable: %w", subject.Path, err)
+		}
+		actual := sha256Of(data)
+		if actual != subject.SHA256 {
+			return fmt.Errorf("frozen subject %s drifted: plan pins %s but disk contains %s", subject.Path, subject.SHA256, actual)
+		}
+	}
+	return nil
 }
 
 // verifyResultArtifactDigest binds an E2E result to the workspace digest it

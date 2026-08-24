@@ -2,6 +2,7 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +49,9 @@ func RegisterPlan(
 	if err := ValidatePlan(&plan); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan coverage: %w", err)
 	}
+	if err := verifyFrozenSubjects(root, &plan); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
+	}
 
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
@@ -56,6 +60,9 @@ func RegisterPlan(
 	var current map[string]any
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+	}
+	if currentRevision := intField(current["revision"]); currentRevision != request.ExpectedRevision {
+		return loopruntime.Snapshot{}, loopruntime.ErrStaleRevision
 	}
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	if state, _ := lifecycle["state"].(string); state != "verification" {
@@ -80,24 +87,53 @@ func RegisterPlan(
 		return loopruntime.Snapshot{}, err
 	}
 	// E2E cold start: create and fingerprint the isolated write surface so
-	// result submit / round close can bind it exactly (L3-S7 §1.4.1).
+	// result submit / round close can bind it exactly (L3-S7 §1.4.1). Keep a
+	// cleanup handle for the failure path; a failed registration must not leave
+	// an apparently usable empty workspace behind.
+	workspace := ""
+	if plan.VerificationArtifactWorkspace != nil {
+		workspace = *plan.VerificationArtifactWorkspace
+	}
+	workspacePath := ""
+	workspaceWasAbsent := false
+	if workspace != "" {
+		workspacePath, err = repositoryContainedPath(root, workspace)
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+		if _, statErr := os.Stat(workspacePath); os.IsNotExist(statErr) {
+			workspaceWasAbsent = true
+		} else if statErr != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("inspect verification workspace: %w", statErr)
+		}
+	}
 	artifactDigest, err := prepareVerificationWorkspace(root, &plan)
 	if err != nil {
 		return loopruntime.Snapshot{}, err
+	}
+	cleanupWorkspace := func() {
+		if workspaceWasAbsent && workspacePath != "" {
+			// Remove only the exact empty leaf we created. If a concurrent
+			// writer populated it, preserve its evidence rather than using a
+			// recursive delete during recovery.
+			_ = os.Remove(workspacePath)
+		}
 	}
 
 	// Pin the plan into the shared control plane directory; the runtime
 	// stores path+sha256 and every consumer hash-verifies on load.
 	planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", plan.ReviewPlanID+".json"))
-	planAbs := filepath.Join(root, filepath.FromSlash(planRel))
-	if err := os.MkdirAll(filepath.Dir(planAbs), 0o755); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("create review plan dir: %w", err)
-	}
 	planBytes := append(canonicalJSON(data), '\n')
-	if err := os.WriteFile(planAbs, planBytes, 0o644); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("write ReviewPlan: %w", err)
+	if err := writeArtifact(root, planRel, planBytes); err != nil {
+		cleanupWorkspace()
+		return loopruntime.Snapshot{}, err
 	}
 	planSHA := sha256Of(planBytes)
+	cleanupPlan := func() {
+		if path, err := repositoryContainedPath(root, planRel); err == nil {
+			_ = os.Remove(path)
+		}
+	}
 
 	runtimeID, _ := current["runtime_id"].(string)
 	occurredAt := request.OccurredAt
@@ -105,13 +141,8 @@ func RegisterPlan(
 		occurredAt = time.Now().UTC()
 	}
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
-	workspace := ""
-	if plan.VerificationArtifactWorkspace != nil {
-		workspace = *plan.VerificationArtifactWorkspace
-	}
-
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
-	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
+	snapshot, err := store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-plan-%s-r%d", plan.ReviewPlanID, request.ExpectedRevision+1),
 		TransitionID:   "REVIEW-PLAN",
 		Event:          "review_plan_registered",
@@ -157,13 +188,16 @@ func RegisterPlan(
 				// §4.5 + L4 §6.2).
 				locks := mergedResourceLocks(assignment.ResourceLocks, &plan, assignment.ClaimIDs)
 				assignmentsProjection[assignment.AssignmentID] = map[string]any{
-					"lens":           assignment.Lens,
-					"claim_ids":      claimIDs,
-					"status":         "planned",
-					"agent_id":       nil,
-					"result_ref":     nil,
-					"resource_locks": locks,
-					"queue_reason":   nil,
+					"lens":            assignment.Lens,
+					"claim_ids":       claimIDs,
+					"status":          "planned",
+					"agent_id":        nil,
+					"result_ref":      nil,
+					"queued_agent_id": nil,
+					"blocker_ref":     nil,
+					"blocked_at":      nil,
+					"resource_locks":  locks,
+					"queue_reason":    nil,
 				}
 			}
 			for _, claim := range plan.Claims {
@@ -200,6 +234,22 @@ func RegisterPlan(
 			return nil
 		},
 	})
+	if err != nil {
+		cleanupStateRevision := func() bool {
+			stateBytes, readErr := os.ReadFile(statePath)
+			if readErr != nil {
+				return false
+			}
+			var persisted map[string]any
+			return json.Unmarshal(stateBytes, &persisted) == nil && intField(persisted["revision"]) == request.ExpectedRevision
+		}
+		if errors.Is(err, loopruntime.ErrStaleRevision) || cleanupStateRevision() {
+			cleanupPlan()
+			cleanupWorkspace()
+		}
+		return snapshot, err
+	}
+	return snapshot, nil
 }
 
 // canonicalJSON re-marshals the plan so the pinned bytes are stable.

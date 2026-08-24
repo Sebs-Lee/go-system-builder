@@ -29,7 +29,7 @@ import (
 
 // validateBlockedClaims enforces the full §3.5 validation chain for every
 // blocked_claims entry. Anything missing rejects the whole submit atomically.
-func validateBlockedClaims(state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result) error {
+func validateBlockedClaims(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result) error {
 	if len(result.BlockedClaims) == 0 {
 		return nil
 	}
@@ -41,11 +41,30 @@ func validateBlockedClaims(state map[string]any, plan *Plan, assignment *PlanAss
 	// the current round plus the Findings this very result confirms in the
 	// same transaction. Prior-round or unknown ids are not evidence.
 	confirmed := map[string]bool{}
+	confirmedEvidence := map[string]map[string]any{}
+	currentFindings := map[string]Finding{}
 	for _, row := range RoundFindings(state) {
-		confirmed[stringField(row["finding_id"])] = true
+		findingID := stringField(row["finding_id"])
+		if findingID == "" || row["status"] == "invalid" || intField(row["review_round"]) != result.ReviewRound {
+			continue
+		}
+		confirmed[findingID] = true
+		confirmedEvidence[findingID] = row
 	}
+	for _, raw := range evidenceEntries(state) {
+		row, _ := raw.(map[string]any)
+		if row == nil || row["status"] == "invalid" || intField(row["review_round"]) != result.ReviewRound {
+			continue
+		}
+		if id := stringField(row["id"]); id != "" {
+			confirmedEvidence[id] = row
+		}
+	}
+	currentFindingIDs := map[string]bool{}
 	for _, finding := range result.Findings {
 		confirmed[finding.FindingID] = true
+		currentFindingIDs[finding.FindingID] = true
+		currentFindings[finding.FindingID] = finding
 	}
 	answered := map[string]bool{}
 	for _, claimResult := range result.ClaimResults {
@@ -85,6 +104,51 @@ func validateBlockedClaims(state map[string]any, plan *Plan, assignment *PlanAss
 		}
 		if len(blocked.EvidenceRefs) == 0 {
 			return fmt.Errorf("blocked claim %s carries no evidence_refs; the projection must prove the precondition failure (L3-S7 §3.5)", blocked.ClaimID)
+		}
+		for _, ref := range blocked.EvidenceRefs {
+			if strings.TrimSpace(ref) == "" {
+				return fmt.Errorf("blocked claim %s contains an empty evidence reference", blocked.ClaimID)
+			}
+			if currentFindingIDs[ref] {
+				finding := currentFindings[ref]
+				linked := false
+				for _, blockingID := range blocked.BlockingFindingIDs {
+					if blockingID == ref {
+						linked = true
+						break
+					}
+				}
+				if !linked {
+					return fmt.Errorf("blocked claim %s uses current finding %s as evidence but it is not one of the blocking_finding_ids", blocked.ClaimID, ref)
+				}
+				if len(finding.EvidenceRefs) == 0 {
+					return fmt.Errorf("blocked claim %s uses current finding %s as evidence, but that Finding has no evidence_refs", blocked.ClaimID, ref)
+				}
+				continue
+			}
+			entry, ok := confirmedEvidence[ref]
+			if !ok {
+				return fmt.Errorf("blocked claim %s references evidence %s which is not a valid current-round evidence entry", blocked.ClaimID, ref)
+			}
+			path, ok := entry["path"].(string)
+			if !ok || strings.TrimSpace(path) == "" {
+				return fmt.Errorf("blocked claim %s evidence %s has no artifact path", blocked.ClaimID, ref)
+			}
+			sha, ok := entry["sha256"].(string)
+			if !ok || len(sha) != 64 {
+				return fmt.Errorf("blocked claim %s evidence %s has no artifact digest", blocked.ClaimID, ref)
+			}
+			artifactPath, err := repositoryContainedPath(root, path)
+			if err != nil {
+				return fmt.Errorf("blocked claim %s evidence %s path is outside repository: %w", blocked.ClaimID, ref, err)
+			}
+			data, err := os.ReadFile(artifactPath)
+			if err != nil {
+				return fmt.Errorf("blocked claim %s evidence %s artifact is unreadable: %w", blocked.ClaimID, ref, err)
+			}
+			if sha256Of(data) != sha {
+				return fmt.Errorf("blocked claim %s evidence %s artifact digest drifted", blocked.ClaimID, ref)
+			}
 		}
 		if !blocked.AfterRepairRequired {
 			return fmt.Errorf("blocked claim %s must declare after_repair_required=true; the repaired round owes this Claim a real execution, blocked never satisfies it", blocked.ClaimID)
@@ -200,29 +264,19 @@ func loadBlockedClaimFromEnvelope(root string, state map[string]any, resultID, c
 	if resultID == "" {
 		return BlockedClaim{}, fmt.Errorf("blocked claim %s has no producing result reference; the projection is out of sync — run `runtime reconcile`", claimID)
 	}
-	var rel string
-	for _, raw := range evidenceEntries(state) {
-		entry, _ := raw.(map[string]any)
-		if entry == nil {
-			continue
-		}
-		if entry["id"] == resultID && entry["kind"] == "review_result" {
-			rel, _ = entry["path"].(string)
-			break
-		}
-	}
-	if rel == "" {
-		return BlockedClaim{}, fmt.Errorf("blocked claim %s: producing result %s is not in the evidence index; the projection is out of sync — run `runtime reconcile`", claimID, resultID)
-	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+	data, err := loadIndexedEvidenceArtifact(root, state, resultID, "review_result")
 	if err != nil {
-		return BlockedClaim{}, fmt.Errorf("blocked claim %s: read producing result %s: %w", claimID, resultID, err)
+		return BlockedClaim{}, fmt.Errorf("blocked claim %s: %w", claimID, err)
 	}
 	var envelope struct {
+		ReviewRound   int            `json:"review_round"`
 		BlockedClaims []BlockedClaim `json:"blocked_claims"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return BlockedClaim{}, fmt.Errorf("blocked claim %s: decode producing result %s: %w", claimID, resultID, err)
+	}
+	if envelope.ReviewRound != currentReviewRound(state) {
+		return BlockedClaim{}, fmt.Errorf("blocked claim %s: producing result %s belongs to review round %d, not current round %d", claimID, resultID, envelope.ReviewRound, currentReviewRound(state))
 	}
 	for _, blocked := range envelope.BlockedClaims {
 		if blocked.ClaimID == claimID {
@@ -230,6 +284,46 @@ func loadBlockedClaimFromEnvelope(root string, state map[string]any, resultID, c
 		}
 	}
 	return BlockedClaim{}, fmt.Errorf("blocked claim %s: producing result %s carries no blocked projection for it; the projection is out of sync — run `runtime reconcile`", claimID, resultID)
+}
+
+// loadIndexedEvidenceArtifact is the single read path for persisted evidence
+// references used by derived projections. The state index supplies the
+// canonical relative path and digest; callers never join an untrusted path
+// directly and never trust the index without re-hashing the bytes.
+func loadIndexedEvidenceArtifact(root string, state map[string]any, evidenceID, expectedKind string) ([]byte, error) {
+	if evidenceID == "" {
+		return nil, fmt.Errorf("evidence id is empty")
+	}
+	for _, raw := range evidenceEntries(state) {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || stringField(entry["id"]) != evidenceID {
+			continue
+		}
+		if expectedKind != "" && stringField(entry["kind"]) != expectedKind {
+			return nil, fmt.Errorf("evidence %s has kind %q, want %q", evidenceID, entry["kind"], expectedKind)
+		}
+		if stringField(entry["status"]) != "valid" {
+			return nil, fmt.Errorf("evidence %s is not valid", evidenceID)
+		}
+		path := stringField(entry["path"])
+		sha := stringField(entry["sha256"])
+		if path == "" || len(sha) != 64 {
+			return nil, fmt.Errorf("evidence %s has incomplete path/digest metadata", evidenceID)
+		}
+		artifactPath, err := repositoryContainedPath(root, path)
+		if err != nil {
+			return nil, fmt.Errorf("evidence %s path is outside repository: %w", evidenceID, err)
+		}
+		data, err := os.ReadFile(artifactPath)
+		if err != nil {
+			return nil, fmt.Errorf("evidence %s artifact is unreadable: %w", evidenceID, err)
+		}
+		if sha256Of(data) != sha {
+			return nil, fmt.Errorf("evidence %s artifact digest drifted", evidenceID)
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("evidence %s is not in the evidence index", evidenceID)
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +359,11 @@ func (e *ReadinessError) Unwrap() error { return e.Err }
 func validateSiteLostDeclarations(result *Result) error {
 	if len(result.SiteLost) == 0 {
 		return nil
+	}
+	for _, finding := range result.Findings {
+		if finding.Severity == "P0" {
+			return fmt.Errorf("result contains P0 finding %s; a mixed result cannot use site_lost because safety-stop findings must take the immediate-seal path", finding.FindingID)
+		}
 	}
 	findingByID := make(map[string]Finding, len(result.Findings))
 	for _, finding := range result.Findings {
@@ -327,7 +426,52 @@ func submitSiteLostBlocker(
 	if occurredAt.IsZero() {
 		occurredAt = time.Now().UTC()
 	}
-	resultRepoPath := repositoryPath(root, request.ResultPath)
+	generation := baselineGeneration(current)
+	blockerID := fmt.Sprintf("review-blocker-%s", result.ResultID)
+	blockerRel := filepath.ToSlash(filepath.Join(
+		".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
+		"review-blockers", result.ResultID+"-site-lost.json"))
+	blockerEnvelope := map[string]any{
+		"schema_version":      "1.0.0",
+		"evidence_id":         blockerID,
+		"kind":                "review_blocker",
+		"runtime_id":          runtimeID,
+		"baseline_generation": generation,
+		"review_round":        result.ReviewRound,
+		"assignment_id":       result.AssignmentID,
+		"producer_agent_id":   result.ProducerAgentID,
+		"finding_id":          readiness.FindingID,
+		"reason":              reason,
+		"created_at":          occurredAt.UTC().Format(time.RFC3339Nano),
+	}
+	blockerBytes, err := marshalArtifact(blockerEnvelope)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("encode site-lost blocker: %w", err)
+	}
+	if err := writeArtifact(root, blockerRel, blockerBytes); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		// If the CAS error was returned after a commit became visible, keep
+		// the immutable bytes so the evidence index cannot be orphaned. Only
+		// clean an artifact when the caller's revision is still persisted.
+		stateBytes, readErr := os.ReadFile(statePath)
+		if readErr != nil {
+			return
+		}
+		var persisted map[string]any
+		if json.Unmarshal(stateBytes, &persisted) != nil || intField(persisted["revision"]) != request.ExpectedRevision {
+			return
+		}
+		if path, pathErr := repositoryContainedPath(root, blockerRel); pathErr == nil {
+			_ = os.Remove(path)
+		}
+	}()
+	blockerSHA := sha256Of(blockerBytes)
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	snapshot, err := store.Update(request.ExpectedRevision, loopruntime.Mutation{
@@ -362,6 +506,10 @@ func submitSiteLostBlocker(
 			if agentID != result.ProducerAgentID {
 				return fmt.Errorf("ReviewResult producer %s does not match the dispatched Agent %s for assignment %s", result.ProducerAgentID, agentID, assignment.AssignmentID)
 			}
+			row["status"] = "blocked"
+			row["queue_reason"] = "site_lost:" + readiness.FindingID
+			row["blocker_ref"] = blockerRel
+			row["blocked_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			entities, _ := state["entities"].(map[string]any)
 			agents, _ := entities["agents"].([]any)
 			for _, raw := range agents {
@@ -373,8 +521,18 @@ func submitSiteLostBlocker(
 					return fmt.Errorf("reviewer Agent %s is %s; a site_lost BLOCKER requires working state", agentID, currentState)
 				}
 				agent["state"] = "blocked"
-				agent["work_blocked_ref"] = resultRepoPath
+				agent["work_blocked_ref"] = blockerRel
+				agent["blocker_resolved_ref"] = nil
 				agent["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
+				if err := appendEvidence(state, map[string]any{
+					"id": blockerID, "kind": "review_blocker", "path": blockerRel,
+					"sha256": blockerSHA, "status": "valid", "baseline_generation": generation,
+					"review_round": result.ReviewRound, "produced_by": []any{result.ProducerAgentID},
+					"invalidated_by": nil, "invalidation_rule": nil, "invalidation_reason": nil,
+					"responsibility_id": LensToResponsibility(assignment.Lens), "scope_refs": []any{assignment.AssignmentID},
+				}); err != nil {
+					return err
+				}
 				return nil
 			}
 			return fmt.Errorf("Agent %s is not registered", agentID)
@@ -383,6 +541,7 @@ func submitSiteLostBlocker(
 	if err != nil {
 		return snapshot, err
 	}
+	committed = true
 	return snapshot, fmt.Errorf(
 		"finding %s is not investigation-ready (%v) and the reviewer declared the scene unrecoverable: %s. "+
 			"Assignment %s is now blocked and stays in S7 — the result was NOT consumed, no Finding was registered and nothing was sealed (L3-S7 §9.1). "+

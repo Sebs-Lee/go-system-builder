@@ -55,6 +55,39 @@ func applyObservationBatchGate(input Input, result *Evaluation) {
 			}
 		}
 	}
+	// The batch must still resolve to readable, hash-matching Finding bytes:
+	// state projections alone cannot detect post-seal evidence tampering or
+	// accidental deletion under .claude/evidence/ (verified live in the S7
+	// round-3 sandbox review — a deleted Finding file otherwise sails through
+	// this gate).
+	evidenceRows := map[string]map[string]any{}
+	if raw, ok := state["evidence"].([]any); ok {
+		for _, item := range raw {
+			if row, ok := item.(map[string]any); ok {
+				if id := row["id"]; id != nil {
+					if key, _ := id.(string); key != "" {
+						evidenceRows[key] = row
+					}
+				}
+			}
+		}
+	}
+	for id := range batchIDs {
+		row := evidenceRows[id]
+		if row == nil {
+			result.Missing = append(result.Missing, "batch:finding_file:"+id+":unindexed")
+			continue
+		}
+		path, _ := row["path"].(string)
+		data, err := input.Files.ReadFile(path)
+		if err != nil {
+			result.Missing = append(result.Missing, "batch:finding_file:"+id+":unreadable")
+			continue
+		}
+		if sha := row["sha256"]; sha256Hex(data) != stringValue(sha) {
+			result.Missing = append(result.Missing, "batch:finding_file:"+id+":hash_mismatch")
+		}
+	}
 	actual := map[string]bool{}
 	for _, row := range review.RoundFindings(state) {
 		if id, ok := row["finding_id"].(string); ok {

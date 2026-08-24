@@ -159,6 +159,14 @@ func ValidatePlan(plan *Plan) error {
 			claimOwner[claimID] = assignment.AssignmentID
 		}
 	}
+	for _, claim := range plan.Claims {
+		owner := claimOwner[claim.ClaimID]
+		for _, dependency := range claim.DependsOn {
+			if dependencyOwner := claimOwner[dependency]; dependencyOwner == owner && owner != "" {
+				return fmt.Errorf("claim %s depends on %s in the same Assignment %s; split the dependency into separate Assignments so its Result can be consumed first", claim.ClaimID, dependency, owner)
+			}
+		}
+	}
 	requiredByLens := map[string]int{"delivery": 0, "qa": 0, "e2e": 0}
 	naByLens := map[string]int{"delivery": 0, "qa": 0, "e2e": 0}
 	for _, claim := range plan.Claims {
@@ -175,6 +183,18 @@ func ValidatePlan(plan *Plan) error {
 	for _, lens := range []string{"delivery", "qa"} {
 		if requiredByLens[lens] == 0 && !justified {
 			return fmt.Errorf("the round has zero required %s Claims; that is only legal for a pure docs/metadata change and needs a non-empty coverage_justification (L3-S7 §4.2)", lens)
+		}
+	}
+	for _, assignment := range plan.Assignments {
+		switch assignment.Lens {
+		case "e2e":
+			if assignment.ExecutionWave != "behavior" {
+				return fmt.Errorf("assignment %s is an e2e lens but not in the behavior wave; behavior wave is reserved for E2E/specialty execution", assignment.AssignmentID)
+			}
+		case "delivery", "qa":
+			if assignment.ExecutionWave != "static" {
+				return fmt.Errorf("assignment %s is a %s lens in the behavior wave; white-box delivery/QA review belongs to the static wave", assignment.AssignmentID, assignment.Lens)
+			}
 		}
 	}
 	switch plan.E2ECoverageState {
@@ -200,6 +220,48 @@ func ValidatePlan(plan *Plan) error {
 		return err
 	}
 	return nil
+}
+
+// DependenciesSettled is the dispatch-time half of the Claim DAG gate. A
+// dependency is usable only after its owning Assignment has produced a
+// terminal Claim disposition. Plan validation proves the graph is finite and
+// cross-Assignment; this projection check proves the upstream Result has
+// actually been consumed in the current runtime.
+func DependenciesSettled(state map[string]any, plan *Plan, assignment *PlanAssignment) error {
+	if plan == nil || assignment == nil {
+		return fmt.Errorf("dependency gate requires a plan and Assignment")
+	}
+	claims := make(map[string]Claim, len(plan.Claims))
+	for _, claim := range plan.Claims {
+		claims[claim.ClaimID] = claim
+	}
+	dispositions := Dispositions(state)
+	for _, claimID := range assignment.ClaimIDs {
+		claim, ok := claims[claimID]
+		if !ok {
+			return fmt.Errorf("assignment %s references unknown claim %s", assignment.AssignmentID, claimID)
+		}
+		for _, dependencyID := range claim.DependsOn {
+			disposition, ok := dispositions[dependencyID]
+			if !ok || !isSettledClaimDisposition(disposition.Disposition) {
+				current := "missing"
+				if ok {
+					current = disposition.Disposition
+				}
+				return fmt.Errorf("assignment %s depends on claim %s, whose disposition is %s; consume the upstream Result before dispatching this Assignment", assignment.AssignmentID, dependencyID, current)
+			}
+		}
+	}
+	return nil
+}
+
+func isSettledClaimDisposition(disposition string) bool {
+	switch disposition {
+	case "pass", "finding", "blocked", "not_applicable":
+		return true
+	default:
+		return false
+	}
 }
 
 // ---------------------------------------------------------------------------

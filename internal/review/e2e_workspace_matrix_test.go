@@ -18,13 +18,21 @@ import (
 // required behavior-wave E2E claim over a cold-start workspace.
 func writeColdStartPlan(t *testing.T, root, workspace string) string {
 	t.Helper()
+	subjectPath := filepath.Join(root, "internal", "example", "service.go")
+	if err := os.MkdirAll(filepath.Dir(subjectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	subjectBytes := []byte("fixture baseline")
+	if err := os.WriteFile(subjectPath, subjectBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	plan := map[string]any{
 		"schema_version":      "1.0.0",
 		"review_plan_id":      "review-plan-cs-1",
 		"review_round":        1,
 		"baseline_generation": 1,
 		"frozen_subjects": []any{
-			map[string]any{"path": "internal/example/service.go", "sha256": strings.Repeat("1", 64), "kind": "product_code"},
+			map[string]any{"path": "internal/example/service.go", "sha256": sha256Of(subjectBytes), "kind": "product_code"},
 		},
 		"claims": []any{
 			map[string]any{
@@ -57,7 +65,7 @@ func writeColdStartPlan(t *testing.T, root, workspace string) string {
 			map[string]any{
 				"assignment_id": "assignment-e2e-1", "lens": "e2e", "claim_ids": []string{"claim-e2e-1"},
 				"non_overlap_boundary": "owns the declared flows; spec authoring stays inside the verification workspace",
-				"execution_wave":        "behavior",
+				"execution_wave":       "behavior",
 			},
 		},
 		"e2e_coverage_state":              "cold_start",
@@ -120,6 +128,7 @@ func writeE2EResultFile(t *testing.T, root string, plan *Plan, resultID, artifac
 		"schema_version":      "1.0.0",
 		"result_id":           resultID,
 		"assignment_id":       "assignment-e2e-1",
+		"assignment_revision": 1,
 		"review_plan_id":      plan.ReviewPlanID,
 		"review_round":        plan.ReviewRound,
 		"baseline_generation": plan.BaselineGeneration,
@@ -205,6 +214,23 @@ func TestColdStartResultMustBindWorkspaceDigest(t *testing.T) {
 	row := snap.State["review"].(map[string]any)["assignments"].(map[string]any)["assignment-e2e-1"].(map[string]any)
 	if row["status"] != "consumed" || row["artifact_digest"] != digest {
 		t.Fatalf("consumed assignment must record the bound digest: %v", row)
+	}
+}
+
+func TestRegisterPlanCleansNewWorkspaceWhenCASApplyFails(t *testing.T) {
+	workspace := "e2e-workspace/orphaned-plan"
+	root := t.TempDir()
+	state := coldStartState()
+	state["entities"].(map[string]any)["findings"] = "invalid" // force post-artifact candidate validation to fail
+	statePath, journalPath := writeState(t, root, state)
+	_, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
+		ExpectedRevision: 1, PlanPath: writeColdStartPlan(t, root, workspace),
+	})
+	if err == nil {
+		t.Fatal("invalid review projection must reject registration")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(workspace))); !os.IsNotExist(statErr) {
+		t.Fatalf("failed registration must clean its newly-created workspace, stat error=%v", statErr)
 	}
 }
 

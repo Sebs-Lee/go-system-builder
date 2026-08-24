@@ -166,31 +166,14 @@ func SubmitSupplement(root, statePath, journalPath string, request SupplementReq
 	generation := baselineGeneration(current)
 	revision := intField(current["revision"])
 
-	// Persist the artifact before the CAS (same pattern as the Finding files):
-	// bytes on disk are what the index row and evidence entry fingerprint.
+	// Compute the immutable target before the CAS. Duplicate checks must happen
+	// before any filesystem mutation; otherwise a retry reports an artifact
+	// collision instead of the domain-level duplicate and can leave misleading
+	// partial evidence behind.
 	supplementRel := filepath.ToSlash(filepath.Join(
 		".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
 		"finding-supplements", supplement.SupplementID+".json"))
 	supplementBytes := append(canonicalJSON(data), '\n')
-	if err := writeArtifact(root, supplementRel, supplementBytes); err != nil {
-		return SupplementReceipt{}, err
-	}
-	supplementSHA := sha256Of(supplementBytes)
-
-	row := SupplementRow{
-		SupplementID:         supplement.SupplementID,
-		SupplementsFindingID: request.FindingID,
-		Author:               supplement.Author,
-		AuthorizedBy:         strings.TrimSpace(request.AuthorizedBy),
-		Path:                 supplementRel,
-		SHA256:               supplementSHA,
-		ReviewRound:          round,
-		BaselineGeneration:   generation,
-		HypothesisID:         supplement.HypothesisID,
-		Discriminator:        supplement.Discriminator,
-		CreatedAt:            supplement.CreatedAt,
-		AppendedAt:           occurredAt.UTC().Format(time.RFC3339Nano),
-	}
 
 	// Legacy migration source: rows from the retired control-plane index are
 	// merged into entities.finding_supplements by the same transaction.
@@ -205,16 +188,36 @@ func SubmitSupplement(root, statePath, journalPath string, request SupplementReq
 	// Fail fast on obvious duplicates; the CAS Apply re-checks against the
 	// authoritative candidate state.
 	for _, existing := range supplementRowsFromState(current) {
-		if existing.SupplementID == row.SupplementID {
-			return SupplementReceipt{}, fmt.Errorf("supplement %s is already appended to finding %s; supplements are immutable — use a new supplement_id", row.SupplementID, existing.SupplementsFindingID)
+		if existing.SupplementID == supplement.SupplementID {
+			return SupplementReceipt{}, fmt.Errorf("supplement %s is already appended to finding %s; supplements are immutable — use a new supplement_id", supplement.SupplementID, existing.SupplementsFindingID)
 		}
 	}
 	if legacyExists {
 		for _, existing := range legacy.Supplements {
-			if existing.SupplementID == row.SupplementID {
-				return SupplementReceipt{}, fmt.Errorf("supplement %s is already appended to finding %s (legacy supplement index); supplements are immutable — use a new supplement_id", row.SupplementID, existing.SupplementsFindingID)
+			if existing.SupplementID == supplement.SupplementID {
+				return SupplementReceipt{}, fmt.Errorf("supplement %s is already appended to finding %s (legacy supplement index); supplements are immutable — use a new supplement_id", supplement.SupplementID, existing.SupplementsFindingID)
 			}
 		}
+	}
+	// Persist only after all deterministic duplicate and legacy checks pass;
+	// writeArtifact itself also refuses overwrite as the final race guard.
+	if err := writeArtifact(root, supplementRel, supplementBytes); err != nil {
+		return SupplementReceipt{}, err
+	}
+	supplementSHA := sha256Of(supplementBytes)
+	row := SupplementRow{
+		SupplementID:         supplement.SupplementID,
+		SupplementsFindingID: request.FindingID,
+		Author:               supplement.Author,
+		AuthorizedBy:         strings.TrimSpace(request.AuthorizedBy),
+		Path:                 supplementRel,
+		SHA256:               supplementSHA,
+		ReviewRound:          round,
+		BaselineGeneration:   generation,
+		HypothesisID:         supplement.HypothesisID,
+		Discriminator:        supplement.Discriminator,
+		CreatedAt:            supplement.CreatedAt,
+		AppendedAt:           occurredAt.UTC().Format(time.RFC3339Nano),
 	}
 
 	lifecycle, _ := current["lifecycle"].(map[string]any)
