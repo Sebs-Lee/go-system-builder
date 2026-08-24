@@ -30,10 +30,47 @@ Dispatch modes and the agent lifecycle are defined in `docs/loop-definition.json
 
 ## Procedure
 1. Launch the Worker with the assignment (register-workgroup already stamped `dispatch_mode` on the agent row; default `plan_checkpoint`).
-2. `plan_checkpoint`: the Worker sends one PLAN_REPORT — assignment_id/revision, objective, planned paths, steps, assertion checks, dependencies, risks — and starts working without waiting. Main reviews asynchronously; silence means aligned, CORRECTION means drift.
+2. `plan_checkpoint`: the Worker sends one PLAN_REPORT — assignment_id/revision, objective, planned paths, steps, assertion checks, dependencies, risks — and starts working without waiting. Main reviews asynchronously; silence means aligned, CORRECTION means drift. The PLAN_REPORT file must satisfy the `planReport` branch of the agent-message schema (all 20 required fields — base envelope plus plan body; steps are `{description, target}` objects, assertion_checks are `{assertion, oracle}` objects); write it from the complete example below, not from memory — a malformed report fails the auto-chain and costs a manual `runtime agent-begin` recovery. Send it with the plan file path as a SendMessage `plan_ref` parameter: the PostToolUse(SendMessage) observer chains reading → activated → working automatically.
 3. `plan_approval_required`: the Worker submits a readback; Main approves (`understanding_approved`) before the activation envelope is accepted.
-4. Register the plan/readback with `loop-harness runtime agent-event --event readback_submitted --message <file>`; then `activation_sent` (the hash chain binds the envelope to the submitted plan/readback file bytes — compute with `shasum -a 256 <file>` / `sha256sum <file>` after writing it).
+4. Register the plan/readback with `loop-harness runtime agent-event --event readback_submitted --message <file>`; then `activation_sent` (the hash chain binds the envelope to the submitted plan/readback file bytes — compute with `shasum -a 256 <file>` / `sha256sum <file>` after writing it). On the `plan_checkpoint` path this step is what the observer automates; run it by hand only when the auto-chain did not fire.
 5. `work_started` → work → `runtime task-complete` (Builders) or `runtime review-result submit` (S7 Reviewers).
+
+### PLAN_REPORT file — complete minimal example
+```json
+{
+  "schema_version": "1.0.0",
+  "message_type": "plan_report",
+  "message_id": "msg-plan-<agent>-0001",
+  "correlation_id": "corr-<agent>-0001",
+  "runtime_id": "<from .claude/loop-state.json runtime_id>",
+  "expected_runtime_revision": <current revision>,
+  "agent_id": "<your agent id>",
+  "agent_definition_ref": "agents/<role>.md",
+  "task_id": "<TASK-id or null>",
+  "bug_id": null,
+  "team_id": "<workgroup id>",
+  "occurred_at": "<RFC3339 now>",
+  "assignment_id": "<assignment id>",
+  "assignment_revision": 1,
+  "objective": "<one sentence, at least 8 chars>",
+  "planned_paths": ["<paths you will read or write>"],
+  "steps": [
+    {"description": "what you will do", "target": "<path or artifact>"}
+  ],
+  "assertion_checks": [
+    {"assertion": "what must hold", "oracle": "how you will know"}
+  ],
+  "dependencies": [],
+  "risks_blockers": []
+}
+```
+A full worked example: `internal/schema/assets/agent-message.examples.json` (the `plan_report` entry).
+
+After writing the file, send it — `plan_ref` is a SendMessage parameter, never a field of the JSON:
+
+```text
+SendMessage(tool_input: {teammate_name: <your agent id>, message_type: "plan_report", plan_ref: <the plan file path>})
+```
 
 ## Outputs
 - Agent lifecycle events under CAS (journal-visible).
@@ -53,4 +90,4 @@ Dispatch modes and the agent lifecycle are defined in `docs/loop-definition.json
 - Do not use `one_shot` for anything with side effects.
 
 ## Inlined Methodology
-Loop Engineering dispatches Agents in three modes (L4 §3.3). The default is continuous execution: one structured PLAN_REPORT is the checkpoint — it makes the plan inspectable and correctable while the work proceeds, without a synchronous approval wait. The two-round readback → approval → activation flow remains for genuinely high-risk or irreversible work, and the activation hash chain (`approved_readback_sha256`) applies in both modes: the envelope proves which plan the Worker actually saw. The first-write barrier (PreToolUse) blocks a dispatched Worker's first product mutation until its PLAN_REPORT is recorded; PostToolUse(SendMessage) observes the report automatically when the platform payload identifies the sender.
+Loop Engineering dispatches Agents in three modes (L4 §3.3). The default is continuous execution: one structured PLAN_REPORT is the checkpoint — it makes the plan inspectable and correctable while the work proceeds, without a synchronous approval wait. The two-round readback → approval → activation flow remains for genuinely high-risk or irreversible work, and the activation hash chain (`approved_readback_sha256`) applies in both modes: the envelope proves which plan the Worker actually saw. The first-write barrier (PreToolUse) blocks a dispatched Worker's first product mutation until its PLAN_REPORT is recorded, whenever the hook payload identifies the sender; on platforms whose payloads carry no agent identity the barrier stays dormant (the reviewer product-write freeze and the PLAN_REPORT phase contract in every agent card carry the invariant instead). PostToolUse(SendMessage) observes the report automatically via its three-level identification ladder (payload agent_id → teammate_name → sole agent awaiting its plan checkpoint).

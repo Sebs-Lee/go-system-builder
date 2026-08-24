@@ -46,9 +46,14 @@ source refs and reason. Capture CDP events for network / console / runtime
 exceptions and produce idempotent re-runnable evidence. Required allow/reject
 branch coverage must be 100%.
 ## Outputs
-Playwright spec files under `web/e2e/{module}/**/*.spec.ts`; evidence bundle under
-`docs/reports/e2e/{AGENT-ID}.md` + JSONL traces + PNG screenshots; BUG drafts under
-`docs/reports/bugs/` for any failure. Evidence reports may be review-round scoped; specs may not.
+For `e2e_coverage_state=cold_start`, Playwright spec/fixture files belong only under the
+ReviewPlan's `verification_artifact_workspace/`; existing regression specs under
+`web/e2e/{module}/` are read/run-only during S7. Put the evidence bundle under
+`.claude/evidence/<runtime>/g<generation>/reviews/<agent>/` (the report projection may be
+under `docs/reports/`, but never under `docs/reports/bugs/`). Every failure becomes a
+structured ReviewResult Finding, not a BUG draft; S8 owns root-cause and canonical BUG
+mapping. Evidence reports may be review-round scoped; product test assets may not be copied
+into a round-named location.
 ## N/A Criteria
 N/A only when no UI-impacting behavior change occurred AND no cross-REQ module sweep is required.
 ## Stop Conditions
@@ -248,7 +253,8 @@ docs/reports/e2e/screenshots/{RUN_ID}-{step}.png     ← per-step screenshot
 5. **CDP findings section** — bugs caught only at browser level (silent 4xx, uncaught exceptions, console errors). Each finding cites the JSONL line.
 6. **Evidence inventory** — paths to JSONL + PNG + (optional) video
 7. **Status-code distribution counts** — sanity check on coverage (e.g. `2xx: 47, 3xx: 3, 4xx: 2 (expected), 5xx: 0`)
-8. **BUG drafts surfaced** — pre-formatted BUG report bodies (see §Bug Surfacing)
+8. **Finding records** — operation path, visible symptom, terminal state, persisted and
+   forbidden side effects, evidence refs, and capture gaps; no root-cause or BUG claim
 9. **Idempotent re-execution instructions** — env vars, start commands, exact `pnpm playwright test` invocation
 
 ### JSONL event stream shape
@@ -307,22 +313,29 @@ Anti-patterns:
 - Single admin token used for every persona (defeats permission testing)
 - Tokens minted via UI login for every test (slow; use API setup)
 
-## Bug Surfacing from Failures
+## Finding Handoff from Failures
 
-When a spec fails, the e2e-tester produces a pre-formatted BUG draft inside the narrative report (§BUG drafts surfaced). Shape matches `docs/reports/bugs/BUG-NNN.md` so filing is a copy-paste:
+When a spec fails, the e2e-tester records an investigation-ready Finding inside the
+Canonical ReviewResult. S7 records the observable operation path and evidence only;
+S8 owns clustering, causal proof and canonical BUG mapping (the machine creates one
+BUG draft per Finding at seal — never hand-write BUG files). Record live observations
+with `loop-harness capture step` while you investigate (its output prints the buffer
+path; `--captures` merges it into a Finding's empty timeline at submit) and write the
+timeline inline only when you author it after the fact. On a cold-start workspace,
+bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` after the
+last spec/fixture write; a P0 Finding must populate `capture_gaps` (what could not be
+recorded and why) or submit rejects it:
 
 ```markdown
-### BUG draft: {short title}
+### Finding record: {short title}
 - 严重度: P0 / P1 / P2
-- 关联 flow: F-NNN
-- 关联 step: 步骤 N
-- 关联 prototype: {file}.html
-- 现象: {what happened, with screenshot ref}
-- 期望: {what flows.md said should happen}
-- 复现: {exact `pnpm playwright test --grep` command}
-- CDP evidence: {JSONL path + line number}
-- 关联代码: {file:line if CDP stack trace identified it}
-- 建议根因: {hypothesis, marked as such — do not assert without code review}
+- 关联 Claim / flow / step: {ids}
+- 操作动线: {exact user action -> request/response or console observation}
+- 现象与终态: {visible result + terminal state}
+- 持久化/禁止副作用: {observed effects and forbidden effects}
+- 证据: {JSONL / screenshot refs}
+- 复跑命令: {exact `pnpm playwright test --grep` command}
+- 现场缺口: {capture gaps, if any}
 ```
 
 Severity rules:
@@ -330,7 +343,9 @@ Severity rules:
 - **P1** — flow partially blocked or wrong behavior with workaround
 - **P2** — cosmetic, perf, or edge-case-only
 
-The e2e-tester does NOT file the BUG; that's the Orchestrator's job after reviewing the draft. The tester produces the draft.
+The e2e-tester does not file a BUG or assert a root cause. The Orchestrator hands the
+sealed ObservationBatch to S8, which may create a canonical BUG only after causal
+investigation and an explicit repair contract.
 
 ## Idempotent Re-Execution
 
@@ -366,7 +381,7 @@ An e2e evidence bundle clears S7 when ALL hold:
 - [ ] JSONL event stream lands at the documented path; one JSON object per line; sortable by `ts`
 - [ ] Screenshots at every step that asserts visibility
 - [ ] Auth strategy documented; per-persona fixtures; no shared admin token; no hardcoded user IDs
-- [ ] BUG drafts (if any) follow the canonical shape with severity + flow ref + repro command + CDP evidence ref
+- [ ] Every failure is an investigation-ready Finding with operation path + evidence refs; no root-cause or BUG draft is asserted in S7
 - [ ] Idempotent re-execution instructions produce the same pass/fail pattern
 - [ ] Cross-REQ regression sweep results enumerated in the report (every `F-NNN` listed with PASS/FAIL)
 

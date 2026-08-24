@@ -8,6 +8,10 @@
 > Responsibility: E2E-USER-FLOW / E2E-CONSOLE-NETWORK
 > Agent: `{agent-id}`
 > Activation: `{activation-ref}`
+> Workspace (cold_start only): `e2e-workspace/{plan-id}/` — bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` after the last spec/fixture write
+
+This Markdown is the human-readable projection; the machine authority is the Canonical
+ReviewResult JSON (`internal/schema/assets/review-result.example.json` is the scaffold).
 
 ## 1. Header
 
@@ -101,6 +105,11 @@ errors). Each finding cites the JSONL line so a reviewer can replay.
 | negative `expected_state` | state remains at the declared rejection state | {observed} | PASS / FAIL / N/A | `{evidence-ref}` |
 | negative `recovery` | declared recovery succeeds, or sourced N/A is recorded | {observed} | PASS / FAIL / N/A | `{evidence/ref or source_refs + reason}` |
 
+The finding schema has no dedicated slot for every column above — carry the same
+accounting into the Canonical ReviewResult legibly across `observed`, the encounter
+`timeline` checkpoints, `terminal_state`, `side_effects`, and `visible_impact`, so S8
+can consume it without re-running the flow.
+
 ## 8. Evidence Validity + Status-Code Distribution
 
 | Field | Value |
@@ -128,23 +137,14 @@ docs/reports/e2e/evidence/{RUN_ID}.jsonl
 docs/reports/e2e/screenshots/{RUN_ID}-{step}.png
 ```
 
-## 9. BUG Drafts Surfaced + Idempotent Re-Execution
+## 9. Findings Surfaced (machine owns the BUG drafts)
 
-BUG drafts surfaced from this bundle (one block per finding that should
-become a canonical BUG; shape matches `docs/reports/bugs/BUG-NNN.md` so
-filing is a copy-paste):
-
-### BUG draft: {short title}
-- 严重度: P0 / P1 / P2
-- 关联 flow: F-NNN
-- 关联 step: 步骤 N
-- 关联 prototype: {file}.html
-- 现象: {what happened, with screenshot ref}
-- 期望: {what flows.md said should happen}
-- 复现: {exact `pnpm playwright test --grep` command}
-- CDP evidence: {JSONL path + line number}
-- 关联代码: {file:line if CDP stack trace identified it}
-- 建议根因: {hypothesis, marked as such — do not assert without code review}
+The machine creates one canonical BUG draft per Finding when the ObservationBatch
+seals (TR-008) — do not hand-write BUG files. What S8 needs from you is the
+investigation-ready Finding in the ReviewResult (walk, boundary, evidence) and the
+idempotent re-execution below. A P0 Finding seals the round immediately
+(stop-the-line): populate the Finding's `capture_gaps` with what could not be
+recorded and why — a P0 without capture gaps is rejected at submit.
 
 Idempotent re-execution instructions — anyone running these commands must see
 the same pass/fail pattern (timestamps differ; counts and verdicts match):
@@ -171,7 +171,9 @@ ls docs/reports/e2e/screenshots/*.png
 pass / finding / req_change_required / release_blocked
 ```
 
-Requested lifecycle event: `{event}`
+Submitted via `runtime review-result submit --assignment-id {id} --result {result.json}`
+(bind `subject_digest` from `loop-harness s7 status`; cold_start also binds
+`verification_artifact_digest` from `loop-harness s7 workspace-digest`).
 
 Findings are symptoms. They enter S8 finding investigation before any repair
 Builder is activated.

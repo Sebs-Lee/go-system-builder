@@ -27,7 +27,9 @@ Read the fingerprinted chain bottom-up, write the PLAN_REPORT JSON to a stable p
 The frontmatter preloads integration-review practice. Before phase-two work, load every additional Skill cited by the activation envelope that applies to the assigned requirement, module, contract, regression, persistence, or security surface.
 ## Allowed Artifacts
 Read the complete current module scenario package, specs, source, tests, and round evidence;
-write only assigned review evidence and BUG drafts after activation.
+write only assigned review evidence and the Canonical ReviewResult draft after activation;
+never edit the product or file a BUG directly. A Finding carries the observable fact and
+the operation path that produced it; S8 derives the root cause.
 ## Forbidden Actions
 Do not edit `.claude/loop-state.json`. Do not modify reviewed product code/tests, reduce a
 module regression to the triggering REQ, combine unrelated conclusions, close BUGs/tasks/rounds,
@@ -35,6 +37,9 @@ silently repair defects, or squash merge/formally release.
 ## Required Inputs
 Require one manifest responsibility, complete document chain, selected Skills, commands, report path, and fingerprints.
 ## Output Contract
-Return one dimension result, evidence, findings, and BUG draft references in a completion report.
+Return the Canonical ReviewResult with `assignment_revision`, exact Claim coverage,
+`subject_digest` copied from `loop-harness s7 status` (the submit verifier rejects any other value),
+reproducible checks, and investigation-ready Findings. Keep observed symptom and
+operation path separate from any hypothesis.
 ## Stop Conditions
 Stop on stale input, missing authority, scope expansion, destructive test need, conflict, or blocked Hook.

@@ -356,7 +356,7 @@ It drives the identical chain (Inspect → non-squash merge → required checks 
 | `work_started` | activated | message_type `work_start`; required before completion |
 | `completion_reported` | working | **use `runtime task-complete` instead** |
 | `completion_acknowledged` | reported | drives the ack/cleanup follow-up (also advanced by `runtime task-integrate` re-runs) |
-| `work_blocked` / `blocker_resolved` / `shutdown_approved` | working / blocked / blocked | blocker lifecycle |
+| `work_blocked` / `blocker_resolved` / `shutdown_approved` | working / blocked / blocked | blocker lifecycle; `blocker_resolved` resumes the Agent in `working` so the same reviewer can resubmit without an orphan `work_started` gap |
 
 ### Gate missing-token legend (TR-006)
 
@@ -406,8 +406,8 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
   - `e2e`: real browser behavior over the declared coverage; a cold start gets an isolated verification-artifact workspace pinned at registration.
 - **actions**:
   1. plan: `loop-harness s7 draft --out plan.json`, fill the TODO oracles, register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
-  2. dispatch: `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle)
-  3. submit: each Reviewer writes one Canonical ReviewResult per `review-result.example.json` and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; record sanitized execution steps with `loop-harness capture step` and merge them with `--captures <dir>`
+  2. dispatch: scaffold each Assignment's reviewer manifest with `loop-harness s7 manifest-draft --assignment <id>` (fills the 20 required fields; replace the TODO(planner) markers), then `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle)
+  3. submit: each Reviewer writes one Canonical ReviewResult per `review-result.example.json` and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; record sanitized execution steps with `loop-harness capture step` while observing live (its output names the buffer path; `--captures <dir-or-file>` merges the buffer into a Finding's empty timeline at submit — reviewer-authored timelines are never rewritten; write the timeline inline instead when you compose it after the fact)
   4. observe: `loop-harness s7 status` is the read-only board (Claim dispositions, assignment consumption, findings, exit state)
 - **reviewer write rule**: the PreToolUse hook hard-denies product/locked-spec writes during verification and names the allowed surfaces in its block reason; Reviewers never repair — a product problem is a Finding.
 - **exits** (all machine/hook-driven; never hand-write an aggregate PASS, a clean_round record, or invoke a transition manually):

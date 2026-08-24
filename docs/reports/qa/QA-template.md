@@ -10,6 +10,10 @@
 > Agent: `{agent-id}`
 > Activation: `{activation-ref}`
 
+This Markdown is the human-readable projection; the machine authority is the
+Canonical ReviewResult JSON you submit (`internal/schema/assets/review-result.example.json`
+is the scaffold; `docs/reports/review/RESULT-template.md` documents the same fields lens-neutrally).
+
 ## 1. Fingerprinted Inputs
 
 | Kind | ID / Scope | Path | Version | SHA-256 |
@@ -52,6 +56,8 @@ in the manifest, not in this report.
 | {check} | `{command}` | pass / fail / blocked / not_run | `{ref}` |
 
 ## 5. Targeted Re-verification
+
+Repair-rounds only (a round that follows S8 BUG repairs): in a first-round report with no repaired BUGs, omit this table entirely.
 
 | BUG | Original assignment | Repair fingerprint | Result | Evidence |
 |:---|:---|:---|:---|:---|

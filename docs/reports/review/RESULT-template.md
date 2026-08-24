@@ -19,8 +19,8 @@ this template documents the same fields for review and audit.
 | result_id | review-result-{...} |
 | review_plan_id / review_round | {plan} / {round} |
 | baseline_generation | {n} |
-| subject_digest | sha256 over the plan's frozen_subjects (tool-verified at submit) |
-| verification_artifact_digest | {sha256 or null} |
+| subject_digest | sha256 over the plan's frozen_subjects (copy the value from `loop-harness s7 status` — the submit verifier rejects any other value) |
+| verification_artifact_digest | cold-start E2E only: sha256 of the workspace content, copied from `loop-harness s7 workspace-digest` after the last spec/fixture write; null otherwise |
 
 ## §2 Claim results (exact set)
 

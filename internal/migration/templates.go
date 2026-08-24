@@ -86,9 +86,20 @@ func ValidateTemplates(root string) error {
 			},
 		},
 		{
-			path:      "docs/reports/qa/QA-template.md",
-			required:  []string{"Review round:", "Workgroup manifest:", "Responsibility:", "Best Practice:"},
-			forbidden: []string{"每个 QA Agent 只能承担一个单一职责维度"},
+			path:     "docs/reports/qa/QA-template.md",
+			required: []string{"Review round:", "Workgroup manifest:", "Responsibility:", "Best Practice:"},
+			forbidden: []string{
+				"每个 QA Agent 只能承担一个单一职责维度",
+			},
+		},
+		{
+			path: "docs/reports/e2e/E2E-template.md",
+			required: []string{
+				// The E2E projection must keep the seven-field negative-CASE
+				// accounting and the cold-start digest binding discoverable.
+				"Real-Browser Flow Execution", "`persisted_effects`", "`recovery`",
+				"s7 workspace-digest", "capture_gaps",
+			},
 		},
 		{
 			path: "docs/reports/bugs/BUG-template.md",

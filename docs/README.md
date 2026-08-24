@@ -450,13 +450,19 @@ Key invariants:
 
 ---
 
-## 9. Two-Phase Agent Activation
+## 9. Agent Activation (three dispatch modes)
 
-Subagents are read-only until their read-back is approved. Phase-one safety
-depends on runtime-aware Hook observation and recovery, not on prompt trust.
-Once the main session delegates an assignment, the Driver's next work is that
-Agent's read-back / approval / activation chain. It must not complete the
-delegated responsibility itself unless the assignment is revoked or reassigned.
+Dispatch defaults to `plan_checkpoint` continuous execution: the Worker sends
+one structured PLAN_REPORT (`skills/agent-dispatch/SKILL.md` has the complete
+file example) and continues immediately — the PostToolUse(SendMessage)
+observer chains reading → activated → working automatically, and Main stays
+silent when aligned (CORRECTION only on semantic drift). The two-round
+read-back → approval → activation flow below is the `plan_approval_required`
+exception for genuinely high-risk or irreversible work; `one_shot` covers
+idempotent single actions. Once the main session delegates an assignment, the
+Driver's next work is that Agent's plan checkpoint (or approval chain); it
+must not complete the delegated responsibility itself unless the assignment is
+revoked or reassigned.
 
 ```mermaid
 sequenceDiagram
@@ -470,7 +476,7 @@ sequenceDiagram
     Main->>Cli: team launch --manifest
     Cli-->>Main: one readback_request envelope per assignment
     rect rgb(255, 243, 224)
-        Note over Agent: Phase one: read-only
+        Note over Agent: plan_approval_required only: phase one read-only
         Main->>Agent: send readback_request with fingerprinted paths
         Agent->>Agent: read TASK -> CONTRACTS -> REQ -> DESIGN -> RULES
         Agent-->>Main: readback_response (ready / conflict / missing)
