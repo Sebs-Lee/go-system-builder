@@ -88,9 +88,9 @@ func TestTaskUpdateSelfClaim(t *testing.T) {
 		{"owner self-assignment blocks", agent, map[string]any{"taskId": "TASK-2", "owner": "builder-1"}, true},
 		{"in_progress on own task allowed", agent, map[string]any{"taskId": "TASK-1", "status": "in_progress"}, false},
 		{"completing own task allowed", agent, map[string]any{"taskId": "TASK-1", "status": "completed"}, false},
-		{"completing unowned task is not a claim", agent, map[string]any{"taskId": "TASK-2", "status": "completed"}, false},
+		{"completing unowned task blocks", agent, map[string]any{"taskId": "TASK-2", "status": "completed"}, true},
 		{"main session (no agent) exempt", nil, map[string]any{"taskId": "TASK-2", "status": "in_progress"}, false},
-		{"missing taskId fails open", agent, map[string]any{"status": "in_progress"}, false},
+		{"missing taskId blocks", agent, map[string]any{"status": "in_progress"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -25,30 +25,30 @@ func TestPostToolUseObservationLadder(t *testing.T) {
 			name: "payload agent_id wins",
 			input: policy.Input{
 				ToolName: "SendMessage", AgentID: "agent-build-1",
-				ToolInput: map[string]any{"message_type": "plan_report"},
+				ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
 			},
 			wantRecord: true, wantAgent: "agent-build-1",
 		},
 		{
 			name: "teammate_name match",
 			input: policy.Input{
-				ToolName: "SendMessage",
-				ToolInput: map[string]any{"message_type": "plan_report", "teammate_name": "agent-qa-1"},
+				ToolName:  "SendMessage",
+				ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json", "teammate_name": "agent-qa-1"},
 			},
 			wantRecord: true, wantAgent: "agent-qa-1",
 		},
 		{
 			name: "sole reading agent fallback",
 			input: policy.Input{
-				ToolName: "SendMessage",
-				ToolInput: map[string]any{"message_type": "plan_report"},
+				ToolName:  "SendMessage",
+				ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
 			},
 			wantRecord: true, wantAgent: "agent-qa-1",
 		},
 		{
 			name: "unrelated tool passes silently",
 			input: policy.Input{
-				ToolName: "Bash",
+				ToolName:  "Bash",
 				ToolInput: map[string]any{"command": "go test ./..."},
 			},
 			wantRecord: false,
@@ -62,9 +62,17 @@ func TestPostToolUseObservationLadder(t *testing.T) {
 			wantRecord: false,
 		},
 		{
+			name: "plan report without authoritative file ref stays silent",
+			input: policy.Input{
+				ToolName: "SendMessage", AgentID: "agent-build-1",
+				ToolInput: map[string]any{"message_type": "plan_report"},
+			},
+			wantRecord: false,
+		},
+		{
 			name: "unidentifiable sender passes silently",
 			input: policy.Input{
-				ToolName: "SendMessage",
+				ToolName:  "SendMessage",
 				ToolInput: map[string]any{"message_type": "blocker_report"},
 			},
 			wantRecord: true, wantAgent: "agent-qa-1", // sole waiting agent fallback
@@ -91,7 +99,7 @@ func TestPostToolUseAmbiguousFallbackSilent(t *testing.T) {
 	}
 	obs := hook.HandlePostToolUse(policy.Input{
 		ToolName:  "SendMessage",
-		ToolInput: map[string]any{"message_type": "plan_report"},
+		ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
 	}, agents)
 	if obs.Recorded {
 		t.Fatalf("ambiguous sender must not record, got %q", obs.AgentID)

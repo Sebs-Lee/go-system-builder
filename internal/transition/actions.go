@@ -8,8 +8,10 @@
 //
 // TASK-015 (BUG-003 §4b.2(e)) owns the inline extension of
 // `record_finding_batch` — the previous stub is replaced with a real
-// implementation that creates canonical BUG entities with deduplication by
-// finding fingerprint. The signature is unchanged.
+// implementation that creates S8 investigation-intake BUG drafts with
+// deduplication by finding fingerprint. The signature is unchanged; a draft
+// is not an accepted canonical BUG until S8 supplies the causal model and
+// Closing Contract.
 package transition
 
 import (
@@ -591,9 +593,11 @@ func actionRecordTargetedReverification(state map[string]any, ctx *ActionContext
 // L3-S7 P0: the batch source is the sealed ObservationBatch in
 // state.review.observation_batch — the exact Finding set the round consumer
 // sealed — not a free-form ctx.Params payload. For every Finding entity in
-// the batch this creates one canonical BUG draft with deduplication by
-// finding content hash, so S8 starts from immutable observation facts
-// (finding file + encounter) instead of a hand-carried summary.
+// the batch this creates one investigation-intake BUG draft with
+// deduplication by finding content hash, so S8 starts from immutable
+// observation facts (finding file + encounter) instead of a hand-carried
+// summary. S8 still owns causal acceptance; this action does not claim that
+// the symptom has a root cause or that a repair is authorized.
 //
 // BUG schema constraints (loop-state.schema.json §bug):
 // - additionalProperties: false; only the 7 canonical keys are allowed.

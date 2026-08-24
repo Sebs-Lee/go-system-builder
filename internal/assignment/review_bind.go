@@ -59,8 +59,11 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 			return fmt.Errorf("assignment %s belongs to lens %s but the workgroup kind is %s; a workgroup never mixes lenses (L3-S7 §3.4)", item.AssignmentID, lens, kind)
 		}
 		status, _ := row["status"].(string)
-		if status != "planned" {
+		if status != "planned" && status != "blocked" {
 			return fmt.Errorf("assignment %s is already %s; one plan Assignment dispatches once", item.AssignmentID, status)
+		}
+		if status == "blocked" && !agentHasBlockerResolution(state, mapString(row["agent_id"])) {
+			return fmt.Errorf("assignment %s is blocked and cannot be dispatched until its Agent records the canonical blocker_resolved event", item.AssignmentID)
 		}
 		if len(item.ClaimIDs) == 0 {
 			return fmt.Errorf("assignment %s carries no claim_ids; the manifest must bind the exact Claim set from the ReviewPlan", item.AssignmentID)
@@ -72,6 +75,11 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		if planAssignment != nil && planAssignment.ExecutionWave == "behavior" && !staticSettled {
 			return fmt.Errorf("assignment %s is a behavior-wave (E2E/specialty) Assignment but required static Claims are not all dispositioned yet; behavior E2E unlocks only after the static set settles (L3-S7 §5.2-5.3)", item.AssignmentID)
 		}
+		if planAssignment != nil {
+			if err := review.DependenciesSettled(state, plan, planAssignment); err != nil {
+				return err
+			}
+		}
 		// Resource-lock conflict: another running assignment already
 		// holds the keys this assignment declares. Per L3-S7 §4.5 the
 		// round may queue but never trim coverage, so we record the
@@ -79,6 +87,7 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		// so the next register-workgroup attempt sees exactly why.
 		if conflict := findResourceLockConflict(item.AssignmentID, row, assignmentsProjection); conflict != "" {
 			row["status"] = "planned"
+			row["queued_agent_id"] = item.AgentID
 			row["queue_reason"] = "resource_lock:" + conflict
 			// Claims stay planned; the assignment is on the queue, not
 			// running, so the round consumer does not expect a Result.
@@ -87,6 +96,9 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		row["status"] = "dispatched"
 		row["queue_reason"] = nil
 		row["agent_id"] = item.AgentID
+		row["queued_agent_id"] = nil
+		row["blocker_ref"] = nil
+		row["blocked_at"] = nil
 		for _, claimID := range item.ClaimIDs {
 			if claimRow, _ := claimsProjection[claimID].(map[string]any); claimRow != nil {
 				claimRow["disposition"] = "running"
@@ -94,6 +106,26 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		}
 	}
 	return nil
+}
+
+func agentHasBlockerResolution(state map[string]any, agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	entities, _ := state["entities"].(map[string]any)
+	agents, _ := entities["agents"].([]any)
+	for _, raw := range agents {
+		agent, _ := raw.(map[string]any)
+		if mapString(agent["id"]) == agentID && mapString(agent["blocker_resolved_ref"]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func mapString(value any) string {
+	valueString, _ := value.(string)
+	return valueString
 }
 
 // findResourceLockConflict returns the sorted, comma-joined set of locks

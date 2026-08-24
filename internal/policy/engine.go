@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +52,9 @@ const (
 	// unless the scheduler already dispatched that task to it. Ordinary
 	// status updates on the agent's own dispatched tasks stay allowed.
 	RuleUnauthorizedTaskSelfClaim = "unauthorized_task_self_claim"
+	// RuleRuntimeUnreadable closes the safety boundary when the hook cannot
+	// load the runtime facts needed to classify a mutating PreToolUse.
+	RuleRuntimeUnreadable = "runtime_unreadable"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -326,11 +330,10 @@ func EvaluateAgentScoped(input Input) (Decision, bool) {
 	return taskUpdateSelfClaimDecision(input)
 }
 
-// taskUpdateSelfClaimDecision blocks a teammate that uses TaskUpdate to
-// claim a task the scheduler never dispatched to it (setting owner to itself
-// or flipping status to in_progress). Status updates on tasks already in the
-// agent's dispatched set — including marking them completed — are not
-// claims and pass through.
+// taskUpdateSelfClaimDecision blocks every mutation of a task that is not in
+// the agent's scheduler-dispatched set. Checking only owner=self or
+// status=in_progress is fail-open: a teammate could complete, reassign, or
+// clear the owner of somebody else's task and corrupt the control plane.
 func taskUpdateSelfClaimDecision(input Input) (Decision, bool) {
 	if input.ToolName != "TaskUpdate" {
 		return Decision{}, false
@@ -345,20 +348,19 @@ func taskUpdateSelfClaimDecision(input Input) (Decision, bool) {
 		taskID, _ = input.ToolInput["task_id"].(string)
 	}
 	if taskID == "" {
-		return Decision{}, false
-	}
-	status, _ := input.ToolInput["status"].(string)
-	owner, _ := input.ToolInput["owner"].(string)
-	if status != "in_progress" && owner != agent.ID {
-		return Decision{}, false
+		return unauthorizedTaskDecision(agent.ID, "<missing>", "TaskUpdate did not identify a taskId/task_id")
 	}
 	if contains(agent.TaskIDs, taskID) {
 		return Decision{}, false
 	}
+	return unauthorizedTaskDecision(agent.ID, taskID, "the task is not in the scheduler-dispatched task set")
+}
+
+func unauthorizedTaskDecision(agentID, taskID, detail string) (Decision, bool) {
 	return Decision{
 		Decision: "block",
 		RuleID:   RuleUnauthorizedTaskSelfClaim,
-		Reason:   fmt.Sprintf("Agent %s used TaskUpdate to claim task %s without a scheduler-dispatched assignment; teammates must not self-assign Team tasks (L4 §1.3)", agent.ID, taskID),
+		Reason:   fmt.Sprintf("Agent %s attempted to mutate task %s without a scheduler-dispatched assignment: %s (L4 §1.3)", agentID, taskID, detail),
 		Recovery: []string{
 			"wait for the scheduler/Main to dispatch an assignment for " + taskID,
 			"only update tasks bound to your own assignment; completing your own dispatched task stays allowed",
@@ -387,24 +389,37 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 	if input.Runtime.Agent == nil {
 		return Decision{}, false
 	}
+	agent := input.Runtime.Agent
+	if agent.State != "spawned" && agent.State != "reading" {
+		return Decision{}, false
+	}
+	if agent.PlanReportedRef != "" || agent.DispatchMode == "one_shot" {
+		return Decision{}, false
+	}
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		paths, mutating := bashMutationPaths(command)
+		if !mutating {
+			return Decision{}, false
+		}
+		if len(paths) == 0 || !allFirstWritePathsAllowed(input, paths) {
+			return assignmentWriteBeforePlanBlock(input)
+		}
+		return Decision{}, false
+	}
 	switch input.ToolName {
 	case "Write", "Edit", "MultiEdit", "NotebookEdit":
 	default:
 		return Decision{}, false
 	}
-	agent := input.Runtime.Agent
-	if agent.State != "spawned" && agent.State != "reading" {
-		return Decision{}, false
-	}
-	if agent.PlanReportedRef != "" {
-		return Decision{}, false
-	}
-	if agent.DispatchMode == "one_shot" {
-		return Decision{}, false
-	}
 	if firstWriteSurfaceAllowed(input) {
 		return Decision{}, false
 	}
+	return assignmentWriteBeforePlanBlock(input)
+}
+
+func assignmentWriteBeforePlanBlock(input Input) (Decision, bool) {
+	agent := input.Runtime.Agent
 	return Decision{
 		Decision: "block",
 		RuleID:   RuleAssignmentWriteBeforePlan,
@@ -422,28 +437,36 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 // block writes that the S7 frozen-baseline rule already exempts (L3-S7
 // §1.4.1 / §8 / L4 §10.4).
 func firstWriteSurfaceAllowed(input Input) bool {
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		paths, mutating := bashMutationPaths(command)
+		return mutating && len(paths) > 0 && allFirstWritePathsAllowed(input, paths)
+	}
 	rawPath, _ := input.ToolInput["file_path"].(string)
-	if rawPath == "" {
-		return false
+	return rawPath != "" && firstWritePathAllowed(input, rawPath)
+}
+
+// firstWritePathAllowed is intentionally broader than reviewerWritePathAllowed.
+// The first-write barrier only establishes that a Worker may record its
+// checkpoint and control-plane bookkeeping before PLAN_REPORT. The stricter
+// frozen-baseline rule still runs in verification and rejects direct runtime
+// state writes there. Keeping these surfaces separate prevents the barrier
+// from blocking the control-plane handshake it exists to support.
+func firstWritePathAllowed(input Input, rawPath string) bool {
+	rel := reviewerRelativePath(input, rawPath)
+	if rel == ".claude" || strings.HasPrefix(rel, ".claude/") {
+		return true
 	}
-	rel := strings.TrimPrefix(filepath.ToSlash(rawPath), "./")
-	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
-		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
-			if r, err := filepath.Rel(rootAbs, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
-				rel = filepath.ToSlash(r)
-			}
+	return reviewerWritePathAllowed(input, rawPath)
+}
+
+func allFirstWritePathsAllowed(input Input, paths []string) bool {
+	for _, path := range paths {
+		if !firstWritePathAllowed(input, path) {
+			return false
 		}
 	}
-	allowed := []string{".claude/", "docs/reports/"}
-	if workspace := strings.TrimSuffix(input.Runtime.VerificationWorkspace, "/"); workspace != "" {
-		allowed = append(allowed, workspace+"/")
-	}
-	for _, prefix := range allowed {
-		if strings.HasPrefix(rel, prefix) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 // reviewerProductWriteDecision enforces the S7 frozen-baseline invariant
@@ -456,32 +479,42 @@ func reviewerProductWriteDecision(input Input) (Decision, bool) {
 	if input.Runtime.CurrentState != "verification" {
 		return Decision{}, false
 	}
-	switch input.ToolName {
-	case "Write", "Edit", "MultiEdit", "NotebookEdit":
-	default:
-		return Decision{}, false
-	}
-	rawPath, _ := input.ToolInput["file_path"].(string)
-	if rawPath == "" {
-		return Decision{}, false
-	}
-	rel := strings.TrimPrefix(filepath.ToSlash(rawPath), "./")
-	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
-		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
-			if r, err := filepath.Rel(rootAbs, abs); err == nil && r != ".." && !strings.HasPrefix(r, "../") {
-				rel = filepath.ToSlash(r)
-			}
-		}
-	}
-	allowed := []string{".claude/", "docs/reports/"}
-	if workspace := strings.TrimSuffix(input.Runtime.VerificationWorkspace, "/"); workspace != "" {
-		allowed = append(allowed, workspace+"/")
-	}
-	for _, prefix := range allowed {
-		if strings.HasPrefix(rel, prefix) {
+	paths := []string{}
+	mutating := false
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		paths, mutating = bashMutationPaths(command)
+		if !mutating {
 			return Decision{}, false
 		}
+	} else {
+		switch input.ToolName {
+		case "Write", "Edit", "MultiEdit", "NotebookEdit":
+		default:
+			return Decision{}, false
+		}
+		rawPath, _ := input.ToolInput["file_path"].(string)
+		if rawPath == "" {
+			return Decision{}, false
+		}
+		paths = []string{rawPath}
 	}
+	for _, path := range paths {
+		if !reviewerWritePathAllowed(input, path) {
+			return reviewerProductWriteBlock(input, path), true
+		}
+	}
+	if len(paths) > 0 {
+		return Decision{}, false
+	}
+	// A write-capable Bash command whose target cannot be identified is
+	// fail-closed during verification; a dynamic script can otherwise mutate
+	// the frozen checkout while appearing pathless to the hook.
+	return reviewerProductWriteBlock(input, "<dynamic Bash mutation>"), true
+}
+
+func reviewerProductWriteBlock(input Input, rawPath string) Decision {
+	rel := reviewerRelativePath(input, rawPath)
 	return Decision{
 		Decision:     "block",
 		RuleID:       RuleReviewerProductWrite,
@@ -492,7 +525,170 @@ func reviewerProductWriteDecision(input Input) (Decision, bool) {
 			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
 			"if the product implementation must change, submit a ReviewResult with verdict=finding instead (L3-S7: Reviewers never repair)",
 		},
-	}, true
+	}
+}
+
+func reviewerRelativePath(input Input, rawPath string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(strings.Trim(rawPath, "\"'")), "./")
+	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
+		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
+			if r, err := filepath.Rel(rootAbs, abs); err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+				rel = filepath.ToSlash(r)
+			}
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+}
+
+func reviewerWritePathAllowed(input Input, rawPath string) bool {
+	rel := reviewerRelativePath(input, rawPath)
+	allowed := []string{".claude/evidence/", "docs/reports/"}
+	if workspace := strings.TrimSuffix(filepath.ToSlash(input.Runtime.VerificationWorkspace), "/"); workspace != "" {
+		allowed = append(allowed, workspace+"/")
+	}
+	for _, prefix := range allowed {
+		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
+		}
+	}
+	return false
+}
+
+// reviewerPathContained closes the filesystem half of the write-surface
+// check. Lexical prefixes alone allow an existing `.claude/evidence` symlink
+// (or a symlinked E2E workspace parent) to redirect an otherwise authorized
+// write outside the repository. Missing leaves are valid; every existing
+// ancestor must still resolve beneath ProjectRoot.
+func reviewerPathContained(root, rel string) bool {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	abs := filepath.Join(rootAbs, filepath.FromSlash(rel))
+	relToRoot, err := filepath.Rel(rootAbs, abs)
+	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) || filepath.IsAbs(relToRoot) {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return false
+	}
+	for current := abs; ; current = filepath.Dir(current) {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			resolvedRel, relErr := filepath.Rel(resolvedRoot, resolved)
+			return relErr == nil && resolvedRel != ".." && !strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) && !filepath.IsAbs(resolvedRel)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+	}
+}
+
+func allReviewWritePathsAllowed(input Input, paths []string) bool {
+	for _, path := range paths {
+		if !reviewerWritePathAllowed(input, path) {
+			return false
+		}
+	}
+	return true
+}
+
+var (
+	bashRedirectPattern   = regexp.MustCompile(`(^|[[:space:]])([0-9]*>>?|[0-9]?&>)[[:space:]]*("[^"]+"|'[^']+'|[^[:space:]&;|]+)`)
+	bashPythonOpenPattern = regexp.MustCompile(`open[[:space:]]*\([[:space:]]*["']([^"']+)["'][[:space:]]*,[[:space:]]*["'][^"']*[wax+][^"']*["']`)
+)
+
+// bashMutationPaths is intentionally a small conservative classifier, not a
+// shell parser. It catches common write forms and fails closed for dynamic
+// mutators; read/test commands remain outside the S7 write rule.
+func bashMutationPaths(command string) ([]string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	paths := []string{}
+	mutating := false
+	add := func(path string) {
+		path = strings.Trim(path, "\"'")
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	for _, match := range bashRedirectPattern.FindAllStringSubmatch(command, -1) {
+		mutating = true
+		add(match[3])
+	}
+	if strings.Contains(lower, "sed -i") || strings.Contains(lower, "sed  -i") || strings.Contains(lower, "perl -i") {
+		mutating = true
+		fields := strings.Fields(command)
+		if len(fields) > 0 {
+			add(fields[len(fields)-1])
+		}
+	}
+	if strings.Contains(lower, "open(") || strings.Contains(lower, "open (") {
+		if matches := bashPythonOpenPattern.FindAllStringSubmatch(command, -1); len(matches) > 0 {
+			mutating = true
+			for _, match := range matches {
+				add(match[1])
+			}
+		} else if strings.Contains(lower, "write") || strings.Contains(lower, "truncate") {
+			mutating = true
+		}
+	}
+	// Shell hooks commonly hide writes in a short Python/Node expression. The
+	// hook cannot safely prove the target of these APIs in all cases, so treat
+	// the command as a mutation even when no literal path was extracted; the
+	// caller then fails closed rather than allowing a dynamic write to bypass
+	// the verification surface.
+	if strings.Contains(lower, "path(") && (strings.Contains(lower, ".write_text") || strings.Contains(lower, ".write_bytes") || strings.Contains(lower, ".unlink") || strings.Contains(lower, ".mkdir")) {
+		mutating = true
+	}
+	if strings.Contains(lower, "fs.writefilesync") || strings.Contains(lower, "fs.appendfilesync") || strings.Contains(lower, "fs.rmsync") || strings.Contains(lower, "fs.mkdirSync") || strings.Contains(lower, "fs.mkdirasync") || strings.Contains(lower, ".writefilesync") || strings.Contains(lower, ".appendfilesync") || strings.Contains(lower, ".rmsync") || strings.Contains(lower, ".mkdirsync") {
+		mutating = true
+	}
+	fields := strings.Fields(command)
+	if len(fields) > 0 {
+		base := strings.TrimPrefix(filepath.Base(strings.Trim(fields[0], "\"'")), "env")
+		switch base {
+		case "tee":
+			mutating = true
+			for _, field := range fields[1:] {
+				if !strings.HasPrefix(field, "-") {
+					add(field)
+					break
+				}
+			}
+		case "cp", "mv", "install":
+			mutating = true
+			if len(fields) > 1 {
+				add(fields[len(fields)-1])
+			}
+		case "rm", "touch", "mkdir":
+			mutating = true
+			for _, field := range fields[1:] {
+				if !strings.HasPrefix(field, "-") {
+					add(field)
+				}
+			}
+		case "go":
+			if len(fields) > 1 && fields[1] == "generate" {
+				mutating = true
+			}
+		case "git":
+			for _, field := range fields[1:] {
+				if contains([]string{"apply", "checkout", "restore", "clean", "reset", "mv", "rm", "commit"}, strings.TrimLeft(field, "-")) {
+					mutating = true
+					break
+				}
+			}
+		}
+	}
+	if strings.HasPrefix(lower, "ln ") || strings.Contains(lower, " ln -") {
+		mutating = true
+	}
+	if strings.Contains(lower, "git") && strings.Contains(lower, " apply") {
+		mutating = true
+	}
+	return paths, mutating
 }
 
 func squashMergeDecision(input Input) (Decision, bool) {

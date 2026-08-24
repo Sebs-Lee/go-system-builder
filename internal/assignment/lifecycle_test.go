@@ -83,6 +83,41 @@ func TestAdvanceAgentRejectsActivationBeforeApproval(t *testing.T) {
 	}
 }
 
+func TestBlockerResolvedReturnsReviewerToWorking(t *testing.T) {
+	root := filepath.Join("..", "..")
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "loop-state.json")
+	journalPath := filepath.Join(dir, "loop-events.jsonl")
+	state := activeState(t, root, "verification", "running", 7)
+	state["entities"].(map[string]any)["agents"] = []any{map[string]any{
+		"id": "agent-ver-1", "role": "qa", "state": "blocked",
+		"task_ids": []any{"TASK-012"}, "team_id": "workgroup-review-1",
+		"definition_ref": "agents/qa.md", "prompt_ref": "manifest#assignment-qa-1",
+		"readback_ref": nil, "activation_ref": nil, "activation_revision": nil,
+		"updated_at": "2026-08-24T00:00:00Z",
+	}}
+	writeJSON(t, statePath, state)
+	messagePath := filepath.Join(dir, "blocker-resolution.json")
+	writeJSON(t, messagePath, map[string]any{
+		"schema_version": "1.0.0", "message_type": "blocker_resolution",
+		"message_id": "msg-blocker-resolution-1", "correlation_id": "corr-blocker-1",
+		"runtime_id": "loop-REQ-002", "expected_runtime_revision": 7,
+		"agent_id": "agent-ver-1", "agent_definition_ref": "agents/qa.md",
+		"task_id": "TASK-012", "bug_id": nil, "team_id": "workgroup-review-1",
+		"occurred_at": "2026-08-24T00:00:00Z", "body": "capture conditions restored",
+	})
+	snapshot, err := assignment.AdvanceAgent(root, statePath, journalPath, assignment.AgentEventRequest{
+		ExpectedRevision: 7, AgentID: "agent-ver-1", Event: "blocker_resolved", MessagePath: messagePath,
+	})
+	if err != nil {
+		t.Fatalf("blocker_resolved: %v", err)
+	}
+	agent := snapshot.State["entities"].(map[string]any)["agents"].([]any)[0].(map[string]any)
+	if agent["state"] != "working" {
+		t.Fatalf("blocker_resolved must resume work directly for review recovery, got %v", agent["state"])
+	}
+}
+
 func writeAgentExample(t *testing.T, root, dir, messageType, agentID, taskID string, revision int) string {
 	t.Helper()
 	data, err := schema.ReadAsset("agent-message.examples.json")

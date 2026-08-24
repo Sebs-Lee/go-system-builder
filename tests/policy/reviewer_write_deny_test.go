@@ -48,9 +48,12 @@ func TestReviewerProductWriteDecision(t *testing.T) {
 					"file_path": tc.path,
 				},
 				Runtime: policy.RuntimeContext{
-					CurrentState:            tc.state,
-					ProjectRoot:             "/repo",
-					VerificationWorkspace:   tc.workspace,
+					CurrentState: tc.state,
+					// This matrix exercises lexical surface classification. The
+					// filesystem symlink containment path is covered separately
+					// with a real ProjectRoot in internal/policy tests.
+					ProjectRoot:           "",
+					VerificationWorkspace: tc.workspace,
 				},
 			}
 			decision, err := engine.Evaluate(input)

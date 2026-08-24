@@ -639,7 +639,7 @@
         {
           "from": "blocked",
           "event": "blocker_resolved",
-          "to": "activated",
+          "to": "working",
           "guards": [
             "activation_scope_still_valid"
           ]
@@ -1109,7 +1109,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One BUG draft is created per Finding, deduplicated by finding content hash.",
+      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One investigation-intake BUG draft is created per Finding, deduplicated by finding content hash; S8 must still establish root cause and the Closing Contract before canonical BUG acceptance.",
       "from_phase": "observation_sealed"
     },
     {

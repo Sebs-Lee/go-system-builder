@@ -73,6 +73,7 @@ type Result struct {
 	SchemaVersion              string                `json:"schema_version"`
 	ResultID                   string                `json:"result_id"`
 	AssignmentID               string                `json:"assignment_id"`
+	AssignmentRevision         int                   `json:"assignment_revision"`
 	ReviewPlanID               string                `json:"review_plan_id"`
 	ReviewRound                int                   `json:"review_round"`
 	BaselineGeneration         int                   `json:"baseline_generation"`

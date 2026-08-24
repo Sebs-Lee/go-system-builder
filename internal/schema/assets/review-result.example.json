@@ -2,6 +2,7 @@
   "schema_version": "1.0.0",
   "result_id": "review-result-example-qa-1",
   "assignment_id": "assignment-qa-logic-1",
+  "assignment_revision": 1,
   "review_plan_id": "review-plan-example-1",
   "review_round": 1,
   "baseline_generation": 1,

@@ -81,7 +81,7 @@ func TestIdentifySenderUsesOfficialTeammateName(t *testing.T) {
 		Event:        "PostToolUse",
 		ToolName:     "SendMessage",
 		TeammateName: "builder-7",
-		ToolInput:    map[string]any{"message_type": "plan_report"},
+		ToolInput:    map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
 	}
 	obs := hook.HandlePostToolUse(input, []hook.AgentRow{{ID: "builder-7", State: "working"}})
 	if !obs.Recorded || obs.AgentID != "builder-7" {

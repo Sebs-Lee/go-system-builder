@@ -26,6 +26,7 @@ type reviewBindSpec struct {
 	lensOverride      map[string]string // assignment id -> projection lens
 	statusOverride    map[string]string // assignment id -> projection status
 	claimDispositions map[string]string // claim id -> disposition
+	dependencies      map[string][]string
 }
 
 // seedReviewBindPlan mirrors register_test.go's seedReviewPlan with the
@@ -36,11 +37,15 @@ func seedReviewBindPlan(t *testing.T, repoRoot string, state map[string]any, spe
 		map[string]any{"path": "docs/tasks/TASK-012.md", "sha256": strings.Repeat("1", 64), "kind": "task"},
 	}
 	claim := func(id, target string) map[string]any {
-		return map[string]any{
+		row := map[string]any{
 			"claim_id": id, "lens": "delivery", "target": target,
 			"assertion": "covered", "oracle": "evidence exists", "method": "review",
 			"applicability": "required", "source_refs": []any{"REQ-002"},
 		}
+		if deps := spec.dependencies[id]; len(deps) > 0 {
+			row["depends_on"] = deps
+		}
+		return row
 	}
 	behavior := map[string]bool{}
 	for _, id := range spec.behaviorWave {
@@ -280,5 +285,21 @@ func TestReviewBindRejectsRedispatch(t *testing.T) {
 	err := registerFixtureWorkgroup(t, root, dir, state, nil)
 	if err == nil || !strings.Contains(err.Error(), "dispatches once") {
 		t.Fatalf("re-dispatch of a dispatched assignment must be rejected, got %v", err)
+	}
+}
+
+func TestReviewBindBlocksAssignmentUntilDependenciesSettle(t *testing.T) {
+	root := filepath.Join("..", "..")
+	dir := t.TempDir()
+	state := activeState(t, root, "verification", "running", 6)
+	seedReviewBindPlan(t, root, state, reviewBindSpec{
+		dependencies: map[string][]string{
+			"claim-dv-spec-gap": {"claim-dv-req-gap"},
+		},
+	})
+
+	err := registerFixtureWorkgroup(t, root, dir, state, nil)
+	if err == nil || !strings.Contains(err.Error(), "upstream Result") {
+		t.Fatalf("dependent Assignment must wait for upstream Result consumption, got %v", err)
 	}
 }

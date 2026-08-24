@@ -255,9 +255,12 @@
                 "type": "array",
                 "items": {"type": "string"}
               },
-              "status": {"enum": ["planned", "dispatched", "result_submitted", "consumed"]},
+              "status": {"enum": ["planned", "dispatched", "blocked", "result_submitted", "consumed"]},
               "agent_id": {"type": ["string", "null"]},
               "result_ref": {"type": ["string", "null"]},
+              "queued_agent_id": {"type": ["string", "null"], "description": "Agent registered for a resource-lock-queued Assignment; the scheduler promotes it when the holder is consumed."},
+              "blocker_ref": {"type": ["string", "null"], "description": "Canonical S7 site-lost blocker artifact; present only while this Assignment is blocked."},
+              "blocked_at": {"type": ["string", "null"], "description": "UTC timestamp at which the Assignment entered the explicit S7 blocker state."},
               "artifact_digest": {
                 "type": ["string", "null"],
                 "pattern": "^[a-f0-9]{64}$",
@@ -1709,7 +1712,8 @@
             "review_result",
             "finding",
             "finding_supplement",
-            "observation_batch"
+            "observation_batch",
+            "review_blocker"
           ]
         },
         "path": {

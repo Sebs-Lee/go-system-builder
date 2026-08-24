@@ -46,6 +46,15 @@ func HandlePostToolUse(input policy.Input, agents []AgentRow) PostToolUseObserva
 	default:
 		return PostToolUseObservation{Reason: "unrelated message type"}
 	}
+	if messageType == "plan_report" {
+		planRef, _ := input.ToolInput["plan_ref"].(string)
+		if strings.TrimSpace(planRef) == "" {
+			planRef, _ = input.ToolInput["plan_path"].(string)
+		}
+		if strings.TrimSpace(planRef) == "" {
+			return PostToolUseObservation{Message: messageType, Reason: "plan_report has no plan_ref/plan_path; authoritative checkpoint was not captured"}
+		}
+	}
 	agentID := identifySender(input, agents)
 	if agentID == "" {
 		return PostToolUseObservation{Message: messageType, Reason: "sender not identifiable (payload carries no agent_id/teammate_name match)"}
