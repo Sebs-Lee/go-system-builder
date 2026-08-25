@@ -189,6 +189,9 @@ func printBindConfirmation(w io.Writer, state map[string]any) {
 		sha = sha[:12]
 	}
 	event, _ := last["event"].(string)
+	if receipt, ok := state["binding_receipt"].(map[string]any); ok {
+		event, _ = receipt["event"].(string)
+	}
 	fmt.Fprintf(w, "bound %s %s (ui_impact=%s)\n", id, version, ui)
 	fmt.Fprintf(w, "  sha256 %s…  approved-by %s\n", sha, approvedBy)
 	fmt.Fprintf(w, "  cursor %s.%s  revision %d  generation %d  event %s\n",

@@ -153,6 +153,25 @@ func TestBuildGuidanceS7RecoveryQueuedDispatchAction(t *testing.T) {
 	}
 }
 
+func TestS7RecoveryBlockedActionNamesRecoveryVerb(t *testing.T) {
+	got := s7RecoveryNextAction(
+		"cannot_clean", 2,
+		nil,
+		nil,
+		[]string{"assignment-qa-3(agent-qa-3)"},
+		nil,
+		nil,
+	)
+	for _, want := range []string{
+		"runtime agent-event --event blocker_resolved --agent-id <id> --message <file>",
+		"resubmit",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("blocked S7 recovery action must contain %q, got %q", want, got)
+		}
+	}
+}
+
 func TestBuildGuidanceS7RecoveryTerminalActions(t *testing.T) {
 	root := filepath.Join("..", "..")
 	cases := []struct {

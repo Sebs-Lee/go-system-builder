@@ -43,3 +43,13 @@ reproducible checks, and investigation-ready Findings. Keep observed symptom and
 operation path separate from any hypothesis.
 ## Stop Conditions
 Stop on stale input, missing authority, scope expansion, destructive test need, conflict, or blocked Hook.
+
+## Recovery: site-lost BLOCKER
+
+If a submit returns `not investigation-ready` and you cannot reconstruct the
+encounter (the runtime/scene is gone, capture buffer empty, logs unreachable),
+declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
+`{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
+`blocked`. Recovery: fix the capture conditions, send
+`runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`,
+then the same finder resubmits. Reproduction debt is never handed to S8.

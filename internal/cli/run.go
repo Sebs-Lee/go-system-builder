@@ -62,6 +62,9 @@ func formatFailure(cmd string, err error) string {
 	if errors.Is(err, runtime.ErrStaleRevision) {
 		return fmt.Sprintf("%s: %s. Next: run `loop-harness status --root <root>` to read the current revision and retry with `--expected-revision <N>`. If revisions diverge repeatedly, an actor is committing concurrently; resolve with `loop-harness runtime reconcile`.", cmd, msg)
 	}
+	if errors.Is(err, runtime.ErrStaleRuntimeIdentity) {
+		return fmt.Sprintf("%s: %s. The runtime identity changed at a lifecycle boundary; reread status and rebuild the transition request against the current runtime.", cmd, msg)
+	}
 	return fmt.Sprintf("%s: %s", cmd, msg)
 }
 
@@ -313,7 +316,7 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	now := time.Now().UTC()
 	shaHex := fmt.Sprintf("%x", sha256.Sum256(data))
 	next, err := transition.Apply(*root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-001", ExpectedRevision: snapshot.Revision, Actor: "user",
+		TransitionID: "TR-001", ExpectedRevision: snapshot.Revision, ExpectedRuntimeID: "loop-inactive", Actor: "user",
 		Evidence: map[string]string{
 			"req_lock_record":           *reqPath + "@" + shaHex,
 			"loop_authorization_record": "approved-by:" + *approvedBy,
@@ -933,7 +936,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -943,6 +946,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		return runRuntimeRollover(args[1:], stdout, stderr)
 	case "human-decision":
 		return runRuntimeHumanDecision(args[1:], stdout, stderr)
+	case "s7-budget-decision":
+		return runRuntimeS7BudgetDecision(args[1:], stdout, stderr)
 	case "pause":
 		return runRuntimePause(args[1:], stdout, stderr)
 	case "resume":
@@ -1041,6 +1046,14 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, formatFailure("runtime transition", err))
 			return 1
 		}
+		resolvedStatePath := resolveRootPath(*root, *statePath)
+		resolvedJournalPath := resolveRootPath(*root, *journalPath)
+		currentSnapshot, err := runtime.NewStore(resolvedStatePath, resolvedJournalPath).Snapshot()
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime transition", err))
+			return 1
+		}
+		currentRuntimeID, _ := currentSnapshot.State["runtime_id"].(string)
 		evidenceMap, err := parseEvidence(evidence)
 		if err != nil {
 			fmt.Fprintf(stderr, "runtime transition: %v\n", err)
@@ -1061,8 +1074,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				ApprovedBy: *reqApprovedBy, ApprovedAt: *reqApprovedAt,
 			}
 		}
-		next, err := transition.Apply(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), transition.Request{
-			TransitionID: *transitionID, ExpectedRevision: resolvedRevision,
+		next, err := transition.Apply(*root, resolvedStatePath, resolvedJournalPath, transition.Request{
+			TransitionID: *transitionID, ExpectedRevision: resolvedRevision, ExpectedRuntimeID: currentRuntimeID,
 			Actor: *actor, Evidence: evidenceMap, REQ: req, OccurredAt: occurredAt,
 			Params: params,
 		})
@@ -2860,10 +2873,18 @@ func persistGateForPreToolUse(root string, request *policy.Input, decision *poli
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	if _, _, err := refreshMilestoneWithGate(root, statePath, journalPath, result.Snapshot, *decision.Guidance, request.Event, result.QualityGate); err != nil {
 		// Persistence failure is non-fatal for the hook verdict: the
-		// wire envelope still carries quality_gate. Log via the audit
-		// trail by leaving decision as-is; milestone will converge on
-		// the next successful CAS.
-		_ = err
+		// wire envelope still carries quality_gate. Expose the bounded
+		// reason and the next action in the same packet so the Agent does
+		// not mistake a missing milestone for permission to improvise.
+		reason := milestoneRefreshFailureReason(err)
+		decision.Guidance.Automation = append(decision.Guidance.Automation,
+			fmt.Sprintf("milestone refresh deferred [%s]; the quality_gate in this Hook packet remains authoritative; retry on the next Hook", reason),
+		)
+		if reason != "stale_revision" {
+			decision.Guidance.Automation = append(decision.Guidance.Automation,
+				"if the refresh failure repeats, stop normal work and run `loop-harness runtime reconcile --root .` to inspect/recover the Runtime pair",
+			)
+		}
 	}
 }
 

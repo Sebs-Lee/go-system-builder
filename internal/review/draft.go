@@ -17,11 +17,23 @@ type taskDoc struct {
 // DraftPlan scaffolds a ReviewPlan from the current runtime facts
 // (L3-S7 §4.2 claim generation order, planner assist): every
 // current-generation TASK yields a delivery traceability claim; the union of
-// Builder-changed paths yields a QA static claim per focus cluster; the E2E
-// coverage state derives from the bound REQ's ui_impact. The draft is a
-// scaffold, not a plan — oracle/method fields carry TODO markers the Planner
-// must replace; registration validates the result normally.
+// Builder-changed paths yields one independently dispatchable QA Assignment
+// per baseline focus; the E2E state is derived from the current CASE→spec
+// inventory (not_applicable only when the bound REQ explicitly has no UI
+// impact). The draft is still a scaffold when no stable CASE input exists —
+// its remaining TODO markers are intentionally rejected by registration.
 func DraftPlan(state map[string]any, round int) (*Plan, []string) {
+	return draftPlanForRoot("", state, round)
+}
+
+// DraftPlanForRoot is the production S7 draft path. It reads the immutable
+// completion envelope through the repository root so changed surfaces can be
+// frozen with their actual disk digest instead of relying on copied state.
+func DraftPlanForRoot(root string, state map[string]any, round int) (*Plan, []string) {
+	return draftPlanForRoot(root, state, round)
+}
+
+func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []string) {
 	generation := baselineGeneration(state)
 	var notes []string
 
@@ -45,29 +57,29 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].id < tasks[j].id })
 
 	frozen := []FrozenSubject{}
+	seenFrozen := map[string]bool{}
 	for _, task := range tasks {
+		if seenFrozen[task.path] {
+			continue
+		}
+		seenFrozen[task.path] = true
 		frozen = append(frozen, FrozenSubject{Path: task.path, SHA256: task.sha256, Kind: "task"})
 	}
 
-	// Builder-changed paths from completion envelopes.
-	changed := map[string]bool{}
-	for _, raw := range evidenceEntries(state) {
-		entry, _ := raw.(map[string]any)
-		if entry == nil || entry["kind"] != "completion_report" {
+	projection := buildS7BaselineProjection(root, state)
+	for _, diagnostic := range projection.Diagnostics {
+		notes = append(notes, "S7 baseline projection: "+diagnostic+"; registration will reject an unverifiable completion artifact")
+	}
+	changedSubjects, subjectDiagnostics := changedSurfaceSubjects(root, projection.ChangedPaths)
+	for _, diagnostic := range subjectDiagnostics {
+		notes = append(notes, "S7 baseline projection: "+diagnostic+"; add a valid frozen subject before registration")
+	}
+	for _, subject := range changedSubjects {
+		if seenFrozen[subject.Path] {
 			continue
 		}
-		if intField(entry["baseline_generation"]) != generation {
-			continue
-		}
-		// changed paths are carried in the envelope body; the draft reads the
-		// index scope_refs as the cheaper projection.
-		if refs, ok := entry["scope_refs"].([]any); ok {
-			for _, ref := range refs {
-				if s, _ := ref.(string); s != "" {
-					changed[s] = true
-				}
-			}
-		}
+		seenFrozen[subject.Path] = true
+		frozen = append(frozen, subject)
 	}
 
 	claims := []Claim{}
@@ -111,20 +123,22 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	// We project from the fingerprinted frozen subjects first (the same
 	// authoritative surface the runtime validates against); if even that
 	// is empty, emit an explicit TODO marker so registration can flag it.
-	changedList := make([]string, 0, len(changed))
-	for path := range changed {
-		changedList = append(changedList, path)
-	}
-	sort.Strings(changedList)
+	changedList := append([]string(nil), projection.ChangedPaths...)
 	qaSurface, qaSurfaceIsPlaceholder := qaChangeSurface(changedList, frozen)
 	if qaSurfaceIsPlaceholder {
 		notes = append(notes, "QA claim `target` is a TODO marker (no current-generation completion envelopes and no frozen subjects); replace it with the real change surface before registration — the registration-time check rejects a fabricated target that names nothing")
 	}
-	var qaClaimIDs []string
+	// Each baseline focus is its own Assignment. This keeps the plan's
+	// independent questions independently dispatchable: platform capacity may
+	// queue them, but it must not collapse six quality perspectives into one
+	// overloaded QA session.
 	for _, focus := range []struct{ key, assertion string }{
+		{"design-boundary", "module boundaries, ownership and contracts are explicit; invalid crossings are rejected at the right layer"},
+		{"pattern-idiom-fit", "the implementation uses the project's established design patterns and idioms where they reduce coupling or risk"},
 		{"logic-state-error", "normal/edge/error paths are self-consistent; state transitions and error ownership are complete"},
 		{"maintainability", "naming, abstraction level and cognitive complexity stay within the project's idiom"},
-		{"test-oracle", "behavior (not implementation detail) is asserted; negative/boundary paths carry valid oracles"},
+		{"testability-oracle", "behavior (not implementation detail) is asserted; negative/boundary paths carry valid oracles"},
+		{"debt-operability", "the change does not introduce avoidable technical debt, opaque operation, or an unowned follow-up"},
 	} {
 		id := nextClaim("qa", focus.key)
 		target := qaSurface
@@ -147,17 +161,25 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 			SourceRefs:    taskIDs(tasks),
 			FocusKey:      focus.key,
 		})
-		qaClaimIDs = append(qaClaimIDs, id)
+		assignments = append(assignments, PlanAssignment{
+			AssignmentID:       "assignment-qa-" + focus.key,
+			Lens:               "qa",
+			ClaimIDs:           []string{id},
+			FocusKeys:          []string{focus.key},
+			NonOverlapBoundary: "owns the " + focus.key + " question; adjacent QA Assignments do not repeat this oracle",
+			ExecutionWave:      "static",
+		})
 	}
-	assignments = append(assignments, PlanAssignment{
-		AssignmentID: "assignment-qa-static", Lens: "qa", ClaimIDs: qaClaimIDs,
-		NonOverlapBoundary: "owns static quality; does not duplicate DV traceability",
-		ExecutionWave:      "static",
-	})
 
-	// E2E coverage state from the bound REQ's ui_impact (§4.2 step 6).
+	// E2E coverage state from the bound REQ's ui_impact (§4.2 step 6). The
+	// Planner consumes the actual S2 CASE catalog and the repository's
+	// Playwright spec mentions. A complete CASE→spec mapping is enough for
+	// regression_available; any missing required CASE conservatively falls
+	// back to cold_start while keeping one Assignment per CASE.
 	uiImpact := boundREQUIImpact(state)
 	e2eState := "regression_available"
+	var e2eAssets []E2EAsset
+	var verificationWorkspace *string
 	switch uiImpact {
 	case "none", "":
 		e2eState = "not_applicable"
@@ -172,23 +194,66 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 		})
 		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; verify against the real required surfaces (§4.3) before registering")
 	default:
-		e2eState = "cold_start"
-		notes = append(notes, "E2E cold start: decompose persona/entry/flow/state/negative/recovery into 1..N behavior Assignments; never compress the blank matrix into one generic Agent")
-		id := nextClaim("e2e", "flows")
-		claims = append(claims, Claim{
-			ClaimID: id, Lens: "e2e", Target: "TODO(planner): persona/flow surface",
-			Assertion:     "declared entry points produce the expected user-observable behavior",
-			Oracle:        "TODO(planner): the flow-level oracle with console/network evidence",
-			Method:        "real-browser execution",
-			Applicability: "required",
-			SourceRefs:    taskIDs(tasks),
-			FocusKey:      "user-flow",
-		})
-		assignments = append(assignments, PlanAssignment{
-			AssignmentID: "assignment-e2e-flows", Lens: "e2e", ClaimIDs: []string{id},
-			NonOverlapBoundary: "owns the declared flows; cold-start spec authoring stays inside the verification workspace",
-			ExecutionWave:      "behavior",
-		})
+		inventory, discoveryDiagnostics := discoverE2EInventory(root, state)
+		for _, diagnostic := range discoveryDiagnostics {
+			notes = append(notes, "E2E inventory: "+diagnostic+"; registration will reject an unverifiable asset and cold_start remains the safe fallback")
+		}
+		e2eAssets = sortE2EAssets(inventory.Assets)
+		assetByCase := make(map[string]bool, len(e2eAssets))
+		for _, asset := range e2eAssets {
+			assetByCase[asset.CaseRef] = true
+		}
+		if len(inventory.Cases) > 0 {
+			allMapped := true
+			for _, scenario := range inventory.Cases {
+				if !assetByCase[scenario.ID] {
+					allMapped = false
+					break
+				}
+			}
+			e2eState = "cold_start"
+			if allMapped {
+				e2eState = "regression_available"
+				e2eAssets = sortE2EAssets(e2eAssets)
+			} else {
+				workspace := fmt.Sprintf("e2e-workspace/review-plan-draft-r%d", round)
+				verificationWorkspace = &workspace
+				notes = append(notes, fmt.Sprintf("E2E cold start: %d required CASE(s) are not mapped to reusable specs; the draft created one behavior Assignment per CASE and an isolated workspace", len(inventory.Cases)))
+			}
+			for index, scenario := range inventory.Cases {
+				claimID := fmt.Sprintf("claim-e2e-case-%d", index+1)
+				claims = append(claims, Claim{
+					ClaimID: claimID, Lens: "e2e",
+					Target:    e2eScenarioTarget(scenario),
+					Assertion: fmt.Sprintf("%s (%s) follows the declared CASE oracle without forbidden side effects", scenario.ID, scenario.Title),
+					Oracle:    e2eScenarioOracle(scenario), Method: "real-browser execution",
+					Applicability: "required", SourceRefs: e2eScenarioSourceRefs(scenario), FocusKey: scenario.ID,
+				})
+				assignments = append(assignments, PlanAssignment{
+					AssignmentID: fmt.Sprintf("assignment-e2e-case-%d", index+1), Lens: "e2e", ClaimIDs: []string{claimID},
+					FocusKeys:          []string{scenario.ID},
+					NonOverlapBoundary: "owns exactly " + scenario.ID + " and its declared PATH(s); do not repeat another CASE's oracle",
+					ExecutionWave:      "behavior",
+				})
+			}
+		} else {
+			e2eState = "cold_start"
+			workspace := fmt.Sprintf("e2e-workspace/review-plan-draft-r%d", round)
+			verificationWorkspace = &workspace
+			notes = append(notes, "E2E cold start: no required browser CASE inventory was discoverable; author the module CASE/PATH matrix, then replace the fallback claim before registration")
+			id := nextClaim("e2e", "flows")
+			claims = append(claims, Claim{
+				ClaimID: id, Lens: "e2e", Target: "TODO(planner): persona/flow surface",
+				Assertion: "declared entry points produce the expected user-observable behavior",
+				Oracle:    "TODO(planner): the flow-level oracle with console/network evidence",
+				Method:    "real-browser execution", Applicability: "required", SourceRefs: taskIDs(tasks), FocusKey: "user-flow",
+			})
+			assignments = append(assignments, PlanAssignment{
+				AssignmentID: "assignment-e2e-flows", Lens: "e2e", ClaimIDs: []string{id},
+				NonOverlapBoundary: "owns the declared flows; cold-start spec authoring stays inside the verification workspace",
+				ExecutionWave:      "behavior",
+			})
+		}
 	}
 
 	if len(tasks) == 0 {
@@ -196,19 +261,33 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	}
 
 	plan := &Plan{
-		SchemaVersion:          "1.0.0",
-		ReviewPlanID:           fmt.Sprintf("review-plan-draft-r%d", round),
-		ReviewRound:            round,
-		BaselineGeneration:     generation,
-		FrozenSubjects:         frozen,
-		Claims:                 claims,
-		Assignments:            assignments,
-		E2ECoverageState:       e2eState,
-		DispatchCapacityPolicy: "coverage_complete",
-		CreatedBy:              "orchestrator",
-		CreatedAt:              time.Now().UTC().Format(time.RFC3339Nano),
+		SchemaVersion:                 "1.0.0",
+		ReviewPlanID:                  fmt.Sprintf("review-plan-draft-r%d", round),
+		ReviewRound:                   round,
+		BaselineGeneration:            generation,
+		FrozenSubjects:                frozen,
+		CoverageInventory:             BuildCoverageInventoryForRoot(root, state),
+		ChangeImpact:                  changeImpactFromPaths(changedList),
+		Claims:                        claims,
+		Assignments:                   assignments,
+		E2ECoverageState:              e2eState,
+		E2EAssets:                     e2eAssets,
+		VerificationArtifactWorkspace: verificationWorkspace,
+		DispatchCapacityPolicy:        "coverage_complete",
+		CreatedBy:                     "orchestrator",
+		CreatedAt:                     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	return plan, notes
+}
+
+func changeImpactFromPaths(paths []string) *ChangeImpact {
+	if len(paths) == 0 {
+		return nil
+	}
+	return &ChangeImpact{
+		Summary:    "derived from the current-generation S6 completion changed_paths",
+		SourceRefs: append([]string(nil), paths...),
+	}
 }
 
 func taskIDs(tasks []taskDoc) []string {
@@ -217,6 +296,73 @@ func taskIDs(tasks []taskDoc) []string {
 		ids = append(ids, task.id)
 	}
 	return ids
+}
+
+func e2eScenarioTarget(scenario e2eScenario) string {
+	parts := []string{scenario.ID}
+	if scenario.Module != "" {
+		parts = append(parts, "module="+scenario.Module)
+	}
+	if strings.TrimSpace(scenario.Title) != "" {
+		parts = append(parts, strings.TrimSpace(scenario.Title))
+	}
+	if len(scenario.FlowRefs) > 0 {
+		parts = append(parts, "flows="+strings.Join(scenario.FlowRefs, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+func e2eScenarioSourceRefs(scenario e2eScenario) []string {
+	refs := []string{scenario.ID}
+	for _, ref := range scenario.FlowRefs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || containsString(refs, ref) {
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func e2eScenarioOracle(scenario e2eScenario) string {
+	parts := []string{}
+	for _, key := range []string{"visible", "terminal_state", "persisted_effects", "forbidden_side_effects", "rejection", "expected_state", "recovery"} {
+		if value := e2eOracleValue(scenario.Oracle[key]); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("execute %s and compare the browser-visible result, terminal state, persisted effects and forbidden side effects with its cases.json oracle", scenario.ID)
+	}
+	return "cases.json oracle: " + strings.Join(parts, "; ")
+}
+
+func e2eOracleValue(raw any) string {
+	switch value := raw.(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case []any:
+		items := make([]string, 0, len(value))
+		for _, item := range value {
+			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+				items = append(items, strings.TrimSpace(text))
+			}
+		}
+		return strings.Join(items, " | ")
+	case []string:
+		return strings.Join(value, " | ")
+	default:
+		return ""
+	}
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // qaChangeSurface derives the QA claim `target` string. The Builder's
@@ -291,7 +437,17 @@ func ValidatePlanTaskCoverage(state map[string]any, plan *Plan) error {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return fmt.Errorf("ReviewPlan drops current-generation TASK(s) %v from every Claim's source_refs; coverage diff is a registration-time error (L3-S7 §4.4)", missing)
+		missingItems := make([]string, len(missing))
+		for i, id := range missing {
+			missingItems[i] = id + " has no Claim source_ref"
+		}
+		return s7GateError(
+			"S7_PLAN_TASK_COVERAGE",
+			"ReviewPlan drops current-generation TASKs from Claim coverage",
+			missingItems,
+			[]string{"add each missing TASK id to at least one Claim.source_refs; keep the Claim target and oracle specific to that TASK"},
+			"runtime review-plan --file plan.json --expected-revision <N>",
+		)
 	}
 	return nil
 }

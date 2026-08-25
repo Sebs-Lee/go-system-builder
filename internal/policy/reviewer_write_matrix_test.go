@@ -60,6 +60,28 @@ func TestReviewerProductWriteHardDeny(t *testing.T) {
 	}
 }
 
+func TestReviewerNotebookEditProductWriteHardDeny(t *testing.T) {
+	engine, err := policy.Load(filepath.Join("..", "..", "docs", "hook-policy.json"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	decision, err := engine.Evaluate(policy.Input{
+		Event:    "PreToolUse",
+		ToolName: "NotebookEdit",
+		ToolInput: map[string]any{
+			"notebook_path": "notebooks/verification.ipynb",
+			"new_source":    "print('mutate product baseline')",
+		},
+		Runtime: policy.RuntimeContext{CurrentState: "verification"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
+		t.Fatalf("NotebookEdit product write in verification must hard deny, got %q (%s)", decision.Decision, decision.RuleID)
+	}
+}
+
 func TestReviewerWriteAuthorizedSurfacesStayOpen(t *testing.T) {
 	engine, err := policy.Load(filepath.Join("..", "..", "docs", "hook-policy.json"))
 	if err != nil {

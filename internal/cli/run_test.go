@@ -279,7 +279,7 @@ func TestRuntimeTransitionCommandStartsLockedREQ(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("transition failed: code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), `"revision":1`) {
+	if !strings.Contains(stdout.String(), `"revision":0`) {
 		t.Fatalf("unexpected output: %s", stdout.String())
 	}
 }

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,10 +37,13 @@ func SubmitResult(
 	request SubmitRequest,
 ) (loopruntime.Snapshot, error) {
 	snapshot, err := submitResult(root, statePath, journalPath, request)
+	var siteLostBlocked *SiteLostBlockedError
 	switch {
 	case err == nil:
 		_ = metrics.RecordS7ResultSubmit(root, "accepted")
 	case errors.Is(err, loopruntime.ErrStaleRevision):
+	case errors.As(err, &siteLostBlocked):
+		_ = metrics.RecordS7ResultSubmit(root, "blocked")
 	default:
 		_ = metrics.RecordS7ResultSubmit(root, "rejected")
 	}
@@ -90,9 +94,29 @@ func submitResult(
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult assignment_id %s does not match --assignment-id %s", result.AssignmentID, request.AssignmentID)
 	}
 	// Capture-buffer merge: findings whose encounter timeline is empty absorb
-	// the buffered steps; reviewer-written timelines are never rewritten.
+	// the buffered steps; reviewer-written timelines are never rewritten. A
+	// multi-Finding result must correlate each buffered step so S8 never gets an
+	// assignment-wide timeline attached to the wrong Finding.
 	if request.CaptureDir != "" {
-		mergeCapturedTimeline(result.Findings, LoadCaptureSteps(request.CaptureDir))
+		steps, captureErr := LoadCaptureStepsStrict(request.CaptureDir)
+		if captureErr != nil {
+			return loopruntime.Snapshot{}, s7GateError(
+				"S7_CAPTURE_INVALID",
+				"capture buffer cannot be consumed",
+				[]string{captureErr.Error()},
+				[]string{"repair the malformed capture line or provide a fresh correlated capture buffer"},
+				"runtime review-result submit --assignment-id "+request.AssignmentID+" --result "+request.ResultPath,
+			)
+		}
+		if err := mergeCapturedTimelineChecked(result.Findings, steps); err != nil {
+			return loopruntime.Snapshot{}, s7GateError(
+				"S7_CAPTURE_CORRELATION",
+				"capture timeline cannot be assigned unambiguously",
+				[]string{err.Error()},
+				[]string{"add finding_id or claim_id to each capture step, or submit reviewer-authored timelines inline"},
+				"runtime review-result submit --assignment-id "+request.AssignmentID+" --result "+request.ResultPath,
+			)
+		}
 	}
 
 	stateData, err := os.ReadFile(statePath)
@@ -119,6 +143,17 @@ func submitResult(
 			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
 		}
 		return loopruntime.Snapshot{}, err
+	}
+	// A regression_available plan reuses an existing CASE/PATH asset only
+	// while the declared path and fingerprint still match disk. Registration
+	// checks this once, but submit must check again because a test asset can
+	// drift while reviewers are working. This is verification-artifact drift,
+	// not a product-baseline drift: keep the runtime unchanged and return the
+	// repair path so the Planner can refresh the asset or choose cold_start.
+	if plan.E2ECoverageState == "regression_available" {
+		if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
+			return loopruntime.Snapshot{}, err
+		}
 	}
 	if err := verifyFrozenSubjects(root, plan); err != nil {
 		return staleReviewPlanAfterDrift(root, statePath, journalPath, current, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err))
@@ -154,6 +189,9 @@ func submitResult(
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateClaimEvidenceRequirements(plan, assignment, &result); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateResultEvidenceReferences(root, current, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateVerdictConsistency(&result); err != nil {
@@ -223,26 +261,27 @@ func submitResult(
 		".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
 		"reviews", result.ProducerAgentID, result.ResultID+".json"))
 	resultEnvelope := map[string]any{
-		"schema_version":          "1.0.0",
-		"evidence_id":             result.ResultID,
-		"kind":                    "review_result",
-		"runtime_id":              runtimeID,
-		"baseline_generation":     generation,
-		"review_round":            round,
-		"producer_agent_id":       result.ProducerAgentID,
-		"producer_responsibility": responsibility,
-		"subject_refs":            []any{},
-		"conclusion":              result.Verdict,
-		"review_plan_id":          plan.ReviewPlanID,
-		"assignment_id":           result.AssignmentID,
-		"assignment_revision":     result.AssignmentRevision,
-		"subject_digest":          result.SubjectDigest,
-		"claim_results":           result.ClaimResults,
-		"blocked_claims":          blockedClaimsOrEmpty(&result),
-		"checks":                  result.Checks,
-		"deviations":              result.Deviations,
-		"verdict":                 result.Verdict,
-		"created_at":              occurredAt.UTC().Format(time.RFC3339Nano),
+		"schema_version":               "1.0.0",
+		"evidence_id":                  result.ResultID,
+		"kind":                         "review_result",
+		"runtime_id":                   runtimeID,
+		"baseline_generation":          generation,
+		"review_round":                 round,
+		"producer_agent_id":            result.ProducerAgentID,
+		"producer_responsibility":      responsibility,
+		"subject_refs":                 []any{},
+		"conclusion":                   result.Verdict,
+		"review_plan_id":               plan.ReviewPlanID,
+		"assignment_id":                result.AssignmentID,
+		"assignment_revision":          result.AssignmentRevision,
+		"subject_digest":               result.SubjectDigest,
+		"verification_artifact_digest": result.VerificationArtifactDigest,
+		"claim_results":                result.ClaimResults,
+		"blocked_claims":               blockedClaimsOrEmpty(&result),
+		"checks":                       result.Checks,
+		"deviations":                   result.Deviations,
+		"verdict":                      result.Verdict,
+		"created_at":                   occurredAt.UTC().Format(time.RFC3339Nano),
 	}
 	resultBytes, err := marshalArtifact(resultEnvelope)
 	if err != nil {
@@ -525,9 +564,9 @@ func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 
 // validateClaimEvidenceRequirements turns a Claim's declared minimum
 // evidence into a submit-time gate. The Claim owns the minimum; the
-// ReviewResult owns the concrete evidence refs. Type-specific evidence
-// catalogs are intentionally not inferred here because refs may point to
-// immutable files that have not yet been indexed by the runtime.
+// ReviewResult owns the concrete evidence refs. Every known requirement is
+// matched by its explicit `<kind>:<id>` prefix so a path or arbitrary symbol
+// cannot satisfy a console/network/timeline requirement by accident.
 func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, result *Result) error {
 	claims := make(map[string]Claim, len(plan.Claims))
 	for _, claim := range plan.Claims {
@@ -539,8 +578,205 @@ func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, r
 			continue
 		}
 		if len(claimResult.EvidenceRefs) == 0 {
-			return fmt.Errorf("claim %s in assignment %s declares required evidence %v, but the ReviewResult supplied no evidence_refs", claimResult.ClaimID, assignment.AssignmentID, claim.RequiredEvidence)
+			return s7GateError(
+				"S7_RESULT_EVIDENCE_MISSING",
+				fmt.Sprintf("claim %s in assignment %s supplied no evidence_refs", claimResult.ClaimID, assignment.AssignmentID),
+				[]string{"required evidence: " + strings.Join(claim.RequiredEvidence, ", ")},
+				[]string{"add one typed evidence reference for every required kind to the ClaimResult"},
+				"runtime review-result submit --assignment-id "+assignment.AssignmentID+" --result <result.json>",
+			)
 		}
+		for _, requirement := range claim.RequiredEvidence {
+			matched := false
+			for _, ref := range claimResult.EvidenceRefs {
+				if evidenceRefMatchesRequirement(ref, requirement) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return s7GateError(
+					"S7_RESULT_EVIDENCE_TYPE",
+					fmt.Sprintf("claim %s in assignment %s is missing typed %s evidence", claimResult.ClaimID, assignment.AssignmentID, requirement),
+					[]string{fmt.Sprintf("required evidence kind: %s", requirement), "received: " + strings.Join(claimResult.EvidenceRefs, ", ")},
+					[]string{fmt.Sprintf("add a %s:<id> reference to this ClaimResult; use the capture wrapper or registered Runtime evidence", requirement)},
+					"runtime review-result submit --assignment-id "+assignment.AssignmentID+" --result <result.json>",
+				)
+			}
+		}
+	}
+	return nil
+}
+
+// validateResultEvidenceReferences validates references whose syntax declares
+// a local artifact (`path:<repo-relative-path>`) or an indexed runtime
+// Evidence row. Bare refs remain symbolic/external refs for compatibility
+// with browser traces and platform-provided evidence IDs; the explicit path
+// prefix is the low-complexity contract that makes local evidence auditable.
+func validateResultEvidenceReferences(root string, state map[string]any, result *Result) error {
+	for _, claimResult := range result.ClaimResults {
+		if err := validateEvidenceRefs(root, state, claimResult.EvidenceRefs, fmt.Sprintf("claim %s", claimResult.ClaimID)); err != nil {
+			return err
+		}
+	}
+	for _, check := range result.Checks {
+		if err := validateEvidenceRefs(root, state, check.EvidenceRefs, fmt.Sprintf("check %s", check.Name)); err != nil {
+			return err
+		}
+	}
+	for _, finding := range result.Findings {
+		if err := validateEvidenceRefs(root, state, finding.EvidenceRefs, fmt.Sprintf("finding %s", finding.FindingID)); err != nil {
+			return err
+		}
+		for _, step := range finding.Encounter.Timeline {
+			if err := validateEvidenceRefs(root, state, step.EvidenceRefs, fmt.Sprintf("finding %s timeline step %d", finding.FindingID, step.Sequence)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, blocked := range result.BlockedClaims {
+		if err := validateEvidenceRefs(root, state, blocked.EvidenceRefs, fmt.Sprintf("blocked claim %s", blocked.ClaimID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateEvidenceRefs(root string, state map[string]any, refs []string, owner string) error {
+	indexed := map[string]map[string]any{}
+	if evidence, ok := state["evidence"].([]any); ok {
+		for _, raw := range evidence {
+			row, _ := raw.(map[string]any)
+			if row != nil && stringField(row["id"]) != "" {
+				indexed[stringField(row["id"])] = row
+			}
+		}
+	}
+	for _, rawRef := range refs {
+		ref := strings.TrimSpace(rawRef)
+		if ref == "" {
+			return fmt.Errorf("%s contains an empty evidence reference", owner)
+		}
+		if strings.HasPrefix(ref, "path:") {
+			rel, wantDigest, err := parsePathEvidenceRef(ref)
+			if err != nil {
+				return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
+			}
+			if rel == "" {
+				return fmt.Errorf("%s contains an empty evidence reference path", owner)
+			}
+			path, err := repositoryContainedPath(root, rel)
+			if err != nil {
+				return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("%s evidence reference %q does not exist: %w", owner, ref, err)
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("%s evidence reference %q is not a regular file", owner, ref)
+			}
+			if wantDigest != "" {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return fmt.Errorf("%s evidence reference %q cannot be read: %w", owner, ref, err)
+				}
+				if got := sha256Of(data); got != wantDigest {
+					return s7GateError(
+						"S7_RESULT_EVIDENCE_REF",
+						fmt.Sprintf("%s evidence reference %q has a digest mismatch", owner, ref),
+						[]string{fmt.Sprintf("got %s, want %s", got, wantDigest)},
+						[]string{"refresh the #sha256 suffix or register the artifact as Runtime evidence and use runtime:<evidence-id>"},
+						"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+					)
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(ref, "runtime:") {
+			evidenceID := strings.TrimPrefix(ref, "runtime:")
+			if evidenceID == "" {
+				return s7GateError(
+					"S7_RESULT_EVIDENCE_REF",
+					fmt.Sprintf("%s contains an empty runtime evidence reference", owner),
+					[]string{"runtime:<evidence-id> is required"},
+					[]string{"use the id of a registered Runtime evidence row or use path:<repo-relative-path> for a local artifact"},
+					"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+				)
+			}
+			row, ok := indexed[evidenceID]
+			if !ok {
+				return s7GateError(
+					"S7_RESULT_EVIDENCE_REF",
+					fmt.Sprintf("%s references runtime evidence %q, but that id is not registered", owner, evidenceID),
+					[]string{"runtime:" + evidenceID},
+					[]string{"register the artifact as Runtime evidence first, then use runtime:" + evidenceID + " in the result"},
+					"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+				)
+			}
+			if err := validateIndexedEvidence(root, row, ref, owner); err != nil {
+				return err
+			}
+			continue
+		}
+		if row, ok := indexed[ref]; ok {
+			if err := validateIndexedEvidence(root, row, ref, owner); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func parsePathEvidenceRef(ref string) (string, string, error) {
+	rel := strings.TrimPrefix(ref, "path:")
+	marker := "#sha256="
+	index := strings.Index(rel, marker)
+	if index < 0 {
+		return rel, "", nil
+	}
+	want := rel[index+len(marker):]
+	rel = rel[:index]
+	if len(want) != 64 {
+		return "", "", fmt.Errorf("#sha256 must contain exactly 64 hexadecimal characters")
+	}
+	if _, err := hex.DecodeString(want); err != nil {
+		return "", "", fmt.Errorf("#sha256 is not hexadecimal: %w", err)
+	}
+	return rel, want, nil
+}
+
+func validateIndexedEvidence(root string, row map[string]any, ref, owner string) error {
+	rel := stringField(row["path"])
+	want := stringField(row["sha256"])
+	path, err := repositoryContainedPath(root, rel)
+	if err != nil {
+		return s7GateError(
+			"S7_RESULT_EVIDENCE_REF",
+			fmt.Sprintf("%s indexed evidence %q has an invalid path", owner, ref),
+			[]string{err.Error()},
+			[]string{"register evidence with a repository-contained regular file and its current sha256"},
+			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+		)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return s7GateError(
+			"S7_RESULT_EVIDENCE_REF",
+			fmt.Sprintf("%s indexed evidence %q cannot be read", owner, ref),
+			[]string{err.Error()},
+			[]string{"restore the registered artifact or register a fresh evidence row"},
+			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+		)
+	}
+	if got := sha256Of(data); got != want {
+		return s7GateError(
+			"S7_RESULT_EVIDENCE_REF",
+			fmt.Sprintf("%s indexed evidence %q has a digest mismatch", owner, ref),
+			[]string{fmt.Sprintf("got %s, want %s", sha256Of(data), want)},
+			[]string{"refresh the evidence registration or reference the current immutable artifact"},
+			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+		)
 	}
 	return nil
 }
@@ -1044,8 +1280,21 @@ func releaseQueuedReviewAssignments(state map[string]any) error {
 				claimRow["disposition"] = "running"
 			}
 		}
+		wakeQueuedReviewAgent(state, agentID)
 	}
 	return nil
+}
+
+func wakeQueuedReviewAgent(state map[string]any, agentID string) {
+	entities, _ := state["entities"].(map[string]any)
+	agents, _ := entities["agents"].([]any)
+	for _, raw := range agents {
+		agent, _ := raw.(map[string]any)
+		if agent != nil && agent["id"] == agentID && agent["state"] == "queued" {
+			agent["state"] = "reading"
+			return
+		}
+	}
 }
 
 func reviewAssignmentLockConflict(candidateID string, candidate map[string]any, assignments map[string]any) bool {
@@ -1366,7 +1615,7 @@ func buildObservationBatch(
 		"baseline_generation":                    baselineGeneration(state),
 		"subject_digest":                         SubjectDigest(plan),
 		"finding_ids":                            batchFindingIDs,
-		"drained_assignment_ids":                 drainedAssignments(state),
+		"drained_assignment_ids":                 drainedAssignments(state, result.AssignmentID),
 		"drain_policy":                           drainPolicy,
 		"claim_coverage_summary":                 summary,
 		"cancelled_or_non_gating_assignment_ids": []any{},
@@ -1381,7 +1630,7 @@ func buildObservationBatch(
 	}, nil
 }
 
-func drainedAssignments(state map[string]any) []any {
+func drainedAssignments(state map[string]any, currentAssignmentID string) []any {
 	out := []any{}
 	reviewMap, _ := state["review"].(map[string]any)
 	assignments, _ := reviewMap["assignments"].(map[string]any)
@@ -1394,6 +1643,19 @@ func drainedAssignments(state map[string]any) []any {
 		row, _ := assignments[id].(map[string]any)
 		if row != nil && row["status"] == "consumed" {
 			out = append(out, id)
+		}
+	}
+	if currentAssignmentID != "" {
+		found := false
+		for _, value := range out {
+			if value == currentAssignmentID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, currentAssignmentID)
+			sort.Slice(out, func(i, j int) bool { return out[i].(string) < out[j].(string) })
 		}
 	}
 	return out

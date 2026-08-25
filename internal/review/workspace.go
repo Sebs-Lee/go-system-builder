@@ -191,6 +191,47 @@ func verifyResultArtifactDigest(root string, plan *Plan, ptr *PlanPointer, resul
 	return nil
 }
 
+// verifyRegressionAssetFingerprints proves that a regression_available plan
+// still points at the exact files it claims to reuse. Cold-start assets are
+// authored inside the pinned workspace and are checked by WorkspaceDigest.
+func verifyRegressionAssetFingerprints(root string, plan *Plan) error {
+	if plan.E2ECoverageState != "regression_available" {
+		return nil
+	}
+	for _, asset := range sortE2EAssets(plan.E2EAssets) {
+		path, err := repositoryContainedPath(root, asset.Path)
+		if err != nil {
+			return s7GateError(
+				"S7_E2E_ASSET_FINGERPRINT",
+				fmt.Sprintf("E2E asset %s is outside the repository", asset.AssetID),
+				[]string{err.Error()},
+				[]string{"use the exact repository-relative CASE/PATH file and regenerate its sha256"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return s7GateError(
+				"S7_E2E_ASSET_FINGERPRINT",
+				fmt.Sprintf("E2E asset %s cannot be read", asset.AssetID),
+				[]string{err.Error()},
+				[]string{"restore the asset or change the plan to cold_start and author a fresh verification workspace"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+		if actual := sha256Of(data); actual != asset.SHA256 {
+			return s7GateError(
+				"S7_E2E_ASSET_FINGERPRINT",
+				fmt.Sprintf("E2E asset %s fingerprint is stale", asset.AssetID),
+				[]string{fmt.Sprintf("asset %s has sha256 %s, plan declares %s", asset.Path, actual, asset.SHA256)},
+				[]string{"refresh the fingerprint from the current immutable asset, or switch to cold_start"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+	}
+	return nil
+}
+
 // verifySealedArtifactDigests re-checks every consumed E2E assignment's
 // bound digest against the workspace at close time (L3-S7 §10.1.6): a
 // workspace that drifted after consumption invalidates the round.
@@ -257,6 +298,8 @@ var secretPatterns = []*regexp.Regexp{
 // CaptureStep is one sanitized timeline step.
 type CaptureStep struct {
 	Sequence   int      `json:"sequence"`
+	FindingID  string   `json:"finding_id,omitempty"`
+	ClaimID    string   `json:"claim_id,omitempty"`
 	Action     string   `json:"action"`
 	Observed   string   `json:"observed"`
 	Evidence   []string `json:"evidence_refs,omitempty"`
@@ -288,24 +331,37 @@ func CaptureFile(root, runtimeID string, generation int, assignmentID string) st
 		fmt.Sprintf("g%d", generation), "captures", assignmentID, "steps.jsonl")
 }
 
-// LoadCaptureSteps reads the buffer; a missing buffer is empty, not an error.
+// LoadCaptureSteps is the compatibility helper used by read-only capture
+// inspectors. Submit paths must use LoadCaptureStepsStrict so malformed lines
+// cannot silently disappear from S8 evidence.
 func LoadCaptureSteps(path string) []CaptureStep {
+	steps, _ := LoadCaptureStepsStrict(path)
+	return steps
+}
+
+// LoadCaptureStepsStrict reads the buffer and reports the first malformed
+// JSONL line with its line number. A missing buffer is empty, not an error.
+func LoadCaptureStepsStrict(path string) ([]CaptureStep, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read capture buffer %s: %w", path, err)
 	}
 	var steps []CaptureStep
-	for _, line := range strings.Split(string(data), "\n") {
+	for lineNumber, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		var step CaptureStep
-		if err := json.Unmarshal([]byte(line), &step); err == nil {
-			steps = append(steps, step)
+		if err := json.Unmarshal([]byte(line), &step); err != nil {
+			return nil, fmt.Errorf("capture buffer %s line %d is malformed JSON: %w", path, lineNumber+1, err)
 		}
+		steps = append(steps, step)
 	}
-	return steps
+	return steps, nil
 }
 
 // mergeCapturedTimeline fills an empty encounter timeline from the buffer.
@@ -328,4 +384,62 @@ func mergeCapturedTimeline(findings []Finding, steps []CaptureStep) {
 			findings[i].Encounter.Timeline = timeline
 		}
 	}
+}
+
+// mergeCapturedTimelineChecked is the submit-time variant. Assignment-wide
+// capture is safe only when there is one Finding. Multiple Findings require a
+// finding_id or claim_id on every step so the same wall is not copied into
+// unrelated investigation cases.
+func mergeCapturedTimelineChecked(findings []Finding, steps []CaptureStep) error {
+	if len(steps) == 0 || len(findings) == 0 {
+		return nil
+	}
+	if len(findings) == 1 {
+		for _, step := range steps {
+			if step.FindingID != "" && step.FindingID != findings[0].FindingID ||
+				step.ClaimID != "" && step.ClaimID != findings[0].ClaimID {
+				return fmt.Errorf("capture step %d is correlated to finding=%s claim=%s, outside the submitted finding set", step.Sequence, step.FindingID, step.ClaimID)
+			}
+		}
+		mergeCapturedTimeline(findings, steps)
+		return nil
+	}
+
+	byFinding := make(map[string]int, len(findings))
+	byClaim := make(map[string]int, len(findings))
+	for index, finding := range findings {
+		byFinding[finding.FindingID] = index
+		byClaim[finding.ClaimID] = index
+	}
+	grouped := make(map[int][]CaptureStep)
+	for _, step := range steps {
+		index := -1
+		if step.FindingID != "" && step.ClaimID != "" {
+			findingIndex, findingOK := byFinding[step.FindingID]
+			claimIndex, claimOK := byClaim[step.ClaimID]
+			if !findingOK || !claimOK || findingIndex != claimIndex {
+				return fmt.Errorf("capture step %d correlation conflict: finding_id=%s and claim_id=%s do not identify the same submitted Finding", step.Sequence, step.FindingID, step.ClaimID)
+			}
+		}
+		if step.FindingID != "" {
+			if candidate, ok := byFinding[step.FindingID]; ok {
+				index = candidate
+			}
+		}
+		if index < 0 && step.ClaimID != "" {
+			if candidate, ok := byClaim[step.ClaimID]; ok {
+				index = candidate
+			}
+		}
+		if index < 0 {
+			return fmt.Errorf("capture timeline is ambiguous for %d findings: step %d has no finding_id or claim_id", len(findings), step.Sequence)
+		}
+		grouped[index] = append(grouped[index], step)
+	}
+	for index, group := range grouped {
+		if len(findings[index].Encounter.Timeline) == 0 {
+			mergeCapturedTimeline(findings[index:index+1], group)
+		}
+	}
+	return nil
 }

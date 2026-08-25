@@ -257,7 +257,7 @@ flowchart TD
     COMPLETE -->|"yes"| BOUND["Extract failure boundaries<br/>cross-layer trace + evidence gaps"]
     BOUND --> GROUP["Create provisional InvestigationCases"]
     GROUP --> HYP["Form discriminating hypotheses"]
-    HYP --> DISPATCH["Dispatch hypothesis Assignments<br/>WIP=2"]
+    HYP --> DISPATCH["Dispatch hypothesis Assignments<br/>按真实依赖/资源容量并行"]
     DISPATCH --> RESULTS["Consume HypothesisResults"]
     RESULTS --> CONVERGE{"Causal model explains exact set?"}
     CONVERGE -->|"no: missing evidence"| NEED{"New occurrence needed<br/>to discriminate?"}
@@ -352,7 +352,7 @@ Main/Investigation Lead 先建立最小竞争假设集，再创建 Assignment。
 | 工作 | 默认拓扑/模式 |
 |:--|:--|
 | 独立代码/契约/数据路径调查 | Agent Team teammate + `plan_checkpoint` |
-| 多个互斥假设并行取证 | 多 teammate，初始 WIP=2 |
+| 多个互斥假设并行取证 | 多 teammate，按真实依赖/资源锁与平台容量调度；不设质量层 token/WIP 上限 |
 | 需要隔离运行实验但不改产品 | 自定义 Sub-agent + 隔离环境/worktree；控制面共享 |
 | 高风险生产式数据/破坏性实验 | `plan_approval_required` 或 human gateway |
 | CausalModel/RepairContract 集成 | Main/Investigation Lead；不得由单个假设 Worker 自动批准 |

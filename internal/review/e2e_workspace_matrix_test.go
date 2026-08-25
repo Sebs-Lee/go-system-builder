@@ -215,6 +215,105 @@ func TestColdStartResultMustBindWorkspaceDigest(t *testing.T) {
 	if row["status"] != "consumed" || row["artifact_digest"] != digest {
 		t.Fatalf("consumed assignment must record the bound digest: %v", row)
 	}
+	resultRef, ok := row["result_ref"].(string)
+	if !ok || resultRef == "" {
+		t.Fatalf("consumed assignment must retain its result artifact reference: %v", row)
+	}
+	resultData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(resultRef)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resultEnvelope map[string]any
+	if err := json.Unmarshal(resultData, &resultEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	if resultEnvelope["verification_artifact_digest"] != digest {
+		t.Fatalf("stored Result envelope must preserve verification_artifact_digest, got %v", resultEnvelope["verification_artifact_digest"])
+	}
+}
+
+func TestRegressionAssetFingerprintMustMatchDisk(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "e2e", "settings-save.spec.ts")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("test('settings save', ...)")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{
+		E2ECoverageState: "regression_available",
+		E2EAssets:        []E2EAsset{{AssetID: "asset-settings", CaseRef: "CASE-001", Path: "e2e/settings-save.spec.ts", SHA256: strings.Repeat("0", 64)}},
+	}
+	if err := verifyRegressionAssetFingerprints(root, plan); err == nil || !strings.Contains(err.Error(), "S7_E2E_ASSET_FINGERPRINT") || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("stale regression asset must be rejected with repair guidance, got %v", err)
+	}
+	plan.E2EAssets[0].SHA256 = sha256Of(content)
+	if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
+		t.Fatalf("current regression asset fingerprint must pass: %v", err)
+	}
+}
+
+func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, coldStartState())
+	assetPath := filepath.Join(root, "e2e", "settings-save.spec.ts")
+	assetBytes := []byte("test('settings save', ...)")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assetPath, assetBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	planPath := writeColdStartPlan(t, root, "unused-cold-start-workspace")
+	planBytes, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(planBytes, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["e2e_coverage_state"] = "regression_available"
+	raw["verification_artifact_workspace"] = nil
+	raw["e2e_assets"] = []any{map[string]any{
+		"asset_id": "asset-settings", "case_ref": "CASE-001", "path": "e2e/settings-save.spec.ts",
+		"sha256": sha256Of(assetBytes),
+	}}
+	regressionPath := filepath.Join(root, "plan-regression.json")
+	regressionBytes, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(regressionPath, append(regressionBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
+		ExpectedRevision: 1, PlanPath: regressionPath,
+	})
+	if err != nil {
+		t.Fatalf("RegisterPlan regression fixture: %v", err)
+	}
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-dv-1", "agent-dv-1")
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-e2e-1", "agent-e2e-1")
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The asset changes after registration but before the E2E result arrives.
+	if err := os.WriteFile(assetPath, []byte("test('settings save', 'changed')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := writeE2EResultFile(t, root, plan, "review-result-e2e-regression", "")
+	if _, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: snap.Revision, AssignmentID: "assignment-e2e-1", ResultPath: resultPath,
+	}); err == nil || !strings.Contains(err.Error(), "S7_E2E_ASSET_FINGERPRINT") || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("submit must recheck a drifted regression asset with repair guidance, got %v", err)
+	}
 }
 
 func TestRegisterPlanCleansNewWorkspaceWhenCASApplyFails(t *testing.T) {

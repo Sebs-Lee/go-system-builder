@@ -190,7 +190,7 @@ func CompleteTask(
 			if err := applyCompletionTask(state, message, taskTransitions, envelopeRel, occurredAt); err != nil {
 				return err
 			}
-			return appendCompletionEvidence(state, evidenceID, envelopeRel, envelopeSHA, request.AgentID, generation, occurredAt)
+			return appendCompletionEvidence(state, evidenceID, envelopeRel, envelopeSHA, request.AgentID, generation, message.ChangedPaths, occurredAt)
 		},
 	})
 }
@@ -291,6 +291,7 @@ func appendCompletionEvidence(
 	state map[string]any,
 	evidenceID, envelopeRel, envelopeSHA, agentID string,
 	generation int,
+	changedPaths []string,
 	occurredAt time.Time,
 ) error {
 	items, ok := state["evidence"].([]any)
@@ -302,6 +303,16 @@ func appendCompletionEvidence(
 		if item != nil && item["id"] == evidenceID {
 			return fmt.Errorf("evidence %s is already registered", evidenceID)
 		}
+	}
+	scopeRefs := make([]any, 0, len(changedPaths))
+	seenPaths := make(map[string]bool, len(changedPaths))
+	for _, path := range changedPaths {
+		path = strings.TrimSpace(filepath.ToSlash(path))
+		if path == "" || seenPaths[path] {
+			continue
+		}
+		seenPaths[path] = true
+		scopeRefs = append(scopeRefs, path)
 	}
 	items = append(items, map[string]any{
 		"id":                  evidenceID,
@@ -316,7 +327,7 @@ func appendCompletionEvidence(
 		"invalidation_rule":   nil,
 		"invalidation_reason": nil,
 		"responsibility_id":   "BUILD-WORK-PACKAGE",
-		"scope_refs":          []any{},
+		"scope_refs":          scopeRefs,
 	})
 	state["evidence"] = items
 	state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)

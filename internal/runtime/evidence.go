@@ -174,6 +174,22 @@ func safeEvidencePath(root, path string) (string, error) {
 	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("evidence path must stay within repository: %q", path)
 	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root: %w", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve repository root symlinks: %w", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(filepath.Join(rootAbs, clean))
+	if err != nil {
+		return "", fmt.Errorf("resolve evidence path symlinks: %w", err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("evidence path must stay within repository: %q", path)
+	}
 	return filepath.ToSlash(clean), nil
 }
 

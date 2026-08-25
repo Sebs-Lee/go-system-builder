@@ -41,8 +41,8 @@ func TestApplyStartsLockedREQAndProducesSchemaValidRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.Revision != 1 {
-		t.Fatalf("expected revision 1, got %d", next.Revision)
+	if next.Revision != 0 {
+		t.Fatalf("expected new bound runtime revision 0, got %d", next.Revision)
 	}
 	data, err := os.ReadFile(statePath)
 	if err != nil {
@@ -55,11 +55,8 @@ func TestApplyStartsLockedREQAndProducesSchemaValidRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := schema.NewValidator(root).ValidateBytes(
-		"loop-event.schema.json",
-		journal,
-	); err != nil {
-		t.Fatalf("transition produced invalid journal event: %v", err)
+	if len(journal) != 0 {
+		t.Fatalf("bound runtime journal must start empty, got %q", journal)
 	}
 	var state map[string]any
 	if err := json.Unmarshal(data, &state); err != nil {
@@ -125,12 +122,12 @@ func TestApplyAdvancesPlanningPhaseAndRejectsIllegalTopLevelJump(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "PTR-PLAN-01", ExpectedRevision: 1, Actor: "hook_controller",
+		TransitionID: "PTR-PLAN-01", ExpectedRevision: 0, Actor: "hook_controller",
 	}); err != nil {
 		t.Fatalf("PTR-PLAN-01 must advance planning.design: %v", err)
 	}
 	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "PTR-PLAN-02", ExpectedRevision: 2, Actor: "hook_controller",
+		TransitionID: "PTR-PLAN-02", ExpectedRevision: 1, Actor: "hook_controller",
 	}); err != nil {
 		t.Fatalf("PTR-PLAN-02 must advance planning.contracts: %v", err)
 	}
@@ -139,7 +136,7 @@ func TestApplyAdvancesPlanningPhaseAndRejectsIllegalTopLevelJump(t *testing.T) {
 	// values.
 	next, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID:     "TR-002",
-		ExpectedRevision: 3,
+		ExpectedRevision: 2,
 		Actor:            "orchestrator",
 		Evidence:         map[string]string{},
 	})
@@ -153,7 +150,7 @@ func TestApplyAdvancesPlanningPhaseAndRejectsIllegalTopLevelJump(t *testing.T) {
 
 	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID:     "TR-006",
-		ExpectedRevision: 2,
+		ExpectedRevision: 3,
 		Actor:            "orchestrator",
 		Evidence: map[string]string{
 			"builder_report_record": "builder-report",
@@ -172,7 +169,7 @@ func TestApplyPlanningCompleteAcceptsEnglishStatusFields(t *testing.T) {
 	advancePlanningToTasks(t, root, statePath, journalPath)
 
 	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
+		TransitionID: "TR-002", ExpectedRevision: 2, Actor: "orchestrator", Evidence: map[string]string{},
 	}); err != nil {
 		t.Fatalf("TR-002 must accept the English Status fields used by TASK templates: %v", err)
 	}
@@ -206,7 +203,7 @@ func TestApplyRejectsEvidenceNotRegisteredInRuntime(t *testing.T) {
 	// when the planning_complete guard finds no CONTRACTS-*.md with
 	// status=locked AND no TASK-*.md with status=complete.
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator",
+		TransitionID: "TR-002", ExpectedRevision: 2, Actor: "orchestrator",
 		Evidence: map[string]string{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "planning not complete") {
@@ -235,7 +232,7 @@ func TestApplyDispatchesRegisteredGuardAndAction(t *testing.T) {
 	})
 	defer transition.InitGuardRegistry()
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
+		TransitionID: "TR-002", ExpectedRevision: 2, Actor: "orchestrator", Evidence: map[string]string{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -269,7 +266,7 @@ func TestApplyRejectsEvidenceWithIncompatibleKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-002", ExpectedRevision: 3, Actor: "orchestrator", Evidence: map[string]string{},
+		TransitionID: "TR-002", ExpectedRevision: 2, Actor: "orchestrator", Evidence: map[string]string{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no complete TASK document") {
 		t.Fatalf("TR-002 must fail while the planning batch is incomplete (a locked contract now exists via the advance fixture, so the gap is the missing complete TASK): %v", err)
@@ -314,7 +311,7 @@ func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 	}
 	for revision, id := range []string{"PTR-PLAN-01", "PTR-PLAN-02"} {
 		if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
-			TransitionID: id, ExpectedRevision: revision + 1, Actor: "hook_controller",
+			TransitionID: id, ExpectedRevision: revision, Actor: "hook_controller",
 		}); err != nil {
 			t.Fatalf("%s must advance formal planning: %v", id, err)
 		}

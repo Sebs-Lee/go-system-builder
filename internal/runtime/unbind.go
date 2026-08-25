@@ -128,6 +128,10 @@ func (s *Store) Unbind(freshState map[string]any, archiveRoot string, approval U
 // recovery-side approval check needs), then run the recovery that writes
 // the fresh replacement runtime.
 func (s *Store) archiveAndReset(stateData, journalData []byte, runtimeID string, revision int, freshState map[string]any, archiveRoot string, manifestExtras map[string]any, disposition string, approval RolloverApproval, occurredAt time.Time) (RolloverRecord, error) {
+	return s.archiveAndResetWithBoundary(stateData, journalData, runtimeID, revision, freshState, archiveRoot, manifestExtras, disposition, "", approval, occurredAt)
+}
+
+func (s *Store) archiveAndResetWithBoundary(stateData, journalData []byte, runtimeID string, revision int, freshState map[string]any, archiveRoot string, manifestExtras map[string]any, disposition, boundaryKind string, approval RolloverApproval, occurredAt time.Time) (RolloverRecord, error) {
 	if err := os.MkdirAll(archiveRoot, 0o755); err != nil {
 		return RolloverRecord{}, fmt.Errorf("create runtime archive root: %w", err)
 	}
@@ -173,6 +177,7 @@ func (s *Store) archiveAndReset(stateData, journalData []byte, runtimeID string,
 			ArchiveStateSHA: stateHash, ArchiveJournalSHA: journalHash,
 		},
 		Approval:            approval,
+		BoundaryKind:        boundaryKind,
 		Disposition:         disposition,
 		OccurredAt:          occurredAt.UTC().Format(time.RFC3339Nano),
 		SourceStateSHA256:   stateHash,

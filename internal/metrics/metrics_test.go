@@ -63,7 +63,7 @@ func TestRecordCASConflictIncrementsTotal(t *testing.T) {
 
 func TestRecordMilestoneRefreshFailureIncrementsTotal(t *testing.T) {
 	root := t.TempDir()
-	if err := metrics.RecordMilestoneRefreshFailure(root); err != nil {
+	if err := metrics.RecordMilestoneRefreshFailure(root, "stale_revision"); err != nil {
 		t.Fatal(err)
 	}
 	snap, err := metrics.NewStore(root).Read()
@@ -72,6 +72,9 @@ func TestRecordMilestoneRefreshFailureIncrementsTotal(t *testing.T) {
 	}
 	if snap.MilestoneRefreshFailures != 1 {
 		t.Fatalf("milestone refresh failures=%d want 1", snap.MilestoneRefreshFailures)
+	}
+	if snap.MilestoneRefreshFailureReasons["stale_revision"] != 1 {
+		t.Fatalf("stale_revision failures=%d want 1", snap.MilestoneRefreshFailureReasons["stale_revision"])
 	}
 }
 
@@ -166,7 +169,7 @@ func TestFormatDoctorIncludesAllMetricFamilies(t *testing.T) {
 	_ = metrics.RecordGateEvaluation(root, "advanced")
 	_ = metrics.RecordTransitionCommit(root, "T-1")
 	_ = metrics.RecordCASConflict(root)
-	_ = metrics.RecordMilestoneRefreshFailure(root)
+	_ = metrics.RecordMilestoneRefreshFailure(root, "write_or_integrity")
 	_ = metrics.RecordRecoveryPacket(root)
 	_ = metrics.RecordIntegrationDuration(root, "success", 10)
 

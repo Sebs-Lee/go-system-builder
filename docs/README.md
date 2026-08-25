@@ -80,9 +80,11 @@ REQ-003 decouples the two lifetimes:
   ```
 
   `--req` is optional: with exactly one bindable REQ (`req list` shows the
-  pool) it is auto-discovered. It creates the Runtime Bookmark (machine
-  cursor `planning/design`) and records the binding (journal: TR-001
-  commit; state event: `req_bound`). It does not start any schedule.
+  pool) it is auto-discovered. It archives the inactive bootstrap runtime,
+  creates the Runtime Bookmark (machine cursor `planning/design`) at revision
+  `0` with an empty active journal, and records `event=req_bound` in the
+  binding receipt together with the source runtime hashes. It does not start
+  any schedule.
 
 - **Claude `/loop`** is a Claude Code built-in scheduler that delivers the
   project's `.claude/loop.md` Wake-up Prompt on a cadence. It does not bind

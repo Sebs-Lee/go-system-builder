@@ -322,6 +322,9 @@ func TestRegisterPlanStaleRevisionDoesNotWritePinnedPlan(t *testing.T) {
 
 func TestQueuedAssignmentIsReleasedWhenLockHolderIsConsumed(t *testing.T) {
 	state := map[string]any{
+		"entities": map[string]any{
+			"agents": []any{map[string]any{"id": "agent-queued", "state": "queued"}},
+		},
 		"review": map[string]any{
 			"assignments": map[string]any{
 				"assignment-holder": map[string]any{
@@ -348,6 +351,10 @@ func TestQueuedAssignmentIsReleasedWhenLockHolderIsConsumed(t *testing.T) {
 	claim := state["review"].(map[string]any)["claims"].(map[string]any)["claim-queued"].(map[string]any)
 	if claim["disposition"] != "running" {
 		t.Fatalf("queued claim disposition = %v, want running", claim["disposition"])
+	}
+	agent := state["entities"].(map[string]any)["agents"].([]any)[0].(map[string]any)
+	if agent["state"] != "reading" {
+		t.Fatalf("released queued agent must be woken into reading state, got %v", agent["state"])
 	}
 }
 
@@ -723,9 +730,29 @@ func reviseFixturePlan(t *testing.T, root string, plan *Plan, extraClaim map[str
 	return path
 }
 
+func revisionSourceState() map[string]any {
+	state := baseVerificationState()
+	state["evidence"] = []any{map[string]any{
+		"id":                  "review-result-qa-1",
+		"kind":                "review_result",
+		"path":                ".claude/evidence/review-result-qa-1.json",
+		"sha256":              strings.Repeat("a", 64),
+		"status":              "valid",
+		"baseline_generation": 1,
+		"review_round":        1,
+		"produced_by":         []any{"agent-qa-1"},
+		"invalidated_by":      nil,
+		"invalidation_rule":   nil,
+		"invalidation_reason": nil,
+		"responsibility_id":   "QA",
+		"scope_refs":          []any{"internal/example"},
+	}}
+	return state
+}
+
 func TestRevisePlanHappyPath(t *testing.T) {
 	root := t.TempDir()
-	statePath, journalPath := writeState(t, root, baseVerificationState())
+	statePath, journalPath := writeState(t, root, revisionSourceState())
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	plan, _, _ := LoadPlan(root, snap.State)
 
@@ -764,7 +791,7 @@ func TestRevisePlanHappyPath(t *testing.T) {
 
 func TestRevisePlanRejectsSecondRevision(t *testing.T) {
 	root := t.TempDir()
-	statePath, journalPath := writeState(t, root, baseVerificationState())
+	statePath, journalPath := writeState(t, root, revisionSourceState())
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	plan, _, _ := LoadPlan(root, snap.State)
 	v2 := reviseFixturePlan(t, root, plan,
@@ -796,7 +823,7 @@ func TestRevisePlanRejectsSecondRevision(t *testing.T) {
 
 func TestRevisePlanRejectsOutOfSurfaceChange(t *testing.T) {
 	root := t.TempDir()
-	statePath, journalPath := writeState(t, root, baseVerificationState())
+	statePath, journalPath := writeState(t, root, revisionSourceState())
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	plan, _, _ := LoadPlan(root, snap.State)
 	v2 := reviseFixturePlan(t, root, plan,
@@ -841,6 +868,146 @@ func TestRevisePlanRejectsMissingSourceRef(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "source_ref") {
 		t.Fatalf("missing source binding must fail, got %v", err)
+	}
+}
+
+func TestRevisePlanRejectsGhostSourceRef(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	plan, _, _ := LoadPlan(root, snap.State)
+	v2 := reviseFixturePlan(t, root, plan,
+		map[string]any{
+			"claim_id": "claim-qa-3", "lens": "qa", "target": "internal/example",
+			"assertion": "covered", "oracle": "observed", "method": "review", "applicability": "required",
+		},
+		map[string]any{
+			"assignment_id": "assignment-qa-2", "lens": "qa", "claim_ids": []string{"claim-qa-3"},
+			"non_overlap_boundary": "owns the new surface", "execution_wave": "static",
+		},
+		[]string{"ghost-result-999"},
+	)
+	_, err := RevisePlan(root, statePath, journalPath, ReviseRequest{
+		ExpectedRevision: snap.Revision, PlanPath: v2,
+		SourceRef: "ghost-result-999", AffectedSurface: "internal/example",
+	})
+	if err == nil || !strings.Contains(err.Error(), "S7_REVISION_SOURCE") || !strings.Contains(err.Error(), "ghost-result-999") {
+		t.Fatalf("revision must reject a ghost source_ref with a repair diagnostic, got %v", err)
+	}
+}
+
+func TestRevisePlanRejectsPreviousRoundSource(t *testing.T) {
+	root := t.TempDir()
+	state := revisionSourceState()
+	state["evidence"].([]any)[0].(map[string]any)["review_round"] = 2
+	statePath, journalPath := writeState(t, root, state)
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := reviseFixturePlan(t, root, plan,
+		map[string]any{
+			"claim_id": "claim-qa-3", "lens": "qa", "target": "internal/example",
+			"assertion": "new surface covered", "oracle": "observed", "method": "review",
+			"applicability": "required",
+		},
+		map[string]any{
+			"assignment_id": "assignment-qa-2", "lens": "qa", "claim_ids": []string{"claim-qa-3"},
+			"non_overlap_boundary": "owns the new surface", "execution_wave": "static",
+		},
+		[]string{"review-result-qa-1"},
+	)
+	_, err = RevisePlan(root, statePath, journalPath, ReviseRequest{
+		ExpectedRevision: snap.Revision, PlanPath: v2,
+		SourceRef: "review-result-qa-1", AffectedSurface: "internal/example",
+	})
+	if err == nil || !strings.Contains(err.Error(), "review_round") || !strings.Contains(err.Error(), "current round") {
+		t.Fatalf("wrong-round source must be rejected with its round boundary, got %v", err)
+	}
+}
+
+func TestRevisePlanCleansArtifactAfterNonStaleApplyFailure(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, revisionSourceState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := reviseFixturePlan(t, root, plan,
+		map[string]any{
+			"claim_id": "claim-qa-3", "lens": "qa", "target": "internal/example",
+			"assertion": "new surface covered", "oracle": "observed", "method": "review",
+			"applicability": "required",
+		},
+		map[string]any{
+			"assignment_id": "assignment-qa-2", "lens": "qa", "claim_ids": []string{"claim-qa-3"},
+			"non_overlap_boundary": "owns the new surface", "execution_wave": "static",
+		},
+		[]string{"review-result-qa-1"},
+	)
+	broken := snap.State["review"].(map[string]any)
+	broken["claims"] = nil
+	stateBytes, err := json.MarshalIndent(snap.State, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, append(stateBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RevisePlan(root, statePath, journalPath, ReviseRequest{
+		ExpectedRevision: snap.Revision, PlanPath: v2,
+		SourceRef: "review-result-qa-1", AffectedSurface: "internal/example",
+	}); err == nil {
+		t.Fatal("broken review projection must make the CAS apply fail")
+	}
+	artifact := filepath.Join(root, ".claude", "review", "plans", plan.ReviewPlanID+"-r2.json")
+	if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+		t.Fatalf("failed revision artifact still exists: %v", err)
+	}
+}
+
+func TestRevisePlanRetainsArtifactWhenRuntimeCommitIsPending(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, revisionSourceState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := reviseFixturePlan(t, root, plan,
+		map[string]any{
+			"claim_id": "claim-qa-3", "lens": "qa", "target": "internal/example",
+			"assertion": "new surface covered", "oracle": "observed", "method": "review",
+			"applicability": "required",
+		},
+		map[string]any{
+			"assignment_id": "assignment-qa-2", "lens": "qa", "claim_ids": []string{"claim-qa-3"},
+			"non_overlap_boundary": "owns the new surface", "execution_wave": "static",
+		},
+		[]string{"review-result-qa-1"},
+	)
+	if err := os.WriteFile(statePath+".commit-pending.json", []byte(`{"schema_version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RevisePlan(root, statePath, journalPath, ReviseRequest{
+		ExpectedRevision: snap.Revision, PlanPath: v2,
+		SourceRef: "review-result-qa-1", AffectedSurface: "internal/example",
+	}); err == nil {
+		t.Fatal("pending runtime commit must make revise fail closed")
+	}
+	artifact := filepath.Join(root, ".claude", "review", "plans", plan.ReviewPlanID+"-r2.json")
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("pending commit cleanup removed a potentially reachable artifact: %v", err)
+	}
+}
+
+func TestDiffClaimsRejectsSurfacePrefixCollision(t *testing.T) {
+	v1 := &Plan{Claims: []Claim{{ClaimID: "claim-1", Target: "internal/example", SourceRefs: []string{"review-result-1"}}}}
+	v2 := &Plan{Claims: []Claim{{ClaimID: "claim-1", Target: "internal/example2", SourceRefs: []string{"review-result-1"}}}}
+	if _, err := diffClaims(v1, v2, "review-result-1", "internal/example"); err == nil || !strings.Contains(err.Error(), "outside the affected surface") {
+		t.Fatalf("surface prefix collision must be rejected, got %v", err)
 	}
 }
 

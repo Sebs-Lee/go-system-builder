@@ -36,6 +36,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	lifecyclePhase, _ := lifecycle["phase"].(string)
 	stage, skill, action := projectNext(lifecycleState, lifecyclePhase, root)
 	next := buildNextProjection(state, stage, skill, action, root)
+	applyS7BudgetGateway(&next, state)
 
 	guidance := policy.Guidance{
 		RuntimeID:      stringValue(state["runtime_id"]),
@@ -220,6 +221,11 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 	guidance.Automation = append(guidance.Automation,
 		fmt.Sprintf("S7 review round %d: plan %s", round, planDesc),
 	)
+	if maxRounds := s7MaxRounds(state); maxRounds > 0 && round >= maxRounds {
+		guidance.Automation = append(guidance.Automation,
+			fmt.Sprintf("S7 budget: current round %d of %d may drain, but opening another full round requires the human `runtime s7-budget-decision` gateway", round, maxRounds),
+		)
+	}
 
 	blockedAgents := blockedAgentIDs(state)
 	var running, queued, blocked, unconsumed []string
@@ -361,7 +367,7 @@ func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked
 	case "paused":
 		return "resolve the recorded pause verdict checkpoint; the round resumes only through the human gateway (TR-010/TR-011)"
 	case "planned", "":
-		return fmt.Sprintf("register the ReviewPlan for round %d: `loop-harness s7 draft --out plan.json`, fill the TODO oracles, then `runtime review-plan --file plan.json`", round)
+		return fmt.Sprintf("register the ReviewPlan for round %d: `loop-harness s7 draft --out plan.json`, fill the TODO oracles and generated `coverage_inventory`/`e2e_assets` facts, then `runtime review-plan --file plan.json`", round)
 	}
 	// running / cannot_clean / discovery_draining: coverage continues even
 	// after an ordinary finding (drain_policy=complete_required_claims).
@@ -369,7 +375,7 @@ func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked
 		return fmt.Sprintf("consume the pending ReviewResult for %s via `runtime review-result submit --assignment-id %s --result <result.json>`", running[0], firstAssignmentID(running[0]))
 	}
 	if len(blocked) > 0 {
-		return fmt.Sprintf("assignment %s is blocked: obtain its blocker report and re-wake the same reviewer; blocked coverage must still be consumed before the round can close", blocked[0])
+		return fmt.Sprintf("assignment %s is blocked: fix the capture conditions, record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, then resubmit the same review result; blocked coverage must still be consumed before the round can close", blocked[0])
 	}
 	if len(queued) > 0 {
 		return fmt.Sprintf("dispatch queued assignment %s via `runtime register-workgroup`; queued coverage is never dropped (L3-S7 §4.5)", queued[0])
@@ -579,10 +585,28 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 		},
 	})
 	if err != nil {
-		metrics.RecordMilestoneRefreshFailure(root)
+		_ = metrics.RecordMilestoneRefreshFailure(root, milestoneRefreshFailureReason(err))
 		return runtime.Snapshot{}, false, err
 	}
 	return updated, true, nil
+}
+
+// milestoneRefreshFailureReason keeps the durable metric useful without
+// leaking raw error strings into a label. The refresh is a best-effort
+// checkpoint, so classification is diagnostic only: it never changes the
+// Controller's gate verdict or invents a revision cap.
+func milestoneRefreshFailureReason(err error) string {
+	switch {
+	case errors.Is(err, runtime.ErrStaleRevision):
+		return "stale_revision"
+	case errors.Is(err, runtime.ErrPendingRuntimeOperation):
+		return "pending_runtime"
+	case errors.Is(err, runtime.ErrCandidateValidatorRequired),
+		errors.Is(err, runtime.ErrCandidateValidatorInvalid):
+		return "candidate_validation"
+	default:
+		return "write_or_integrity"
+	}
 }
 
 // reconcileGuidance is intentionally bounded. A concurrent transition may

@@ -192,17 +192,19 @@ These hold across every stage:
 - **inputs**: locked REQ, healthy Loop Definition / Hook Policy / Runtime schema, inactive Runtime with no other bound REQ.
 - **inputs_from**: [S0 (human-locked REQ + lock record + SHA-256)]
 - **actions**:
-  1. run `loop-harness req bind --approved-by <human identity>` — it auto-initializes a missing runtime, self-preflights, and discovers the sole bindable REQ when `--req` is omitted (`req list` shows the candidate pool; multiple candidates require an explicit `--req`). The human may equivalently tell the main session to bind, which then executes the command on their behalf — the consent gesture is the human's explicit instruction, the execution confirmation is the tool-permission prompt, the durable record is the journal.
-  2. read the confirmation output (bound id/version/sha256, cursor, baseline generation, journal event) — the output is the verification; no manual state inspection is needed. `doctor` remains available for deep health checks but is not a binding prerequisite.
+  1. run `loop-harness req bind --approved-by <human identity>` — it auto-initializes a missing runtime, self-preflights, and discovers the sole bindable REQ when `--req` is omitted (`req list` shows the candidate pool; multiple candidates require an explicit `--req`). The human may equivalently tell the main session to bind, which then executes the command on their behalf — the consent gesture is the human's explicit instruction, the execution confirmation is the tool-permission prompt, and the durable binding record is the `binding_receipt` plus the archived source state/journal pair.
+  2. read the confirmation output (bound id/version/sha256, cursor, baseline generation, revision `0`, and `event req_bound`) — the output is the verification; no manual state inspection is needed. The previous inactive runtime is retained under `runtime-archive/`, while the new active runtime starts with an empty journal. `doctor` remains available for deep health checks but is not a binding prerequisite.
 - **done_when**:
   - Runtime `bound_req.path` matches the locked REQ file
   - SHA-256 in Runtime matches the file on disk
   - the bind confirmation output was printed (bound id/version/sha256, cursor, generation)
-  - the binding is journalled (TR-001 commit) and the state records event `req_bound` — the cursor advances directly to `planning.design`; a literal "S1" state is never observed (S1 is the bind action, not a residence)
+  - the binding receipt records `event=req_bound`, source runtime identity/revision/hashes, and the approved REQ; the archived source journal is preserved, while the new active journal is empty and the new runtime revision is `0` — the cursor advances directly to `planning.design`; a literal "S1" state is never observed (S1 is the bind action, not a residence)
 - **next**: S2. After binding records the required Runtime facts, the next `PreToolUse` reflects the Controller-established `planning.design` cursor; no manual transition CLI is needed.
 - **failure_route**: if doctor/validate fail, fix Loop Definition / Hook Policy / schema first; if a REQ is already bound, surface `req_amendment` or abort.
 - **human_gateway**: binding cannot proceed without a human-locked REQ and a human identity approver.
 - **primary_skill**: `loop-orchestration`
+
+**Binding boundary rule:** `revision` has no global maximum. Hooks or controller checkpoints may advance the inactive runtime before binding; TR-001 uses the current revision as its CAS value, archives that complete source state/journal pair, and installs a new `loop-REQ-*` runtime at revision `0` with an empty journal. Do not edit the revision by hand or reuse a pre-bind runtime snapshot after binding; the runtime identity changes at this boundary and stale identities are rejected.
 
 ## S2 — design {#s2}
 
@@ -352,7 +354,7 @@ It drives the identical chain (Inspect → non-squash merge → required checks 
 | `readback_submitted` | reading | same command shape; message_type `readback_response` |
 | `understanding_approved` (or `understanding_rejected`) | understanding_submitted | message_type `readback_response` |
 | `document_conflict_reported` | understanding_submitted | route TR-007 inputs |
-| `activation_sent` | understanding_approved | message_type `activation`; the runtime verifies `approved_readback_sha256` equals the byte hash of the registered readback file — compute it with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux) |
+| `activation_sent` | understanding_approved (plan_approval_required only) | plan_approval_required: message_type `activation`; the runtime verifies `approved_readback_sha256` equals the byte hash of the registered readback file — compute it with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux). plan_checkpoint skips this round: the activation envelope is generated at register-workgroup time and PostToolUse(SendMessage) chains reading → working automatically |
 | `work_started` | activated | message_type `work_start`; required before completion |
 | `completion_reported` | working | **use `runtime task-complete` instead** |
 | `completion_acknowledged` | reported | drives the ack/cleanup follow-up (also advanced by `runtime task-integrate` re-runs) |
@@ -387,7 +389,7 @@ The Milestone recovery packet uses two projection-level tokens with the same sem
 | `agent_definition_ref` | path to `.claude/agents/<role>.md` — the identity anchor, not optional content |
 | `message_id` / `correlation_id` / `activation_id` | hash-chain identifiers; `activation_id` is the `act-` id issued at `activation_sent` |
 
-The runtime reads the file at the registered `readback_ref` path, computes its byte hash with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux), and verifies `approved_readback_sha256` equals that value at `activation_sent`. Compute the hash after the readback file is written and registered; do not copy a hash from an earlier draft.
+The runtime reads the file at the registered `readback_ref` path, computes its byte hash with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux), and verifies `approved_readback_sha256` equals that value at `activation_sent` (plan_approval_required only — plan_checkpoint skips the readback/approval round entirely, see skills/agent-dispatch/SKILL.md). Compute the hash after the readback file is written and registered; do not copy a hash from an earlier draft.
 
 `agent_id` in the SubagentStop payload is the identification contract: the hook locates the assignment by `agent_id` (or `target_id`). A Builder should stop with the same `agent_id` it was dispatched under — otherwise the integration never fires and the `task-integrate` fallback is the recovery.
 
@@ -405,10 +407,26 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
   - `qa`: static engineering quality (pattern-fit, logic/boundary, maintainability oracles);
   - `e2e`: real browser behavior over the declared coverage; a cold start gets an isolated verification-artifact workspace pinned at registration.
 - **actions**:
-  1. plan: `loop-harness s7 draft --out plan.json`, fill the TODO oracles, register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
+  1. plan: `loop-harness s7 draft --out plan.json`, inspect the generated `coverage_inventory` and CASE-level E2E Assignments. The draft reads current module `cases.json` and maps each required browser CASE to a Playwright spec that mentions its CASE id; a complete mapping emits `regression_available` plus SHA-pinned `e2e_assets`, while any missing CASE conservatively emits `cold_start` plus `e2e-workspace/<round>` and one behavior Assignment per CASE. Only when no readable CASE inventory exists do TODO oracles remain to be filled. Typed path evidence may be written as `path:<repo-relative>#sha256=<64-hex>` for drift detection (bare `path:` remains existence-only compatibility). Register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
   2. dispatch: scaffold each Assignment's reviewer manifest with `loop-harness s7 manifest-draft --assignment <id>` (fills the 20 required fields; replace the TODO(planner) markers), then `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle)
-  3. submit: each Reviewer writes one Canonical ReviewResult per `review-result.example.json` and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; record sanitized execution steps with `loop-harness capture step` while observing live (its output names the buffer path; `--captures <dir-or-file>` merges the buffer into a Finding's empty timeline at submit — reviewer-authored timelines are never rewritten; write the timeline inline instead when you compose it after the fact)
-  4. observe: `loop-harness s7 status` is the read-only board (Claim dispositions, assignment consumption, findings, exit state)
+  3. submit: each Reviewer writes one Canonical ReviewResult per `internal/schema/assets/review-result.example.json` (the schema's required fields include `subject_digest` — copy it from `loop-harness s7 status`; bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` for cold-start E2E; P0 Findings must populate `capture_gaps` or submit rejects) and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence uses typed refs (`console:<id>`, `network:<id>`, `path:<repo-relative>`, `runtime:<evidence-id>`, `screenshot:<id>`, `state:<id>`, `timeline:<id>`, `trace:<id>`), and capture steps may bind `--finding <id>`/`--claim <id>`; record sanitized execution steps with `loop-harness capture step` while observing live (its output names the buffer path; `--captures <dir-or-file>` merges the buffer into a Finding's empty timeline at submit — reviewer-authored timelines are never rewritten; write the timeline inline instead when you compose it after the fact). **Repair rounds (TR-012 re-entry)**: the TR-012 re-entry plan's `frozen_subjects` MUST include every post-repair artifact named by the current `change_impact` evidence, with the exact on-disk SHA-256. RegisterPlan performs the disk check in `internal/review/workspace.go#verifyFrozenSubjects` and the TR-012 binding check in `internal/review/repair_baseline.go`; `review-plan.schema.json` only checks field shape and SHA format.
+  4. observe: `loop-harness s7 status` is the read-only board (Claim dispositions, assignment consumption, findings, exit state, `round N of M`, and blocked `blocker_ref` plus the exact `blocker_resolved` recovery verb)
+- **constraint_recovery**: a rejected plan/result is not a dead end. The diagnostic includes `code`, `missing`, `repair`, `next`, `verify`, and `ref`; execute `next`, then verify with `loop-harness s7 status`. A malformed capture buffer must be corrected and resubmitted; an ambiguous multi-Finding buffer must be split with `--finding`/`--claim`; a stale regression asset must be refreshed or the plan returned to `cold_start`.
+- **budget_gate**: `s7 status` always prints `round N of M`. The active round may drain when `N >= M`, but no new full round opens. A failed `start_review_round` emits the human gateway; submit a JSON decision with `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`. `decision="increase_budget"` must provide `new_max_full_review_rounds > M` and atomically records the scoped `human_decision` evidence plus the new limit; the controller then retries the pending round-opening transition. `decision="return_to_governance"` records the same evidence, invalidates downstream review evidence, clears the old ReviewPlan projection, resets the round counter for the new planning generation, and routes through declared human gateway GTR-006 to planning. The decision artifact must bind the current `runtime_id`, `expected_revision`, `review_round`, `previous_max_full_review_rounds`, `reason`, and `authorized_by`; stale revisions or lower budgets are rejected.
+- **budget_decision_shape**:
+  ```json
+  {
+    "decision": "increase_budget",
+    "runtime_id": "loop-REQ-039",
+    "expected_revision": 123,
+    "review_round": 5,
+    "previous_max_full_review_rounds": 5,
+    "new_max_full_review_rounds": 8,
+    "reason": "the remaining surface requires another complete review round",
+    "authorized_by": "user",
+    "created_at": "2026-08-25T12:00:00Z"
+  }
+  ```
 - **reviewer write rule**: the PreToolUse hook hard-denies product/locked-spec writes during verification and names the allowed surfaces in its block reason; Reviewers never repair — a product problem is a Finding.
 - **exits** (all machine/hook-driven; never hand-write an aggregate PASS, a clean_round record, or invoke a transition manually):
   1. no findings — the machine CleanRound is registered inside the final submit → TR-009 to S10
@@ -588,6 +606,11 @@ Milestone. The following CLI examples show the equivalent diagnostic projection
 for reconcile or human/operator use.
 
 ### `loop-harness status --root .`
+
+The sample below represents a runtime after the first ordinary post-bind
+transition. Immediately after `req bind`, the new active runtime is at
+`revision: 0` with an empty journal; `binding_receipt.event` is `req_bound`
+and the source pair is under `runtime-archive/`.
 
 ```json
 {

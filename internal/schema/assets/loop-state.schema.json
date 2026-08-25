@@ -130,6 +130,16 @@
         }
       ]
     },
+    "binding_receipt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/bindingReceipt"
+        }
+      ]
+    },
     "change": {
       "oneOf": [
         {
@@ -179,6 +189,18 @@
             "null"
           ],
           "minimum": 1
+        },
+        "round_entry": {
+          "type": ["object", "null"],
+          "description": "The transition that opened the active S7 round. TR-012 entries carry the exact change_impact evidence reference used to freeze the post-repair baseline.",
+          "additionalProperties": false,
+          "required": ["transition_id", "round", "baseline_generation", "change_impact_ref"],
+          "properties": {
+            "transition_id": {"type": "string", "minLength": 1},
+            "round": {"type": "integer", "minimum": 1},
+            "baseline_generation": {"type": "integer", "minimum": 0},
+            "change_impact_ref": {"type": ["string", "null"], "minLength": 1}
+          }
         },
         "plan": {
           "description": "The registered S7 ReviewPlan pointer (L3-S7 §3.2). Claim/assignment content lives in the pinned plan file; the runtime holds identity, hash and status under CAS.",
@@ -333,6 +355,72 @@
               "type": "integer",
               "minimum": 1,
               "default": 5
+            },
+            "last_budget_decision": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "decision",
+                "evidence_id",
+                "evidence_path",
+                "review_round",
+                "previous_max_full_review_rounds",
+                "new_max_full_review_rounds",
+                "authorized_by",
+                "reason",
+                "decided_at",
+                "committed_revision"
+              ],
+              "properties": {
+                "decision": {
+                  "enum": [
+                    "increase_budget",
+                    "return_to_governance"
+                  ]
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "review_round": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "previous_max_full_review_rounds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "new_max_full_review_rounds": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1
+                },
+                "authorized_by": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "decided_at": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+                },
+                "committed_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
             }
           }
         }
@@ -1072,6 +1160,36 @@
         }
       }
     },
+    "bindingReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "transition_id",
+        "event",
+        "approved_by",
+        "occurred_at",
+        "source_runtime_id",
+        "source_revision",
+        "source_state_sha256",
+        "source_journal_sha256",
+        "target_runtime_id",
+        "target_revision"
+      ],
+      "properties": {
+        "event_id": {"type": "string", "minLength": 1},
+        "transition_id": {"type": "string", "const": "TR-001"},
+        "event": {"type": "string", "const": "req_bound"},
+        "approved_by": {"type": "string", "minLength": 1},
+        "occurred_at": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"},
+        "source_runtime_id": {"type": "string", "minLength": 1},
+        "source_revision": {"type": "integer", "minimum": 0},
+        "source_state_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "source_journal_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "target_runtime_id": {"type": "string", "pattern": "^loop-REQ-[0-9]{3,}$"},
+        "target_revision": {"type": "integer", "const": 0}
+      }
+    },
     "documentReference": {
       "type": "object",
       "additionalProperties": false,
@@ -1165,6 +1283,7 @@
         "state": {
           "enum": [
             "spawned",
+            "queued",
             "reading",
             "understanding_submitted",
             "understanding_approved",

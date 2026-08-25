@@ -62,3 +62,19 @@ func TestManualIncludesExplicitS11HumanDecisionGuidance(t *testing.T) {
 		}
 	}
 }
+
+func TestManualS7RecoveryGuidanceNamesRepairFactsAndTypedEvidence(t *testing.T) {
+	manual := transition.RenderManual(&transition.LoopDefinition{}, transition.ManualOptions{})
+
+	for _, want := range []string{
+		"coverage_inventory",
+		"e2e_assets",
+		"capture step --finding <id> --claim <id>",
+		"rejected command includes the missing facts, repair action, next command",
+		"runtime s7-budget-decision",
+	} {
+		if !strings.Contains(manual, want) {
+			t.Fatalf("S7 manual guidance must contain %q, got:\n%s", want, manual)
+		}
+	}
+}

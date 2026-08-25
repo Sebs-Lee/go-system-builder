@@ -493,7 +493,7 @@ func reviewerProductWriteDecision(input Input) (Decision, bool) {
 		default:
 			return Decision{}, false
 		}
-		rawPath, _ := input.ToolInput["file_path"].(string)
+		rawPath := toolPath(input.ToolInput)
 		if rawPath == "" {
 			return Decision{}, false
 		}

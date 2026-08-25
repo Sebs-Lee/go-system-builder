@@ -262,7 +262,7 @@ func TestRolloverArchivesCRLFREQ(t *testing.T) {
 		"path":           ".claude/decisions/rollover.json",
 		"sha256":         fmt.Sprintf("%x", sha256.Sum256(decisionBody)),
 		"produced_by":    []any{"alice"},
-		"scope_refs":     []any{"runtime_rollover:loop-REQ-208@1"},
+		"scope_refs":     []any{"runtime_rollover:loop-REQ-208@0"},
 		"invalidated_by": nil, "invalidation_rule": nil, "invalidation_reason": nil,
 		"responsibility_id": nil,
 	}}

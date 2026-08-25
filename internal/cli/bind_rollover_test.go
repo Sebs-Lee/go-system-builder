@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,19 +12,25 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/cli"
+	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
-func TestREQBindRejectsNonCanonicalInactiveRuntime(t *testing.T) {
+func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(t *testing.T) {
 	root := newBindTestRoot(t)
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	state := readJSONMap(t, statePath)
 	state["revision"] = float64(8)
 	state["journal"] = map[string]any{
 		"path":          ".claude/loop-events.jsonl",
-		"last_sequence": float64(0),
-		"last_event_id": nil,
+		"last_sequence": float64(8),
+		"last_event_id": "evt-milestone-r8",
 	}
 	writeJSONMap(t, statePath, state)
+	if err := os.WriteFile(journalPath, validArchiveJournalForCLI("loop-inactive", 8, "evt-milestone-r8"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
@@ -31,11 +38,51 @@ func TestREQBindRejectsNonCanonicalInactiveRuntime(t *testing.T) {
 		"--req", "docs/requirements/REQ-099.md",
 		"--approved-by", "release-owner",
 	}, strings.NewReader(""), &stdout, &stderr)
-	if code == 0 {
-		t.Fatal("req bind must reject an inactive runtime with prior revision history")
+	if code != 0 {
+		t.Fatalf("req bind must accept a controller-touched inactive runtime: code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "fresh inactive runtime") {
-		t.Fatalf("bind error = %q, want fresh inactive runtime guidance", stderr.String())
+	bound := readJSONMap(t, statePath)
+	if got := bound["revision"]; got != float64(0) {
+		t.Fatalf("bound runtime revision = %v, want 0", got)
+	}
+	if got := bound["runtime_id"]; got != "loop-REQ-099" {
+		t.Fatalf("bound runtime id = %v, want loop-REQ-099", got)
+	}
+	receipt, ok := bound["binding_receipt"].(map[string]any)
+	if !ok {
+		t.Fatalf("binding receipt = %#v, want object", bound["binding_receipt"])
+	}
+	if receipt["event"] != "req_bound" || receipt["source_runtime_id"] != "loop-inactive" || receipt["target_runtime_id"] != "loop-REQ-099" {
+		t.Fatalf("binding receipt identity = %#v", receipt)
+	}
+	if receipt["source_revision"] != float64(8) || receipt["target_revision"] != float64(0) {
+		t.Fatalf("binding receipt revisions = %#v, want source 8 target 0", receipt)
+	}
+	if _, err := transition.Apply(root, statePath, journalPath, transition.Request{
+		TransitionID: "PTR-PLAN-01", ExpectedRevision: 8, ExpectedRuntimeID: "loop-inactive", Actor: "hook_controller",
+	}); !errors.Is(err, runtime.ErrStaleRuntimeIdentity) {
+		t.Fatalf("stale pre-bind snapshot error = %v, want stale runtime identity", err)
+	}
+	journal, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(journal) != 0 {
+		t.Fatalf("bound runtime journal must start empty, got %q", journal)
+	}
+	archives, err := filepath.Glob(filepath.Join(root, ".claude", "runtime-archive", "loop-inactive-r8-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archives) != 1 {
+		t.Fatalf("bind archive directories = %v, want one", archives)
+	}
+	archivedJournal, err := os.ReadFile(filepath.Join(archives[0], "loop-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archivedJournal), "evt-milestone-r8") {
+		t.Fatalf("bind archive did not preserve pre-bind journal: %s", archivedJournal)
 	}
 }
 
@@ -422,8 +469,8 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 		t.Fatalf("pending rollover marker still exists: %v", err)
 	}
 	journal := mustReadFile(t, journalPath)
-	if strings.Contains(string(journal), "evt-terminal") || !strings.Contains(string(journal), "evt-tr-001-r1") {
-		t.Fatalf("journal = %q, want only recovered bind journal", journal)
+	if len(journal) != 0 {
+		t.Fatalf("journal = %q, want empty journal for the new bound runtime", journal)
 	}
 }
 

@@ -178,6 +178,10 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 					// two-round approval is the exception for high-risk work.
 					dispatchMode = "plan_checkpoint"
 				}
+				agentState := "reading"
+				if reviewAssignmentQueued(state, item.AssignmentID, item.AgentID) {
+					agentState = "queued"
+				}
 				// Pre-stage the activation envelope for plan_checkpoint
 				// agents (L4 §3.3 auto-activation). The envelope's
 				// hash-chain fields are placeholders; the PostToolUse
@@ -202,7 +206,7 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 				agents = append(agents, map[string]any{
 					"id":                  item.AgentID,
 					"role":                item.RoleFamily,
-					"state":               "reading",
+					"state":               agentState,
 					"task_ids":            []string{request.TaskID},
 					"team_id":             value.WorkgroupID,
 					"definition_ref":      item.AgentDefinitionRef,
@@ -219,6 +223,13 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 			return nil
 		},
 	})
+}
+
+func reviewAssignmentQueued(state map[string]any, assignmentID, agentID string) bool {
+	reviewMap, _ := state["review"].(map[string]any)
+	assignments, _ := reviewMap["assignments"].(map[string]any)
+	row, _ := assignments[assignmentID].(map[string]any)
+	return row != nil && row["status"] == "planned" && row["queued_agent_id"] == agentID
 }
 
 func assignedResponsibilities(value manifest) []string {

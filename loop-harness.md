@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `030d8624543494fc8149b7ff221a7ffe025abe1e73518e3e34fe72faa9434ea7`
+- **Loop definition SHA-256**: `02f87cc1cf76eaa0b961127704c73b06cd0d39c3b683dd54670b3fc20089db9c`
 
 ---
 
@@ -14,14 +14,20 @@
 
 The Hook is an event trigger for the Loop Controller, not only a guard. On `SessionStart`, `PreCompact`, `SubagentStart`, `SubagentStop`, and `TeammateIdle`, the Controller reads the Runtime, refreshes the resumable Milestone through CAS, and emits a positive `LOOP RECOVERY` packet.
 
+### Bootstrap binding boundary
+
+`revision` has no global maximum. A Hook/controller checkpoint may advance the inactive bootstrap runtime before `TR-001`; binding uses the current revision as its CAS value, archives the complete inactive state/journal pair, and installs a new `loop-REQ-*` runtime at revision `0` with an empty active journal. The `binding_receipt` carries `event=req_bound`, the approved REQ, and source runtime hashes. Do not edit revision by hand or reuse a pre-bind runtime snapshot after binding; the runtime identity changes and stale identities are rejected.
+
 1. Read the `Next` action and current `Stage` from the Hook packet, then follow its `Read in order` list.
 2. Read the linked `docs/agent-protocol.md#sN` section before acting.
 3. If blocked or the Runtime is unclear, read this Manual. Use `runtime reconcile` only when the Hook reports an integrity/CAS recovery condition; do not call `status`/`next` during normal continuation. When the live Quality Gate checklist is unclear, run `loop-harness ready` (diagnostics; never hand-push a Transition from it). `doctor` is schema/manual/policy_ref/metrics only — not stage readiness.
 4. Execute the one missing deliverable/evidence named by Hook/`ready` `missing[]`; do not invent a parallel lifecycle.
 5. For `SubagentStop`, complete the report, worktree review, merge-back to the current `develop` integration branch and `completion_ack` checklist before acknowledging the stop. For `TeammateIdle`, re-wake the same teammate. The identical integration chain is available explicitly via `runtime task-integrate --assignment-id <id>` when the automatic SubagentStop payload cannot identify the assignment.
 6. Builder completion is registered with `runtime task-complete` — one atomic command (message validation + evidence envelope derivation + Agent/TASK advance + evidence registration); the legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope. Before the Builder writes, create its worktree (`git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop`) and record `worktree_path`/`branch`/`target_branch` on the manifest row — SubagentStop integration requires them.
-7. In S7 (verification) the round is driven by runtime verbs, not by hand-pushed transitions: scaffold and register the ReviewPlan (`s7 draft`, `runtime review-plan --file <plan.json>`), dispatch reviewers (`s7 manifest-draft`, `runtime register-workgroup`), consume each Assignment's Canonical ReviewResult (`runtime review-result submit --assignment-id <id> --result <result.json>`; observation steps land via `capture step` / `--captures`), and revise a running plan once per round (`runtime review-plan revise`). `loop-harness s7 status` is the board: it prints the plan line (with the `subject_digest` every result must bind), claim dispositions, and the single next action; a cold-start E2E round also has `loop-harness s7 workspace-digest` for the `verification_artifact_digest` the E2E result must bind. The machine exits are automatic — a sealed ObservationBatch or a machine CleanRound commits TR-008/TR-009 on the next PreToolUse; do not invoke the transition CLI for them. If the PostToolUse auto-activation chain did not fire for a dispatched Worker, recover with `runtime agent-begin --agent-id <id> --plan <plan-report.json>`. Full verb walkthrough: `docs/agent-protocol.md#s7`.
-8. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
+7. In S7 (verification) the round is driven by runtime verbs, not by hand-pushed transitions: scaffold and register the ReviewPlan (`s7 draft`, inspect `coverage_inventory`/`e2e_assets`, then `runtime review-plan --file <plan.json>`), dispatch reviewers (`s7 manifest-draft`, `runtime register-workgroup`), consume each Assignment's Canonical ReviewResult (`runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence refs are typed, and observation steps land via `capture step --finding <id> --claim <id>` / `--captures`), and revise a running plan once per round (`runtime review-plan revise`). `loop-harness s7 status` is the board: it prints the plan line, the round counter (current / `max_full_review_rounds`), the `subject_digest` every result must bind, claim dispositions, any blocked assignment's `blocker_ref` and the recovery verb `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, and the single next action; a cold-start E2E round also has `loop-harness s7 workspace-digest` for the `verification_artifact_digest` the E2E result must bind. Re-entering S7 via TR-012 (post S9 repair) re-runs the same verbs — the transition records the current `change_impact` evidence in `review.round_entry`, and RegisterPlan requires every `changed_artifacts` path/SHA from that evidence in `frozen_subjects`, `coverage_inventory`, and a Claim source_ref; QA reports additionally carry the §5 Targeted Re-verification table alongside §2–§4, and the round counter tells you which round you are on. A rejected command includes the missing facts, repair action, next command, verification command and protocol ref; fix those facts and resubmit the same artifact. The machine exits are automatic — a sealed ObservationBatch or a machine CleanRound commits TR-008/TR-009 on the next PreToolUse; do not invoke the transition CLI for them. If the PostToolUse auto-activation chain did not fire for a dispatched Worker, recover with `runtime agent-begin --agent-id <id> --plan <plan-report.json>`. Full verb walkthrough: `docs/agent-protocol.md#s7`.
+Before registering an S7 draft, inspect its CASE-level E2E Assignments. `s7 draft` projects required browser CASEs from `docs/design/prototypes/<module>/cases.json`; a complete CASE→Playwright spec mapping produces `regression_available` and SHA-pinned `e2e_assets`, while any missing mapping produces `cold_start`, an `e2e-workspace/<round>` write surface, and one behavior Assignment per CASE. If no readable CASE inventory exists, the remaining `TODO(planner)` is intentional and registration explains the missing S2 input. Typed path evidence may use `path:<repo-relative>#sha256=<64-hex>` for drift detection; bare `path:` is compatibility-only existence evidence.
+8. If `s7 status` reports `round N of M` with N >= M, finish draining the current round but do not open another one. Submit the human artifact through `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`; `increase_budget` atomically raises `max_full_review_rounds` and leaves the pending round-opening transition to retry, while `return_to_governance` records the decision, invalidates downstream review evidence, resets the review projection, and routes through GTR-006 to planning. The decision file is persisted as scoped `human_decision` evidence, and CAS rejects stale revisions, mismatched runtime/round values, and non-increasing limits.
+9. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
 
 The persisted `.claude/loop-state.json` `milestone` is a recovery cache, not a second state machine. `docs/loop-definition.json` and the Transition Engine remain the authority for legal lifecycle changes.
 
@@ -99,6 +105,7 @@ _Global_
 - [`GTR-003`](#gtr-003) → paused — Production-data, security, compliance or irreversible actions require human approval.
 - [`GTR-004`](#gtr-004) → paused — Configured repair limits never silently close a BUG.
 - [`GTR-005`](#gtr-005) → paused — Runtime/document inconsistency fails closed.
+- [`GTR-006`](#gtr-006) → planning — When the S7 full-review budget is exhausted, a human may return the Runtime to planning for specification or architecture governance instead of authorizing another review round.
 
 ---
 
@@ -879,4 +886,21 @@ Evidence bindings (copy into `runtime transition`):
   Accepted kinds: `human_decision`
 
 If a binding is missing, retry with the command above; run `loop-harness explain GTR-005` to inspect current candidates.
+
+### `GTR-006` {#gtr-006}
+
+_bug_resolution|acceptance → planning_
+
+When the S7 full-review budget is exhausted, a human may return the Runtime to planning for specification or architecture governance instead of authorizing another review round.
+
+_No guards._
+
+Evidence: `human_decision_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `human_decision_record`: `--evidence human_decision_record=<reference>`
+  Accepted kinds: `human_decision`
+
+If a binding is missing, retry with the command above; run `loop-harness explain GTR-006` to inspect current candidates.
 

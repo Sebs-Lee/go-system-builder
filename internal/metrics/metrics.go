@@ -37,12 +37,13 @@ type DurationStats struct {
 
 // Snapshot is the durable on-disk metrics document.
 type Snapshot struct {
-	GateEvaluations          map[string]int64         `json:"loop_gate_evaluations_total"`
-	TransitionCommits        map[string]int64         `json:"loop_transition_commits_total"`
-	CASConflicts             int64                    `json:"loop_cas_conflicts_total"`
-	MilestoneRefreshFailures int64                    `json:"loop_milestone_refresh_failures_total"`
-	RecoveryPackets          int64                    `json:"loop_recovery_packets_total"`
-	IntegrationDuration      map[string]DurationStats `json:"loop_integration_duration_ms"`
+	GateEvaluations                map[string]int64         `json:"loop_gate_evaluations_total"`
+	TransitionCommits              map[string]int64         `json:"loop_transition_commits_total"`
+	CASConflicts                   int64                    `json:"loop_cas_conflicts_total"`
+	MilestoneRefreshFailures       int64                    `json:"loop_milestone_refresh_failures_total"`
+	MilestoneRefreshFailureReasons map[string]int64         `json:"loop_milestone_refresh_failure_reasons,omitempty"`
+	RecoveryPackets                int64                    `json:"loop_recovery_packets_total"`
+	IntegrationDuration            map[string]DurationStats `json:"loop_integration_duration_ms"`
 	// S7 verification-round series (L3-S7 §14.2 machine-collectible subset;
 	// see s7.go).
 	S7Assignments        map[string]int64         `json:"loop_s7_assignments,omitempty"`
@@ -76,17 +77,18 @@ func (s *Store) Path() string { return s.path }
 
 func emptySnapshot() Snapshot {
 	return Snapshot{
-		GateEvaluations:      map[string]int64{},
-		TransitionCommits:    map[string]int64{},
-		IntegrationDuration:  map[string]DurationStats{},
-		S7Assignments:        map[string]int64{},
-		S7Claims:             map[string]int64{},
-		S7PlanRevision:       map[string]int64{},
-		S7ResultSubmits:      map[string]int64{},
-		S7ClaimLeadTime:      map[string]DurationStats{},
-		S7Findings:           map[string]int64{},
-		S7FirstFindingToSeal: map[string]DurationStats{},
-		S7CleanRounds:        map[string]int64{},
+		GateEvaluations:                map[string]int64{},
+		TransitionCommits:              map[string]int64{},
+		MilestoneRefreshFailureReasons: map[string]int64{},
+		IntegrationDuration:            map[string]DurationStats{},
+		S7Assignments:                  map[string]int64{},
+		S7Claims:                       map[string]int64{},
+		S7PlanRevision:                 map[string]int64{},
+		S7ResultSubmits:                map[string]int64{},
+		S7ClaimLeadTime:                map[string]DurationStats{},
+		S7Findings:                     map[string]int64{},
+		S7FirstFindingToSeal:           map[string]DurationStats{},
+		S7CleanRounds:                  map[string]int64{},
 	}
 }
 
@@ -111,6 +113,9 @@ func (s *Store) Read() (Snapshot, error) {
 	}
 	if snap.TransitionCommits == nil {
 		snap.TransitionCommits = map[string]int64{}
+	}
+	if snap.MilestoneRefreshFailureReasons == nil {
+		snap.MilestoneRefreshFailureReasons = map[string]int64{}
 	}
 	if snap.IntegrationDuration == nil {
 		snap.IntegrationDuration = map[string]DurationStats{}
@@ -165,10 +170,14 @@ func RecordCASConflict(root string) error {
 	})
 }
 
-// RecordMilestoneRefreshFailure increments loop_milestone_refresh_failures_total.
-func RecordMilestoneRefreshFailure(root string) error {
+// RecordMilestoneRefreshFailure increments loop_milestone_refresh_failures_total
+// and records one bounded diagnostic reason. The reason labels are deliberately
+// a small operational taxonomy rather than raw error strings, so a malformed
+// candidate cannot create unbounded metric cardinality.
+func RecordMilestoneRefreshFailure(root, reason string) error {
 	return NewStore(root).mutate(func(snap *Snapshot) {
 		snap.MilestoneRefreshFailures++
+		snap.MilestoneRefreshFailureReasons[normalizeMilestoneFailureReason(reason)]++
 	})
 }
 
@@ -234,6 +243,7 @@ func FormatDoctor(root string) (string, error) {
 	writeLabeledCounter(&b, metricTransitionCommits, "transition", snap.TransitionCommits)
 	fmt.Fprintf(&b, "  %s %d\n", metricCASConflicts, snap.CASConflicts)
 	fmt.Fprintf(&b, "  %s %d\n", metricMilestoneRefreshFailures, snap.MilestoneRefreshFailures)
+	writeLabeledCounter(&b, metricMilestoneRefreshFailures, "reason", snap.MilestoneRefreshFailureReasons)
 	fmt.Fprintf(&b, "  %s %d\n", metricRecoveryPackets, snap.RecoveryPackets)
 	writeDurationStats(&b, metricIntegrationDuration, snap.IntegrationDuration)
 	return strings.TrimRight(b.String(), "\n"), nil
@@ -276,6 +286,15 @@ func normalizeLabel(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func normalizeMilestoneFailureReason(value string) string {
+	switch strings.TrimSpace(value) {
+	case "stale_revision", "pending_runtime", "candidate_validation", "write_or_integrity":
+		return strings.TrimSpace(value)
+	default:
+		return "unknown"
+	}
 }
 
 func acquireLock(path string, timeout time.Duration) (func(), error) {

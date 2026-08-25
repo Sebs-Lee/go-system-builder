@@ -38,6 +38,8 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	action := flags.String("action", "", "what was done (sanitized)")
 	observed := flags.String("observed", "", "what was observed at the checkpoint")
 	evidence := flags.String("evidence", "", "comma-separated evidence refs (redacted refs, never values)")
+	findingID := flags.String("finding", "", "optional Finding id this step belongs to")
+	claimID := flags.String("claim", "", "optional Claim id this step belongs to")
 	sequence := flags.Int("sequence", 0, "step sequence (default: next)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
@@ -57,6 +59,8 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	step := review.CaptureStep{
 		Sequence:   *sequence,
+		FindingID:  *findingID,
+		ClaimID:    *claimID,
 		Action:     *action,
 		Observed:   *observed,
 		Evidence:   evidenceRefs,
@@ -83,7 +87,11 @@ func runCapture(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	bufferPath := review.CaptureFile(*root, runtimeID, generation, *assignmentID)
-	steps := review.LoadCaptureSteps(bufferPath)
+	steps, err := review.LoadCaptureStepsStrict(bufferPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "capture step: read buffer: %v\n", err)
+		return 1
+	}
 	if step.Sequence == 0 {
 		step.Sequence = len(steps) + 1
 	}

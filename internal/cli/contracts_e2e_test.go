@@ -105,11 +105,11 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 	// ui_impact_resolved guard — impact is `changed`, so it passes), then
 	// PTR-PLAN-02 carries guard contracts_checked + action register_locked_contracts.
 	if _, stderr, code = run("runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-01", "--expected-revision", "1", "--actor", "orchestrator"); code != 0 {
+		"--id", "PTR-PLAN-01", "--expected-revision", "0", "--actor", "orchestrator"); code != 0 {
 		t.Fatalf("PTR-PLAN-01 failed: %s", stderr)
 	}
 	_, stderr, code = run("runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-02", "--expected-revision", "2", "--actor", "orchestrator")
+		"--id", "PTR-PLAN-02", "--expected-revision", "1", "--actor", "orchestrator")
 	if code != 0 {
 		t.Fatalf("PTR-PLAN-02 failed: %s", stderr)
 	}
@@ -210,11 +210,11 @@ func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 		t.Fatalf("bind failed: %s", stderr.String())
 	}
 	if code := cli.Run([]string{"runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-01", "--expected-revision", "1", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		"--id", "PTR-PLAN-01", "--expected-revision", "0", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("PTR-PLAN-01 failed: %s", stderr.String())
 	}
 	if code := cli.Run([]string{"runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-02", "--expected-revision", "2", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "AC-701") {
+		"--id", "PTR-PLAN-02", "--expected-revision", "1", "--actor", "orchestrator"}, strings.NewReader(""), &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "AC-701") {
 		t.Fatalf("PTR-PLAN-02 must be blocked by the bridge naming AC-701, got: %s", stderr.String())
 	}
 }

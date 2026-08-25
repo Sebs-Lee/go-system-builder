@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,26 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
+
+func TestMilestoneRefreshFailureReasonIsBoundedAndActionable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "stale revision", err: fmt.Errorf("refresh: %w", runtime.ErrStaleRevision), want: "stale_revision"},
+		{name: "pending runtime", err: runtime.ErrPendingRuntimeOperation, want: "pending_runtime"},
+		{name: "candidate validation", err: fmt.Errorf("candidate: %w", runtime.ErrCandidateValidatorInvalid), want: "candidate_validation"},
+		{name: "unknown write", err: errors.New("permission denied"), want: "write_or_integrity"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := milestoneRefreshFailureReason(tt.err); got != tt.want {
+				t.Fatalf("reason=%q want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	root := filepath.Join("..", "..")

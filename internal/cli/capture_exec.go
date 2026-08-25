@@ -182,7 +182,12 @@ func runCaptureExecInner(args []string, stdin io.Reader, stdout, stderr io.Write
 		fmt.Fprintf(stderr, "capture exec: %v\n", err)
 		return 1
 	}
-	sequence := len(review.LoadCaptureSteps(bufferPath)) + 1
+	steps, err := review.LoadCaptureStepsStrict(bufferPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "capture exec: read buffer: %v; repair the malformed line before continuing\n", err)
+		return 1
+	}
+	sequence := len(steps) + 1
 
 	// Typed evidence files for the full streams live next to the buffer.
 	execDir := filepath.Join(filepath.Dir(bufferPath), "exec")

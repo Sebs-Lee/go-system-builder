@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,64 @@ func TestValidatePlanColdStartRequirements(t *testing.T) {
 	}
 }
 
+func TestValidatePlanRejectsRegressionWorkspaceAndMissingE2EClaim(t *testing.T) {
+	plan := loadFixturePlan(t)
+	plan.E2ECoverageState = "regression_available"
+	workspace := "e2e-workspace/should-not-be-used"
+	plan.VerificationArtifactWorkspace = &workspace
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "only valid when e2e_coverage_state=cold_start") {
+		t.Fatalf("regression_available must not declare an authoring workspace, got %v", err)
+	}
+
+	plan = loadFixturePlan(t)
+	plan.E2ECoverageState = "regression_available"
+	dropClaims(plan, "claim-e2e-na")
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "at least one required e2e Claim") {
+		t.Fatalf("regression_available without an executable E2E Claim must be rejected, got %v", err)
+	}
+}
+
+func TestValidatePlanRegressionRequiresAssetFingerprints(t *testing.T) {
+	plan := loadFixturePlan(t)
+	plan.E2ECoverageState = "regression_available"
+	dropClaims(plan, "claim-e2e-na")
+	plan.Claims = append(plan.Claims, Claim{
+		ClaimID: "claim-e2e-1", Lens: "e2e", Target: "settings save flow",
+		Assertion: "flow behaves as declared", Oracle: "browser oracle", Method: "real browser",
+		Applicability: "required", SourceRefs: []string{"REQ-001#settings"}, FocusKey: "settings-save",
+	})
+	plan.Assignments = append(plan.Assignments, PlanAssignment{
+		AssignmentID: "assignment-e2e-1", Lens: "e2e", ClaimIDs: []string{"claim-e2e-1"},
+		NonOverlapBoundary: "owns settings save", ExecutionWave: "behavior",
+	})
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "S7_E2E_ASSET_FINGERPRINT") {
+		t.Fatalf("regression plan without asset fingerprints must be rejected, got %v", err)
+	}
+	plan.E2EAssets = []E2EAsset{{
+		AssetID: "asset-settings-save", CaseRef: "CASE-001", Path: "e2e/settings-save.spec.ts",
+		SHA256: strings.Repeat("a", 64),
+	}}
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("regression plan with an asset fingerprint must pass structural validation: %v", err)
+	}
+}
+
+func TestValidatePlanRejectsPlannerTODOPlaceholder(t *testing.T) {
+	plan := loadFixturePlan(t)
+	plan.Claims[0].Oracle = "TODO(planner): replace with a concrete oracle"
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "TODO(planner)") {
+		t.Fatalf("planner TODO placeholder must be rejected at the plan gate, got %v", err)
+	}
+}
+
+func TestValidatePlanRejectsUnknownEvidenceRequirement(t *testing.T) {
+	plan := loadFixturePlan(t)
+	plan.Claims[0].RequiredEvidence = []string{"made_up_evidence_kind"}
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "S7_PLAN_EVIDENCE_KIND") {
+		t.Fatalf("unknown required evidence kind must be rejected with a recovery diagnostic, got %v", err)
+	}
+}
+
 // §14.1: E2E 不适用 —— 必须有 impact/source/rationale；没有任何 N/A e2e
 // Claim 的 not_applicable 结论被拒绝。
 func TestValidatePlanNotApplicableRequiresNAClaim(t *testing.T) {
@@ -201,6 +260,232 @@ func TestRegisterPlanRejectsTaskCoverageGap(t *testing.T) {
 	}
 }
 
+func TestValidateCoverageInventoryRequiresChangedSurfaceFrozenSubject(t *testing.T) {
+	root := t.TempDir()
+	changedRel := "internal/api/handler.go"
+	changedPath := filepath.Join(root, filepath.FromSlash(changedRel))
+	if err := os.MkdirAll(filepath.Dir(changedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	changedBytes := []byte("package api\n")
+	if err := os.WriteFile(changedPath, changedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	completionRel := ".claude/evidence/completion.json"
+	completionBytes := []byte(`{"kind":"completion_report","changed_paths":["internal/api/handler.go"]}` + "\n")
+	completionPath := filepath.Join(root, filepath.FromSlash(completionRel))
+	if err := os.MkdirAll(filepath.Dir(completionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(completionPath, completionBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := baseDraftState(t)
+	state["evidence"] = []any{map[string]any{
+		"id": "completion-1", "kind": "completion_report", "path": completionRel,
+		"sha256": sha256Of(completionBytes), "status": "valid", "baseline_generation": 1,
+		"scope_refs": []any{},
+	}}
+	plan := &Plan{
+		CoverageInventory: []CoverageItem{{
+			ID: "surface:" + changedRel, Kind: "changed_surface", SourceRef: changedRel,
+			Target: changedRel, Lens: "qa",
+		}},
+		Claims: []Claim{{SourceRefs: []string{changedRel}}},
+	}
+	if err := validateCoverageInventory(root, state, plan); err == nil || !strings.Contains(err.Error(), "frozen_subjects") {
+		t.Fatalf("changed surface without a frozen subject must be rejected with recovery guidance, got %v", err)
+	}
+	plan.FrozenSubjects = []FrozenSubject{{Path: changedRel, SHA256: sha256Of(changedBytes), Kind: "changed_surface"}}
+	if err := validateCoverageInventory(root, state, plan); err != nil {
+		t.Fatalf("a SHA-pinned changed surface frozen subject should close the gate, got %v", err)
+	}
+}
+
+func TestValidateRepairRoundBaselineRequiresChangedArtifactsInFrozenSubjects(t *testing.T) {
+	root := t.TempDir()
+	changedRel := "internal/api/handler.go"
+	changedBytes := []byte("package api\n")
+	changedPath := filepath.Join(root, filepath.FromSlash(changedRel))
+	if err := os.MkdirAll(filepath.Dir(changedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(changedPath, changedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	impactRel := ".claude/evidence/impact.json"
+	impactValue := map[string]any{
+		"schema_version": "1.0.0", "record_type": "change_impact", "impact_id": "impact-BUG-001-attempt-1",
+		"runtime_id": "loop-REQ-TEST", "req_id": "REQ-001", "baseline_generation": 1,
+		"source_bug_ids": []string{"BUG-001"}, "change_types": []string{"implementation"},
+		"changed_artifacts": []any{map[string]any{"id": "handler", "path": changedRel, "sha256": sha256Of(changedBytes)}},
+		"decisions": []any{map[string]any{
+			"source_id": "handler", "target_id": "evidence-verification", "relation": "implements repair",
+			"rule_id": "IM-IMPLEMENTATION-MODULE", "decision": "invalidate", "responsibility_id": "VER-MODULE-COMPLETE",
+			"scope": []string{"internal/api/handler.go"}, "rationale": "repair changed the implementation", "recovery_evidence": []string{"BUG-001"},
+		}},
+		"escalation_level": "review_round", "invalidated_evidence_ids": []string{"ev-old"},
+		"superseded_evidence_ids": []string{}, "retained_evidence_ids": []string{},
+		"required_reverification_ids": []string{"reverify-BUG-001"}, "analyzed_by": "orchestrator", "analyzed_at": "2026-08-25T00:00:00Z",
+	}
+	impactBytes, err := json.Marshal(impactValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impactPath := filepath.Join(root, filepath.FromSlash(impactRel))
+	if err := os.MkdirAll(filepath.Dir(impactPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(impactPath, impactBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state := baseDraftState(t)
+	state["runtime_id"] = "loop-REQ-TEST"
+	state["baseline"].(map[string]any)["generation"] = float64(1)
+	state["review"] = map[string]any{
+		"round": 2.0, "clean_round": nil,
+		"round_entry": map[string]any{
+			"transition_id":       "TR-012",
+			"round":               2.0,
+			"baseline_generation": 1.0,
+			"change_impact_ref":   "ev-impact-1",
+		},
+	}
+	state["evidence"] = []any{map[string]any{
+		"id": "ev-impact-1", "kind": "change_impact", "path": impactRel,
+		"sha256": sha256Of(impactBytes), "status": "valid", "baseline_generation": 1,
+		"review_round": nil, "produced_by": []any{"orchestrator"}, "invalidated_by": nil,
+		"invalidation_rule": nil, "invalidation_reason": nil, "responsibility_id": "orchestrator", "scope_refs": []any{},
+	}}
+
+	plan := &Plan{
+		ReviewRound:        2,
+		BaselineGeneration: 1,
+		ChangeImpact:       &ChangeImpact{SourceRefs: []string{"ev-impact-1"}},
+		FrozenSubjects:     []FrozenSubject{{Path: "internal/other.go", SHA256: strings.Repeat("a", 64)}},
+		CoverageInventory:  []CoverageItem{{ID: "surface:" + changedRel, Kind: "changed_surface", SourceRef: changedRel, Target: changedRel, Lens: "qa"}},
+		Claims:             []Claim{{SourceRefs: []string{changedRel}}},
+	}
+	if err := validateRepairRoundBaseline(root, state, plan); err == nil || !strings.Contains(err.Error(), changedRel) {
+		t.Fatalf("repair round without changed artifact frozen subject must be rejected, got %v", err)
+	}
+
+	plan.FrozenSubjects = append(plan.FrozenSubjects, FrozenSubject{Path: changedRel, SHA256: sha256Of(changedBytes)})
+	if err := validateRepairRoundBaseline(root, state, plan); err != nil {
+		t.Fatalf("complete repair baseline should pass: %v", err)
+	}
+}
+
+func TestRegisterPlanEnforcesTR012RepairBaselineBinding(t *testing.T) {
+	root := t.TempDir()
+	state := baseVerificationState()
+	state["review"] = map[string]any{
+		"round": 2.0, "clean_round": nil,
+		"round_entry": map[string]any{
+			"transition_id": "TR-012", "round": 2.0, "baseline_generation": 1.0,
+			"change_impact_ref": "ev-impact-1",
+		},
+	}
+
+	planPath := writePlanFile(t, root)
+	planData, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planBody map[string]any
+	if err := json.Unmarshal(planData, &planBody); err != nil {
+		t.Fatal(err)
+	}
+	planBody["review_round"] = 2
+	planBody["change_impact"] = map[string]any{"source_refs": []string{"ev-impact-1"}}
+	planBody["coverage_inventory"] = []any{map[string]any{
+		"id": "surface:internal/example/service.go", "kind": "changed_surface",
+		"source_ref": "internal/example/service.go", "target": "internal/example/service.go", "lens": "qa",
+	}}
+	for _, raw := range planBody["claims"].([]any) {
+		claim := raw.(map[string]any)
+		if claim["claim_id"] == "claim-qa-1" {
+			claim["source_refs"] = append(claim["source_refs"].([]any), "internal/example/service.go")
+		}
+	}
+	updatedPlan, err := json.MarshalIndent(planBody, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(updatedPlan, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	impactRel := ".claude/evidence/impact.json"
+	impactValue := map[string]any{
+		"schema_version": "1.0.0", "record_type": "change_impact", "impact_id": "impact-BUG-001-attempt-1",
+		"runtime_id": "loop-REQ-TEST", "req_id": "REQ-001", "baseline_generation": 1,
+		"source_bug_ids": []string{"BUG-001"}, "change_types": []string{"implementation"},
+		"changed_artifacts": []any{map[string]any{"id": "handler", "path": "internal/example/service.go", "sha256": sha256Of([]byte("fixture baseline"))}},
+		"decisions": []any{map[string]any{
+			"source_id": "handler", "target_id": "evidence-verification", "relation": "implements repair",
+			"rule_id": "IM-IMPLEMENTATION-MODULE", "decision": "invalidate", "responsibility_id": "VER-MODULE-COMPLETE",
+			"scope": []string{"internal/example/service.go"}, "rationale": "repair changed the implementation", "recovery_evidence": []string{"BUG-001"},
+		}},
+		"escalation_level": "review_round", "invalidated_evidence_ids": []string{"ev-old"},
+		"superseded_evidence_ids": []string{}, "retained_evidence_ids": []string{},
+		"required_reverification_ids": []string{"reverify-BUG-001"}, "analyzed_by": "orchestrator", "analyzed_at": "2026-08-25T00:00:00Z",
+	}
+	impactBytes, err := json.Marshal(impactValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impactPath := filepath.Join(root, filepath.FromSlash(impactRel))
+	if err := os.MkdirAll(filepath.Dir(impactPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(impactPath, impactBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state["evidence"] = []any{map[string]any{
+		"id": "ev-impact-1", "kind": "change_impact", "path": impactRel,
+		"sha256": sha256Of(impactBytes), "status": "valid", "baseline_generation": 1,
+		"review_round": nil, "produced_by": []any{"orchestrator"}, "invalidated_by": nil,
+		"invalidation_rule": nil, "invalidation_reason": nil, "responsibility_id": "orchestrator", "scope_refs": []any{},
+	}}
+	statePath, journalPath := writeState(t, root, state)
+	if _, err := RegisterPlan(root, statePath, journalPath, PlanRequest{ExpectedRevision: 1, PlanPath: planPath}); err != nil {
+		t.Fatalf("TR-012 plan with complete repair baseline must register: %v", err)
+	}
+
+	var incomplete map[string]any
+	if err := json.Unmarshal(updatedPlan, &incomplete); err != nil {
+		t.Fatal(err)
+	}
+	otherPath := filepath.Join(root, "internal", "other.go")
+	if err := os.MkdirAll(filepath.Dir(otherPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(otherPath, []byte("package other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	incomplete["frozen_subjects"] = []any{map[string]any{"path": "internal/other.go", "sha256": sha256Of([]byte("package other\n"))}}
+	incompleteBytes, err := json.MarshalIndent(incomplete, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	incompletePath := filepath.Join(root, "plan-incomplete.json")
+	if err := os.WriteFile(incompletePath, append(incompleteBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Use a fresh state because the successful registration above owns the
+	// round; the rejection assertion is about the same registration gate.
+	freshState := baseVerificationState()
+	freshState["review"] = state["review"]
+	freshState["evidence"] = state["evidence"]
+	freshStatePath, freshJournalPath := writeState(t, root, freshState)
+	if _, err := RegisterPlan(root, freshStatePath, freshJournalPath, PlanRequest{ExpectedRevision: 1, PlanPath: incompletePath}); err == nil || !strings.Contains(err.Error(), "S7_REPAIR_BASELINE_COVERAGE") {
+		t.Fatalf("TR-012 plan missing repaired frozen subject must be rejected, got %v", err)
+	}
+}
+
 // TASKs from earlier generations do not constrain the current round's plan.
 func TestRegisterPlanIgnoresPriorGenerationTasks(t *testing.T) {
 	root := t.TempDir()
@@ -217,5 +502,63 @@ func TestRegisterPlanIgnoresPriorGenerationTasks(t *testing.T) {
 		ExpectedRevision: 1, PlanPath: writePlanFile(t, root),
 	}); err != nil {
 		t.Fatalf("prior-generation TASK must not gate registration, got %v", err)
+	}
+}
+
+func TestRegisterPlanRejectsChangedSurfaceCoverageGap(t *testing.T) {
+	root := t.TempDir()
+	state := baseVerificationState()
+	state["evidence"] = []any{map[string]any{
+		"id":                  "ev-completion-surface-1",
+		"kind":                "completion_report",
+		"path":                ".claude/evidence/completion-surface.json",
+		"sha256":              strings.Repeat("a", 64),
+		"status":              "valid",
+		"baseline_generation": 1,
+		"review_round":        nil,
+		"produced_by":         []any{"agent-builder-1"},
+		"invalidated_by":      nil,
+		"invalidation_rule":   nil,
+		"invalidation_reason": nil,
+		"responsibility_id":   "BUILD-WORK-PACKAGE",
+		"scope_refs":          []any{"internal/example/service.go"},
+	}}
+	statePath, journalPath := writeState(t, root, state)
+	planPath := writePlanFile(t, root)
+	if _, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
+		ExpectedRevision: 1, PlanPath: planPath,
+	}); err == nil || !strings.Contains(err.Error(), "S7_PLAN_SURFACE_COVERAGE") || !strings.Contains(err.Error(), "internal/example/service.go") {
+		t.Fatalf("changed surface without inventory/Claim must be rejected with a repair diagnostic, got %v", err)
+	}
+
+	data, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(data, &body); err != nil {
+		t.Fatal(err)
+	}
+	body["coverage_inventory"] = []any{map[string]any{
+		"id": "surface:internal/example/service.go", "kind": "changed_surface",
+		"source_ref": "internal/example/service.go", "target": "internal/example/service.go", "lens": "qa",
+	}}
+	for _, raw := range body["claims"].([]any) {
+		claim := raw.(map[string]any)
+		if claim["claim_id"] == "claim-qa-1" {
+			claim["source_refs"] = append(claim["source_refs"].([]any), "internal/example/service.go")
+		}
+	}
+	updated, err := json.MarshalIndent(body, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
+		ExpectedRevision: 1, PlanPath: planPath,
+	}); err != nil {
+		t.Fatalf("complete changed-surface inventory must register: %v", err)
 	}
 }

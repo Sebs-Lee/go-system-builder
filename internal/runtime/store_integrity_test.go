@@ -78,6 +78,56 @@ func TestReadOnlySnapshotReportsPendingRolloverWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestRemoveUnreferencedArtifactSkipsPendingOperation(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "loop-state.json")
+	journalPath := filepath.Join(dir, "loop-events.jsonl")
+	writeState(t, statePath, 1)
+
+	artifactRel := ".claude/review/plans/review-plan-test-r2.json"
+	artifactPath := filepath.Join(dir, filepath.FromSlash(artifactRel))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artifact := []byte("staged plan")
+	if err := os.WriteFile(artifactPath, artifact, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath+".commit-pending.json", []byte(`{"schema_version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := runtime.NewWriter(statePath, journalPath, dir, integrityTestValidator{}).RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{
+		ExpectedRevision: 1,
+		ArtifactPath:     artifactRel,
+		ArtifactSHA256:   sha256HexForTest(artifact),
+	})
+	if err != nil {
+		t.Fatalf("RemoveUnreferencedArtifact: %v", err)
+	}
+	if removed {
+		t.Fatal("pending runtime operation must prevent artifact deletion")
+	}
+	if _, err := os.Stat(artifactPath); err != nil {
+		t.Fatalf("staged artifact was removed: %v", err)
+	}
+
+	if err := os.Remove(statePath + ".commit-pending.json"); err != nil {
+		t.Fatal(err)
+	}
+	removed, err = runtime.NewWriter(statePath, journalPath, dir, integrityTestValidator{}).RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{
+		ExpectedRevision: 1,
+		ArtifactPath:     artifactRel,
+		ArtifactSHA256:   sha256HexForTest(artifact),
+	})
+	if err != nil {
+		t.Fatalf("RemoveUnreferencedArtifact without pending operation: %v", err)
+	}
+	if !removed {
+		t.Fatal("unreferenced artifact should be removed when the runtime is stable")
+	}
+}
+
 func TestWriterSnapshotRecoversPendingRolloverWithValidation(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")

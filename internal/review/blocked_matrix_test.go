@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
@@ -473,6 +474,16 @@ func TestSubmitResultSiteLostRecordsAssignmentBlocker(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error must name the recovery action %q: %v", want, err)
 		}
+	}
+	snapMetrics, metricsErr := metrics.NewStore(root).Read()
+	if metricsErr != nil {
+		t.Fatal(metricsErr)
+	}
+	if got := snapMetrics.S7ResultSubmits["blocked"]; got != 1 {
+		t.Fatalf("site-lost submit outcome = %d, want blocked=1", got)
+	}
+	if got := snapMetrics.S7ResultSubmits["rejected"]; got != 0 {
+		t.Fatalf("site-lost submit must not be counted as rejected, got %d", got)
 	}
 	// The BLOCKER committed: reviewer Agent working -> blocked with the
 	// declaring result as the blocker reference.

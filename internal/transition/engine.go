@@ -33,8 +33,12 @@ type LockedREQ struct {
 type Request struct {
 	TransitionID     string
 	ExpectedRevision int
-	Actor            string
-	Evidence         map[string]string
+	// ExpectedRuntimeID binds a caller's snapshot to the runtime identity as
+	// well as its numeric revision. This prevents a pre-bind revision-zero
+	// snapshot from being accepted after bind created a new runtime identity.
+	ExpectedRuntimeID string
+	Actor             string
+	Evidence          map[string]string
 	// AffectedPaths are repository-relative paths changed by the tool call that
 	// triggered this transition. Used by invalidate_affected_evidence.
 	AffectedPaths []string
@@ -77,6 +81,12 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	}
 	currentState, _ := currentLifecycle["state"].(string)
 	currentPhase := nullablePhase(currentLifecycle["phase"])
+	if expectedRuntimeID := strings.TrimSpace(request.ExpectedRuntimeID); expectedRuntimeID != "" && !(request.TransitionID == "TR-001" && expectedRuntimeID == "loop-inactive") {
+		currentRuntimeID, _ := current["runtime_id"].(string)
+		if currentRuntimeID != expectedRuntimeID {
+			return loopruntime.Snapshot{}, fmt.Errorf("%w: expected %q, current %q", loopruntime.ErrStaleRuntimeIdentity, expectedRuntimeID, currentRuntimeID)
+		}
+	}
 	catalog, err := LoadCatalog(root)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("load transition catalog: %w", err)
@@ -139,7 +149,7 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		GateID:                 request.GateID,
 		GateFingerprint:        request.GateFingerprint,
 		ProducerResponsibility: request.ProducerResponsibility,
-		RequireEmptyJournal:    resolved.Spec.ID == "TR-001",
+		BoundaryReset:          resolved.Spec.ID == "TR-001",
 		Apply: func(state map[string]any) error {
 			// Direct-check guards resolve disk paths from state["root"]. The
 			// writer re-reads state from disk before invoking this closure, so
@@ -991,15 +1001,15 @@ func capturePauseCheckpoint(state map[string]any, resolved resolvedTransition, o
 	documents := documentFingerprints(state)
 
 	state["pause"] = map[string]any{
-		"from_state":                 fromState,
-		"from_phase":                 fromPhase,
-		"phase_revision":             phaseRevision,
-		"baseline_generation":        baselineGeneration,
-		"review_round":               reviewRound,
-		"reason":                     resolved.Spec.Description,
-		"required_human_action":      pauseRequiredAction(fromState),
-		"document_fingerprints":      documents,
-		"paused_at":                  occurredAt.UTC().Format(time.RFC3339Nano),
+		"from_state":            fromState,
+		"from_phase":            fromPhase,
+		"phase_revision":        phaseRevision,
+		"baseline_generation":   baselineGeneration,
+		"review_round":          reviewRound,
+		"reason":                resolved.Spec.Description,
+		"required_human_action": pauseRequiredAction(fromState),
+		"document_fingerprints": documents,
+		"paused_at":             occurredAt.UTC().Format(time.RFC3339Nano),
 	}
 	return nil
 }

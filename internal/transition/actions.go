@@ -17,11 +17,11 @@ package transition
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/impact"
@@ -93,7 +93,7 @@ func InitActionRegistry() {
 		"record_loop_authorization": actionRecordLoopAuthorization,
 		"update_bound_req":          actionUpdateBoundREQ,
 		"register_locked_contracts": actionRegisterLockedContracts,
-		"register_design_documents":   actionRegisterDesignDocuments,
+		"register_design_documents": actionRegisterDesignDocuments,
 		"register_execution_batch":  actionRegisterExecutionBatch,
 		// BUG-PLANNING-SUBSTATE: only set_planning_phase_design remains
 		// from the planning phase-set family. The other six (initialize,
@@ -109,33 +109,34 @@ func InitActionRegistry() {
 		"set_verification_phase_clean_round_passed":     actionSetVerificationPhase("clean_round_passed"),
 		// L3-S7 P0: S7 entry now lands on `planned`; the phase machine is a
 		// ReviewPlan status projection, not a per-lens serial pipeline.
-		"set_verification_phase_planned": actionSetVerificationPhase("planned"),
-		"set_bug_phase_investigation":                   actionSetBugPhase("investigation"),
-		"set_bug_phase_bug_report_review":               actionSetBugPhase("bug_report_review"),
-		"set_bug_phase_repair_readback":                 actionSetBugPhase("repair_readback"),
-		"set_bug_phase_fixing":                          actionSetBugPhase("fixing"),
-		"set_bug_phase_targeted_reverification":         actionSetBugPhase("targeted_reverification"),
-		"set_bug_phase_ready_for_full_review":           actionSetBugPhase("ready_for_full_review"),
-		"record_planning_checkpoint":                    actionRecordPlanningCheckpoint,
-		"record_document_result":                        actionRecordDocumentResult,
-		"register_planning_tasks":                       actionRegisterPlanningTasks,
-		"start_review_round":                            actionStartReviewRound,
-		"start_new_review_round":                        actionStartNewReviewRound,
-		"record_bug_drafts":                             actionRecordBugDrafts,
-		"record_canonical_bug_batch":                    actionRecordCanonicalBugBatch,
-		"record_bug_review_feedback":                    actionRecordBugReviewFeedback,
-		"record_repair_activation":                      actionRecordRepairActivation,
-		"invalidate_affected_evidence":                  actionInvalidateAffectedEvidence,
-		"invalidate_consumed_review_evidence":          actionInvalidateConsumedReviewEvidence,
-		"record_repair_completion":                      actionRecordRepairCompletion,
-		"record_targeted_reverification":                actionRecordTargetedReverification,
-		"record_finding_batch":                          actionRecordFindingBatch,
-		"record_delivery_result":                        actionRecordDeliveryResult,
-		"record_qa_result":                              actionRecordQAResult,
-		"record_e2e_result":                             actionRecordE2EResult,
-		"record_clean_round":                            actionRecordCleanRound,
-		"record_acc":                                    actionRecordACC,
-		"record_release_audit":                          actionRecordReleaseAudit,
+		"set_verification_phase_planned":        actionSetVerificationPhase("planned"),
+		"set_bug_phase_investigation":           actionSetBugPhase("investigation"),
+		"set_bug_phase_bug_report_review":       actionSetBugPhase("bug_report_review"),
+		"set_bug_phase_repair_readback":         actionSetBugPhase("repair_readback"),
+		"set_bug_phase_fixing":                  actionSetBugPhase("fixing"),
+		"set_bug_phase_targeted_reverification": actionSetBugPhase("targeted_reverification"),
+		"set_bug_phase_ready_for_full_review":   actionSetBugPhase("ready_for_full_review"),
+		"record_planning_checkpoint":            actionRecordPlanningCheckpoint,
+		"record_document_result":                actionRecordDocumentResult,
+		"register_planning_tasks":               actionRegisterPlanningTasks,
+		"start_review_round":                    actionStartReviewRound,
+		"start_new_review_round":                actionStartNewReviewRound,
+		"record_bug_drafts":                     actionRecordBugDrafts,
+		"record_canonical_bug_batch":            actionRecordCanonicalBugBatch,
+		"record_bug_review_feedback":            actionRecordBugReviewFeedback,
+		"record_repair_activation":              actionRecordRepairActivation,
+		"invalidate_affected_evidence":          actionInvalidateAffectedEvidence,
+		"invalidate_consumed_review_evidence":   actionInvalidateConsumedReviewEvidence,
+		"record_repair_completion":              actionRecordRepairCompletion,
+		"record_targeted_reverification":        actionRecordTargetedReverification,
+		"record_finding_batch":                  actionRecordFindingBatch,
+		"record_delivery_result":                actionRecordDeliveryResult,
+		"record_qa_result":                      actionRecordQAResult,
+		"record_e2e_result":                     actionRecordE2EResult,
+		"record_clean_round":                    actionRecordCleanRound,
+		"record_acc":                            actionRecordACC,
+		"record_release_audit":                  actionRecordReleaseAudit,
+		"reset_s7_review_after_governance":      actionResetS7ReviewAfterGovernance,
 		// SINGLE capture path. Covers GTR-001..GTR-005 and TR-005/010/011/014/018.
 		"capture_pause_checkpoint":           actionCapturePauseCheckpoint,
 		"restore_state_phase_and_entities":   actionRestoreFromPause,
@@ -233,13 +234,104 @@ func actionSetBugPhase(target string) ActionFn {
 // / TR-016. PTR-VERIFY-05 uses start_new_review_round instead, which is the
 // distinct action registered below.
 func actionStartReviewRound(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	if ctx == nil {
+		return ActionResult{Status: "failed", Detail: "transition context missing"}, fmt.Errorf("start_review_round requires transition context")
+	}
 	review, ok := state["review"].(map[string]any)
 	if !ok {
 		return ActionResult{Status: "failed", Detail: "review missing"}, fmt.Errorf("review missing")
 	}
-	review["round"] = integer(review["round"]) + 1
+	currentRound := integer(review["round"])
+	if maxRounds, err := configuredMaxFullReviewRounds(state); err != nil {
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	} else if currentRound >= maxRounds {
+		err := fmt.Errorf("S7 full-review budget exhausted at round %d of %d; human decision required: run `loop-harness runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>` with increase_budget or return_to_governance", currentRound, maxRounds)
+		return ActionResult{Status: "failed", Detail: err.Error()}, err
+	}
+	nextRound := currentRound + 1
+	roundEntry := map[string]any{
+		"transition_id":       ctx.Spec.ID,
+		"round":               nextRound,
+		"baseline_generation": baselineGeneration(state),
+		"change_impact_ref":   nil,
+	}
+	if ctx.Spec.ID == "TR-012" {
+		changeImpactRef := ""
+		if ctx != nil && ctx.Evidence != nil {
+			changeImpactRef = strings.TrimSpace(ctx.Evidence["change_impact_record"])
+		}
+		if changeImpactRef == "" {
+			return ActionResult{Status: "failed", Detail: "TR-012 requires change_impact_record"}, fmt.Errorf("TR-012 requires a change_impact_record binding so the next S7 plan can freeze the post-repair baseline")
+		}
+		roundEntry["change_impact_ref"] = changeImpactRef
+	}
+	review["round"] = nextRound
 	review["clean_round"] = nil
+	review["round_entry"] = roundEntry
 	return ActionResult{Status: "committed", MutationApplied: true, Detail: "review.round++"}, nil
+}
+
+func configuredMaxFullReviewRounds(state map[string]any) (int, error) {
+	configuration, ok := state["configuration"].(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("runtime configuration missing while opening S7 review round")
+	}
+	repair, ok := configuration["repair"].(map[string]any)
+	if !ok {
+		return 0, fmt.Errorf("runtime configuration.repair missing while opening S7 review round")
+	}
+	max := integer(repair["max_full_review_rounds"])
+	if max < 1 {
+		return 0, fmt.Errorf("max_full_review_rounds must be at least 1")
+	}
+	return max, nil
+}
+
+// actionResetS7ReviewAfterGovernance clears the review projection when a
+// human chooses specification/architecture governance instead of authorizing
+// another full round. The current human decision remains valid as the audit
+// authorization; every other currently-valid evidence item is superseded so
+// the new planning generation cannot accidentally consume old S7/S8/S9 facts.
+func actionResetS7ReviewAfterGovernance(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	review, ok := state["review"].(map[string]any)
+	if !ok {
+		return ActionResult{Status: "failed", Detail: "review missing"}, fmt.Errorf("reset_s7_review_after_governance: review missing")
+	}
+	review["round"] = 0
+	review["clean_round"] = nil
+	review["round_entry"] = nil
+	review["plan"] = nil
+	review["claims"] = map[string]any{}
+	review["assignments"] = map[string]any{}
+	review["observation_batch"] = nil
+
+	items, ok := state["evidence"].([]any)
+	if !ok {
+		return ActionResult{Status: "committed", MutationApplied: true, Detail: "review projection reset; no evidence to invalidate"}, nil
+	}
+	excluded := transitionEvidenceIDs(ctx)
+	impacts := make([]impact.EvidenceImpact, 0, len(items))
+	for _, raw := range items {
+		entry, ok := raw.(map[string]any)
+		if !ok || entry["status"] != "valid" {
+			continue
+		}
+		id, _ := entry["id"].(string)
+		if _, keep := excluded[id]; keep {
+			continue
+		}
+		impacts = append(impacts, impact.EvidenceImpact{
+			EvidenceID:    id,
+			Rule:          "s7_governance_return",
+			Reason:        "S7 budget decision returned the Runtime to specification/architecture governance",
+			CurrentStatus: "valid",
+		})
+	}
+	invalidated := impact.InvalidateEvidence(state, impacts, "GTR-006")
+	return ActionResult{
+		Status: "committed", MutationApplied: true,
+		Detail: fmt.Sprintf("review projection reset; %d downstream evidence entries invalidated", len(invalidated)),
+	}, nil
 }
 
 // actionStartNewReviewRound is the action declared by PTR-VERIFY-05. It is

@@ -287,8 +287,8 @@ func evidenceBackedGuard(name string) GuardFn {
 }
 
 func requireFreshInactiveRuntime(state map[string]any) error {
-	if err := loopruntime.ValidateFreshInactiveState(state); err != nil {
-		return fmt.Errorf("requires a fresh inactive runtime: %w", err)
+	if err := loopruntime.ValidateBindEligibleState(state); err != nil {
+		return fmt.Errorf("requires a fresh inactive runtime (unbound, revision-independent): %w", err)
 	}
 	return nil
 }

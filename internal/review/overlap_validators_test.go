@@ -17,6 +17,10 @@ import (
 
 func planWithClaimsAndAssignments(claims []Claim, assignments []PlanAssignment, e2eState string) *Plan {
 	workspace := "e2e-workspace/plan-t-overlap"
+	var workspaceRef *string
+	if e2eState == "cold_start" {
+		workspaceRef = &workspace
+	}
 	// Ensure the §4.2 zero-claim guard doesn't pre-empt the validator under
 	// test. The helper adds delivery + qa stubs unless the test already
 	// supplied its own required claims for those lenses, so ValidatePlan
@@ -54,7 +58,7 @@ func planWithClaimsAndAssignments(claims []Claim, assignments []PlanAssignment, 
 		Claims:                        claims,
 		Assignments:                   assignments,
 		E2ECoverageState:              e2eState,
-		VerificationArtifactWorkspace: &workspace,
+		VerificationArtifactWorkspace: workspaceRef,
 		DispatchCapacityPolicy:        "coverage_complete",
 		CreatedBy:                     "test",
 		CreatedAt:                     "2026-08-23T00:00:00Z",

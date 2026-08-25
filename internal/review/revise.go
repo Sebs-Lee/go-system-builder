@@ -2,11 +2,9 @@ package review
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -89,11 +87,23 @@ func RevisePlan(
 	if err := verifyFrozenSubjects(root, &next); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan frozen subject baseline: %w", err)
 	}
+	if err := verifyRegressionAssetFingerprints(root, &next); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	if err := ValidatePlanTaskCoverage(current, &next); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateCoverageInventory(root, current, &next); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateRepairRoundBaseline(root, current, &next); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if workspaceValue(next.VerificationArtifactWorkspace) != workspaceValue(currentPlan.VerificationArtifactWorkspace) {
 		return loopruntime.Snapshot{}, fmt.Errorf("a revision keeps the verification_artifact_workspace; changing the E2E write surface requires a new review round")
+	}
+	if err := validateRevisionSource(root, current, request.SourceRef, currentPlan.ReviewRound, currentPlan.BaselineGeneration); err != nil {
+		return loopruntime.Snapshot{}, err
 	}
 
 	changed, err := diffClaims(currentPlan, &next, request.SourceRef, request.AffectedSurface)
@@ -113,12 +123,6 @@ func RevisePlan(
 		return loopruntime.Snapshot{}, err
 	}
 	planSHA := sha256Of(planBytes)
-	cleanupPlan := func() {
-		if path, err := repositoryContainedPath(root, planRel); err == nil {
-			_ = os.Remove(path)
-		}
-	}
-
 	runtimeID, _ := current["runtime_id"].(string)
 	occurredAt := request.OccurredAt
 	if occurredAt.IsZero() {
@@ -290,8 +294,18 @@ func RevisePlan(
 		},
 	})
 	if err != nil {
-		if errors.Is(err, loopruntime.ErrStaleRevision) {
-			cleanupPlan()
+		// Update may have left a durable pending commit after writing its
+		// marker. Cleanup must be serialized with Runtime writers and must
+		// retain the artifact whenever recovery could still publish a pointer
+		// to it.
+		cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+		if _, cleanupErr := cleanupStore.RemoveUnreferencedArtifact(loopruntime.ArtifactCleanupRequest{
+			ExpectedRevision: request.ExpectedRevision,
+			ArtifactPath:     planRel,
+			ArtifactSHA256:   planSHA,
+			ReferencedPaths:  []string{ptr.Path},
+		}); cleanupErr != nil {
+			return snapshot, fmt.Errorf("revise failed and staged plan cleanup was inconclusive: %w (original: %v)", cleanupErr, err)
 		}
 		return snapshot, err
 	}
@@ -321,8 +335,14 @@ func diffClaims(v1, v2 *Plan, sourceRef, surface string) ([]string, error) {
 		if claim == nil {
 			// Removed claim: bind the removal to the surface via the v1 row.
 			original := byID1[claimID]
-			if !strings.HasPrefix(original.Target, surface) {
-				return fmt.Errorf("claim %s (target %s) is removed but its target sits outside the affected surface %s; removals need the same source binding", claimID, original.Target, surface)
+			if !surfaceMatches(original.Target, surface) {
+				return s7GateError(
+					"S7_REVISION_SURFACE",
+					fmt.Sprintf("claim %s (target %s) is removed but its target sits outside the affected surface %s", claimID, original.Target, surface),
+					[]string{"removed Claim target: " + original.Target, "affected surface: " + surface},
+					[]string{"limit the revision to Claims whose normalized target is the affected surface or a child path"},
+					"runtime review-plan revise --file plan-v2.json --source-ref <current-result-or-finding> --affected-surface <surface>",
+				)
 			}
 			return nil
 		}
@@ -336,8 +356,14 @@ func diffClaims(v1, v2 *Plan, sourceRef, surface string) ([]string, error) {
 		if !hasSource {
 			return fmt.Errorf("changed claim %s lacks source_ref %s; revisions must trace to the triggering Result/Finding evidence (L3-S7 §5.3)", claimID, sourceRef)
 		}
-		if !strings.HasPrefix(claim.Target, surface) && !strings.Contains(claim.Target, surface) {
-			return fmt.Errorf("changed claim %s targets %q, outside the affected surface %q", claimID, claim.Target, surface)
+		if !surfaceMatches(claim.Target, surface) {
+			return s7GateError(
+				"S7_REVISION_SURFACE",
+				fmt.Sprintf("changed claim %s targets %q, outside the affected surface %q", claimID, claim.Target, surface),
+				[]string{"Claim target: " + claim.Target, "affected surface: " + surface},
+				[]string{"change only Claims whose normalized target is the affected surface or a child path"},
+				"runtime review-plan revise --file plan-v2.json --source-ref <current-result-or-finding> --affected-surface <surface>",
+			)
 		}
 		return nil
 	}

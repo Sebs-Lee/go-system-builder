@@ -397,6 +397,8 @@ Stage/ReviewPlan 必须从两个策略中选择一个：
 - `bounded_flow` 的 WIP 也是 active concurrency 上限，不是 Backlog/Ready coverage 上限；
 - idle 不等于可以 self-claim 下一项，只有 scheduler 重新计算 Ready/Dispatchable 后才能派发。
 
+资源锁释放时，Assignment 状态、Claim disposition 与 queued Agent 的唤醒必须在同一消费事务内完成：Assignment 从 `planned/queued` 变为 `dispatched` 后，Agent 从 `queued` 进入 `reading`，再由正常 PLAN_REPORT/activation 必经路径继续。queued Agent 在尚未释放前不应被 stop/idle 门要求提交计划；释放后也不能直接跳过计划检查。
+
 ## 7. 默认协议：双回执、单次连续执行
 
 ### 7.1 现实原型

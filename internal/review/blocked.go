@@ -349,6 +349,16 @@ type ReadinessError struct {
 	Err       error
 }
 
+// SiteLostBlockedError reports a committed control-plane blocker whose
+// ReviewResult was deliberately not consumed. It remains an error at the CLI
+// boundary so the Agent must read and follow the recovery path, but callers
+// such as metrics must distinguish it from a rejected submission.
+type SiteLostBlockedError struct {
+	Message string
+}
+
+func (e *SiteLostBlockedError) Error() string { return e.Message }
+
 func (e *ReadinessError) Error() string { return e.Err.Error() }
 func (e *ReadinessError) Unwrap() error { return e.Err }
 
@@ -542,11 +552,11 @@ func submitSiteLostBlocker(
 		return snapshot, err
 	}
 	committed = true
-	return snapshot, fmt.Errorf(
+	return snapshot, &SiteLostBlockedError{Message: fmt.Sprintf(
 		"finding %s is not investigation-ready (%v) and the reviewer declared the scene unrecoverable: %s. "+
 			"Assignment %s is now blocked and stays in S7 — the result was NOT consumed, no Finding was registered and nothing was sealed (L3-S7 §9.1). "+
 			"Recovery: fix the capture conditions (capture buffer, read-only state re-capture, existing logs), record blocker_resolved for Agent %s, and have the same finder resubmit a fresh ReviewResult; an authorized human decides whether a safe rebuild is possible. The reproduction debt is never handed to S8",
-		readiness.FindingID, readiness.Err, reason, result.AssignmentID, result.ProducerAgentID)
+		readiness.FindingID, readiness.Err, reason, result.AssignmentID, result.ProducerAgentID)}
 }
 
 // asReadinessError unwraps a validation failure into a ReadinessError.

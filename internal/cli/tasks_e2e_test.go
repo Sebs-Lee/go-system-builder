@@ -118,7 +118,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 		t.Fatalf("bind failed: %s", stderr)
 	}
 	if _, stderr, code := run("runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-01", "--expected-revision", "1", "--actor", "orchestrator"); code != 0 {
+		"--id", "PTR-PLAN-01", "--expected-revision", "0", "--actor", "orchestrator"); code != 0 {
 		t.Fatalf("PTR-PLAN-01 failed: %s", stderr)
 	}
 	// Jump the phase to tasks without running PTR-PLAN-02 (the state edit
@@ -128,7 +128,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	state["lifecycle"] = map[string]any{"state": "planning", "phase": "tasks", "phase_revision": float64(1)}
 	writeJSONMap(t, statePath, state)
 	_, stderr, code := run("runtime", "transition", "--root", root,
-		"--id", "TR-002", "--expected-revision", "2", "--actor", "orchestrator")
+		"--id", "TR-002", "--expected-revision", "1", "--actor", "orchestrator")
 	if code == 0 || !strings.Contains(stderr, "no locked contract registered") || !strings.Contains(stderr, "PTR-PLAN-02") {
 		t.Fatalf("planning_complete must point at PTR-PLAN-02: code=%d stderr=%s", code, stderr)
 	}
@@ -137,14 +137,14 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	state["lifecycle"] = map[string]any{"state": "planning", "phase": "contracts", "phase_revision": float64(1)}
 	writeJSONMap(t, statePath, state)
 	if _, stderr, code = run("runtime", "transition", "--root", root,
-		"--id", "PTR-PLAN-02", "--expected-revision", "2", "--actor", "orchestrator"); code != 0 {
+		"--id", "PTR-PLAN-02", "--expected-revision", "1", "--actor", "orchestrator"); code != 0 {
 		t.Fatalf("PTR-PLAN-02 failed: %s", stderr)
 	}
 
 	// --- tasks_checked surfaces at guard level, not just CLI ---
 	write("docs/tasks/TASK-600-02.md", strings.Replace(readFile(t, root, "docs/tasks/TASK-600-02.md"), "| BE-600 | §2 |", "| BE-600 | §2, §7 |", 1))
 	_, stderr, code = run("runtime", "transition", "--root", root,
-		"--id", "TR-002", "--expected-revision", "3", "--actor", "orchestrator")
+		"--id", "TR-002", "--expected-revision", "2", "--actor", "orchestrator")
 	if code == 0 || !strings.Contains(stderr, "tasks_checked") || !strings.Contains(stderr, "BE-600 §7") {
 		t.Fatalf("tasks_checked must reject at guard level naming the phantom clause: code=%d stderr=%s", code, stderr)
 	}
@@ -160,7 +160,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 
 	// --- TR-002 passes with EMPTY evidence and registers the batch ---
 	if _, stderr, code = run("runtime", "transition", "--root", root,
-		"--id", "TR-002", "--expected-revision", "3", "--actor", "orchestrator"); code != 0 {
+		"--id", "TR-002", "--expected-revision", "2", "--actor", "orchestrator"); code != 0 {
 		t.Fatalf("TR-002 must pass with empty evidence (required_evidence is empty): %s", stderr)
 	}
 	state = readJSONMap(t, statePath)
@@ -200,7 +200,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	rev := int(state["revision"].(float64))
 	write("docs/tasks/TASK-600-01.md", strings.Replace(readFile(t, root, "docs/tasks/TASK-600-01.md"), "v1.0.0", "v1.1.0", 1))
 	for _, step := range []struct {
-		id string
+		id  string
 		rev int
 	}{
 		{"PTR-PLAN-01", rev},

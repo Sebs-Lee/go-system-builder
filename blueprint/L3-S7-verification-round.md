@@ -175,7 +175,7 @@ flowchart LR
 | `verification_artifact_workspace` | 仅在 E2E `cold_start` 需要新建 spec/fixture/dataset 时启用的独立写面；已有验证资产时不创建额外控制面 |
 | `dispatch_capacity_policy` | 固定为 L4 `coverage_complete`；required Assignment 逻辑数量不设上限，物理槽位不足只进入 queued；不因此开放无限 Claim 扩张 |
 | `dispatch_policy` | 优先级、真实依赖、共享环境/账号/spec 写面的 resource locks 和平台容量；不得含 Reviewer/token 硬上限 |
-| `status` | `planned / running / cannot_clean / discovery_draining / observation_sealed / closing / clean / paused / stale` |
+| `status` | `planned / running / cannot_clean / discovery_draining / observation_sealed / clean / paused / stale`；close-round 是 submit 内部事务，不是持久化状态 |
 
 ReviewPlan 在 S7 入口生成初始完整 required Claims。平台是否当下允许 launch 某个 Agent 是调度事实，不应删除或合并 required Assignment。只有 Result/Finding 明确暴露一个初始 plan 未覆盖、且可以通过 `source_ref + affected_surface` 定位的新表面时，才允许一次受控 revision；revision 后重新计算受影响 Claims，完成后即关闭本轮计划。所谓“无新增 Claim”是一次计算结果，不是 Agent 可以自行递归扩大范围的长期状态。
 
@@ -270,6 +270,7 @@ Assignment 数量不是预设配额，也没有最大值。Planner 先生成 Cla
 - E2E Result 必须同时绑定 frozen product `subject_digest` 与本次实际使用的 `verification_artifact_digest`；spec/fixture 在 Result consumed 后变化，只 invalid 依赖它的 Result 并要求重跑，不使产品 baseline stale；
 - `verdict` 由 Claim 结果和 finding 类型校验，不允许与局部结果矛盾；
 - 每个 fail Claim 必须引用一份待提交 Finding；运行型 Finding 还必须带 `encounter`，不能只把 `observed` 或测试报错复制进来；
+- `evidence_refs[]` 中需要由 Harness 在本地校验的仓库文件使用显式 `path:<repo-relative-path>` 形式；裸 refs 保留给浏览器 trace、平台 artifact ID 等外部/符号证据，已登记的 runtime evidence ID 则按其 path+sha256 复核；
 
 Claim 的 round-level disposition 由 Planner/consumer 计算为 `planned / running / pass / finding / not_applicable / blocked / stale`。`blocked` 不是 Reviewer 自报的专业结论；只有工具能根据已确认 Finding、失败前置条件和证据，把它投影为 `blocked_by_confirmed_finding`。该投影必须带 `blocking_finding_ids[] + failed_precondition + evidence_refs + after_repair_required=true`，不另建一套长期 Claim 状态。
 - Markdown、图表和 E2E 原始产物可以继续作为人读/raw evidence，但不再充当另一份状态权威；
@@ -855,7 +856,7 @@ S7 在授权 verification workspace 中新增/修订 cold-start E2E spec、fixtu
 S7 控制面以 ReviewPlan 状态表达整轮收敛：
 
 ```text
-planned -> running -> closing -> clean
+planned -> running -> clean
               |           |
               |           +-> stale -> planned(new round)
               +-> cannot_clean -> discovery_draining -> observation_sealed -> S8
@@ -916,7 +917,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 | 公理四 成本 | 必要 Reviewer/token 是防止缺陷逃逸和反复返工的质量投资，不设上限；只消除重复泛审和无消费控制面。static-first 保证 oracle 清晰，不用于取消 E2E；encounter 内嵌 Finding 且自动采集 |
 | 公理五 传达 | pass/finding/req change/release blocked/recoverable blocked/stale 有不同出口 |
 
-## 13. 当前实现差距与迁移清单
+## 13. 当前实现状态与历史迁移记录
 
 > **2026-08-18 审计（P0+强耦合 P1 落地）**：批次 A+B 已实施。控制面已迁为 ReviewPlan 模型 ——
 > `review-plan.schema.json`（单一 required Claim set + Assignment 精确分割 + `dispatch_capacity_policy=coverage_complete` 固定值）、
@@ -1211,7 +1212,10 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 >   claims 形态由 submit matrix 单测覆盖（本轮 r5 static 已结算故 unobserved 为空）。
 > - **冷读误报澄清**：SendMessage 示例形状（teammate_name/message_type/plan_ref in tool_input）与观察者解析契约一致，
 >   保留；workspace 相对路径疑虑由注册错误文案兜底（"must live under e2e-workspace/"）。
-> - **验证**：go test ./... 全绿、validate --all、doctor（manual current）。
+>   **`s7 status` blocked 看板补救与扳机提示**：原看板只报 `status=blocked`，
+>   reviewer 必须 grep state 找 blocker 文件；现在单行打印 `blocker_ref=<path>` 并把
+>   `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`
+>   当成下一动作明示。CLI 单测覆盖 round 2 of 5 + blocked 看板两行输出。
 >
 > **2026-08-23 审计（验证轮后续：四工作包修复 R6/R7/R8/R10）**：
 > - **R6（register-workgroup `--root` 路径不一致）已修**：所有走 `runtime.NewStore`/`runtime.NewWriter` 的入口在 `resolveExpectedRevision`
@@ -1230,36 +1234,34 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 >   头部 4 KiB 缓冲 + 模式命中则终端也写 `[withheld]` 占位符。3 条回归测试覆盖 secret 泄漏、正常透传、大输出+exit code。
 > - **跨批次依赖**：上一轮 R4 修改（recovery 包不能_clean 时不再说"not yet opened"）使批次 1 的 `TestBuildGuidanceS7RecoveryClaimsNoBatchOpen`
 >   测试断言过时——已同步更新为断言新逻辑（drain invariant + missing-pointer diagnostic + "not yet opened" 必须不出现）。
-> - **仍未做**：命令面拆分（review-plan register/revise、register-workgroup 的 S6 词汇）、RegisterPlan 失败遗留目录、真实 2.1.218 平台 doctor、
->   产品侧浏览器 wrapper、regression_available 指纹复用校验。
+> - **当时仍未做、现已分流**：命令面拆分（review-plan register/revise、register-workgroup 的 S6 词汇）仍是低优先兼容迁移；RegisterPlan 失败遗留目录随后已由 workspace/plan 精确清理修复并有回归测试；本轮新增确认的 revise pending-commit artifact 风险与 TR-012 修复基线绑定已完成实现并由回归测试锁定。
 
-### 13.1 当前事实
+### 13.1 当前事实（2026-08-25）
 
-目标机制尚未落地。当前仓库仍有以下差距：
+S7 的主闭环已经落到当前实现；本表只记录仍影响行为的差距，不再把早期迁移计划误报成未实现能力：
 
 | 当前位置 | 如实现状 | 与目标的差距 |
 |:--|:--|:--|
-| `docs/loop-definition.json` verification phase machine | Delivery → QA → E2E → clean evaluation → clean passed 串行 | 应迁为 ReviewPlan DAG/Lens 投影与一次 close-round |
-| `internal/schema/assets/team-manifest.schema.json` / `internal/team/validator.go` | Assignment 只有单一 `responsibility_id` | 应支持 `claim_ids[]/focus_keys[]/non_overlap_boundary`，Lens/责任粒度不再等于 Agent 粒度 |
-| angle declaration/registry + guards | 有独立 schema、历史 disposition、min count、dispatch 时间检查；标准登记链仍不闭合 | 删除独立生命周期，迁移有效意图到 Claim |
-| `skills/two-phase-activation` 与三个 Agent Definition | 仍要求 readback → approval → activation | 引用 L4 plan_checkpoint/approval_required |
-| Delivery/QA/E2E 模板 | Markdown 枚举和字段不一致，缺统一 adapter | 生成 Canonical ReviewResult scaffold；Markdown 自动投影视图 |
-| DV/QA/E2E 派发 | 现有叙事容易每个 Lens 各启动一个通用 Agent，且 E2E 首次覆盖空白没有 cold-start 分解 | 从 impact 生成 focus/flow coverage matrix 与单一 Claim set，按不设上限的 1..N Assignments 派发 |
-| QA 内容 | 偏代码质量、复用和测试枚举，缺 pattern-fit、逻辑自洽、边界/依赖方向、维护风险的结构化 oracle | 建 design/boundary、pattern/idiom、logic/state/error、maintainability、test/debt baseline Claims |
-| E2E coverage | 以“一个 E2E Agent 跑一轮”表达，缺 persona/flow/state/negative/recovery matrix、cold-start 状态和 spec 写面拆分 | 增加 `e2e_coverage_state`、1..N flow Assignments、overload validator 与隔离写面；coverage 只作为 Claim 计算视图 |
-| 并发/成本策略 | 初始 WIP=2、finding 后停止新昂贵/E2E 派发 | 删除 Reviewer/token 硬上限；真实锁冲突排队，ordinary finding 继续剩余 required Claims；不因资源不足扩张或裁剪计划 |
-| Finding/Observation handoff | 当前只有通用 finding envelope/BUG draft，没有 immutable Finding、Supplement、ObservationBatch schema | 建立无损 S7→S8 exact-set handoff，禁止在 S7 预写 root cause/fix |
-| Finding 现场 | 现有字段偏自由文本 reproduction，未区分实际发生时间线、failure boundary 和未来复现步骤 | Finding 内嵌 discriminated encounter；执行 wrapper 自动采集，Reviewer 只补短摘要/边界 |
-| E2E/命令证据 | trace、截图、console/network 可能存在，但没有 step/checkpoint binding 和统一 freeze 时机 | 撞墙时冻结 evidence window，按 timeline step 引用 typed evidence；敏感值脱敏 |
-| Quality Gate phase requirements | 各 phase 只要求一条 aggregate PASS envelope | 改读精确 Assignment/Claim Results；aggregate 只计算不手写 |
-| `internal/verification/clean_round.go` | 责任集合和 evidence 过滤不精确；valid ID 可替代 PASS；旧轮/无关 evidence 会污染 | 按当前 ReviewPlan exact set、Result kind/producer/conclusion/fingerprint 求值 |
-| TR-008 auto path | quality-gate evidence 不携带 finding Params，可能切状态却不创建实体；首个 finding 也无法表达 required-Claim drain | result submit 原子持久化 Finding，batch seal 后携 exact IDs handoff |
-| TR-010/011 pause | 预判 pause evidence 与生成 checkpoint 双载体 | verdict 提交内创建一个权威 checkpoint |
-| `settings.json` | 没有 PostToolUse(SendMessage)；reviewer write scope 不 hard deny | 增加计划回执捕获、首写屏障和 reviewer scope enforcement |
-| PreToolUse Quality Gate | `not_ready/unknown` 默认 allow，只有少量安全规则 deny | 保留顾问式 gate，但 plan/stale/role scope 等确定性越权必须真实阻断 |
-| `agent-protocol.md` S7 | 仍描述三段 team + two-phase activation +人工 clean-round Skill | 缩成入口、Lens、出口和本文/L4 索引 |
+| ReviewPlan / phase projection | 已使用 `planned/running/cannot_clean/discovery_draining/observation_sealed/clean`，close-round 是 submit 内部事务 | `closing` 仅可作为内部日志语义，不能重新加入持久化状态 |
+| Plan/Assignment | schema、binding 和 validator 已消费 `claim_ids[]/focus_keys[]/non_overlap_boundary`，并校验 exact Claim set、lens、wave、overlap 与 cold-start overload；`regression_available` 的 `e2e_assets` 会在注册/修订时校验 path、CASE 和 SHA-256；changed surface 必须同时进入 `coverage_inventory`、Claim `source_refs` 和 `frozen_subjects`；TR-012 已把当前 `change_impact.changed_artifacts` 逐项绑定到 round-2 的 `frozen_subjects`、`coverage_inventory` 和 Claim source_refs | 命令面仍沿用兼容入口；真实 Claude Code 2.1.218 平台 doctor 仍需目标环境实测 |
+| Reviewer dispatch | `coverage_complete` 保留全部 required Assignment；资源冲突进入 queued，锁释放后同一 CAS 将 queued Agent 唤醒为 `reading`；NotebookEdit 与其他写工具共用路径边界 | 平台真实 Claude Code 2.1.218 doctor 仍需在目标环境实测 |
+| DraftPlan / QA coverage | DraftPlan 生成六个 QA baseline focus，并拆成可独立派发的 Assignment；从当前模块 `cases.json` 读取 required browser CASE，按 CASE 拆分 E2E Assignment；literal `TODO(planner)` 在注册 gate 拒绝；DraftPlan 同时投影 changed-surface `coverage_inventory` | 没有可读 CASE inventory 时仍保留显式 TODO，必须先补 S2 场景包；不能用通用 Claim 假装已完成 |
+| E2E workspace | workspace 仅允许 `cold_start`；`regression_available` 不得创建写面，也必须有 required E2E Claim；声明的 E2E asset 在注册/修订时校验 path containment、可读性和 SHA-256；E2E Result 与 result artifact 均保留 `verification_artifact_digest`；Planner 从 CASE→Playwright spec 文本映射生成最小 `e2e_assets`，任一 required CASE 缺映射即回退 `cold_start` | 产品侧浏览器/console/network wrapper、selector 与 environment 的更细粒度 fingerprint 仍由产品接入；当前自动投影不猜测这些字段 |
+| Finding / evidence | Result submit 原子写入 immutable Finding/ObservationBatch；required evidence 采用 typed refs，`path:`/indexed evidence 会校验存在性与指纹；capture buffer 使用严格 JSONL 和多 Finding 的 `finding_id`/`claim_id` 关联，普通 Finding 继续要求 failure boundary | 浏览器/runner 的产品侧 console/network 注入 wrapper 仍由产品接入 |
+| S7→S8 handoff | ObservationBatch 保留 exact Finding set、coverage、routes、readiness；`drained_assignment_ids[]` 包含触发 seal 的当前 Assignment，避免 S8 丢失最后一份 Result | S8 InvestigationCase/RepairContract 仍按 L3-S8 的迁移计划实施 |
+| 工具必经路径 | plan_checkpoint 连续执行、idle/stop 控制、reviewer product-write hard deny、结构化 gate diagnostics、结果消费和机器 CleanRound 已由 Hook/submit/consumer 接管；`s7 status` 直接显示 round budget、blocked ref 和恢复动词 | 命令面拆分（review-plan register/revise、dispatch-assignment）和真实平台 doctor 仍是低复杂度后续项 |
 
-### 13.2 P0：先修正确性与原子闭环
+### 13.2 历史迁移批次（已落地项的原始记录）
+
+下列 13.2～13.5 保留为设计演进记录，不是当前待办；实际剩余项以 13.1 和 13.A 为准。
+
+**2026-08-25 审计（复杂度审查第七轮：阅读预算、概念密度与 revise 边界）**：
+
+- 冷读量化：首次完整阅读约 1,200 行；后续单轮最低约 769 行，最大约 3,200 行；高混淆概念集中在 subject_digest、verification_artifact_digest、dispatch_capacity_policy、exact-set、encounter、drain_policy、blocked_by_confirmed_finding、non_overlap_boundary、site_lost、exact-set coverage gate。
+- 复杂度结论：这些成本主要来自 progressive disclosure 的事实核对，不新增控制面；因此不以删减覆盖换取阅读量下降。
+- revise 边界实驱发现：pending commit marker 存在时，r2 artifact 不能按“revision 未变”删除；安全清理必须在 Runtime lock 内检查 pending operation、当前 revision、状态引用和 artifact SHA。
+- TR-012 边界实驱发现：文档要求 round-2 冻结修复后提交，但 schema 不能做磁盘语义校验；现由 round entry 记录 `change_impact` 引用，RegisterPlan 绑定 `changed_artifacts` 到 `frozen_subjects`、`coverage_inventory` 和 Claim source_refs。
+- 验证：`go test ./...`、`validate --all`、`doctor` 通过；新增 pending artifact、TR-012 baseline 缺失/完整注册矩阵测试。
 
 1. 定义 ReviewPlan/Claim/ReviewResult/Finding/FindingSupplement/ObservationBatch/CleanRound schema；ReviewPlan 只持有单一 required Claim set，静态/E2E/discovery 是计算视图；verification-artifact workspace 仅为 E2E cold start 可选能力，Finding 内含按 observation mode 判别的 encounter，不新增顶层 Failure Episode 状态机；
 2. 实现 `verification result init/submit`；
@@ -1269,7 +1271,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 6. Reviewer 产品写路径 hard deny；
 7. 使用共享控制面和 CAS，覆盖 worktree 并发。
 
-### 13.3 P1：删除重复机制
+### 13.3 历史 P1：删除重复机制
 
 1. S7 停用 two-phase activation，接入 L4 plan_checkpoint；
 2. 停止要求人工 phase aggregate envelope；
@@ -1278,7 +1280,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 5. 合并 pause 双载体；
 6. QA/E2E/Delivery 模板改为 ReviewResult scaffold 或自动人读视图。
 
-### 13.4 P2：优化流动与派发
+### 13.4 历史 P2：优化流动与派发
 
 1. 实现 Claim 生成与 coverage 求差；
 2. 支持 Assignment `claim_ids[]/focus_keys[]/non_overlap_boundary` 与 grouping rationale；
@@ -1290,7 +1292,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 8. 实现浏览器/测试/CLI/trace wrapper 的 timeline 和 failure-window 自动采集；
 9. ordinary finding 后先 evidence freeze，再完成剩余 required Claims；只有 critical finding immediate-stop。
 
-### 13.5 P3：协议瘦身与观测
+### 13.5 历史 P3：协议瘦身与观测
 
 1. `agent-protocol.md` 只保留入口索引；
 2. Agent Definitions 只保留稳定角色边界；
@@ -1493,6 +1495,7 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 
 | 日期 | 版本 | 变更 | 原因 |
 |:--|:--|:--|:--|
+| 2026-08-24 | v0.8.0 | 将实现终审收敛为可执行边界：NotebookEdit 统一路径 hard deny、DraftPlan 六个 QA focus 独立 Assignment、TODO/显式本地 evidence ref/三态 E2E workspace gate、Result artifact digest、当前 Assignment 纳入 drained handoff、resource-lock 释放唤醒 queued Agent；清理持久化 `closing` 与 S8 固定 WIP=2 叙事 | 让工具必经路径真正承载 S7→S8 闭环，避免文档声称有覆盖而实现遗漏、最后一份 Result 丢失或 Agent 排队后永不恢复 |
 | 2026-08-20 | v0.7.0 | 将三类 Frontier 收敛为单一 required Claim set 与计算视图；将 coverage fixed point 改为最多一次、来源明确的 ReviewPlan revision；将 `blocked_by_confirmed_finding` 降为工具派生投影；verification-artifact workspace 限定为 E2E cold start 可选能力；ordinary finding 后继续剩余 required Claims | 终审发现多套 frontier、开放式 fixed point 和独立 blocked 状态会形成重复控制面；保留完整发现能力，但把范围扩张和状态数量限制在可验证闭环内 |
 | 2026-08-20 | v0.5.0 | 将 DV/QA 明确为可按 focus 派出 1..N Reviewers 的 Static Quality Frontier；新增 focus coverage matrix、non-overlap boundary、QA design/boundary、pattern/idiom fit、logic/state/error、maintainability/test/debt 基线；ordinary static finding 后完成 preplanned frontier 再去 S8，behavior E2E 必须等待 frontier | 把黑盒 Builder 代码的设计债、边界混乱和维护风险尽量在白盒阶段一次发现，避免等 E2E 撞墙或后续 Agent 改错；同时以 focus 聚类、WIP 和 overlap validator 防止多 Agent 变成重复 checklist 与模式崇拜 |
 | 2026-08-20 | v0.4.0 | 在 Finding 内新增 discriminated encounter、短 journey、last-good/wall/first-bad、状态差异、side effects、capture gaps 和 investigation readiness；增加撞墙时 evidence freeze、step-to-evidence binding、自动采集/脱敏和高危安全例外；明确 S8 不默认重新复现症状 | 保全最易丢失的操作现场，让 S8 可直接开展因果调查；采用内嵌事实 + typed raw evidence，避免新增独立报告和状态机造成复杂度失控 |
@@ -1501,36 +1504,40 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 
 ---
 
-## 13.A · 待做缺口总表（持续维护）
+## 13.A · 待做缺口与本轮闭环记录（持续维护）
 
 > 本节是把上面若干轮审计里反复出现的"仍未做"项集中到一处，便于下一个 agent 或人工拣选。每项标注：类别（机制/CLI/UX/环境/产品侧）+ 来源 + 落地时建议的第一步。
 
-### 机制层
+### 机制层（仍待做）
 
 1. **命令面拆分**（CLI，§14.1 长期信号）
    - `runtime review-plan` 单一动词承担 register / revise 两种语义；改为 `runtime review-plan register` 与 `runtime review-plan revise`。
    - `runtime register-workgroup` 泄漏 S6 词汇（`--task` / `--task-id`）；S7 路径建议另起 `runtime dispatch-assignment --assignment-id --manifest`。
    - 来源：批次 1 恢复+复杂度评审、批次 2 命令面复评。
 
-2. **`regression_available` 指纹复用校验**（机制）
-   - 当前 `e2e_coverage_state` 三态可计算，但 cold-start 与 regression 的**有效性判定**（已存在 spec/fixture 是否还能复用）未实现。
-   - 来源：L3-S7 §4.3、批次 2。
+### 本轮已完成、从待办移除
+
+2. **Revise pending-commit artifact 安全清理**（机制，P1，已完成）
+   - `runtime review-plan revise` 先落盘 r2 artifact，再进入 Runtime CAS。若 `.commit-pending.json` 已写出但 state/journal 尚未完成，旧清理逻辑只看 revision 和 artifact SHA，可能删除将被 Runtime recovery 引用的 r2 文件。
+   - 修复方向：Runtime lock 内检查所有 pending marker、revision、状态引用和 artifact SHA；存在 pending operation 时保留 artifact，交给 recovery 继续接管。
+   - 验收：pending marker 故障窗口不删除 r2；稳定且未引用的 staged artifact 可清理；CAS 已提交或其他 writer 获胜时不误删。
+   - 来源：第七轮 revise 边界实驱；代码位置 `internal/review/revise.go` / `internal/runtime/store.go`；已由 pending marker、稳定清理和 revise 保留测试覆盖。
+
+3. **TR-012 修复基线机器绑定**（机制，P1，已完成）
+   - 当前 `review-plan.schema.json` 只能检查结构；必须由 TR-012 写入 `review.round_entry.change_impact_ref`，再由 RegisterPlan 校验 canonical `change_impact.changed_artifacts` 的路径/SHA 是否进入 `frozen_subjects`、`coverage_inventory` 和 Claim source_refs。
+   - 来源：第七轮冷读与 round-2 注册边界审查；已由 round-entry、RegisterPlan 校验和合法/缺失注册矩阵覆盖。
 
 ### CLI/UX 层
 
-4. **第三方测试 fixture 同步**（CLI）
-   - `internal/qualitygate/evaluator_test.go` 与 fixtures 仍引用已被 catalog 删除的 `delivery_review_record` / `qa_review_record` / `e2e_review_record` 自名别名。
-   - 来源：catalog 别名审计。
-
 ### 环境/平台层
 
-5. **真实 Claude Code 2.1.218 平台 doctor**（环境）
+4. **真实 Claude Code 2.1.218 平台 doctor**（环境）
    - 全程基于文档记载的 payload 形状与官方 `exit 2`/stderr 反馈语义。环境无 Claude Code 运行时，无法实测。
    - 来源：L4 §15.2 P0-3/4、S7 批次 1 闭环条件。
 
 ### 产品侧（依赖产品代码注入）
 
-6. **产品侧浏览器/Playwright wrapper 的注入式采集**（产品侧）
+5. **产品侧浏览器/Playwright wrapper 的注入式采集**（产品侧）
    - harness 已提供 capture buffer + 脱敏 gate + 并入 binding（capture exec + capture step），产品侧 wrapper 需自行实现把 console/network/timeline 注入 buffer 的桥。
    - 手册 `loop-harness.md §capture` 的 `### Product-side wrappers` 段已写契约。
    - 来源：批次 2 §6.3/§8、批次 1 capture tester。

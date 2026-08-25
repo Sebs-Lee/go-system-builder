@@ -20,12 +20,67 @@ package review
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
+
+func TestDraftPlanForRootProjectsCanonicalCompletionEnvelope(t *testing.T) {
+	root := t.TempDir()
+	state := baseDraftState(t)
+	state["documents"] = []any{taskFixture("TASK-1", "internal/example/service.go")}
+	changedPath := filepath.Join(root, "internal", "api", "handler.go")
+	if err := os.MkdirAll(filepath.Dir(changedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(changedPath, []byte("package api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	completionRel := filepath.ToSlash(filepath.Join(".claude", "evidence", "completion.json"))
+	completion := []byte(`{"kind":"completion_report","changed_paths":["internal/api/handler.go"],"reviewed_paths":[]}` + "\n")
+	completionPath := filepath.Join(root, filepath.FromSlash(completionRel))
+	if err := os.MkdirAll(filepath.Dir(completionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(completionPath, completion, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state["evidence"] = []any{map[string]any{
+		"id": "completion-1", "kind": "completion_report", "path": completionRel,
+		"sha256": sha256Of(completion), "status": "valid", "baseline_generation": 1,
+		"scope_refs": []any{},
+	}}
+
+	plan, notes := DraftPlanForRoot(root, state, 1)
+	if plan == nil {
+		t.Fatal("DraftPlanForRoot returned nil plan")
+	}
+	for _, note := range notes {
+		if strings.Contains(note, "baseline projection") {
+			t.Fatalf("unexpected baseline projection note: %v", notes)
+		}
+	}
+	if len(plan.CoverageInventory) != 1 || plan.CoverageInventory[0].SourceRef != "internal/api/handler.go" {
+		t.Fatalf("coverage_inventory = %+v, want canonical changed path", plan.CoverageInventory)
+	}
+	foundFrozen := false
+	for _, subject := range plan.FrozenSubjects {
+		if subject.Path == "internal/api/handler.go" {
+			foundFrozen = true
+			break
+		}
+	}
+	if !foundFrozen {
+		t.Fatalf("frozen_subjects = %+v, want canonical changed path", plan.FrozenSubjects)
+	}
+	if plan.ChangeImpact == nil || len(plan.ChangeImpact.SourceRefs) != 1 || plan.ChangeImpact.SourceRefs[0] != "internal/api/handler.go" {
+		t.Fatalf("change_impact = %+v, want canonical changed path", plan.ChangeImpact)
+	}
+}
 
 // baseDraftState returns a schema-valid runtime payload ready for
 // DraftPlan to consume. The caller patches documents/evidence per
@@ -113,6 +168,55 @@ func TestDraftPlanQAClaimsUseRealChangedSurface(t *testing.T) {
 			t.Errorf("planner note falsely flags a real surface as a TODO marker: %q", note)
 		}
 	}
+}
+
+func TestDraftPlanSplitsQABaselineIntoIndependentAssignments(t *testing.T) {
+	state := baseDraftState(t)
+	state["documents"] = []any{taskFixture("TASK-1", "internal/example/service.go")}
+	plan, _ := DraftPlan(state, 1)
+	want := map[string]bool{
+		"design-boundary":    false,
+		"pattern-idiom-fit":  false,
+		"logic-state-error":  false,
+		"maintainability":    false,
+		"testability-oracle": false,
+		"debt-operability":   false,
+	}
+	assignments := 0
+	for _, assignment := range plan.Assignments {
+		if assignment.Lens != "qa" {
+			continue
+		}
+		assignments++
+		if len(assignment.ClaimIDs) != 1 || len(assignment.FocusKeys) != 1 {
+			t.Fatalf("QA assignment must own exactly one focus Claim, got %+v", assignment)
+		}
+		claim := planClaimByID(plan, assignment.ClaimIDs[0])
+		if claim == nil {
+			t.Fatalf("QA assignment must reference an existing Claim, assignment=%+v", assignment)
+		}
+		if _, ok := want[claim.FocusKey]; !ok || assignment.FocusKeys[0] != claim.FocusKey {
+			t.Fatalf("QA assignment focus must match one baseline Claim, assignment=%+v claim=%+v", assignment, claim)
+		}
+		want[claim.FocusKey] = true
+	}
+	if assignments != len(want) {
+		t.Fatalf("DraftPlan must produce one independently dispatchable QA assignment per baseline focus, got %d", assignments)
+	}
+	for focus, seen := range want {
+		if !seen {
+			t.Errorf("missing QA baseline focus %q", focus)
+		}
+	}
+}
+
+func planClaimByID(plan *Plan, id string) *Claim {
+	for i := range plan.Claims {
+		if plan.Claims[i].ClaimID == id {
+			return &plan.Claims[i]
+		}
+	}
+	return nil
 }
 
 // TestDraftPlanQAClaimsFallbackToFrozenSubjects proves the

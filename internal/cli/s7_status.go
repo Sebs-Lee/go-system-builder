@@ -87,11 +87,39 @@ func runS7Status(root string, stdout io.Writer) int {
 
 	reviewMap, _ := state["review"].(map[string]any)
 	round := 0
+	roundBudgeted := false
+	maxRounds := 0
 	if value, ok := reviewMap["round"].(float64); ok {
 		round = int(value)
 	}
+	// Surface the round budget so the Main agent can confirm "round N of M"
+	// without grepping state. Once the current round reaches the limit, the
+	// board names the human gateway; the active round is still allowed to drain.
+	if cfg, ok := state["configuration"].(map[string]any); ok {
+		if repair, ok := cfg["repair"].(map[string]any); ok {
+			if max := integerValue(repair["max_full_review_rounds"]); max > 0 {
+				fmt.Fprintf(stdout, "S7 review board (round %d of %d)\n", round, max)
+				maxRounds = max
+				roundBudgeted = true
+			}
+		}
+	}
+	if !roundBudgeted {
+		fmt.Fprintf(stdout, "S7 review board (round %d)\n", round)
+	}
+	if maxRounds > 0 && round >= maxRounds {
+		fmt.Fprintln(stdout, "budget: exhausted for opening another full S7 round")
+		fmt.Fprintln(stdout, "human decision required: increase_budget or return_to_governance")
+		fmt.Fprintln(stdout, "next: `loop-harness runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`")
+	}
+	if cfg, ok := state["configuration"].(map[string]any); ok {
+		if repair, ok := cfg["repair"].(map[string]any); ok {
+			if decision, ok := repair["last_budget_decision"].(map[string]any); ok && decision != nil {
+				fmt.Fprintf(stdout, "last_budget_decision: %s evidence=%s\n", decision["decision"], decision["evidence_id"])
+			}
+		}
+	}
 	ptr := review.PlanPointerFromState(state)
-	fmt.Fprintf(stdout, "S7 review board (round %d)\n", round)
 	if ptr == nil {
 		fmt.Fprintln(stdout, "(no ReviewPlan registered — create one and run `runtime review-plan --file <plan.json>`)")
 		return 0
@@ -156,7 +184,17 @@ func runS7Status(root string, stdout io.Writer) int {
 		if agent == "" {
 			agent = "(not dispatched — run `runtime register-workgroup`)"
 		}
-		fmt.Fprintf(stdout, "  %s [%s] status=%s agent=%s\n", id, row["lens"], row["status"], agent)
+		status := row["status"]
+		// A blocked assignment carries a blocker_ref + blocked_at; surface
+		// both so the reviewer does not have to dig through state JSON
+		// (the recovery verb is `runtime agent-event blocker_resolved`).
+		line := fmt.Sprintf("  %s [%s] status=%s agent=%s", id, row["lens"], status, agent)
+		if status == "blocked" {
+			if ref, _ := row["blocker_ref"].(string); ref != "" {
+				line += fmt.Sprintf("\n    blocker_ref=%s (record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>` after the capture conditions are fixed, then resubmit)", ref)
+			}
+		}
+		fmt.Fprintln(stdout, line)
 	}
 
 	// Current-round findings.
@@ -254,7 +292,7 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 			stage, round)
 		return 1
 	}
-	plan, notes := review.DraftPlan(snapshot.State, round)
+	plan, notes := review.DraftPlanForRoot(root, snapshot.State, round)
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stdout, "encode draft: %v\n", err)

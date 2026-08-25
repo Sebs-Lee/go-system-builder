@@ -61,7 +61,7 @@ func TestS2DualTrackConvergenceE2E(t *testing.T) {
 		t.Fatalf("bind with unknown impact must succeed (blocking happens at PTR-PLAN-01)")
 	}
 	if _, stderr, code := run("runtime", "transition", "--root", scratch,
-		"--id", "PTR-PLAN-01", "--expected-revision", "1", "--actor", "orchestrator"); code == 0 || !strings.Contains(stderr, "ui_impact_resolved") {
+		"--id", "PTR-PLAN-01", "--expected-revision", "0", "--actor", "orchestrator"); code == 0 || !strings.Contains(stderr, "ui_impact_resolved") {
 		t.Fatalf("unknown ui_impact must block PTR-PLAN-01 (wired guard), got code=%d stderr=%s", code, stderr)
 	}
 
@@ -104,12 +104,12 @@ func TestS2DualTrackConvergenceE2E(t *testing.T) {
 			"id": "rule-submit", "source_refs": []any{"REQ-300/FR-001"}, "risk": "ordinary",
 			"branches": []any{
 				map[string]any{"id": "b-allow", "case_id": "CASE-WB-001", "title": "institutional submits", "polarity": "positive", "required": true,
-					"witness": map[string]any{"fact-submitter": "institutional"},
-					"oracle":  map[string]any{"visible": []any{"filing-form"}, "terminal_state": "submitted", "persisted_effects": []any{"filing"}, "forbidden_side_effects": []any{"dup"}},
+					"witness":    map[string]any{"fact-submitter": "institutional"},
+					"oracle":     map[string]any{"visible": []any{"filing-form"}, "terminal_state": "submitted", "persisted_effects": []any{"filing"}, "forbidden_side_effects": []any{"dup"}},
 					"fixture_id": "fix-sub", "story_refs": []any{"S-001"}, "flow_refs": []any{"F-001", "PATH-SUBMIT"}, "browser_required": true},
 				map[string]any{"id": "b-reject", "case_id": "CASE-WB-002", "title": "individual rejected", "polarity": "negative", "required": true,
-					"witness": map[string]any{"fact-submitter": "individual"},
-					"oracle":  map[string]any{"visible": []any{"validation-error"}, "terminal_state": "draft", "persisted_effects": []any{"draft"}, "rejection": "institutional-only", "expected_state": "draft", "forbidden_side_effects": []any{"filing"}, "recovery": "switch"},
+					"witness":    map[string]any{"fact-submitter": "individual"},
+					"oracle":     map[string]any{"visible": []any{"validation-error"}, "terminal_state": "draft", "persisted_effects": []any{"draft"}, "rejection": "institutional-only", "expected_state": "draft", "forbidden_side_effects": []any{"filing"}, "recovery": "switch"},
 					"fixture_id": "fix-sub", "story_refs": []any{"S-001"}, "flow_refs": []any{"F-001", "PATH-SUBMIT"}, "browser_required": true},
 			},
 		}},
@@ -131,8 +131,7 @@ func TestS2DualTrackConvergenceE2E(t *testing.T) {
 	})
 	// fixtures (after branches settle)
 	writeJSONFile("fixture-contract.json", map[string]any{
-		"module": "workbench", "fixtures": []any{map[string]any{"id": "fix-sub", "persona": "operator", "synthetic": true, "setup": []any{"seed"}, "cleanup": []any{"purge"}},
-		}})
+		"module": "workbench", "fixtures": []any{map[string]any{"id": "fix-sub", "persona": "operator", "synthetic": true, "setup": []any{"seed"}, "cleanup": []any{"purge"}}}})
 	// convergence-2: flows (PATH binding) + prototype pages (4-field header)
 	writeFile("flows.md", "# Flows\n\n## F-001\n\n### PATH-SUBMIT\n\nREQ-300\n")
 	writeFile("index.html", "<!-- proto-meta: 设计代数 v1 更新 路由 /workbench -->\n<html><body>index</body></html>\n")

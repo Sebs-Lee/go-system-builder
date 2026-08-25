@@ -49,12 +49,49 @@
         }
       }
     },
+    "coverage_inventory": {
+      "type": "array",
+      "description": "Frozen S6 changed-surface denominator. Every current-generation completion scope must appear here and in at least one Claim source_refs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "source_ref", "target", "lens"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "kind": {"type": "string", "minLength": 1},
+          "source_ref": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1},
+          "lens": {"enum": ["delivery", "qa", "e2e"]}
+        }
+      }
+    },
+    "e2e_assets": {
+      "type": "array",
+      "description": "Existing CASE/PATH assets and fingerprints required when e2e_coverage_state=regression_available.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "case_ref", "path", "sha256"],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "case_ref": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "selector_ref": {"type": "string"},
+          "environment": {"type": "string"}
+        }
+      }
+    },
     "change_impact": {
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {
         "summary": {"type": "string"},
-        "source_refs": {"type": "array", "items": {"type": "string"}}
+        "source_refs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Evidence or surface references consumed by the Planner. On TR-012 re-entry this must include the current change_impact evidence reference; runtime validation then binds its changed_artifacts to frozen_subjects. The schema validates shape only."
+        }
       }
     },
     "claims": {

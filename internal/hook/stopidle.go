@@ -76,6 +76,12 @@ func StopIdleDecision(root string, input policy.Input) (policy.Decision, bool) {
 		return policy.Decision{}, false
 	}
 	agent := loaded.PolicyContext.Agent
+	if agent.State == "queued" {
+		// A resource-lock-queued Agent has not been dispatched. It must not
+		// be forced through PLAN_REPORT/Result gates before the queue consumer
+		// wakes it into reading in the same CAS that releases the lock.
+		return policy.Decision{}, false
+	}
 	switch agent.State {
 	case "reported", "done", "completed", "closed":
 		return policy.Decision{}, false

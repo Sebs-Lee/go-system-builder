@@ -14,6 +14,8 @@ type Plan struct {
 	ReviewRound                   int              `json:"review_round"`
 	BaselineGeneration            int              `json:"baseline_generation"`
 	FrozenSubjects                []FrozenSubject  `json:"frozen_subjects"`
+	CoverageInventory             []CoverageItem   `json:"coverage_inventory,omitempty"`
+	E2EAssets                     []E2EAsset       `json:"e2e_assets,omitempty"`
 	ChangeImpact                  *ChangeImpact    `json:"change_impact"`
 	Claims                        []Claim          `json:"claims"`
 	Assignments                   []PlanAssignment `json:"assignments"`
@@ -25,6 +27,17 @@ type Plan struct {
 	CreatedAt                     string           `json:"created_at"`
 }
 
+// E2EAsset is one existing CASE/PATH asset that a regression_available round
+// claims it can reuse. The file digest is checked at registration and submit.
+type E2EAsset struct {
+	AssetID     string `json:"asset_id"`
+	CaseRef     string `json:"case_ref"`
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+	SelectorRef string `json:"selector_ref,omitempty"`
+	Environment string `json:"environment,omitempty"`
+}
+
 // FrozenSubject is one fingerprinted product/config/test/spec surface the
 // round binds.
 type FrozenSubject struct {
@@ -33,7 +46,9 @@ type FrozenSubject struct {
 	Kind   string `json:"kind,omitempty"`
 }
 
-// ChangeImpact carries the S6 change surface summary the Planner consumed.
+// ChangeImpact carries the change-surface summary the Planner consumed. On a
+// TR-012 re-entry, SourceRefs must include the current change_impact evidence
+// id; RegisterPlan binds that artifact's changed_artifacts to frozen subjects.
 type ChangeImpact struct {
 	Summary    string   `json:"summary,omitempty"`
 	SourceRefs []string `json:"source_refs,omitempty"`

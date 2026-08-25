@@ -112,9 +112,132 @@ func TestRequiredEvidenceMustBePresentOnClaimResult(t *testing.T) {
 	if err := validateClaimEvidenceRequirements(plan, assignment, result); err == nil || !strings.Contains(err.Error(), "required evidence") {
 		t.Fatalf("missing required evidence must be rejected, got %v", err)
 	}
-	result.ClaimResults[0].EvidenceRefs = []string{"ev/trace.md"}
+	result.ClaimResults[0].EvidenceRefs = []string{"trace:ev/trace.md"}
 	if err := validateClaimEvidenceRequirements(plan, assignment, result); err != nil {
 		t.Fatalf("claim result with evidence must be accepted: %v", err)
+	}
+}
+
+func TestRequiredEvidenceMustMatchTypedReference(t *testing.T) {
+	plan := &Plan{Claims: []Claim{{ClaimID: "claim-e2e-1", RequiredEvidence: []string{"console", "network"}}}}
+	assignment := &PlanAssignment{AssignmentID: "assignment-e2e-1", ClaimIDs: []string{"claim-e2e-1"}}
+	result := &Result{ClaimResults: []ClaimResult{{
+		ClaimID: "claim-e2e-1", Conclusion: "pass",
+		EvidenceRefs: []string{"path:browser-run.md", "network:net-1"},
+	}}}
+	if err := validateClaimEvidenceRequirements(plan, assignment, result); err == nil || !strings.Contains(err.Error(), "console:<id>") {
+		t.Fatalf("path evidence must not satisfy a console requirement, got %v", err)
+	}
+
+	result.ClaimResults[0].EvidenceRefs = []string{"console:console-1", "network:net-1"}
+	if err := validateClaimEvidenceRequirements(plan, assignment, result); err != nil {
+		t.Fatalf("matching typed evidence must be accepted: %v", err)
+	}
+}
+
+func TestRuntimeEvidenceReferenceMustResolveToIndexedArtifact(t *testing.T) {
+	root := t.TempDir()
+	artifact := filepath.Join(root, "runtime-evidence.md")
+	content := []byte("registered evidence")
+	if err := os.WriteFile(artifact, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{"evidence": []any{map[string]any{
+		"id": "ev-console-1", "path": "runtime-evidence.md", "sha256": sha256Of(content),
+	}}}
+	if err := validateEvidenceRefs(root, state, []string{"runtime:ev-console-1"}, "claim claim-e2e-1"); err != nil {
+		t.Fatalf("registered runtime evidence must be accepted: %v", err)
+	}
+	if err := validateEvidenceRefs(root, state, []string{"runtime:missing"}, "claim claim-e2e-1"); err == nil || !strings.Contains(err.Error(), "runtime evidence") {
+		t.Fatalf("unknown runtime evidence must be rejected with a recovery diagnostic, got %v", err)
+	}
+}
+
+func TestPathEvidenceReferenceWithDigestRejectsDrift(t *testing.T) {
+	root := t.TempDir()
+	rel := "evidence/local-trace.json"
+	path := filepath.Join(root, rel)
+	content := []byte(`{"event":"save","result":"failed"}`)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ref := "path:" + rel + "#sha256=" + sha256Of(content)
+	if err := validateEvidenceRefs(root, map[string]any{}, []string{ref}, "claim claim-qa-1"); err != nil {
+		t.Fatalf("matching path digest must pass: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"event":"tampered"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateEvidenceRefs(root, map[string]any{}, []string{ref}, "claim claim-qa-1"); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("drifted path evidence must fail with a digest diagnostic, got %v", err)
+	}
+}
+
+func TestSubmitResultRejectsMissingExplicitEvidencePath(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	planPath := writePlanFile(t, root)
+	planData, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planBody map[string]any
+	if err := json.Unmarshal(planData, &planBody); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range planBody["claims"].([]any) {
+		claim := raw.(map[string]any)
+		if claim["claim_id"] == "claim-qa-1" {
+			claim["required_evidence"] = []any{"trace"}
+		}
+	}
+	planData, err = json.MarshalIndent(planBody, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(planData, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := RegisterPlan(root, statePath, journalPath, PlanRequest{ExpectedRevision: 1, PlanPath: planPath})
+	if err != nil {
+		t.Fatalf("RegisterPlan: %v", err)
+	}
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
+	plan, _, err := LoadPlan(root, snap.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-missing-evidence", "agent-qa-1", "pass",
+		map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	resultData, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resultBody map[string]any
+	if err := json.Unmarshal(resultData, &resultBody); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range resultBody["claim_results"].([]any) {
+		claimResult := raw.(map[string]any)
+		if claimResult["claim_id"] == "claim-qa-1" {
+			claimResult["evidence_refs"] = []any{"path:.claude/evidence/missing-trace.md"}
+		}
+	}
+	resultData, err = json.MarshalIndent(resultBody, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultPath, append(resultData, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-1", ResultPath: resultPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "evidence reference") {
+		t.Fatalf("missing explicit evidence path must be rejected, got %v", err)
 	}
 }
 
@@ -576,6 +699,28 @@ func TestSubmitResultKeepsTwoFindingsForTheSameSymptom(t *testing.T) {
 	if !seen["finding-qa-1"] || !seen["finding-dv-1"] {
 		t.Fatalf("exact set wrong: %v", ids)
 	}
+	batchPtr := batch
+	batchBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(batchPtr["path"].(string))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batchArtifact map[string]any
+	if err := json.Unmarshal(batchBytes, &batchArtifact); err != nil {
+		t.Fatal(err)
+	}
+	drained := batchArtifact["drained_assignment_ids"].([]any)
+	if !containsAnyString(drained, "assignment-qa-1") || !containsAnyString(drained, "assignment-dv-1") {
+		t.Fatalf("sealed batch must include the assignment whose Result triggered sealing, got %v", drained)
+	}
+}
+
+func containsAnyString(values []any, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // §14.1 状态机: 普通 finding 标 cannot_clean 后继续 drain；第二个普通

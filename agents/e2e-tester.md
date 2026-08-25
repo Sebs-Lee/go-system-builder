@@ -82,3 +82,13 @@ For every negative CASE, the report must separately account for `visible`, `term
 `visible_impact`); recovery N/A requires source refs and a non-empty reason.
 ## Stop Conditions
 Stop on stale input (flows.md fingerprint drift), missing module prototype set, frontend not reachable, auth failure, missing `data-test` hooks blocking selector strategy, scope expansion beyond the assigned module, or blocked Hook. When a flow exposes a prototype gap (steps don't match real UI), stop and surface as `DV-SPEC-CONSISTENCY` finding rather than working around it in the spec.
+
+## Recovery: site-lost BLOCKER
+
+If a submit returns `not investigation-ready` and you cannot reconstruct the
+encounter (the runtime/scene is gone, capture buffer empty, logs unreachable),
+declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
+`{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
+`blocked`. Recovery: fix the capture conditions, send
+`runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`,
+then the same finder resubmits. Reproduction debt is never handed to S8.

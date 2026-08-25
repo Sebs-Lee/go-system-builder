@@ -101,6 +101,7 @@ func buildNextProjection(state map[string]any, stage, skill, action, root string
 		projection.Missing = changeOpenItems(record)
 		projection.DoneWhen = []string{"all Change Record work items are done", "all required checks are passed or evidence-backed N/A"}
 	}
+	applyS7BudgetGateway(&projection, state)
 	return projection
 }
 
@@ -379,6 +380,15 @@ func stringValue(value any) string {
 }
 
 func projectedGateway(state map[string]any, stage string) any {
+	if s7BudgetGateRequired(state) {
+		return map[string]any{
+			"type":             "s7_budget_gateway",
+			"human_required":   true,
+			"decision_command": "loop-harness runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>",
+			"decisions":        []string{"increase_budget", "return_to_governance"},
+			"guidance":         "the current S7 round may finish, but no new full review round opens until the human decision is recorded",
+		}
+	}
 	switch lifecycleState(state) {
 	case "awaiting_human_release":
 		return map[string]any{

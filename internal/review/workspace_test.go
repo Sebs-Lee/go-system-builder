@@ -177,3 +177,63 @@ func TestCaptureBufferRoundTripAndMerge(t *testing.T) {
 		t.Fatal("a reviewer-written timeline must never be rewritten")
 	}
 }
+
+func TestLoadCaptureStepsStrictRejectsMalformedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "steps.jsonl")
+	if err := os.WriteFile(path, []byte(`{"sequence":1,"action":"open","observed":"ok"}
+not-json
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCaptureStepsStrict(path); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("malformed capture line must be reported with its line number, got %v", err)
+	}
+}
+
+func TestMergeCapturedTimelineCheckedRejectsAmbiguousAssignmentBuffer(t *testing.T) {
+	findings := []Finding{
+		{FindingID: "finding-1", ClaimID: "claim-1", Encounter: Encounter{}},
+		{FindingID: "finding-2", ClaimID: "claim-2", Encounter: Encounter{}},
+	}
+	steps := []CaptureStep{{Sequence: 1, Action: "submit", Observed: "save failed"}}
+	if err := mergeCapturedTimelineChecked(findings, steps); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("one uncorrelated buffer cannot be copied to multiple findings, got %v", err)
+	}
+}
+
+func TestMergeCapturedTimelineCheckedUsesFindingCorrelation(t *testing.T) {
+	findings := []Finding{
+		{FindingID: "finding-1", ClaimID: "claim-1", Encounter: Encounter{}},
+		{FindingID: "finding-2", ClaimID: "claim-2", Encounter: Encounter{}},
+	}
+	steps := []CaptureStep{
+		{Sequence: 1, FindingID: "finding-1", Action: "submit", Observed: "first wall"},
+		{Sequence: 2, FindingID: "finding-2", Action: "submit", Observed: "second wall"},
+	}
+	if err := mergeCapturedTimelineChecked(findings, steps); err != nil {
+		t.Fatalf("correlated capture steps must merge: %v", err)
+	}
+	if got := findings[0].Encounter.Timeline[0].ObservedCheckpoint; got != "first wall" {
+		t.Fatalf("finding-1 timeline = %q", got)
+	}
+	if got := findings[1].Encounter.Timeline[0].ObservedCheckpoint; got != "second wall" {
+		t.Fatalf("finding-2 timeline = %q", got)
+	}
+}
+
+func TestMergeCapturedTimelineCheckedRejectsConflictingFindingAndClaim(t *testing.T) {
+	findings := []Finding{
+		{FindingID: "finding-1", ClaimID: "claim-1", Encounter: Encounter{}},
+		{FindingID: "finding-2", ClaimID: "claim-2", Encounter: Encounter{}},
+	}
+	steps := []CaptureStep{{
+		Sequence: 1, FindingID: "finding-1", ClaimID: "claim-2",
+		Action: "submit", Observed: "wrong correlation",
+	}}
+	if err := mergeCapturedTimelineChecked(findings, steps); err == nil ||
+		!strings.Contains(err.Error(), "conflict") ||
+		!strings.Contains(err.Error(), "finding-1") ||
+		!strings.Contains(err.Error(), "claim-2") {
+		t.Fatalf("conflicting finding/claim correlation must be rejected, got %v", err)
+	}
+}

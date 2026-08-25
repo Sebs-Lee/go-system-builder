@@ -1023,9 +1023,11 @@ func autoTransitionRequest(
 	gateID string,
 	evaluation qualitygate.Evaluation,
 ) transition.Request {
+	runtimeIdentity, _ := snapshot.State["runtime_id"].(string)
 	return transition.Request{
 		TransitionID:           candidate.ID,
 		ExpectedRevision:       snapshot.Revision,
+		ExpectedRuntimeID:      runtimeIdentity,
 		Actor:                  candidate.AutoTrigger.Actor,
 		Evidence:               buildTransitionEvidence(snapshot, candidate, evaluation),
 		AffectedPaths:          normalizeAffectedPaths(req),

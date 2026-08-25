@@ -537,6 +537,7 @@
       ],
       "states": [
         "spawned",
+        "queued",
         "reading",
         "understanding_submitted",
         "understanding_approved",
@@ -1958,6 +1959,33 @@
       ],
       "on_guard_failure": "reject",
       "description": "Runtime/document inconsistency fails closed."
+    },
+    {
+      "id": "GTR-006",
+      "from": [
+        "bug_resolution",
+        "acceptance"
+      ],
+      "automation": {
+        "eligible": false,
+        "human_boundary": true
+      },
+      "event": "human_s7_governance_return",
+      "to": "planning",
+      "actors": [
+        "user",
+        "orchestrator"
+      ],
+      "guards": [],
+      "actions": [
+        "reset_s7_review_after_governance"
+      ],
+      "required_evidence": [
+        "human_decision_record"
+      ],
+      "human_decision_scope": "runtime_governance",
+      "on_guard_failure": "reject",
+      "description": "When the S7 full-review budget is exhausted, a human may return the Runtime to planning for specification or architecture governance instead of authorizing another review round."
     }
   ],
   "forbidden_events": [

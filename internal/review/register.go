@@ -52,6 +52,9 @@ func RegisterPlan(
 	if err := verifyFrozenSubjects(root, &plan); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
 	}
+	if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
@@ -84,6 +87,12 @@ func RegisterPlan(
 	// Coverage diff at registration (L3-S7 §4.4): every current-generation
 	// TASK must be claimed by at least one Claim's source_refs.
 	if err := ValidatePlanTaskCoverage(current, &plan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateCoverageInventory(root, current, &plan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	if err := validateRepairRoundBaseline(root, current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	// E2E cold start: create and fingerprint the isolated write surface so

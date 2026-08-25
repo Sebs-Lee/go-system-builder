@@ -112,7 +112,19 @@ func SubjectDigest(plan *Plan) string {
 // zero-Claim white-box lens).
 func ValidatePlan(plan *Plan) error {
 	if plan.DispatchCapacityPolicy != "coverage_complete" {
-		return fmt.Errorf("dispatch_capacity_policy must be coverage_complete (L3-S7 §4.5); downgrading to bounded_flow is a human policy decision, not a plan field")
+		return s7GateError(
+			"S7_DISPATCH_POLICY",
+			"dispatch_capacity_policy must be coverage_complete",
+			[]string{"the plan declares a capacity policy other than coverage_complete"},
+			[]string{"set dispatch_capacity_policy to coverage_complete; platform capacity may queue Assignments but must not delete coverage"},
+			"runtime review-plan --file plan.json --expected-revision <N>",
+		)
+	}
+	if err := rejectPlannerPlaceholders(plan); err != nil {
+		return err
+	}
+	if err := validatePlanEvidenceRequirements(plan); err != nil {
+		return err
 	}
 	claims := make(map[string]Claim, len(plan.Claims))
 	for _, claim := range plan.Claims {
@@ -200,24 +212,111 @@ func ValidatePlan(plan *Plan) error {
 	switch plan.E2ECoverageState {
 	case "cold_start":
 		if plan.VerificationArtifactWorkspace == nil || strings.TrimSpace(*plan.VerificationArtifactWorkspace) == "" {
-			return fmt.Errorf("e2e_coverage_state=cold_start requires a verification_artifact_workspace; cold start never compresses the blank matrix into one generic Agent (L3-S7 §4.3)")
+			return s7GateError(
+				"S7_E2E_WORKSPACE_MISSING",
+				"e2e_coverage_state=cold_start requires a verification_artifact_workspace",
+				[]string{"the cold-start E2E plan has no isolated verification workspace"},
+				[]string{"set verification_artifact_workspace to the isolated spec/fixture write surface"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
 		}
 		if requiredByLens["e2e"] == 0 {
-			return fmt.Errorf("e2e_coverage_state=cold_start requires at least one required e2e Claim")
+			return s7GateError(
+				"S7_E2E_CLAIM_MISSING",
+				"e2e_coverage_state=cold_start requires at least one required e2e Claim",
+				[]string{"the blank E2E coverage matrix has no executable Claim"},
+				[]string{"add one required e2e Claim per recoverable flow context and assign it in the behavior wave"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
 		}
 	case "not_applicable":
+		if plan.VerificationArtifactWorkspace != nil && strings.TrimSpace(*plan.VerificationArtifactWorkspace) != "" {
+			return fmt.Errorf("verification_artifact_workspace is only valid when e2e_coverage_state=cold_start; not_applicable must not create an E2E authoring surface")
+		}
 		if naByLens["e2e"] == 0 {
 			return fmt.Errorf("e2e_coverage_state=not_applicable requires at least one e2e Claim carrying applicability=not_applicable with source and rationale; ui_impact=none alone is not a conclusion (L3-S7 §4.3)")
 		}
 	case "regression_available":
+		if plan.VerificationArtifactWorkspace != nil && strings.TrimSpace(*plan.VerificationArtifactWorkspace) != "" {
+			return s7GateError(
+				"S7_E2E_WORKSPACE_UNEXPECTED",
+				"verification_artifact_workspace is only valid when e2e_coverage_state=cold_start",
+				[]string{"regression_available declares an isolated authoring workspace"},
+				[]string{"remove verification_artifact_workspace or change e2e_coverage_state to cold_start"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+		if requiredByLens["e2e"] == 0 {
+			return s7GateError(
+				"S7_E2E_CLAIM_MISSING",
+				"e2e_coverage_state=regression_available requires at least one required e2e Claim",
+				[]string{"the plan declares reusable E2E assets but has no executable E2E Claim"},
+				[]string{"bind each changed or gap surface to an existing E2E asset Claim; do not silently skip behavior coverage"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+		if err := validateE2EAssetDeclarations(plan); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("unknown e2e_coverage_state %q", plan.E2ECoverageState)
+		return s7GateError(
+			"S7_E2E_COVERAGE_STATE_UNKNOWN",
+			fmt.Sprintf("unknown e2e_coverage_state %q", plan.E2ECoverageState),
+			[]string{"e2e_coverage_state must be cold_start, regression_available, or not_applicable"},
+			[]string{"choose the state that matches the actual E2E asset inventory"},
+			"runtime review-plan --file plan.json --expected-revision <N>",
+		)
 	}
 	if err := validateAssignmentOverlap(plan, claims); err != nil {
 		return err
 	}
 	if err := validateColdStartE2EOverload(plan, claims); err != nil {
 		return err
+	}
+	return nil
+}
+
+// rejectPlannerPlaceholders keeps DraftPlan useful as an authoring aid while
+// ensuring its temporary TODO markers can never cross the registration gate.
+// This is deliberately a narrow marker check rather than a second schema: a
+// planner may use prose such as "todo list" in a source reference, but the
+// generated TODO(planner) token is unambiguously unfinished plan content.
+func rejectPlannerPlaceholders(plan *Plan) error {
+	check := func(kind, id, value string) error {
+		if strings.Contains(value, "TODO(planner)") {
+			return fmt.Errorf("%s %s still contains TODO(planner); replace the draft placeholder with a concrete target/assertion/oracle/method before registering the ReviewPlan", kind, id)
+		}
+		return nil
+	}
+	for _, claim := range plan.Claims {
+		fields := []struct {
+			name  string
+			value string
+		}{
+			{name: "target", value: claim.Target}, {name: "assertion", value: claim.Assertion},
+			{name: "oracle", value: claim.Oracle}, {name: "method", value: claim.Method},
+			{name: "na_rationale", value: claim.NARationale}, {name: "focus_key", value: claim.FocusKey},
+		}
+		for _, field := range fields {
+			if err := check(fmt.Sprintf("claim %s %s", claim.ClaimID, field.name), claim.ClaimID, field.value); err != nil {
+				return err
+			}
+		}
+		for _, ref := range append(append([]string{}, claim.SourceRefs...), claim.RequiredEvidence...) {
+			if err := check(fmt.Sprintf("claim %s reference", claim.ClaimID), claim.ClaimID, ref); err != nil {
+				return err
+			}
+		}
+	}
+	for _, assignment := range plan.Assignments {
+		if err := check("assignment boundary", assignment.AssignmentID, assignment.NonOverlapBoundary); err != nil {
+			return err
+		}
+		for _, focus := range assignment.FocusKeys {
+			if err := check("assignment focus", assignment.AssignmentID, focus); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

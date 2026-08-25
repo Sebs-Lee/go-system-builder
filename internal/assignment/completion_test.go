@@ -10,12 +10,21 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
+
+func anyStrings(values []any) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.(string))
+	}
+	return result
+}
 
 func completionRoot(t *testing.T) string {
 	t.Helper()
@@ -159,6 +168,56 @@ func TestCompleteTaskRegistersBuilderResultAtomically(t *testing.T) {
 	encoded, _ := json.Marshal(snapshot.State)
 	if err := semantic.ValidateRuntimeBytes(root, encoded); err != nil {
 		t.Fatalf("CompleteTask produced invalid runtime: %v", err)
+	}
+}
+
+func TestCompleteTaskProjectsChangedPathsIntoEvidenceScopeRefs(t *testing.T) {
+	root := completionRoot(t)
+	statePath := filepath.Join(root, "loop-state.json")
+	journalPath := filepath.Join(root, "loop-events.jsonl")
+	state := activeState(t, root, "building", nil, 7)
+	state["baseline"] = map[string]any{"generation": 1, "captured_at": "2026-08-20T00:00:00Z"}
+	state["entities"] = map[string]any{
+		"agents": []any{map[string]any{
+			"id": "builder-1", "role": "backend-builder", "state": "working",
+			"task_ids": []any{"TASK-001"}, "team_id": "workgroup-build-1",
+			"definition_ref": ".claude/agents/backend-builder.md",
+			"prompt_ref":     "manifest#assignment-builder-1",
+			"readback_ref":   nil, "activation_ref": nil, "activation_revision": nil,
+			"updated_at": "2026-08-20T00:00:00Z",
+		}},
+		"tasks": []any{map[string]any{
+			"id": "TASK-001", "state": "in_progress", "path": "docs/tasks/TASK-001.md",
+			"sha256": semanticSha(t, []byte("# TASK-001\n")), "owner_agent_ids": []any{"builder-1"},
+		}},
+		"bugs": []any{}, "teams": []any{},
+	}
+	writeJSON(t, statePath, state)
+	messagePath := completionMessage(t, root, "builder-1", "TASK-001")
+	data, err := os.ReadFile(messagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message map[string]any
+	if err := json.Unmarshal(data, &message); err != nil {
+		t.Fatal(err)
+	}
+	message["changed_paths"] = []any{"internal/api/handler.go", "web/src/form.tsx"}
+	writeJSON(t, messagePath, message)
+
+	snapshot, err := assignment.CompleteTask(root, statePath, journalPath, assignment.CompletionRequest{
+		ExpectedRevision: 7, AgentID: "builder-1", MessagePath: messagePath,
+	})
+	if err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+	entry := snapshot.State["evidence"].([]any)[0].(map[string]any)
+	refs, ok := entry["scope_refs"].([]any)
+	if !ok {
+		t.Fatalf("scope_refs type = %T, want []any", entry["scope_refs"])
+	}
+	if got, want := strings.Join(anyStrings(refs), ","), "internal/api/handler.go,web/src/form.tsx"; got != want {
+		t.Fatalf("scope_refs = %q, want %q", got, want)
 	}
 }
 

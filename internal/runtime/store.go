@@ -24,6 +24,12 @@ func sha256Hex(data []byte) string {
 
 var ErrStaleRevision = errors.New("stale runtime revision")
 
+// ErrStaleRuntimeIdentity distinguishes a stale snapshot from a same-runtime
+// CAS conflict. It is especially important when a boundary transition resets
+// revision to zero: the old runtime identity must not become valid again just
+// because its old numeric revision was also zero.
+var ErrStaleRuntimeIdentity = errors.New("stale runtime identity")
+
 // ErrPendingRuntimeOperation is returned by read-only APIs when the durable
 // runtime pair has an unfinished rollover or commit. Readers must not repair
 // a pair implicitly: the caller must use an explicit writer/recovery path.
@@ -74,10 +80,15 @@ type Mutation struct {
 	// JournalOutcome overrides the persisted journal `outcome` field. Defaults
 	// to committed when empty.
 	JournalOutcome string
-	// RequireEmptyJournal is used by TR-001. Binding may only start from the
-	// canonical fresh runtime pair, not from a hand-edited state file that
-	// still points at a previous runtime's journal.
+	// RequireEmptyJournal is retained for legacy mutation callers that require
+	// an empty journal. TR-001 uses BoundaryReset instead: it validates the
+	// inactive source pair, archives it, and creates a new empty active pair.
 	RequireEmptyJournal bool
+	// BoundaryReset makes the mutation install a new runtime identity after
+	// applying its domain actions. TR-001 uses this because binding is the
+	// boundary between the inactive bootstrap runtime and the new active
+	// runtime; the new runtime starts at revision zero with an empty journal.
+	BoundaryReset bool
 	// RetainLastTransition keeps the existing last_transition snapshot when
 	// the mutation is not a legality lifecycle commit (e.g. milestone refresh).
 	RetainLastTransition bool
@@ -105,6 +116,18 @@ type Snapshot struct {
 	State    map[string]any
 }
 
+// ArtifactCleanupRequest describes a staged repository artifact that may be
+// removed only when the Runtime is stable and the artifact is not reachable
+// from the state being protected. The operation deliberately does not recover
+// pending Runtime writes: a pending marker means a prior CAS may still make
+// the artifact reachable, so the safe answer is to retain it.
+type ArtifactCleanupRequest struct {
+	ExpectedRevision int
+	ArtifactPath     string
+	ArtifactSHA256   string
+	ReferencedPaths  []string
+}
+
 // RolloverRecord describes the human-authorized archive created before a
 // terminal runtime is replaced by a fresh inactive runtime.
 type RolloverRecord struct {
@@ -129,6 +152,7 @@ type rolloverPending struct {
 	FreshState          map[string]any   `json:"fresh_state"`
 	Record              RolloverRecord   `json:"record"`
 	Approval            RolloverApproval `json:"approval"`
+	BoundaryKind        string           `json:"boundary_kind,omitempty"`
 	Disposition         string           `json:"disposition,omitempty"`
 	OccurredAt          string           `json:"occurred_at"`
 	SourceStateSHA256   string           `json:"source_state_sha256"`
@@ -233,10 +257,10 @@ func normalizeMutation(state map[string]any, mutation Mutation) (Mutation, error
 	if strings.TrimSpace(stateRuntimeID) == "" {
 		return Mutation{}, errors.New("state runtime_id is required")
 	}
-	allowsInitialBinding := mutation.TransitionID == "TR-001" && mutation.RequireEmptyJournal && strings.HasPrefix(mutation.RuntimeID, "loop-REQ-")
+	allowsInitialBinding := mutation.TransitionID == "TR-001" && mutation.BoundaryReset && strings.HasPrefix(mutation.RuntimeID, "loop-REQ-")
 	if allowsInitialBinding {
-		if err := ValidateFreshInactiveState(state); err != nil {
-			return Mutation{}, fmt.Errorf("requires a fresh inactive runtime: %w", err)
+		if err := ValidateBindEligibleState(state); err != nil {
+			return Mutation{}, fmt.Errorf("requires a fresh inactive runtime (unbound, revision-independent): %w", err)
 		}
 	}
 	if mutation.RuntimeID != "" && mutation.RuntimeID != stateRuntimeID && !allowsInitialBinding {
@@ -528,6 +552,92 @@ func (s *Store) Snapshot() (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return Snapshot{Revision: revision, State: state}, nil
+}
+
+// RemoveUnreferencedArtifact performs a lock-protected, fail-closed cleanup
+// for artifacts staged before a Runtime CAS. It returns false when cleanup is
+// unsafe or unnecessary. In particular, it never removes anything while a
+// commit/fingerprint/rollover marker exists because the pending operation may
+// still publish a state that references the artifact.
+func (s *Store) RemoveUnreferencedArtifact(request ArtifactCleanupRequest) (bool, error) {
+	if s == nil {
+		return false, errors.New("runtime store is required for artifact cleanup")
+	}
+	if strings.TrimSpace(s.root) == "" {
+		return false, errors.New("runtime root is required for artifact cleanup")
+	}
+	if request.ExpectedRevision < 0 {
+		return false, errors.New("artifact cleanup expected revision must not be negative")
+	}
+	if len(request.ArtifactSHA256) != 64 {
+		return false, errors.New("artifact cleanup requires a 64-character sha256")
+	}
+	cleanArtifact, err := safeEvidencePath(s.root, request.ArtifactPath)
+	if err != nil {
+		return false, fmt.Errorf("validate artifact cleanup path: %w", err)
+	}
+
+	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	if err := s.reportPendingOperationLocked(); err != nil {
+		if errors.Is(err, ErrPendingRuntimeOperation) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect pending runtime operation before artifact cleanup: %w", err)
+	}
+	state, err := s.read()
+	if err != nil {
+		return false, fmt.Errorf("read runtime before artifact cleanup: %w", err)
+	}
+	revision, err := integerField(state, "revision")
+	if err != nil {
+		return false, fmt.Errorf("read runtime revision before artifact cleanup: %w", err)
+	}
+	if revision != request.ExpectedRevision {
+		return false, nil
+	}
+	for _, referenced := range request.ReferencedPaths {
+		cleanReferenced, cleanErr := cleanArtifactReference(referenced)
+		if cleanErr != nil {
+			return false, fmt.Errorf("validate referenced artifact path %q: %w", referenced, cleanErr)
+		}
+		if cleanReferenced == cleanArtifact {
+			return false, nil
+		}
+	}
+
+	artifactPath := filepath.Join(s.root, filepath.FromSlash(cleanArtifact))
+	data, err := os.ReadFile(artifactPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read artifact before cleanup: %w", err)
+	}
+	if sha256Hex(data) != request.ArtifactSHA256 {
+		return false, nil
+	}
+	if err := os.Remove(artifactPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("remove unreferenced artifact: %w", err)
+	}
+	if err := syncDir(filepath.Dir(artifactPath)); err != nil {
+		return false, fmt.Errorf("sync artifact cleanup: %w", err)
+	}
+	return true, nil
+}
+
+func cleanArtifactReference(path string) (string, error) {
+	clean := filepath.Clean(path)
+	if strings.TrimSpace(path) == "" || filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("artifact reference must be repository-relative")
+	}
+	return filepath.ToSlash(clean), nil
 }
 
 // Rollover archives a terminal runtime and its journal, then replaces the
@@ -1175,7 +1285,7 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if _, exists := existingJournal.EventIndex[mutation.EventID]; exists {
 		return Snapshot{}, fmt.Errorf("mutation event_id %q already exists in runtime journal", mutation.EventID)
 	}
-	if mutation.RequireEmptyJournal {
+	if mutation.RequireEmptyJournal && !mutation.BoundaryReset {
 		empty, err := journalEmpty(s.journalPath)
 		if err != nil {
 			return Snapshot{}, err
@@ -1191,6 +1301,9 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	}
 	if err := validateMutationApplyBoundary(previousState, state, mutation.RetainLastTransition); err != nil {
 		return Snapshot{}, fmt.Errorf("mutation apply coherence: %w", err)
+	}
+	if mutation.BoundaryReset {
+		return s.applyBoundaryResetLocked(previousState, state, mutation, expectedRevision)
 	}
 
 	nextRevision := expectedRevision + 1
@@ -1280,6 +1393,111 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 		return Snapshot{}, err
 	}
 	return Snapshot{Revision: nextRevision, State: state}, nil
+}
+
+// applyBoundaryResetLocked closes the bootstrap runtime and installs the
+// domain state produced by a boundary transition as a new runtime pair. The
+// source pair is archived before the replacement is published, so a bind
+// cannot lose Hook checkpoints merely because the active revision restarts at
+// zero. The caller already holds the state lock.
+func (s *Store) applyBoundaryResetLocked(previousState, targetState map[string]any, mutation Mutation, sourceRevision int) (Snapshot, error) {
+	if strings.TrimSpace(s.root) == "" {
+		return Snapshot{}, errors.New("runtime root is required for boundary reset")
+	}
+	if sourceRevision < 0 {
+		return Snapshot{}, errors.New("boundary source revision must be non-negative")
+	}
+	stateData, err := os.ReadFile(s.statePath)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read source runtime for boundary reset: %w", err)
+	}
+	journalData, err := os.ReadFile(s.journalPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Snapshot{}, errors.New("fresh runtime journal is missing")
+		}
+		return Snapshot{}, fmt.Errorf("read source journal for boundary reset: %w", err)
+	}
+	sourceRuntimeID, _ := previousState["runtime_id"].(string)
+	targetRuntimeID, _ := targetState["runtime_id"].(string)
+	if sourceRuntimeID == "" || targetRuntimeID == "" || sourceRuntimeID == targetRuntimeID {
+		return Snapshot{}, fmt.Errorf("boundary reset requires a runtime identity change, source=%q target=%q", sourceRuntimeID, targetRuntimeID)
+	}
+	occurredAt := mutation.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	targetState["binding_receipt"] = map[string]any{
+		"event_id":              mutation.EventID,
+		"transition_id":         mutation.TransitionID,
+		"event":                 "req_bound",
+		"approved_by":           mutation.Actor,
+		"occurred_at":           occurredAt.UTC().Format(time.RFC3339Nano),
+		"source_runtime_id":     sourceRuntimeID,
+		"source_revision":       sourceRevision,
+		"source_state_sha256":   sha256Hex(stateData),
+		"source_journal_sha256": sha256Hex(journalData),
+		"target_runtime_id":     targetRuntimeID,
+		"target_revision":       0,
+	}
+	targetState["revision"] = 0
+	targetState["journal"] = map[string]any{
+		"path":          ".claude/loop-events.jsonl",
+		"last_sequence": 0,
+		"last_event_id": nil,
+	}
+	targetState["last_transition"] = nil
+	if err := validateBoundaryTarget(targetState); err != nil {
+		return Snapshot{}, fmt.Errorf("boundary target invalid: %w", err)
+	}
+	if err := s.validateCandidate(targetState); err != nil {
+		return Snapshot{}, fmt.Errorf("boundary target semantic validation: %w", err)
+	}
+	archiveRoot := filepath.Join(filepath.Dir(s.statePath), "runtime-archive")
+	_, err = s.archiveAndResetWithBoundary(
+		stateData,
+		journalData,
+		sourceRuntimeID,
+		sourceRevision,
+		targetState,
+		archiveRoot,
+		map[string]any{
+			"boundary_kind":     "bind",
+			"binding_event_id":  mutation.EventID,
+			"target_runtime_id": targetRuntimeID,
+		},
+		"bound",
+		"bind",
+		RolloverApproval{ApprovedBy: mutation.Actor, EvidenceID: mutation.EventID},
+		occurredAt,
+	)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("archive source runtime for bind: %w", err)
+	}
+	return Snapshot{Revision: 0, State: targetState}, nil
+}
+
+func validateBoundaryTarget(state map[string]any) error {
+	revision, err := integerField(state, "revision")
+	if err != nil || revision != 0 {
+		return errors.New("boundary target revision must be zero")
+	}
+	runtimeID, _ := state["runtime_id"].(string)
+	if !strings.HasPrefix(runtimeID, "loop-REQ-") {
+		return fmt.Errorf("boundary target runtime_id must identify the bound REQ, got %q", runtimeID)
+	}
+	if state["bound_req"] == nil {
+		return errors.New("boundary target bound_req is required")
+	}
+	journal, err := objectField(state, "journal")
+	if err != nil {
+		return errors.New("boundary target journal must be an object")
+	}
+	sequence, err := integerField(journal, "last_sequence")
+	if err != nil || sequence != 0 || journal["last_event_id"] != nil {
+		return errors.New("boundary target journal cursor must be empty")
+	}
+	return nil
 }
 
 func validateMutationApplyBoundary(previousState, candidateState map[string]any, retainLastTransition bool) error {
@@ -1911,7 +2129,11 @@ func (s *Store) recoverPendingRolloverLocked() error {
 	if strings.TrimSpace(pending.Approval.ApprovedBy) == "" || strings.TrimSpace(pending.Approval.EvidenceID) == "" {
 		return errors.New("pending runtime rollover approval is incomplete")
 	}
-	if err := ValidateFreshInactiveState(pending.FreshState); err != nil {
+	if pending.BoundaryKind == "bind" {
+		if err := validateBoundaryTarget(pending.FreshState); err != nil {
+			return fmt.Errorf("pending bind boundary target is invalid: %w", err)
+		}
+	} else if err := ValidateFreshInactiveState(pending.FreshState); err != nil {
 		return fmt.Errorf("pending runtime rollover is invalid: %w", err)
 	}
 	if err := s.validateCandidate(pending.FreshState); err != nil {
@@ -1927,12 +2149,14 @@ func (s *Store) recoverPendingRolloverLocked() error {
 	if err != nil {
 		return err
 	}
-	scopePrefix := "runtime_rollover"
-	if pending.Disposition == "unbound" {
-		scopePrefix = "runtime_unbind"
-	}
-	if err := validateLifecycleApproval(archivedState, pending.Approval.ApprovedBy, pending.Approval.EvidenceID, pending.Record.RuntimeID, pending.Record.Revision, scopePrefix); err != nil {
-		return fmt.Errorf("pending runtime rollover approval does not match archived runtime: %w", err)
+	if pending.BoundaryKind != "bind" {
+		scopePrefix := "runtime_rollover"
+		if pending.Disposition == "unbound" {
+			scopePrefix = "runtime_unbind"
+		}
+		if err := validateLifecycleApproval(archivedState, pending.Approval.ApprovedBy, pending.Approval.EvidenceID, pending.Record.RuntimeID, pending.Record.Revision, scopePrefix); err != nil {
+			return fmt.Errorf("pending runtime rollover approval does not match archived runtime: %w", err)
+		}
 	}
 
 	currentStateData, err := os.ReadFile(s.statePath)
@@ -2086,15 +2310,16 @@ func (s *Store) clearRolloverMarkerLocked() error {
 	return nil
 }
 
-// ValidateFreshInactiveState verifies the canonical state half of a runtime
-// pair that may begin TR-001. Store.Update additionally verifies that the
-// corresponding journal file is empty before committing the bind.
-func ValidateFreshInactiveState(state map[string]any) error {
+// ValidateBindEligibleState verifies that the inactive runtime has not made
+// business progress and may therefore be replaced by TR-001. The revision is
+// deliberately not part of this predicate: controller checkpoints may have
+// advanced the CAS cursor before the human binds a REQ.
+func ValidateBindEligibleState(state map[string]any) error {
 	if state["runtime_id"] != "loop-inactive" {
 		return errors.New("runtime_id must be loop-inactive")
 	}
-	if revision, err := integerField(state, "revision"); err != nil || revision != 0 {
-		return errors.New("revision must be zero")
+	if revision, err := integerField(state, "revision"); err != nil || revision < 0 {
+		return errors.New("revision must be a non-negative integer")
 	}
 	lifecycle, err := objectField(state, "lifecycle")
 	if err != nil || lifecycle["state"] != "inactive" || lifecycle["phase"] != nil {
@@ -2110,8 +2335,13 @@ func ValidateFreshInactiveState(state map[string]any) error {
 	if path, _ := journal["path"].(string); path != ".claude/loop-events.jsonl" {
 		return errors.New("journal path must be .claude/loop-events.jsonl")
 	}
-	if sequence, err := integerField(journal, "last_sequence"); err != nil || sequence != 0 || journal["last_event_id"] != nil {
-		return errors.New("journal cursor must be empty")
+	if sequence, err := integerField(journal, "last_sequence"); err != nil || sequence < 0 {
+		return errors.New("journal cursor sequence must be non-negative")
+	}
+	if eventID := journal["last_event_id"]; eventID != nil {
+		if value, ok := eventID.(string); !ok || strings.TrimSpace(value) == "" {
+			return errors.New("journal last_event_id must be null or a non-empty string")
+		}
 	}
 	if state["bound_req"] != nil || state["pause"] != nil || state["last_transition"] != nil || state["change"] != nil {
 		return errors.New("runtime contains prior lifecycle state")
@@ -2147,6 +2377,27 @@ func ValidateFreshInactiveState(state map[string]any) error {
 		if !emptyArray(entities[field]) {
 			return fmt.Errorf("entities.%s must be empty", field)
 		}
+	}
+	return nil
+}
+
+// ValidateFreshInactiveState verifies the canonical revision-zero state used
+// by init, rollover, and unbind. TR-001 uses ValidateBindEligibleState
+// instead because bind is the operation that creates the next revision-zero
+// runtime boundary.
+func ValidateFreshInactiveState(state map[string]any) error {
+	if err := ValidateBindEligibleState(state); err != nil {
+		return err
+	}
+	if revision, err := integerField(state, "revision"); err != nil || revision != 0 {
+		return errors.New("revision must be zero")
+	}
+	journal, err := objectField(state, "journal")
+	if err != nil {
+		return errors.New("journal must be an object")
+	}
+	if sequence, err := integerField(journal, "last_sequence"); err != nil || sequence != 0 || journal["last_event_id"] != nil {
+		return errors.New("journal cursor must be empty")
 	}
 	return nil
 }

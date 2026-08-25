@@ -82,7 +82,7 @@ func TestTASK03901TR002RejectsBeforeTasksPhase(t *testing.T) {
 
 	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
 		TransitionID:     "TR-002",
-		ExpectedRevision: 1,
+		ExpectedRevision: 0,
 		Actor:            "orchestrator",
 	})
 	if err == nil || !strings.Contains(err.Error(), "planning.tasks") {

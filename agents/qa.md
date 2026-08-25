@@ -50,3 +50,13 @@ the wall, last-good/first-bad boundary, terminal state, evidence refs and captur
 Do not propose a local repair or invent a root cause; S8 owns causal investigation.
 ## Stop Conditions
 Stop on stale input, unclear applicability, missing evidence, scope expansion, critical finding, or blocked Hook.
+
+## Recovery: site-lost BLOCKER
+
+If a submit returns `not investigation-ready` and you cannot reconstruct the
+encounter (the runtime/scene is gone, capture buffer empty, logs unreachable),
+declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
+`{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
+`blocked`. Recovery: fix the capture conditions, send
+`runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`,
+then the same finder resubmits. Reproduction debt is never handed to S8.
