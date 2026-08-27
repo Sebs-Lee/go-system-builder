@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `02f87cc1cf76eaa0b961127704c73b06cd0d39c3b683dd54670b3fc20089db9c`
+- **Loop definition SHA-256**: `4eca51a9db5604fd853c66a794e2aa1acd0b45e5208015d4f0c10ed26f0e469a`
 
 ---
 
@@ -24,10 +24,12 @@ The Hook is an event trigger for the Loop Controller, not only a guard. On `Sess
 4. Execute the one missing deliverable/evidence named by Hook/`ready` `missing[]`; do not invent a parallel lifecycle.
 5. For `SubagentStop`, complete the report, worktree review, merge-back to the current `develop` integration branch and `completion_ack` checklist before acknowledging the stop. For `TeammateIdle`, re-wake the same teammate. The identical integration chain is available explicitly via `runtime task-integrate --assignment-id <id>` when the automatic SubagentStop payload cannot identify the assignment.
 6. Builder completion is registered with `runtime task-complete` — one atomic command (message validation + evidence envelope derivation + Agent/TASK advance + evidence registration); the legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope. Before the Builder writes, create its worktree (`git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop`) and record `worktree_path`/`branch`/`target_branch` on the manifest row — SubagentStop integration requires them.
-7. In S7 (verification) the round is driven by runtime verbs, not by hand-pushed transitions: scaffold and register the ReviewPlan (`s7 draft`, inspect `coverage_inventory`/`e2e_assets`, then `runtime review-plan --file <plan.json>`), dispatch reviewers (`s7 manifest-draft`, `runtime register-workgroup`), consume each Assignment's Canonical ReviewResult (`runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence refs are typed, and observation steps land via `capture step --finding <id> --claim <id>` / `--captures`), and revise a running plan once per round (`runtime review-plan revise`). `loop-harness s7 status` is the board: it prints the plan line, the round counter (current / `max_full_review_rounds`), the `subject_digest` every result must bind, claim dispositions, any blocked assignment's `blocker_ref` and the recovery verb `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, and the single next action; a cold-start E2E round also has `loop-harness s7 workspace-digest` for the `verification_artifact_digest` the E2E result must bind. Re-entering S7 via TR-012 (post S9 repair) re-runs the same verbs — the transition records the current `change_impact` evidence in `review.round_entry`, and RegisterPlan requires every `changed_artifacts` path/SHA from that evidence in `frozen_subjects`, `coverage_inventory`, and a Claim source_ref; QA reports additionally carry the §5 Targeted Re-verification table alongside §2–§4, and the round counter tells you which round you are on. A rejected command includes the missing facts, repair action, next command, verification command and protocol ref; fix those facts and resubmit the same artifact. The machine exits are automatic — a sealed ObservationBatch or a machine CleanRound commits TR-008/TR-009 on the next PreToolUse; do not invoke the transition CLI for them. If the PostToolUse auto-activation chain did not fire for a dispatched Worker, recover with `runtime agent-begin --agent-id <id> --plan <plan-report.json>`. Full verb walkthrough: `docs/agent-protocol.md#s7`.
+7. In S7 (verification) the round is driven by runtime verbs, not by hand-pushed transitions: scaffold and register the ReviewPlan (`s7 draft`, inspect `coverage_inventory`/`e2e_assets`, then `runtime review-plan --file <plan.json>`), dispatch reviewers (`s7 manifest-draft`, `runtime register-workgroup`), consume each Assignment's Canonical ReviewResult (`runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence refs are typed, and observation steps land via `capture step --finding <id> --claim <id>` / `--captures`), and revise a running plan once per round (`runtime review-plan revise`). `loop-harness s7 status` is the board: it prints the plan line, the round counter (current / `max_full_review_rounds`), the `round_entry` block (which TR re-entered the round and its seed/handoff/impact refs) plus the `seed_projection` line when a plan is registered from the S9 seed, the `subject_digest` every result must bind, claim dispositions, any blocked assignment's `blocker_ref` and the recovery verb `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, and the single next action; a cold-start E2E round also has `loop-harness s7 workspace-digest` for the `verification_artifact_digest` the E2E result must bind. Re-entering S7 via TR-012 (post S9 repair) re-runs the same verbs from a generated seed: `.claude/review/repair/s7-seeds/review-plan-s9-round-<N>.json` is baseline-complete (it carries the changed-artifact `frozen_subjects`, the change-impact source_refs, and the current-generation TASK coverage) but not a finished plan — the Planner still refines Claims, Assignments and `non_overlap_boundary` per `docs/agent-protocol.md` §s7s9-control-plane-map; refresh the frozen shas if the tree moved, refine the Claim set if needed, then `runtime review-plan --file <seed>`. the change-impact evidence is the source of truth: the registered plan must derive `frozen_subjects`, `coverage_inventory`, and a Claim source_ref from every `changed_artifacts` path/SHA it carries; QA reports additionally carry the §5 Targeted Re-verification table alongside §2–§4, and the round counter tells you which round you are on. A no-repair batch returns via TR-022 (`findings_resolved_without_repair`) instead of TR-012 and runs the same S7 verbs without a seed. A rejected command includes the missing facts, repair action, next command, verification command and protocol ref; fix those facts and resubmit the same artifact. The machine exits are automatic — a sealed ObservationBatch or a machine CleanRound commits TR-008/TR-009 on the next PreToolUse; do not invoke the transition CLI for them. If the PostToolUse auto-activation chain did not fire for a dispatched Worker, recover with `runtime agent-begin --agent-id <id> --plan <plan-report.json>`. Full verb walkthrough: `docs/agent-protocol.md#s7`.
 Before registering an S7 draft, inspect its CASE-level E2E Assignments. `s7 draft` projects required browser CASEs from `docs/design/prototypes/<module>/cases.json`; a complete CASE→Playwright spec mapping produces `regression_available` and SHA-pinned `e2e_assets`, while any missing mapping produces `cold_start`, an `e2e-workspace/<round>` write surface, and one behavior Assignment per CASE. If no readable CASE inventory exists, the remaining `TODO(planner)` is intentional and registration explains the missing S2 input. Typed path evidence may use `path:<repo-relative>#sha256=<64-hex>` for drift detection; bare `path:` is compatibility-only existence evidence.
-8. If `s7 status` reports `round N of M` with N >= M, finish draining the current round but do not open another one. Submit the human artifact through `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`; `increase_budget` atomically raises `max_full_review_rounds` and leaves the pending round-opening transition to retry, while `return_to_governance` records the decision, invalidates downstream review evidence, resets the review projection, and routes through GTR-006 to planning. The decision file is persisted as scoped `human_decision` evidence, and CAS rejects stale revisions, mismatched runtime/round values, and non-increasing limits.
-9. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
+8. In S9 (bug_resolution), consume only the approved RepairContract: open the RepairSession, compile the RepairPlan, dispatch each Assignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, send the generic PLAN_REPORT and submit the S9 domain PlanReport, then wait for `runtime repair execution begin` before product writes. Use `runtime repair status` for each Assignment's owner/report/result, `queue_reason`, `lock_state` and next action; do not create a second scheduler or edit Runtime state by hand.
+9. If `s7 status` reports `round N of M` with N >= M, finish draining the current round but do not open another one. Submit the human artifact through `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`; `increase_budget` atomically raises `max_full_review_rounds` and leaves the pending round-opening transition to retry, while `return_to_governance` records the decision, invalidates downstream review evidence, resets the review projection, and routes through GTR-006 to planning. The decision file is persisted as scoped `human_decision` evidence, and CAS rejects stale revisions, mismatched runtime/round values, and non-increasing limits.
+11. Some authority transactions carry runtime-issued ids that are not TRs and therefore do not appear in the Contents index above: `S8-REPAIR-CONTRACT-APPROVAL` (runtime investigation contract approve — the S8→S9 authority; PTR-BUG-08 is its legacy-catalog alias), plus the entity/record CAS ids (REVIEW-RESULT, REVIEW-PLAN-STALE, S7-BUDGET-DECISION, AGENT-LIFECYCLE, BUG-LIFECYCLE, EVIDENCE-RECORD). They are driven by their runtime verbs, never by `runtime transition`.
+12. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.
 
 The persisted `.claude/loop-state.json` `milestone` is a recovery cache, not a second state machine. `docs/loop-definition.json` and the Transition Engine remain the authority for legal lifecycle changes.
 
@@ -59,11 +61,11 @@ Human approval records release authorization only. Harness has no squash merge, 
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
 - [`TR-006`](#tr-006) building → verification — Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint.
 - [`TR-007`](#tr-007) building → planning — Non-REQ execution conflicts return through planning and document verification.
-- [`TR-008`](#tr-008) verification → bug_resolution — A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default.
+- [`TR-008`](#tr-008) verification → bug_resolution — A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor.
 - [`TR-009`](#tr-009) verification → acceptance — Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time.
 - [`TR-010`](#tr-010) verification → paused — A ReviewResult verdict of req_change_required pauses the loop for a human REQ decision.
 - [`TR-011`](#tr-011) verification → paused — A ReviewResult verdict of release_blocked pauses the loop for a human release decision.
-- [`TR-012`](#tr-012) bug_resolution → verification — Only the ready_for_full_review handoff checkpoint may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round.
+- [`TR-012`](#tr-012) bug_resolution → verification — Only the ready_for_full_review handoff checkpoint for an approved RepairContract may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round.
 - [`TR-013`](#tr-013) bug_resolution → planning — Repair-driven specification changes return through planning and document verification.
 - [`TR-014`](#tr-014) bug_resolution → paused — Repair work cannot modify the locked REQ.
 - [`TR-015`](#tr-015) acceptance → release_audit — Release audit starts only from current ACC and clean-round evidence.
@@ -73,7 +75,7 @@ Human approval records release authorization only. Harness has no squash merge, 
 - [`TR-019`](#tr-019) paused → RESUME_FROM_PAUSE — Resume the exact validated state, phase and entity checkpoint.
 - [`TR-020`](#tr-020) paused → planning — A changed locked REQ starts a new planning generation.
 - [`TR-021`](#tr-021) paused → aborted — Only a human may permanently abort the Loop.
-- [`TR-022`](#tr-022) bug_resolution → verification — When the completed S8 disposition batch contains no accepted BUG, every finding is finally rejected without product/specification change or duplicate-linked to a canonical BUG with no remaining repair, the Loop returns to verification for a fresh complete round.
+- [`TR-022`](#tr-022) bug_resolution → verification — When the InvestigationCase has dispositioned every source Finding as no-change, duplicate, or another non-repair route, and no approved RepairContract remains, the Loop returns to verification for a fresh complete round.
 - [`TR-023`](#tr-023) bug_resolution → planning — Finding-level specification rework (S8) routes back to planning.
 - [`TR-024`](#tr-024) bug_resolution → paused — A finding that requires modifying the locked REQ cannot proceed autonomously; the Loop pauses for human amendment.
 - [`TR-025`](#tr-025) awaiting_human_release → release_authorized — Record human release authorization without performing merge, publication, deployment, or formal release.
@@ -85,13 +87,18 @@ Human approval records release authorization only. Harness has no squash merge, 
 
 _Phase: bug_resolution_
 
-- [`PTR-BUG-01`](#ptr-bug-01) investigation → bug_report_review — A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists.
-- [`PTR-BUG-02`](#ptr-bug-02) bug_report_review → repair_readback — The orchestrator approves canonical BUGs and duplicate mappings.
-- [`PTR-BUG-03`](#ptr-bug-03) bug_report_review → investigation — Insufficient BUG reports return to investigation.
-- [`PTR-BUG-04`](#ptr-bug-04) repair_readback → fixing — Repair execution uses the same agent dispatch gate (plan_checkpoint by default).
+- [`PTR-BUG-09`](#ptr-bug-09) repair_readback → planning — S9 enters planning with a dispatchable Assignment set; no implementation write is authorized yet.
+- [`PTR-BUG-10`](#ptr-bug-10) planning → reproducing — Builders report their intended repair and failing pre-fix signal before execution.
+- [`PTR-BUG-11`](#ptr-bug-11) reproducing → fixing — Only the explicit execution checkpoint releases implementation writes.
+- [`PTR-BUG-01`](#ptr-bug-01) investigation → bug_report_review — Legacy compatibility transition only.
+- [`PTR-BUG-02`](#ptr-bug-02) bug_report_review → repair_readback — Legacy compatibility projection only.
+- [`PTR-BUG-03`](#ptr-bug-03) bug_report_review → investigation — Legacy compatibility projection only.
+- [`PTR-BUG-08`](#ptr-bug-08) investigation → repair_readback — Legacy compatibility projection only.
+- [`PTR-BUG-04`](#ptr-bug-04) repair_readback → fixing — Legacy compatibility projection only.
 - [`PTR-BUG-05`](#ptr-bug-05) fixing → targeted_reverification — Every repair invalidates affected historical PASS evidence before recheck.
 - [`PTR-BUG-06`](#ptr-bug-06) targeted_reverification → ready_for_full_review — A targeted pass never substitutes for the full review round; it records the S9-to-S7 handoff checkpoint.
-- [`PTR-BUG-07`](#ptr-bug-07) targeted_reverification → investigation — Failed repair verification restarts root-cause investigation.
+- [`PTR-BUG-12`](#ptr-bug-12) investigation → targeted_reverification — After an environmental or authority blocker is resolved, reopen the existing targeted verification checkpoint; runtime hard-checks status=blocked, failure_route=blocked, and a non-empty resolution reason.
+- [`PTR-BUG-07`](#ptr-bug-07) targeted_reverification → investigation — Failed repair verification returns to the same InvestigationCase for causal reassessment; it does not create a new BUG draft unless the causal model genuinely differs.
 
 _Phase: planning_
 
@@ -103,7 +110,7 @@ _Global_
 - [`GTR-001`](#gtr-001) → paused — A user may pause from any active state.
 - [`GTR-002`](#gtr-002) → paused — Any required locked REQ change pauses automation.
 - [`GTR-003`](#gtr-003) → paused — Production-data, security, compliance or irreversible actions require human approval.
-- [`GTR-004`](#gtr-004) → paused — Configured repair limits never silently close a BUG.
+- [`GTR-004`](#gtr-004) → paused — Configured repair limits never silently close an InvestigationCase or RepairContract; exhaustion pauses the Loop with the current repair evidence.
 - [`GTR-005`](#gtr-005) → paused — Runtime/document inconsistency fails closed.
 - [`GTR-006`](#gtr-006) → planning — When the S7 full-review budget is exhausted, a human may return the Runtime to planning for specification or architecture governance instead of authorizing another review round.
 
@@ -231,7 +238,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → bug_resolution_
 
-A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One investigation-intake BUG draft is created per Finding, deduplicated by finding content hash; S8 must still establish root cause and the Closing Contract before canonical BUG acceptance.
+A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor. TR-008 records the cursor handoff; the next mandatory S8 verb is `runtime investigation ingest`, which creates the InvestigationCase after exact-set/hash/baseline validation. S8 consumes the facts and does not re-reproduce symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.
 
 - `observation_batch_sealed` [semantic_check] — _no spec_
 
@@ -299,7 +306,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _bug_resolution → verification_
 
-Only the ready_for_full_review handoff checkpoint may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round.
+Only the ready_for_full_review handoff checkpoint for an approved RepairContract may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round.
 
 - `bug_phase_ready_for_full_review` [evidence_attestation] — Every BUG from the round has reached `bug_phase_ready_for_full_review`, i.e. targeted re-verification is complete and the bug sub-machine is ready to fold back into the main verification review.
 - `all_targeted_reverification_passed` [semantic_check] — Every P0 BUG in runtime.entities.bugs[] has advanced past `retesting`/`fixing`/`investigating` so no blocking bug remains awaiting targeted re-verification.
@@ -492,7 +499,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _bug_resolution → verification_
 
-When the completed S8 disposition batch contains no accepted BUG, every finding is finally rejected without product/specification change or duplicate-linked to a canonical BUG with no remaining repair, the Loop returns to verification for a fresh complete round. An insufficient BUG report remains in investigation; spec and REQ changes use TR-023 and TR-024.
+When the InvestigationCase has dispositioned every source Finding as no-change, duplicate, or another non-repair route, and no approved RepairContract remains, the Loop returns to verification for a fresh complete round. The legacy bug_batch_record is only a compatibility projection; spec and REQ changes use TR-023 and TR-024.
 
 - `no_accepted_bugs` [evidence_attestation] — No BUG in runtime.entities.bugs[] for the current review round is in state `accepted`, `assigned`, `fixing`, or `retesting`. Used by TR-022 to confirm a finding-level Loop exit to verification is safe (no accepted BUG requires the S9 repair flow).
 - `bug_report_review_complete` [evidence_attestation] — Every blocking S7 finding has a recorded disposition in runtime.evidence[] (accepted canonical BUG, rejected BUG, duplicate link, spec rework handoff, or REQ change pause). Used by TR-022 to confirm the orchestrator has classified every blocking finding before exiting the bug_resolution phase.
@@ -652,11 +659,35 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 ## Phase transitions: bug_resolution
 
+### `PTR-BUG-09` {#ptr-bug-09}
+
+_repair_readback → planning_
+
+S9 enters planning with a dispatchable Assignment set; no implementation write is authorized yet.
+
+_No guards._
+
+### `PTR-BUG-10` {#ptr-bug-10}
+
+_planning → reproducing_
+
+Builders report their intended repair and failing pre-fix signal before execution.
+
+_No guards._
+
+### `PTR-BUG-11` {#ptr-bug-11}
+
+_reproducing → fixing_
+
+Only the explicit execution checkpoint releases implementation writes.
+
+_No guards._
+
 ### `PTR-BUG-01` {#ptr-bug-01}
 
 _investigation → bug_report_review_
 
-A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists.
+Legacy compatibility transition only. If an older implementation emits bug_drafts_ready, the resulting BUG records are projections that must be reconciled into an InvestigationCase; new paths keep the Case status in its artifact and do not create a second runtime phase machine.
 
 - `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
 
@@ -675,7 +706,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _bug_report_review → repair_readback_
 
-The orchestrator approves canonical BUGs and duplicate mappings.
+Legacy compatibility projection only. A canonical BUG acceptance event cannot authorize S9 unless an approved RepairContract is already present; new paths do not enter bug_report_review.
 
 - `canonical_bug_mapping_complete` [evidence_attestation] — Each finding evidence item in the round maps to a canonical BUG id in runtime.entities.bugs[] so the verification phase cannot advance on unresolved duplicates.
 - `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
@@ -693,7 +724,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _bug_report_review → investigation_
 
-Insufficient BUG reports return to investigation.
+Legacy compatibility projection only. Rejected BUG projections return to the InvestigationCase rather than creating another per-Finding BUG draft.
 
 _No guards._
 
@@ -706,11 +737,32 @@ Evidence bindings (copy into `runtime transition`):
 
 If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-03` to inspect current candidates.
 
+### `PTR-BUG-08` {#ptr-bug-08}
+
+_investigation → repair_readback_
+
+Legacy compatibility projection only. The current S8 main path is `runtime investigation contract approve`, which writes immutable approved Case/Contract revisions, pins their hashes, and enters S9 repair_readback directly; it does not invoke this PTR-BUG-08 catalog transition. No canonical BUG acceptance is required or sufficient.
+
+- `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
+- `bug_closing_contract_complete` [evidence_attestation] — The single-BUG closing contract (root-cause, repair plan, and reverification plan) described in docs/rules/bugfix-review.md is referenced by evidence for the BUG leaving `investigating`.
+- `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
+
+Evidence: `root_cause_record`, `repair_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `root_cause_record`: `--evidence root_cause_record=<reference>`
+  Accepted kinds: `bug`
+- `repair_record`: `--evidence repair_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-08` to inspect current candidates.
+
 ### `PTR-BUG-04` {#ptr-bug-04}
 
 _repair_readback → fixing_
 
-Repair execution uses the same agent dispatch gate (plan_checkpoint by default).
+Legacy compatibility projection only. Current S9 dispatch uses `runtime repair dispatch` for each RepairAssignment, then the explicit `runtime repair execution begin` checkpoint releases implementation writes.
 
 - `repair_understanding_approved` [evidence_attestation] — An understanding-approval evidence item is referenced from runtime.evidence[] confirming the assigned Builder understood the root-cause writeup before activation.
 - `repair_activation_recorded` [evidence_attestation] — A repair-activation evidence item is referenced from runtime.evidence[] confirming the assigned Builder has started the repair task recorded in runtime.entities.tasks[].
@@ -760,11 +812,19 @@ Evidence bindings (copy into `runtime transition`):
 
 If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-06` to inspect current candidates.
 
+### `PTR-BUG-12` {#ptr-bug-12}
+
+_investigation → targeted_reverification_
+
+After an environmental or authority blocker is resolved, reopen the existing targeted verification checkpoint; runtime hard-checks status=blocked, failure_route=blocked, and a non-empty resolution reason. A new independent TargetedReverification is still required, and this transition never authorizes a repair or a pass.
+
+_No guards._
+
 ### `PTR-BUG-07` {#ptr-bug-07}
 
 _targeted_reverification → investigation_
 
-Failed repair verification restarts root-cause investigation.
+Failed repair verification returns to the same InvestigationCase for causal reassessment; it does not create a new BUG draft unless the causal model genuinely differs.
 
 _No guards._
 
@@ -855,7 +915,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification|bug_resolution → paused_
 
-Configured repair limits never silently close a BUG.
+Configured repair limits never silently close an InvestigationCase or RepairContract; exhaustion pauses the Loop with the current repair evidence.
 
 _No guards._
 

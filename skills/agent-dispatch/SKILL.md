@@ -30,7 +30,7 @@ Dispatch modes and the agent lifecycle are defined in `docs/loop-definition.json
 
 ## Procedure
 1. Launch the Worker with the assignment (register-workgroup already stamped `dispatch_mode` on the agent row; default `plan_checkpoint`).
-2. `plan_checkpoint`: the Worker sends one PLAN_REPORT — assignment_id/revision, objective, planned paths, steps, assertion checks, dependencies, risks — and starts working without waiting. Main reviews asynchronously; silence means aligned, CORRECTION means drift. The PLAN_REPORT file must satisfy the `planReport` branch of the agent-message schema (all 20 required fields — base envelope plus plan body; steps are `{description, target}` objects, assertion_checks are `{assertion, oracle}` objects); write it from the complete example below, not from memory — a malformed report fails the auto-chain and costs a manual `runtime agent-begin` recovery. Send it with the plan file path as a SendMessage `plan_ref` parameter: the PostToolUse(SendMessage) observer chains reading → activated → working automatically.
+2. `plan_checkpoint`: the Worker sends one PLAN_REPORT — assignment_id/revision, objective, planned paths, steps, assertion checks, dependencies, risks — and starts working without waiting. Main reviews asynchronously; silence means aligned, CORRECTION means drift. The PLAN_REPORT file must satisfy the `planReport` branch of the agent-message schema (all 20 required fields — base envelope plus plan body; steps are `{description, target}` objects, assertion_checks are `{assertion, oracle}` objects); write it from the complete example below, not from memory — a malformed report fails the auto-chain and costs a manual `runtime agent-begin` recovery. Send it with the plan file path as a SendMessage `plan_ref` parameter: the PostToolUse(SendMessage) observer chains reading → activated → working automatically. The checkpoint binding is source-specific: S7 assignments are checked against the current ReviewPlan; S6/S8/S9 assignments are checked against the fingerprinted workgroup manifest, with generic non-S7 `assignment_revision=1`. For S9, the platform `assignment-s9-*` alias is distinct from the domain `repair-assignment-*`; the generic checkpoint never replaces the domain repair report.
 3. `plan_approval_required`: the Worker submits a readback; Main approves (`understanding_approved`) before the activation envelope is accepted.
 4. Register the plan/readback with `loop-harness runtime agent-event --event readback_submitted --message <file>`; then `activation_sent` (the hash chain binds the envelope to the submitted plan/readback file bytes — compute with `shasum -a 256 <file>` / `sha256sum <file>` after writing it). On the `plan_checkpoint` path this step is what the observer automates; run it by hand only when the auto-chain did not fire.
 5. `work_started` → work → `runtime task-complete` (Builders) or `runtime review-result submit` (S7 Reviewers).
@@ -71,6 +71,22 @@ After writing the file, send it — `plan_ref` is a SendMessage parameter, never
 ```text
 SendMessage(tool_input: {teammate_name: <your agent id>, message_type: "plan_report", plan_ref: <the plan file path>})
 ```
+
+### Do not confuse platform PLAN_REPORT with a domain plan report
+
+`message_type=plan_report` is the generic platform checkpoint. It proves that a
+platform-dispatched Agent understood its Assignment and lets PostToolUse and
+the Agent lifecycle release the normal first-write checkpoint. It is not a
+stage-specific authorization or completion record.
+
+S9 has a second, domain-specific artifact: `record_type=repair_plan_report`,
+submitted with `runtime repair plan-report submit --file <report.json>`. It
+must bind the RepairSession/RepairPlan/RepairAssignment, expose the assertion
+map, and include a red or blocked pre-fix check before
+`runtime repair execution begin` can release product writes. A domain
+`repair_plan_report` must not be passed as `SendMessage(plan_ref=...)`, and a
+generic PLAN_REPORT does not replace the S9 domain submission. If both gates
+apply, submit the generic checkpoint first and the domain artifact second.
 
 ## Outputs
 - Agent lifecycle events under CAS (journal-visible).

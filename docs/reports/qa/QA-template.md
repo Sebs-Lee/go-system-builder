@@ -69,6 +69,22 @@ a fresh complete round does (L3-S7 §10 / agent-protocol.md#s9).
 
 Targeted re-verification does not satisfy a complete clean round.
 
+### Worked repair-round example
+
+This example applies only to a repair-round report (TR-012 re-entry): a
+first-round report with no repaired BUGs omits §5 entirely and should not
+imitate the row below. The following is the minimum shape, not a replacement
+for the rest of this report — the same repair-round QA report still fills
+§2–§4 for the complete Assignment:
+
+| BUG | Original assignment | Repair fingerprint | Result | Evidence |
+|:---|:---|:---|:---|:---|
+| BUG-042 | `assignment-qa-logic-state-error` | `commit:abc123` | pass | `runtime:reverify-042` |
+
+The row answers only whether the repaired causal assertion was independently
+re-verified. It does not waive the QA conclusion, checks, or Claim coverage in
+§2–§4; a later `runtime s7` submission still needs the full Claim set.
+
 ## 6. Evidence Validity
 
 | Field | Value |

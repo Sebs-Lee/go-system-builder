@@ -107,7 +107,7 @@ performs recovery. This pair is the compact recovery protocol.
 The Main Spine is a one-way delivery trunk with explicit correction loops.
 S6 and S9 both use specialized Builder capability (`frontend-builder`,
 `backend-builder`, or `test-builder`), but they are different stages with
-different inputs: S6 builds locked TASKs; S9 repairs accepted BUGs.
+different inputs: S6 builds locked TASKs; S9 executes approved RepairContracts.
 
 ```mermaid
 flowchart TD
@@ -119,8 +119,8 @@ flowchart TD
     S5["S5 document_verification<br/>spec + task verification"]
     S6["S6 build<br/>specialized Builders implement locked TASKs"]
     S7["S7 full_verification_round<br/>ReviewPlan Claims -> Result"]
-    S8["S8 finding_investigation<br/>Finding -> CausalModel -> RepairContract"]
-    S9["S9 bug_resolution<br/>specialized Builder repairs accepted BUGs"]
+    S8["S8 finding_investigation<br/>ObservationBatch -> InvestigationCase -> RepairContract"]
+    S9["S9 bug_resolution<br/>specialized Builder executes approved RepairContracts"]
     S10["S10 acceptance_and_audit<br/>ACC + release audit"]
     S11["S11 human_release_gateway<br/>automation stops"]
     PAUSE["paused<br/>human decision / REQ change"]
@@ -140,6 +140,115 @@ flowchart TD
     S9 -->|"REQ change required"| PAUSE
 ```
 
+## S7～S9 控制面与埋点地图 {#s7s9-control-plane-map}
+
+本节是 S7～S9 的当前总契约。三份 L3 blueprint 解释各阶段为什么这样做；本节只回答
+“事实落在哪里、哪个动词消费它、失败后由谁接住”。除非下表明确标为兼容投影，聊天、
+Team task、BUG 草稿和看板都不是权威。
+
+### 1. 权威链与唯一下一步
+
+| 环节 | 权威对象/指针 | 产生方式 | 消费者与出口 | 不应误解为 |
+|:--|:--|:--|:--|:--|
+| S7 计划 | `review.plan` → `.claude/review/plans/<id>.json`；Claims/Assignments 是同一 Plan 的集合 | `s7 draft` → `runtime review-plan`；结果暴露新受影响面时最多一次 `review-plan revise` | `runtime register-workgroup` 绑定 Assignment；`review-result submit` 消费 Claim | 人工 checklist 或 Agent 数量 |
+| S7 观察 | ReviewResult evidence、immutable Finding、sealed `review.observation_batch` | `runtime review-result submit` 原子写入；普通 Finding 进入 drain，P0 可立即 seal | S8 `runtime investigation ingest` 消费 exact Finding set、encounter、capture gaps 和 baseline | BUG、根因结论或“找到一个就停止”的报告 |
+| S8 案件 | `review.investigation` → immutable InvestigationCase revision | `investigation ingest` 建立 Case；hypothesis/result/route 追加 Case revision；`investigation dispatch` 将带真实 `assignment-*` 的 Hypothesis 接入 Investigator workgroup/Task/Agent lifecycle | `contract approve` 在 causal closure 后把 approved RepairContract 和 Case revision 一起提交到 `S8-REPAIR-CONTRACT-APPROVAL`；S9 定向失败用带 `--reassessment-evidence` 的 `investigation route --route investigate_more` 重开同一 Case，并在同一 CAS 退休旧 `review.repair` 指针；非 S9 route 由 `investigation consume` 接走 | `status --all` 聚合视图、BUG 文件或自由文本 root cause |
+| S9 修复 | `review.repair` → RepairSession/RepairPlan/PlanReport/Result/Impact/Targeted/Handoff 链 | `session open` → `plan compile` → 每 Assignment 的领域 PlanReport → `execution begin` → Result | impact/targeted/handoff 逐级 CAS 消费；targeted failure 持久化并回 S8；handoff 触发 `TR-012` | 一份 completion Markdown 或单个 Builder 的 changed-path 自报 |
+| S9→S7 | `review.round_entry`（含 `repair_handoff_ref`/SHA、`change_impact_ref`、seed 和 fresh implementation baseline）与 S7 seed（作为本轮 r1 投影） | `repair handoff commit` 在同一 CAS 中清理旧投影、递增 round、登记 handoff/impact/targeted evidence 并写入 seed | S7 Planner 先审查 seed；需要新增/拆分覆盖时用一次 `runtime review-plan revise` 形成 r2，再派发最终 Assignment 集合 | targeted PASS、seed 本身或 S9 的局部结论 |
+
+`TR-012` 当前会把生成的 seed 投影到 `review.plan`，但 seed 只提供修复影响面、基础
+Delivery/QA 责任和 E2E applicability 提示；它不是完整的最终 S7 覆盖计划。Agent 看到
+`S9 handoff` 的下一步时，应先检查 seed 的 changed artifacts、TASK coverage、E2E
+coverage 和 risk，再整理/注册本轮最终 Plan；不能把 seed 的 `status=running` 当作已经
+完成派发或已经完成全量审查。这里的“整理”不是把 seed 与另一个 draft 盲目追加合并：
+Planner 以 seed 作为唯一输入基线，保留每个 changed artifact 的 path+SHA、ChangeImpact
+source_ref、TASK coverage 和 E2E applicability，补齐/拆分 Claims、Assignments、
+`non_overlap_boundary` 与真实验证资产。seed 已作为本轮 ReviewPlan revision 1 投影；
+若覆盖发生变化，生成同一 `review_plan_id` 的 revision 2，并使用
+`runtime review-plan revise --file <plan-v2.json> --source-ref path:<change-impact-path> --affected-surface <surface>`
+完成受控更新，然后才派发最终 Assignment 集合。若 worktree 在 handoff 后发生变化，先
+刷新 frozen-subject SHA 并重新核对 coverage；不得直接编辑 `review.plan` projection。
+
+### 2. 不要混淆的四种 revision/hash
+
+| 名称 | 语义 | 上限/变更规则 |
+|:--|:--|:--|
+| Runtime `revision` | 全局 CAS 序号；每次自然工具/事务写入都可能递增 | **没有最大值，也不是轮次预算**；只在命令中作为 `expected-revision` 防并发 |
+| ReviewPlan `revision` | 同一 S7 round 的计划修订号 | 初始为 1；当前设计最多一次受控 revise，防止无限 scope creep；达到上限应开新轮或回上游，不得把它当 Runtime revision |
+| InvestigationCase `revision` | Case 的 immutable 事实/假设/路由历史 | 每次 Case mutation 生成新文件和新 hash；所有写入必须同时携带 Case revision/hash |
+| Artifact SHA-256 | 某个 immutable 文件的内容身份 | 变化即 stale；不能用 revision 代替 hash，也不能用 hash 代替生命周期状态 |
+
+S9 的 `RepairContract.revision` 是其绑定的 Case revision 语义；批准时会生成新的
+approved Contract 文件和新的 Case revision。S9 不应把这个字段当成全局 Runtime revision。
+
+### 3. 埋点应落在必经路径
+
+| 必经路径 | 承担的职责 | 失败时必须给出的恢复动词 |
+|:--|:--|:--|
+| Role/Skill/Assignment prompt | 解释当前目标、边界、读入顺序和交付格式 | 缺少职责或上下文时停在当前 Assignment |
+| JSON schema/domain validator | 校验字段形状、exact set、身份、最小证据 | 补具体字段/引用后重新提交同一 artifact |
+| Runtime CAS command | 写入权威指针、状态、事件和 `next_action` | 使用当前 Runtime/Case revision 重读并重试 |
+| PreToolUse | 首写屏障、产品写权限、scope/assignment/阶段门 | 按错误中的唯一 next command 补 checkpoint 或缩小路径 |
+| PostToolUse(SendMessage) | 只捕获通用平台 `agent-message` 的 PLAN_REPORT，并驱动 plan_checkpoint 自动继续 | 缺 plan_ref 或 schema 错误时 `runtime agent-begin` 恢复 |
+| Stop/Idle Hook | 区分“暂时无消息”和“已交卷”，避免正常计划后被 kill | 保持当前 Agent/Assignment，或按 blocker_resolved 恢复 |
+| Controller/status | 从权威对象计算 board、缺口、队列和下一动作 | 执行 status 输出的单一下一步，不手改 state |
+| Result/approve/commit consumer | 消费 exact set 并决定 clean、S8、S9 或上游路由 | 按记录的 route/failure_route 回到对应阶段 |
+
+有两个必须分开的 `plan report`：
+
+1. 通用平台 checkpoint 是 `agent-message.schema.json` 的 `message_type=plan_report`，由
+   `SendMessage(plan_ref=...)` 发送，供 PostToolUse 和 Agent lifecycle 使用；
+2. S9 领域 `RepairPlanReport` 是 `repair-plan-report.schema.json` 的
+   `record_type=repair_plan_report`，由 `runtime repair plan-report submit --file ...`
+   提交，用来证明某个 repair unit 的 red pre-fix 和计划。
+
+S9 Builder 需要两个事实时，应分别提交：先走通用 Assignment checkpoint（若该 Agent
+被平台派发），再提交领域 RepairPlanReport。**不能把 S9 领域文件直接作为通用
+`SendMessage.plan_ref`**；PostToolUse 会校验 `agent-message` envelope，并按 Assignment
+来源绑定控制面：S7 绑定当前 ReviewPlan，S6/S8/S9 绑定已指纹化的 workgroup manifest。
+非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`；S9 平台使用的
+`assignment-s9-*` 只是 manifest alias，领域 `repair-assignment-*` 仍必须单独出现在
+RepairPlanReport 中。通用 PLAN_REPORT 通过不等于领域修复计划已提交。
+
+### 4. 当前实现审计：闭合、部分闭合与断点
+
+| 范围 | 当前状态 | Agent 可依赖的事实 | 仍需补齐/避免的误导 |
+|:--|:--|:--|:--|
+| S7 | 主链闭合 | Plan exact-set、N 个 DV/QA/E2E Assignment、typed evidence、Finding/ObservationBatch、CleanRound、budget decision 和 site-lost recovery 已有 Runtime/Hook/CLI 承接 | `register-workgroup` 仍是兼容入口；真实 Claude Code 2.1.218 doctor 和产品侧浏览器 wrapper 仍是环境/产品侧工作 |
+| S8 intake/Case/Contract | 核心链闭合 | ingest、immutable Case revision、hypothesis/result、真实 Assignment dispatch、deterministic route、canonical duplicate link、`investigate_more` 重路由、Contract approve 和 `S8-REPAIR-CONTRACT-APPROVAL` 已有 CAS 命令；approve 自己执行 Case/Contract readiness 校验 | 单个 Runtime 当前只 pin 一个 active Case；`status --all` 仍只是只读聚合，不是 CaseSet authority |
+| S8 调查派发 | **闭合（入口已接线）** | `investigation dispatch` 从已注册 Hypothesis 生成受 schema/semantic 校验的 Investigator manifest、TASK 和 activation envelope，并复用 `register-workgroup` CAS；hypothesis/result 使用同一 Assignment id；多值 flags 支持重复传入或逗号分隔，路由 JSON 文件错误会返回具体路径和恢复动作 | Claude/Agent Team 的实际进程启动仍是平台动作；Runtime 负责登记、边界和恢复，不伪造外部 spawn 成功 |
+| S9 execution plan | **闭合（最小调度语义）** | Unit→Assignment、`runtime repair dispatch` 的 Builder Team/Task/Agent/activation、scope、assertion map、PlanReport、first-write barrier、exact Result、actual diff、Impact、Targeted 和 Handoff 已落地；Plan 编译校验 DAG/引用/覆盖，Result 消费校验依赖和 resource lock | 没有独立 scheduler；queued/held/released 是现有 Result/PlanReport 投影上的确定性判定，不应扩张成第二状态机 |
+| S9 status/board | **闭合（只读批次投影）** | `runtime repair status` 按当前 RepairPlan、`plan_report_refs`、`result_refs` 重算每个 Assignment 的 owner/report/result/status、依赖 queue_reason、lock_state 和缺口 | status 是派生视图；修复事实仍只能由 PlanReport/Result/Runtime CAS 写入 |
+| S9→S7 | **部分闭合（共用 artifact 校验）** | handoff 同 CAS 递增 round、清理旧 S7/S8 projection、写入 seed 和 baseline digest；seed 与普通注册入口共用 frozen-subject、coverage/asset artifact 校验 | handoff 仍在同一 CAS 内直接 Apply projection，不能替代最终 S7 Planner 对 Claim/Assignment 的整理与正式 `runtime review-plan` 注册 |
+| guidance | **主链已闭合，仍保留兼容提示** | `runtime investigation status`、`runtime repair status`、S7 status 和 Hook 会披露当前缺口及下一动作；S9 dispatch 明示 generic PLAN_REPORT 与领域 PlanReport 的先后 | `register-workgroup`、旧 BUG/PTR 和最终 S7 seed staging 仍是兼容/职责边界；Agent 以领域 pointer 的 `next_action` 和本节边界为准 |
+
+当前 Runtime 为兼容既有 `docs/loop-definition.json`，仍会在部分 S9 plan/impact/targeted 事件中写入
+`PTR-BUG-09/10/11/05/06/12`。这些是内部/兼容 transition id，不是新的授权入口；其中
+`PTR-BUG-12` 只记录“验证阻塞已解开”的运行时 checkpoint，硬条件仍由 `runtime repair targeted resume`
+执行。Agent 只使用领域命令和 `next_action`，不要手工选择或伪造 PTR。
+
+这些断点不是要求现在增加更多状态文件。优先原则是：先复用已有 Case/Assignment/Plan
+和 Runtime CAS；只有某个新字段有明确消费者、恢复动词和测试时才增加机制。多 Case
+CaseSet、S9 专用调度器和完整 impact dependency graph 属于后续实现任务，不在文档中
+假装已经存在。
+
+### 5. 缺口修复顺序与复杂度判断
+
+| 优先级 | 根因 | 最小修复方向 | 复杂度/收益判断 |
+|:--|:--|:--|:--|
+| P0 | Controller/CLI 在 Case 已路由或 handoff 已完成时仍输出通用“继续调查/注册 seed”，且 duplicate target 不落盘 | 让 recovery `next_action` 按 Case/Repair pointer 分支；修正 route help；在现有 Case revision 中持久化 canonical Case ref | 低复杂度、高收益；这是直接消除 Agent 迷路和不可追踪链接，不增加控制面 |
+| P0 | 新 `contract approve` 与旧 BUG evidence guard 共用 `PTR-BUG-08` 语义 | 新 Case/Contract authority 使用独立 `S8-REPAIR-CONTRACT-APPROVAL` transition id；`PTR-BUG-08` 仅保留为 legacy catalog 兼容说明，不再由新 approve 写入 | 低复杂度、高收益；消除同一 ID 的两种事实语义 |
+| P0 | `investigate_more` 路由写入后没有合法的重路由出口 | 允许 `investigate_more → <new route>` 仅发生在新的 Case revision、带新增 evidence/hypothesis/result 的 CAS 操作中；保留 route history，禁止无新证据的覆盖 | 低到中复杂度、高收益；直接解除 S8 卡死，不增加顶层状态机 |
+| P1 | S8 `status`/`status --all` 读取 Case 文件后未统一验证 pinned hash/schema | 复用已有 artifact validator；读板发现 hash/schema/pointer 不一致时只报 stale 并给出 reconcile/恢复动作，禁止把聚合视图升级为新权威 | 低复杂度、中高收益；闭合只读恢复信息，不新增状态对象 |
+| P1 | `s2_spec_rework`、`human_req_change`、`s7_no_change` 路由可持久化但缺少统一消费者和下一动作 | 为每个已有 route 接上对应的 S2/人工 Gateway/S7 consumer 与 `next_action`；不再增加 route 类型或并行 requested event | 低到中复杂度、高收益；闭合“决定已写入但无人接手”的出口 |
+| P1 | S8 Hypothesis 的 `assignment_id` 没有统一 dispatch/lifecycle 绑定 | 已复用现有 Assignment/workgroup 绑定，增加 Investigator kind 和 `investigation dispatch` 入口；不新建 Investigator 状态机 | 中低复杂度、高收益；把已有追踪字段接到已有调度链 |
+| P1 | S9 `depends_on/resource_locks` 只有声明，没有 Unit/Assignment 一致性、DAG/ready/queued/released 消费 | 已在 `ValidateRepairPlan` 校验引用、环、scope/Assignment 覆盖和锁 exact-set，并在 Result submit/status board 中实现确定性依赖与锁等待；不引入新 scheduler 服务 | 中复杂度、高收益；只实现真实多 Unit 并行所需的最小消费面 |
+| P1 | S9 status 只展示 pointer 和最近一个 Result，无法完整披露多 Assignment 批次缺口 | 已复用 `result_refs`、PlanReport refs 和 RepairPlan，在只读 status 中计算每个 Assignment 的 report/result/owner/status；status 不成为写入权威 | 低到中复杂度、高收益 |
+| P2 | TR-012 seed 直接应用 projection，绕过部分完整 RegisterPlan 前置校验 | 已抽取 artifact-level registration checks 供普通注册和 handoff seed 共用，保留同 CAS 写入；最终 ReviewPlan 仍由正常 S7 consumer 完成 | 中复杂度、中高收益；仍保留 staging 与最终注册的职责边界 |
+| 延后 | 多 CaseSet、独立 Targeted schema、命令面大拆分、真实 Claude doctor、产品 wrapper | 只有出现第二个真实消费者或平台接入需求时再做；现阶段保留兼容路径并在状态页披露 | 避免机制复杂度高于收益；这些不是当前 S7→S8→S9 主链的阻断 |
+
+上述顺序的共同验收条件是：每个新增校验必须在拒绝消息中说明缺失事实、唯一恢复动词和验证动作，并由对应 Runtime/CLI/Hook consumer 的回归测试锁定；否则只写提示，不升级为新门禁。
+
 ## Non-negotiable invariants
 
 These hold across every stage:
@@ -153,7 +262,10 @@ These hold across every stage:
    capture is required.
 4. 每个委派责任都有唯一 Assignment；普通 `plan_checkpoint` 任务在 PLAN_REPORT 后连续执行，高风险任务才需要 `plan_approval_required`。
 5. Main Agent 不自执行已委派责任，不因正常计划回复“批准开工”；只有计划偏移、阻塞、权限变化或 Result 消费需要介入。平台会话状态不能用 Runtime 的 `active` 文案伪造唤醒。
-6. Blocking findings enter S8 finding investigation before S9 repair.
+6. Blocking findings enter S8 finding investigation before S9 repair. The
+   authoritative handoff is `sealed ObservationBatch → InvestigationCase →
+   approved RepairContract`; a canonical BUG is only a post-approval
+   compatibility projection and never a prerequisite for investigation.
    Targeted re-verification never produces a clean round; only a same-round
    complete Delivery + QA + E2E Browser pass does.
 7. On the normal path, the Agent produces the missing deliverable or evidence;
@@ -407,12 +519,13 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
   - `qa`: static engineering quality (pattern-fit, logic/boundary, maintainability oracles);
   - `e2e`: real browser behavior over the declared coverage; a cold start gets an isolated verification-artifact workspace pinned at registration.
 - **actions**:
-  1. plan: `loop-harness s7 draft --out plan.json`, inspect the generated `coverage_inventory` and CASE-level E2E Assignments. The draft reads current module `cases.json` and maps each required browser CASE to a Playwright spec that mentions its CASE id; a complete mapping emits `regression_available` plus SHA-pinned `e2e_assets`, while any missing CASE conservatively emits `cold_start` plus `e2e-workspace/<round>` and one behavior Assignment per CASE. Only when no readable CASE inventory exists do TODO oracles remain to be filled. Typed path evidence may be written as `path:<repo-relative>#sha256=<64-hex>` for drift detection (bare `path:` remains existence-only compatibility). Register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
-  2. dispatch: scaffold each Assignment's reviewer manifest with `loop-harness s7 manifest-draft --assignment <id>` (fills the 20 required fields; replace the TODO(planner) markers), then `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle)
-  3. submit: each Reviewer writes one Canonical ReviewResult per `internal/schema/assets/review-result.example.json` (the schema's required fields include `subject_digest` — copy it from `loop-harness s7 status`; bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` for cold-start E2E; P0 Findings must populate `capture_gaps` or submit rejects) and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence uses typed refs (`console:<id>`, `network:<id>`, `path:<repo-relative>`, `runtime:<evidence-id>`, `screenshot:<id>`, `state:<id>`, `timeline:<id>`, `trace:<id>`), and capture steps may bind `--finding <id>`/`--claim <id>`; record sanitized execution steps with `loop-harness capture step` while observing live (its output names the buffer path; `--captures <dir-or-file>` merges the buffer into a Finding's empty timeline at submit — reviewer-authored timelines are never rewritten; write the timeline inline instead when you compose it after the fact). **Repair rounds (TR-012 re-entry)**: the TR-012 re-entry plan's `frozen_subjects` MUST include every post-repair artifact named by the current `change_impact` evidence, with the exact on-disk SHA-256. RegisterPlan performs the disk check in `internal/review/workspace.go#verifyFrozenSubjects` and the TR-012 binding check in `internal/review/repair_baseline.go`; `review-plan.schema.json` only checks field shape and SHA format.
-  4. observe: `loop-harness s7 status` is the read-only board (Claim dispositions, assignment consumption, findings, exit state, `round N of M`, and blocked `blocker_ref` plus the exact `blocker_resolved` recovery verb)
+  1. plan: `loop-harness s7 draft --out plan.json`, inspect the generated `coverage_inventory` and CASE-level E2E Assignments. The draft reads current module `cases.json` and maps each required browser CASE to a Playwright spec that mentions its CASE id; a complete mapping emits `regression_available` plus SHA-pinned `e2e_assets`, while any missing CASE conservatively emits `cold_start` plus `e2e-workspace/<round>` and one behavior Assignment per CASE. Only when no readable CASE inventory exists do TODO oracles remain to be filled. Typed path evidence may be written as `path:<repo-relative>#sha256=<64-hex>` for drift detection (bare `path:` remains existence-only compatibility). Draft Claim and Assignment IDs are plan-local: copy them from the generated file/status rather than guessing names. Keep the generated DV + six QA baseline Claims unless a Planner records an explicit coverage decision; Assignments may be merged only within one lens and only when their non-overlap boundary remains truthful. When `e2e_coverage_state=not_applicable`, keep the generated explicit E2E N/A Claim with `applicability=not_applicable`, `source_refs`, and `na_rationale`; it is a plan disposition, not a dispatched E2E task. Register with `runtime review-plan --file plan.json` — the validator enforces exact-set coverage and reports the concrete gap; a consumed Result/Finding with `source_ref + affected_surface` permits one controlled revision via `runtime review-plan revise`
+     `TODO(planner)` is an authoring marker, not a valid conclusion: replace it in the Claim `target`, `assertion`, `oracle`, `method`, `na_rationale` and relevant source/required-evidence fields defined by `internal/schema/assets/review-plan.schema.json`; the semantic registration gate rejects the literal marker.
+  2. dispatch: scaffold each Assignment's reviewer manifest with `loop-harness s7 manifest-draft --assignment <id>` (fills the 20 required fields; replace the TODO(planner) markers, especially `agent_id` with the real platform Agent identity), then `runtime register-workgroup` per Assignment (the manifest binds the plan Assignment's exact Claim set; behavior-wave registration unlocks only after the static Claims settle). Registration rejects authoring placeholders; do not attempt to dispatch the literal `TODO(planner):agent-id-...` value.
+  3. submit: each Reviewer writes one Canonical ReviewResult per `internal/schema/assets/review-result.example.json` (the schema's required fields include `subject_digest` — copy it from `loop-harness s7 status`; bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` for cold-start E2E; P0 Findings must populate `capture_gaps` or submit rejects) and submits `runtime review-result submit --assignment-id <id> --result <result.json>`; required evidence uses typed refs (`console:<id>`, `network:<id>`, `path:<repo-relative>`, `runtime:<evidence-id>`, `screenshot:<id>`, `state:<id>`, `timeline:<id>`, `trace:<id>`), and capture steps may bind `--finding <id>`/`--claim <id>`; record sanitized execution steps with `loop-harness capture step` while observing live (its output names the buffer path; `--captures <dir-or-file>` merges the buffer into a Finding's empty timeline at submit — reviewer-authored timelines are never rewritten; write the timeline inline instead when you compose it after the fact). **Repair rounds (TR-012 re-entry)**: the round-2 `subject_digest` differs from round 1 (the frozen set now includes the repaired artifacts) — always re-copy it from `loop-harness s7 status`; reusing the previous round's digest is rejected. The TR-012 re-entry plan's `frozen_subjects` MUST include every post-repair artifact named by the current `change_impact` evidence, with the exact on-disk SHA-256. RegisterPlan performs the disk check in `internal/review/workspace.go#verifyFrozenSubjects` and the TR-012 binding check in `internal/review/repair_baseline.go`; `review-plan.schema.json` only checks field shape and SHA format.
+  4. observe: `loop-harness s7 status` is the read-only board (round provenance including TR-012 S9-seed vs TR-022 no-repair re-entry, plan-local Claim focus/target/Assignment mapping, Claim dispositions, assignment consumption, findings, exit state, `round N of M`, and blocked `blocker_ref` plus the exact `blocker_resolved` recovery verb). If a `review_plan_seed_ref` exists without a registered plan, status reports a missing seed projection and the next reconcile action.
 - **constraint_recovery**: a rejected plan/result is not a dead end. The diagnostic includes `code`, `missing`, `repair`, `next`, `verify`, and `ref`; execute `next`, then verify with `loop-harness s7 status`. A malformed capture buffer must be corrected and resubmitted; an ambiguous multi-Finding buffer must be split with `--finding`/`--claim`; a stale regression asset must be refreshed or the plan returned to `cold_start`.
-- **budget_gate**: `s7 status` always prints `round N of M`. The active round may drain when `N >= M`, but no new full round opens. A failed `start_review_round` emits the human gateway; submit a JSON decision with `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`. `decision="increase_budget"` must provide `new_max_full_review_rounds > M` and atomically records the scoped `human_decision` evidence plus the new limit; the controller then retries the pending round-opening transition. `decision="return_to_governance"` records the same evidence, invalidates downstream review evidence, clears the old ReviewPlan projection, resets the round counter for the new planning generation, and routes through declared human gateway GTR-006 to planning. The decision artifact must bind the current `runtime_id`, `expected_revision`, `review_round`, `previous_max_full_review_rounds`, `reason`, and `authorized_by`; stale revisions or lower budgets are rejected.
+- **budget_gate** (decision-file shape: `budget_decision_shape` below in this section): `s7 status` always prints `round N of M`. The active round may drain when `N >= M`, but no new full round opens. A failed `start_review_round` emits the human gateway; submit a JSON decision with `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`. `decision="increase_budget"` must provide `new_max_full_review_rounds > M` and atomically records the scoped `human_decision` evidence plus the new limit; the controller then retries the pending round-opening transition. `decision="return_to_governance"` records the same evidence, invalidates downstream review evidence, clears the old ReviewPlan projection, resets the round counter for the new planning generation, and routes through declared human gateway GTR-006 to planning. The decision artifact must bind the current `runtime_id`, `expected_revision`, `review_round`, `previous_max_full_review_rounds`, `reason`, and `authorized_by`; stale revisions or lower budgets are rejected.
 - **budget_decision_shape**:
   ```json
   {
@@ -441,92 +554,99 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
 
 ## S8 — finding_investigation {#s8}
 
-- **purpose**: consume S7's immutable observations and derive evidence-backed root cause and a complete RepairContract for S9.
-- **inputs**: sealed ObservationBatch, Finding encounter/raw evidence, locked spec chain, implementation, tests, historical impact.
-- **inputs_from**: [S7 (sealed Finding exact set and claim coverage summary), S5 (locked spec chain), S6 (current implementation)]
+- **purpose**: consume S7's immutable observations, form InvestigationCases, derive an evidence-backed root cause and approve a complete RepairContract for S9. S8 does not create a canonical BUG at intake; after approval, a canonical BUG may be emitted as a compatibility projection carrying the Case/RepairContract identity and hash.
+- **inputs**: sealed ObservationBatch with the exact Finding set and frozen baseline, Finding encounter/raw evidence and capture gaps, locked spec chain, implementation, tests, historical impact, and any registered original-finder or replacement-investigator route.
+- **inputs_from**: [S7 (sealed ObservationBatch, Finding exact set, encounter/readiness outcome and capture gaps), S5 (locked spec chain), S6 (current implementation)]
 - **actions**:
-  1. validate ObservationBatch exact Finding set, baseline, encounter readiness and claim coverage; do not default to re-running the symptom
-  2. create/revise InvestigationCases; preserve every Finding and keep grouping reversible
+  1. validate the ObservationBatch identity, exact Finding set, content hashes, frozen baseline and minimum investigation boundary; consume S7's claim/readiness outcome instead of re-running discovery, and do not default to re-running the symptom
+  2. create/revise InvestigationCases; preserve every Finding and keep grouping reversible without overwriting the source observation
   3. create a minimal competing hypothesis set and dispatch investigation Assignments by hypothesis/discriminator, not by file or symptom count
-  4. prove trigger → violated invariant → faulty mechanism → propagation → symptoms, and search blast radius and detection gap
-  5. classify each Case as implementation/test/tooling/environment/spec/REQ/duplicate/no-change and define the correct authority route
-  6. approve a RepairContract only when every source Finding is explained and symptom/root/detection assertions are Builder-ready
+  4. prove trigger → violated invariant → faulty mechanism → propagation → symptoms, and bound blast radius and detection gap
+  5. classify each Case as implementation/test/tooling/environment/spec/REQ/duplicate/no-change and define one explicit authority route
+  6. approve a RepairContract only when every source Finding is explained and symptom/root/detection assertions are Builder-ready; only then may a caller optionally run `runtime investigation project` to create the canonical BUG compatibility projection
 - **disposition routing**:
 
   | S8 result | Required disposition | Next route |
   |:---|:---|:---|
   | Case lacks causal evidence or has unexplained Findings | `investigate_more` | stay in S8; add evidence or discriminator-bound follow-up |
-  | confirmed implementation/test/tooling/environment repair | approved RepairContract | S9 repair |
+  | confirmed implementation/test/tooling/environment repair | `s9_repair` + approved RepairContract (`S8-REPAIR-CONTRACT-APPROVAL`) | S9 repair |
   | duplicate of an already covered Case | reversible duplicate link | follow canonical Case |
-  | specification correction | `spec_rework_required` | S2 planning |
-  | locked REQ must change | `req_change_required` | paused / human Gateway |
-  | evidence-backed no artifact change | `no_change` | new complete S7 round when the batch has no remaining repair |
+  | specification correction | `s2_spec_rework` | S2 planning (TR-023) |
+  | locked REQ must change | `human_req_change` | paused / human Gateway (TR-024) |
+  | evidence-backed no artifact change | `s7_no_change` | new complete S7 round via TR-022 (`findings_resolved_without_repair`) when the batch has no remaining repair |
 - **done_when**:
   - every Finding maps to a Case disposition without deleting or overwriting the source observation
   - every Case routed to S9 has a supported CausalModel, blast radius, detection gap and approved RepairContract
-  - no accepted repair is defined as a symptom-only patch; S9 consumes the RepairContract instead of re-deriving root cause
-- **next**: S9 for approved RepairContract; S2 for specification rework; paused for REQ change; S7 only for evidence-backed no-change or after repair. Produce the missing Case/Hypothesis/Contract fact; do not ask S8 to reproduce a confirmed symptom by default.
-- **failure_route**: unsupported root cause stays in S8 investigation; REQ-level ambiguity surfaces `req_amendment`.
+  - no accepted repair is defined as a symptom-only patch; S9 consumes the approved RepairContract instead of re-deriving root cause
+  - any canonical BUG emitted for compatibility references the approved RepairContract and is not an independent S8 authority
+- **next**: after intake (`runtime investigation ingest --grouping-rationale <why>`), record each falsifiable hypothesis with `runtime investigation hypothesis register --case-id <case> --id <hyp> --assignment-id <assignment> --statement <...> --invariant <...> --discriminator <...> --support <...> --refute <...> --source-finding <id>`; then bind that registered question to a real Investigator with `runtime investigation dispatch --case-id <case> --hypothesis-id <hyp> --agent-id <agent>` (optionally `--assignment-id <assignment>` only when it matches the Hypothesis). The dispatch command generates the Investigator manifest/task and establishes the lifecycle checkpoint; the worker must send the generic PLAN_REPORT while still running, then continue the discriminator and submit its read-only evidence with `runtime investigation hypothesis result --case-id <case> --hypothesis-id <hyp> --assignment-id <assignment> --method <...> --observed <...> --result <supported|refuted|inconclusive> --explains <finding> --source-boundary <ref> --evidence <ref> --counterfactual <...>`. Register/result pin the Case CAS (`--expected-case-revision` / `--expected-case-sha256` from `runtime investigation status`). The status board's top-level `next` is the executable next action; after dispatch it points to the result, and it must be followed before routing. Once every source Finding is explained by supported results, record the disposition with `runtime investigation route --case-id <case> --route s9_repair --reason <...> --primary-root-cause <...> --causal-model-file <json> --blast-radius-file <json> --detection-gap-file <json>`; then approve the RepairContract with `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor>` (the draft's `revision` field must equal the Case revision shown by `investigation status`); the command advances the Runtime through `S8-REPAIR-CONTRACT-APPROVAL` to S9 and pins the Contract hash. If a legacy consumer needs a BUG-shaped view, run `runtime investigation project --bug-id <BUG-xxx>` only after approval; it validates the exact Finding set and never mutates the authority pointer. S9 consumes that contract. Specification correction routes to S2, REQ change pauses for the human Gateway, duplicate follows its canonical Case, evidence-backed no-change returns to a new complete S7 round, and `investigate_more` stays in S8. Do not ask S8 to reproduce a confirmed symptom by default.
+- S8 的多值字段 `--source-finding`、`--source-boundary`、`--evidence`、`--explains` 和 `--does-not-explain` 可以重复传入，也可以在一次 flag 中使用逗号分隔；CLI 会保留完整集合后再由 Case validator 做 exact-set/重复校验。`--causal-model-file`、`--blast-radius-file` 和 `--detection-gap-file` 是 JSON object authoring inputs；文件不存在或不是合法 JSON 时，命令会指出具体 flag/路径，先创建或修正文件后重试，不要把这个错误误判为 Case 缺少根因字段。
+- **failure_route**: an invalid or incomplete ObservationBatch returns to S7 for evidence completion; an unsupported root cause, unexplained Finding or incomplete contract stays in the same S8 Case; a duplicate follows its canonical Case; specification ambiguity routes to S2; REQ-level ambiguity surfaces `req_amendment`. A follow-up observation is allowed only when it is bound to a named discriminator and a safe evidence gap.
 - **human_gateway**: only `req_amendment`.
 - **primary_skill**: `bug-resolution` plus L4 plan_checkpoint; S8 Investigator is read-only against product/spec.
 
+`runtime investigation status` 是 S8 的单一恢复入口：当 Case 为 `contract_approved` 且没有未处理的 S9 targeted failure 时，`next` 会直接给出
+`runtime repair session open --root <root> --session-id <session> --created-by <agent>`，并同时披露
+`repair_contract_ref`；Agent 不需要再次执行 `contract approve`。当 `review.repair.status=blocked` 且生命周期已回到 S8 时，status 优先披露 S9 保存的 `next_action` 和 `repair_recovery`，因此失败类别是因果重评估还是验证阻塞都能直接看到下一动词。非 `blocked` 失败先按该命令读取
+`causal_reassessment_refs[]`，再登记带新的 `assignment-*` 的 Hypothesis；该 CAS 会同时退休旧的 `review.repair` 指针，避免新 Contract 被错误识别为旧 S9 session。`blocked` 失败不进入 S8 因果调查：先执行 status 给出的 `runtime repair targeted resume --actor <actor> --reason <resolution>`，再创建独立复验。
+
 ## S9 — bug_resolution {#s9}
 
-- **purpose**: execute approved RepairContracts (with canonical BUG as a compatibility projection), target-re-verify root-cause elimination, then return for a fresh complete round.
-- **inputs**: approved RepairContract/CausalModel (canonical BUG is a projection if needed), original spec chain, implementation.
+- **purpose**: execute an approved RepairContract, target-re-verify root-cause elimination, invalidate affected historical PASS evidence, and return for a fresh complete S7 round. A canonical BUG is only a compatibility projection and never the repair authority.
+- **inputs**: approved RepairContract and its CausalModel/InvestigationCase references, source Finding evidence needed for verification, original spec chain, implementation, and the current baseline.
 - **inputs_from**: [S8 (approved RepairContract), S5 (locked spec chain), S6 (current implementation)]
 - **control shape**:
 
   ```mermaid
   flowchart TD
-      FINDING["S7 blocking finding<br/>observed by Delivery / QA / E2E"]
-      INVESTIGATE["S8 investigation<br/>failure boundary + root cause"]
-      BUG["accepted canonical BUG<br/>repair scope + Closing Contract"]
-      READBACK["S9.1 Builder read-back<br/>BUG + original spec chain"]
+      FINDING["S7 sealed ObservationBatch<br/>exact Findings + encounter"]
+      INVESTIGATE["S8 InvestigationCase<br/>failure boundary + root cause"]
+      CONTRACT["approved RepairContract<br/>repair scope + assertions"]
+      BUG["canonical BUG<br/>legacy compatibility projection"]
+      READBACK["S9.1 Builder read-back<br/>RepairContract + original spec chain"]
       FIX["S9.2 Builder fixes<br/>RepairContract-scoped plan"]
       INVALIDATE["S9.3 invalidate affected PASS evidence"]
       TARGET["S9.4 original responsibility<br/>targeted re-verification"]
       HANDOFF["S9.5 ready_for_full_review<br/>persisted handoff checkpoint"]
       REVIEW["S7 new full review round<br/>Delivery + QA + E2E"]
 
-      FINDING --> INVESTIGATE --> BUG --> READBACK --> FIX --> INVALIDATE --> TARGET --> HANDOFF --> REVIEW
+      FINDING --> INVESTIGATE --> CONTRACT --> READBACK --> FIX --> INVALIDATE --> TARGET --> HANDOFF --> REVIEW
+      CONTRACT -.-> BUG
+      BUG -.-> READBACK
   ```
 
-- **actions** (sub-phases, see table below for full mapping):
-  1. **S8.1 investigation** — assign single-responsibility root-cause investigation
-  2. **S8.2 bug_report_review** — write the canonical BUG report; main session approves it
-  3. **S9.1 repair_readback** — create or reuse a Builder; phase-one read-back of BUG + spec chain
-  4. **S9.2 fixing** — phase-two activate; Builder implements fix; run scoped tests
-  5. **S9.3 invalidate_evidence** — mark affected historical PASS evidence invalid
-  6. **S9.4 targeted_reverification** — original finding responsibility re-verifies only that BUG
-  7. **S9.5 ready_for_full_review** — persist the completed S9 handoff; no Agent performs new work here
+- **actions** (S8 investigation and approval happen above; the legacy phase names remain only as Runtime compatibility projections):
+  1. **S9.1 `repair_readback → planning → reproducing`** — create the immutable session with `runtime repair session open --session-id <session> --created-by <agent>`, then compile the bounded plan with `runtime repair plan compile --plan-id <plan> --created-by <agent>`. The plan creates one explicit `repair-assignment-<unit>` per RepairUnit and records the derived `symptom-N/root-N/gap-N` assertion map. Dispatch each Assignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`; this command generates the manifest/task internally — it does not take `--manifest` — and reuses the normal Team/Task/Agent/activation CAS. Each assigned Builder must submit an immutable PlanReport with `runtime repair plan-report submit --file <report.json>`; [`docs/examples/s7-s9/repair-plan-report.json`](examples/s7-s9/repair-plan-report.json) is the copyable shape. The report must bind the current Session/Plan/Assignment, expose the assertion map, state the intended repair and include at least one `fail`/`blocked` red pre-fix check. Submit one report per Assignment; planning/reproducing is also enforced by PreToolUse: product writes are denied while plan reports are incomplete. The first-write barrier remains held until `runtime repair execution begin`. Read back the approved RepairContract, CausalModel references, scope, assertions and original spec chain. A legacy canonical BUG may be projected with `runtime investigation project`, but never authorizes repair.
+  2. **S9.2 `fixing`** — after `runtime repair execution begin`, continue the already-dispatched bounded Builder(s), implement the RepairContract-scoped plan, and submit one JSON RepairResult with `runtime repair result submit --file <result.json>`; [`docs/examples/s7-s9/repair-result.json`](examples/s7-s9/repair-result.json) shows the request shape. The command and PreToolUse Hook bind the Worker to the immutable PlanReport Assignment scope; the Hook names the `repair_write_before_execution` and `repair_assignment_scope` barriers when a product write is denied. Submit one exact-unit Result per Assignment. A pass batch must contain every Assignment before impact reconciliation; any non-pass Result immediately moves the Runtime to `blocked` and exposes the recorded blocker/residual risks plus the S8 causal-reassessment route, so unrelated Assignments are not left waiting. Each Result must include before-fix red evidence and, for a passing result, non-empty all-pass checks. Every `changed_artifacts[]` row needs a path, status and content SHA; a deleted file uses the base/last-good SHA because absence from the worktree is not permission to omit its identity. A blocked/fail Result may carry `changed_artifacts: []` only when the Session has no repository diff. Include the PlanReport reference, scope deviations, migration/rollback and residual risks when applicable.
+  3. **S9.3 `impact_reconciliation`** — compute the session-wide actual Changeset with `runtime repair changeset compute --session-id <session>` (the default consumes the immutable Session baseline; Git refs remain available for explicit historical comparisons), create ChangeImpact with `runtime repair impact create --file <request.json>` using [`docs/examples/s7-s9/change-impact.json`](examples/s7-s9/change-impact.json), then commit it with `runtime repair impact commit --file <change-impact.json>`; do not use a single tool call's affected-path list as the session diff. The canonical source identity is `source_case_ids[]` from the approved InvestigationCase; legacy `source_bug_ids[]` remains accepted only for compatibility projections. The commit binds the ChangeImpact to the current Runtime RepairResult and requires an exact path+SHA set; the later handoff applies the same exact-set check to Changeset.
+  4. **S9.4 `targeted_reverification`** — an independent verifier creates a TargetedReverification with `runtime repair targeted create --file <request.json>` and commits it with `runtime repair targeted commit --file <reverification.json>`. Same-assignment verification is rejected; the ImpactID, RuntimeID and baseline must match the current chain; identify the authority with `case_id` (or legacy `bug_id` for a compatibility projection); assertion IDs must be unique and a PASS result cannot hide a failed assertion. Use exact Contract slots `symptom-N`, `root-N`, and `gap-N` (or the `detection-N` alias) in Contract order. A failed result is persisted with `failure_class=fail_same_cause|fail_new_cause|blocked|scope_changed|stale` and routes to the recorded recovery action; for non-`blocked` failure, the next action names `runtime investigation route --route investigate_more --reassessment-evidence <targeted-path>`, which creates a new S8 Case revision, clears the superseded Contract pointer and retires the old `review.repair` pointer so a later approved Contract can open a fresh S9 session. A `blocked` verifier first resolves the blocker, records it with `runtime repair targeted resume --actor <actor> --reason <resolution>`, and then creates and commits a new independent reverification. Targeted PASS never substitutes for the complete S7 round.
+  5. **S9.5 `ready_for_full_review`** — create a complete RepairHandoff with `runtime repair handoff create --file <request.json>` using [`docs/examples/s7-s9/repair-handoff.json`](examples/s7-s9/repair-handoff.json), and commit it with `runtime repair handoff commit --file <handoff.json>`. The commit enters `verification.running`, clears stale S7/S8 projections, records a fresh implementation baseline digest, writes and registers a generated S7 ReviewPlan seed under `.claude/review/repair/s7-seeds/`, and exposes its Delivery/QA assignments for dispatch. The seed is the round's revision 1 projection; review it first, and when coverage changes refine it only through the controlled `runtime review-plan revise` path before dispatching the final Assignment set. Use `runtime repair status` after compaction to recover the exact pointer and next command.
 - **sub-phases** (machine `bug_resolution.*` phases):
 
-  | Sub-phase | Role | Entry PTR | Exit PTR | Done when |
+  | Target sub-phase (legacy Runtime name) | Role | Entry PTR | Exit PTR | Done when |
   |:---|:---|:---|:---|:---|
-  | S8.1 investigation | Investigator (single-responsibility subagent or main session) | enter bug_resolution | PTR-BUG-01 | root cause + scope + reproduction identified |
-  | S8.2 bug_report_review | main session | PTR-BUG-01 | PTR-BUG-02 (approve) / PTR-BUG-03 (reject) | BUG report sufficient to direct repair |
-  | S9.1 repair_readback | Builder phase one (read-only) | PTR-BUG-02 | PTR-BUG-04 | read-back approved; scope and plan confirmed |
-  | S9.2 fixing | Builder phase two (bounded write) | PTR-BUG-04 | PTR-BUG-05 | fix landed; scoped unit/integration tests pass; completion_report written |
-  | S9.3 invalidate_evidence | main session | PTR-BUG-05 | before targeted re-verification starts | affected historical PASS evidence marked invalid; replacement evidence has fresh IDs |
-  | S9.4 targeted_reverification | original finding responsibility | PTR-BUG-05 | PTR-BUG-06 (pass) / PTR-BUG-07 (fail) | only that BUG's dimensions PASS |
-  | S9.5 ready_for_full_review | Runtime handoff checkpoint | PTR-BUG-06 | TR-012 | targeted PASS is durably recorded; only a new complete S7 may follow |
+  | S8 investigation / Case review (Runtime phase: `investigation`) | Investigator plus Main/Architect when required | enter bug_resolution; then `runtime investigation ingest` | `S8-REPAIR-CONTRACT-APPROVAL` for Contract approval (legacy BUG PTRs are migration-only) | Case has supported causal model, explicit route and approved RepairContract; canonical BUG projection is optional |
+  | S9.1 repair_readback → planning → reproducing | Repair Lead and dispatched Builders (read-only until the execution checkpoint) | `S8-REPAIR-CONTRACT-APPROVAL`; then `runtime repair session open` → `runtime repair plan compile` → `runtime repair dispatch` → PlanReport submission | `runtime repair execution begin` (legacy `PTR-BUG-09`/`PTR-BUG-10` are compatibility projections only) | every RepairAssignment has a PlanReport with a red/blocked pre-fix check; the first-write barrier remains held |
+  | S9.2 fixing | dispatched Builder(s) (bounded write) | `runtime repair execution begin` | exact-unit `runtime repair result submit` (legacy `PTR-BUG-11`/`PTR-BUG-05` are compatibility projections only) | every Assignment reports the Contract-scoped result, exact changed paths and validation evidence |
+  | S9.3 impact_reconciliation | Repair Lead/main session | all required RepairResults are consumed | `runtime repair impact commit` | session-wide actual Changeset and ChangeImpact are committed; affected historical PASS evidence is invalidated in the same CAS |
+  | S9.4 targeted_reverification | independent verifier / original Finding responsibility | `runtime repair impact commit` | `runtime repair targeted commit` (failure is persisted with its typed recovery route) | the approved Contract's affected Findings and assertions PASS independently |
+  | S9.5 ready_for_full_review | Runtime handoff checkpoint | `runtime repair targeted commit` with PASS | `runtime repair handoff commit` → `TR-012` | handoff, fresh baseline and S7 seed are durably recorded; only a new complete S7 may follow |
 
   Sub-phase invariants:
 
-  - Findings are not repair work. S8 must produce an accepted BUG with root cause and Closing Contract before any Builder repair starts.
-  - The Builder activated in S9.1/S9.2 has a **BUG-scoped activation envelope**, not the original S6 Builder scope. Write paths, tools, and command classes are bounded by what the BUG fix requires.
-  - S9.4 **never produces a clean round**. Targeted re-verification only proves this BUG is fixed. The S9 → S7 advance requires a fresh complete Delivery + QA + E2E round.
+  - Findings are not repair work. S8 must produce an approved RepairContract with root cause, scope and assertions before any Builder repair starts; a canonical BUG may be created afterward only as a compatibility projection.
+  - The Builder activated in S9.1/S9.2 has a **RepairContract-scoped activation envelope**, not the original S6 Builder scope. Write paths, tools, and command classes are bounded by the Contract; a legacy BUG ID may identify the projection but cannot widen the scope.
+  - S9.4 **never produces a clean round**. Targeted re-verification only proves the approved RepairContract's affected Findings and assertions pass. The S9 → S7 advance requires a fresh complete Delivery + QA + E2E round.
   - S9.3 must complete before targeted re-verification and before the S9 → S7 transition commits; otherwise the new S7 round would reference PASS evidence that the fix invalidated.
   - `ready_for_full_review` is terminal only for the nested `bug_resolution` phase machine. It is not a terminal Loop state and performs no repair work; it is the persisted, recoverable handoff that makes TR-012 the only legal S9 exit.
 
 - **done_when**:
-  - accepted BUG report exists with root cause, scope, and reproduction from S8
+  - an approved RepairContract exists with root cause, scope, causal references and symptom/root/detection assertions; any canonical BUG is a matching compatibility projection
   - affected evidence is marked invalid; replacement evidence has fresh IDs (S9.3)
   - repair is implemented and the targeted re-verification passes (S9.1, S9.2, S9.4)
   - Runtime reaches `bug_resolution.ready_for_full_review` before TR-012 starts the new S7 round
-- **next**: S7 (a brand-new complete Delivery + QA + E2E round). Produce the missing activation, repair, invalidation, or targeted re-verification evidence; each next `PreToolUse` lets the Controller auto-commit at most one declared BUG phase Transition, culminating in `TR-012` after the durable `ready_for_full_review` checkpoint.
-- **failure_route**: if targeted re-verification fails, return to S8 investigation for the same BUG (PTR-BUG-07 `targeted_reverification_fail → investigation`) or a new BUG if root cause differs; if repair cannot be safely completed, pause only after every autonomous recovery path is exhausted.
+- **next**: S7 (a brand-new complete Delivery + QA + E2E round). Produce the missing read-back, repair, invalidation, or targeted assertion evidence; each next `PreToolUse` lets the Controller auto-commit at most one declared legacy-compatible phase Transition, culminating in `TR-012` after the durable `ready_for_full_review` checkpoint.
+- **failure_route**: if targeted re-verification fails, the Runtime preserves the failed artifact and exposes an executable `runtime investigation route --case-id <case> --route investigate_more --reason "targeted reverification requires causal reassessment" --reassessment-evidence <targeted-path>` action for the same S8 Case. That CAS creates a new Case revision, clears the superseded Contract pointer, retires the old S9 `review.repair` pointer, and preserves the original Finding exact set; only a genuinely different causal model opens a new Case. `PTR-BUG-07 targeted_reverification_fail → investigation` remains a legacy projection. A `blocked` verifier uses `runtime repair targeted resume --actor <actor> --reason <resolution>` after resolving the blocker, then submits a new independent reverification; it does not create causal evidence. If the RepairContract is incomplete or unsafe, stop S9 and route back to S8; if repair cannot be safely completed, pause only after every autonomous recovery path is exhausted.
 - **human_gateway**: only `req_amendment`.
 - **primary_skill**: `bug-resolution`
 
@@ -544,7 +664,7 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
   - release audit complete with no open action
   - package is release-ready
 - **next**: S11. Produce the missing current ACC or release-audit evidence; the next `PreToolUse` lets the Controller auto-commit at most one allowlisted Transition (`TR-015`, then on a later event `TR-017`) when its gate is satisfied.
-- **failure_route**: if a defect is found, return to S8 finding investigation; only accepted canonical BUGs proceed to S9 repair. If the issue is an incomplete build report rather than a defect, return to S6. If it is a REQ gap, surface `req_amendment`.
+- **failure_route**: if a defect is found, return to S8 finding investigation; only approved RepairContracts proceed to S9 repair, with canonical BUGs used only as compatibility projections. If the issue is an incomplete build report rather than a defect, return to S6. If it is a REQ gap, surface `req_amendment`.
 - **human_gateway**: only `req_amendment`.
 - **primary_skill**: `acceptance-and-handoff`
 
@@ -588,7 +708,7 @@ normal S2/S3/S4 cursor authority.
 | S5 document_verification | `document_verification` |
 | S6 build | `building` |
 | S7 full_verification_round | Target: `verification.plan` / `verification.assignment.result` / `verification.observation_batch.sealed` / `verification.clean_round`; current phase names remain compatibility projections |
-| S8 finding_investigation | Target: `bug_resolution.intake` / `bug_resolution.case.investigation` / `bug_resolution.repair_contract.approved`; current BUG review names remain compatibility projections |
+| S8 finding_investigation | Runtime phase: `bug_resolution.investigation`; Case artifact status carries `investigating → contract_review → contract_approved → routed`; `runtime investigation status` is the operator projection |
 | S9 bug_resolution | Target: RepairContract-scoped plan / fixing / targeted_reverification / ready_for_full_review; current BUG event names remain compatibility projections |
 | S10 acceptance_and_audit | `acceptance` / `release_audit` |
 | S11 human_release_gateway | `awaiting_human_release` (non-terminal decision gateway) |

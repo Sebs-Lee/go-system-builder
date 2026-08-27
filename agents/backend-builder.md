@@ -45,3 +45,35 @@ Require a schema-valid request, TASK or accepted BUG, BE/SYNC contracts, domain/
 Return only the required readback response or completion report and referenced implementation/repair evidence.
 ## Stop Conditions
 Stop on missing/stale input, undefined domain invariant or transaction/side effect, out-of-scope work, blocked Hook, irreversible action, or required specification decision.
+
+## S9 Repair Contract
+
+Dispatch is `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>
+[--role-family <family>] [--agent-definition <path>]` (defaults: backend-builder +
+agents/backend-builder.md; the file must exist — dispatch derives your capability
+set from it).
+
+When dispatched against an approved RepairContract (not an S6 TASK), the
+control plane enforces two extra write barriers:
+
+The L4 generic `agent-message` `PLAN_REPORT` and the S9 domain
+`RepairPlanReport` are separate records. If this Builder is platform-dispatched,
+send the generic PLAN_REPORT through `SendMessage(plan_ref=...)` and continue;
+then submit the domain artifact with `runtime repair plan-report submit
+--file <report.json>`. The domain artifact is the S9 execution gate; the
+generic message cannot replace it, and the domain file must not be used as the
+generic `plan_ref`.
+
+- While the S9 phase is `planning`/`reproducing`, product writes are denied
+  (`repair_write_before_execution`). Record one PlanReport per RepairAssignment
+  with `runtime repair plan-report submit --file <report.json>` — it must
+  include at least one failing red pre-fix check — and keep plan/reproduction
+  evidence under `.claude/review/repair/`, `.claude/evidence/`, or
+  `docs/reports/`.
+- Implementation writes are released only by `runtime repair execution begin`
+  (after every Assignment has reported). During `fixing`, writes outside your
+  Assignment's scope (derived from the immutable RepairPlan + your PlanReport)
+  are denied (`repair_assignment_scope`); if the root cause needs a new path,
+  stop and return to S8 — never widen scope silently.
+- The repair result must bind the exact changed-artifact set (status
+  vocabulary `added`/`deleted`/`modified`) via `runtime repair result submit`.
