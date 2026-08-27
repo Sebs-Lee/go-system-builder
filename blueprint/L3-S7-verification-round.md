@@ -6,7 +6,7 @@
 >
 > 横切机制：[L4 Agent 调度与治理](./L4-agent-dispatch-governance.md)。L4 负责 Assignment、PLAN_REPORT、连续执行、Hook、idle/stop、恢复和拓扑选择；本文只定义 S7 特有的验证规划、Claims、波次、ReviewResult、Finding、ObservationBatch 与 clean-round 收口。
 >
-> 设计状态：本文件以目标机制为主；§13 单列当前实现差距和迁移顺序。目标中的 `ReviewPlan`、Canonical `ReviewResult`、结果提交事务和新 Hook 在 L5 完成前，不得被描述为现有代码能力。
+> 设计状态：本文件同时作为当前机制契约和目标设计；§13 区分已落地能力、兼容投影和真实差距，历史审计段落保留当时快照。未在“当前事实”中明确标为已落地的内容，不得当作现有代码能力。
 
 ## 0. 阅读方式与一句话结论
 
@@ -1248,8 +1248,25 @@ S7 的主闭环已经落到当前实现；本表只记录仍影响行为的差�
 | DraftPlan / QA coverage | DraftPlan 生成六个 QA baseline focus，并拆成可独立派发的 Assignment；从当前模块 `cases.json` 读取 required browser CASE，按 CASE 拆分 E2E Assignment；literal `TODO(planner)` 在注册 gate 拒绝；DraftPlan 同时投影 changed-surface `coverage_inventory` | 没有可读 CASE inventory 时仍保留显式 TODO，必须先补 S2 场景包；不能用通用 Claim 假装已完成 |
 | E2E workspace | workspace 仅允许 `cold_start`；`regression_available` 不得创建写面，也必须有 required E2E Claim；声明的 E2E asset 在注册/修订时校验 path containment、可读性和 SHA-256；E2E Result 与 result artifact 均保留 `verification_artifact_digest`；Planner 从 CASE→Playwright spec 文本映射生成最小 `e2e_assets`，任一 required CASE 缺映射即回退 `cold_start` | 产品侧浏览器/console/network wrapper、selector 与 environment 的更细粒度 fingerprint 仍由产品接入；当前自动投影不猜测这些字段 |
 | Finding / evidence | Result submit 原子写入 immutable Finding/ObservationBatch；required evidence 采用 typed refs，`path:`/indexed evidence 会校验存在性与指纹；capture buffer 使用严格 JSONL 和多 Finding 的 `finding_id`/`claim_id` 关联，普通 Finding 继续要求 failure boundary | 浏览器/runner 的产品侧 console/network 注入 wrapper 仍由产品接入 |
-| S7→S8 handoff | ObservationBatch 保留 exact Finding set、coverage、routes、readiness；`drained_assignment_ids[]` 包含触发 seal 的当前 Assignment，避免 S8 丢失最后一份 Result | S8 InvestigationCase/RepairContract 仍按 L3-S8 的迁移计划实施 |
+| S7→S8 handoff | ObservationBatch 保留 exact Finding set、coverage、routes、readiness；`drained_assignment_ids[]` 包含触发 seal 的当前 Assignment，避免 S8 丢失最后一份 Result | S8 的 ingest/Case/hypothesis/result/route/Contract 主链与 Investigator Assignment lifecycle bridge 已可执行；单 Runtime 多 Case 协调和只读聚合仍不是现有权威，见 [S7～S9 控制面与埋点地图](../docs/agent-protocol.md#s7s9-control-plane-map) |
 | 工具必经路径 | plan_checkpoint 连续执行、idle/stop 控制、reviewer product-write hard deny、结构化 gate diagnostics、结果消费和机器 CleanRound 已由 Hook/submit/consumer 接管；`s7 status` 直接显示 round budget、blocked ref 和恢复动词 | 命令面拆分（review-plan register/revise、dispatch-assignment）和真实平台 doctor 仍是低复杂度后续项 |
+
+### 13.1.A S7→S8→S9 接口审计（2026-08-26）
+
+S7 的交付边界是“可调查的观察事实”，不是根因结论：
+
+- `review-result submit` 负责把 exact Claims、typed evidence、Finding encounter、capture gaps、baseline 和最后一个已消费 Assignment 原子收口为 `review.observation_batch`；S8 不应依赖聊天摘要或重新跑用户旅程。
+- `ObservationBatch` 是 S8 的唯一正常入口。S7 不创建 canonical BUG，也不把 targeted PASS、seed 或单个 Finding 当作可直接修复的授权。
+- TR-012 生成的 S7 seed 已投影到 `review.plan`，但只是 registration staging：下一轮 Planner 仍需检查 changed artifacts、TASK coverage、E2E applicability、frozen subjects 和 risk，再走正常 ReviewPlan 注册/派发/消费路径。
+- Runtime `revision` 只是 CAS 序号，没有最大值；ReviewPlan `revision` 是同一 round 的受控计划修订号，当前最多一次；Case/Contract revision 和 artifact SHA 是另外三类身份，不能混用。
+
+因此 S7 只对“发现是否完整、现场是否可调查、是否正确交给 S8”负责；共同根因、架构级修复意图由 S8 负责，实际写入、影响重算、定向复验和回环由 S9 负责。S7 的低优先残留仍是命令面兼容迁移、真实 Claude Code doctor 和产品侧浏览器/console/network wrapper，不应被伪装成 S7 业务闭环缺失。
+
+### 13.1.B S7~S9 当前闭环复审（2026-08-27）
+
+本轮按实际落地重新确认边界：S7 只把同一轮的 ReviewPlan、Claim disposition、Finding encounter、typed evidence、capture gaps 和 sealed `ObservationBatch` 交给 S8；S8 只在 immutable Case 中登记可证伪假设、证据结果、因果闭合和路由，approved `RepairContract` 才是 S9 授权；S9 只消费该 Contract，按 RepairAssignment 走 PlanReport → execution begin → exact Result → Impact → independent Targeted → Handoff，并把 seed 交回 S7。任何聊天摘要、BUG 兼容投影、targeted PASS 或 seed 都不能越级成为下一阶段事实源。
+
+本轮实现核对还确认两项输入层修复：S8 多 Finding/多边界证据的重复 flags 不再静默丢失；缺失/非法的因果模型、影响面或检测缺口文件会在 CLI 边界指出具体路径和下一动作。它们没有新增状态、Case、scheduler 或额外审批轮，只把既有对象的输入契约埋回必经工具路径，复杂度收益为正。Runtime revision 继续无限递增且仅用于 CAS；ReviewPlan revision 的一次受控修改仍是另一条规则。
 
 ### 13.2 历史迁移批次（已落地项的原始记录）
 
@@ -1474,7 +1491,7 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 28. 旧轮 evidence 仍在索引就让新轮失败，或用旧 ID 满足新轮；CleanRound 只读 exact current set；
 29. 只更新本文件却不改 Hook/Schema/CLI，就宣称机制已强制；§13 明确列出实现差距。
 
-30. 把 `PLAN_REPORT` 的 message_type 当成事实；PostToolUse 只有在 plan_ref/plan_path 指向当前 Assignment、当前 revision 且通过 agent-message schema 校验时，才会写入 `plan_reported_ref`；缺 ref 或错绑定只产生观察提示，不清除首写屏障。
+30. 把 `PLAN_REPORT` 的 message_type 当成事实；PostToolUse 只有在 plan_ref/plan_path 指向当前 Assignment、通过 agent-message schema 校验且完成来源绑定时，才会写入 `plan_reported_ref`：S7 校验当前 ReviewPlan revision，S6/S8/S9 校验 fingerprinted workgroup manifest，非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`；缺 ref 或错绑定只产生观察提示，不清除首写屏障。
 31. 在运行时检查点不可读时让变更型 PreToolUse 继续执行；控制器无法确认写入边界时，Write/Edit/Bash 等变更型工具 fail-closed，恢复运行时后再重试。
 
 ### 16.2 阅读预算
@@ -1526,6 +1543,25 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 3. **TR-012 修复基线机器绑定**（机制，P1，已完成）
    - 当前 `review-plan.schema.json` 只能检查结构；必须由 TR-012 写入 `review.round_entry.change_impact_ref`，再由 RegisterPlan 校验 canonical `change_impact.changed_artifacts` 的路径/SHA 是否进入 `frozen_subjects`、`coverage_inventory` 和 Claim source_refs。
    - 来源：第七轮冷读与 round-2 注册边界审查；已由 round-entry、RegisterPlan 校验和合法/缺失注册矩阵覆盖。
+
+4. **Reviewer Agent identity 占位符穿透**（机制，P0，已完成）
+   - `s7 manifest-draft` 仍输出 `TODO(planner):agent-id-...` 是有意的 authoring 草稿，但此前只有说明，没有注册边界；任意字符串会进入 `entities.agents[]`，并可能被 PostToolUse 观察者当作真实身份。
+   - 已新增共享 `internal/identity` 校验，在 readback 请求生成、`register-workgroup`、activation envelope 预写、`runtime agent-event` 状态机、PostToolUse 识别、自动激活和 `runtime agent-begin` 恢复入口统一拒绝空白/控制字符和占位身份；观察者保持 fail-open，不产生伪绑定。注册错误会明确要求替换为真实平台 Agent ID。
+   - 来源：A1/A7 沙盒 r11；回归覆盖注册不落状态、观察者不记录、auto-chain/agent-begin 不读伪身份文件。
+
+5. **S7 status 缺少轮次来源和 Claim 映射**（CLI/UX，P1，已完成）
+   - 看板现展示 `round_entry` 的 TR-012（S9 handoff seed）/TR-022（S8 no-repair re-entry）来源、handoff/impact/seed/baseline 引用；若 seed 存在但 `review.plan` 缺失，会直接显示 projection gap 和 reconcile 下一动作。
+   - 每个可加载 Claim 同时显示 `focus`、`target` 和 Assignment，未消费的 Claim 也显示为 `planned`，避免 Agent 猜动态 claim id 或从原始 state 反查映射。
+   - 来源：B3/A4；回归覆盖 round-2 blocked 看板和 seed projection 缺失。
+
+6. **S8/S9 `--file` 请求形状不可发现**（CLI/UX，P1，已完成）
+   - 增加 `docs/examples/s7-s9/` 下的 PlanReport、RepairResult、ChangeImpact、RepairHandoff 可复制 JSON；README 同时说明 Hypothesis 使用 flags、S9 dispatch 生成 manifest/task 且不接受 `--manifest`。
+   - QA-template §5 增加 repair round 中 §2–§4 与 targeted row 共存的 worked example；S7/S9 protocol、skill、manual 均指向同一 examples 目录。
+   - 来源：B1/B2/F4；选择文档样例而非增加新的运行时状态或 wrapper，保持复杂度收益比为正。
+
+7. **`coverage_justification` 空对象误报**（机制，已核实为 false positive）
+   - `Plan.CoverageJustification` 是 `*string`，草稿序列化为 JSON `null`，而不是 `{}`；schema 本身接受 string/null。新增回归测试锁定这一事实。若现场出现空对象，应视为外部手工变换或过期产物，不修改运行时契约来迁就它。
+   - 同理，`e2e_coverage_state=not_applicable` 的强制 E2E N/A Claim 是有意的 exact-set 语义，已在 protocol/manual/draft note 明示；不为减少一次派发而删除它。
 
 ### CLI/UX 层
 

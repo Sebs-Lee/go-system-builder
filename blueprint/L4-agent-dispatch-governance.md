@@ -222,6 +222,13 @@ Agent Teams 打开时，`name`、fork 和调用级 `isolation` 会影响 Agent �
 
 不得再用“所有 specialized Agent 都走硬两阶段”作为统一规则。
 
+派发身份是另一条低复杂度硬边界：manifest-draft 可以输出
+`TODO(planner):agent-id-...` 作为 authoring 草稿，但该值不是 Agent identity。
+readback 请求生成、`register-workgroup`、activation envelope、`runtime agent-event`、
+PostToolUse sender binding、auto-chain 和 `runtime agent-begin` 只接受非空、无控制字符且非占位符的真实平台 ID；不强制
+`agent-` 前缀。观察到非法可选身份时，PostToolUse 继续尝试已验证的
+`teammate_name`，找不到则 fail-open 且不伪造绑定。
+
 ## 4. 风险分类：什么时候必须批准计划
 
 ### 4.1 默认采用 plan_checkpoint 的条件
@@ -784,7 +791,7 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 | S5 文档验证 | 两个独立 reviewer responsibility | Agent Team；read-only plan_checkpoint | 两份独立结论和 exact subject |
 | S6 构建 | frontend/backend/test Builder | 隔离写入优先 Sub-agent + worktree；路径可分时可用 teammate；默认 plan_checkpoint，高风险 approval | Builder Result + integration |
 | S7 完整验证 | DV/QA/E2E Claims 与独立验证面 | ReviewPlan DAG + 1..N Assignments + plan_checkpoint | 当前 round 的 ReviewResult、Finding 和 CleanRound/ObservationBatch |
-| S8 调查 | 多假设调查、Original Finder 责任 | 多 teammate plan_checkpoint | canonical finding/BUG |
+| S8 调查 | 多假设调查、Original Finder 责任 | 多 teammate plan_checkpoint；Investigator lifecycle bridge 已接入 Runtime，通用 PLAN_REPORT 按 fingerprinted manifest 绑定 | InvestigationCase/HypothesisResult/RepairContract；canonical BUG 仅为批准后的兼容投影；实际平台进程启动仍由 Claude/Agent Team 负责 |
 | S9 修复 | repair Builder、定向复验 | 隔离写入优先 Sub-agent；默认 plan_checkpoint，高风险 teammate approval | fix Result、影响失效、targeted reverify |
 | S10 验收审计 | 证据汇编、独立系统审计 | read-only teammate/one_shot | ACC 与 audit 结论 |
 | S11 发布闸 | 发布前信息整理 | read-only one_shot 可辅助 | 最终 release decision 仍由人 |
@@ -834,7 +841,9 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 >
 > 缺口分类汇总见 [L3-S7 §13.A](./L3-S7-verification-round.md#13a--待做缺口总表持续维护)（命令面拆分 / regression 指纹复用 / RegisterPlan 原子性 / fixture 同步 / 平台 doctor / 产品侧 wrapper / 长期演进信号）。
 
-### 15.1 当前差距
+### 15.1 历史差距记录
+
+本节保留各批次迁移时的原始差距，不应直接当作当前代码快照。当前 S7～S9 的权威状态、已落地工具和仍未闭合的跨阶段断点，以 [agent-protocol.md 的 S7～S9 控制面与埋点地图](../docs/agent-protocol.md#s7s9-control-plane-map) 及各 L3 的“当前事实”为准。
 
 | 位置 | 当前机制 | 与目标的差距 |
 |:--|:--|:--|
@@ -851,6 +860,18 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 | dispatch topology | name、Agent Teams、fork、isolation 的组合未形成确定路由 | 应记录真实 topology，区分隔离 Sub-agent 与共享 Task teammate |
 | tests | 使用自造 agent_id 的 TeammateIdle payload | 应使用 2.1.218 官方 payload 做端到端测试 |
 | L3-S5/S6/S7/S9 | 各自保留两阶段描述 | 应引用本 L4，只保留 Stage 特有条件 |
+
+### 15.3 S7～S9 当前交界审计（2026-08-26）
+
+调度层的统一闭环只覆盖“谁负责、何时可写、何时可停、如何恢复”；它不替 S7/S8/S9 做业务判断。跨阶段当前结论如下：
+
+| 边界 | 调度层已经保证 | 仍不能声称已经保证 |
+|:--|:--|:--|
+| S7 → S8 | ReviewResult/ObservationBatch 的 Assignment、消息、CAS、exact-set 消费和 S8 入口指引；Investigator 已由专用 workgroup/Task/Agent/activation bridge 登记，通用 PLAN_REPORT 可按 manifest 绑定 | Claude/Agent Team 的实际进程启动仍是平台动作；Runtime 只登记控制面和恢复事实，不伪造外部 spawn 成功 |
+| S8 → S9 | approved RepairContract 才能打开 S9；Contract hash/revision 进入 Session/Plan；通用 PLAN_REPORT 可按 fingerprinted manifest 校验 | BUG projection、通用 PLAN_REPORT 和 S9 domain PlanReport 不自动互换；它们仍是不同契约，领域报告必须单独提交 |
+| S9 → S7 | Handoff、baseline、seed、round+1 和清理旧投影在 Runtime CAS 中形成可恢复事实 | seed 已等同完整 ReviewPlan；S9 的 `depends_on/resource_locks` 已被调度器执行；这些仍需最终 S7 注册/消费或后续专门实现 |
+
+调度机制的复杂度边界保持不变：保留首写屏障、PLAN_REPORT、Stop/Idle 控制、Assignment/CAS 和 exact-set 消费，因为每一项都有实际消费者和恢复动作；不新增第二套 Investigator lifecycle、CaseSet 或 S9 scheduler，除非先补齐明确的权威对象、next command、失败恢复和回归测试。涉及两个计划回报时，平台通用 `agent-message.plan_report` 只证明 Agent 已理解并可继续，S9 `repair-plan-report` 才证明领域执行计划已提交；两者不能用文档简称合并。
 
 ### 15.2 迁移顺序
 

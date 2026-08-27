@@ -4,7 +4,7 @@
 >
 > 横切机制：[L4 Agent 调度与治理](./L4-agent-dispatch-governance.md)。L4 负责 Assignment、PLAN_REPORT、连续执行、Hook、idle/stop 和恢复；本文只定义 S8 特有的 Observation ingest、InvestigationCase、Hypothesis、CausalModel、RepairContract 与路由。
 >
-> 设计状态：本文以目标机制为主；§13 单列当前实现差距。目标中的 ObservationBatch/encounter ingest、InvestigationCase、HypothesisResult、RepairContract 和 case-level 事务在 L5 实现前，不得被描述为既有代码能力。
+> 设计状态：本文以目标机制为主；§13 单列当前实现差距。当前代码已落地 ObservationBatch ingest、InvestigationCase revision、Hypothesis/Result、真实 Investigator dispatch、route、canonical duplicate link、`investigate_more` 重入、S9 定向失败的同 Case causal reassessment、RepairContract approve 和 S9 指针推进；单 Runtime 多 Case 协调仍不是本轮目标。v0.7 起增加“复杂度预算”：任何新字段、状态或工具都必须直接减少信息丢失、错误路由或重复调查，否则只保留为计算视图或文档提示。
 
 ## 0. 一句话结论与阶段关系
 
@@ -29,6 +29,17 @@ flowchart LR
 4. §13～§15：维护者按迁移顺序实现并验收。
 
 ## 1. S8 的立意、目标与不变量
+
+### 1.0 优化决策：先统一权威，再增加机制
+
+S8 的主风险不是缺少调查概念，而是旧的 `Finding → canonical BUG → S9` 与目标的 `Finding → InvestigationCase → RepairContract → S9` 同时存在。自本版本起，后者是新路径唯一权威；canonical BUG、Markdown 报告和旧 runtime BUG phase 只能作为批准后的兼容投影。不得再新增一套与 Case/Contract 平行的状态。
+
+S8 的复杂度预算遵循四条规则：
+
+1. S7 已经证明的事实不在 S8 重新证明；S8 只校验身份、hash、baseline 和最低调查边界；
+2. Hypothesis、CausalModel、blast radius、detection gap 都收敛在 Case 内，不创建独立生命周期；
+3. 路由只保留一个 `route` 和一个 `route_reason`，不重复维护 classification、disposition、requested event；
+4. 只有能被机器消费、能减少返工或能阻止错误修复的约束才进入 Gate；其余内容作为渐进披露提示。
 
 ### 1.1 为什么 Finding 不能直接派修
 
@@ -103,6 +114,8 @@ S8 不负责：
 
 S8 入口消费一份 sealed ObservationBatch，而不是聊天摘要或单条 generic finding envelope。Intake 必须验证：
 
+> 这里的“验证”是完整性与可调查性校验，不是重新执行 S7。Claim coverage、encounter 采集、E2E 动线和 site-lost 处理由 S7 负责；S8 消费这些结果，并把 `ready_with_safety_gaps` 作为带缺口的调查输入。
+
 - batch revision、frozen baseline digest 和当前 handoff 一致；
 - `finding_ids[]` exact set 可解析且每个 Finding hash 匹配；
 - Finding 的 expected/authority、observed、observation mode、encounter、failure boundary、evidence 和 original finder 完整；
@@ -119,6 +132,15 @@ S8 入口消费一份 sealed ObservationBatch，而不是聊天摘要或单条 g
 - S7 没有预写 authoritative root cause、repair scope 或 canonical BUG。
 
 Intake 失败时不丢弃 batch，也不新建 BUG。工具返回缺失 Finding ID、字段和唯一补充动作。
+
+S8 Intake 的最小硬门只有四类：
+
+1. `ObservationBatch` 文件存在且 hash 与 state pointer 一致；
+2. Finding exact set、review round 和 baseline 与 batch 一致；
+3. 每个 Finding 至少有对应的 failure boundary 或 `code_inspection` boundary；
+4. 不能在 Intake 阶段创建 BUG、写产品代码或要求无 discriminator 的症状复现。
+
+其余 Claim coverage、原始 Finder 路由和 capture gap 作为 S7 已完成的事实或明确缺口带入 Case，不在两个 Macro-stage 之间重复维护第二套 Gate。
 
 ### 2.2 FindingSupplement 与澄清
 
@@ -179,25 +201,15 @@ flowchart LR
 
 ### 3.2 InvestigationCase
 
-| 字段 | 含义 |
-|:--|:--|
-| `case_id / revision / status` | 调查身份、CAS 和生命周期 |
-| `observation_batch_id / baseline_digest` | 来源与 before-fix 世界 |
-| `source_finding_ids[]` | 当前 Case 尝试解释的表象 exact set |
-| `failure_boundary_refs[]` | 从 source Findings 计算的 last-good/wall/first-bad 视图，不复制 encounter |
-| `cross_layer_trace / evidence_gaps` | 已观察传播节点、断点和待判别缺口 |
-| `normalized_contradiction` | 多表象共同违反的可观察事实，不写修复方案 |
-| `grouping_rationale` | 为什么可能同根；允许 provisional |
-| `hypotheses[]` | 互斥或竞争的机制解释 |
-| `hypothesis_results[]` | supported/refuted/inconclusive 及证据 |
-| `causal_model` | trigger、invariant、mechanism、propagation、symptom mapping |
-| `primary_root_cause / contributing_factors[]` | 主根因与必要条件 |
-| `blast_radius` | 同机制影响的组件、数据、用户、路径和历史 evidence |
-| `detection_gap` | 为什么 S5/S6/测试/监控/S7 之前没有拦住 |
-| `classification` | implementation/test/tooling/spec/REQ/environment/dependency/duplicate/false_positive |
-| `split_merge_history[]` | 所有可逆聚类变化及理由 |
-| `unexplained_finding_ids[]` | 未解释完时禁止收口 |
-| `disposition` | investigate_more / repair / spec_rework / req_change / no_change / duplicate |
+Case 不要求 Agent 在 Intake 一次填满。字段按阶段渐进出现，避免把调查过程变成空字段表单：
+
+| 阶段 | 必填内容 | 目的 |
+|:--|:--|:--|
+| Intake | `case_id / revision / status`、`observation_batch_id / baseline_digest`、`source_finding_ids[]`、`grouping_rationale` | 建立 exact set 和 provisional grouping，不提前声称根因 |
+| Investigation | `failure_boundary_refs[]`、`cross_layer_trace`、`evidence_gaps`、`hypotheses[]`、`hypothesis_results[]`、`unexplained_finding_ids[]`；若从 S9 回流则增加带 hash 的 `causal_reassessment_refs[]` | 记录每个独立证据问题、残余事实和导致旧因果模型失效的定向证据 |
+| Close | `causal_model`、`primary_root_cause`、`blast_radius`、`detection_gap`、`route / route_reason`、`repair_contract_ref` | 只有完整因果链和唯一下一路由才能离开 S8 |
+
+`classification`、`disposition` 和 requested transition 不再作为三套并行权威；Case 只保存一个 `route`：`s9_repair`、`s2_spec_rework`、`human_req_change`、`s7_no_change`、`investigate_more` 或 `duplicate`。split/merge 只增加 revision/history，不删除 source Findings。S9 定向失败回流时，`causal_reassessment_refs[]` 只作为新的证据索引，不另建 FailureCase 或 RepairContract 状态。
 
 ### 3.3 Hypothesis 与 HypothesisResult
 
@@ -222,7 +234,7 @@ HypothesisResult：
 | `result` | `supported / refuted / inconclusive` |
 | `explains_finding_ids[]` | 能解释哪些表象 |
 | `does_not_explain[]` | 残余事实 |
-| `new_hypotheses[]` | 新线索；加入 Case revision 后才可派发 |
+| `new_hypotheses[]` | 新线索；必须在写入同一 Case revision 时就带唯一 `assignment-*`、invariant、support/refute outcomes 和 source Finding subset，之后才可派发 |
 
 Agent final text 不是 HypothesisResult；产品代码 diff 更不是调查证据。
 
@@ -424,25 +436,15 @@ S8 只提出影响模型和修复预期；S9 根据实际 diff 生成最终 chan
 
 ### 8.1 RepairContract 的内容
 
-| 字段 | 要求 |
+RepairContract 只保留三组权威内容；实现步骤可以拆成 DAG，但不能反向改变这三组意图：
+
+| 部分 | 必填内容 |
 |:--|:--|
-| `repair_contract_id / case_id / canonical_problem_id / revision` | 唯一身份和批准版本 |
-| `source_finding_ids[]` | 原始表象 exact set，一个都不能丢 |
-| `root_cause_statement` | primary mechanism，不写模糊“逻辑问题” |
-| `violated_authority/invariant` | 需要恢复的契约、所有权或状态不变量 |
-| `causal_model_ref` | 证据支持的完整因果链 |
-| `architecture_intent` | 正确 source-of-truth、边界所有权和交互方向 |
-| `repair_units[]` | 可执行但不绑定具体代码行的修复单元和 DAG |
-| `prospective_scope / forbidden_scope` | 允许调查所得的边界与禁止局部补丁 |
-| `compatibility/migration/rollout/rollback` | 数据和运行安全要求 |
-| `symptom_assertions[]` | 每个 Finding 的 before/after 断言 |
-| `root_invariant_assertions[]` | 直接证明根因机制被消除的 contract/integration assertions |
-| `detection_gap_assertions[]` | 新 oracle 必须能在回退补丁时变红 |
-| `regression_surfaces[]` | S9 targeted 与下一 S7 full round 的范围 |
-| `impact_expectations` | 哪些旧 evidence 预计 invalid/superseded/reverify |
-| `required_skills/tools` | S9 计划输入 |
-| `stop/escalation_conditions` | 发现根因错误、scope 扩大、spec/REQ 冲突时返回哪里 |
-| `approved_by/at/hash` | Main/Architect 的授权事实 |
+| Cause | `root_cause_statement`、`violated_authority/invariant`、`causal_model_ref`、证据 refs |
+| Scope | `source_finding_ids[]`、`architecture_intent`、`repair_units[]`、`prospective_scope / forbidden_scope`、兼容/迁移/回滚 |
+| Verification | `symptom_assertions[]`、`root_invariant_assertions[]`、`detection_gap_assertions[]`、`regression_surfaces[]`、stop/escalation |
+
+`canonical_problem_id` 只在批准后生成；`required_skills/tools` 由调度层从 Contract 和 Agent 能力推导，不作为第二套修复权威。`approved_by/at/hash` 是授权事实，不能由 Investigator 自己填写为“已批准”。
 
 ### 8.2 Minimum Complete Root-Cause Repair
 
@@ -515,21 +517,24 @@ ObservationBatch 可以拆成多个 Cases，不要求一条 batch envelope 强�
 
 `investigate_more` 表示根因、证据或 RepairContract 不够，Case 留在 S8；它与 `false_positive/no_change` 完全不同。前者仍未决，后者需要确定性证据证明无需改变任何 artifact。
 
+S9 的 targeted failure 是 `investigate_more` 的另一种受控入口：当失败类别不是 `blocked` 时，使用
+`runtime investigation route --case-id <case> --route investigate_more --reason "targeted reverification requires causal reassessment" --reassessment-evidence <targeted-path>`。该命令校验证据文件的 SHA，在新 Case revision 中清除旧 RepairContract 指针、保留原 Finding exact set 和 route history，然后才允许登记新的 Hypothesis。`blocked` 先在 S9 解决环境/验证阻塞并提交新的独立 targeted result，不要把环境阻塞误写成新根因。
+
 ## 10. S8→S9 的原子 Handoff
 
-Main/Architect 批准 RepairContract 时，一个事务必须：
+Main/Architect 批准 RepairContract 时，权威事务只负责：
 
 1. 校验 Case revision、source Finding exact set 和 baseline；
 2. 校验 CausalModel、root cause、blast radius、detection gap；
 3. 校验无 unexplained Findings；
 4. 校验 contract assertions 覆盖每个 source Finding 和根因不变量；
 5. 校验 classification/authority route；
-6. 生成 canonical Problem/BUG ID；
-7. 持久化 approved RepairContract hash；
-8. 将 original Finding relationships 写入 canonical mapping；
-9. 生成 S9 repair work-package inputs/Assignment candidates；
-10. 更新 Case `contract_approved` 并返回唯一下一动作；
-11. 只有所有受当前 route 约束的 Cases 都 ready，才推进 Macro-stage。
+6. 持久化 approved RepairContract hash；
+7. 更新 Case `contract_approved` 并返回唯一下一动作。
+
+当前实现的最小入口是 `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor>`：它要求 draft 覆盖 Case 的 exact Finding set，以不可变的新 Case/Contract 修订写入 hash，并通过同一个 Runtime CAS 将生命周期推进到 `bug_resolution.repair_readback`。它不在审批失败时创建 BUG，也不把 Markdown/BUG 投影伪装成权威；S9 以 Runtime 指针中的 Contract ref/hash 作为唯一入口。
+
+canonical Problem/BUG、人读报告、S9 work-package 和 Finding mapping 都是批准后的幂等投影，可以重试生成；它们不再和 Case/Contract 共享一个过大的跨域事务。只有所有受当前 route 约束的 Cases 都 ready，才推进 Macro-stage。
 
 不再要求 Investigator 手写 rich BUG、runtime entity、generic root-cause envelope 和 batch wrapper 四份独立事实。人读 BUG 报告、Runtime entity 和 gate 由 InvestigationCase/RepairContract 投影。
 
@@ -595,47 +600,55 @@ S8 状态页至少展示：
 
 | 当前位置 | 如实现状 | 与目标差距 |
 |:--|:--|:--|
-| S7→S8 TR-008 | 可能只切 cursor，finding Params/BUG entity 丢失 | 应传 sealed ObservationBatch exact set，不在 S7 创建 canonical BUG |
-| Runtime BUG creation | 调查前分配 BUG-looking ID，存在两套不同 fingerprint | canonical Problem 只在 RepairContract approve 时创建；Finding 不语义去重 |
-| S8 入口 | 通用 finding envelope + 手工 inventory | 缺 ObservationBatch ingest、FindingSupplement 和 completeness gate |
-| S7 discovery completeness | 旧 handoff 可能在首个 Finding 后留下未执行 DV/QA/E2E Claims | ingest 校验单一 `claim_coverage_summary`；ordinary batch 必须完成最终 Claim set 且 `unobserved=0` |
-| Finding 现场消费 | 复现步骤、trace、截图可能分散，未形成 failure boundary/readiness | 直接消费 S7 nested encounter；投影 boundary/trace/gap，不另建 Failure Episode entity |
-| 调查默认动作 | Investigator 容易重新跑症状来理解现场 | 已确认症状不默认复现；新 observation 必须服务于 hypothesis discriminator |
-| BUG entity/phase | 两套状态链不同步 | 以 InvestigationCase 为 S8 authority，Runtime BUG 仅作批准后的投影 |
-| Investigator role/team | gate 接受 Investigator 文本，但无正式 Agent/workgroup | 增加只读 Investigator Definition/Assignment topology |
-| Root cause | non-empty string/envelope 即可过部分 gate | 需要 HypothesisResults、CausalModel、Finding coverage 和证据 |
-| Dedup | reporter/body/path 或 source/evidence fingerprint | 只防重复输入；语义 grouping 通过可逆 Case 和因果模型 |
-| Rich BUG/Markdown/generic envelope | 四套事实无 adapter | InvestigationCase/RepairContract 单一权威，其他自动投影 |
-| Closing Contract | 自由文本或非空 ref | 改为 RepairContract 的 symptom/root/detection assertions |
-| Batch selector | mixed routes 互相冲突 | case-level disposition + authority precedence 确定性聚合 |
-| Product write scope | 调查只读主要靠文本 | S8 Investigator product/spec writes hard deny |
-| S9 input | accepted BUG 仍需 Builder 重读和猜修复思路 | S9 只消费 approved RepairContract，不重新定义 root cause |
+| S7→S8 TR-008 | `investigation ingest` 已校验 sealed ObservationBatch 的 path/hash、exact Finding set、round/baseline 和最小 boundary，并创建 immutable Case | 单个 Runtime 当前只 pin 一个 active Case；多 Case/CaseSet 还不是现有权威，不应由 `status --all` 冒充 |
+| Runtime BUG creation | 新路径不在调查前创建 BUG；`investigation project` 只在批准后输出兼容投影 | legacy `bug-event` 仍可被旧门消费；协议、模板和旧 PTR 仍需继续标为兼容迁移路径 |
+| S8 入口 | `runtime investigation ingest` 已可消费 ObservationBatch 并写 `review.investigation` | `FindingSupplement` 仍不是独立 S8 ingest 动词；补充事实须沿现有受控 evidence/Case 路径进入，不能凭自由文本改写 Finding |
+| Finding 现场消费 | Case 从 S7 encounter/boundary/evidence 读取事实；S8 不默认重跑症状 | 继续 observation 必须绑定 hypothesis discriminator；工具/产品侧采集 wrapper 仍是上游接入责任 |
+| InvestigationCase | immutable Case revision、CAS、hypothesis register/result、route 和 Contract approve 已有 Runtime/CLI 承接；`status`/`status --all` 读取时验证 pinned Case 的 hash、schema、identity 和 revision；S9 targeted failure 时 `status` 优先投影 `review.repair.next_action` 和 `repair_recovery`，不会把 Agent 送回旧 Contract；非 `blocked` causal reassessment CAS 会同时退休旧 `review.repair` 指针，保证新 Contract 能开启新 S9 session | `status --all` 仍只是只读聚合，不能成为 CaseSet authority |
+| Investigator role/team | `agents/investigator.md` 已明确只读、假设和路由职责；`runtime investigation dispatch` 会从已注册 Hypothesis 生成 Investigator manifest/TASK/activation envelope，并复用 `register-workgroup` CAS | 实际 Claude/Agent Team 进程启动仍是平台动作；Runtime 负责登记、边界、状态与恢复，不伪造外部 spawn 成功 |
+| Root cause | hypothesis result、unexplained set、causal closure、blast radius、detection gap 和 assertions 已成为 Contract gate 的输入 | 专业调查结果仍依赖 Investigator 写入 Case；系统不替代因果判断，也不应新增分数或第二套 root-cause 报告 |
+| Route | `runtime investigation route` 已持久化一个 Case route；普通 `investigate_more` 仅允许在新增 Hypothesis/Result 后重路由；S9 targeted failure 则携带 `--reassessment-evidence` 在同一 Case 创建新 revision 并清除旧 Contract 指针；`s2_spec_rework`、`s7_no_change`、duplicate 有 `investigation consume` 出口；Contract approve 使用 `S8-REPAIR-CONTRACT-APPROVAL` 推进 S9 | `human_req_change` 仍必须停在人闸并由人工完成 `runtime pause`/`req amend`；CaseSet 仍不是单 Runtime 权威 |
+| Duplicate route | CLI/Runtime 要求并校验 `canonical_case_id`，Case revision 保存 canonical path+SHA，status/next_action 指向 canonical Case | canonical Case 仍由人工/上层流程继续消费；当前不引入 CaseSet 或自动合并 |
+| `investigate_more` 重入 | 首次 route 可记录 `investigate_more`；补充 Hypothesis/Result 后，`route` 可在新 Case revision 中重路由，并追加 route_history | 无新增证据时仍拒绝覆盖；若仍无法闭合，继续停留 `investigate_more`，而不是反复创建 Case |
+| Contract | approved RepairContract 以 Case revision/hash、exact Finding set 和 CAS 写入，S9 以它为唯一修复输入；新 CLI 自己执行 Case/Contract readiness gate | `RepairContract.revision` 仍表示批准时绑定的 Case revision，后续可重命名字段但不在本轮复制第二套版本；新 authority 使用 `S8-REPAIR-CONTRACT-APPROVAL`，`PTR-BUG-08` 仅保留 legacy catalog 语义 |
+| Product write scope | S8 Investigator 产品/spec 写入已由 Hook hard deny 覆盖 | 只读边界不是 Investigator Assignment lifecycle 的替代品；诊断命令、证据目录和运行环境仍需保持可用 |
+| S8→S9 | approved Contract 直接推进 `bug_resolution.repair_readback`；BUG 是批准后的兼容投影；S9 以 `runtime repair dispatch` 接住每个 RepairAssignment | S9 的依赖/锁消费与 generic/domain PlanReport 适配由 S9 侧负责；平台实际 Agent spawn 仍是运行时动作 |
+
+### 13.1.A S8 的消费、派发与出口边界（2026-08-26）
+
+S8 的必经链只有一条：
+
+`sealed ObservationBatch → ingest → Case revision → hypothesis/result → route → approved RepairContract`
+
+- `runtime investigation status` 是当前 Case 的恢复入口；它展示 Case revision/hash、未解释 Findings、假设和下一动作。`status --all` 只能帮助人工发现目录中的其他 Case，不能写入指针、不能决定 mixed route，也不能替代 CaseSet coordinator。
+- 假设按独立证据问题派发，而不是按 Finding 数量机械派发。`runtime investigation dispatch` 将 Hypothesis 的 `assignment_id` 接到现有 workgroup/Task/Agent lifecycle，并预置通用 `plan_checkpoint` activation；显式传入的 Assignment 必须与 Hypothesis 登记值一致；Agent 进程本身由 Claude/Agent Team 平台启动，Runtime 不假装已经 spawn。HypothesisResult 产生的 `new_hypotheses[]` 也必须已经完整可派发，不能先写入一个没有 Assignment 的半成品。
+- Investigator 的通用 `agent-message` `PLAN_REPORT` 是平台生命周期 checkpoint，不是 HypothesisResult 或根因结论；PostToolUse 按已指纹化 workgroup manifest 校验 S8 的 `assignment-*`、Agent、Task、Team 和当前 runtime，非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`。计划回报通过后立即继续 discriminator，不等待 Main 的第二轮批准；最终因果事实仍必须由 `runtime investigation hypothesis result` 写入 Case。
+- `route` 是持久化的诊断决定，不是自动推进所有生命周期的万能 Transition；`contract approve` 的 S9 路由在同一 CAS 中推进到 S9，`investigation consume` 接走 S2、duplicate 和 no-change 路由，REQ 变更仍停在人闸。普通 `investigate_more` 只有在新增 Hypothesis/Result 后才能在新的 Case revision 中显式重路由；S9 targeted failure 使用带精确证据 hash 的 `--reassessment-evidence` 作为例外入口，先清除旧 Contract 指针并退休旧 `review.repair` 指针，再继续调查；duplicate 的 canonical Case path+SHA 已持久化。
+- 不添加 CaseSet、独立 Failure Episode 或第二份 root-cause report，除非出现明确消费者、恢复动词和回归测试；当前单 active Case 限制应被 status/Controller 明示，而不是靠新增控制面掩盖。
 
 ### 13.2 P0：先闭合信息链和权限
 
-1. 定义 Finding nested encounter、FindingSupplement、ObservationBatch investigation-readiness + Claim coverage ingest contract；
-2. 定义 InvestigationCase/HypothesisResult/CausalModel/RepairContract schema；
-3. TR-008 原子 handoff exact Finding set、failure-boundary refs、readiness 和 capture gaps；
-4. 增加 Investigator role、Assignment 和产品写 hard deny；
-5. Case/Result/Contract 使用共享控制面与 CAS；
-6. 从 Finding/evidence refs 计算 failure-boundary/cross-layer/evidence-gap 视图，不复制成新实体；
-7. canonical Problem ID 延后到 contract approval。
+1. 先同步 blueprint、agent-protocol、loop-definition、bug-resolution Skill 的权威语义；
+2. 实现最小 `investigation ingest`：exact set、hash、baseline、最低 boundary 校验，创建一个 Case pointer；
+3. Case/Result/Contract 使用共享控制面与 CAS，但不新增 Failure Episode、ledger 或 BUG batch 生命周期；
+4. 从 Finding/evidence refs 计算 failure-boundary/cross-layer/evidence-gap 视图，不复制成新实体；
+5. 增加 Investigator 只读范围和产品写 hard deny；
+6. canonical Problem ID 延后到 contract approval。
 
 ### 13.3 P1：建立假设调查与因果收口
 
-1. 实现 `investigation ingest/case create/revise/split/merge`；
-2. 实现 hypothesis Assignment/Result；
+1. 实现 `investigation case/status` 和 Case revision；
+2. 实现 hypothesis Assignment/Result，按独立证据问题派发，不按 Finding 机械派发；
 3. 实现 Finding coverage、unexplained set 和 causal model completeness；
-4. 支持 original finder clarification/supplement；
+4. 复用 FindingSupplement 支持 clarification/discriminator observation；
 5. follow-up observation 必须绑定 hypothesis/discriminator，删除默认 symptom re-reproduction；
-6. blast radius/detection gap 成为 contract 前置；
-7. 删除按 finding 一条一 Investigator 的默认叙事。
+6. blast radius/detection gap 成为 Contract 前置。
 
 ### 13.4 P2：RepairContract 和 S9 handoff
 
-1. 实现 contract scaffold/approve 事务；
-2. 自动投影 canonical BUG、人读报告、repair work-package inputs；
-3. case-level disposition 和 authority precedence；
+1. 实现 contract scaffold/approve 事务；当前已落地最小 `approve`：schema、exact Finding coverage、approved hash、Case/Contract immutable revision 和 `S8-REPAIR-CONTRACT-APPROVAL` S9 handoff 已闭合；
+2. 用一个 `route` 加 `route_reason` 实现 case-level disposition 和 authority precedence；
+3. 批准后幂等投影 canonical BUG、人读报告、repair work-package inputs；
 4. 删除 generic batch wrapper 和 root-cause attestation stub；
 5. S9 改为消费 contract revision/hash。
 
@@ -668,6 +681,7 @@ S8 状态页至少展示：
 | original finder 失联 | 从 Finding/Assignment/encounter 继续调查，事实不丢，不默认重现症状 |
 | Investigator 请求“再试一次”但无 discriminator | follow-up request 拒绝 |
 | discriminator 需要区分 H1/H2 | 允许最小只读 observation，并将新事实追加为 Supplement |
+| Hypothesis 没有 `assignment-*` | register 拒绝；先分配唯一 Assignment，再 dispatch 到 Investigator lifecycle |
 | 两个表象疑似同根 | provisional Case 保留两个 Findings，未证实时可 split |
 | 只因同文件/同报错尝试合并 | case validator 要求因果/contract grouping rationale |
 | 一个 Finding 两个 contributing causes | 允许多 Case 关系，不强制一对一 |
@@ -682,6 +696,7 @@ S8 状态页至少展示：
 | RepairContract 只修一个症状 | assertion coverage 拒绝 |
 | RepairContract 缺 detection gap/forbidden patch | approve 拒绝 |
 | contract approved | canonical Problem、mapping、S9 inputs 同事务创建 |
+| S9 targeted failure | 非 `blocked` 失败必须携带精确证据执行 `runtime investigation route --route investigate_more --reassessment-evidence <path>`；新 Case revision 清除旧 Contract 指针并保留原 Finding exact set |
 | session 恢复 | open Cases/hypotheses/unexplained/next action 可重建 |
 
 ### 14.2 运营指标
@@ -706,6 +721,52 @@ S8 状态页至少展示：
 | symptom-patch plan rejection count | 观察局部修补倾向，不追求绝对为 0 |
 | contract revision during S9 | 衡量 S8 是否给出可执行且正确的架构意图 |
 | no-change false disposition | 回 S7 后再次出现同 Finding，目标为 0 |
+
+## 14.A · 复杂度审查审计（2026-08-26，S7~S8 第八轮）
+
+> 本节保留第八轮审计时的原始发现，不是当前实现快照；“未修”表示该轮结束时尚未修复。当前状态以 §13.1、§13.1.A 和 [S7～S9 控制面与埋点地图](../docs/agent-protocol.md#s7s9-control-plane-map) 为准。
+
+> 方法 = 冷读 sub-agent 完整走 S8 引导链 + 沙盒 r9 从 sealed ObservationBatch 实驱**新路径全链**
+> （ingest → hypothesis register/result → route s9_repair → contract approve → `S8-REPAIR-CONTRACT-APPROVAL` 自动推进 repair_readback）。
+>
+> **致命发现并修复（1）**：investigation 包导出 RegisterHypothesis / SubmitHypothesisResult /
+> UpdateCaseRoute 三个 API，但 CLI 只接了 ingest|status|contract|project——**新路径走到 investigation 相后
+> 无任何动词可推进**（假设记不了 → unexplained_finding_ids 永不清空 → contract approve 永拒）。本轮补齐
+> `runtime investigation hypothesis register|result` 与 `runtime investigation route` 三个子动词（含 Case 级
+> CAS flags --expected-case-revision/--expected-case-sha256 与 --source-boundary 必填），r9 全链打通，
+> CLI 回归测试 TestRuntimeInvestigationHypothesisAndRouteCLI 锁死。
+>
+> **en route 记录（错误教练质量良好）**：contract 路径必须是仓库相对路径；draft 的 `revision` 字段语义是
+> **Case revision 钉定**（字段名有歧义，记待办）；schema 对 assertions 数组要求字符串而非对象；"only a draft
+> can be approved" 状态机自查。沙盒亦实驱 legacy BUG 链（bug-event investigation_started →
+> bug_report_submitted（root_cause_evidence + closing_contract params）→ bug_accepted），PTR-BUG-02 门在
+> 合成状态下 LOOP_GATE_UNKNOWN（记 13.A：legacy 门评估路径需复查）。
+>
+> **冷读其余发现（当时未修，保留为历史记录）**：无 investigator 角色 卡（agents/ 七卡无一绑定 Investigator）；"Closing
+> Contract" 在 manual/TR-02 guard/BUG-template 三处定义不一致（新路径应统一到 RepairContract 三断言组）；
+> 混合批次路由优先级（REQ>spec>repair>duplicate>no-change 时整批暂停）只在 blueprint、不在 protocol；
+> 无 `s8 status` 看板（S7 有 s7 status）；InvestigationCase/RepairContract 无 committed 示例文件。后续批次已补 Investigator 卡和 `runtime investigation status`；当前仍开放的是 Investigator lifecycle bridge、mixed-route 的实际消费、duplicate canonical target 持久化以及示例/authoring 面。
+>
+> **并行工作声明**：验证期间 loop-definition.json 被另一工作流实时编辑（S9-PLAN-* 事务族新增后 guard 又被
+> 移除），其当前快照违反 loop-definition.schema 的 PTR ID 模式（S9-PLAN-COMPILE 不匹配 ^PTR-[A-Z]+-[0-9]{2}$）
+> 导致全套件红——本轮为 unblock 曾注册 repair_plan/repair_plan_report 证据槽与 kind；S9 重设计的其余收口
+> 归属该工作流，本审计不越界。
+
+## 14.B · 当前接线补充（2026-08-26）
+
+本轮对 S7→S8 的实际接线只补必要的可发现性，不增加 Case、Failure Episode 或第二套调度状态机：
+
+- S8 假设仍通过 flags 注册/提交；S8/S9 的 `--file` 请求形状统一收录在 [`docs/examples/s7-s9/`](../docs/examples/s7-s9/)，避免 Investigator/Repair Lead 反查 Go 结构体。
+- Investigator 通过 `runtime investigation dispatch --case-id <case> --hypothesis-id <hypothesis> --agent-id <agent>` 复用既有 Assignment/Task/Agent 生命周期；命令只建立登记和生命周期绑定，Worker 仍必须在运行中发送 generic PLAN_REPORT 并继续判别，不等待第二轮批准。真实 Agent identity 必须是平台身份，注册边界拒绝 `TODO(planner)` 占位符，PostToolUse 观察失败仍保持 fail-open。S8 status 的顶层 `next` 是当前 Case 的唯一可执行下一动作。
+- S7 的 `round_entry`/seed provenance 由 `s7 status` 直接披露；S8 不把 TR-012 seed 当成已完成的新一轮，也不要求重新复现原始症状。
+- S8 假设的 `--source-finding` 与结果的 `--source-boundary`、`--evidence`、`--explains`、`--does-not-explain` 支持重复 flag 或逗号分隔值；路由的三个 `--*-file` 输入在 CLI 层明确报告缺失/非法 JSON 的文件路径和恢复动作。这样多 Finding/多边界证据不会因 flag 解析被静默截断，也不会把 authoring 文件错误误报为因果模型缺失。
+- 这些变化属于工具引导和输入边界增强，既有 exact Finding、Case revision、Hypothesis discriminator 与 Contract approval 不变；复杂度收益来自减少反查和伪身份污染，而不是增加新的业务状态。
+
+### 14.C · S8~S9 接口复审（2026-08-27）
+
+本轮复审确认的最小闭环仍是：`ObservationBatch` 只提供可调查事实，`InvestigationCase` 保存假设/结果/路由，approved `RepairContract` 才授权 S9；S8 不生成第二份 Failure Episode 或调度状态。实现层只补了两类输入摩擦：重复值不丢失、路由 authoring 文件错误可定位。两者都在 CLI 边界完成，不改变 Case schema、生命周期或权威对象，因此收益高于复杂度。
+
+S8 当前给 Agent 的单一恢复路径是 `runtime investigation status`：先按 `next_action` 注册/派发/提交结果，再 route；S9 targeted failure 只携带带 SHA 的 reassessment evidence 回到同一 Case。`status --all`、BUG 投影和聊天摘要仍是只读/兼容表面，不能替代 Case 或 Contract。
 
 ## 15. Definition of Done
 
