@@ -169,6 +169,15 @@ func scopeAllows(path string, prospective, forbidden []string) error {
 // captureRepositoryBaseline records the implementation surface at Session
 // open. Control-plane files are deliberately excluded: they are mutated by
 // the runtime while the repair is running and are not implementation output.
+//
+// RC-03 (EH-8) narrowing: the exclusion is explicit, not blanket ".claude".
+// Known control-plane subtrees (.claude/review, .claude/evidence,
+// .claude/workgroups and the mutable state files) are skipped, but an
+// unexpected .claude path (e.g., .claude/foo/product.go) is treated as
+// product surface — a repair that hides product writes under .claude must be
+// visible to the Session diff instead of silently excluded. Any legitimate
+// control-plane write must be under the known subtrees; product writes under
+// .claude remain product drift.
 func captureRepositoryBaseline(root string) ([]ArtifactRef, string, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -186,21 +195,38 @@ func captureRepositoryBaseline(root string) ([]ArtifactRef, string, error) {
 		if rel == "." {
 			return nil
 		}
-		parts := strings.Split(filepath.ToSlash(rel), "/")
-		if parts[0] == ".git" || parts[0] == ".claude" {
+		relSlash := filepath.ToSlash(rel)
+		parts := strings.Split(relSlash, "/")
+		if parts[0] == ".git" {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if entry.IsDir() || !entry.Type().IsRegular() {
+		if parts[0] == ".claude" {
+			if isControlPlanePath(relSlash, entry.IsDir()) {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.IsDir() {
+				return nil
+			}
+		} else if entry.IsDir() || !entry.Type().IsRegular() {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !entry.Type().IsRegular() {
 			return nil
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read baseline artifact %s: %w", filepath.ToSlash(rel), err)
+			return fmt.Errorf("read baseline artifact %s: %w", relSlash, err)
 		}
-		artifacts = append(artifacts, ArtifactRef{ID: "baseline-" + strings.NewReplacer("/", "-", "\\", "-").Replace(filepath.ToSlash(rel)), Path: filepath.ToSlash(rel), SHA256: sha256Bytes(data), Status: "modified"})
+		artifacts = append(artifacts, ArtifactRef{ID: "baseline-" + strings.NewReplacer("/", "-", "\\", "-").Replace(relSlash), Path: relSlash, SHA256: sha256Bytes(data), Status: "modified"})
 		return nil
 	})
 	if err != nil {
@@ -212,6 +238,19 @@ func captureRepositoryBaseline(root string) ([]ArtifactRef, string, error) {
 		lines = append(lines, artifact.Path+":"+artifact.SHA256)
 	}
 	return artifacts, sha256Bytes([]byte(strings.Join(lines, "\n"))), nil
+}
+
+func isControlPlanePath(rel string, isDir bool) bool {
+	_ = isDir
+	if rel == ".claude/loop-state.json" || rel == ".claude/loop-events.jsonl" || rel == ".claude/loop-metrics.json" || rel == ".claude/settings.json" || rel == ".claude/settings.local.json" {
+		return true
+	}
+	for _, prefix := range []string{".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/"} {
+		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // ComputeSessionChangeset derives the actual implementation delta from the

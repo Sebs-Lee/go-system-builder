@@ -106,7 +106,7 @@ func TestCT03923_TargetedRecheckFailedSystem(t *testing.T) {
 	writeSystemState(t, root, state)
 
 	body := req039fixtures.PreToolUseBody("session-ct-039-23-sys", "Edit", map[string]any{
-		"file_path": "internal/controller/cycle.go",
+		"file_path": "docs/reports/bugs/BUG-039-15.md",
 	})
 	code, _, stderr := runHookWithRunner(t, runner, root, "PreToolUse", body)
 	if code != 0 {

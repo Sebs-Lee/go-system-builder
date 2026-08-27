@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -138,6 +139,12 @@ func repositoryContainedPath(root, rel string) (string, error) {
 // the bytes on disk. SubjectDigest only fingerprints the plan declarations;
 // it must not be mistaken for a disk-baseline check. A changed or missing
 // subject makes the round stale before any Reviewer Result is consumed.
+//
+// RC-03 dual-source (S7-2): the check is the union of the declared set and the
+// git diff baseline. A file modified or added outside frozen_subjects is still
+// product drift — the plan is stale even though the hand-written list hashes
+// clean. Allowed write surfaces (.claude/, docs/reports/, e2e-workspace/) are
+// excluded from the drift scan.
 func verifyFrozenSubjects(root string, plan *Plan) error {
 	if plan == nil {
 		return fmt.Errorf("frozen subject verification requires a plan")
@@ -162,7 +169,93 @@ func verifyFrozenSubjects(root string, plan *Plan) error {
 			return fmt.Errorf("frozen subject %s drifted: plan pins %s but disk contains %s", subject.Path, subject.SHA256, actual)
 		}
 	}
+	if root != "" {
+		if drift, err := detectUndeclaredProductDrift(root, plan); err == nil && len(drift) > 0 {
+			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; add them to frozen_subjects or revert the change (RC-03 dual-source: declared set ∪ git diff baseline)", strings.Join(drift, ", "))
+		}
+	}
 	return nil
+}
+
+// detectUndeclaredProductDrift scans the git diff baseline for product files
+// that were modified, added, or untracked without being declared in
+// frozen_subjects. It is the second source of the RC-03 dual-source check.
+// Non-git repositories (e.g., TempDir fixtures) degrade gracefully: no extra
+// drift is reported when git is unavailable.
+func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
+	frozen := make(map[string]bool, len(plan.FrozenSubjects))
+	for _, subject := range plan.FrozenSubjects {
+		frozen[normalizeSurface(subject.Path)] = true
+	}
+	output, err := exec.Command("git", "-C", root, "status", "--porcelain", "--no-renames").CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	var drift []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Porcelain format: XY<space>path[ -> orig] — with --no-renames the
+		// path is always the last field.
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		rawPath := fields[len(fields)-1]
+		// Handle quoted paths (core.quotepath) by trimming quotes.
+		rawPath = strings.Trim(rawPath, "\"'")
+		rel := normalizeSurface(filepath.ToSlash(rawPath))
+		if rel == "" || frozen[rel] {
+			continue
+		}
+		if isAllowedDriftSurface(rel) {
+			continue
+		}
+		drift = append(drift, rel)
+	}
+	sort.Strings(drift)
+	return drift, nil
+}
+
+func isAllowedDriftSurface(rel string) bool {
+	if rel == ".claude" || isControlPlaneDriftPath(rel) {
+		return true
+	}
+	if rel == "docs/reports" || strings.HasPrefix(rel, "docs/reports/") {
+		return true
+	}
+	if rel == "docs/release_audits" || strings.HasPrefix(rel, "docs/release_audits/") {
+		return true
+	}
+	// Audit, blueprint and other non-product projections are not frozen product
+	// surfaces; their presence as untracked/modified files must not turn every
+	// S7 round stale. Only product surfaces (internal/, cmd/, pkg/, api/, etc.)
+	// are drift-relevant — docs/ as a whole is an allowed surface for the
+	// dual-source check (the frozen_subjects allow-list still governs product).
+	if strings.HasPrefix(rel, "docs/") || strings.HasPrefix(rel, "blueprint/") || strings.HasPrefix(rel, "schema/") {
+		return true
+	}
+	if strings.HasPrefix(rel, "e2e-workspace/") {
+		return true
+	}
+	if rel == ".git" || strings.HasPrefix(rel, ".git/") {
+		return true
+	}
+	return false
+}
+
+func isControlPlaneDriftPath(rel string) bool {
+	if rel == ".claude/loop-state.json" || rel == ".claude/loop-events.jsonl" || rel == ".claude/loop-metrics.json" || rel == ".claude/settings.json" || rel == ".claude/settings.local.json" {
+		return true
+	}
+	for _, prefix := range []string{".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/"} {
+		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyResultArtifactDigest binds an E2E result to the workspace digest it

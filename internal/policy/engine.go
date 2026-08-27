@@ -937,15 +937,46 @@ func allReviewWritePathsAllowed(input Input, paths []string) bool {
 }
 
 var (
-	bashRedirectPattern   = regexp.MustCompile(`(^|[[:space:]])([0-9]*>>?|[0-9]?&>)[[:space:]]*("[^"]+"|'[^']+'|[^[:space:]&;|]+)`)
-	bashPythonOpenPattern = regexp.MustCompile(`open[[:space:]]*\([[:space:]]*["']([^"']+)["'][[:space:]]*,[[:space:]]*["'][^"']*[wax+][^"']*["']`)
+	bashRedirectPattern      = regexp.MustCompile(`(^|[[:space:]])([0-9]*>>?|[0-9]?&>)[[:space:]]*("[^"]+"|'[^']+'|[^[:space:]&;|]+)`)
+	bashPythonOpenPattern    = regexp.MustCompile(`open[[:space:]]*\([[:space:]]*["']([^"']+)["'][[:space:]]*,[[:space:]]*["'][^"']*[wax+][^"']*["']`)
+	bashInterpreterPattern   = regexp.MustCompile(`\b(python[0-9]*|node|nodejs|npm|npx|yarn|pnpm|make|cargo)\b`)
+	bashHeredocPattern       = regexp.MustCompile(`<<-?\s*["']?\w*`)
+	bashInterpreterProbeArgs = regexp.MustCompile(`(^|[[:space:]])(--version|-V|--help|-h)([[:space:]]|$)`)
 )
+
+func isInterpreterReadOnlyProbe(lower string) bool {
+	// Only version/help probes are safe. Everything else in the interpreter
+	// family is conservatively treated as a potential write (fail-closed).
+	if bashInterpreterProbeArgs.MatchString(lower) {
+		return true
+	}
+	// `npm --version` and friends embed the flag after the tool name; also
+	// handle `python --version` style without relying on word boundaries.
+	for _, probe := range []string{"--version", "--help", " -v ", " -h "} {
+		if strings.Contains(lower, probe) {
+			return true
+		}
+	}
+	fields := strings.Fields(lower)
+	if len(fields) == 2 && (fields[1] == "--version" || fields[1] == "-v" || fields[1] == "--help" || fields[1] == "-h" || fields[1] == "version" || fields[1] == "help") {
+		return true
+	}
+	return false
+}
 
 // bashMutationPaths is intentionally a small conservative classifier, not a
 // shell parser. It catches common write forms and fails closed for dynamic
 // mutators; read/test commands remain outside the S7 write rule.
+//
+// RC-03 (S7-2) extension: the interpreter family (python/node/npm/make/cargo/
+// go run/heredoc/inline script) is treated as potentially mutating —
+// `python3 gen_fixtures.py` must not bypass the frozen baseline. Commands
+// whose target cannot be statically extracted are still marked mutating with
+// an empty path slice so the caller fails closed via the dynamic-mutation
+// branch instead of allowing a bypass.
 func bashMutationPaths(command string) ([]string, bool) {
 	lower := strings.ToLower(strings.TrimSpace(command))
+	trimmed := strings.TrimSpace(command)
 	paths := []string{}
 	mutating := false
 	add := func(path string) {
@@ -953,6 +984,32 @@ func bashMutationPaths(command string) ([]string, bool) {
 		if path != "" {
 			paths = append(paths, path)
 		}
+	}
+
+	// Heredoc / here-string / inline-script markers: `<<`, `<<<`, `<<-`.
+	// `cat <<'EOF' > path` is already caught by the redirect pattern, but a
+	// bare `python3 <<'PY'` or `node <<'JS'` heredoc without an explicit
+	// redirect still executes a script that can mutate the product surface.
+	if bashHeredocPattern.MatchString(command) || strings.Contains(command, "<<<") {
+		mutating = true
+	}
+	// Interpreter family invocation — even without an extractable literal path
+	// the command is an inline script execution that can write arbitrarily.
+	// Checked here (before early return) so `python3 gen_fixtures.py` or
+	// `node -e '...'` never bypasses as non-mutating.
+	if bashInterpreterPattern.MatchString(lower) {
+		// Explicitly read-only probe allowlist: version/help probes are not
+		// product mutations. Everything else in this family is conservatively
+		// treated as a potential write (fail-closed); a true read-only script
+		// that is denied can be re-expressed as a `Read` tool call.
+		if !isInterpreterReadOnlyProbe(lower) {
+			mutating = true
+		}
+	}
+	// `go run` is an interpreter-family invocation hidden behind the `go`
+	// tool; `go generate` is already handled in the switch below.
+	if strings.Contains(lower, "go run") {
+		mutating = true
 	}
 	for _, match := range bashRedirectPattern.FindAllStringSubmatch(command, -1) {
 		mutating = true
@@ -986,6 +1043,15 @@ func bashMutationPaths(command string) ([]string, bool) {
 	if strings.Contains(lower, "fs.writefilesync") || strings.Contains(lower, "fs.appendfilesync") || strings.Contains(lower, "fs.rmsync") || strings.Contains(lower, "fs.mkdirSync") || strings.Contains(lower, "fs.mkdirasync") || strings.Contains(lower, ".writefilesync") || strings.Contains(lower, ".appendfilesync") || strings.Contains(lower, ".rmsync") || strings.Contains(lower, ".mkdirsync") {
 		mutating = true
 	}
+	// Inline script flags: `python -c`, `python3 -m`, `node -e`, etc. already
+	// covered by the interpreter-family check above, but make the intent
+	// explicit so a future allowlist does not accidentally re-open them.
+	if strings.Contains(lower, "python") && (strings.Contains(trimmed, " -c ") || strings.Contains(trimmed, " -m ") || strings.Contains(lower, " -c'") || strings.Contains(lower, " -c\"")) {
+		mutating = true
+	}
+	if strings.Contains(lower, "node ") && (strings.Contains(trimmed, " -e ") || strings.Contains(lower, " -e'") || strings.Contains(lower, " -e\"") || strings.Contains(lower, "--eval")) {
+		mutating = true
+	}
 	fields := strings.Fields(command)
 	if len(fields) > 0 {
 		base := strings.TrimPrefix(filepath.Base(strings.Trim(fields[0], "\"'")), "env")
@@ -1011,7 +1077,7 @@ func bashMutationPaths(command string) ([]string, bool) {
 				}
 			}
 		case "go":
-			if len(fields) > 1 && fields[1] == "generate" {
+			if len(fields) > 1 && (fields[1] == "generate" || fields[1] == "run") {
 				mutating = true
 			}
 		case "git":
@@ -1019,6 +1085,24 @@ func bashMutationPaths(command string) ([]string, bool) {
 				if contains([]string{"apply", "checkout", "restore", "clean", "reset", "mv", "rm", "commit"}, strings.TrimLeft(field, "-")) {
 					mutating = true
 					break
+				}
+			}
+		case "python", "python3", "python2", "node", "nodejs", "npm", "npx", "yarn", "pnpm", "make", "cargo":
+			// Interpreter / build-tool family: already marked mutating above;
+			// attempt to extract a trailing file argument as the affected path
+			// for a more precise denial message, but mutating stays true even
+			// when no literal can be extracted (fail-closed).
+			if !isInterpreterReadOnlyProbe(lower) {
+				mutating = true
+				isInlineScript := strings.Contains(lower, " -c ") || strings.Contains(lower, " -c'") || strings.Contains(lower, " -c\"") || strings.Contains(lower, " -m ") || strings.Contains(lower, " -m'") || strings.Contains(lower, " -m\"") || strings.Contains(lower, " -e ") || strings.Contains(lower, " -e'") || strings.Contains(lower, " -e\"") || strings.Contains(lower, "--eval") || strings.Contains(lower, "open(") || strings.Contains(command, "<<")
+				if !isInlineScript {
+					for i := len(fields) - 1; i >= 1; i-- {
+						if !strings.HasPrefix(fields[i], "-") && !strings.Contains(fields[i], "=") {
+							// Skip the subcommand itself for npm/make/cargo.
+							add(fields[i])
+							break
+						}
+					}
 				}
 			}
 		}

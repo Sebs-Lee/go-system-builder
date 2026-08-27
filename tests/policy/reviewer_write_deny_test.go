@@ -7,12 +7,15 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 )
 
-// The S7 frozen-baseline invariant (L3-S7 §1.4.1, §8): during the
-// verification stage, Write/Edit/MultiEdit/NotebookEdit may only target the
-// control plane (.claude/), the report projections (docs/reports/) and the
-// ReviewPlan's declared verification artifact workspace. Anything else is
-// baseline drift and must hard-deny. Non-verification stages stay open
-// (repairs happen in bug_resolution).
+// The S7 frozen-baseline invariant (L3-S7 §1.4.1, §8) plus the RC-04
+// phase-level freeze: verification and every non-fixing bug_resolution
+// phase, acceptance, and release_audit all freeze the product surface.
+// Only .claude/, docs/reports/, docs/release_audits/, and the ReviewPlan's
+// declared verification artifact workspace remain writable; product writes
+// elsewhere hard-deny. The sole product-write exception is
+// bug_resolution.fixing through an approved RepairContract scope (tested in
+// internal/policy repair matrix, not here). Non-verification stages are no
+// longer open for product writes after RC-04.
 func TestReviewerProductWriteDecision(t *testing.T) {
 	engine, err := policy.Load(filepath.Join("..", "..", "docs", "hook-policy.json"))
 	if err != nil {
@@ -37,7 +40,7 @@ func TestReviewerProductWriteDecision(t *testing.T) {
 		{"other absolute path denied", "verification", "Write", "/tmp/other/x.ts", workspace, true},
 		{"bash never hits this rule", "verification", "Bash", "", "", false},
 		{"building stage open", "building", "Edit", "internal/controller/cycle.go", "", false},
-		{"bug_resolution open", "bug_resolution", "Edit", "internal/controller/cycle.go", "", false},
+		{"bug_resolution frozen (RC-04)", "bug_resolution", "Edit", "internal/controller/cycle.go", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
