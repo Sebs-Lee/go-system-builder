@@ -1,12 +1,14 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 )
 
@@ -42,7 +44,7 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	}
 	catalog := evidence.DefaultCatalog()
 	if !catalog.IsRegisteredKind(request.Kind) {
-		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q; registered kinds: %s", request.Kind, strings.Join(catalog.RegisteredKinds(), ", "))
+		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q; registered kinds: %s; note: the Quality Gate records S10 artifacts as acceptance_record/release_audit_record, but registration uses --kind acceptance or --kind release_audit (bind --review-round to the current round; S10 envelopes also auto-inherit it from the envelope file)", request.Kind, strings.Join(catalog.RegisteredKinds(), ", "))
 	}
 	// finding_supplement is pipeline-owned: review.SubmitSupplement persists
 	// the entities.finding_supplements index row and the evidence entry in one
@@ -67,6 +69,19 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	data, err := os.ReadFile(filepath.Join(root, cleanPath))
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read evidence artifact: %w", err)
+	}
+	if err := acceptance.ValidateEvidenceArtifact(root, request.Kind, data); err != nil {
+		return Snapshot{}, err
+	}
+	// S10 evidence must bind to the current review round (L3-S10 §4.2): the
+	// s10 board and gates read entry.review_round verbatim. The envelope
+	// already carries that fact, so a registration that omits --review-round
+	// inherits it instead of persisting a round-less row the S10 layer would
+	// immediately reject as stale (2026-08-28 walkthrough defect B).
+	if request.ReviewRound == nil && isS10RoundScopedKind(request.Kind) {
+		if round, ok := s10EnvelopeReviewRound(data); ok {
+			request.ReviewRound = &round
+		}
 	}
 
 	store := NewWriter(statePath, journalPath, root, request.Validator)
@@ -198,4 +213,27 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+// isS10RoundScopedKind reports whether an evidence kind is consumed by the
+// S10 board and gates with a mandatory current-round binding.
+func isS10RoundScopedKind(kind string) bool {
+	switch kind {
+	case "acceptance", "acceptance_record", "release_audit", "release_audit_record":
+		return true
+	default:
+		return false
+	}
+}
+
+// s10EnvelopeReviewRound reads review_round out of an S10 evidence envelope.
+// ok is false when the envelope omits it or the value cannot be a round.
+func s10EnvelopeReviewRound(data []byte) (int, bool) {
+	var envelope struct {
+		ReviewRound int `json:"review_round"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.ReviewRound < 1 {
+		return 0, false
+	}
+	return envelope.ReviewRound, true
 }

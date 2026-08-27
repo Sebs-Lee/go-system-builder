@@ -1,0 +1,362 @@
+package cli
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/acceptance"
+	"github.com/entroforge/go-system-builder/internal/runtime"
+)
+
+// runS10Command exposes the small S10 tool surface used by the Agent at the
+// point where the work is naturally produced. It deliberately has no write
+// operation: validation and status make the next evidence-registration step
+// explicit, while Runtime transitions remain Controller-owned.
+func runS10Command(args []string, stdout, stderr io.Writer) int {
+	if wantsHelp(args) {
+		name := compactHelpName(args)
+		if name == "" {
+			name = "<status|manifest validate>"
+		}
+		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, and route defects back through S7→S8→S9.")
+		return 0
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "s10 requires <status|manifest>")
+		return 2
+	}
+	switch args[0] {
+	case "status":
+		return runS10Status(args[1:], stdout, stderr)
+	case "manifest":
+		return runS10Manifest(args[1:], stdout, stderr)
+	default:
+		fmt.Fprintln(stderr, "s10 requires <status|manifest>")
+		return 2
+	}
+}
+
+func runS10Manifest(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "validate" {
+		fmt.Fprintln(stderr, "s10 manifest requires <validate>")
+		return 2
+	}
+	flags := flag.NewFlagSet("s10 manifest validate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "s10 manifest validate")
+	root := flags.String("root", ".", "repository root")
+	file := flags.String("file", "", "S10 manifest JSON path relative to repository root")
+	kind := flags.String("type", "", "manifest type: acceptance or release_audit (default: read manifest_type)")
+	outcome := flags.String("outcome", "pass", "evidence outcome: pass, review_required, approved, approved_with_risk, or blocked")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*file) == "" {
+		fmt.Fprintln(stderr, "s10 manifest validate requires --file <manifest.json>; next: write the finite coverage_inventory and counterevidence ledger first")
+		return 2
+	}
+	manifestPath, err := safeS10Path(*root, *file)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
+		return 1
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest validate: read %s: %v; next: provide the manifest path from the current S10 assignment\n", *file, err)
+		return 1
+	}
+	manifestType := strings.TrimSpace(*kind)
+	if manifestType == "" {
+		var header struct {
+			ManifestType string `json:"manifest_type"`
+		}
+		if err := json.Unmarshal(data, &header); err != nil {
+			fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
+			return 1
+		}
+		manifestType = header.ManifestType
+	}
+	summary, err := acceptance.ValidateForOutcome(data, manifestType, strings.TrimSpace(*outcome))
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
+		return 1
+	}
+	next := "create a fingerprinted acceptance/release-audit evidence envelope pointing to this immutable manifest, then register it with `loop-harness runtime evidence add --expected-revision <N> --id <id> --kind <acceptance|release_audit> --path <envelope.json> --produced-by <agent> --responsibility <role>`; let the Controller evaluate the next gate and do not call runtime transition"
+	if strings.TrimSpace(*outcome) == "blocked" {
+		next = "register the blocked release-audit envelope with `loop-harness runtime evidence add`, then let the Controller take TR-018 to paused; do not call runtime transition"
+	} else if strings.TrimSpace(*outcome) == "review_required" {
+		next = "register the review-required acceptance envelope with `loop-harness runtime evidence add`, then let the Controller route TR-016 back to S7; do not call runtime transition"
+	}
+	return encodeJSON(stdout, map[string]any{
+		"valid":                 true,
+		"manifest_type":         summary.ManifestType,
+		"outcome":               strings.TrimSpace(*outcome),
+		"inventory_count":       summary.InventoryCount,
+		"dispositioned_count":   summary.DispositionedCount,
+		"counterevidence_count": summary.CounterevidenceCount,
+		"audit_area_count":      summary.AuditAreaCount,
+		"metrics":               summary.Metrics,
+		"next":                  next,
+	})
+}
+
+type s10StatusProjection struct {
+	Stage          string            `json:"stage"`
+	LifecycleState string            `json:"lifecycle_state"`
+	ReviewRound    int               `json:"review_round"`
+	Acceptance     s10ArtifactStatus `json:"acceptance"`
+	ReleaseAudit   s10ArtifactStatus `json:"release_audit"`
+	Next           string            `json:"next"`
+	Guardrails     []string          `json:"guardrails"`
+}
+
+type s10ArtifactStatus struct {
+	State                string             `json:"state"`
+	EvidenceID           string             `json:"evidence_id,omitempty"`
+	Conclusion           string             `json:"conclusion,omitempty"`
+	ManifestPath         string             `json:"manifest_path,omitempty"`
+	InventoryCount       int                `json:"inventory_count,omitempty"`
+	CounterevidenceCount int                `json:"counterevidence_count,omitempty"`
+	AuditAreaCount       int                `json:"audit_area_count,omitempty"`
+	EvidenceRefsCount    int                `json:"evidence_refs_count,omitempty"`
+	Metrics              acceptance.Metrics `json:"metrics,omitempty"`
+	Error                string             `json:"error,omitempty"`
+	Next                 string             `json:"next"`
+}
+
+func runS10Status(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("s10 status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "s10 status")
+	root := flags.String("root", ".", "repository root")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	snapshot, err := runtime.NewStore(
+		filepath.Join(*root, ".claude/loop-state.json"),
+		filepath.Join(*root, ".claude/loop-events.jsonl"),
+	).Snapshot()
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 status: read runtime: %v; next: initialize or recover the Runtime before starting S10\n", err)
+		return 1
+	}
+	state := snapshot.State
+	lifecycle := lifecycleState(state)
+	stage, _, _ := projectNext(lifecycle, lifecyclePhase(state), *root)
+	result := s10StatusProjection{
+		Stage:          stage,
+		LifecycleState: lifecycle,
+		ReviewRound:    integerValue(nestedStateValue(state, "review", "round")),
+		Acceptance:     inspectS10Artifact(*root, state, "acceptance"),
+		ReleaseAudit:   inspectS10Artifact(*root, state, "release_audit"),
+		Guardrails: []string{
+			"S9 has no direct S10 exit; every repair must return through a fresh S7 clean round",
+			"S10 is read-only for product code, locked REQ, contracts, and TASKs",
+			"UNKNOWN, unsupported PASS, unowned risk, untracked debt, and blocking finding must be zero before S11",
+		},
+	}
+	switch lifecycle {
+	case "acceptance":
+		result.Next = result.Acceptance.Next
+	case "release_audit":
+		result.Next = result.ReleaseAudit.Next
+	default:
+		result.Next = "S10 status is observational; current cursor is " + lifecycle + ", follow `loop-harness next --root <root>`"
+	}
+	return encodeJSON(stdout, result)
+}
+
+func inspectS10Artifact(root string, state map[string]any, manifestType string) s10ArtifactStatus {
+	result := s10ArtifactStatus{
+		State: "missing",
+		Next:  "produce the " + manifestType + " manifest, validate it, then register a fingerprinted evidence envelope",
+	}
+	runtimeID := stringValue(state["runtime_id"])
+	currentGeneration := integerValue(nestedStateValue(state, "baseline", "generation"))
+	currentRound := integerValue(nestedStateValue(state, "review", "round"))
+	wantedKinds := map[string]bool{manifestType: true}
+	if manifestType == "acceptance" {
+		wantedKinds["acceptance_record"] = true
+	} else {
+		wantedKinds["release_audit_record"] = true
+	}
+	for _, raw := range stateEvidence(state) {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || !wantedKinds[stringValue(entry["kind"])] || stringValue(entry["status"]) != "valid" {
+			continue
+		}
+		if entry["invalidated_by"] != nil {
+			return s10InvalidArtifact(result, "evidence is invalidated; register a new current S10 evidence envelope")
+		}
+		if integerValue(entry["baseline_generation"]) != currentGeneration || integerValue(entry["review_round"]) != currentRound {
+			return s10InvalidArtifact(result, "evidence binding is stale; baseline_generation and review_round must match the current Runtime")
+		}
+		result.EvidenceID = stringValue(entry["id"])
+		path := stringValue(entry["path"])
+		evidencePath, pathErr := safeS10Path(root, path)
+		if pathErr != nil {
+			return s10InvalidArtifact(result, pathErr.Error())
+		}
+		data, err := os.ReadFile(evidencePath)
+		if err != nil {
+			return s10InvalidArtifact(result, "evidence artifact unreadable: "+err.Error())
+		}
+		if sha256HexForArtifact(data) != stringValue(entry["sha256"]) {
+			return s10InvalidArtifact(result, "evidence artifact hash mismatch; register a new immutable envelope")
+		}
+		var envelope struct {
+			RuntimeID          string `json:"runtime_id"`
+			BaselineGeneration int    `json:"baseline_generation"`
+			ReviewRound        int    `json:"review_round"`
+			Conclusion         string `json:"conclusion"`
+			ManifestPath       string `json:"audit_manifest_path"`
+			ManifestSHA        string `json:"audit_manifest_sha256"`
+		}
+		if err := json.Unmarshal(data, &envelope); err != nil || envelope.ManifestPath == "" || envelope.ManifestSHA == "" {
+			return s10InvalidArtifact(result, "audit_manifest_path and audit_manifest_sha256 are required")
+		}
+		if envelope.RuntimeID != runtimeID || envelope.BaselineGeneration != currentGeneration || envelope.ReviewRound != currentRound {
+			return s10InvalidArtifact(result, "evidence binding is stale; runtime_id, baseline_generation, and review_round must match the current Runtime")
+		}
+		result.ManifestPath = envelope.ManifestPath
+		result.Conclusion = strings.TrimSpace(envelope.Conclusion)
+		manifestFile, pathErr := safeS10Path(root, envelope.ManifestPath)
+		if pathErr != nil {
+			return s10InvalidArtifact(result, pathErr.Error())
+		}
+		manifestData, err := os.ReadFile(manifestFile)
+		if err != nil {
+			return s10InvalidArtifact(result, "manifest unreadable: "+err.Error())
+		}
+		if sha256HexForArtifact(manifestData) != envelope.ManifestSHA {
+			return s10InvalidArtifact(result, "manifest hash mismatch; do not edit in place, regenerate and re-register")
+		}
+		summary, err := acceptance.ValidateForOutcome(manifestData, manifestType, result.Conclusion)
+		if err != nil {
+			return s10InvalidArtifact(result, err.Error())
+		}
+		var manifestBinding struct {
+			RuntimeID          string `json:"runtime_id"`
+			BaselineGeneration int    `json:"baseline_generation"`
+			ReviewRound        int    `json:"review_round"`
+		}
+		if err := json.Unmarshal(manifestData, &manifestBinding); err != nil || manifestBinding.RuntimeID != runtimeID || manifestBinding.BaselineGeneration != currentGeneration || manifestBinding.ReviewRound != currentRound {
+			return s10InvalidArtifact(result, "manifest binding is stale; runtime_id, baseline_generation, and review_round must match the current Runtime")
+		}
+		result.InventoryCount = summary.InventoryCount
+		result.CounterevidenceCount = summary.CounterevidenceCount
+		result.AuditAreaCount = summary.AuditAreaCount
+		result.EvidenceRefsCount = len(summary.EvidenceRefs)
+		result.Metrics = summary.Metrics
+		if result.Conclusion == "blocked" || result.Conclusion == "review_required" {
+			// Routed outcomes keep their unresolved rows by design
+			// (acceptance.ValidateForOutcome); their evidence ledger may not
+			// fully resolve, and the route itself is the actionable fact.
+			// Surface the route before any strict reference audit.
+			result.State = result.Conclusion
+			if result.Conclusion == "blocked" {
+				result.Next = "let the Controller take TR-018 to paused with the recorded blocker; do not call runtime transition"
+			} else {
+				result.Next = "let the Controller route TR-016 back to S7 for a fresh complete round; do not call runtime transition"
+			}
+			return result
+		}
+		if missing := missingS10EvidenceRefsInState(root, state, summary.EvidenceRefs); len(missing) > 0 {
+			return s10InvalidArtifact(result, "manifest references evidence not registered as current valid Runtime evidence: "+strings.Join(missing, ", ")+"; ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id; register those evidence artifacts first, then regenerate and re-register this manifest")
+		}
+		result.State = "ready"
+		result.Next = "let the Controller evaluate the S10 gate; do not call runtime transition or release commands"
+		return result
+	}
+	return result
+}
+
+func s10InvalidArtifact(result s10ArtifactStatus, message string) s10ArtifactStatus {
+	result.State = "invalid"
+	result.Error = message
+	result.Next = "correct the named S10 artifact, validate it, and register a new fingerprinted evidence envelope"
+	return result
+}
+
+func stateEvidence(state map[string]any) []any {
+	items, _ := state["evidence"].([]any)
+	return items
+}
+
+// missingS10EvidenceRefsInState mirrors the gate's evidence-reference audit
+// (qualitygate.missingS10EvidenceRefs): an id only counts as available when
+// the registered entry is valid, current-generation, and its on-disk file
+// still hashes to the recorded fingerprint. Keeping both consumers identical
+// prevents `s10 status` from declaring ready on a ledger the gate would
+// reject (2026-08-28 walkthrough defect C).
+func missingS10EvidenceRefsInState(root string, state map[string]any, refs []string) []string {
+	currentGeneration := integerValue(nestedStateValue(state, "baseline", "generation"))
+	available := make(map[string]struct{})
+	for _, raw := range stateEvidence(state) {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || stringValue(entry["status"]) != "valid" || entry["invalidated_by"] != nil || integerValue(entry["baseline_generation"]) != currentGeneration {
+			continue
+		}
+		id := stringValue(entry["id"])
+		path := stringValue(entry["path"])
+		if id == "" || path == "" {
+			continue
+		}
+		full, pathErr := safeS10Path(root, path)
+		if pathErr != nil {
+			continue
+		}
+		data, err := os.ReadFile(full)
+		if err != nil || sha256HexForArtifact(data) != stringValue(entry["sha256"]) {
+			continue
+		}
+		available[id] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, ref := range refs {
+		if _, ok := available[ref]; !ok {
+			missing = append(missing, ref)
+		}
+	}
+	return missing
+}
+
+func nestedStateValue(state map[string]any, parent, child string) any {
+	nested, _ := state[parent].(map[string]any)
+	return nested[child]
+}
+
+func safeS10Path(root, value string) (string, error) {
+	clean := filepath.Clean(value)
+	if filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("S10 path must stay inside the repository: %q", value)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve S10 repository root: %w", err)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve S10 repository root: %w", err)
+	}
+	candidate := filepath.Join(rootAbs, clean)
+	resolvedPath, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		// A missing file will be reported by the caller. It is still safe to
+		// return the lexical candidate because no external bytes can be read.
+		if os.IsNotExist(err) {
+			return candidate, nil
+		}
+		return "", fmt.Errorf("resolve S10 path %q: %w", value, err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("S10 path must stay inside the repository: %q", value)
+	}
+	return candidate, nil
+}

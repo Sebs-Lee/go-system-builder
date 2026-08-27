@@ -78,3 +78,29 @@ func TestManualS7RecoveryGuidanceNamesRepairFactsAndTypedEvidence(t *testing.T) 
 		}
 	}
 }
+
+func TestManualS10GuidanceNamesManifestAndClosedLoop(t *testing.T) {
+	manual := transition.RenderManual(&transition.LoopDefinition{
+		Transitions: []transition.TransitionSpec{
+			{ID: "TR-009", From: "verification", To: "acceptance", RequiredEvidence: []string{"clean_round_record"}},
+			{ID: "TR-015", From: "acceptance", To: "release_audit", RequiredEvidence: []string{"acceptance_record", "clean_round_record"}},
+			{ID: "TR-017", From: "release_audit", To: "awaiting_human_release", RequiredEvidence: []string{"release_audit_record", "acceptance_record", "clean_round_record"}},
+			{ID: "TR-018", From: "release_audit", To: "paused", RequiredEvidence: []string{"release_audit_record", "pause_record"}},
+		},
+	}, transition.ManualOptions{})
+
+	for _, want := range []string{
+		"loop-harness s10 manifest validate",
+		"audit_manifest_path",
+		"audit_manifest_sha256",
+		"counterevidence",
+		"explicit `requirement`, `contract`, and `changed_path` rows",
+		"all eight audit areas",
+		"--outcome blocked",
+		"S8 → S9 → a fresh complete S7",
+	} {
+		if !strings.Contains(manual, want) {
+			t.Fatalf("S10 manual guidance must contain %q, got:\n%s", want, manual)
+		}
+	}
+}

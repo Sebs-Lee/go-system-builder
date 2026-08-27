@@ -70,6 +70,8 @@ func PreToolUseWithQualityGate(decision policy.Decision, result controller.Contr
 				"fingerprint":          qg.Fingerprint,
 				"missing":              nonNil(qg.Missing),
 				"evidence_refs":        nonNil(qg.EvidenceRefs),
+				"conflicts":            nonNil(qg.Conflicts),
+				"error_code":           qg.ErrorCode,
 				"transition_committed": qg.TransitionCommitted,
 				"next_cursor":          qg.NextCursor,
 			},
@@ -165,6 +167,14 @@ func formatPreToolUseRecoveryPacket(decision policy.Decision, qg controller.Qual
 		b.WriteString(".")
 	}
 
+	// Conflicts carry the UNKNOWN verdict's diagnosis (L3-S10 walkthrough
+	// 2026-08-28: a fully-coached evidence_ref_missing conflict never reached
+	// the agent because only missing[] was rendered). Without them an
+	// unknown gate is un-actionable.
+	if len(qg.Conflicts) > 0 {
+		fmt.Fprintf(&b, " Conflicts: %s.", strings.Join(qg.Conflicts, "; "))
+	}
+
 	// For blocked decisions the agent needs the rule id + recovery.
 	if qg.Status == controller.StatusBlocked || decision.Decision == "block" || decision.Decision == "deny" {
 		if decision.RuleID != "" {
@@ -181,6 +191,18 @@ func formatPreToolUseRecoveryPacket(decision policy.Decision, qg controller.Qual
 		if decision.HumanRequired {
 			b.WriteString(" Human required.")
 		}
+	} else if decision.Decision == "warn" {
+		if decision.RuleID != "" {
+			fmt.Fprintf(&b, " Rule: %s.", decision.RuleID)
+		}
+		if decision.Reason != "" {
+			fmt.Fprintf(&b, " %s", decision.Reason)
+		}
+		if len(decision.Recovery) > 0 {
+			b.WriteString(" Recovery: ")
+			b.WriteString(strings.Join(decision.Recovery, " → "))
+			b.WriteString(".")
+		}
 	} else if len(decision.Recovery) > 0 {
 		b.WriteString(" Recovery: ")
 		b.WriteString(strings.Join(decision.Recovery, " → "))
@@ -188,6 +210,13 @@ func formatPreToolUseRecoveryPacket(decision policy.Decision, qg controller.Qual
 	}
 
 	return b.String()
+}
+
+// FormatPreToolUseRecoveryPacket exposes the stable Agent-facing recovery
+// text to integration tests and adjacent adapters without exposing the
+// internal formatting helpers used by the wire renderer.
+func FormatPreToolUseRecoveryPacket(decision policy.Decision, qg controller.QualityGateResult) string {
+	return formatPreToolUseRecoveryPacket(decision, qg)
 }
 
 func nonEmptyQG(value, fallback string) string {

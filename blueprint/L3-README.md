@@ -36,6 +36,8 @@
 | `TeammateIdle` | 按 L4 区分正常交卷、计划缺失、异常 idle 与阻塞；只在责任仍可继续时唤醒同一 Worker，不自动派发下一任务 |
 | `PreCompact` | 持久化可恢复检查点（给下一个 SessionStart） |
 
+> 平台共有 31 个 Hook 锚点，全集与选点审查见 [L4 Claude Code Hook 锚点全图](L4-hook-anchor-catalog.md)；事件注册、payload 契约、输出/退出码与失败态度（fail-open/closed）的唯一权威是 [L4 Hook 与平台事件接线](L4-hook-platform-wiring.md)。上表只列各事件承载的职责，不复制定义。
+
 ### B. Harness（`loop-harness` 二进制——确定性引擎）
 
 | 能力 | 关键命令/机制 |
@@ -60,6 +62,8 @@ frontend/backend/test-builder（构建者）；document/delivery-verifier、qa�
 `agent-dispatch`（L4 plan_checkpoint 派发；旧 `two-phase-activation` 已删除）/ `team-planning`（组队）/ `loop-orchestration`（驱动）/ `bug-resolution`（深查）/ `clean-round-evaluation` 等。
 
 Agent 调度是首个进入 L4 的共用机制。S5/S6/S7/S8/S9 只声明消费 `one_shot`、`plan_checkpoint` 或 `plan_approval_required` 及本阶段完成条件；派发对象、计划回执、消息、等待、idle/stop、恢复和结果消费统一以 [L4 Agent 调度与治理机制](L4-agent-dispatch-governance.md) 为目标态。两阶段授权事件（readback_submitted → understanding_approved → activated）仍是 `plan_approval_required` 模式下的真实代码路径（internal/assignment/lifecycle.go 的 12 事件生命周期），并非待迁移的死代码；`two-phase-activation` Skill 已被 `agent-dispatch` 取代并删除。
+
+其余横跨多个 Stage 的机制——权威状态与单写者 CAS、revision 语义词典、指纹体系、证据链与失效家族、追溯分母链（单一验证分母）、精确集求值纪律、门禁与迁移分类学、写屏障家族、观测采集与脱敏、暂停/Blocker/终止保障、会话恢复投影、错误信息契约、债务与兼容性登记——统一沉淀在 [L4 运行时控制面与横切治理](L4-runtime-control-plane.md)。各 L3 只声明消费方式，不再内联定义；发现正文与该文冲突时，先核对代码现状，再按演化协议回改落后的一方。另有两份基石机制篇：[Hook 与平台事件接线](L4-hook-platform-wiring.md) 与 [权威状态机与迁移事务核心](L4-state-transition-core.md) 分别是事件总线契约与存储/迁移引擎的唯一权威——各 L3 的 hook 表格与 TR 表格只描述本阶段消费，不复制定义。
 
 **编排三原则**：①模板负责"声明结构"（字段逼问），harness 负责"事实求值"（指纹/门/迁移），hook 负责"在自然事件上执法与提醒"；②同一职责多机制必须声明主备；③优先写机制的真实命令/事件名。
 
@@ -117,3 +121,5 @@ L3 文档自身也必须遵循漏斗思考。读者应先理解这个 stage 为�
 | 2026-08-18 | 文档骨架改为“阶段立意→任务分解→完整工作流→逐步设计与机制承载→职责审计→准则嵌入→出口路由→易错点/渐进披露”的漏斗结构；S0 作为首个迁移样板 | owner 指示：L3 文档自身必须形成体系化逻辑，不能以机制盘点代替 stage 设计 |
 | 2026-08-20 | S2～S11 完成统一漏斗结构迁移；S6～S11 对当前未闭合机制、正文未被 gate 消费的字段及路由/实体不同步等现状做显式标注 | owner 指示：串行完成 S2～S11 |
 | 2026-08-20 | L4 建立后收敛层级边界：Agent 调度细节上移至跨 Stage 机制层，L3 只保留各 Stage 的消费模式和完成条件；两阶段授权标为迁移入口 | owner 指示：统一治理 Sub-agent / Agent Team，不在每个 L3 重复协议 |
+| 2026-08-28 | 新增第二份 L4《运行时控制面与横切治理》并在共用机制清单挂链接：Agent 调度之外的十三个跨 Stage 机制域上移（v0.2.0 定稿，含追溯分母链与精确集求值两域的本体化）；同步修正 L3-S5 的 two-phase-activation 现役残留与 L3-S10 干净轮分母旧口径（angle） | owner 指示：跨 Stage 贯穿机制沉淀为单独的 L4 设计汇总 |
+| 2026-08-28 | 基石抽取批次：新立《Hook 与平台事件接线》《权威状态机与迁移事务核心》两份 L4，A/Hook 节与本节均改挂权威指针——各 stage 的 hook 表与 TR 表自此只描述消费 | owner 批准：按五问判据筛出并立篇（顺序 Hook→状态机） |

@@ -497,6 +497,213 @@ func TestMissingIsDeterministicallySorted(t *testing.T) {
 	}
 }
 
+func TestAcceptanceGateRequiresStructuredS10Manifest(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{})
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusNotReady {
+		t.Fatalf("status = %q, want not_ready (refs=%v missing=%v conflicts=%v)", result.Status, result.EvidenceRefs, result.Missing, result.Conflicts)
+	}
+	if !contains(result.Missing, "s10:acceptance_manifest:ev-acc") {
+		t.Fatalf("missing = %#v, want an actionable S10 manifest item", result.Missing)
+	}
+}
+
+func TestAcceptanceGateConsumesStructuredS10Manifest(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusSatisfied {
+		t.Fatalf("status = %q, want satisfied (missing=%v conflicts=%v)", result.Status, result.Missing, result.Conflicts)
+	}
+}
+
+func TestAcceptanceGateRejectsManifestEvidenceReferenceDrift(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	var decoded map[string]any
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	items := decoded["coverage_inventory"].([]any)
+	items[0].(map[string]any)["evidence_refs"] = []string{"ev-not-registered"}
+	manifest, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusUnknown || result.ErrorCode != qualitygate.ErrorGateUnknown {
+		t.Fatalf("status = %q code=%q, want unknown/%s", result.Status, result.ErrorCode, qualitygate.ErrorGateUnknown)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:evidence_ref_missing") {
+		t.Fatalf("conflicts = %#v, want missing evidence reference", result.Conflicts)
+	}
+}
+
+func TestReleaseAuditGateRequiresAllAuditAreas(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "release_audit")
+	var decoded map[string]any
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	decoded["audit_areas"] = []any{}
+	manifest, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	input := s10GateInput(t, "GATE-RELEASE-AUDIT-APPROVED", "TR-017", "release_audit", map[string]any{
+		"audit_manifest_path":   "s10/release-audit-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	acceptanceManifest := validS10Manifest(t, "acceptance")
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = acceptanceManifest
+	acceptanceEvidence := input.Files.(memoryFiles)["evidence/ev-acc.json"]
+	var acceptanceEnvelope map[string]any
+	if err := json.Unmarshal(acceptanceEvidence, &acceptanceEnvelope); err != nil {
+		t.Fatalf("decode acceptance evidence: %v", err)
+	}
+	acceptanceEnvelope["audit_manifest_path"] = "s10/acceptance-manifest.json"
+	acceptanceEnvelope["audit_manifest_sha256"] = sha256Hex(acceptanceManifest)
+	acceptanceEvidence, err = json.Marshal(acceptanceEnvelope)
+	if err != nil {
+		t.Fatalf("marshal acceptance evidence: %v", err)
+	}
+	input.Files.(memoryFiles)["evidence/ev-acc.json"] = acceptanceEvidence
+	for _, raw := range input.Snapshot.State["evidence"].([]any) {
+		index := raw.(map[string]any)
+		if index["id"] == "ev-acc" {
+			index["sha256"] = sha256Hex(acceptanceEvidence)
+		}
+	}
+	input.Files.(memoryFiles)["s10/release-audit-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusUnknown || result.ErrorCode != qualitygate.ErrorGateUnknown {
+		t.Fatalf("status = %q code=%q refs=%v, want unknown/%s", result.Status, result.ErrorCode, result.EvidenceRefs, qualitygate.ErrorGateUnknown)
+	}
+	if !containsPrefix(result.Conflicts, "s10:release_audit_manifest:ev-audit") {
+		t.Fatalf("conflicts = %#v, want actionable manifest conflict", result.Conflicts)
+	}
+}
+
+func TestReleaseAuditGateRequiresCurrentCleanRound(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	acceptanceManifest := replaceManifestEvidenceRef(t, validS10Manifest(t, "acceptance"), "ev-clean", "ev-acc")
+	releaseManifest := replaceManifestEvidenceRef(t, validS10Manifest(t, "release_audit"), "ev-clean", "ev-acc")
+	input := s10GateInput(t, "GATE-RELEASE-AUDIT-APPROVED", "TR-017", "release_audit", map[string]any{
+		"audit_manifest_path":   "s10/release-audit-manifest.json",
+		"audit_manifest_sha256": sha256Hex(releaseManifest),
+	})
+	files := input.Files.(memoryFiles)
+	files["s10/acceptance-manifest.json"] = acceptanceManifest
+	files["s10/release-audit-manifest.json"] = releaseManifest
+	for _, evidence := range input.Snapshot.State["evidence"].([]any) {
+		entry := evidence.(map[string]any)
+		switch entry["id"] {
+		case "ev-acc":
+			data := withS10ManifestBinding(t, files["evidence/ev-acc.json"], "s10/acceptance-manifest.json", acceptanceManifest)
+			files["evidence/ev-acc.json"] = data
+			entry["sha256"] = sha256Hex(data)
+		case "ev-audit":
+			data := withS10ManifestBinding(t, files["evidence/ev-audit.json"], "s10/release-audit-manifest.json", releaseManifest)
+			files["evidence/ev-audit.json"] = data
+			entry["sha256"] = sha256Hex(data)
+		}
+	}
+	evidence := input.Snapshot.State["evidence"].([]any)
+	filtered := make([]any, 0, len(evidence)-1)
+	for _, raw := range evidence {
+		if raw.(map[string]any)["id"] != "ev-clean" {
+			filtered = append(filtered, raw)
+		}
+	}
+	input.Snapshot.State["evidence"] = filtered
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusNotReady || !contains(result.Missing, "evidence:clean_round_record") {
+		t.Fatalf("status = %q missing=%v conflicts=%v, want not_ready with current clean round missing", result.Status, result.Missing, result.Conflicts)
+	}
+}
+
+func replaceManifestEvidenceRef(t *testing.T, data []byte, from, to string) []byte {
+	t.Helper()
+	var decoded any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	var replace func(any)
+	replace = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if key == "evidence_refs" {
+					refs := child.([]any)
+					for i, ref := range refs {
+						if ref == from {
+							refs[i] = to
+						}
+					}
+				}
+				replace(child)
+			}
+		case []any:
+			for _, child := range typed {
+				replace(child)
+			}
+		}
+	}
+	replace(decoded)
+	result, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	return result
+}
+
+func withS10ManifestBinding(t *testing.T, data []byte, path string, manifest []byte) []byte {
+	t.Helper()
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode evidence: %v", err)
+	}
+	decoded["audit_manifest_path"] = path
+	decoded["audit_manifest_sha256"] = sha256Hex(manifest)
+	result, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal evidence: %v", err)
+	}
+	return result
+}
+
 func TestDocumentPassListsBothMissingResponsibilities(t *testing.T) {
 	evaluator := newTestEvaluator(t)
 	input := documentPassInput(t, "reviewer-1", "reviewer-2", "")
@@ -784,6 +991,117 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 		TransitionID: "TR-010",
 		Files:        files,
 	}
+}
+
+func s10GateInput(t *testing.T, gateID, transitionID, lifecycleState string, extra map[string]any) qualitygate.Input {
+	t.Helper()
+	addEvidence := func(id, kind, responsibility, conclusion string) (map[string]any, []byte) {
+		envelope := map[string]any{
+			"schema_version":          "1.0.0",
+			"evidence_id":             id,
+			"kind":                    kind,
+			"runtime_id":              "loop-test",
+			"baseline_generation":     1,
+			"review_round":            2,
+			"producer_agent_id":       "s10-agent",
+			"producer_responsibility": responsibility,
+			"conclusion":              conclusion,
+			"created_at":              "2026-07-29T00:00:00Z",
+		}
+		for key, value := range extra {
+			envelope[key] = value
+		}
+		data, err := json.Marshal(envelope)
+		if err != nil {
+			t.Fatalf("marshal S10 evidence: %v", err)
+		}
+		return map[string]any{
+			"id": id, "kind": kind, "path": "evidence/" + id + ".json",
+			"sha256": sha256Hex(data), "status": "valid", "baseline_generation": 1,
+			"review_round": 2, "produced_by": []any{"s10-agent"}, "invalidated_by": nil,
+			"responsibility_id": responsibility, "scope_refs": []any{},
+		}, data
+	}
+	files := memoryFiles{}
+	acceptance, acceptanceData := addEvidence("ev-acc", "acceptance", "Orchestrator", "pass")
+	files["evidence/ev-acc.json"] = acceptanceData
+	clean, cleanData := addEvidence("ev-clean", "clean_round", "Orchestrator", "pass")
+	files["evidence/ev-clean.json"] = cleanData
+	evidence := []any{acceptance, clean}
+	if lifecycleState == "release_audit" {
+		audit, auditData := addEvidence("ev-audit", "release_audit", "Release Auditor", "approved")
+		files["evidence/ev-audit.json"] = auditData
+		evidence = []any{audit, acceptance, clean}
+	}
+	return qualitygate.Input{
+		Snapshot: runtime.Snapshot{Revision: 10, State: map[string]any{
+			"runtime_id": "loop-test",
+			"lifecycle":  map[string]any{"state": lifecycleState, "phase": nil},
+			"baseline":   map[string]any{"generation": 1},
+			"review":     map[string]any{"round": 2},
+			"documents":  []any{},
+			"evidence":   evidence,
+		}},
+		GateID: gateID, TransitionID: transitionID, Files: files,
+	}
+}
+
+func validS10Manifest(t *testing.T, kind string) []byte {
+	t.Helper()
+	items := []any{}
+	counterevidence := []any{}
+	for _, item := range []struct {
+		id, category string
+	}{
+		{"REQ-AC-001", "requirement"},
+		{"CONTRACT-001", "contract"},
+		{"PATH-001", "changed_path"},
+		{"AUDIT-001", "audit_area"},
+	} {
+		items = append(items, map[string]any{
+			"id": item.id, "category": item.category, "source_refs": []string{"source:" + item.id},
+			"expected": "expected " + item.id, "oracle": "oracle " + item.id, "owner": "S10 reviewer",
+			"evidence_refs": []string{"ev-acc"}, "disposition": "pass",
+		})
+		counterevidence = append(counterevidence, map[string]any{
+			"id": "CE-" + item.id, "inventory_id": item.id, "question": "what disproves " + item.id + "?",
+			"evidence_refs": []string{"ev-clean"}, "outcome": "pass",
+		})
+	}
+	manifest := map[string]any{
+		"schema_version": "1.0.0", "manifest_type": kind, "runtime_id": "loop-test",
+		"baseline_generation": 1, "review_round": 2, "coverage_inventory": items,
+		"counterevidence":   counterevidence,
+		"risks":             []any{},
+		"technical_debt":    []any{},
+		"blocking_findings": []any{},
+		"metrics": map[string]any{
+			"requirement_coverage": 1, "contract_coverage": 1, "changed_path_coverage": 1,
+			"audit_area_coverage": 1, "unknown_count": 0, "unsupported_pass_count": 0,
+			"unowned_risk_count": 0, "untracked_debt_count": 0, "blocking_finding_count": 0,
+		},
+	}
+	if kind == "release_audit" {
+		areas := []any{}
+		for _, id := range []string{"state_machine", "transaction_uow", "concurrency_idempotency", "data_migration", "call_sites_topology", "observability_errors", "verification_evidence", "docs_release_scope"} {
+			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-audit"}})
+		}
+		manifest["audit_areas"] = areas
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal valid S10 manifest: %v", err)
+	}
+	return data
+}
+
+func containsPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func conflictingRequestedEventsInput(t *testing.T) qualitygate.Input {

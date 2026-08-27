@@ -28,7 +28,7 @@ var auditMu sync.Mutex
 // The layered Controller-driven PreToolUse path lives in pretooluse.go
 // (`PreToolUseWithQualityGate`); RenderWithRoot continues to serve the
 // legacy hook-policy envelope and the non-PreToolUse lifecycle events
-// (SessionStart, SubagentStart, SubagentStop, TeammateIdle, PreCompact).
+// (SessionStart, SubagentStart, SubagentStop, TeammateIdle, Stop, PreCompact).
 // PreToolUse callers MUST use PreToolUseWithQualityGate so the layered
 // `quality_gate` object reaches the wire (BUG-039-03 §4.1).
 //
@@ -63,6 +63,16 @@ var auditMu sync.Mutex
 // stage prefix/banner so existing tests that pass RuntimeContext{} remain
 // byte-identical with their pre-banner output.
 func RenderWithRoot(root, event string, decision policy.Decision, rt policy.RuntimeContext) ([]byte, int, error) {
+	return RenderWithAdditionalContext(root, event, decision, rt, "")
+}
+
+// RenderWithAdditionalContext is the lifecycle-aware renderer. Claude Code
+// accepts additionalContext on SessionStart and SubagentStart; keeping it in
+// this adapter lets the CLI inject a short authoritative checkpoint without
+// exposing the project's internal runtime JSON shape to the platform.
+// PreToolUse and stop-control events intentionally keep their existing wire
+// shapes even if a caller supplies context.
+func RenderWithAdditionalContext(root, event string, decision policy.Decision, rt policy.RuntimeContext, additionalContext string) ([]byte, int, error) {
 	switch decision.Decision {
 	case "allow":
 		if decision.Guidance == nil {
@@ -76,7 +86,7 @@ func RenderWithRoot(root, event string, decision policy.Decision, rt policy.Runt
 			}
 			return data, 0, nil
 		}
-		data, err := renderSystemMessage(body)
+		data, err := renderSystemMessage(body, event, additionalContext)
 		if err != nil {
 			return nil, 1, fmt.Errorf("encode Hook output: %w", err)
 		}
@@ -93,7 +103,7 @@ func RenderWithRoot(root, event string, decision policy.Decision, rt policy.Runt
 			}
 			return data, 0, nil
 		}
-		data, err := renderSystemMessage(body)
+		data, err := renderSystemMessage(body, event, additionalContext)
 		if err != nil {
 			return nil, 1, fmt.Errorf("encode Hook output: %w", err)
 		}
@@ -113,7 +123,7 @@ func RenderWithRoot(root, event string, decision policy.Decision, rt policy.Runt
 			}
 			return data, 0, nil
 		}
-		data, err := renderSystemMessage(body)
+		data, err := renderSystemMessage(body, event, additionalContext)
 		if err != nil {
 			return nil, 1, fmt.Errorf("encode Hook output: %w", err)
 		}
@@ -128,7 +138,7 @@ func RenderWithRoot(root, event string, decision policy.Decision, rt policy.Runt
 			}
 			return data, 0, nil
 		}
-		data, err := renderSystemMessage(body)
+		data, err := renderSystemMessage(body, event, additionalContext)
 		if err != nil {
 			return nil, 1, fmt.Errorf("encode Hook output: %w", err)
 		}
@@ -222,8 +232,12 @@ func renderPreToolUsePayload(body, permission string) ([]byte, error) {
 // TeammateIdle/SubagentStop never reach this renderer from the CLI
 // transport — they exit 2 with stderr feedback (stopidle.go); this shape
 // remains for warn and for in-process/library callers.
-func renderSystemMessage(body string) ([]byte, error) {
-	return json.Marshal(map[string]any{"systemMessage": body})
+func renderSystemMessage(body, event, additionalContext string) ([]byte, error) {
+	payload := map[string]any{"systemMessage": body}
+	if (event == "SessionStart" || event == "SubagentStart") && strings.TrimSpace(additionalContext) != "" {
+		payload["additionalContext"] = additionalContext
+	}
+	return json.Marshal(payload)
 }
 
 // auditRecord is the on-disk representation of a policy.Decision in
@@ -231,6 +245,7 @@ func renderSystemMessage(body string) ([]byte, error) {
 // compiler catches missing fields when Decision evolves.
 type auditRecord struct {
 	EvaluatedAt    string   `json:"evaluated_at"`
+	ElapsedMS      int64    `json:"elapsed_ms,omitempty"`
 	Decision       string   `json:"decision"`
 	RuleID         string   `json:"rule_id"`
 	Reason         string   `json:"reason"`
@@ -261,6 +276,7 @@ func appendAuditLine(root string, decision policy.Decision) error {
 	}
 	record := auditRecord{
 		EvaluatedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		ElapsedMS:      decision.ElapsedMS,
 		Decision:       decision.Decision,
 		RuleID:         decision.RuleID,
 		Reason:         decision.Reason,

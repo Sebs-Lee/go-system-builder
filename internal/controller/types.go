@@ -42,13 +42,14 @@ type ControlRequest struct {
 	// Root/.claude exactly.
 	StatePath   string
 	JournalPath string
-	Event       string         // PreToolUse, PostToolUse, SessionStart, ...
-	ToolName    string         // Write, Edit, Bash, ...
-	ToolInput   map[string]any // parsed payload (file_path, command, ...)
-	TargetID    string         // optional target identifier from the Hook payload
-	AgentID     string         // optional agent id for hookctx resolution
-	SessionID   string         // optional session id
-	HookPayload map[string]any // raw hook payload, preserved for diagnostics
+	Event       string                // PreToolUse, PostToolUse, SessionStart, ...
+	ToolName    string                // Write, Edit, Bash, ...
+	ToolInput   map[string]any        // parsed payload (file_path, command, ...)
+	TargetID    string                // optional target identifier from the Hook payload
+	AgentID     string                // optional agent id for hookctx resolution
+	SessionID   string                // optional session id
+	Runtime     policy.RuntimeContext // optional preloaded runtime facts, including Agent identity
+	HookPayload map[string]any        // raw hook payload, preserved for diagnostics
 	Files       qualityGateFiles
 	// AffectedPaths is the canonical list of paths the current tool call will
 	// mutate. The Hook adapter is responsible for computing this; when the

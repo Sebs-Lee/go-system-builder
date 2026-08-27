@@ -103,8 +103,8 @@ func TestTaskUpdateSelfClaim(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			gotBlock := decision.Decision == "block" && decision.RuleID == policy.RuleUnauthorizedTaskSelfClaim
-			if gotBlock != tc.wantBlock {
+			gotDenied := (decision.Decision == "deny" || decision.Decision == "block") && decision.RuleID == policy.RuleUnauthorizedTaskSelfClaim
+			if gotDenied != tc.wantBlock {
 				t.Fatalf("wantBlock=%v got decision=%q rule=%q", tc.wantBlock, decision.Decision, decision.RuleID)
 			}
 		})
@@ -131,8 +131,8 @@ func TestFirstWriteBarrierGuidesPlanCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if decision.Decision != "block" {
-		t.Fatalf("pre-plan write must block, got %q", decision.Decision)
+	if decision.Decision != "deny" {
+		t.Fatalf("pre-plan write must deny, got %q", decision.Decision)
 	}
 	joined := ""
 	for _, step := range decision.Recovery {

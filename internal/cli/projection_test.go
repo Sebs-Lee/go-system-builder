@@ -57,3 +57,25 @@ func TestTerminalProjectionsDoNotFallBackToCrossStage(t *testing.T) {
 		})
 	}
 }
+
+func TestS10ProjectionKeepsTheAuditSequenceVisible(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  []string
+	}{
+		{state: "acceptance", want: []string{"coverage_inventory", "counterevidence", "s10 manifest validate", "do not modify product code"}},
+		{state: "release_audit", want: []string{"8 release-audit areas", "counterevidence", "s10 manifest validate", "S7"}},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			stage, _, action := projectNext(tc.state, "", ".")
+			if stage != "S10" {
+				t.Fatalf("state %s projected as stage %q, want S10", tc.state, stage)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(action, want) {
+					t.Fatalf("S10 action %q does not contain %q", action, want)
+				}
+			}
+		})
+	}
+}

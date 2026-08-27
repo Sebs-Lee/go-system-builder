@@ -152,11 +152,11 @@ func stopIdleBlock(event string, agent *policy.AgentContext) policy.Decision {
 		}
 	}
 	return policy.Decision{
-		Decision: "block",
+		Decision: "deny",
 		RuleID:   ruleID,
 		Reason:   reason,
 		Recovery: recovery,
-		Retry:    "continue_current_assignment",
+		Retry:    policy.RetryAfterRecoveryValidation,
 	}
 }
 

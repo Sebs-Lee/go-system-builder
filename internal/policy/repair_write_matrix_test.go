@@ -18,8 +18,8 @@ func TestRepairPlanningAndReproductionFreezeProductWrites(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Evaluate(%s): %v", phase, err)
 		}
-		if decision.Decision != "block" || decision.RuleID != policy.RuleRepairWriteBeforeExecution {
-			t.Fatalf("S9 %s product write must block, got %q (%s)", phase, decision.Decision, decision.RuleID)
+		if decision.Decision != "deny" || decision.RuleID != policy.RuleRepairWriteBeforeExecution {
+			t.Fatalf("S9 %s product write must deny, got %q (%s)", phase, decision.Decision, decision.RuleID)
 		}
 		if !strings.Contains(strings.Join(decision.Recovery, "\n"), "BeginRepairExecution") {
 			t.Fatalf("S9 %s recovery must name the execution checkpoint: %v", phase, decision.Recovery)
@@ -60,8 +60,8 @@ func TestRepairExecutingWorkerIsBoundToAssignmentScope(t *testing.T) {
 
 	input.ToolInput["file_path"] = "web/app.tsx"
 	decision, blocked = policy.EvaluateAgentScoped(input)
-	if !blocked || decision.Decision != "block" || decision.RuleID != policy.RuleRepairAssignmentScope {
-		t.Fatalf("out-of-scope repair write must block, blocked=%v decision=%#v", blocked, decision)
+	if !blocked || decision.Decision != "deny" || decision.RuleID != policy.RuleRepairAssignmentScope {
+		t.Fatalf("out-of-scope repair write must deny, blocked=%v decision=%#v", blocked, decision)
 	}
 	if !strings.Contains(strings.Join(decision.Recovery, "\n"), "scope deviation") {
 		t.Fatalf("scope recovery must explain the correction path: %v", decision.Recovery)
@@ -76,8 +76,8 @@ func TestRepairExecutingWorkerIsBoundToAssignmentScope(t *testing.T) {
 
 	input.ToolInput = map[string]any{"command": "python3 -c 'open(\"web/app.tsx\", \"w\").write(\"x\")'"}
 	decision, blocked = policy.EvaluateAgentScoped(input)
-	if !blocked || decision.RuleID != policy.RuleRepairAssignmentScope {
-		t.Fatalf("out-of-scope Bash repair write must block: blocked=%v decision=%#v", blocked, decision)
+	if !blocked || decision.Decision != "deny" || decision.RuleID != policy.RuleRepairAssignmentScope {
+		t.Fatalf("out-of-scope Bash repair write must deny: blocked=%v decision=%#v", blocked, decision)
 	}
 
 }

@@ -140,6 +140,7 @@ type workgroupManifest struct {
 		Scope          []string `json:"scope"`
 		WritePaths     []string `json:"write_paths"`
 		RequiredChecks []string `json:"required_checks"`
+		DoneWhen       []string `json:"done_when"`
 		Status         string   `json:"status"`
 		// Worktree coordinates are optional extensions on the workgroup
 		// assignment row (BUG-039-37 / BUG-039-04 residual). When present
@@ -593,26 +594,32 @@ func buildAssignmentRow(root string, agent buildAgentRow, idx loadedTask) *Assig
 	if manifest != nil {
 		// Match an assignment row whose agent_id matches this agent.
 		for _, a := range manifest.Assignments {
-			if a.AgentID != "" && a.AgentID != agent.ID {
+			if a.AgentID == "" || a.AgentID != agent.ID {
 				continue
 			}
 			row.AssignmentID = a.AssignmentID
+			row.RoleFamily = a.RoleFamily
+			row.AgentDefinitionRef = a.AgentDefinitionRef
 			row.ResponsibilityIDs = append(row.ResponsibilityIDs, a.ResponsibilityID)
 			row.WritePaths = append(row.WritePaths, assignmentWritePaths(a.WritePaths, a.Scope)...)
 			row.RequiredChecks = append(row.RequiredChecks, a.RequiredChecks...)
+			row.DoneWhen = append(row.DoneWhen, a.DoneWhen...)
 			row.ReportStatus = a.Status
 			applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
 			break
 		}
-		// Fallback: pick the first assignment row when no explicit
-		// agent_id match — common for prepublished workgroups whose
-		// agent_id slot is still "planned".
-		if row.AssignmentID == "" && len(manifest.Assignments) > 0 {
+		// A single unbound assignment is safe to associate with the task's
+		// sole owner. Multiple unbound assignments are ambiguous and must not
+		// inherit the first row's scope.
+		if row.AssignmentID == "" && len(manifest.Assignments) == 1 {
 			a := manifest.Assignments[0]
 			row.AssignmentID = a.AssignmentID
+			row.RoleFamily = a.RoleFamily
+			row.AgentDefinitionRef = a.AgentDefinitionRef
 			row.ResponsibilityIDs = append(row.ResponsibilityIDs, a.ResponsibilityID)
 			row.WritePaths = append(row.WritePaths, assignmentWritePaths(a.WritePaths, a.Scope)...)
 			row.RequiredChecks = append(row.RequiredChecks, a.RequiredChecks...)
+			row.DoneWhen = append(row.DoneWhen, a.DoneWhen...)
 			row.ReportStatus = a.Status
 			applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
 		}
@@ -621,7 +628,7 @@ func buildAssignmentRow(root string, agent buildAgentRow, idx loadedTask) *Assig
 	// assignment sidecar and/or a durable integration checkpoint. Never
 	// invent paths that are not present on disk (BUG-039-04 §4.2).
 	enrichAssignmentCoords(root, row)
-	if manifest == nil && row.AssignmentID == "" {
+	if row.AssignmentID == "" {
 		return nil
 	}
 	return row
@@ -636,26 +643,41 @@ func buildAssignmentRowFromTask(root, taskID, ownerAgentID string) *AssignmentCo
 	if manifest == nil {
 		return nil
 	}
-	for _, a := range manifest.Assignments {
-		if a.AssignmentID == "" {
+	matchedIndex := -1
+	for index := range manifest.Assignments {
+		a := &manifest.Assignments[index]
+		if a.AssignmentID == "" || (a.AgentID != "" && a.AgentID != ownerAgentID) {
 			continue
 		}
-		row := &AssignmentContext{
-			AssignmentID:      a.AssignmentID,
-			TaskID:            taskID,
-			OwnerAgentID:      ownerAgentID,
-			State:             "in_progress",
-			ManifestRef:       ".claude/workgroups/" + reqIDFromRuntime(root) + "/" + taskID + "/manifest.json",
-			ReportStatus:      a.Status,
-			WritePaths:        assignmentWritePaths(a.WritePaths, a.Scope),
-			RequiredChecks:    append([]string(nil), a.RequiredChecks...),
-			ResponsibilityIDs: []string{a.ResponsibilityID},
+		if a.AgentID == "" && len(manifest.Assignments) != 1 {
+			continue
 		}
-		applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
-		enrichAssignmentCoords(root, row)
-		return row
+		if matchedIndex >= 0 {
+			return nil
+		}
+		matchedIndex = index
 	}
-	return nil
+	if matchedIndex < 0 {
+		return nil
+	}
+	a := manifest.Assignments[matchedIndex]
+	row := &AssignmentContext{
+		AssignmentID:       a.AssignmentID,
+		TaskID:             taskID,
+		OwnerAgentID:       ownerAgentID,
+		RoleFamily:         a.RoleFamily,
+		AgentDefinitionRef: a.AgentDefinitionRef,
+		State:              "in_progress",
+		ManifestRef:        ".claude/workgroups/" + reqIDFromRuntime(root) + "/" + taskID + "/manifest.json",
+		ReportStatus:       a.Status,
+		WritePaths:         assignmentWritePaths(a.WritePaths, a.Scope),
+		RequiredChecks:     append([]string(nil), a.RequiredChecks...),
+		DoneWhen:           append([]string(nil), a.DoneWhen...),
+		ResponsibilityIDs:  []string{a.ResponsibilityID},
+	}
+	applyAssignmentCoords(row, a.WorktreePath, a.Branch, a.TargetBranch)
+	enrichAssignmentCoords(root, row)
+	return row
 }
 
 // applyAssignmentCoords copies non-empty worktree coordinates onto the

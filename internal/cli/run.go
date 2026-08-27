@@ -117,7 +117,9 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  validate    Validate runtime + journal against schema")
 	fmt.Fprintln(stdout, "  dry-run     Render an applied transition without writing")
 	fmt.Fprintln(stdout, "  hook        Hook adapter entrypoints (PreToolUse, Stop, etc.)")
-	fmt.Fprintln(stdout, "  doctor      Surface schema / manual / policy_ref / metrics gaps")
+	fmt.Fprintln(stdout, "  doctor      Structural schema / manual / policy_ref checks (not runtime health)")
+	fmt.Fprintln(stdout, "  health      Runtime history signals and Hook timing (use --fail-on-degraded in CI)")
+	fmt.Fprintln(stdout, "  actions     Canonical Agent action catalog and compatibility notes")
 	fmt.Fprintln(stdout, "  runtime     Runtime helpers (including investigation intake, S9 repair transactions and terminal rollover)")
 	fmt.Fprintln(stdout, "  team        Team manifest + responsibility checks")
 	fmt.Fprintln(stdout, "  impact      Evidence invalidation analysis")
@@ -125,6 +127,7 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  release-graph Release-graph topological assertions")
 	fmt.Fprintln(stdout, "  e2e-coverage  Score E2E scenario inventory fidelity (REQ-039)")
 	fmt.Fprintln(stdout, "  scenario      Generate and validate module fact-driven scenario packages")
+	fmt.Fprintln(stdout, "  s10           Acceptance/release-audit manifest validation and status (read-only)")
 	fmt.Fprintln(stdout, "  manual      Render the gate-level manual")
 	fmt.Fprintln(stdout, "  explain     Per-transition details (explain <TR-xxx>)")
 	fmt.Fprintln(stdout)
@@ -133,7 +136,7 @@ func printTopLevelUsage(stdout io.Writer) {
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|runtime|team|impact|verification|release-graph|capture|e2e-coverage|scenario|contracts|manual|explain>")
+		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|health|actions|runtime|team|impact|verification|release-graph|capture|e2e-coverage|scenario|contracts|s10|manual|explain>")
 		fmt.Fprintln(stderr, "manual:  see .claude/bin/loop-harness.md (gate-level specification)")
 		fmt.Fprintln(stderr, "explain: loop-harness explain <TR-xxx> (per-transition details)")
 		return 2
@@ -161,6 +164,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runHook(args[1:], stdin, stdout, stderr)
 	case "doctor":
 		return runDoctor(args[1:], stdout, stderr)
+	case "health":
+		return runHealth(args[1:], stdout, stderr)
+	case "actions":
+		return runActions(args[1:], stdout, stderr)
 	case "runtime":
 		return runRuntime(args[1:], stdout, stderr)
 	case "team":
@@ -187,6 +194,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCapture(args[1:], stdin, stdout, stderr)
 	case "s7":
 		return runS7Command(args[1:], stdout, stderr)
+	case "s10":
+		return runS10Command(args[1:], stdout, stderr)
 	case "tasks":
 		return runTasks(args[1:], stdout, stderr)
 	default:
@@ -529,7 +538,10 @@ func projectNext(state, phase, root string) (string, string, string) {
 		}
 		return "S9", "bug-resolution", "recover the S9 RepairSession with `runtime repair status` and follow its next_action"
 	case "acceptance", "release_audit":
-		return "S10", "acceptance-and-handoff", "complete acceptance and release audit"
+		if state == "acceptance" {
+			return "S10", "acceptance-and-handoff", "freeze the finite coverage_inventory and responsibility matrix, answer one counterevidence question per item, validate the acceptance manifest with `loop-harness s10 manifest validate --file <path> --type acceptance`, then register the fingerprinted acceptance evidence; do not modify product code or jump to S11"
+		}
+		return "S10", "acceptance-and-handoff", "complete all 8 release-audit areas and their counterevidence, validate the release-audit manifest with `loop-harness s10 manifest validate --file <path> --type release_audit`, then register the fingerprinted audit evidence; if any finding is blocking, route back through S7 or pause instead of forcing S11"
 	case "awaiting_human_release":
 		return "S11", "acceptance-and-handoff", "stop automation and submit one explicit runtime human-decision (approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort)"
 	case "release_authorized":
@@ -947,6 +959,14 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 }
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
+	if wantsHelp(args) {
+		name := compactHelpName(args)
+		if name == "" {
+			name = "<stage-specific verb>"
+		}
+		printCommandHelp(stdout, "loop-harness runtime "+name, "Runtime actions are the CAS-owned mutation surface. Choose the stage-specific verb shown by `loop-harness actions`; diagnostics expose the next recovery action.")
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|investigation|repair|bug-event|fingerprint>")
 		return 2
@@ -2085,7 +2105,26 @@ func runRuntimeEvidence(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime evidence add", err))
 		return 1
 	}
-	return encodeJSON(stdout, next)
+	entry := map[string]any{}
+	for _, raw := range next.State["evidence"].([]any) {
+		if item, ok := raw.(map[string]any); ok && item["id"] == *id {
+			entry = item
+			break
+		}
+	}
+	// One-line receipt: the full snapshot stays readable via `s10 status` /
+	// loop-state; dumping it here buried the actionable fields (2026-08-28
+	// walkthrough UX finding).
+	return encodeJSON(stdout, map[string]any{
+		"recorded":            true,
+		"id":                  *id,
+		"kind":                *kind,
+		"revision":            next.Revision,
+		"path":                entry["path"],
+		"sha256":              entry["sha256"],
+		"review_round":        entry["review_round"],
+		"baseline_generation": entry["baseline_generation"],
+	})
 }
 
 func runRuntimeChange(args []string, stdout, stderr io.Writer) int {
@@ -2288,7 +2327,40 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintln(stdout, out)
 	}
-	fmt.Fprintln(stdout, "doctor passed: schemas, examples, semantic links valid; manual current")
+	fmt.Fprintln(stdout, "doctor passed: structural schemas, examples, semantic links valid; manual current")
+	fmt.Fprintln(stdout, "doctor note: runtime health is reported separately by `loop-harness health --root .`")
+	return 0
+}
+
+// runHealth reports cumulative runtime signals without re-running the
+// repository's structural doctor. This separation prevents a large historical
+// counter from being mistaken for a current schema failure, while still
+// giving CI/operators an explicit --fail-on-degraded choice.
+func runHealth(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("health", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "health")
+	root := flags.String("root", ".", "repository root")
+	failOnDegraded := flags.Bool("fail-on-degraded", false, "return exit 1 when historical runtime signals require inspection")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	out, err := metrics.FormatHealth(*root)
+	if err != nil {
+		fmt.Fprintf(stderr, "health failed: read loop metrics: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, out)
+	if *failOnDegraded {
+		degraded, err := metrics.HealthDegraded(*root)
+		if err != nil {
+			fmt.Fprintf(stderr, "health failed: classify runtime signals: %v\n", err)
+			return 1
+		}
+		if degraded {
+			return 1
+		}
+	}
 	return 0
 }
 
@@ -2345,6 +2417,7 @@ func reportPolicyRefDrift(root, statePath, journalPath string, stdout, stderr io
 }
 
 func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Writer, renderHook bool) int {
+	evaluationStarted := time.Now()
 	var request policy.Input
 	if err := json.NewDecoder(input).Decode(&request); err != nil {
 		fmt.Fprintf(stderr, "decode Hook input: %v\n", err)
@@ -2369,6 +2442,9 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Event == "PostToolUse" {
 		return runPostToolUseHook(root, request, stdout, stderr)
 	}
+	if request.Event == "PostToolUseFailure" || request.Event == "ConfigChange" {
+		return runNativeObserverHook(root, request, stdout, stderr, evaluationStarted)
+	}
 	if request.Runtime.RuntimeID == "" {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
@@ -2391,28 +2467,58 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 1
 	}
 
-	// The Hook entrypoint delegates the canonical control cycle to the
-	// internal/controller package. That cycle runs the eleven steps of
-	// BUG-039-02 §4.1 (snapshot → gate → optional one Transition →
-	// committed snapshot → milestone refresh → final safety →
-	// ControlResult). The minimal safety policy still produces the
-	// `Decision` consumed downstream by the envelope and renderer; the
-	// controller only adds Quality Gate progress and (when applicable)
-	// auto-commits a single Transition before the safety verdict.
-	controlResult := runControlCycleForHook(root, request)
-	decision := projectControlDecision(controlResult)
-	if request.Event == "PreToolUse" && hookInputMayMutate(request) && request.Runtime.RuntimeID == "" && controlResult.Error != "" && runtimeCheckpointMissing(root) {
-		decision = policy.Decision{
-			Decision:       "block",
-			RuleID:         policy.RuleRuntimeUnreadable,
-			Reason:         "runtime facts are unreadable; mutating tools are blocked until the loop runtime is restored",
-			Recovery:       []string{"restore .claude/loop-state.json and .claude/loop-events.jsonl", "run `loop-harness runtime inspect --root .`", "retry the tool after the runtime becomes readable"},
-			Retry:          "after_runtime_recovery",
-			HumanRequired:  false,
-			MatchedRuleIDs: []string{policy.RuleRuntimeUnreadable},
+	// Main Stop is a preflight gate. It must run before the Controller because
+	// the Controller is allowed to commit one automatic transition and refresh
+	// the Runtime milestone; a Stop that is already known to be illegal must not
+	// mutate the cursor while discovering that fact (HOOK-B03).
+	var controlResult controller.ControlResult
+	var decision policy.Decision
+	mainStopBlocked := false
+	if request.Event == "Stop" {
+		if stopDecision, blocked := hook.MainStopDecision(root, request); blocked {
+			decision = stopDecision
+			mainStopBlocked = true
 		}
 	}
-	refreshGuidanceFromController(root, &request, &decision, controlResult)
+
+	if !mainStopBlocked {
+		// The Hook entrypoint delegates the canonical control cycle to the
+		// internal/controller package. That cycle runs the eleven steps of
+		// BUG-039-02 §4.1 (snapshot → gate → optional one Transition →
+		// committed snapshot → milestone refresh → final safety →
+		// ControlResult). The minimal safety policy still produces the
+		// `Decision` consumed downstream by the envelope and renderer; the
+		// controller only adds Quality Gate progress and (when applicable)
+		// auto-commits a single Transition before the safety verdict.
+		controlResult = runControlCycleForHook(root, request)
+		decision = projectControlDecision(controlResult)
+		if request.Event == "PreToolUse" && hookInputMayMutate(request) && request.Runtime.RuntimeID == "" && controlResult.Error != "" && runtimeCheckpointMissing(root) {
+			decision = policy.Decision{
+				Decision:       "deny",
+				RuleID:         policy.RuleRuntimeUnreadable,
+				Reason:         "runtime facts are unreadable; mutating tools are blocked until the loop runtime is restored",
+				Recovery:       []string{"restore .claude/loop-state.json and .claude/loop-events.jsonl", "run `loop-harness runtime inspect --root .`", "retry the tool after the runtime becomes readable"},
+				Retry:          policy.RetryAfterRecoveryValidation,
+				HumanRequired:  false,
+				MatchedRuleIDs: []string{policy.RuleRuntimeUnreadable},
+			}
+		}
+		refreshGuidanceFromController(root, &request, &decision, controlResult)
+	}
+	// Lifecycle hooks are the agent's re-entry points. Inject only a bounded
+	// native context packet: SessionStart gets the current stage/next action;
+	// SubagentStart additionally gets an Assignment brief when the platform
+	// payload maps to exactly one runtime assignment. Ambiguity stays
+	// fail-open and leaves the full Guidance packet as the source of truth.
+	if request.Event == "SessionStart" || request.Event == "SubagentStart" {
+		var assignments []hookctx.AssignmentContext
+		if request.Event == "SubagentStart" {
+			if loaded, err := hookctx.LoadFull(root, request.AgentID); err == nil && loaded != nil {
+				assignments = loaded.Assignments
+			}
+		}
+		decision.AdditionalContext = hook.BuildLifecycleAdditionalContext(request.Event, request, decision, assignments)
+	}
 	// L4 §15.2 P0-5: the PreToolUse(TaskUpdate) self-claim guard needs an
 	// identified agent; the Controller cycle's safety input carries no Agent
 	// context, so the agent-scoped rule is evaluated here against the
@@ -2443,6 +2549,21 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			decision = stopDecision
 		}
 	}
+	// Stop is the Main-session counterpart to the Worker stop/idle gate. The
+	// preflight above handles a known pending review assignment before any
+	// Controller mutation. If the preflight allowed, re-check after the normal
+	// cycle because a concurrent worker may have submitted a Result meanwhile;
+	// an already-blocked preflight decision remains authoritative.
+	if request.Event == "Stop" && !isDenyingHookDecision(decision.Decision) {
+		if stopDecision, blocked := hook.MainStopDecision(root, request); blocked {
+			decision = stopDecision
+		}
+	}
+	// Record the measured controller/policy path before the envelope is
+	// persisted. A platform timeout kills the process before this point, so a
+	// missing record remains a useful timeout signal rather than a fabricated
+	// timed_out=true value.
+	decision.ElapsedMS = time.Since(evaluationStarted).Milliseconds()
 	envelope := buildEnvelopeFromController(root, request, decision, controlResult, time.Now())
 	// envelopeWithQualityGate carries the layered Controller projection
 	// alongside the legacy hook-policy envelope fields. On PreToolUse the
@@ -2488,6 +2609,10 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, hook.RenderStopBlockFeedback(decision))
 		return 2
 	}
+	if request.Event == "Stop" && isDenyingHookDecision(decision.Decision) {
+		fmt.Fprintln(stderr, hook.RenderStopBlockFeedback(decision))
+		return 2
+	}
 	// PreToolUse uses the layered Controller-driven render path
 	// (PreToolUseWithQualityGate) so the wire envelope carries the
 	// `quality_gate` object alongside permissionDecision. Lifecycle events
@@ -2499,7 +2624,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Event == "PreToolUse" {
 		output, code, err = hook.PreToolUseWithQualityGate(decision, controlResult)
 	} else {
-		output, code, err = hook.RenderWithRoot(root, request.Event, decision, request.Runtime)
+		output, code, err = hook.RenderWithAdditionalContext(root, request.Event, decision, request.Runtime, decision.AdditionalContext)
 	}
 	if err != nil {
 		if isDenyingHookDecision(decision.Decision) {
@@ -2517,7 +2642,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			return 1
 		}
 	}
-	if decision.Decision == "block" {
+	if isDenyingHookDecision(decision.Decision) {
 		return 2
 	}
 	return code
@@ -2528,8 +2653,30 @@ func hookInputMayMutate(request policy.Input) bool {
 	case "Write", "Edit", "MultiEdit", "NotebookEdit", "Bash":
 		return true
 	default:
-		return false
+		return policy.IsMCPTool(request.ToolName)
 	}
+}
+
+// runNativeObserverHook consumes platform-native observation events without
+// entering the lifecycle Controller. These events cannot safely veto the
+// originating operation; their value is a durable, deduplicated audit signal
+// that can be correlated with the existing wrapper and runtime evidence.
+func runNativeObserverHook(root string, request policy.Input, stdout, stderr io.Writer, started time.Time) int {
+	engine, err := policy.Load(filepath.Join(root, "docs", "hook-policy.json"))
+	if err != nil {
+		fmt.Fprintf(stderr, "load policy for %s observer: %v\n", hook.NativeObserverSummary(request), err)
+		return 0
+	}
+	decision := hook.NativeObserverDecision(request, time.Since(started))
+	envelope := engine.Envelope(request, decision, time.Now())
+	if err := audit.NewOutbox(filepath.Join(root, ".claude", "hook-decisions.jsonl")).Append(envelope); err != nil {
+		fmt.Fprintf(stderr, "append %s audit: %v\n", hook.NativeObserverSummary(request), err)
+		// This event is observation-only. Losing an audit row is reported on
+		// stderr, but must not turn a non-vetoing observer into an accidental
+		// tool failure or permission gate.
+		return 0
+	}
+	return 0
 }
 
 func runtimeCheckpointMissing(root string) bool {
@@ -2883,6 +3030,7 @@ func runControlCycleForHook(root string, request policy.Input) controller.Contro
 		TargetID:    request.TargetID,
 		AgentID:     request.AgentID,
 		SessionID:   request.SessionID,
+		Runtime:     request.Runtime,
 		HookPayload: map[string]any{},
 	}
 	result, err := controller.RunControlCycle(contextForHook(request), controlReq)
@@ -2919,7 +3067,14 @@ func contextForHook(request policy.Input) context.Context {
 // `block` and only `advanced` keeps the tool-default `allow` after a
 // successful transition.
 func projectControlDecision(result controller.ControlResult) policy.Decision {
-	if result.Decision.Decision == "block" {
+	if result.Decision.Decision == "block" || result.Decision.Decision == "deny" {
+		return result.Decision
+	}
+	// A warning is still a policy result even though the tool remains
+	// allowed. Preserve its rule, reason, recovery and retry fields so the
+	// Agent sees the classification guidance instead of an indistinguishable
+	// allow verdict (unknown MCP tools are the canonical example).
+	if result.Decision.Decision == "warn" {
 		return result.Decision
 	}
 	switch result.QualityGate.Status {
@@ -2928,7 +3083,7 @@ func projectControlDecision(result controller.ControlResult) policy.Decision {
 		// layer denied. The Decision field already carries the block
 		// payload; we just ensure the gate status survives the round-trip.
 		decision := result.Decision
-		if decision.Decision != "block" {
+		if !isDenyingHookDecision(decision.Decision) {
 			decision.Decision = "block"
 			decision.RuleID = policy.RuleLockedArtifactWrite
 			decision.Reason = "final safety block"
@@ -3061,6 +3216,7 @@ func buildEnvelopeFromController(root string, request policy.Input, decision pol
 			Retry:         decision.Retry,
 			HumanRequired: decision.HumanRequired,
 			EvaluatedAt:   evaluatedAt.UTC().Format(time.RFC3339Nano),
+			ElapsedMS:     decision.ElapsedMS,
 		}
 		if decision.Guidance != nil {
 			envelope.Guidance = decision.Guidance
@@ -3086,6 +3242,10 @@ func qualityGateEnvelopeFields(qg controller.QualityGateResult) map[string]any {
 	if evidenceRefs == nil {
 		evidenceRefs = []string{}
 	}
+	conflicts := qg.Conflicts
+	if conflicts == nil {
+		conflicts = []string{}
+	}
 	return map[string]any{
 		"quality_gate": map[string]any{
 			"status":               string(qg.Status),
@@ -3095,6 +3255,8 @@ func qualityGateEnvelopeFields(qg controller.QualityGateResult) map[string]any {
 			"fingerprint":          qg.Fingerprint,
 			"missing":              missing,
 			"evidence_refs":        evidenceRefs,
+			"error_code":           qg.ErrorCode,
+			"conflicts":            conflicts,
 			"transition_committed": qg.TransitionCommitted,
 			"next_cursor":          qg.NextCursor,
 		},

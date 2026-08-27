@@ -645,6 +645,33 @@ func TestMilestoneIdempotencyChangesWithQualityGateFingerprint(t *testing.T) {
 	}
 }
 
+func TestMilestoneIdentityIgnoresObservedRevision(t *testing.T) {
+	guidance := policy.Guidance{
+		RuntimeID: "loop-REQ-039",
+		Revision:  12,
+		Stage:     "S10",
+		Action:    "audit the release scope",
+	}
+	base := controller.QualityGateResult{
+		Status:           controller.StatusNotReady,
+		GateID:           "GATE-RELEASE-AUDIT-APPROVED",
+		ObservedRevision: 12,
+		Fingerprint:      "sha256:stable",
+		Missing:          []string{"evidence:release_audit_record"},
+		NextCursor:       "release_audit",
+	}
+	persisted := guidanceMapWithGate(persistedGuidanceForMatch(guidance), base, "PreToolUse", 12, time.Now().UTC(), base)
+
+	newerObservation := base
+	newerObservation.ObservedRevision = 13
+	if !milestoneMatchesWithGate(persisted, guidance, newerObservation) {
+		t.Fatal("a revision-only observation change must not force a milestone refresh")
+	}
+	if milestoneIdempotencyWithGate(guidance, base) != milestoneIdempotencyWithGate(guidance, newerObservation) {
+		t.Fatal("revision-only observation change must not change milestone idempotency")
+	}
+}
+
 // TestRefreshMilestonePersistsQualityGateObject locks the integration
 // point: when refreshMilestone commits a milestone, the persisted
 // `milestone.quality_gate` must round-trip as a 9-field object and the

@@ -331,6 +331,16 @@
             "minLength": 1
           }
         },
+        "done_when": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Concrete closing predicates for this Assignment. SubagentStart projects these values into the Worker context; do not replace them with a generic completion reminder.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "output_paths": {
           "$ref": "#/$defs/paths"
         },

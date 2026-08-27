@@ -1531,7 +1531,8 @@
       ],
       "required_evidence": [
         "release_audit_record",
-        "acceptance_record"
+        "acceptance_record",
+        "clean_round_record"
       ],
       "on_guard_failure": "reject",
       "auto_trigger": {

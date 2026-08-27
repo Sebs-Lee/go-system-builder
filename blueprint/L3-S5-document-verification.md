@@ -158,7 +158,7 @@ flowchart TD
 
 S5 的 review round 是 0，模板不要求显式填写 `review_round`。`subject_refs` 当前按流程从 runtime 手动复制；这能迫使 reviewer 面对具体版本，但也带来抄漏/抄错成本，最终由 exact-subject gate 兜底。
 
-`two-phase-activation` 提供的是 readback、信封和主会话派发纪律。当前实现对未激活或越界写入主要呈现 `not_ready`/流程阻断，并非覆盖所有路径的强制文件锁；不要把这一层描述成与 S6 scope hook 等价的硬隔离。
+`agent-dispatch`（L4 plan_checkpoint 派发）提供的是计划回执（PLAN_REPORT）、信封和主会话派发纪律；旧 `two-phase-activation` 两阶段 skill 已由其取代并删除。当前实现对未激活或越界写入主要呈现 `not_ready`/流程阻断，并非覆盖所有路径的强制文件锁；不要把这一层描述成与 S6 scope hook 等价的硬隔离。
 
 ### 4.3 T3 — 规格一致性审查
 
@@ -316,7 +316,7 @@ gate 中存在 reviewer-vs-author 检查逻辑，但当前有机登记普遍把 
 | 角色/时机 | 最小阅读集 | 按需加载 | 不需要背诵 |
 |:--|:--|:--|:--|
 | Orchestrator 组队 | 两个职责定义、team-planning、触发表、当前 documents | 复杂 team/DAG 方法 | 审查细节全文 |
-| 两名 reviewer 激活 | assignment、two-phase-activation、REV template、当前 subject 集 | 被指名的专项规则 | transition 实现 |
+| 两名 reviewer 激活 | assignment、agent-dispatch、REV template、当前 subject 集 | 被指名的专项规则 | transition 实现 |
 | 规格 reviewer | REQ、design、contracts、TASK coverage；相关场景包 | NFR/权限/API 深挖 | S4 覆盖算法 |
 | TASK reviewer | TASK、contracts、tasks check 输出 | 迁移、外部集成、critical 风险规则 | 全仓实现代码 |
 | gate 收口 | 两条 evidence、runtime documents、drift/conflict | 对应错误诊断 | 人工重做语义审查 |

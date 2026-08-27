@@ -164,11 +164,16 @@ type Input struct {
 	SessionID string          `json:"session_id"`
 	Event     string          `json:"hook_event_name"`
 	AgentID   string          `json:"agent_id"`
+	AgentType string          `json:"agent_type,omitempty"`
 	ToolName  string          `json:"tool_name"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	FilePath  string          `json:"file_path,omitempty"`
+	Error     string          `json:"error,omitempty"`
 	ToolInput map[string]any  `json:"tool_input"`
 	TargetID  string          `json:"target_id"`
 	Facts     map[string]bool `json:"facts"`
 	Runtime   RuntimeContext  `json:"runtime_context"`
+	Source    string          `json:"source,omitempty"`
 	// Official Claude Code 2.1.218 TeammateIdle/SubagentStop payload fields
 	// (L4 §15.2 P0-1). TeammateIdle carries teammate_name/team_name and no
 	// agent_id; SubagentStop carries agent_id/agent_transcript_path/
@@ -210,6 +215,16 @@ type Decision struct {
 	HumanRequired  bool      `json:"human_required"`
 	MatchedRuleIDs []string  `json:"matched_rule_ids,omitempty"`
 	Guidance       *Guidance `json:"guidance,omitempty"`
+	// AdditionalContext is a bounded, lifecycle-only context injection for
+	// Claude Code's SessionStart/SubagentStart native output fields. It is
+	// deliberately not part of the policy decision schema or audit record;
+	// the authoritative state remains the runtime and Guidance.
+	AdditionalContext string `json:"-"`
+	// ElapsedMS is populated by the Hook transport with the measured policy
+	// and controller evaluation duration. It is carried into the durable
+	// DecisionEnvelope so timeout pressure can be observed without inventing
+	// a timeout verdict inside the Hook process.
+	ElapsedMS int64 `json:"-"`
 }
 
 // Guidance is the controller's positive scheduling instruction. It is
@@ -320,6 +335,9 @@ func (e *Engine) HasRule(id string) bool {
 }
 
 func (e *Engine) Evaluate(input Input) (Decision, error) {
+	if decision, blocked := unknownMCPToolDecision(input); blocked {
+		return decision, nil
+	}
 	if decision, blocked := lockedArtifactDecision(input); blocked {
 		return decision, nil
 	}
@@ -387,14 +405,14 @@ func taskUpdateSelfClaimDecision(input Input) (Decision, bool) {
 
 func unauthorizedTaskDecision(agentID, taskID, detail string) (Decision, bool) {
 	return Decision{
-		Decision: "block",
+		Decision: "deny",
 		RuleID:   RuleUnauthorizedTaskSelfClaim,
 		Reason:   fmt.Sprintf("Agent %s attempted to mutate task %s without a scheduler-dispatched assignment: %s (L4 §1.3)", agentID, taskID, detail),
 		Recovery: []string{
 			"wait for the scheduler/Main to dispatch an assignment for " + taskID,
 			"only update tasks bound to your own assignment; completing your own dispatched task stays allowed",
 		},
-		Retry: "after_dispatch",
+		Retry: RetryAfterRecoveryValidation,
 	}, true
 }
 
@@ -427,7 +445,7 @@ func repairPreExecutionWriteDecision(input Input) (Decision, bool) {
 
 func repairPreExecutionBlock(input Input, rawPath string) Decision {
 	return Decision{
-		Decision:     "block",
+		Decision:     "deny",
 		RuleID:       RuleRepairWriteBeforeExecution,
 		AffectedPath: reviewerRelativePath(input, rawPath),
 		Reason:       fmt.Sprintf("S9 %s is read-only on the product surface until BeginRepairExecution; %s is not a repair-control artifact", input.Runtime.CurrentPhase, reviewerRelativePath(input, rawPath)),
@@ -436,7 +454,7 @@ func repairPreExecutionBlock(input Input, rawPath string) Decision {
 			"run `BeginRepairExecution` via `runtime repair execution begin --expected-revision <current>` after every Assignment has a PlanReport",
 			"keep plan/reproduction evidence under .claude/review/repair/ or .claude/evidence/; do not write product files yet",
 		},
-		Retry: "after_repair_execution_begin",
+		Retry: RetryAfterRecoveryValidation,
 	}
 }
 
@@ -482,7 +500,7 @@ func repairAssignmentBlock(input Input, rawPath string) Decision {
 		assignment = input.Runtime.Agent.RepairAssignmentID
 	}
 	return Decision{
-		Decision:     "block",
+		Decision:     "deny",
 		RuleID:       RuleRepairAssignmentScope,
 		AffectedPath: reviewerRelativePath(input, rawPath),
 		Reason:       fmt.Sprintf("S9 executing Worker assignment %s cannot write %s: the path is outside its immutable Assignment scope", assignment, reviewerRelativePath(input, rawPath)),
@@ -491,7 +509,7 @@ func repairAssignmentBlock(input Input, rawPath string) Decision {
 			"keep the change inside the Assignment scope; if the root cause needs a new path, stop and return to S8 for Contract/Plan revision",
 			"do not widen scope by editing the hook or runtime; submit a scope deviation for Main to reconcile",
 		},
-		Retry: "after_assignment_scope_correction",
+		Retry: RetryAfterRecoveryValidation,
 	}
 }
 
@@ -567,9 +585,7 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 		}
 		return Decision{}, false
 	}
-	switch input.ToolName {
-	case "Write", "Edit", "MultiEdit", "NotebookEdit":
-	default:
+	if !isSideEffectTool(input.ToolName) {
 		return Decision{}, false
 	}
 	if firstWriteSurfaceAllowed(input) {
@@ -581,7 +597,7 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 func assignmentWriteBeforePlanBlock(input Input) (Decision, bool) {
 	agent := input.Runtime.Agent
 	return Decision{
-		Decision: "block",
+		Decision: "deny",
 		RuleID:   RuleAssignmentWriteBeforePlan,
 		Reason:   fmt.Sprintf("Agent %s is %s with no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", agent.ID, agent.State),
 		Recovery: []string{
@@ -602,7 +618,7 @@ func firstWriteSurfaceAllowed(input Input) bool {
 		paths, mutating := bashMutationPaths(command)
 		return mutating && len(paths) > 0 && allFirstWritePathsAllowed(input, paths)
 	}
-	rawPath, _ := input.ToolInput["file_path"].(string)
+	rawPath := toolPath(input.ToolInput)
 	return rawPath != "" && firstWritePathAllowed(input, rawPath)
 }
 
@@ -648,9 +664,7 @@ func reviewerProductWriteDecision(input Input) (Decision, bool) {
 			return Decision{}, false
 		}
 	} else {
-		switch input.ToolName {
-		case "Write", "Edit", "MultiEdit", "NotebookEdit":
-		default:
+		if !isSideEffectTool(input.ToolName) {
 			return Decision{}, false
 		}
 		rawPath := toolPath(input.ToolInput)
@@ -676,7 +690,7 @@ func reviewerProductWriteDecision(input Input) (Decision, bool) {
 func reviewerProductWriteBlock(input Input, rawPath string) Decision {
 	rel := reviewerRelativePath(input, rawPath)
 	return Decision{
-		Decision:     "block",
+		Decision:     "deny",
 		RuleID:       RuleReviewerProductWrite,
 		Reason:       fmt.Sprintf("verification stage freezes the product baseline; %s is outside the reviewer write surfaces (.claude/, docs/reports/, and the ReviewPlan verification_artifact_workspace)", rel),
 		AffectedPath: rel,
@@ -685,6 +699,7 @@ func reviewerProductWriteBlock(input Input, rawPath string) Decision {
 			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
 			"if the product implementation must change, submit a ReviewResult with verdict=finding instead (L3-S7: Reviewers never repair)",
 		},
+		Retry: RetryAfterRecoveryValidation,
 	}
 }
 
@@ -861,13 +876,13 @@ func squashMergeDecision(input Input) (Decision, bool) {
 		return Decision{}, false
 	}
 	return Decision{
-		Decision:       "block",
+		Decision:       "deny",
 		RuleID:         RuleSquashMerge,
 		Reason:         RuleSquashMerge,
 		ParsedCommand:  parsedCommand,
 		Stage:          input.Runtime.CurrentStage,
 		Recovery:       []string{"use a normal merge without squash"},
-		Retry:          "with_normal_merge",
+		Retry:          RetryAfterRecoveryValidation,
 		HumanRequired:  false,
 		MatchedRuleIDs: []string{RuleSquashMerge},
 	}, true
@@ -904,15 +919,22 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 						filepath.Base(artifact.Path),
 					)}
 				}
+				decision := "block"
+				retry := RetryNever
+				humanRequired := artifact.Kind == "req"
+				if !humanRequired {
+					decision = "deny"
+					retry = RetryAfterRecoveryValidation
+				}
 				return Decision{
-					Decision:       "block",
+					Decision:       decision,
 					RuleID:         RuleLockedArtifactWrite,
 					Reason:         RuleLockedArtifactWrite,
 					AffectedPath:   path,
 					Stage:          input.Runtime.CurrentStage,
 					Recovery:       recovery,
-					Retry:          "after_rework",
-					HumanRequired:  artifact.Kind == "req",
+					Retry:          retry,
+					HumanRequired:  humanRequired,
 					MatchedRuleIDs: []string{RuleLockedArtifactWrite},
 				}, true
 			}
@@ -983,6 +1005,7 @@ type DecisionEnvelope struct {
 	Retry                   string    `json:"retry"`
 	HumanRequired           bool      `json:"human_required"`
 	EvaluatedAt             string    `json:"evaluated_at"`
+	ElapsedMS               int64     `json:"elapsed_ms"`
 	Guidance                *Guidance `json:"guidance,omitempty"`
 }
 
@@ -991,7 +1014,6 @@ func (e *Engine) Envelope(input Input, decision Decision, evaluatedAt time.Time)
 	revision := nullableInt(input.Runtime.RuntimeID != "", input.Runtime.Revision)
 	agentID := nullableString(input.AgentID)
 	targetID := nullableString(input.TargetID)
-	ruleID := nullableString(decision.RuleID)
 	reason := decision.Reason
 	missing := append([]string(nil), decision.Missing...)
 	recovery := append([]string(nil), decision.Recovery...)
@@ -1006,17 +1028,28 @@ func (e *Engine) Envelope(input Input, decision Decision, evaluatedAt time.Time)
 		humanRequired = false
 		matchedRuleIDs = []string{}
 	}
+	if missing == nil {
+		missing = []string{}
+	}
+	if recovery == nil {
+		recovery = []string{}
+	}
+	retry = canonicalRetry(decision.Decision, retry)
 	identity := fmt.Sprintf(
-		"%s|%s|%s|%d|%s|%s|%s|%s",
+		"%s|%s|%s|%d|%s|%s|%s|%s|%s|%s",
 		input.SessionID,
 		input.Event,
 		input.Runtime.RuntimeID,
 		input.Runtime.Revision,
 		input.AgentID,
 		input.TargetID,
+		input.ToolUseID,
 		e.policySHA256,
 		strings.Join(decision.MatchedRuleIDs, ","),
+		eventFingerprint(input),
 	)
+	wireRuleID := canonicalWireRuleID(decision.RuleID)
+	wireMatchedRuleIDs := canonicalWireRuleIDs(matchedRuleIDs)
 	return DecisionEnvelope{
 		SchemaVersion:           "1.1.0",
 		DecisionID:              fmt.Sprintf("hook-decision-%x", sha256.Sum256([]byte(identity))),
@@ -1029,18 +1062,91 @@ func (e *Engine) Envelope(input Input, decision Decision, evaluatedAt time.Time)
 		ObservedRuntimeRevision: revision,
 		AgentID:                 agentID,
 		TargetID:                targetID,
-		MatchedRuleIDs:          matchedRuleIDs,
+		MatchedRuleIDs:          wireMatchedRuleIDs,
 		Decision:                decision.Decision,
-		RuleID:                  ruleID,
+		RuleID:                  nullableString(wireRuleID),
 		Reason:                  reason,
 		Missing:                 missing,
 		Recovery:                recovery,
 		Retry:                   retry,
 		HumanRequired:           humanRequired,
 		EvaluatedAt:             evaluatedAt.UTC().Format(time.RFC3339Nano),
+		ElapsedMS:               decision.ElapsedMS,
 		// Guidance is supplied by the Loop Controller, not the policy engine;
 		// the minimal safety engine only emits a Decision.
 	}
+}
+
+// eventFingerprint separates distinct native observation payloads when the
+// platform does not provide a ToolUseID. It deliberately hashes only stable
+// input facts so retries of the same event remain idempotent while different
+// ConfigChange/PostToolUseFailure payloads are not collapsed by the outbox.
+func eventFingerprint(input Input) string {
+	payload := struct {
+		ToolName  string         `json:"tool_name,omitempty"`
+		FilePath  string         `json:"file_path,omitempty"`
+		Error     string         `json:"error,omitempty"`
+		Source    string         `json:"source,omitempty"`
+		ToolInput map[string]any `json:"tool_input,omitempty"`
+	}{
+		ToolName:  input.ToolName,
+		FilePath:  input.FilePath,
+		Error:     input.Error,
+		Source:    input.Source,
+		ToolInput: input.ToolInput,
+	}
+	data, _ := json.Marshal(payload)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("event-%x", sum[:])
+}
+
+// canonicalWireRuleID is the boundary adapter between the internal rule
+// names used by recovery anchors and the Hook envelope schema's stable
+// HOOK_* identifiers. Internal callers may continue to compare the lowercase
+// constants; serialized contracts get one canonical representation.
+func canonicalWireRuleID(ruleID string) string {
+	ruleID = strings.TrimSpace(ruleID)
+	if ruleID == "" {
+		return ""
+	}
+	if strings.HasPrefix(ruleID, "HOOK_") {
+		return ruleID
+	}
+	var builder strings.Builder
+	builder.WriteString("HOOK_")
+	lastUnderscore := false
+	for _, r := range strings.ToUpper(ruleID) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			builder.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.TrimRight(builder.String(), "_")
+}
+
+func canonicalWireRuleIDs(ruleIDs []string) []string {
+	if len(ruleIDs) == 0 {
+		return []string{}
+	}
+	result := make([]string, 0, len(ruleIDs))
+	seen := make(map[string]struct{}, len(ruleIDs))
+	for _, ruleID := range ruleIDs {
+		canonical := canonicalWireRuleID(ruleID)
+		if canonical == "" {
+			continue
+		}
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, canonical)
+	}
+	return result
 }
 
 func matches(matcher, toolName string) bool {
@@ -1060,7 +1166,7 @@ func isSideEffectTool(tool string) bool {
 	case "Write", "Edit", "MultiEdit", "Bash", "NotebookEdit":
 		return true
 	default:
-		return false
+		return IsMCPTool(tool) && !isVerifiedReadOnlyMCPTool(tool)
 	}
 }
 

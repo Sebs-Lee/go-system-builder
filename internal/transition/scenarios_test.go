@@ -208,7 +208,7 @@ func TestSM015_InvalidatedEvidenceRejected(t *testing.T) {
 	}
 }
 
-// --- SM-020: automation requests squash merge -> strong-block ---
+// --- SM-020: automation requests squash merge -> recoverable deny ---
 
 func TestSM020_AutomatedSquashMergeBlocked(t *testing.T) {
 	// This is a Hook policy test, not a transition test.
@@ -225,8 +225,8 @@ func TestSM020_AutomatedSquashMergeBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" {
-		t.Fatalf("SM-020: expected block for automated squash merge, got %s", decision.Decision)
+	if decision.Decision != "deny" {
+		t.Fatalf("SM-020: expected deny for automated squash merge, got %s", decision.Decision)
 	}
 }
 
@@ -246,15 +246,15 @@ func TestSM022_ReqChangeInvalidatesDownstream(t *testing.T) {
 	}
 	state["baseline"] = map[string]any{"generation": float64(1), "captured_at": "2026-01-01T00:00:00Z"}
 	state["pause"] = map[string]any{
-		"from_state":                 "verification",
-		"from_phase":                 nil,
-		"phase_revision":             float64(1),
-		"baseline_generation":        float64(1),
-		"review_round":               float64(1),
-		"reason":                     "test",
-		"required_human_action":      "test",
-		"document_fingerprints":      []any{},
-		"paused_at":                  "2026-01-01T00:00:00Z",
+		"from_state":            "verification",
+		"from_phase":            nil,
+		"phase_revision":        float64(1),
+		"baseline_generation":   float64(1),
+		"review_round":          float64(1),
+		"reason":                "test",
+		"required_human_action": "test",
+		"document_fingerprints": []any{},
+		"paused_at":             "2026-01-01T00:00:00Z",
 	}
 	state["evidence"] = []any{
 		map[string]any{

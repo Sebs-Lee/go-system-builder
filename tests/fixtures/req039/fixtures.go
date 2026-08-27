@@ -927,6 +927,18 @@ func SeedAcceptanceReady(t *testing.T, root string, state map[string]any) {
 			"producer_agent_id": agent, "producer_responsibility": responsibility,
 			"conclusion": conclusion, "created_at": "2026-07-30T00:00:00Z",
 		}
+		if wireKind == "acceptance" || wireKind == "release_audit" {
+			manifestPath := "s10/" + wireKind + "-manifest.json"
+			manifestData := s10ManifestData(t, state, wireKind, 1)
+			if err := os.MkdirAll(filepath.Join(root, "s10"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(manifestPath)), manifestData, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			envelope["audit_manifest_path"] = manifestPath
+			envelope["audit_manifest_sha256"] = Sha256Hex(manifestData)
+		}
 		data, err := json.Marshal(envelope)
 		if err != nil {
 			t.Fatal(err)
@@ -988,6 +1000,18 @@ func SeedReleaseAuditReady(t *testing.T, root string, state map[string]any) {
 			"producer_agent_id": agent, "producer_responsibility": responsibility,
 			"conclusion": conclusion, "created_at": "2026-07-30T00:00:00Z",
 		}
+		if wireKind == "acceptance" || wireKind == "release_audit" {
+			manifestPath := "s10/" + wireKind + "-manifest.json"
+			manifestData := s10ManifestData(t, state, wireKind, 1)
+			if err := os.MkdirAll(filepath.Join(root, "s10"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(manifestPath)), manifestData, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			envelope["audit_manifest_path"] = manifestPath
+			envelope["audit_manifest_sha256"] = Sha256Hex(manifestData)
+		}
 		data, err := json.Marshal(envelope)
 		if err != nil {
 			t.Fatal(err)
@@ -1034,6 +1058,55 @@ func SeedReleaseAuditReady(t *testing.T, root string, state map[string]any) {
 	SeedCleanRoundProjection(t, root, state)
 	state["milestone"].(map[string]any)["stage"] = "S10"
 	state["milestone"].(map[string]any)["lifecycle_state"] = "release_audit"
+}
+
+func s10ManifestData(t *testing.T, state map[string]any, manifestType string, reviewRound int) []byte {
+	t.Helper()
+	items := []any{}
+	counterevidence := []any{}
+	for _, item := range []struct {
+		id, category string
+	}{
+		{"REQ-AC-001", "requirement"},
+		{"CONTRACT-001", "contract"},
+		{"PATH-001", "changed_path"},
+		{"AUDIT-001", "audit_area"},
+	} {
+		items = append(items, map[string]any{
+			"id": item.id, "category": item.category, "source_refs": []string{"fixture:" + item.id},
+			"expected": "fixture expected " + item.id, "oracle": "fixture oracle " + item.id,
+			"owner": "S10 fixture reviewer", "evidence_refs": []string{"ev-acc"},
+			"disposition": "pass",
+		})
+		counterevidence = append(counterevidence, map[string]any{
+			"id": "CE-" + item.id, "inventory_id": item.id,
+			"question": "what disproves " + item.id + "?", "evidence_refs": []string{"ev-clean-pass"},
+			"outcome": "pass",
+		})
+	}
+	manifest := map[string]any{
+		"schema_version": "1.0.0", "manifest_type": manifestType,
+		"runtime_id": runtimeIDFromState(state), "baseline_generation": 1, "review_round": reviewRound,
+		"coverage_inventory": items, "counterevidence": counterevidence,
+		"risks": []any{}, "technical_debt": []any{}, "blocking_findings": []any{},
+		"metrics": map[string]any{
+			"requirement_coverage": 1, "contract_coverage": 1, "changed_path_coverage": 1,
+			"audit_area_coverage": 1, "unknown_count": 0, "unsupported_pass_count": 0,
+			"unowned_risk_count": 0, "untracked_debt_count": 0, "blocking_finding_count": 0,
+		},
+	}
+	if manifestType == "release_audit" {
+		areas := []any{}
+		for _, id := range []string{"state_machine", "transaction_uow", "concurrency_idempotency", "data_migration", "call_sites_topology", "observability_errors", "verification_evidence", "docs_release_scope"} {
+			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-audit"}})
+		}
+		manifest["audit_areas"] = areas
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 // writeWorkgroupManifest writes a readable team manifest for clean_round_still_valid.

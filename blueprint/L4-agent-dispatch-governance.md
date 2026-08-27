@@ -614,7 +614,7 @@ Plan mode 属于 approval_required Worker，不属于 lead 的普通等待状态
 | 事件 | 真实责任 |
 |:--|:--|
 | PreToolUse(Agent/Task) | 派发前检查 Assignment、dispatch_mode、worktree、stage capacity policy、Dispatchable slot、冲突和角色；不得因槽满删除 queued responsibility |
-| SubagentStart | 注入 Assignment ref、连续执行语义和最小上下文 |
+| SubagentStart | 注入唯一匹配 Assignment 的真实 scope、`done_when`、Required Checks、连续执行语义和最小上下文 |
 | PostToolUse(SendMessage) | 捕获 PLAN_REPORT/BLOCKER/COMPLETION，更新 Assignment checkpoint |
 | PreToolUse(Write/Edit/Bash...) | 首写计划屏障、locked artifact、不可逆动作、scope 前置诊断 |
 | PreToolUse(TaskUpdate) | owner/status 变化必须对应有效 Assignment 和 scheduler 决策；阻止 teammate 擅自 self-claim 下一责任 |

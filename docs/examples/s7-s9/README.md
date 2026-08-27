@@ -15,6 +15,21 @@ not validate these request files against the artifact schemas; submit them
 through the verb and let the runtime validate the derived chain and the
 current revision.
 
+## Request file → command map
+
+| Request file | Command that consumes it |
+|:---|:---|
+| `repair-contract-draft.json` | `loop-harness runtime investigation contract approve --case-id <case> --file repair-contract-draft.json --approved-by <actor>` |
+| `repair-plan-report.json` | `loop-harness runtime repair plan-report submit --file repair-plan-report.json --expected-revision <N> --actor <agent>` |
+| `repair-result.json` | `loop-harness runtime repair result submit --file repair-result.json --expected-revision <N> --actor <agent>` |
+| `change-impact.json` | `loop-harness runtime repair impact create --file change-impact.json`, then `... impact commit --file <created-impact.json>` |
+| `targeted-reverification.json` | `loop-harness runtime repair targeted create --file targeted-reverification.json`, then `... targeted commit --file <created-reverification.json>` |
+| `repair-handoff.json` | `loop-harness runtime repair handoff create --file repair-handoff.json`, then `... handoff commit --file <created-handoff.json>` |
+
+For every CAS-writing command, read the current revision from the status board
+or the previous command response. The placeholder IDs, paths and hashes in
+these examples are not valid evidence for a real run.
+
 ## The normal handoff path
 
 1. S8 registers a falsifiable hypothesis with flags, not a JSON file:

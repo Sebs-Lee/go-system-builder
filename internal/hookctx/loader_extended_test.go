@@ -366,6 +366,7 @@ func TestLoadFullSurfacesActiveAssignmentsFromWorkgroupManifests(t *testing.T) {
 			"role_family":"backend-builder",
 			"agent_id":"agent-039-04",
 			"write_paths":["internal/controller/"],
+			"done_when":["register the exact Assignment Result", "preserve evidence refs"],
 			"status":"in_progress"
 		}]
 	}`
@@ -394,6 +395,40 @@ func TestLoadFullSurfacesActiveAssignmentsFromWorkgroupManifests(t *testing.T) {
 	}
 	if len(row.WritePaths) != 1 || row.WritePaths[0] != "internal/controller/" {
 		t.Fatalf("WritePaths: got %+v", row.WritePaths)
+	}
+	if strings.Join(row.DoneWhen, "|") != "register the exact Assignment Result|preserve evidence refs" {
+		t.Fatalf("DoneWhen: got %+v", row.DoneWhen)
+	}
+}
+
+func TestLoadFullDoesNotGuessFirstAssignmentWhenAgentBindingIsAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	state := `{
+		"runtime_id":"loop-REQ-039","revision":1,"baseline":{"generation":1},
+		"entities":{
+			"agents":[{"id":"agent-039-ambiguous","state":"working","task_ids":["TASK-039-ambiguous"]}],
+			"tasks":[{"id":"TASK-039-ambiguous","state":"in_progress","owner_agent_ids":["agent-039-ambiguous"]}],
+			"bugs":[],"teams":[]
+		}
+	}`
+	manifest := `{
+		"schema_version":"1.0.0","manifest_id":"team-manifest-ambiguous","version":"v1.0.0",
+		"runtime_id":"loop-REQ-039","req_id":"REQ-039","baseline_generation":1,"status":"active",
+		"workgroup_id":"workgroup-ambiguous","workgroup_kind":"builder",
+		"assignments":[
+			{"assignment_id":"assignment-one","responsibility_id":"BUILD-WORK-PACKAGE","role_family":"backend-builder","agent_id":"agent-other-1","write_paths":["internal/one"],"status":"planned"},
+			{"assignment_id":"assignment-two","responsibility_id":"BUILD-WORK-PACKAGE","role_family":"backend-builder","agent_id":"agent-other-2","write_paths":["internal/two"],"status":"planned"}
+		]
+	}`
+	writeJSONL(t, filepath.Join(root, ".claude", "loop-state.json"), state)
+	writeJSONL(t, filepath.Join(root, ".claude", "workgroups", "REQ-039", "TASK-039-ambiguous", "manifest.json"), manifest)
+
+	loaded, err := hookctx.LoadFull(root, "")
+	if err != nil {
+		t.Fatalf("load full: %v", err)
+	}
+	if len(loaded.Assignments) != 0 {
+		t.Fatalf("ambiguous agent binding must not inherit the first assignment: %+v", loaded.Assignments)
 	}
 }
 

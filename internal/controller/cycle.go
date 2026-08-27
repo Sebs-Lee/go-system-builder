@@ -361,7 +361,7 @@ func applyFinalSafety(
 		// Quality gate may ONLY be projected to blocked when the safety
 		// layer actually denied the call. not_ready is intentionally
 		// distinct (BE-039 §3.2 / §5.2).
-		if decision.Decision == "block" {
+		if decision.Decision == "block" || decision.Decision == "deny" {
 			decision.HumanRequired = decision.HumanRequired || (decision.RuleID == policy.RuleLockedArtifactWrite)
 			result.Decision = decision
 			result.QualityGate.Status = StatusBlocked
@@ -878,6 +878,7 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 		ProjectRoot:  req.Root,
 		CurrentState: stateName,
 		CurrentPhase: stringValue(phaseName),
+		Agent:        req.Runtime.Agent,
 	}
 	if bound, ok := snapshot.State["bound_req"].(map[string]any); ok {
 		rt.BoundREQID, _ = bound["id"].(string)

@@ -85,6 +85,7 @@ type ManifestAssignment struct {
 	DependsOn          []string `json:"depends_on"`
 	ReuseDecision      string   `json:"reuse_decision"`
 	GroupingRationale  string   `json:"grouping_rationale"`
+	DoneWhen           []string `json:"done_when"`
 	Status             string   `json:"status"`
 }
 
@@ -141,6 +142,20 @@ func lensToRoleFamily(lens string) string {
 // (agents/<role>.md — the identity anchor, see docs/agent-protocol.md).
 func roleFamilyDefinitionRef(roleFamily string) string {
 	return "agents/" + roleFamily + ".md"
+}
+
+// assignmentDoneWhen turns the ReviewPlan's exact Claim set into a concrete
+// closing contract for the dispatched Worker. The Planner may refine the
+// wording, but the draft must make the required output and evidence boundary
+// visible without asking the Worker to infer it from a role name.
+func assignmentDoneWhen(kind, assignmentID string, claimIDs []string) []string {
+	claims := strings.Join(claimIDs, ", ")
+	result := fmt.Sprintf("register one complete ReviewResult for %s covering exactly Claims [%s]", assignmentID, claims)
+	evidence := "each Claim has a disposition and the required evidence is referenced"
+	if kind == "e2e_browser" {
+		evidence = "each assigned user flow has executable evidence, or an explicit applicability and rationale"
+	}
+	return []string{result, evidence, "run every declared required check before reporting completion"}
 }
 
 // DraftManifest scaffolds a register-workgroup team manifest for one
@@ -349,7 +364,8 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		GroupingRationale: fmt.Sprintf(
 			"One plan Assignment = one reviewer Agent (L3-S7 §3.4): this row binds the exact Claim set of %s in ReviewPlan %s.",
 			assignmentID, ptr.PlanID),
-		Status: "planned",
+		DoneWhen: assignmentDoneWhen(kind, assignmentID, planned.ClaimIDs),
+		Status:   "planned",
 	}
 
 	draft := &ManifestDraft{

@@ -68,7 +68,7 @@ func writeControlPlaneRecovery(b *strings.Builder) {
 	fmt.Fprintf(b, "`revision` has no global maximum. A Hook/controller checkpoint may advance the inactive bootstrap runtime before `TR-001`; binding uses the current revision as its CAS value, archives the complete inactive state/journal pair, and installs a new `loop-REQ-*` runtime at revision `0` with an empty active journal. The `binding_receipt` carries `event=req_bound`, the approved REQ, and source runtime hashes. Do not edit revision by hand or reuse a pre-bind runtime snapshot after binding; the runtime identity changes and stale identities are rejected.\n\n")
 	fmt.Fprintf(b, "1. Read the `Next` action and current `Stage` from the Hook packet, then follow its `Read in order` list.\n")
 	fmt.Fprintf(b, "2. Read the linked `docs/agent-protocol.md#sN` section before acting.\n")
-	fmt.Fprintf(b, "3. If blocked or the Runtime is unclear, read this Manual. Use `runtime reconcile` only when the Hook reports an integrity/CAS recovery condition; do not call `status`/`next` during normal continuation. When the live Quality Gate checklist is unclear, run `loop-harness ready` (diagnostics; never hand-push a Transition from it). `doctor` is schema/manual/policy_ref/metrics only — not stage readiness.\n")
+	fmt.Fprintf(b, "3. If blocked or the Runtime is unclear, read this Manual. Use `runtime reconcile` only when the Hook reports an integrity/CAS recovery condition; do not call `status`/`next` during normal continuation. When the live Quality Gate checklist is unclear, run `loop-harness ready` (diagnostics; never hand-push a Transition from it). `doctor` is structural schema/manual/policy_ref only — not stage readiness or runtime health; use `loop-harness health` for cumulative runtime signals. For the complete S7→S8→S9→S7→S10 action sequence and compatibility notes, run `loop-harness actions`.\n")
 	fmt.Fprintf(b, "4. Execute the one missing deliverable/evidence named by Hook/`ready` `missing[]`; do not invent a parallel lifecycle.\n")
 	fmt.Fprintf(b, "5. For `SubagentStop`, complete the report, worktree review, merge-back to the current `develop` integration branch and `completion_ack` checklist before acknowledging the stop. For `TeammateIdle`, re-wake the same teammate. The identical integration chain is available explicitly via `runtime task-integrate --assignment-id <id>` when the automatic SubagentStop payload cannot identify the assignment.\n")
 	fmt.Fprintf(b, "6. Builder completion is registered with `runtime task-complete` — one atomic command (message validation + evidence envelope derivation + Agent/TASK advance + evidence registration); the legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope. Before the Builder writes, create its worktree (`git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop`) and record `worktree_path`/`branch`/`target_branch` on the manifest row — SubagentStop integration requires them.\n")
@@ -76,6 +76,7 @@ func writeControlPlaneRecovery(b *strings.Builder) {
 	fmt.Fprintf(b, "Before registering an S7 draft, inspect its CASE-level E2E Assignments. `s7 draft` projects required browser CASEs from `docs/design/prototypes/<module>/cases.json`; a complete CASE→Playwright spec mapping produces `regression_available` and SHA-pinned `e2e_assets`, while any missing mapping produces `cold_start`, an `e2e-workspace/<round>` write surface, and one behavior Assignment per CASE. If no readable CASE inventory exists, the remaining `TODO(planner)` is intentional and registration explains the missing S2 input. Typed path evidence may use `path:<repo-relative>#sha256=<64-hex>` for drift detection; bare `path:` is compatibility-only existence evidence.\n")
 	fmt.Fprintf(b, "8. In S9 (bug_resolution), consume only the approved RepairContract: open the RepairSession, compile the RepairPlan, dispatch each Assignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, send the generic PLAN_REPORT and submit the S9 domain PlanReport, then wait for `runtime repair execution begin` before product writes. Use `runtime repair status` for each Assignment's owner/report/result, `queue_reason`, `lock_state` and next action; do not create a second scheduler or edit Runtime state by hand.\n")
 	fmt.Fprintf(b, "9. If `s7 status` reports `round N of M` with N >= M, finish draining the current round but do not open another one. Submit the human artifact through `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>`; `increase_budget` atomically raises `max_full_review_rounds` and leaves the pending round-opening transition to retry, while `return_to_governance` records the decision, invalidates downstream review evidence, resets the review projection, and routes through GTR-006 to planning. The decision file is persisted as scoped `human_decision` evidence, and CAS rejects stale revisions, mismatched runtime/round values, and non-increasing limits.\n")
+	fmt.Fprintf(b, "10. In S10 (acceptance_and_audit), treat the stage as a read-only audit, not a final shortcut: run `s10 status`, freeze the finite coverage inventory and responsibility matrix, record one counterevidence check per item, and validate the machine manifest before registering the human-readable ACC or release-audit envelope. The manifest must prove 100%% requirement/contract/changed-path/audit-area coverage with zero UNKNOWN, unsupported PASS, unowned risk, untracked debt, or blocking finding. If any product or architecture defect appears, return through S8 → S9 → a fresh complete S7; never use S9 → S10 or edit product code in S10. Only a current clean package may reach S11.\n")
 	fmt.Fprintf(b, "11. Some authority transactions carry runtime-issued ids that are not TRs and therefore do not appear in the Contents index above: `S8-REPAIR-CONTRACT-APPROVAL` (runtime investigation contract approve — the S8→S9 authority; PTR-BUG-08 is its legacy-catalog alias), plus the entity/record CAS ids (REVIEW-RESULT, REVIEW-PLAN-STALE, S7-BUDGET-DECISION, AGENT-LIFECYCLE, BUG-LIFECYCLE, EVIDENCE-RECORD). They are driven by their runtime verbs, never by `runtime transition`.\n")
 	fmt.Fprintf(b, "12. Stop only at a human Gateway, an external asynchronous wait, or the end of the current turn.\n\n")
 	fmt.Fprintf(b, "The persisted `.claude/loop-state.json` `milestone` is a recovery cache, not a second state machine. "+
@@ -211,6 +212,7 @@ func writeTransition(b *strings.Builder, t TransitionSpec) {
 	if len(t.RequiredEvidence) > 0 {
 		fmt.Fprintf(b, "Evidence: %s\n\n", joinBack(t.RequiredEvidence))
 		writeEvidenceBindings(b, t)
+		writeS10ArtifactGuidance(b, t.ID)
 	}
 }
 
@@ -226,6 +228,41 @@ func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
 		fmt.Fprintf(b, "  Accepted kinds: %s\n", joinBack(catalog.RegisteredAcceptedKinds(slot)))
 	}
 	fmt.Fprintf(b, "\nIf a binding is missing, retry with the command above; run `loop-harness explain %s` to inspect current candidates.\n\n", t.ID)
+}
+
+func writeS10ArtifactGuidance(b *strings.Builder, transitionID string) {
+	switch transitionID {
+	case "TR-009", "TR-015":
+		fmt.Fprintf(b, "S10 acceptance machine artifact (required before the Controller can consume the acceptance evidence):\n\n")
+		fmt.Fprintf(b, "```text\n")
+		fmt.Fprintf(b, "loop-harness s10 manifest validate --root <root> \\\n")
+		fmt.Fprintf(b, "  --file <acceptance-manifest.json> --type acceptance\n")
+		fmt.Fprintf(b, "loop-harness runtime evidence add --root <root> \\\n")
+		fmt.Fprintf(b, "  --expected-revision <N> --id <id> --kind acceptance \\\n")
+		fmt.Fprintf(b, "  --path <envelope.json> --produced-by <agent> --responsibility <role>\n")
+		fmt.Fprintf(b, "```\n\n")
+		fmt.Fprintf(b, "The envelope must contain `audit_manifest_path` and `audit_manifest_sha256`. The manifest must have a frozen `coverage_inventory` with explicit `requirement`, `contract`, and `changed_path` rows (use evidence-backed `not_applicable`, never an omitted hard category), exactly one counterevidence row per item, and zero UNKNOWN/unsupported PASS/unowned risk/untracked debt/blocking finding metrics. Start from the copyable shape `docs/examples/s10/acceptance-manifest.json` when useful. Run `loop-harness s10 status --root <root>` to see the current round and the next recovery action. Do not call `runtime transition` manually.\n\n")
+	case "TR-017":
+		fmt.Fprintf(b, "The release-audit evidence must point to a separately validated manifest:\n\n")
+		fmt.Fprintf(b, "```text\n")
+		fmt.Fprintf(b, "loop-harness s10 manifest validate --root <root> \\\n")
+		fmt.Fprintf(b, "  --file <release-audit-manifest.json> --type release_audit\n")
+		fmt.Fprintf(b, "loop-harness runtime evidence add --root <root> \\\n")
+		fmt.Fprintf(b, "  --expected-revision <N> --id <id> --kind release_audit \\\n")
+		fmt.Fprintf(b, "  --path <envelope.json> --produced-by <agent> --responsibility \"Release Auditor\"\n")
+		fmt.Fprintf(b, "```\n\n")
+		fmt.Fprintf(b, "The manifest must include all eight audit areas from `internal/schema/assets/s10-audit-manifest.schema.json`; use `docs/examples/s10/release-audit-manifest.json` as the copyable shape. Markdown audit prose does not replace this machine-checked ledger.\n\n")
+	case "TR-018":
+		fmt.Fprintf(b, "The BLOCKED release-audit evidence must preserve its machine-readable blocker ledger:\n\n")
+		fmt.Fprintf(b, "```text\n")
+		fmt.Fprintf(b, "loop-harness s10 manifest validate --root <root> \\\n")
+		fmt.Fprintf(b, "  --file <release-audit-manifest.json> --type release_audit --outcome blocked\n")
+		fmt.Fprintf(b, "loop-harness runtime evidence add --root <root> \\\n")
+		fmt.Fprintf(b, "  --expected-revision <N> --id <id> --kind release_audit \\\n")
+		fmt.Fprintf(b, "  --path <envelope.json> --produced-by <agent> --responsibility \"Release Auditor\"\n")
+		fmt.Fprintf(b, "```\n\n")
+		fmt.Fprintf(b, "Keep the blocking finding, route, evidence references, and all eight audit areas in the manifest. Let the Controller take TR-018 to `paused`; do not call `runtime transition` manually.\n\n")
+	}
 }
 
 // ValidateManualEvidenceBindings verifies that a generated Manual contains an

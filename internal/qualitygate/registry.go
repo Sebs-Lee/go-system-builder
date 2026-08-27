@@ -28,6 +28,11 @@ type EvidenceRequirement struct {
 	MinCount           int
 	CurrentReviewRound bool
 	RequestedEvent     string
+	// ProducedByTransition marks evidence that is materialized by the
+	// candidate transition itself (for example pause_record). It is a
+	// postcondition, not a pre-transition gate input; treating it as a normal
+	// prerequisite creates an evaluator/transition deadlock.
+	ProducedByTransition bool
 	// RoutingVerdict marks gates that wait for one rare routing verdict among
 	// many ordinary results (S7 pause verdicts). A current-round envelope
 	// whose conclusion is a different verdict is a normal state, not a
@@ -65,6 +70,11 @@ func NewRegistry(catalog *transition.Catalog) (*Registry, error) {
 		for _, requirement := range requirements {
 			if err := catalog.ValidateSlots([]string{requirement.Kind}); err != nil {
 				return fmt.Errorf("quality gate %s evidence contract: %w", gateID, err)
+			}
+		}
+		for index := range requirements {
+			if _, generated := catalog.Generator(requirements[index].Kind); generated {
+				requirements[index].ProducedByTransition = true
 			}
 		}
 		registry.gates[gateID] = GateSpec{
@@ -224,6 +234,7 @@ var semanticRequirements = map[string][]EvidenceRequirement{
 	"GATE-RELEASE-AUDIT-APPROVED": {
 		requirement("release_audit_record", []string{"Release Auditor"}, []string{"approved", "approved_with_risk"}),
 		requirement("acceptance_record", []string{"Acceptance", "Orchestrator"}, []string{"pass"}),
+		currentRoundRequirement("clean_round_record", []string{"Clean Round Evaluator", "Orchestrator"}, []string{"pass"}),
 	},
 	"GATE-RELEASE-AUDIT-BLOCKED": {
 		requestedRequirement("release_audit_record", []string{"Release Auditor"}, []string{"blocked"}, "release_audit_blocked"),

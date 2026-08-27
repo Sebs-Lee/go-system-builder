@@ -60,11 +60,11 @@ func TestReviewerProductWriteDecision(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			if tc.wantBlock && decision.Decision != "block" {
-				t.Fatalf("want block, got %q (rule=%q)", decision.Decision, decision.RuleID)
+			if tc.wantBlock && decision.Decision != "deny" {
+				t.Fatalf("want deny, got %q (rule=%q)", decision.Decision, decision.RuleID)
 			}
-			if !tc.wantBlock && decision.Decision == "block" {
-				t.Fatalf("want allow, got block (%s: %s)", decision.RuleID, decision.Reason)
+			if !tc.wantBlock && (decision.Decision == "deny" || decision.Decision == "block") {
+				t.Fatalf("want allow, got %s (%s: %s)", decision.Decision, decision.RuleID, decision.Reason)
 			}
 		})
 	}

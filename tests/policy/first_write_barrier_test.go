@@ -42,9 +42,9 @@ func TestFirstWriteBarrier(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Evaluate: %v", err)
 			}
-			gotBlock := decision.Decision == "block" && decision.RuleID == policy.RuleAssignmentWriteBeforePlan
-			if gotBlock != tc.wantBlock {
-				t.Fatalf("wantBlock=%v got decision=%q rule=%q", tc.wantBlock, decision.Decision, decision.RuleID)
+			gotDenied := (decision.Decision == "deny" || decision.Decision == "block") && decision.RuleID == policy.RuleAssignmentWriteBeforePlan
+			if gotDenied != tc.wantBlock {
+				t.Fatalf("wantDenied=%v got decision=%q rule=%q", tc.wantBlock, decision.Decision, decision.RuleID)
 			}
 		})
 	}

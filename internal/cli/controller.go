@@ -194,8 +194,42 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		applyS9RepairProjection(state, &guidance)
 	}
 
+	// L3-S10 §9: acceptance and release audit are read-only audit work, not
+	// an invitation to take the shortest route to S11. Keep the finite
+	// denominator, counterevidence, and the S9→fresh-S7 prerequisite visible
+	// on every normal recovery packet.
+	if lifecycleState == "acceptance" || lifecycleState == "release_audit" {
+		applyS10Guidance(&guidance)
+	}
+
 	guidance.Instruction = formatGuidanceInstruction(guidance)
 	return guidance
+}
+
+func applyS10Guidance(guidance *policy.Guidance) {
+	guidance.Automation = append(guidance.Automation,
+		"S10 is read-only for product code, locked REQ, contracts, and TASKs; any product change invalidates the current S7 clean round and must return through S8→S9→fresh S7",
+		"do not treat a generic clean-round or overall PASS as acceptance; consume the finite coverage_inventory and counterevidence ledger",
+		"the shortest path to S11 is not a completion criterion; UNKNOWN must be resolved, not renamed N/A or non-blocking risk",
+	)
+	guidance.Recovery = append(guidance.Recovery,
+		"if the manifest gate names a missing row, correct that row and register a new immutable evidence artifact",
+		"if an audit finding changes product behavior, stop S10 and route S8→S9→fresh S7; never patch in S10",
+		"only after acceptance and release audit are complete should the Controller move to S11's human gateway",
+	)
+	if guidance.LifecycleState == "acceptance" {
+		guidance.Missing = appendUniqueStrings(guidance.Missing, "coverage_inventory", "counterevidence_ledger", "acceptance_manifest")
+		guidance.DoneWhen = append(guidance.DoneWhen,
+			"every coverage item has source, expected, oracle, owner, evidence, disposition, and one counterevidence result",
+			"acceptance manifest is valid, current, and bound to this runtime/baseline/review round",
+		)
+	} else {
+		guidance.Missing = appendUniqueStrings(guidance.Missing, "audit_areas:8", "counterevidence_ledger", "release_audit_manifest")
+		guidance.DoneWhen = append(guidance.DoneWhen,
+			"all 8 release-audit areas have an independent conclusion and evidence",
+			"release-audit manifest is valid, current, and bound to this runtime/baseline/review round",
+		)
+	}
 }
 
 func investigationNextAction(state map[string]any) string {
@@ -819,7 +853,7 @@ func guidanceMapWithGate(g policy.Guidance, _ controller.QualityGateResult, even
 		"source_revision": sourceRevision,
 		"updated_at":      now.Format(time.RFC3339Nano),
 	}
-	if gate.Status != "" {
+	if gateHasIdentity(gate) {
 		milestone["quality_gate"] = qualityGateMap(gate)
 	}
 	return milestone
@@ -862,29 +896,56 @@ func milestoneMatches(current map[string]any, guidance policy.Guidance) bool {
 
 // milestoneMatchesWithGate reports whether the persisted milestone is
 // semantically identical to a fresh projection computed from `guidance`
-// and `gate`. The comparison ignores time/event/instruction/source_revision
-// fields, but a quality_gate fingerprint change MUST defeat the no-op
-// (BUG-039-07 §4.1 step 2) so a new gate result forces a fresh write.
+// and `gate`. Volatile observations such as revision/time/event are not part
+// of milestone identity; a quality-gate fingerprint or actual guidance
+// change still defeats the no-op (BUG-039-07 §4.1 step 2).
 func milestoneMatchesWithGate(current map[string]any, guidance policy.Guidance, gate controller.QualityGateResult) bool {
 	if current == nil {
 		return false
 	}
-	existing := map[string]any{}
-	for key, value := range current {
+	return equalJSON(stableMilestoneProjection(current), stableMilestoneProjection(
+		guidanceMapWithGate(guidance, controller.QualityGateResult{}, "", guidance.Revision, time.Time{}, gate),
+	))
+}
+
+// stableMilestoneProjection is the single semantic identity used by both
+// the no-op comparison and the journal idempotency key. The observed runtime
+// revision is diagnostic telemetry, not a state change: including it here
+// makes every hook refresh its own milestone and burns an unbounded revision
+// for no semantic progress.
+func stableMilestoneProjection(milestone map[string]any) map[string]any {
+	if milestone == nil {
+		return nil
+	}
+	projection := make(map[string]any, len(milestone))
+	for key, value := range milestone {
 		switch key {
 		case "source_revision", "updated_at", "event", "instruction":
 			continue
+		case "quality_gate":
+			gate, ok := value.(map[string]any)
+			if !ok {
+				projection[key] = value
+				continue
+			}
+			stableGate := make(map[string]any, len(gate))
+			for gateKey, gateValue := range gate {
+				if gateKey != "observed_revision" {
+					stableGate[gateKey] = gateValue
+				}
+			}
+			projection[key] = stableGate
 		default:
-			existing[key] = value
+			projection[key] = value
 		}
 	}
-	expected := guidanceMapWithGate(guidance, controller.QualityGateResult{}, "", guidance.Revision, time.Time{}, gate)
-	for key := range expected {
-		if key == "source_revision" || key == "updated_at" || key == "event" || key == "instruction" {
-			delete(expected, key)
-		}
-	}
-	return equalJSON(existing, expected)
+	return projection
+}
+
+func gateHasIdentity(gate controller.QualityGateResult) bool {
+	return gate.Status != "" || gate.GateID != "" || gate.CandidateTransition != "" ||
+		gate.Fingerprint != "" || len(gate.Missing) > 0 || len(gate.EvidenceRefs) > 0 ||
+		len(gate.Conflicts) > 0 || gate.ErrorCode != "" || gate.TransitionCommitted || gate.NextCursor != ""
 }
 
 func equalJSON(left, right any) bool {
@@ -902,24 +963,13 @@ func milestoneIdempotency(g policy.Guidance) string {
 	return milestoneIdempotencyWithGate(g, controller.QualityGateResult{})
 }
 
-// milestoneIdempotencyWithGate hashes the guidance together with the
-// gate fingerprint so a gate change produces a new Journal key while a
-// semantically identical checkpoint stays a no-op (BUG-039-07 §4.1 step 3,
-// REQ-039 §17 idempotency).
+// milestoneIdempotencyWithGate hashes the stable milestone projection so a
+// gate change produces a new Journal key while observation-only revision
+// changes remain idempotent (BUG-039-07 §4.1 step 3, REQ-039 §17).
 func milestoneIdempotencyWithGate(g policy.Guidance, gate controller.QualityGateResult) string {
-	payload := struct {
-		Guidance    policy.Guidance
-		GateStatus  string
-		GateID      string
-		Fingerprint string
-		ObservedRev int
-	}{
-		Guidance:    g,
-		GateStatus:  string(gate.Status),
-		GateID:      gate.GateID,
-		Fingerprint: gate.Fingerprint,
-		ObservedRev: gate.ObservedRevision,
-	}
+	payload := stableMilestoneProjection(guidanceMapWithGate(
+		g, controller.QualityGateResult{}, "", g.Revision, time.Time{}, gate,
+	))
 	data, _ := json.Marshal(payload)
 	sum := sha256.Sum256(data)
 	return "milestone:" + hex.EncodeToString(sum[:])

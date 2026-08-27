@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
@@ -201,6 +202,12 @@ type evidenceEnvelope struct {
 	Checks          []envelopeCheck `json:"checks,omitempty"`
 	ChangedPaths    []string        `json:"changed_paths,omitempty"`
 	ScopeDeviations []string        `json:"scope_deviations,omitempty"`
+	// S10 acceptance/release-audit evidence points at a structured completion
+	// ledger. The human-readable ACC/audit Markdown remains a report; this
+	// reference makes the finite coverage and counterevidence contract
+	// consumable by the gate without parsing prose.
+	AuditManifestPath   string `json:"audit_manifest_path,omitempty"`
+	AuditManifestSHA256 string `json:"audit_manifest_sha256,omitempty"`
 }
 
 // envelopeCheck mirrors the completion-report checkResult shape
@@ -312,6 +319,13 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 	}
 	var evidenceIDs []string
 	for _, requirement := range spec.EvidenceRequirements {
+		if requirement.ProducedByTransition {
+			// The transition engine validates the canonical generated token and
+			// materializes this evidence while committing the transition. It
+			// cannot be required in the pre-transition snapshot without making
+			// the automatic gate permanently not_ready.
+			continue
+		}
 		qualified, conflicts := qualifiedEvidence(
 			state,
 			input.Files,
@@ -361,8 +375,141 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 		// current-round Finding set with the drain policy respected.
 		applyObservationBatchGate(input, &result)
 	}
+	if result.GateID == "GATE-ACCEPTANCE-COMPLETE" || result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+		// L3-S10 §1.2: a generic PASS/APPROVED envelope is not enough. The
+		// finite coverage inventory and counterevidence ledger are the
+		// machine-consumed anti-shortcut contract.
+		applyS10ManifestGate(input, &result)
+	}
 	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, documents, result.EvidenceRefs)
 	return result
+}
+
+func applyS10ManifestGate(input Input, result *Evaluation) {
+	wanted := map[string]string{"acceptance": "acceptance_record"}
+	if result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+		wanted["release_audit"] = "release_audit_record"
+	}
+	for manifestType, evidenceKind := range wanted {
+		evidenceID := ""
+		for _, id := range result.EvidenceRefs {
+			envelope, ok := s10EnvelopeByID(input, id)
+			if ok && evidenceKindsEqual(evidenceKind, envelope.Kind) {
+				evidenceID = id
+				break
+			}
+		}
+		if evidenceID == "" {
+			// The ordinary evidence requirements already explain a missing
+			// acceptance/audit envelope. Do not add a second, confusing
+			// manifest error when its parent evidence is absent.
+			continue
+		}
+		envelope, _ := s10EnvelopeByID(input, evidenceID)
+		if strings.TrimSpace(envelope.AuditManifestPath) == "" || strings.TrimSpace(envelope.AuditManifestSHA256) == "" {
+			result.Missing = append(result.Missing, "s10:"+manifestType+"_manifest:"+evidenceID)
+			result.Status = StatusNotReady
+			continue
+		}
+		if input.Files == nil {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, "s10:"+manifestType+"_manifest:"+evidenceID+":unreadable; next: restore the manifest file and register a new fingerprinted envelope")
+			continue
+		}
+		manifestData, err := input.Files.ReadFile(envelope.AuditManifestPath)
+		if err != nil {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:unreadable:%s; next: restore the manifest file and register a new fingerprinted envelope", manifestType, evidenceID, err))
+			continue
+		}
+		if sha256Hex(manifestData) != envelope.AuditManifestSHA256 {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:sha256_mismatch; next: do not edit in place, regenerate the manifest and register a new fingerprinted envelope", manifestType, evidenceID))
+			continue
+		}
+		summary, err := acceptance.Validate(manifestData, manifestType)
+		if err != nil {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:invalid:%s", manifestType, evidenceID, err))
+			continue
+		}
+		if missing := missingS10EvidenceRefs(input, summary.EvidenceRefs); len(missing) > 0 {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:evidence_ref_missing:%s; next: register the referenced current evidence first, then regenerate and re-register the manifest envelope (ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id)", manifestType, evidenceID, strings.Join(missing, ",")))
+			continue
+		}
+		if summary.ManifestType != manifestType || !s10ManifestBindingMatches(input, envelope, manifestData) {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:binding_mismatch; next: regenerate against the current runtime, baseline, and S7 round", manifestType, evidenceID))
+		}
+	}
+	result.Missing = sortedUnique(result.Missing)
+	result.Conflicts = sortedUnique(result.Conflicts)
+	if len(result.Conflicts) == 0 && len(result.Missing) > 0 {
+		result.Status = StatusNotReady
+	}
+}
+
+func missingS10EvidenceRefs(input Input, refs []string) []string {
+	if len(refs) == 0 {
+		return nil
+	}
+	currentGeneration := nestedInt(input.Snapshot.State, "baseline", "generation")
+	available := make(map[string]struct{})
+	rawEvidence, _ := input.Snapshot.State["evidence"].([]any)
+	for _, raw := range rawEvidence {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || stringValue(entry["status"]) != "valid" || entry["invalidated_by"] != nil || intValue(entry["baseline_generation"]) != currentGeneration {
+			continue
+		}
+		id := stringValue(entry["id"])
+		path := stringValue(entry["path"])
+		if id == "" || input.Files == nil || path == "" {
+			continue
+		}
+		data, err := input.Files.ReadFile(path)
+		if err != nil || sha256Hex(data) != stringValue(entry["sha256"]) {
+			continue
+		}
+		available[id] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, ref := range refs {
+		if _, ok := available[ref]; !ok {
+			missing = append(missing, ref)
+		}
+	}
+	return sortedUnique(missing)
+}
+
+func s10EnvelopeByID(input Input, id string) (evidenceEnvelope, bool) {
+	for _, envelope := range evidenceEnvelopesByID(input, []string{id}) {
+		return envelope, true
+	}
+	return evidenceEnvelope{}, false
+}
+
+func s10ManifestBindingMatches(input Input, envelope evidenceEnvelope, data []byte) bool {
+	var manifest struct {
+		RuntimeID          string `json:"runtime_id"`
+		BaselineGeneration int    `json:"baseline_generation"`
+		ReviewRound        int    `json:"review_round"`
+	}
+	if json.Unmarshal(data, &manifest) != nil {
+		return false
+	}
+	return manifest.RuntimeID == envelope.RuntimeID &&
+		manifest.BaselineGeneration == envelope.BaselineGeneration &&
+		manifest.ReviewRound == envelope.ReviewRound &&
+		manifest.RuntimeID == stringValue(input.Snapshot.State["runtime_id"]) &&
+		manifest.BaselineGeneration == nestedInt(input.Snapshot.State, "baseline", "generation") &&
+		manifest.ReviewRound == nestedInt(input.Snapshot.State, "review", "round")
 }
 
 func evidenceMissingKey(spec GateSpec, requirement EvidenceRequirement) string {

@@ -25,6 +25,14 @@ import (
 // `workspace-digest` prints the current verification-artifact digest an
 // E2E cold-start ReviewResult must bind (L3-S7 §3.5).
 func runS7Command(args []string, stdout, stderr io.Writer) int {
+	if wantsHelp(args) {
+		name := compactHelpName(args)
+		if name == "" {
+			name = "<status|draft|manifest-draft|workspace-digest>"
+		}
+		printCommandHelp(stdout, "loop-harness s7 "+name, "S7 actions: draft/register the ReviewPlan, dispatch a manifest, submit typed Results, and inspect the status board.")
+		return 0
+	}
 	if len(args) == 0 || (args[0] != "status" && args[0] != "draft" && args[0] != "manifest-draft" && args[0] != "workspace-digest") {
 		fmt.Fprintln(stderr, "s7 requires <status|draft|manifest-draft|workspace-digest>")
 		return 2

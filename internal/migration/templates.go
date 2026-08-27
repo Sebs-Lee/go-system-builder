@@ -149,16 +149,19 @@ func ValidateTemplates(root string) error {
 	}
 	for _, value := range []string{
 		`"PreToolUse"`, `"SubagentStart"`, `"SubagentStop"`,
-		`"TeammateIdle"`, `"SessionStart"`, `"PreCompact"`, `"PostToolUse"`,
+		`"TeammateIdle"`, `"Stop"`, `"SessionStart"`, `"PreCompact"`, `"PostToolUse"`,
+		`"PostToolUseFailure"`, `"ConfigChange"`,
 		`.claude/bin/loop-harness hook --event`,
 	} {
 		if !strings.Contains(string(settingsData), value) {
 			return fmt.Errorf("%s: missing migrated field or route %q", settingsLabel, value)
 		}
 	}
-	// PostToolUse is a live observation event (L3-S7/L4 PLAN_REPORT capture);
-	// the remaining three stay retired.
-	for _, removed := range []string{`"PermissionRequest"`, `"TaskCompleted"`, `"ConfigChange"`} {
+	// PostToolUse and PostToolUseFailure are live observation events. ConfigChange
+	// is also an audit-only observer; it cannot veto policy_settings changes.
+	// PermissionRequest and TaskCompleted stay retired until their separate
+	// human-gateway / stop-channel designs are approved.
+	for _, removed := range []string{`"PermissionRequest"`, `"TaskCompleted"`} {
 		if strings.Contains(string(settingsData), removed) {
 			return fmt.Errorf("%s: obsolete Hook event %s", settingsLabel, removed)
 		}

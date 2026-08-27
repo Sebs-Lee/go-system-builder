@@ -40,8 +40,8 @@ func TestReviewerProductWriteHardDeny(t *testing.T) {
 	}
 
 	decision := evaluateWrite(t, engine, "Write", "internal/example/service.go", "verification", "e2e-workspace/plan-1")
-	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
-		t.Fatalf("product write in verification must hard deny, got %q (%s)", decision.Decision, decision.RuleID)
+	if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
+		t.Fatalf("product write in verification must deny, got %q (%s)", decision.Decision, decision.RuleID)
 	}
 	// The deny names the authorized evidence surfaces so the Reviewer can
 	// proceed without a human round-trip.
@@ -55,8 +55,8 @@ func TestReviewerProductWriteHardDeny(t *testing.T) {
 
 	// Locked spec writes are product-surface writes too.
 	decision = evaluateWrite(t, engine, "Edit", "docs/contracts/CONTRACTS-001.md", "verification", "")
-	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
-		t.Fatalf("locked spec edit in verification must hard deny, got %q", decision.Decision)
+	if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
+		t.Fatalf("locked spec edit in verification must deny, got %q", decision.Decision)
 	}
 }
 
@@ -77,8 +77,8 @@ func TestReviewerNotebookEditProductWriteHardDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
-		t.Fatalf("NotebookEdit product write in verification must hard deny, got %q (%s)", decision.Decision, decision.RuleID)
+	if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
+		t.Fatalf("NotebookEdit product write in verification must deny, got %q (%s)", decision.Decision, decision.RuleID)
 	}
 }
 
@@ -103,13 +103,13 @@ func TestReviewerWriteAuthorizedSurfacesStayOpen(t *testing.T) {
 	// A write into a *different* workspace than the plan declared is still a
 	// product-surface write.
 	decision := evaluateWrite(t, engine, "Write", "e2e-workspace/other/spec.ts", "verification", workspace)
-	if decision.Decision != "block" {
+	if decision.Decision != "deny" {
 		t.Fatalf("writes outside the declared workspace must deny, got %q", decision.Decision)
 	}
 	// Runtime control-plane files are tool-owned. Agents may write evidence,
 	// not mutate the state or journal directly.
 	decision = evaluateWrite(t, engine, "Write", ".claude/loop-state.json", "verification", workspace)
-	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
+	if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
 		t.Fatalf("direct runtime-state write must deny, got %q (%s)", decision.Decision, decision.RuleID)
 	}
 	for _, path := range []string{
@@ -117,7 +117,7 @@ func TestReviewerWriteAuthorizedSurfacesStayOpen(t *testing.T) {
 		"e2e-workspace/plan-1/../../internal/example/service.go",
 	} {
 		decision := evaluateWrite(t, engine, "Write", path, "verification", workspace)
-		if decision.Decision != "block" {
+		if decision.Decision != "deny" {
 			t.Fatalf("path traversal must not enter an allowed reviewer surface: %s => %q", path, decision.Decision)
 		}
 	}
@@ -151,7 +151,7 @@ func TestReviewerBashMutationHardDenyAndReadOnlyCommandsStayOpen(t *testing.T) {
 		"git -C . apply /tmp/change.patch",
 	} {
 		decision := evaluate(command)
-		if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
+		if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
 			t.Fatalf("mutating Bash command must deny: %q => %q (%s)", command, decision.Decision, decision.RuleID)
 		}
 	}
@@ -199,7 +199,7 @@ func TestReviewerWriteSurfaceRejectsSymlinkEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Decision != "block" || decision.RuleID != policy.RuleReviewerProductWrite {
+	if decision.Decision != "deny" || decision.RuleID != policy.RuleReviewerProductWrite {
 		t.Fatalf("symlinked evidence surface must deny, got %q (%s)", decision.Decision, decision.RuleID)
 	}
 }

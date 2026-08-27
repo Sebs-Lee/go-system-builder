@@ -9,7 +9,7 @@
 | 第一层 | `L1-design-principles.md` | 工程哲学与设计蓝图：场景、物理约束 C1-C5、使命与六项把控、主干设计决策 D1-D7、五公理、失效模式目录、演化协议、权威层结构定义 | ✅ v2.4.0 |
 | 第二层 | `L2-lifecycle-plan.md` | 生命周期实战目标：三条铁律 + 能量函数、S0-S11 每阶段（任务/把控/风险对应/理论根据/入口/出口/失败路由）、全局规则、层间校验 | ✅ v1.4.4 |
 | 第三层 | `L3-README.md` + 12 份 `L3-Sn-<stage名>.md`（S0-requirement-design … S11-release-gate） | 各 Stage 详细落地设计：角色/产物/过程/门禁判定/工具承载（T1-T7）/失败处置/反作弊/度量 | ✅ |
-| 第四层 | `L4-agent-dispatch-governance.md`（首份；后续按机制域扩展） | 横跨多个 L3 的工具机制与治理设计：统一对象模型、状态、消息、Hook、Harness、恢复和验收契约 | ✅ v0.3.0 |
+| 第四层 | 五份机制篇：`L4-agent-dispatch-governance.md`（谁在责任上行动）、`L4-state-transition-core.md`（事实住哪与合法变更引擎）、`L4-hook-platform-wiring.md`（决策如何上平台总线）、`L4-hook-anchor-catalog.md`（平台 31 锚点全图与选点审查）、`L4-runtime-control-plane.md`（内容合规规则与词汇词典）；后续按机制域扩展 | 横跨多个 L3 的工具机制与治理设计：统一对象模型、状态、消息、Hook、Harness、恢复和验收契约；每份是其覆盖域的唯一权威定义处，各 L3 只声明消费 | ✅ v0.3.0 / v0.1.0 / v0.1.1 / v0.1.0 / v0.3.0 |
 | 第五层 | `L5-*.md`（待建） | 实现规格与实现：Schema、Skill、Agent Definition、模板、代码、测试和迁移任务 | ⏳ |
 | 第六层 | `L6-*.md`（待建） | 实战运营记录与回灌（失效数据 → 第一层演化协议） | ⏳ |
 
@@ -40,3 +40,6 @@ cp -R blueprint <target-project>/.claude/bin/blueprint
 | 2026-08-22 | 高优先缺口根因修复批次：TR-008/009 文案对齐自动提交语义、恢复包 drain/来源/噪音三修复、剪枝推广到嵌套判别节点、plan_checkpoint 自动激活链（register-workgroup 预生成信封 + PostToolUse 链式推进 + `runtime agent-begin` 兜底）、s7 draft 前置门与 sandbox recipe | S7 §13 审计记录；剩余缺口收敛为环境/产品侧与低优先 UX 项 |
 | 2026-08-23 | 验证轮（盲测五视角）确认第一轮修复生效，且发现两处回归：R1 资产未 go:embed、R2 链中途失败后不可恢复——均已修；R3 文案残留、R4 恢复包矛盾、R5 ready 非确定性、R9 文档/schema 矛盾——均已修。R6 CLI 路径解析、R7 controller 抢停 stop-idle 门、R8 错误指引弱、R10 capture exec 终端泄漏——待修 | S7 §13 审计记录；剩余缺口以 CLI/UX 为主，机制层已稳定 |
 | 2026-08-23 | 验证轮后续修复批次：R6 `--root` 路径一致（register-workgroup + fingerprint + reconcile-policy-ref 同类 bug 同步）、R7 stop-idle 门不再被 controller 抢拍（lifecycle 各阶段回归）、R8 三处错误信息 next-action 加强（stale revision / verdict=fail / supplement 缺字段）、R10 capture exec 终端秘密不泄漏 | S7 §13 审计记录；剩余收敛为命令面拆分与产品侧 wrapper |
+| 2026-08-28 | 新增第二份 L4《运行时控制面与横切治理》：对 S0～S11 做全量文档一致性审查后，把 Agent 调度之外的十三个机制域统一沉淀为唯一权威定义处（v0.1 九域起步，v0.2 按调度篇准入逻辑复审后扩入追溯分母链、精确集求值、观测脱敏、歧义裁决、债务登记五域）；承接 L2「能量函数权威定义归第四层」的悬空授权；同步修正 L3-S5 两处 two-phase-activation 旧引用、L3-S10 干净轮分母表对齐 EvaluateCleanRound 七检查现状（去除 angle 残留） | owner 指示：回看 S0~S9 梳理 L3 理念、核对 L1/L2 一致性、跨 Stage 机制沉淀为 L4 单独汇总；复核：L4 应定义机制而非综述 |
+| 2026-08-28 | 基石抽取批次：按「自有对象模型 + 全 stage 深消费 + 独立失败面 + 平台边界 + 风险分级」五问筛出两份新基石 L4——《Hook 与平台事件接线》（事件注册/payload 无损透传/输出退出码契约/fail-open-closed 矩阵/四级识别链，并核实 protected_commands 已退出 Hook 主链路的事实更正）与《权威状态机与迁移事务核心》（loop-state 存储模型/CAS 本体/崩溃 marker 协议/12 态+三 phase 机+实体生命周期索引/guard-action 引擎/auto_trigger 仲裁/失效与预算事务/rollover 边界/对账命令族）；控制面篇相应章节降为指针（v0.3） | owner 追问"是否还有设计基石类机制未整理"，批准按 Hook→状态机顺序立篇 |
+| 2026-08-28 | 新立《Claude Code Hook 锚点全图与选点审查》：对照官方 Hooks Reference（核对日 2026-08-28）与 owner 知识库 SebsVault/LLM/Hook，收录平台全部 31 个锚点（九段生命周期 × 触发/阻断/matcher/消费状态）、共享机制（输出三层字段/退出码含 JSON 首字符解析规则/并行最严优先/matcher 语法陷阱/五类 handler 支持矩阵/超时特例/异步/信任边界）、现役七锚点选取理由、十个候选评估备忘与六问选点准入流程；接线篇改写为"七锚点是消费快照非平台边界"（v0.1.1） | owner 指示：hook 挂点不应被现用集合限死，须有一份表述平台完整机制的文档供后续迭代对照审查锚点是否合适 |

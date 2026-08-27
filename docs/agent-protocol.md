@@ -56,13 +56,17 @@ re-entry points into that journey:
 | Event | Controller responsibility | Agent responsibility |
 |:---|:---|:---|
 | `SessionStart` | Reconcile Runtime, refresh `milestone`, emit the full current guidance and ordered read list | Read in the listed order and drive the single `Next` action; no normal CLI call |
+| `SessionStart` native context | Inject a bounded `additionalContext` containing source/stage/revision/next/read; retain the full packet in `systemMessage` | Use the injected checkpoint as the immediate re-entry cue; authoritative detail remains Runtime + Guidance |
 | `PreCompact` | Persist the latest resumable checkpoint and emit the compact handoff | Leave the next session a recoverable Runtime; the next `SessionStart` re-seats it |
 | `SubagentStart` | Resolve Assignment、真实 topology、dispatch mode 和最小上下文；高风险才进入原生 Plan approval | 读取权威输入，按 Assignment 执行；`plan_checkpoint` 不等待第二轮授意 |
 | `PostToolUse` `SendMessage` | 捕获 PLAN_REPORT/BLOCKER/COMPLETION，更新 Assignment checkpoint | PLAN_REPORT 通过 SendMessage 发送，不是 final response；发送后继续执行 |
+| `PostToolUseFailure` | Record the platform-native failure as audit evidence; never pretend the event can undo the tool action | Treat it as an evidence signal; continue through the existing S7/S8 failure contract |
+| `ConfigChange` | Record source/file facts for governance-asset changes as audit evidence; no policy_settings interception is claimed | Reconcile policy/runtime after a governance asset changes; do not infer that audit means approval |
 | `SubagentStop` | Result 缺失时，在官方 stop decision 已通过 doctor 时阻止停止；否则保留 checkpoint 并交 scheduler 恢复/重派 | 只有 canonical Result、有效 BLOCKER 或已消费结果才能收口 |
 | `TeammateIdle` | 只处理当前 Assignment；官方 continue/block 已通过 doctor 时反馈到同一 teammate，否则保留 checkpoint，不模拟唤醒 | 计划缺失、计划后未完成或 Result 缺失时继续当前责任；不 self-claim 下一项 |
+| `Stop` | Main 收工前先 preflight 检查 review assignments：未派发责任或未消费 Result 才 exit 2；活跃后台 Worker 不构成阻断，且阻断时不先运行可能写 Runtime 的 Controller cycle | 按 stderr 的唯一下一步继续 DRIVE：先派发责任或消费 Result；无待收口工作才结束回合 |
 | `PreToolUse` `Task|Agent` | 检查 Assignment、scope、dispatch mode、冲突和平台容量；槽满只排队不裁 coverage | 使用真实 topology；缺少 Assignment 或 scope 时修正派发，不复制长协议 |
-| `PreToolUse` safety decision | Emit Quality Gate status, any committed Transition, the final safety decision, and a Recovery Packet | Produce listed missing work when `not_ready`; only a locked-artifact write or squash-merge attempt is hard-blocked |
+| `PreToolUse` safety decision | Emit Quality Gate status, any committed Transition, the final safety decision, and a Recovery Packet; MCP tools are matched by `mcp__.*`, with unknown pathless tools classified before allow | Produce listed missing work when `not_ready`; classify an unknown MCP tool before retrying it; only an allowed tool/scope may proceed |
 
 A Hook is a natural-event trigger and does not itself mutate lifecycle state. It
 invokes the Controller, which reads the authoritative Runtime, evaluates the
@@ -424,6 +428,7 @@ These hold across every stage:
 2. Author the workgroup manifest (`.claude/workgroups/<REQ>/<TASK>/manifest.json`), following `team-manifest.example.json`. Per assignment declare:
    - `write_paths` — the write-scope audit compares the real git diff against these at integration;
    - `required_checks` — commands the Integrator actually executes before `verified` (entries prefixed `locked:` declare locked-artifact paths instead);
+   - `done_when` — one or more concrete closing predicates for this Assignment. They are injected into the Worker at `SubagentStart`; do not replace them with the generic phrase "register the Assignment Result";
    - `worktree_path` / `branch` / `target_branch` — see worktree discipline below;
    - `depends_on` — other assignments in the same manifest this one must wait for (workgroup-internal scheduling only; cross-workgroup waits are encoded via separation edges or left to runtime ordering);
    - `reuse_decision` — `create` for a fresh assignment, `reuse` when a prior assignment's work is being continued, `replace` when a stale assignment is being superseded;
@@ -652,19 +657,27 @@ The runtime reads the file at the registered `readback_ref` path, computes its b
 
 ## S10 — acceptance_and_audit {#s10}
 
-- **purpose**: assemble acceptance materials and run release architecture audit.
+- **purpose**: perform an anti-shortcut acceptance and release audit: prove that the latest complete S7 round covers the declared REQ scope, actively search for counterevidence, and hand only an evidence-backed release package to S11.
 - **inputs**: clean round, locked REQ, all valid evidence.
 - **inputs_from**: [S7 (clean round record by ID + hash), S0 (locked REQ), S5 (locked spec chain), S6+S7+S8+S9 (all valid evidence)]
 - **actions**:
-  1. write the ACC document (REQ coverage, evidence map, migration, rollback)
-  2. run the release architecture audit (changes, risks, protected-command impact)
-  3. assemble the release-ready package
+  1. freeze a finite `coverage_inventory` and responsibility matrix from REQ, contracts, TASK Closing Contracts, S7 Claims, S9 ChangeImpact, changed paths and risk tags; do not reduce it to reach PASS
+  2. revalidate the current S7 clean-round anchor; S9 has no S10 exit, and any post-round product change requires a fresh complete S7
+  3. assemble ACC with one row per REQ acceptance criterion and Closing Contract: source, expected, oracle, current evidence, result, and negative/boundary/recovery coverage
+  4. run mandatory counterevidence review; record what would falsify each conclusion, with `UNKNOWN` blocking completion
+  5. check delivery, migration, deployment, rollback, operations, technical debt, and ownership
+  6. run the release architecture audit across state machine, transaction/UoW, concurrency/idempotency, data/migration, call sites/topology, observability/errors, verification evidence, and docs/release scope
+  7. require objective completion: coverage=100%, UNKNOWN=0, unsupported PASS=0, unowned risk=0, untracked debt=0, blocking finding=0; then assemble the S11 package
+- **machine_artifact**: acceptance and release-audit evidence envelopes MUST carry `audit_manifest_path` and `audit_manifest_sha256`. The referenced JSON must satisfy `internal/schema/assets/s10-audit-manifest.schema.json`; its `coverage_inventory`, one `counterevidence` row per item, metrics, and (for `release_audit`) all eight `audit_areas` are consumed by the Quality Gate. `requirement`, `contract`, and `changed_path` are hard inventory categories and cannot be omitted to create an empty 100% denominator; use an evidence-backed `not_applicable` row when one is genuinely out of scope. Acceptance does not require `metrics.audit_area_coverage`; release-audit does. An `unknown` counterevidence row may temporarily omit `evidence_refs`, but UNKNOWN still blocks the gate and must be resolved. Copyable starting shapes are [`docs/examples/s10/acceptance-manifest.json`](examples/s10/acceptance-manifest.json) and [`docs/examples/s10/release-audit-manifest.json`](examples/s10/release-audit-manifest.json). The ACC/audit Markdown remains the human-readable report and is not parsed as a substitute.
+- **manifest_validation**: before `runtime evidence add`, run `loop-harness s10 manifest validate --root <root> --file <manifest.json> --type <acceptance|release_audit>`. The default validates a passing artifact. For a deliberate routed outcome, use `--outcome review_required` (acceptance → TR-016/S7) or `--outcome blocked` (release audit → TR-018/paused); these modes still require a structurally complete, evidence-linked ledger but allow the unresolved rows that explain the route. Missing/invalid manifest references are rejected before Runtime mutation or reported as an actionable gate conflict.
+- **status_probe**: when resuming or after compaction, run `loop-harness s10 status --root <root>` (or read the equivalent Hook packet). It reports acceptance/release-audit manifest state, inventory/counterevidence counts, the current S7 round, and the next legal action; it never performs a transition.
 - **done_when**:
-  - ACC document exists and is consistent with the Runtime
-  - release audit complete with no open action
-  - package is release-ready
-- **next**: S11. Produce the missing current ACC or release-audit evidence; the next `PreToolUse` lets the Controller auto-commit at most one allowlisted Transition (`TR-015`, then on a later event `TR-017`) when its gate is satisfied.
-- **failure_route**: if a defect is found, return to S8 finding investigation; only approved RepairContracts proceed to S9 repair, with canonical BUGs used only as compatibility projections. If the issue is an incomplete build report rather than a defect, return to S6. If it is a REQ gap, surface `req_amendment`.
+  - the finite audit universe is frozen and fully dispositioned
+  - ACC and release audit have current evidence, counterevidence checks, and no unanswered items
+  - release audit is complete with no blocking action and every non-blocking risk has owner/tracking/recovery data
+  - package is release-ready and explicitly states that automation stops
+- **next**: S11. Produce the missing current coverage/ACC/release-audit evidence; the next `PreToolUse` lets the Controller auto-commit at most one allowlisted Transition (`TR-015`, then on a later event `TR-017`) when its gate is satisfied. Do not shorten the audit universe to make the gate pass.
+- **failure_route**: if a product or architecture defect is found, return through S8 root-cause investigation → S9 repair → fresh complete S7; S9 never goes directly to S10. If the issue is an incomplete build report rather than a defect, return to S6. If it is a REQ gap, surface `req_amendment`. If an audit universe item is unknown, remain in S10 and investigate it.
 - **human_gateway**: only `req_amendment`.
 - **primary_skill**: `acceptance-and-handoff`
 

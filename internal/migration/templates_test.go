@@ -21,8 +21,16 @@ func TestHookRegistrationCoversDelegationTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"Write|Edit|MultiEdit|Bash|NotebookEdit|Task|TaskUpdate|Agent"`) {
+	if !strings.Contains(string(data), `"Write|Edit|MultiEdit|Bash|NotebookEdit|Task|TaskUpdate|Agent|mcp__.*"`) {
 		t.Fatalf("PreToolUse must invoke the controller before Agent/Task/TaskUpdate delegation: %s", data)
+	}
+	if !strings.Contains(string(data), `"Stop"`) {
+		t.Fatalf("Stop must invoke the Main收工门: %s", data)
+	}
+	for _, event := range []string{`"PostToolUseFailure"`, `"ConfigChange"`} {
+		if !strings.Contains(string(data), event) {
+			t.Fatalf("%s must be registered as an audit observer: %s", event, data)
+		}
 	}
 }
 
@@ -98,7 +106,7 @@ func TestValidateTemplatesRejectsForbiddenField(t *testing.T) {
 // TestValidateTemplatesRejectsObsoleteHookEvent covers the
 // "obsolete Hook event" branch (templates.go:147-151). PostToolUse is a live
 // observation event since L3-S7/L4 (PLAN_REPORT capture); the retired events
-// (PermissionRequest / TaskCompleted / ConfigChange) must still fail closed.
+// (PermissionRequest / TaskCompleted) must still fail closed.
 func TestValidateTemplatesRejectsObsoleteHookEvent(t *testing.T) {
 	dir := t.TempDir()
 	// A settings.json with the obsolete PermissionRequest event present.

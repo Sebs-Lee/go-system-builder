@@ -13,6 +13,7 @@ prelude.md                                  full onboarding (read §1 for the co
 loop-template.md                            Wake-up Prompt source -> .claude/loop.md
 loop-harness.md                             agent-facing Manual source -> .claude/bin/loop-harness.md
 settings.json                               Hook registration for .claude/settings.json
+tools/claude-hook-smoke.sh                  Process-boundary Hook smoke and platform acceptance entry
 skills/                                     SKILL.md files -> .claude/skills/
 agents/                                     agent definitions -> .claude/agents/
 docs/                                       templates + Loop definitions + rules -> docs/

@@ -9,6 +9,51 @@ import (
 	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
+func TestReleaseAuditBlockedGateDoesNotRequireTransitionProducedPauseRecord(t *testing.T) {
+	catalog, err := transition.LoadCatalog("../..")
+	if err != nil {
+		t.Fatalf("LoadCatalog: %v", err)
+	}
+	registry, err := NewRegistry(catalog)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	evidenceData := []byte(`{"schema_version":"1.0.0","evidence_id":"ev-release-blocked","kind":"release_audit","runtime_id":"loop-test","baseline_generation":1,"review_round":1,"producer_agent_id":"release-auditor-1","producer_responsibility":"Release Auditor","conclusion":"blocked","requested_event":"release_audit_blocked"}`)
+	input := Input{
+		Snapshot: runtime.Snapshot{
+			Revision: 12,
+			State: map[string]any{
+				"runtime_id": "loop-test",
+				"lifecycle":  map[string]any{"state": "release_audit", "phase": nil},
+				"baseline":   map[string]any{"generation": 1},
+				"review":     map[string]any{"round": 1},
+				"documents":  []any{},
+				"evidence": []any{map[string]any{
+					"id": "ev-release-blocked", "kind": "release_audit", "path": "evidence/release.json",
+					"sha256": sha256HexLocal(evidenceData), "status": "valid", "baseline_generation": 1,
+					"review_round": 1, "produced_by": []any{"release-auditor-1"}, "invalidated_by": nil,
+					"responsibility_id": "Release Auditor", "scope_refs": []any{},
+				}},
+			},
+		},
+		GateID:       "GATE-RELEASE-AUDIT-BLOCKED",
+		TransitionID: "TR-018",
+		Files:        memFiles{"evidence/release.json": evidenceData},
+	}
+
+	result, err := NewEvaluator(registry).Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != StatusSatisfied {
+		t.Fatalf("status = %q, want satisfied (missing=%v conflicts=%v)", result.Status, result.Missing, result.Conflicts)
+	}
+	if containsString(result.Missing, "evidence:pause_record") {
+		t.Fatalf("generated pause record must not be a pre-transition gate prerequisite: %#v", result.Missing)
+	}
+}
+
 func TestSubjectsMatchEmptyMeansNoConstraint(t *testing.T) {
 	docs := []documentFact{{Path: "docs/a.md", Version: "v1", SHA256: "abc"}}
 	if !subjectsMatch(nil, docs) {

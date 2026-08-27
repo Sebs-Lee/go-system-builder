@@ -191,18 +191,49 @@ func TestFormatDoctorIncludesAllMetricFamilies(t *testing.T) {
 	}
 }
 
+func TestFormatHealthDistinguishesHistoricalRuntimeSignals(t *testing.T) {
+	root := t.TempDir()
+	if out, err := metrics.FormatHealth(root); err != nil || !strings.Contains(out, "runtime health: healthy") {
+		t.Fatalf("empty metrics should be healthy, out=%q err=%v", out, err)
+	}
+	if err := metrics.RecordCASConflict(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := metrics.RecordGateEvaluation(root, "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := metrics.FormatHealth(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"runtime health: degraded",
+		"historical runtime signals",
+		"loop_cas_conflicts_total=1",
+		"loop_gate_evaluations_total{status=\"unknown\"} 1",
+		"next: inspect runtime state/journal with `loop-harness runtime reconcile`",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("health output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestProcessCountersMirrorLegacySemantics(t *testing.T) {
 	root := t.TempDir()
+	gateBefore := metrics.ProcessGateEvaluations()
+	transitionBefore := metrics.ProcessTransitionCommits()
+	casBefore := metrics.ProcessCASConflicts()
 	metrics.RecordGateEvaluationProcess(root, "satisfied")
 	metrics.RecordTransitionCommitProcess(root, "T-1")
 	metrics.RecordCASConflictProcess(root)
-	if metrics.ProcessGateEvaluations() != 1 {
-		t.Fatalf("process gate=%d want 1", metrics.ProcessGateEvaluations())
+	if got := metrics.ProcessGateEvaluations() - gateBefore; got != 1 {
+		t.Fatalf("process gate delta=%d want 1", got)
 	}
-	if metrics.ProcessTransitionCommits() != 1 {
-		t.Fatalf("process transition=%d want 1", metrics.ProcessTransitionCommits())
+	if got := metrics.ProcessTransitionCommits() - transitionBefore; got != 1 {
+		t.Fatalf("process transition delta=%d want 1", got)
 	}
-	if metrics.ProcessCASConflicts() != 1 {
-		t.Fatalf("process cas=%d want 1", metrics.ProcessCASConflicts())
+	if got := metrics.ProcessCASConflicts() - casBefore; got != 1 {
+		t.Fatalf("process cas delta=%d want 1", got)
 	}
 }

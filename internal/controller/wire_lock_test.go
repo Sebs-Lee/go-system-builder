@@ -47,8 +47,8 @@ func TestWireSafetyLocksArtifactsFromStage(t *testing.T) {
 	if d := run("S5"); d.Decision == "block" {
 		t.Fatalf("S5 repair loop must stay writable, got block: %#v", d)
 	}
-	if d := run("S6"); d.Decision != "block" || d.Reason != "locked_artifact_write" {
-		t.Fatalf("S6+ must block registered-artifact writes with locked_artifact_write, got %#v", d)
+	if d := run("S6"); d.Decision != "deny" || d.Reason != "locked_artifact_write" {
+		t.Fatalf("S6+ must deny registered-artifact writes with locked_artifact_write, got %#v", d)
 	}
 	// Superseded non-req generations never reach this projection (the
 	// loader keeps only the current generation for non-req kinds — the old

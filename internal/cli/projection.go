@@ -29,7 +29,7 @@ var projectionContracts = map[string]stageContract{
 	"S7":                 {"complete one current full verification round", []string{"bound REQ", "locked specification chain", "Builder evidence", "docs/agent-protocol.md#s7"}, []string{"review_plan"}, []string{"every required Claim of the registered ReviewPlan has a consumed pass Result; findings seal into the ObservationBatch (TR-008), otherwise the machine CleanRound closes the round (TR-009)"}},
 	"S8":                 {"turn the sealed ObservationBatch into evidence-backed InvestigationCase dispositions", []string{"sealed ObservationBatch", "locked specification chain", "implementation"}, []string{"investigation_case", "causal_model_or_route"}, []string{"every Finding is covered by a Case route and every s9_repair Case has an approved RepairContract"}},
 	"S9":                 {"execute approved RepairContracts and target-reverify them", []string{"approved RepairContract", "locked specification chain", "implementation"}, []string{"targeted_reverification"}, []string{"repair evidence is current and the Contract assertions pass"}},
-	"S10":                {"complete acceptance and release audit", []string{"bound REQ", "current clean round", "valid evidence"}, []string{"acceptance_record", "release_audit"}, []string{"acceptance and release audit are complete with no open action"}},
+	"S10":                {"complete acceptance and release audit", []string{"bound REQ", "current clean round", "ACC-template.md", "release_audits/TEMPLATE.md", "release-architecture-audit.md", "acceptance-and-handoff/SKILL.md"}, []string{"coverage_inventory", "counterevidence_ledger", "acceptance_record", "release_audit"}, []string{"coverage inventory is frozen and 100% dispositioned", "counterevidence is recorded for every coverage item", "UNKNOWN, unsupported PASS, unowned risk, untracked debt, and blocking finding are all zero", "S9 changes have returned through a fresh S7 clean round; no S9→S10 shortcut"}},
 	"S11":                {"present the release-ready package to the human and record one explicit decision", []string{"acceptance record", "release audit", "release-ready package"}, []string{"human_decision"}, []string{"one explicit S11 decision is recorded or the Gateway remains awaiting a decision"}},
 	"release_authorized": {"S11 human-authorized terminal", []string{"human decision record"}, []string{}, []string{"human authorization is recorded; Harness performs no merge, publication, deployment, or formal release"}},
 	"aborted":            {"aborted terminal Runtime", []string{"human decision record"}, []string{}, []string{"automation remains stopped and only an eligible human-authorized rollover may start a new Runtime"}},
@@ -181,8 +181,11 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 	case "S9":
 		contract.Missing = []string{repairMissingItem(state)}
 	case "S10":
-		if lifecycleState(state) == "release_audit" {
-			contract.Missing = []string{"release_audit"}
+		switch lifecycleState(state) {
+		case "acceptance":
+			contract.Missing = []string{"coverage_inventory", "counterevidence_ledger", "acceptance_manifest"}
+		case "release_audit":
+			contract.Missing = []string{"audit_areas:8", "counterevidence_ledger", "release_audit_manifest", "s11_handoff"}
 		}
 	case "S11":
 		if lifecycleState(state) == "awaiting_human_release" {

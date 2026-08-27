@@ -117,8 +117,8 @@ func TestRuntimeEvidenceAddCommand(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("runtime evidence add output is not JSON: %v", err)
 	}
-	if result["Revision"] != float64(2) {
-		t.Fatalf("unexpected result: %#v", result)
+	if result["revision"] != float64(2) || result["recorded"] != true || result["id"] != "EV-CLI-001" {
+		t.Fatalf("unexpected receipt: %#v", result)
 	}
 }
 
@@ -969,11 +969,11 @@ func TestDryRunEnforcesFirstWriteBarrier(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dry-run always returns 0 (envelope-only), code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), policy.RuleAssignmentWriteBeforePlan) {
+	if !strings.Contains(stdout.String(), "HOOK_ASSIGNMENT_WRITE_BEFORE_PLAN") {
 		t.Fatalf("dry-run envelope must surface the first-write barrier rule id, got %s", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), `"decision":"block"`) {
-		t.Fatalf("dry-run envelope must carry decision=block on a pre-plan product write, got %s", stdout.String())
+	if !strings.Contains(stdout.String(), `"decision":"deny"`) {
+		t.Fatalf("dry-run envelope must carry decision=deny on a pre-plan product write, got %s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "HOOK_AGENT_NOT_ACTIVATED") {
 		t.Fatalf("legacy predicate HOOK_AGENT_NOT_ACTIVATED must not appear: %s", stdout.String())

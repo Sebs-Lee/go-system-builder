@@ -365,8 +365,8 @@ For each HS-* decision:
 2. **Do not retry the same call.** The Adapter has already denied the tool
    call at the protocol layer. Read the rule's own `human_required` and
    `retry` fields rather than assuming — `HOOK_LOCKED_ARTIFACT_WRITE` is
-   `human_required=true`, `retry="after_rework"`, while `HOOK_SQUASH_MERGE`
-   is `human_required=false`, `retry="with_normal_merge"`.
+   `human_required=true`, `retry="never"`, while `HOOK_SQUASH_MERGE`
+   is `human_required=false`, `retry="rerun after recovery validation"`.
 3. Take the rule's recovery path:
    - `HOOK_LOCKED_ARTIFACT_WRITE` → write a new generation under
      `docs/{kind}/versions/{REQ-ID}/g{N+1}/`. If changing the locked

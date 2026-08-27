@@ -198,6 +198,9 @@ func TestDraftManifestE2EPrefillsForcedSkills(t *testing.T) {
 	if row.RoleFamily != "e2e-tester" || row.AgentDefinitionRef != "agents/e2e-tester.md" {
 		t.Errorf("role/definition = %q/%q, want e2e-tester/agents/e2e-tester.md", row.RoleFamily, row.AgentDefinitionRef)
 	}
+	if len(row.DoneWhen) != 3 || !strings.Contains(row.DoneWhen[0], "assignment-e2e-flows") {
+		t.Errorf("done_when = %v, want concrete assignment result contract", row.DoneWhen)
+	}
 	// E2E-USER-FLOW forces e2e-browser-testing + playwright-e2e at
 	// registration; the draft pre-fills them instead of a TODO.
 	if strings.Join(row.SkillRefs, ",") != "e2e-browser-testing,playwright-e2e" {

@@ -5,6 +5,7 @@
 package metrics
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,12 @@ const (
 	metricMilestoneRefreshFailures = "loop_milestone_refresh_failures_total"
 	metricRecoveryPackets          = "loop_recovery_packets_total"
 	metricIntegrationDuration      = "loop_integration_duration_ms"
+	// Hook registrations currently use the Claude Code default command
+	// timeout configured by this repository. Forty percent is the early
+	// warning point: PreToolUse command timeouts can silently let the tool
+	// proceed, so operators need signal before the platform budget is near.
+	defaultHookTimeoutMS         int64 = 10000
+	hookTimingWarningThresholdMS int64 = defaultHookTimeoutMS * 40 / 100
 )
 
 // DurationStats aggregates observed integration durations per status label.
@@ -246,7 +253,161 @@ func FormatDoctor(root string) (string, error) {
 	writeLabeledCounter(&b, metricMilestoneRefreshFailures, "reason", snap.MilestoneRefreshFailureReasons)
 	fmt.Fprintf(&b, "  %s %d\n", metricRecoveryPackets, snap.RecoveryPackets)
 	writeDurationStats(&b, metricIntegrationDuration, snap.IntegrationDuration)
+	hookTiming, err := readHookTiming(root)
+	if err != nil {
+		return "", err
+	}
+	writeHookTimingStats(&b, hookTiming)
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// FormatHealth renders runtime observations separately from repository
+// structure checks. The counters are intentionally historical and
+// cumulative; a non-zero signal means "inspect the runtime history", not
+// that the current repository is structurally invalid. Callers that need a
+// hard CI decision can use HealthDegraded and choose --fail-on-degraded at
+// the CLI boundary.
+func FormatHealth(root string) (string, error) {
+	snap, err := NewStore(root).Read()
+	if err != nil {
+		return "", err
+	}
+	timing, err := readHookTiming(root)
+	if err != nil {
+		return "", err
+	}
+	degraded := healthDegraded(snap, timing)
+	var b strings.Builder
+	if degraded {
+		b.WriteString("runtime health: degraded (historical runtime signals; not a structural validation)\n")
+	} else {
+		b.WriteString("runtime health: healthy (historical runtime signals; not a structural validation)\n")
+	}
+	fmt.Fprintf(&b, "  %s=%d\n", metricCASConflicts, snap.CASConflicts)
+	fmt.Fprintf(&b, "  %s=%d\n", metricMilestoneRefreshFailures, snap.MilestoneRefreshFailures)
+	writeLabeledCounter(&b, metricGateEvaluations, "status", snap.GateEvaluations)
+	writeHookTimingStats(&b, timing)
+	if degraded {
+		b.WriteString("  next: inspect runtime state/journal with `loop-harness runtime reconcile`\n")
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// HealthDegraded reports whether historical runtime signals warrant operator
+// inspection. It does not replace a current state/journal validation.
+func HealthDegraded(root string) (bool, error) {
+	snap, err := NewStore(root).Read()
+	if err != nil {
+		return false, err
+	}
+	timing, err := readHookTiming(root)
+	if err != nil {
+		return false, err
+	}
+	return healthDegraded(snap, timing), nil
+}
+
+func healthDegraded(snap Snapshot, timing map[string]hookTimingStats) bool {
+	if snap.CASConflicts > 0 || snap.MilestoneRefreshFailures > 0 {
+		return true
+	}
+	if snap.GateEvaluations["unknown"] > 0 {
+		return true
+	}
+	for _, stats := range timing {
+		for _, sample := range stats.samples {
+			if sample >= hookTimingWarningThresholdMS {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type hookTimingStats struct {
+	samples []int64
+}
+
+// readHookTiming reads the durable Hook decision outbox without adding a
+// second per-hook metrics write. Older records without elapsed_ms are valid
+// historical records and are skipped; new records carry the measured value.
+func readHookTiming(root string) (map[string]hookTimingStats, error) {
+	path := filepath.Join(root, ".claude", "hook-decisions.jsonl")
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]hookTimingStats{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read Hook timing outbox: %w", err)
+	}
+	defer file.Close()
+
+	timing := map[string]hookTimingStats{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if len(strings.TrimSpace(scanner.Text())) == 0 {
+			continue
+		}
+		var record struct {
+			HookEvent string `json:"hook_event"`
+			ElapsedMS *int64 `json:"elapsed_ms"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			return nil, fmt.Errorf("decode Hook timing outbox: %w", err)
+		}
+		if record.ElapsedMS == nil {
+			continue
+		}
+		if *record.ElapsedMS < 0 {
+			return nil, fmt.Errorf("Hook timing outbox contains negative elapsed_ms: %d", *record.ElapsedMS)
+		}
+		event := normalizeLabel(record.HookEvent, "unknown")
+		stats := timing[event]
+		const maxSamples = 256
+		if len(stats.samples) == maxSamples {
+			copy(stats.samples, stats.samples[1:])
+			stats.samples[len(stats.samples)-1] = *record.ElapsedMS
+		} else {
+			stats.samples = append(stats.samples, *record.ElapsedMS)
+		}
+		timing[event] = stats
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan Hook timing outbox: %w", err)
+	}
+	return timing, nil
+}
+
+func writeHookTimingStats(b *strings.Builder, timing map[string]hookTimingStats) {
+	if len(timing) == 0 {
+		fmt.Fprintf(b, "  loop_hook_evaluation_duration_ms (no samples)\n")
+		return
+	}
+	events := make([]string, 0, len(timing))
+	for event := range timing {
+		events = append(events, event)
+	}
+	sort.Strings(events)
+	for _, event := range events {
+		samples := append([]int64(nil), timing[event].samples...)
+		sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+		if len(samples) == 0 {
+			continue
+		}
+		index := (len(samples)*95+99)/100 - 1
+		if index < 0 {
+			index = 0
+		}
+		if index >= len(samples) {
+			index = len(samples) - 1
+		}
+		p95 := samples[index]
+		max := samples[len(samples)-1]
+		fmt.Fprintf(b, "  loop_hook_evaluation_duration_ms{event=%q} count=%d p95_ms=%d max_ms=%d\n", event, len(samples), p95, max)
+		if p95 >= hookTimingWarningThresholdMS || max >= hookTimingWarningThresholdMS {
+			fmt.Fprintf(b, "  WARNING: Hook event %q is at or above %d%% of the %dms timeout; a platform timeout can bypass PreToolUse enforcement\n", event, hookTimingWarningThresholdMS*100/defaultHookTimeoutMS, defaultHookTimeoutMS)
+		}
+	}
 }
 
 func writeLabeledCounter(b *strings.Builder, name, labelKey string, values map[string]int64) {
