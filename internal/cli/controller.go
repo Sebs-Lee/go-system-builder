@@ -37,6 +37,12 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	stage, skill, action := projectNext(lifecycleState, lifecyclePhase, root)
 	next := buildNextProjection(state, stage, skill, action, root)
 	applyS7BudgetGateway(&next, state)
+	if lifecycleState == "bug_resolution" && lifecyclePhase == "investigation" {
+		next.Action = investigationNextAction(state)
+	}
+	if lifecycleState == "bug_resolution" && lifecyclePhase != "investigation" {
+		next.Action = repairNextAction(state, lifecyclePhase)
+	}
 
 	guidance := policy.Guidance{
 		RuntimeID:      stringValue(state["runtime_id"]),
@@ -185,10 +191,90 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// the milestone log. Read from state.review.observation_batch.
 	if lifecycleState == "bug_resolution" && (event == "SessionStart" || event == "PreCompact") {
 		applyS8EntryProjection(state, &guidance)
+		applyS9RepairProjection(state, &guidance)
 	}
 
 	guidance.Instruction = formatGuidanceInstruction(guidance)
 	return guidance
+}
+
+func investigationNextAction(state map[string]any) string {
+	reviewMap, _ := state["review"].(map[string]any)
+	casePointer, _ := reviewMap["investigation"].(map[string]any)
+	if casePointer == nil {
+		return "ingest the sealed ObservationBatch via `runtime investigation ingest --expected-revision <N> --grouping-rationale <reason>`; do not create a BUG or reproduce the symptom"
+	}
+	caseID := stringValue(casePointer["case_id"])
+	if caseID == "" {
+		caseID = "<case-id>"
+	}
+	if route := stringValue(casePointer["route"]); route != "" {
+		if action := investigationRouteNextAction(route, casePointer); action != "" {
+			return fmt.Sprintf("Case %s is routed to %s; next: %s", caseID, route, action)
+		}
+	}
+	return fmt.Sprintf("continue InvestigationCase %s: run `runtime investigation status --case-id %s`, then dispatch independent hypothesis questions", caseID, caseID)
+}
+
+func repairNextAction(state map[string]any, phase string) string {
+	reviewMap, _ := state["review"].(map[string]any)
+	if investigation, _ := reviewMap["investigation"].(map[string]any); investigation == nil || stringValue(investigation["status"]) != "contract_approved" {
+		return "complete S8 InvestigationCase and approve the RepairContract before opening S9"
+	}
+	pointer, _ := reviewMap["repair"].(map[string]any)
+	if pointer == nil {
+		return "consume the approved S8 RepairContract: run `runtime repair session open --session-id <session> --created-by <agent>`"
+	}
+	switch stringValue(pointer["status"]) {
+	case "planning":
+		return "dispatch each RepairAssignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, then submit one S9 domain PlanReport per Builder"
+	case "reproducing":
+		return "submit any missing S9 domain PlanReports; when every Assignment is reported run `runtime repair execution begin`"
+	}
+	if action := stringValue(pointer["next_action"]); action != "" {
+		return action
+	}
+	return fmt.Sprintf("continue S9 repair phase %s: run `runtime repair status` and follow the recorded next action", phase)
+}
+
+func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
+	reviewMap, _ := state["review"].(map[string]any)
+	if reviewMap == nil {
+		return
+	}
+	investigation, _ := reviewMap["investigation"].(map[string]any)
+	if investigation == nil || stringValue(investigation["status"]) != "contract_approved" {
+		return
+	}
+	pointer, _ := reviewMap["repair"].(map[string]any)
+	if pointer == nil {
+		line := "S9 RepairSession not opened: consume the approved Contract with `runtime repair session open --session-id <session> --created-by <agent>`"
+		guidance.Automation = append(guidance.Automation, line)
+		guidance.Recovery = append([]string{line}, guidance.Recovery...)
+		return
+	}
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	line := fmt.Sprintf("S9 repair %s: session=%s; next=%s", stringValue(pointer["status"]), stringValue(pointer["session_id"]), repairNextAction(state, stringValue(lifecycle["phase"])))
+	switch stringValue(pointer["status"]) {
+	case "planning":
+		line += "; dispatch every RepairAssignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, then submit one domain PlanReport per Builder with a red/blocked pre-fix check"
+	case "reproducing":
+		line += "; all PlanReports must be present before `runtime repair execution begin`; implementation writes remain gated"
+	case "repairing":
+		line += "; submit one exact-unit RepairResult per Assignment; the batch stays in fixing until every Assignment is reported"
+	case "impact_reconciliation":
+		line += "; the complete Assignment Result batch is present; compute session-wide Changeset and commit ChangeImpact"
+	case "blocked":
+		if route := stringValue(pointer["failure_route"]); route != "" {
+			line += "; failure_route=" + route + " — follow the recorded recovery action; do not create a symptom-only patch"
+		}
+	case "closed":
+		if seed := stringValue(pointer["review_plan_seed_ref"]); seed != "" {
+			line += "; consume the registration-ready S7 seed with `runtime review-plan --file " + seed + "` after refreshing frozen hashes"
+		}
+	}
+	guidance.Automation = append(guidance.Automation, line)
+	guidance.Recovery = append([]string{line}, guidance.Recovery...)
 }
 
 // applyS7RecoveryProjection enriches the SessionStart/PreCompact recovery
@@ -315,6 +401,11 @@ func applyS8EntryProjection(state map[string]any, guidance *policy.Guidance) {
 	reviewMap, _ := state["review"].(map[string]any)
 	if reviewMap == nil {
 		return
+	}
+	if investigationPointer, _ := reviewMap["investigation"].(map[string]any); investigationPointer == nil {
+		line := "S8 intake pending: run `runtime investigation ingest --expected-revision <N> --grouping-rationale <reason>`; do not create a BUG or reproduce the sealed symptom"
+		guidance.Automation = append(guidance.Automation, line)
+		guidance.Recovery = append([]string{line}, guidance.Recovery...)
 	}
 	batch, _ := reviewMap["observation_batch"].(map[string]any)
 	if batch == nil {

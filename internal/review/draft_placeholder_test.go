@@ -82,6 +82,25 @@ func TestDraftPlanForRootProjectsCanonicalCompletionEnvelope(t *testing.T) {
 	}
 }
 
+func TestDraftPlanNotApplicableCoverageJustificationMarshalsAsNull(t *testing.T) {
+	root := t.TempDir()
+	plan, _ := DraftPlanForRoot(root, baseDraftState(t), 1)
+	if plan.CoverageJustification != nil {
+		t.Fatalf("not-applicable draft coverage_justification = %v, want nil", *plan.CoverageJustification)
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded map[string]any
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	if value, present := encoded["coverage_justification"]; !present || value != nil {
+		t.Fatalf("coverage_justification = %#v, want explicit JSON null", value)
+	}
+}
+
 // baseDraftState returns a schema-valid runtime payload ready for
 // DraftPlan to consume. The caller patches documents/evidence per
 // scenario; lifecycle and review sections are inert stubs because

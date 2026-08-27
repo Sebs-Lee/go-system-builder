@@ -33,13 +33,18 @@ func TestS7StatusReportsRoundBudget(t *testing.T) {
 	state["baseline"] = map[string]any{"generation": 1}
 	state["configuration"] = map[string]any{
 		"repair": map[string]any{
-			"max_attempts_per_bug":    3,
+			"max_attempts_per_bug":       3,
 			"max_same_contract_failures": 2,
-			"max_full_review_rounds": 5,
+			"max_full_review_rounds":     5,
 		},
 	}
 	state["review"] = map[string]any{
 		"round": 2, "clean_round": nil,
+		"round_entry": map[string]any{
+			"transition_id": "TR-012", "repair_handoff_ref": ".claude/review/repair/handoff.json",
+			"review_plan_seed_ref": ".claude/review/repair/s7-seeds/review-plan-s9-round-2.json",
+			"change_impact_ref":    ".claude/review/repair/change-impact.json",
+		},
 		"plan": map[string]any{
 			"plan_id": "review-plan-r2", "path": ".claude/review/plans/r2.json",
 			"sha256": "deadbeef", "revision": 1, "review_round": 2,
@@ -54,9 +59,9 @@ func TestS7StatusReportsRoundBudget(t *testing.T) {
 				"id": "agent-qa-r2", "role": "qa", "state": "blocked",
 				"task_ids": []any{"TASK-1"}, "team_id": "workgroup-r2",
 				"definition_ref": "agents/qa.md",
-				"readback_ref": nil, "activation_ref": nil, "activation_revision": nil,
+				"readback_ref":   nil, "activation_ref": nil, "activation_revision": nil,
 				"blocker_resolved_ref": nil,
-				"updated_at": "2026-08-24T07:00:00Z",
+				"updated_at":           "2026-08-24T07:00:00Z",
 			},
 		},
 		"tasks": []any{}, "bugs": []any{}, "teams": []any{},
@@ -79,7 +84,7 @@ func TestS7StatusReportsRoundBudget(t *testing.T) {
 	reviewMap, _ := loaded["review"].(map[string]any)
 	planMap := reviewMap["plan"].(map[string]any)
 	planRel := planMap["path"].(string)
-	planBytes := []byte(`{"schema_version":"1.0.0","review_plan_id":"review-plan-r2","review_round":2,"baseline_generation":1,"frozen_subjects":[],"claims":[],"assignments":[]}`)
+	planBytes := []byte(`{"schema_version":"1.0.0","review_plan_id":"review-plan-r2","review_round":2,"baseline_generation":1,"frozen_subjects":[],"claims":[{"claim_id":"claim-qa-1","lens":"qa","focus_key":"logic-state-error","target":"internal/example","assertion":"errors propagate","oracle":"no dropped error","method":"code review","applicability":"required","source_refs":["REQ-002"]}],"assignments":[{"assignment_id":"assignment-qa-r2","lens":"qa","claim_ids":["claim-qa-1"],"focus_keys":["logic-state-error"],"non_overlap_boundary":"owns static quality","execution_wave":"static"}]}`)
 	planDir := filepath.Dir(filepath.Join(root, planRel))
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -111,6 +116,53 @@ func TestS7StatusReportsRoundBudget(t *testing.T) {
 		"status=blocked",
 		"blocker_ref=.claude/evidence/loop-REQ-S7ROUND/g1/review-blockers/review-result-qa-r2-sitelost-site-lost.json",
 		"blocker_resolved",
+		"round_entry: TR-012 (S9 handoff seed)",
+		"seed_projection: present",
+		"focus=logic-state-error target=internal/example",
+		"pending required claims: 1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("s7 status missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestS7StatusReportsSeedProjectionGap(t *testing.T) {
+	root := t.TempDir()
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "schema", "assets", "loop-state.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["review"] = map[string]any{
+		"round": 2,
+		"round_entry": map[string]any{
+			"transition_id":        "TR-012",
+			"review_plan_seed_ref": ".claude/review/repair/s7-seeds/review-plan-s9-round-2.json",
+		},
+		"plan":   nil,
+		"claims": map[string]any{}, "assignments": map[string]any{}, "observation_batch": nil,
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stateBytes, _ := json.MarshalIndent(state, "", "  ")
+	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-state.json"), append(stateBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if code := cli.Run([]string{"s7", "status", "--root", root}, strings.NewReader(""), &out, &out); code != 0 {
+		t.Fatalf("s7 status exit=%d output=%s", code, out.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"seed_projection: missing",
+		"review.plan is absent",
+		"reconcile the S9 handoff projection",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("s7 status missing %q:\n%s", want, got)

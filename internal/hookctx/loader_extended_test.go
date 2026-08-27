@@ -1,6 +1,8 @@
 package hookctx_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,6 +14,11 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 )
 
+func hookSHA(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 // writeJSONL writes a JSON file to disk for tests.
 func writeJSONL(t *testing.T, path, content string) {
 	t.Helper()
@@ -20,6 +27,56 @@ func writeJSONL(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadFullBindsS9AssignmentScopeFromPlanReport(t *testing.T) {
+	root := t.TempDir()
+	plan := []byte(`{"assignments":[{"assignment_id":"repair-assignment-unit-1","owner_agent_id":"","scope":["internal/api"]}]}`)
+	report := []byte(`{"agent_id":"builder-s9","assignment_id":"repair-assignment-unit-1"}`)
+	planPath := filepath.Join(root, ".claude", "review", "repair", "plans", "repair-plan-1.json")
+	reportPath := filepath.Join(root, ".claude", "review", "repair", "plan-reports", "repair-plan-report-1.json")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(reportPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, plan, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reportPath, report, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]any{
+		"runtime_id": "loop-REQ-039", "revision": 7,
+		"lifecycle": map[string]any{"state": "bug_resolution", "phase": "fixing"},
+		"review": map[string]any{"repair": map[string]any{
+			"status": "repairing", "session_id": "repair-session-1",
+			"plan_ref": ".claude/review/repair/plans/repair-plan-1.json", "plan_sha256": hookSHA(plan),
+			"plan_report_refs": []any{map[string]any{"path": ".claude/review/repair/plan-reports/repair-plan-report-1.json", "sha256": hookSHA(report)}},
+		}},
+		"entities": map[string]any{"agents": []any{map[string]any{"id": "builder-s9", "state": "working"}}},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeJSONL(t, filepath.Join(root, ".claude", "loop-state.json"), string(data))
+	writeJSONL(t, filepath.Join(root, ".claude", "loop-events.jsonl"), "")
+
+	loaded, err := hookctx.LoadFull(root, "builder-s9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.PolicyContext.RepairStatus != "repairing" || loaded.PolicyContext.Agent == nil {
+		t.Fatalf("S9 repair pointer/agent not projected: %#v", loaded.PolicyContext)
+	}
+	if loaded.PolicyContext.Agent.RepairAssignmentID != "repair-assignment-unit-1" {
+		t.Fatalf("assignment id = %q", loaded.PolicyContext.Agent.RepairAssignmentID)
+	}
+	if len(loaded.PolicyContext.Agent.RepairAllowedWritePaths) != 1 || loaded.PolicyContext.Agent.RepairAllowedWritePaths[0] != "internal/api" {
+		t.Fatalf("assignment scope = %#v", loaded.PolicyContext.Agent.RepairAllowedWritePaths)
 	}
 }
 

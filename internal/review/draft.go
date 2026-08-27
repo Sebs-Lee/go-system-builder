@@ -170,6 +170,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			ExecutionWave:      "static",
 		})
 	}
+	notes = append(notes, "the six QA baseline Claims are independent quality questions; keep their plan-local claim_id values and merge Assignments only when the same-lens read set and non-overlap boundary remain truthful")
 
 	// E2E coverage state from the bound REQ's ui_impact (§4.2 step 6). The
 	// Planner consumes the actual S2 CASE catalog and the repository's
@@ -192,7 +193,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			NARationale:   "bound REQ declares no UI impact; no entry point or browser-observable behavior is in scope",
 			SourceRefs:    []string{"bound_req"},
 		})
-		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; verify against the real required surfaces (§4.3) before registering")
+		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; keep the explicit claim-e2e-na-1 Claim with source_refs and na_rationale (it is not dispatched), then verify against the real required surfaces (§4.3) before registering")
 	default:
 		inventory, discoveryDiagnostics := discoverE2EInventory(root, state)
 		for _, diagnostic := range discoveryDiagnostics {

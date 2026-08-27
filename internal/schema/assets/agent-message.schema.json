@@ -283,7 +283,8 @@
                 "document-verifier",
                 "delivery-verifier",
                 "qa",
-                "e2e-tester"
+                "e2e-tester",
+                "investigator"
               ]
             },
             "documents": {

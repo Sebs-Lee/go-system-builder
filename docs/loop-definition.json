@@ -51,10 +51,10 @@
     "bug_resolution": {
       "stage": "S8/S9",
       "category": "work",
-      "description": "Findings are investigated, accepted as canonical BUGs, repaired and rechecked by the original finding responsibility.",
+      "description": "S8 consumes sealed S7 Findings into InvestigationCases, derives causal models and approved RepairContracts; S9 repairs only from an approved RepairContract. Canonical BUGs are compatibility projections, not authorities.",
       "phase_machine": "bug_resolution",
-      "entry_condition": "A blocking Delivery Verifier, QA, or E2E Browser finding exists.",
-      "exit_condition": "Targeted re-verification passes and affected evidence is invalidated, or specification/REQ change is required."
+      "entry_condition": "A sealed S7 ObservationBatch with an exact immutable Finding set exists, or a human release decision routes a finding into S8.",
+      "exit_condition": "The approved RepairContract completes targeted re-verification and hands back to S7, or the InvestigationCase is routed to specification, REQ, duplicate, no-change, or further investigation."
     },
     "acceptance": {
       "stage": "S10",
@@ -255,37 +255,89 @@
       ],
       "phases": {
         "investigation": {
-          "description": "Reproduce findings and determine root cause.",
-          "entry_condition": "Blocking findings are received.",
-          "exit_condition": "Root cause and evidence are sufficient to draft canonical BUGs."
+          "description": "Investigators consume S7 encounter/raw evidence, form competing hypotheses and answer independent discriminator questions. Reproduction is an exception for missing or contradictory evidence, not an intake requirement.",
+          "entry_condition": "TR-008 or a human defect decision has opened an InvestigationCase with an exact source Finding set and a frozen baseline.",
+          "exit_condition": "The Case has a supported causal model, or an explicit route to investigate_more, specification rework, REQ decision, duplicate, or no-change."
         },
         "bug_report_review": {
-          "description": "The orchestrator deduplicates and accepts canonical BUG reports.",
-          "entry_condition": "BUG drafts contain reproduction, root cause and Closing Contract.",
-          "exit_condition": "Every blocking finding has an explicit disposition. An insufficient BUG report returns to investigation (PTR-BUG-03); an accepted canonical BUG enters repair_readback (PTR-BUG-02); a final rejected finding with no product or specification change, or a duplicate whose canonical target needs no remaining repair, may use TR-022 only when no accepted BUG remains; a duplicate of an open canonical BUG follows that BUG's repair path; spec rework uses TR-023 and REQ change uses TR-024."
+          "description": "Legacy compatibility projection only. New S8 paths do not enter this phase and do not use canonical BUG acceptance as their authority. Existing BUG records are projections of an InvestigationCase/RepairContract and must be mapped back to those artifacts before repair.",
+          "entry_condition": "An older implementation has already materialized a BUG projection that must be reconciled into an InvestigationCase.",
+          "exit_condition": "The projection is mapped to a Case and, when repair is requested, an approved RepairContract exists; otherwise the projection returns to investigation for Case reconciliation."
         },
         "repair_readback": {
-          "description": "Repair Builders read BUG plus the original specification chain and submit structured understanding.",
-          "entry_condition": "Canonical BUGs are accepted.",
-          "exit_condition": "Understanding and phase-two activation are approved."
+          "description": "S9 Repair Builders read the approved RepairContract and submit structured understanding. A compatibility BUG projection may be read for legacy context but cannot authorize repair.",
+          "entry_condition": "An approved RepairContract is durably referenced and handed off from S8.",
+          "exit_condition": "Understanding and phase-two activation are approved against the RepairContract."
+        },
+        "planning": {
+          "description": "S9 Repair Builders bind each RepairUnit to an explicit Assignment/assertion map and submit an immutable PlanReport with proposed scope and a failing pre-fix check; product writes remain denied.",
+          "entry_condition": "A RepairSession and RepairPlan are created from the approved RepairContract.",
+          "exit_condition": "Every required Assignment has a bound PlanReport."
+        },
+        "reproducing": {
+          "description": "The Runtime and PreToolUse Hook hold the product first-write barrier while the builder confirms the original failure and records red pre-fix evidence.",
+          "entry_condition": "A PlanReport is accepted for the current RepairPlan and Assignment.",
+          "exit_condition": "The explicit S9 execution-begin checkpoint is committed."
         },
         "fixing": {
-          "description": "Activated repair Builders implement within approved BUG/task scope.",
-          "entry_condition": "Repair activation is recorded.",
-          "exit_condition": "Fix reports, changed paths and validation evidence exist."
+          "description": "Activated repair Builders implement within the approved RepairContract scope and immutable Assignment/path boundary; every Assignment must report exact units before impact reconciliation.",
+          "entry_condition": "Repair activation is recorded and an approved RepairContract is current.",
+          "exit_condition": "Fix reports, changed paths and validation evidence exist for the Contract."
         },
         "targeted_reverification": {
-          "description": "The original finding responsibility checks each BUG Closing Contract.",
-          "entry_condition": "Repair evidence exists and affected PASS evidence is invalidated.",
+          "description": "The original Finding responsibility checks the RepairContract symptom, invariant and detection-gap assertions.",
+          "entry_condition": "Repair evidence exists, affected PASS evidence is invalidated, and the approved RepairContract is current.",
           "exit_condition": "Targeted checks pass or return to investigation."
         },
         "ready_for_full_review": {
-          "description": "A terminal handoff checkpoint inside S9: targeted checks pass and no further S9 work may start; the only successor is TR-012 into a complete Delivery + QA + E2E Browser round.",
-          "entry_condition": "All repaired BUGs pass targeted re-verification.",
+          "description": "A terminal handoff checkpoint inside S9: all RepairContract assertions pass and no further S9 work may start; the only successor is TR-012 into a complete Delivery + QA + E2E Browser round.",
+          "entry_condition": "All source Findings covered by the approved RepairContract pass targeted re-verification.",
           "exit_condition": "TR-012 returns the top-level Loop to verification.delivery."
         }
       },
       "transitions": [
+        {
+          "id": "PTR-BUG-09",
+          "from": "repair_readback",
+          "selector": "SEL-BUG-OUTCOME",
+          "automation": {"eligible": true, "human_boundary": false},
+          "event": "repair_plan_compiled",
+          "to": "planning",
+          "actors": ["orchestrator", "hook_controller"],
+          "guards": [],
+          "actions": [],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "S9 enters planning with a dispatchable Assignment set; no implementation write is authorized yet."
+        },
+        {
+          "id": "PTR-BUG-10",
+          "from": "planning",
+          "selector": "SEL-BUG-OUTCOME",
+          "automation": {"eligible": true, "human_boundary": false},
+          "event": "repair_plan_reported",
+          "to": "reproducing",
+          "actors": ["orchestrator", "hook_controller"],
+          "guards": [],
+          "actions": [],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Builders report their intended repair and failing pre-fix signal before execution."
+        },
+        {
+          "id": "PTR-BUG-11",
+          "from": "reproducing",
+          "selector": "SEL-BUG-OUTCOME",
+          "automation": {"eligible": true, "human_boundary": false},
+          "event": "repair_execution_started",
+          "to": "fixing",
+          "actors": ["orchestrator", "hook_controller"],
+          "guards": [],
+          "actions": [],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Only the explicit execution checkpoint releases implementation writes."
+        },
         {
           "id": "PTR-BUG-01",
           "from": "investigation",
@@ -319,7 +371,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "A sealed ObservationBatch (the exact S7 Finding set) cannot become repair work before root-cause evidence exists."
+          "description": "Legacy compatibility transition only. If an older implementation emits bug_drafts_ready, the resulting BUG records are projections that must be reconciled into an InvestigationCase; new paths keep the Case status in its artifact and do not create a second runtime phase machine."
         },
         {
           "id": "PTR-BUG-02",
@@ -354,7 +406,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "The orchestrator approves canonical BUGs and duplicate mappings."
+          "description": "Legacy compatibility projection only. A canonical BUG acceptance event cannot authorize S9 unless an approved RepairContract is already present; new paths do not enter bug_report_review."
         },
         {
           "id": "PTR-BUG-03",
@@ -386,7 +438,36 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Insufficient BUG reports return to investigation."
+          "description": "Legacy compatibility projection only. Rejected BUG projections return to the InvestigationCase rather than creating another per-Finding BUG draft."
+        },
+        {
+          "id": "PTR-BUG-08",
+          "from": "investigation",
+          "selector": "SEL-BUG-OUTCOME",
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
+          "event": "repair_contract_approved",
+          "to": "repair_readback",
+          "actors": [
+            "orchestrator",
+            "hook_controller"
+          ],
+          "guards": [
+            "root_cause_evidence_complete",
+            "bug_closing_contract_complete",
+            "bug_closing_contracts_complete"
+          ],
+          "actions": [
+            "set_bug_phase_repair_readback"
+          ],
+          "required_evidence": [
+            "root_cause_record",
+            "repair_record"
+          ],
+          "on_guard_failure": "reject",
+          "description": "Legacy compatibility projection only. The current S8 main path is `runtime investigation contract approve`, which writes immutable approved Case/Contract revisions, pins their hashes, and enters S9 repair_readback directly; it does not invoke this PTR-BUG-08 catalog transition. No canonical BUG acceptance is required or sufficient."
         },
         {
           "id": "PTR-BUG-04",
@@ -421,7 +502,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Repair execution uses the same agent dispatch gate (plan_checkpoint by default)."
+          "description": "Legacy compatibility projection only. Current S9 dispatch uses `runtime repair dispatch` for each RepairAssignment, then the explicit `runtime repair execution begin` checkpoint releases implementation writes."
         },
         {
           "id": "PTR-BUG-05",
@@ -494,6 +575,27 @@
           "description": "A targeted pass never substitutes for the full review round; it records the S9-to-S7 handoff checkpoint."
         },
         {
+          "id": "PTR-BUG-12",
+          "from": "investigation",
+          "selector": "SEL-BUG-OUTCOME",
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
+          "event": "targeted_reverification_unblocked",
+          "to": "targeted_reverification",
+          "actors": [
+            "orchestrator",
+            "hook_controller",
+            "qa"
+          ],
+          "guards": [],
+          "actions": [],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "After an environmental or authority blocker is resolved, reopen the existing targeted verification checkpoint; runtime hard-checks status=blocked, failure_route=blocked, and a non-empty resolution reason. A new independent TargetedReverification is still required, and this transition never authorizes a repair or a pass."
+        },
+        {
           "id": "PTR-BUG-07",
           "from": "targeted_reverification",
           "selector": "SEL-BUG-OUTCOME",
@@ -523,7 +625,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Failed repair verification restarts root-cause investigation."
+          "description": "Failed repair verification returns to the same InvestigationCase for causal reassessment; it does not create a new BUG draft unless the causal model genuinely differs."
         }
       ]
     }
@@ -1095,7 +1197,6 @@
         "observation_batch_sealed"
       ],
       "actions": [
-        "record_finding_batch",
         "set_bug_phase_investigation"
       ],
       "required_evidence": [
@@ -1110,7 +1211,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 diagnosis; S8 never re-reproduces symptoms by default. One investigation-intake BUG draft is created per Finding, deduplicated by finding content hash; S8 must still establish root cause and the Closing Contract before canonical BUG acceptance.",
+      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor. TR-008 records the cursor handoff; the next mandatory S8 verb is `runtime investigation ingest`, which creates the InvestigationCase after exact-set/hash/baseline validation. S8 consumes the facts and does not re-reproduce symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.",
       "from_phase": "observation_sealed"
     },
     {
@@ -1255,7 +1356,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Only the ready_for_full_review handoff checkpoint may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round."
+      "description": "Only the ready_for_full_review handoff checkpoint for an approved RepairContract may enter a complete Delivery + QA + E2E Browser round; targeted re-verification never substitutes for that round."
     },
     {
       "id": "TR-013",
@@ -1595,7 +1696,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "When the completed S8 disposition batch contains no accepted BUG, every finding is finally rejected without product/specification change or duplicate-linked to a canonical BUG with no remaining repair, the Loop returns to verification for a fresh complete round. An insufficient BUG report remains in investigation; spec and REQ changes use TR-023 and TR-024."
+      "description": "When the InvestigationCase has dispositioned every source Finding as no-change, duplicate, or another non-repair route, and no approved RepairContract remains, the Loop returns to verification for a fresh complete round. The legacy bug_batch_record is only a compatibility projection; spec and REQ changes use TR-023 and TR-024."
     },
     {
       "id": "TR-023",
@@ -1930,7 +2031,7 @@
         "bug_batch_record"
       ],
       "on_guard_failure": "reject",
-      "description": "Configured repair limits never silently close a BUG."
+      "description": "Configured repair limits never silently close an InvestigationCase or RepairContract; exhaustion pauses the Loop with the current repair evidence."
     },
     {
       "id": "GTR-005",
@@ -2073,27 +2174,27 @@
     },
     {
       "id": "INV-008",
-      "statement": "Every blocking finding maps to an accepted canonical BUG before repair.",
+      "statement": "Every blocking Finding maps to exactly one current InvestigationCase or an explicit duplicate, no-change, specification, or REQ disposition before S8 exits; a per-Finding BUG is not required.",
       "enforcement": "guard"
     },
     {
       "id": "INV-009",
-      "statement": "Repair reads BUG plus the original specification chain.",
+      "statement": "S8 consumes the sealed ObservationBatch encounter and raw evidence; symptom re-reproduction is not a default investigation prerequisite.",
       "enforcement": "guard"
     },
     {
       "id": "INV-010",
-      "statement": "Original finding responsibilities reverify repairs before a complete review restarts.",
+      "statement": "S9 repair activation requires a current approved RepairContract; canonical BUG records are compatibility projections and cannot authorize repair.",
       "enforcement": "guard"
     },
     {
       "id": "INV-011",
-      "statement": "Repair invalidates affected evidence and targeted checks never replace the complete review.",
+      "statement": "An approved RepairContract covers every source Finding with causal, invariant and detection-gap assertions; repair invalidates affected evidence and targeted checks never replace the complete review.",
       "enforcement": "combined"
     },
     {
       "id": "INV-012",
-      "statement": "A clean round uses current evidence from one complete round and has no blocking BUG.",
+      "statement": "A clean round uses current evidence from one complete round and has no unresolved blocking InvestigationCase or approved RepairContract.",
       "enforcement": "combined"
     },
     {

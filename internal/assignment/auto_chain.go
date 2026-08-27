@@ -32,18 +32,19 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/identity"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 // AutoChainOutcome reports what the auto-chain observed and did.
 type AutoChainOutcome struct {
-	Chained     bool   `json:"chained"`
-	AgentID     string `json:"agent_id"`
-	FinalState  string `json:"final_state,omitempty"`
+	Chained      bool   `json:"chained"`
+	AgentID      string `json:"agent_id"`
+	FinalState   string `json:"final_state,omitempty"`
 	ActivationID string `json:"activation_id,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Note        string `json:"note,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Note         string `json:"note,omitempty"`
 }
 
 // AutoChainInput is the minimal fact set the auto-chain needs.
@@ -83,6 +84,9 @@ type AutoChainInput struct {
 func AutoAdvanceToWorking(in AutoChainInput) (AutoChainOutcome, error) {
 	if in.AgentID == "" {
 		return AutoChainOutcome{Reason: "agent_id is required"}, nil
+	}
+	if err := identity.ValidateAgentID(in.AgentID); err != nil {
+		return AutoChainOutcome{AgentID: in.AgentID, Reason: err.Error()}, nil
 	}
 	if in.PlanPath == "" {
 		return AutoChainOutcome{AgentID: in.AgentID, Reason: "plan_path missing in SendMessage payload — run `runtime agent-begin --agent-id " + in.AgentID + " --plan <plan-report.json>` to recover"}, nil
@@ -318,6 +322,9 @@ type AgentBeginRequest struct {
 func AgentBegin(root, statePath, journalPath string, req AgentBeginRequest) (loopruntime.Snapshot, AutoChainOutcome, error) {
 	if req.AgentID == "" {
 		return loopruntime.Snapshot{}, AutoChainOutcome{Reason: "agent_id is required"}, fmt.Errorf("runtime agent-begin: agent_id is required")
+	}
+	if err := identity.ValidateAgentID(req.AgentID); err != nil {
+		return loopruntime.Snapshot{}, AutoChainOutcome{AgentID: req.AgentID, Reason: err.Error()}, fmt.Errorf("runtime agent-begin: %w", err)
 	}
 	if req.PlanPath == "" {
 		return loopruntime.Snapshot{}, AutoChainOutcome{AgentID: req.AgentID, Reason: "plan path is required"}, fmt.Errorf("runtime agent-begin: --plan is required")

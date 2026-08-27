@@ -1,6 +1,7 @@
 package hookctx
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,6 +47,7 @@ type stateFile struct {
 			Status                        string `json:"status"`
 			VerificationArtifactWorkspace string `json:"verification_artifact_workspace"`
 		} `json:"plan"`
+		Repair map[string]any `json:"repair"`
 	} `json:"review"`
 	Pause *struct {
 		Reason string `json:"reason,omitempty"`
@@ -237,6 +239,12 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 		if state.Review.Plan != nil {
 			context.VerificationWorkspace = state.Review.Plan.VerificationArtifactWorkspace
 		}
+		if state.Review.Repair != nil {
+			context.RepairStatus, _ = state.Review.Repair["status"].(string)
+			context.RepairSessionID, _ = state.Review.Repair["session_id"].(string)
+			context.RepairPlanRef, _ = state.Review.Repair["plan_ref"].(string)
+			context.RepairPlanSHA256, _ = state.Review.Repair["plan_sha256"].(string)
+		}
 	}
 	for _, ev := range state.Evidence {
 		if ev.Status == "valid" {
@@ -385,6 +393,10 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 	// referenced activation envelope before policy evaluation. Failure
 	// paths here are documented by loader_test.go errors.
 	if agentID != "" {
+		var repairPointer map[string]any
+		if state.Review != nil {
+			repairPointer = state.Review.Repair
+		}
 		for _, agent := range state.Entities.Agents {
 			if agent.ID != agentID {
 				continue
@@ -405,6 +417,7 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 				context.Agent.CompletionReportedRef = *agent.CompletionReportedRef
 			}
 			if agent.ActivationRef == nil {
+				loadRepairAgentScope(root, repairPointer, agent.ID, context.Agent)
 				break
 			}
 			activation, err := loadActivation(root, *agent.ActivationRef)
@@ -417,6 +430,7 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			context.Agent.AllowedTools = activation.AllowedTools
 			context.Agent.AllowedWritePaths = activation.AllowedWritePaths
 			context.Agent.AllowedCommandClasses = activation.AllowedCommandClasses
+			loadRepairAgentScope(root, repairPointer, agent.ID, context.Agent)
 			break
 		}
 		if context.Agent == nil {
@@ -438,6 +452,110 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 	loaded.IntegrationCheckpoint = firstIntegrationCheckpoint(state.Milestone)
 
 	return loaded, nil
+}
+
+// repairPlanHook is the deliberately small, read-only projection needed by
+// the S9 Hook barrier. The authoritative artifact is still validated by the
+// repair package at each Runtime command; this loader only verifies the
+// pointed bytes and extracts the assignment scope before a tool call.
+type repairPlanHook struct {
+	Assignments []struct {
+		AssignmentID string   `json:"assignment_id"`
+		OwnerAgentID string   `json:"owner_agent_id"`
+		Scope        []string `json:"scope"`
+	} `json:"assignments"`
+}
+
+type repairPlanReportHook struct {
+	AgentID      string `json:"agent_id"`
+	AssignmentID string `json:"assignment_id"`
+}
+
+// loadRepairAgentScope binds a Worker to the S9 assignment proven by its
+// PlanReport. A malformed/missing pointer is intentionally left unresolved;
+// the policy layer then blocks product writes in fixing instead of guessing a
+// scope from the activation envelope or from ToolInput.
+func loadRepairAgentScope(root string, pointer map[string]any, agentID string, agent *policy.AgentContext) {
+	if agent == nil || pointer == nil || agentID == "" {
+		return
+	}
+	planPath, _ := pointer["plan_ref"].(string)
+	planSHA, _ := pointer["plan_sha256"].(string)
+	planBytes, ok := readRepairHookArtifact(root, planPath, planSHA)
+	if !ok {
+		return
+	}
+	var plan repairPlanHook
+	if json.Unmarshal(planBytes, &plan) != nil {
+		return
+	}
+
+	assignmentID := ""
+	for _, assignment := range plan.Assignments {
+		if assignment.OwnerAgentID == agentID {
+			assignmentID = assignment.AssignmentID
+			agent.RepairAllowedWritePaths = append([]string(nil), assignment.Scope...)
+			break
+		}
+	}
+	if refs, ok := pointer["plan_report_refs"].([]any); ok {
+		for _, raw := range refs {
+			ref, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			path, _ := ref["path"].(string)
+			sha, _ := ref["sha256"].(string)
+			data, valid := readRepairHookArtifact(root, path, sha)
+			if !valid {
+				continue
+			}
+			var report repairPlanReportHook
+			if json.Unmarshal(data, &report) != nil || report.AgentID != agentID {
+				continue
+			}
+			assignmentID = report.AssignmentID
+			for _, assignment := range plan.Assignments {
+				if assignment.AssignmentID != assignmentID {
+					continue
+				}
+				agent.RepairAllowedWritePaths = append([]string(nil), assignment.Scope...)
+				break
+			}
+			agent.RepairPlanReportRef = path
+			break
+		}
+	}
+	if assignmentID != "" {
+		agent.RepairAssignmentID = assignmentID
+	}
+}
+
+func readRepairHookArtifact(root, relative, expectedSHA string) ([]byte, bool) {
+	if strings.TrimSpace(relative) == "" || strings.TrimSpace(expectedSHA) == "" {
+		return nil, false
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, false
+	}
+	abs, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(relative)))
+	if err != nil {
+		return nil, false
+	}
+	rel, err := filepath.Rel(rootAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, false
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, false
+	}
+	actual := sha256.Sum256(data)
+	if fmt.Sprintf("%x", actual[:]) != expectedSHA {
+		return nil, false
+	}
+	return data, true
 }
 
 type loadedTask struct {

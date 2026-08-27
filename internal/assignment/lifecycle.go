@@ -34,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/identity"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -113,6 +114,9 @@ func AdvanceAgent(
 ) (loopruntime.Snapshot, error) {
 	if request.AgentID == "" || request.Event == "" {
 		return loopruntime.Snapshot{}, fmt.Errorf("agent_id and event are required")
+	}
+	if err := identity.ValidateAgentID(request.AgentID); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("runtime agent-event: %w", err)
 	}
 	data, err := os.ReadFile(request.MessagePath)
 	if err != nil {

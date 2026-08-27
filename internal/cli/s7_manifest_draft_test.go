@@ -117,6 +117,9 @@ func TestS7ManifestDraftEndToEnd(t *testing.T) {
 	if !strings.Contains(stdout.String(), "note:") {
 		t.Errorf("expected planner notes, got:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "agent_id") || !strings.Contains(stdout.String(), "registration rejects") {
+		t.Errorf("manifest-draft guidance must explain the identity replacement and hard registration gate, got:\n%s", stdout.String())
+	}
 
 	data, err := os.ReadFile(out)
 	if err != nil {

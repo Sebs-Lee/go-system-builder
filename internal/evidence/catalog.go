@@ -252,6 +252,11 @@ func formatKinds(kinds []string) string {
 	return strings.Join(formatted, ", ")
 }
 
+// `repair_handoff` is intentionally absent from the generic registration
+// allowlist: only the S9 handoff CAS may index it, because a free-standing
+// evidence row would not prove the linked Session/Plan/Result/Impact chain.
+// It remains a legal loop-state evidence kind and is auto-indexed by
+// internal/repair.CommitRepairHandoff.
 var defaultRegisteredKinds = []string{
 	"acceptance",
 	"agent_activation",
@@ -277,6 +282,8 @@ var defaultRegisteredKinds = []string{
 	"observation_batch",
 	"team_manifest",
 	"targeted_reverification",
+	"repair_plan",
+	"repair_plan_report",
 }
 
 // defaultImportableKinds is an explicit recovery trust boundary. Keep this
@@ -419,6 +426,12 @@ var defaultSlots = map[string]SlotSpec{
 	},
 	"repair_record": {
 		AcceptedKinds: []string{"bug", "repair_record"},
+	},
+	"repair_plan": {
+		AcceptedKinds: []string{"repair_plan", "repair_record"},
+	},
+	"repair_plan_report": {
+		AcceptedKinds: []string{"repair_plan_report", "repair_record"},
 	},
 	"targeted_reverification_record": {
 		// Authority: kind targeted_reverification; the self-named alias is

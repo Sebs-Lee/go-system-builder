@@ -37,8 +37,9 @@ func TestCT03913_VerificationChainOneHookPerStep(t *testing.T) {
 }
 
 // TestCT03913ObservationBatchHandoff drives the finding path: a sealed
-// ObservationBatch commits TR-008, and the record_finding_batch action
-// materializes one BUG draft per Finding in the exact set.
+// ObservationBatch commits TR-008, then the explicit S8 intake verb creates
+// one InvestigationCase for the exact Finding set. TR-008 itself only moves
+// the cursor; it must not create a per-Finding BUG draft.
 func TestCT03913ObservationBatchHandoff(t *testing.T) {
 	root := freshRoot(t)
 	runner := &req039fixtures.CLIRunner{}
@@ -55,17 +56,27 @@ func TestCT03913ObservationBatchHandoff(t *testing.T) {
 		"TR-008", "bug_resolution", "investigation", "CT-039-13/TR-008")
 
 	state = req039fixtures.ReadState(t, root)
+	var intakeStdout, intakeStderr strings.Builder
+	if code := runner.Run(t, []string{
+		"runtime", "investigation", "ingest", "--root", root,
+		"--grouping-rationale", "the sealed S7 batch is the provisional investigation boundary",
+	}, strings.NewReader(""), &intakeStdout, &intakeStderr); code != 0 {
+		t.Fatalf("S8 InvestigationCase intake failed: code=%d stdout=%s stderr=%s", code, intakeStdout.String(), intakeStderr.String())
+	}
+
+	state = req039fixtures.ReadState(t, root)
+	review := state["review"].(map[string]any)
+	casePointer, ok := review["investigation"].(map[string]any)
+	if !ok || casePointer == nil {
+		t.Fatalf("TR-008 + investigation ingest must pin an InvestigationCase pointer: %#v", review)
+	}
+	if casePointer["status"] != "investigating" {
+		t.Fatalf("InvestigationCase must start investigating, got %v", casePointer["status"])
+	}
 	entities := state["entities"].(map[string]any)
 	bugs := entities["bugs"].([]any)
-	if len(bugs) != 1 {
-		t.Fatalf("expected exactly one BUG draft from the sealed batch, got %d", len(bugs))
-	}
-	bug := bugs[0].(map[string]any)
-	if bug["state"] != "draft" {
-		t.Fatalf("BUG must land in draft, got %v", bug["state"])
-	}
-	if !strings.Contains(bug["path"].(string), "finding-qa-1.json") {
-		t.Fatalf("BUG must reference the finding file, got %v", bug["path"])
+	if len(bugs) != 0 {
+		t.Fatalf("S8 intake must not create a BUG draft before RepairContract approval, got %d", len(bugs))
 	}
 	if runner.ManualTransitionCalls != 0 {
 		t.Fatalf("TR-008 must not use manual transition CLI")

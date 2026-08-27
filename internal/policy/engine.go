@@ -15,7 +15,8 @@ import (
 
 // Minimal Safety Policy — REQ-039 v2.0.0 §14 / BE-039 v1.0.2 §6.
 //
-// The enforce path produces exactly three block reasons:
+// The enforce path produces the configured safety reasons plus the
+// deterministic L4/S9 lifecycle barriers below:
 //
 //   - locked_artifact_write  — the affected path matches a LockedArtifact
 //     manifest entry whose identity is complete (ID/kind/path/version/
@@ -55,6 +56,16 @@ const (
 	// RuleRuntimeUnreadable closes the safety boundary when the hook cannot
 	// load the runtime facts needed to classify a mutating PreToolUse.
 	RuleRuntimeUnreadable = "runtime_unreadable"
+	// RuleRepairWriteBeforeExecution keeps S9 planning/reproduction read-only
+	// on the product surface. The plan/report artifacts themselves remain
+	// writable through the control plane; implementation writes require the
+	// explicit BeginRepairExecution checkpoint.
+	RuleRepairWriteBeforeExecution = "repair_write_before_execution"
+	// RuleRepairAssignmentScope keeps an executing S9 Worker inside the
+	// Assignment scope that was derived from the immutable RepairPlan and its
+	// validated PlanReport. It is deliberately separate from the generic L4
+	// first-write rule so the recovery packet names the repair assignment.
+	RuleRepairAssignmentScope = "repair_assignment_scope"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -72,6 +83,11 @@ type AgentContext struct {
 	// readback_submitted event) once the plan checkpoint is recorded.
 	DispatchMode    string `json:"dispatch_mode,omitempty"`
 	PlanReportedRef string `json:"plan_reported_ref,omitempty"`
+	// S9 assignment facts are loaded from the immutable RepairPlan and the
+	// validated PlanReport refs. They are never accepted from ToolInput.
+	RepairAssignmentID      string   `json:"repair_assignment_id,omitempty"`
+	RepairAllowedWritePaths []string `json:"repair_allowed_write_paths,omitempty"`
+	RepairPlanReportRef     string   `json:"repair_plan_report_ref,omitempty"`
 	// TaskIDs is the scheduler-dispatched task set for this agent
 	// (entities.agents[].task_ids); the TaskUpdate self-claim guard reads it
 	// to tell an owned status update from an unauthorized claim. TeamID and
@@ -135,6 +151,13 @@ type RuntimeContext struct {
 	// product-write deny allows writes only inside it plus the control-plane
 	// and report directories (L3-S7 §8).
 	VerificationWorkspace string `json:"verification_workspace,omitempty"`
+	// S9 repair pointer projection used by the phase/write barriers. The
+	// policy engine only needs the lifecycle and immutable plan identity; the
+	// hook context loader resolves the per-agent Assignment scope.
+	RepairStatus     string `json:"repair_status,omitempty"`
+	RepairSessionID  string `json:"repair_session_id,omitempty"`
+	RepairPlanRef    string `json:"repair_plan_ref,omitempty"`
+	RepairPlanSHA256 string `json:"repair_plan_sha256,omitempty"`
 }
 
 type Input struct {
@@ -219,11 +242,11 @@ type Guidance struct {
 }
 
 // Rule is the on-disk representation of a docs/hook-policy.json rules[]
-// entry. The minimal policy document only contains entries whose predicate
-// is locked_artifact_write or squash_merge; the engine loads the document
-// to keep HasRule / PolicyVersion compatibility for Hook adapter tests and
-// the schema-version envelope, but does not iterate the rules to produce
-// a Decision.
+// entry. The repository document keeps the two globally configured rules;
+// lifecycle barriers require the loaded Runtime/Assignment projection and
+// therefore remain deterministic code-level rules. The engine loads the
+// document for PolicyVersion and envelope identity, but does not iterate it
+// to produce a Decision.
 type Rule struct {
 	RuleID         string   `json:"rule_id"`
 	Event          string   `json:"event"`
@@ -306,6 +329,9 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 	if decision, blocked := reviewerProductWriteDecision(input); blocked {
 		return decision, nil
 	}
+	if decision, blocked := repairPreExecutionWriteDecision(input); blocked {
+		return decision, nil
+	}
 	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
 		return decision, nil
 	}
@@ -324,6 +350,9 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 // for any dispatched Worker that writes into the product surface before
 // its PLAN_REPORT is recorded (L4 §15.2 P1-3 close-out).
 func EvaluateAgentScoped(input Input) (Decision, bool) {
+	if decision, blocked := repairAssignmentScopeDecision(input); blocked {
+		return decision, true
+	}
 	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
 		return decision, true
 	}
@@ -367,6 +396,137 @@ func unauthorizedTaskDecision(agentID, taskID, detail string) (Decision, bool) {
 		},
 		Retry: "after_dispatch",
 	}, true
+}
+
+// repairPreExecutionWriteDecision is the S9 phase-one hard barrier. Planning
+// and reproduction may create/read repair-control artifacts, but they may not
+// mutate the implementation surface. This runs in the ordinary policy path
+// (without an Agent context) so the main session and every Worker see the
+// same checkpoint.
+func repairPreExecutionWriteDecision(input Input) (Decision, bool) {
+	if input.Event != "PreToolUse" || input.Runtime.CurrentState != "bug_resolution" {
+		return Decision{}, false
+	}
+	if input.Runtime.CurrentPhase != "planning" && input.Runtime.CurrentPhase != "reproducing" {
+		return Decision{}, false
+	}
+	paths, mutating := repairMutationPaths(input)
+	if !mutating {
+		return Decision{}, false
+	}
+	if len(paths) == 0 {
+		return repairPreExecutionBlock(input, "<dynamic Bash mutation>"), true
+	}
+	for _, path := range paths {
+		if !repairControlPathAllowed(input, path) {
+			return repairPreExecutionBlock(input, path), true
+		}
+	}
+	return Decision{}, false
+}
+
+func repairPreExecutionBlock(input Input, rawPath string) Decision {
+	return Decision{
+		Decision:     "block",
+		RuleID:       RuleRepairWriteBeforeExecution,
+		AffectedPath: reviewerRelativePath(input, rawPath),
+		Reason:       fmt.Sprintf("S9 %s is read-only on the product surface until BeginRepairExecution; %s is not a repair-control artifact", input.Runtime.CurrentPhase, reviewerRelativePath(input, rawPath)),
+		Recovery: []string{
+			"record one PlanReport per RepairAssignment with a failing pre-fix check",
+			"run `BeginRepairExecution` via `runtime repair execution begin --expected-revision <current>` after every Assignment has a PlanReport",
+			"keep plan/reproduction evidence under .claude/review/repair/ or .claude/evidence/; do not write product files yet",
+		},
+		Retry: "after_repair_execution_begin",
+	}
+}
+
+// repairAssignmentScopeDecision is the S9 phase-two product-write barrier.
+// The Hook context loader derives RepairAssignmentID and RepairAllowedWritePaths
+// from the immutable Plan + PlanReport refs; policy only evaluates the
+// already-loaded facts and never trusts a Worker-supplied path declaration.
+func repairAssignmentScopeDecision(input Input) (Decision, bool) {
+	if input.Event != "PreToolUse" || input.Runtime.CurrentState != "bug_resolution" || input.Runtime.CurrentPhase != "fixing" {
+		return Decision{}, false
+	}
+	paths, mutating := repairMutationPaths(input)
+	if !mutating {
+		return Decision{}, false
+	}
+	if len(paths) == 0 {
+		return repairAssignmentBlock(input, "<dynamic Bash mutation>"), true
+	}
+	for _, path := range paths {
+		if repairControlPathAllowed(input, path) {
+			continue
+		}
+		if input.Runtime.Agent == nil || input.Runtime.Agent.RepairAssignmentID == "" {
+			return repairAssignmentBlock(input, path), true
+		}
+		allowed := false
+		for _, rule := range input.Runtime.Agent.RepairAllowedWritePaths {
+			if repairPathMatches(input, path, rule) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return repairAssignmentBlock(input, path), true
+		}
+	}
+	return Decision{}, false
+}
+
+func repairAssignmentBlock(input Input, rawPath string) Decision {
+	assignment := "<unresolved>"
+	if input.Runtime.Agent != nil && input.Runtime.Agent.RepairAssignmentID != "" {
+		assignment = input.Runtime.Agent.RepairAssignmentID
+	}
+	return Decision{
+		Decision:     "block",
+		RuleID:       RuleRepairAssignmentScope,
+		AffectedPath: reviewerRelativePath(input, rawPath),
+		Reason:       fmt.Sprintf("S9 executing Worker assignment %s cannot write %s: the path is outside its immutable Assignment scope", assignment, reviewerRelativePath(input, rawPath)),
+		Recovery: []string{
+			"reread the current RepairPlan and PlanReport for the dispatched Assignment",
+			"keep the change inside the Assignment scope; if the root cause needs a new path, stop and return to S8 for Contract/Plan revision",
+			"do not widen scope by editing the hook or runtime; submit a scope deviation for Main to reconcile",
+		},
+		Retry: "after_assignment_scope_correction",
+	}
+}
+
+func repairMutationPaths(input Input) ([]string, bool) {
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		return bashMutationPaths(command)
+	}
+	if !isSideEffectTool(input.ToolName) {
+		return nil, false
+	}
+	path := toolPath(input.ToolInput)
+	if path == "" {
+		return nil, true
+	}
+	return []string{path}, true
+}
+
+func repairControlPathAllowed(input Input, rawPath string) bool {
+	rel := reviewerRelativePath(input, rawPath)
+	for _, prefix := range []string{".claude/review/repair", ".claude/evidence", "docs/reports"} {
+		if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
+		}
+	}
+	return false
+}
+
+func repairPathMatches(input Input, rawPath, rule string) bool {
+	rel := reviewerRelativePath(input, rawPath)
+	rule = reviewerRelativePath(input, rule)
+	if rel != rule && !strings.HasPrefix(rel, strings.TrimSuffix(rule, "/")+"/") {
+		return false
+	}
+	return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
 }
 
 // assignmentWriteBeforePlanDecision is the L4 first-write barrier: a

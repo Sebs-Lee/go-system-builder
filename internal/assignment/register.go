@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/identity"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -19,11 +20,13 @@ import (
 )
 
 type Request struct {
-	ExpectedRevision int
-	ManifestPath     string
-	TaskID           string
-	TaskPath         string
-	OccurredAt       time.Time
+	ExpectedRevision   int
+	ManifestPath       string
+	TaskID             string
+	TaskPath           string
+	RepairAssignmentID string
+	RepairOwnerAgentID string
+	OccurredAt         time.Time
 }
 
 type manifest struct {
@@ -90,6 +93,11 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 	if err := json.Unmarshal(manifestData, &value); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode team manifest: %w", err)
 	}
+	for _, item := range value.Assignments {
+		if err := identity.ValidateAgentID(item.AgentID); err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("team manifest assignment %s: %w", item.AssignmentID, err)
+		}
+	}
 	taskData, err := os.ReadFile(request.TaskPath)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read task: %w", err)
@@ -107,7 +115,14 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 	responsibilityIDs := assignedResponsibilities(value)
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
-	return store.Update(request.ExpectedRevision, loopruntime.Mutation{
+	// Activation envelopes are staged while the mutation builds its candidate
+	// state. Keep their exact bytes' digests so a rejected Apply can remove only
+	// the files created by this attempt. Store.Update already protects the
+	// cleanup with the same revision/pending-marker checks used by every other
+	// staged artifact; if the commit may still be recoverable, the file is
+	// intentionally retained.
+	stagedActivations := make([]loopruntime.ArtifactCleanupRequest, 0, len(value.Assignments))
+	snapshot, updateErr := store.Update(request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-register-%s-r%d", value.WorkgroupID, request.ExpectedRevision+1),
 		TransitionID:   "ENTITY-REGISTER",
 		Event:          "workgroup_registered",
@@ -126,6 +141,43 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 			}
 			if err := validateWorkgroupState(value.WorkgroupKind, lifecycle); err != nil {
 				return err
+			}
+			if request.RepairAssignmentID != "" {
+				if value.WorkgroupKind != "builder" || request.RepairOwnerAgentID == "" {
+					return fmt.Errorf("repair assignment binding requires a builder workgroup and repair owner agent")
+				}
+				manifestAssignment := false
+				manifestOwner := ""
+				for _, item := range value.Assignments {
+					if item.AssignmentID == request.RepairAssignmentID || item.AssignmentID == "assignment-s9-"+strings.TrimPrefix(request.RepairAssignmentID, "repair-assignment-") {
+						manifestAssignment = true
+						manifestOwner = item.AgentID
+						break
+					}
+				}
+				if !manifestAssignment {
+					return fmt.Errorf("repair assignment %s is not represented by the registered builder manifest", request.RepairAssignmentID)
+				}
+				if manifestOwner != request.RepairOwnerAgentID {
+					return fmt.Errorf("repair assignment %s manifest owner %s does not match requested Agent %s", request.RepairAssignmentID, manifestOwner, request.RepairOwnerAgentID)
+				}
+				review, _ := state["review"].(map[string]any)
+				if review == nil {
+					return fmt.Errorf("repair assignment binding requires Runtime review state")
+				}
+				repairPointer, _ := review["repair"].(map[string]any)
+				if repairPointer == nil {
+					return fmt.Errorf("repair assignment %s is not bound to an active S9 RepairSession", request.RepairAssignmentID)
+				}
+				owners, _ := repairPointer["assignment_owners"].(map[string]any)
+				if owners == nil {
+					owners = map[string]any{}
+					repairPointer["assignment_owners"] = owners
+				}
+				if existing, _ := owners[request.RepairAssignmentID].(string); existing != "" && existing != request.RepairOwnerAgentID {
+					return fmt.Errorf("RepairAssignment %s is already owned by Agent %s; do not replace ownership mid-session", request.RepairAssignmentID, existing)
+				}
+				owners[request.RepairAssignmentID] = request.RepairOwnerAgentID
 			}
 			// L3-S7: reviewer workgroups bind to the registered ReviewPlan —
 			// exact Claim set, lens match, static-before-behavior wave gate.
@@ -201,6 +253,22 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 				}
 				var activationRefValue any
 				if activationRef != "" {
+					activationBytes, marshalErr := json.MarshalIndent(buildActivationEnvelope(item.AgentID, ActivationSourceEntry{
+						AgentID:            item.AgentID,
+						AgentDefinitionRef: item.AgentDefinitionRef,
+						SkillRefs:          item.SkillRefs,
+						WritePaths:         item.WritePaths,
+						OutputPaths:        item.OutputPaths,
+					}), "", "  ")
+					if marshalErr != nil {
+						return fmt.Errorf("activation envelope: hash staged bytes: %w", marshalErr)
+					}
+					stagedActivations = append(stagedActivations, loopruntime.ArtifactCleanupRequest{
+						ExpectedRevision: request.ExpectedRevision,
+						ArtifactPath:     activationRef,
+						ArtifactSHA256:   sha256Of(append(activationBytes, '\n')),
+						ReferencedPaths:  stateArtifactPaths(current),
+					})
 					activationRefValue = activationRef
 				}
 				agents = append(agents, map[string]any{
@@ -223,6 +291,14 @@ func Register(root, statePath, journalPath string, request Request) (loopruntime
 			return nil
 		},
 	})
+	if updateErr != nil {
+		for index := len(stagedActivations) - 1; index >= 0; index-- {
+			if _, cleanupErr := store.RemoveUnreferencedArtifact(stagedActivations[index]); cleanupErr != nil {
+				return snapshot, fmt.Errorf("%w; staged activation envelope cleanup failed: %v", updateErr, cleanupErr)
+			}
+		}
+	}
+	return snapshot, updateErr
 }
 
 func reviewAssignmentQueued(state map[string]any, assignmentID, agentID string) bool {
@@ -279,6 +355,10 @@ func validateWorkgroupState(kind string, lifecycle map[string]any) error {
 		if state != "building" && state != "bug_resolution" {
 			return fmt.Errorf("builder workgroup requires building or bug_resolution state")
 		}
+	case "investigator":
+		if state != "bug_resolution" || phase != "investigation" {
+			return fmt.Errorf("investigator workgroup requires bug_resolution.investigation (current %s.%s)", state, phase)
+		}
 	default:
 		return fmt.Errorf("unsupported workgroup kind %q", kind)
 	}
@@ -302,6 +382,35 @@ func containsEntity(value any, id string) bool {
 		}
 	}
 	return false
+}
+
+func stateArtifactPaths(state map[string]any) []string {
+	seen := map[string]bool{}
+	var visit func(any)
+	visit = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for _, child := range typed {
+				visit(child)
+			}
+		case []any:
+			for _, child := range typed {
+				visit(child)
+			}
+		case string:
+			path := filepath.ToSlash(typed)
+			if strings.HasPrefix(path, ".claude/") {
+				seen[path] = true
+			}
+		}
+	}
+	visit(state)
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // =============================================================================

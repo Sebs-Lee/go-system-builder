@@ -105,3 +105,31 @@ func TestPostToolUseAmbiguousFallbackSilent(t *testing.T) {
 		t.Fatalf("ambiguous sender must not record, got %q", obs.AgentID)
 	}
 }
+
+func TestPostToolUseIgnoresAuthoringPlaceholderAgentID(t *testing.T) {
+	obs := hook.HandlePostToolUse(policy.Input{
+		ToolName: "SendMessage", AgentID: "TODO(planner):agent-id-for-qa",
+		ToolInput: map[string]any{
+			"message_type": "plan_report",
+			"plan_ref":     ".claude/plan-report.json",
+		},
+	}, []hook.AgentRow{{ID: "TODO(planner):agent-id-for-qa", State: "reading"}})
+	if obs.Recorded {
+		t.Fatalf("placeholder identity must not be observed or auto-chained: %#v", obs)
+	}
+}
+
+func TestPostToolUseFallsThroughMalformedAgentIDToVerifiedTeammate(t *testing.T) {
+	obs := hook.HandlePostToolUse(policy.Input{
+		ToolName:     "SendMessage",
+		AgentID:      "TODO(planner):agent-id-for-qa",
+		TeammateName: "agent-qa-real",
+		ToolInput: map[string]any{
+			"message_type": "plan_report",
+			"plan_ref":     ".claude/evidence/plan.json",
+		},
+	}, []hook.AgentRow{{ID: "agent-qa-real", State: "reading"}})
+	if !obs.Recorded || obs.AgentID != "agent-qa-real" {
+		t.Fatalf("verified teammate identity should survive a malformed optional agent_id: %#v", obs)
+	}
+}

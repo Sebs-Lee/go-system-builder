@@ -119,13 +119,31 @@ func runS7Status(root string, stdout io.Writer) int {
 			}
 		}
 	}
+	roundEntry, _ := reviewMap["round_entry"].(map[string]any)
+	seedRef := stringValue(roundEntry["review_plan_seed_ref"])
 	ptr := review.PlanPointerFromState(state)
 	if ptr == nil {
+		if seedRef != "" {
+			fmt.Fprintf(stdout, "seed_projection: missing (seed=%s is present in round_entry but review.plan is absent)\n", seedRef)
+			fmt.Fprintln(stdout, "next: reconcile the S9 handoff projection before drafting or registering another plan")
+		}
 		fmt.Fprintln(stdout, "(no ReviewPlan registered — create one and run `runtime review-plan --file <plan.json>`)")
 		return 0
 	}
 	fmt.Fprintf(stdout, "plan: %s status=%s revision=%d e2e_coverage=%s\n",
 		ptr.PlanID, ptr.Status, ptr.Revision, ptr.E2ECoverageState)
+	if roundEntry != nil {
+		transitionID := stringValue(roundEntry["transition_id"])
+		fmt.Fprintf(stdout, "round_entry: %s (%s)\n", transitionID, s7RoundEntryLabel(transitionID))
+		for _, field := range []string{"repair_handoff_ref", "change_impact_ref", "review_plan_seed_ref", "implementation_baseline_digest"} {
+			if value := stringValue(roundEntry[field]); value != "" {
+				fmt.Fprintf(stdout, "  %s=%s\n", field, value)
+			}
+		}
+		if seedRef != "" {
+			fmt.Fprintln(stdout, "seed_projection: present (the registered plan is the S9 seed projection; refine only through the controlled revise path)")
+		}
+	}
 
 	plan, _, planErr := review.LoadPlan(root, state)
 	if planErr == nil {
@@ -135,6 +153,18 @@ func runS7Status(root string, stdout io.Writer) int {
 		fmt.Fprintf(stdout, "subject_digest: %s (every review-result submit must bind exactly this value)\n", review.SubjectDigest(plan))
 	}
 	dispositions := review.Dispositions(state)
+	claimsByID := map[string]review.Claim{}
+	assignmentByClaim := map[string]string{}
+	if planErr == nil {
+		for _, claim := range plan.Claims {
+			claimsByID[claim.ClaimID] = claim
+		}
+		for _, assignment := range plan.Assignments {
+			for _, claimID := range assignment.ClaimIDs {
+				assignmentByClaim[claimID] = assignment.AssignmentID
+			}
+		}
+	}
 
 	// Claims grouped by lens, in plan order when loadable.
 	fmt.Fprintln(stdout, "\nclaims:")
@@ -152,7 +182,14 @@ func runS7Status(root string, stdout io.Writer) int {
 	for _, claimID := range claimOrder {
 		disp, ok := dispositions[claimID]
 		if !ok {
-			continue
+			claim, inPlan := claimsByID[claimID]
+			if !inPlan {
+				continue
+			}
+			disp = review.ClaimDisposition{
+				Lens: claim.Lens, Applicability: claim.Applicability,
+				Disposition: "planned", AssignmentID: assignmentByClaim[claimID],
+			}
 		}
 		line := fmt.Sprintf("  %s [%s] %s", claimID, disp.Lens, disp.Disposition)
 		if disp.Applicability == "not_applicable" {
@@ -160,6 +197,16 @@ func runS7Status(root string, stdout io.Writer) int {
 		}
 		if disp.AssignmentID != "" {
 			line += fmt.Sprintf(" <- %s", disp.AssignmentID)
+		}
+		if claim, ok := claimsByID[claimID]; ok {
+			focus, target := claim.FocusKey, claim.Target
+			if focus == "" {
+				focus = "-"
+			}
+			if target == "" {
+				target = "-"
+			}
+			line += fmt.Sprintf(" focus=%s target=%s", focus, target)
 		}
 		if len(disp.FindingIDs) > 0 {
 			line += fmt.Sprintf(" findings=%v", disp.FindingIDs)
@@ -182,7 +229,11 @@ func runS7Status(root string, stdout io.Writer) int {
 		}
 		agent, _ := row["agent_id"].(string)
 		if agent == "" {
-			agent = "(not dispatched — run `runtime register-workgroup`)"
+			if queuedAgent, _ := row["queued_agent_id"].(string); queuedAgent != "" {
+				agent = fmt.Sprintf("(queued for %s)", queuedAgent)
+			} else {
+				agent = "(not dispatched — run `runtime register-workgroup`)"
+			}
 		}
 		status := row["status"]
 		// A blocked assignment carries a blocker_ref + blocked_at; surface
@@ -193,6 +244,9 @@ func runS7Status(root string, stdout io.Writer) int {
 			if ref, _ := row["blocker_ref"].(string); ref != "" {
 				line += fmt.Sprintf("\n    blocker_ref=%s (record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>` after the capture conditions are fixed, then resubmit)", ref)
 			}
+		}
+		if queuedAgent, _ := row["queued_agent_id"].(string); queuedAgent != "" {
+			line += fmt.Sprintf("\n    queue_reason=%v (the platform TeammateIdle hook re-wakes %s with this Assignment envelope after the lock is released)", row["queue_reason"], queuedAgent)
 		}
 		fmt.Fprintln(stdout, line)
 	}
@@ -216,7 +270,7 @@ func runS7Status(root string, stdout io.Writer) int {
 
 	// Exit state and the single next action.
 	fmt.Fprintln(stdout, "")
-	pending := review.UndispositionedRequired(state)
+	pending := s7PendingRequiredClaims(state, plan, planErr == nil)
 	if batch, _ := reviewMap["observation_batch"].(map[string]any); batch != nil {
 		fmt.Fprintf(stdout, "observation_batch: sealed as %s (%d findings) — the next PreToolUse auto-commits TR-008 (do not invoke the transition CLI)\n",
 			batch["batch_id"], len(batchFindingIDs(batch)))
@@ -232,6 +286,53 @@ func runS7Status(root string, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "all required claims dispositioned; round consumer closes on the next submit")
 	}
 	return 0
+}
+
+func s7RoundEntryLabel(transitionID string) string {
+	switch transitionID {
+	case "TR-012":
+		return "S9 handoff seed"
+	case "TR-022":
+		return "S8 no-repair re-entry"
+	case "TR-006":
+		return "S6 delivery entry"
+	case "TR-016":
+		return "acceptance re-entry"
+	default:
+		if transitionID == "" {
+			return "entry source unknown"
+		}
+		return "entry source recorded"
+	}
+}
+
+// s7PendingRequiredClaims reads the plan as the coverage authority and the
+// runtime projection as the consumption authority. This matters during a
+// partially projected/recovered board: an absent state.review.claims row is
+// still a pending required Claim, not evidence that the round is complete.
+func s7PendingRequiredClaims(state map[string]any, plan *review.Plan, planLoaded bool) []string {
+	if !planLoaded || plan == nil {
+		return review.UndispositionedRequired(state)
+	}
+	dispositions := review.Dispositions(state)
+	pending := make([]string, 0)
+	for _, claim := range plan.Claims {
+		if claim.Applicability == "not_applicable" {
+			continue
+		}
+		disposition, ok := dispositions[claim.ClaimID]
+		if !ok {
+			pending = append(pending, claim.ClaimID)
+			continue
+		}
+		switch disposition.Disposition {
+		case "pass", "finding", "blocked":
+		default:
+			pending = append(pending, claim.ClaimID)
+		}
+	}
+	sort.Strings(pending)
+	return pending
 }
 
 func batchFindingIDs(batch map[string]any) []any {
@@ -310,6 +411,7 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 	for _, note := range notes {
 		fmt.Fprintf(stdout, "note: %s\n", note)
 	}
+	fmt.Fprintln(stdout, "note: replace every TODO(planner) marker (target/assertion/oracle/method/na_rationale) with real facts before registration — the registration gate rejects the literal marker; if a whole lens ends up with zero required Claims, fill coverage_justification instead")
 	return 0
 }
 

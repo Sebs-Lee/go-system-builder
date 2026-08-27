@@ -408,14 +408,14 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			phase:     "investigation",
 			wantStage: "S8",
 			wantSkill: "bug-resolution",
-			wantText:  "investigate findings",
+			wantText:  "InvestigationCase",
 		},
 		{
 			name:      "bug report review is S8",
 			phase:     "bug_report_review",
 			wantStage: "S8",
 			wantSkill: "bug-resolution",
-			wantText:  "canonical BUG",
+			wantText:  "legacy BUG projection",
 		},
 		{
 			name:      "repair readback is S9",
@@ -423,6 +423,13 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			wantStage: "S9",
 			wantSkill: "bug-resolution",
 			wantText:  "repair",
+		},
+		{
+			name:      "fixing continues dispatched builders",
+			phase:     "fixing",
+			wantStage: "S9",
+			wantSkill: "bug-resolution",
+			wantText:  "already-dispatched",
 		},
 	}
 

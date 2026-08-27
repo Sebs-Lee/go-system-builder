@@ -68,7 +68,8 @@
         "document_verifier",
         "delivery_verifier",
         "qa",
-        "e2e_browser"
+        "e2e_browser",
+        "investigator"
       ]
     },
     "status": {
@@ -285,7 +286,8 @@
             "document-verifier",
             "delivery-verifier",
             "qa",
-            "e2e-tester"
+            "e2e-tester",
+            "investigator"
           ]
         },
         "scope": {
@@ -452,7 +454,8 @@
         "QA-RELIABILITY",
         "QA-MIGRATION",
         "E2E-USER-FLOW",
-        "E2E-CONSOLE-NETWORK"
+        "E2E-CONSOLE-NETWORK",
+        "S8-CAUSAL-INVESTIGATION"
       ]
     },
     "paths": {

@@ -118,7 +118,7 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  dry-run     Render an applied transition without writing")
 	fmt.Fprintln(stdout, "  hook        Hook adapter entrypoints (PreToolUse, Stop, etc.)")
 	fmt.Fprintln(stdout, "  doctor      Surface schema / manual / policy_ref / metrics gaps")
-	fmt.Fprintln(stdout, "  runtime     Runtime helpers (including evidence recording and terminal rollover)")
+	fmt.Fprintln(stdout, "  runtime     Runtime helpers (including investigation intake, S9 repair transactions and terminal rollover)")
 	fmt.Fprintln(stdout, "  team        Team manifest + responsibility checks")
 	fmt.Fprintln(stdout, "  impact      Evidence invalidation analysis")
 	fmt.Fprintln(stdout, "  verification Verification round evaluators")
@@ -501,21 +501,33 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "planned":
 			return "S7", "loop-orchestration", "scaffold the ReviewPlan via `loop-harness s7 draft --out plan.json`, fill the TODO oracles, and register via `runtime review-plan --file plan.json`"
 		case "running", "cannot_clean", "discovery_draining":
-			return "S7", "team-planning", "dispatch reviewer workgroups via `runtime register-workgroup` and consume each Assignment's Canonical ReviewResult via `runtime review-result submit` (see `loop-harness s7 status`)"
+			return "S7", "team-planning", "read `loop-harness s7 status`, scaffold each Assignment with `loop-harness s7 manifest-draft --assignment <id>`, register via `runtime register-workgroup`, and consume each Canonical ReviewResult via `runtime review-result submit`"
 		case "observation_sealed":
 			return "S7", "bug-resolution", "ObservationBatch sealed; the next PreToolUse auto-commits TR-008 to hand the batch to S8 — do not call the transition CLI"
 		case "clean":
 			return "S7", "acceptance-and-handoff", "machine CleanRound recorded; the next PreToolUse auto-commits TR-009 to advance into S10 — do not call the transition CLI"
 		}
-		return "S7", "loop-orchestration", "recover the verification round (see `loop-harness s7 status`)"
+		return "S7", "loop-orchestration", "recover the verification round with `loop-harness s7 status`; if no plan is registered, run `s7 draft`, otherwise scaffold the exact Assignment with `s7 manifest-draft` and register it"
 	case "bug_resolution":
 		switch phase {
 		case "investigation":
-			return "S8", "bug-resolution", "investigate findings and determine evidence-backed root causes"
+			return "S8", "bug-resolution", "ingest or continue the InvestigationCase from the sealed ObservationBatch; do not create a BUG or reproduce the symptom"
 		case "bug_report_review":
-			return "S8", "bug-resolution", "accept canonical BUG reports with root cause and Closing Contract"
+			return "S8", "bug-resolution", "reconcile the legacy BUG projection into its InvestigationCase; new S8 work must not accept a BUG as the authority"
+		case "repair_readback":
+			return "S9", "bug-resolution", "open or recover the RepairSession with `runtime repair status` / `runtime repair session open`, then compile the bounded RepairPlan"
+		case "planning":
+			return "S9", "bug-resolution", "dispatch each RepairAssignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, then each Builder submits an immutable PlanReport with `runtime repair plan-report submit --file <report.json>` (bind Session/Plan/Assignment, include at least one failing red pre-fix check); product writes stay denied until `runtime repair execution begin`"
+		case "reproducing":
+			return "S9", "bug-resolution", "the red pre-fix checks are recorded in the PlanReport; when every Assignment has reported, release implementation writes with `runtime repair execution begin`; inspect `runtime repair status` for missing reports"
+		case "fixing":
+			return "S9", "bug-resolution", "continue the already-dispatched bounded repair Builder(s) and submit one exact-unit result per Assignment with `runtime repair result submit --file <result.json>`"
+		case "targeted_reverification":
+			return "S9", "bug-resolution", "commit ChangeImpact and an independent TargetedReverification; follow `runtime repair status`"
+		case "ready_for_full_review":
+			return "S9", "bug-resolution", "create and commit the complete RepairHandoff with `runtime repair handoff create/commit`; then S7 starts a fresh full round"
 		}
-		return "S9", "bug-resolution", "resolve the canonical BUG and return to full review"
+		return "S9", "bug-resolution", "recover the S9 RepairSession with `runtime repair status` and follow its next_action"
 	case "acceptance", "release_audit":
 		return "S10", "acceptance-and-handoff", "complete acceptance and release audit"
 	case "awaiting_human_release":
@@ -936,7 +948,7 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|investigation|repair|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -1600,6 +1612,10 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			"sha256":                 receipt.SHA256,
 			"revision":               receipt.Revision,
 		})
+	case "investigation":
+		return runRuntimeInvestigation(args[1:], stdout, stderr)
+	case "repair":
+		return runRuntimeRepair(args[1:], stdout, stderr)
 	case "bug-event":
 		flags := flag.NewFlagSet("runtime bug-event", flag.ContinueOnError)
 		flags.SetOutput(stderr)
@@ -2661,20 +2677,150 @@ func validatePlanReportCheckpoint(root string, snapshot runtime.Snapshot, agentI
 		return fmt.Errorf("plan_ref runtime_id does not match the current runtime")
 	}
 	ptr := review.PlanPointerFromState(snapshot.State)
-	if ptr == nil {
-		return fmt.Errorf("no ReviewPlan is registered for the plan report")
-	}
-	if revision := integerValue(message["assignment_revision"]); revision != ptr.Revision {
-		return fmt.Errorf("plan_ref assignment_revision %d does not match ReviewPlan revision %d", revision, ptr.Revision)
-	}
 	assignmentID, _ := message["assignment_id"].(string)
-	reviewMap, _ := snapshot.State["review"].(map[string]any)
-	assignments, _ := reviewMap["assignments"].(map[string]any)
-	row, _ := assignments[assignmentID].(map[string]any)
-	if row == nil || row["agent_id"] != agentID {
-		return fmt.Errorf("plan_ref Assignment %s is not dispatched to Agent %s", assignmentID, agentID)
+	if ptr != nil {
+		if revision := integerValue(message["assignment_revision"]); revision != ptr.Revision {
+			// A non-S7 workgroup may be active while the previous S7 plan is
+			// still present in the projection. Only enforce the ReviewPlan
+			// revision when the submitted Assignment is actually one of its
+			// rows; S8/S9 assignments are bound by their manifest below.
+			reviewMap, _ := snapshot.State["review"].(map[string]any)
+			assignments, _ := reviewMap["assignments"].(map[string]any)
+			if _, exists := assignments[assignmentID]; exists {
+				return fmt.Errorf("plan_ref assignment_revision %d does not match ReviewPlan revision %d", revision, ptr.Revision)
+			}
+		}
+		reviewMap, _ := snapshot.State["review"].(map[string]any)
+		assignments, _ := reviewMap["assignments"].(map[string]any)
+		row, _ := assignments[assignmentID].(map[string]any)
+		if row != nil {
+			if row["agent_id"] != agentID {
+				return fmt.Errorf("plan_ref Assignment %s is not dispatched to Agent %s", assignmentID, agentID)
+			}
+			if revision := integerValue(message["assignment_revision"]); revision != ptr.Revision {
+				return fmt.Errorf("plan_ref assignment_revision %d does not match ReviewPlan revision %d", revision, ptr.Revision)
+			}
+			return nil
+		}
 	}
-	return nil
+	return validateManifestPlanReportCheckpoint(root, snapshot, message, agentID)
+}
+
+// validateManifestPlanReportCheckpoint validates the generic L4 checkpoint
+// for Builder/Investigator workgroups that are not S7 ReviewPlan rows. Their
+// Assignment identity lives in the fingerprinted team manifest; the manifest
+// assignment is immutable for the lifetime of that dispatch, so its generic
+// checkpoint revision is deliberately 1. S9 keeps a separate domain
+// RepairAssignment (repair-assignment-*) and maps it to the platform-safe
+// manifest id (assignment-s9-*); this function validates the latter while the
+// S9 domain PlanReport validates the former.
+func validateManifestPlanReportCheckpoint(root string, snapshot runtime.Snapshot, message map[string]any, agentID string) error {
+	assignmentID := stringValue(message["assignment_id"])
+	teamID := stringValue(message["team_id"])
+	taskID := stringValue(message["task_id"])
+	if assignmentID == "" || teamID == "" || taskID == "" {
+		return fmt.Errorf("manifest-bound plan_ref requires assignment_id, team_id, and task_id")
+	}
+	if revision := integerValue(message["assignment_revision"]); revision != 1 {
+		return fmt.Errorf("manifest-bound Assignment %s uses assignment_revision=1; got %d", assignmentID, revision)
+	}
+
+	entities, _ := snapshot.State["entities"].(map[string]any)
+	var agent map[string]any
+	rawAgents, _ := entities["agents"].([]any)
+	for _, raw := range rawAgents {
+		candidate, _ := raw.(map[string]any)
+		if stringValue(candidate["id"]) == agentID {
+			agent = candidate
+			break
+		}
+	}
+	if agent == nil {
+		return fmt.Errorf("manifest-bound plan_ref Agent %s is not registered", agentID)
+	}
+	if recordedTeam := stringValue(agent["team_id"]); recordedTeam != "" && recordedTeam != teamID {
+		return fmt.Errorf("plan_ref team_id %s does not match Agent %s team %s", teamID, agentID, recordedTeam)
+	}
+	if !containsStringValue(stringSliceAny(agent["task_ids"]), taskID) {
+		return fmt.Errorf("plan_ref TASK %s is outside Agent %s assignment", taskID, agentID)
+	}
+
+	var teamRow map[string]any
+	rawTeams, _ := entities["teams"].([]any)
+	for _, raw := range rawTeams {
+		candidate, _ := raw.(map[string]any)
+		if stringValue(candidate["id"]) == teamID {
+			teamRow = candidate
+			break
+		}
+	}
+	if teamRow == nil {
+		return fmt.Errorf("manifest-bound plan_ref team %s is not registered", teamID)
+	}
+	manifestRef := stringValue(teamRow["manifest_ref"])
+	if manifestRef == "" {
+		return fmt.Errorf("team %s has no manifest_ref for the plan checkpoint", teamID)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve repository root for manifest: %w", err)
+	}
+	manifestPath := resolveRootPath(root, manifestRef)
+	manifestAbs, err := filepath.Abs(manifestPath)
+	if err != nil {
+		return fmt.Errorf("resolve team manifest %q: %w", manifestRef, err)
+	}
+	manifestRel, err := filepath.Rel(rootAbs, manifestAbs)
+	if err != nil || manifestRel == ".." || strings.HasPrefix(manifestRel, ".."+string(filepath.Separator)) || filepath.IsAbs(manifestRel) {
+		return fmt.Errorf("team manifest %q is outside the repository", manifestRef)
+	}
+	manifestBytes, err := os.ReadFile(manifestAbs)
+	if err != nil {
+		return fmt.Errorf("read dispatched team manifest %s: %w", manifestRef, err)
+	}
+	if err := schema.NewValidator(root).ValidateBytes("team-manifest.schema.json", manifestBytes); err != nil {
+		return fmt.Errorf("dispatched team manifest schema: %w", err)
+	}
+	if err := team.ValidateBytes(manifestBytes); err != nil {
+		return fmt.Errorf("dispatched team manifest semantics: %w", err)
+	}
+	var manifest struct {
+		RuntimeID   string `json:"runtime_id"`
+		WorkgroupID string `json:"workgroup_id"`
+		Assignments []struct {
+			AssignmentID       string `json:"assignment_id"`
+			AgentID            string `json:"agent_id"`
+			AgentDefinitionRef string `json:"agent_definition_ref"`
+		} `json:"assignments"`
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return fmt.Errorf("decode dispatched team manifest: %w", err)
+	}
+	if manifest.RuntimeID != stringValue(snapshot.State["runtime_id"]) {
+		return fmt.Errorf("plan_ref manifest runtime_id does not match the current runtime")
+	}
+	if manifest.WorkgroupID != teamID {
+		return fmt.Errorf("plan_ref team_id %s does not match manifest workgroup_id %s", teamID, manifest.WorkgroupID)
+	}
+	for _, assignment := range manifest.Assignments {
+		if assignment.AssignmentID != assignmentID {
+			continue
+		}
+		if assignment.AgentID != agentID {
+			return fmt.Errorf("plan_ref Assignment %s is owned by Agent %s, not %s", assignmentID, assignment.AgentID, agentID)
+		}
+		return nil
+	}
+	return fmt.Errorf("plan_ref Assignment %s is not declared by manifest %s", assignmentID, manifestRef)
+}
+
+func containsStringValue(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // recordPlanCheckpoint writes agent.plan_reported_ref once (idempotent).

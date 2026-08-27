@@ -22,6 +22,25 @@ type PlanRequest struct {
 	OccurredAt       time.Time
 }
 
+// ValidatePlanArtifactForRegistration contains the artifact-level checks that
+// every S7 registration path must consume. The normal ReviewPlan command and
+// the S9 TR-012 handoff seed both enter the same control plane, so neither is
+// allowed to use a lighter frozen-subject or regression-asset validation path.
+// Runtime-coordinate checks remain in RegisterPlan because the handoff builds
+// its next-round projection inside its own CAS transaction.
+func ValidatePlanArtifactForRegistration(root string, plan *Plan) error {
+	if err := ValidatePlan(plan); err != nil {
+		return fmt.Errorf("ReviewPlan coverage: %w", err)
+	}
+	if err := verifyFrozenSubjects(root, plan); err != nil {
+		return fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
+	}
+	if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
+		return err
+	}
+	return nil
+}
+
 // RegisterPlan is the S7 entry verb: it schema-validates the Planner's
 // ReviewPlan, proves exact-set Claim coverage (ValidatePlan), pins the plan
 // into the shared control plane under one CAS, initializes the claim /
@@ -46,13 +65,7 @@ func RegisterPlan(
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode ReviewPlan: %w", err)
 	}
-	if err := ValidatePlan(&plan); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan coverage: %w", err)
-	}
-	if err := verifyFrozenSubjects(root, &plan); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
-	}
-	if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
+	if err := ValidatePlanArtifactForRegistration(root, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 
@@ -164,83 +177,7 @@ func RegisterPlan(
 			plan.ReviewPlanID, round, len(plan.Claims), len(plan.Assignments), plan.E2ECoverageState),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
-			reviewMap, ok := state["review"].(map[string]any)
-			if !ok {
-				return fmt.Errorf("runtime review section must be an object")
-			}
-			reviewMap["plan"] = map[string]any{
-				"plan_id":                         plan.ReviewPlanID,
-				"path":                            planRel,
-				"sha256":                          planSHA,
-				"revision":                        1,
-				"review_round":                    round,
-				"status":                          "running",
-				"e2e_coverage_state":              plan.E2ECoverageState,
-				"verification_artifact_workspace": workspace,
-				"verification_artifact_digest":    artifactDigestOrNil(artifactDigest),
-				"submitted_at":                    occurredAt.UTC().Format(time.RFC3339Nano),
-			}
-			claimsProjection := map[string]any{}
-			assignmentsProjection := map[string]any{}
-			ownerByClaim := map[string]string{}
-			for _, assignment := range plan.Assignments {
-				claimIDs := make([]any, 0, len(assignment.ClaimIDs))
-				for _, claimID := range assignment.ClaimIDs {
-					claimIDs = append(claimIDs, claimID)
-					ownerByClaim[claimID] = assignment.AssignmentID
-				}
-				// Resource locks are the declared shared-resource keys
-				// (account, port, spec file, dataset, worktree, ...). The
-				// union of assignment-level and claim-level locks is what
-				// the runtime consults for conflict detection at dispatch
-				// and for queueing when a lock is already held (L3-S7
-				// §4.5 + L4 §6.2).
-				locks := mergedResourceLocks(assignment.ResourceLocks, &plan, assignment.ClaimIDs)
-				assignmentsProjection[assignment.AssignmentID] = map[string]any{
-					"lens":            assignment.Lens,
-					"claim_ids":       claimIDs,
-					"status":          "planned",
-					"agent_id":        nil,
-					"result_ref":      nil,
-					"queued_agent_id": nil,
-					"blocker_ref":     nil,
-					"blocked_at":      nil,
-					"resource_locks":  locks,
-					"queue_reason":    nil,
-				}
-			}
-			for _, claim := range plan.Claims {
-				disposition := "planned"
-				if claim.Applicability == "not_applicable" {
-					// N/A is a plan-level disposition with source and
-					// rationale; it is never dispatched (L3-S7 §9.3).
-					disposition = "not_applicable"
-				}
-				claimsProjection[claim.ClaimID] = map[string]any{
-					"lens":          claim.Lens,
-					"applicability": claim.Applicability,
-					"disposition":   disposition,
-					"assignment_id": ownerByClaim[claim.ClaimID],
-					"result_id":     nil,
-					"finding_ids":   []any{},
-				}
-			}
-			reviewMap["claims"] = claimsProjection
-			reviewMap["assignments"] = assignmentsProjection
-			reviewMap["observation_batch"] = nil
-			// The Finding index starts empty for the round; rows are
-			// immutable once appended by review-result submit.
-			if entities, ok := state["entities"].(map[string]any); ok {
-				if _, present := entities["findings"]; !present {
-					entities["findings"] = []any{}
-				}
-			}
-			if lc, ok := state["lifecycle"].(map[string]any); ok {
-				lc["phase"] = "running"
-				lc["phase_revision"] = intField(lc["phase_revision"]) + 1
-			}
-			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
-			return nil
+			return ApplyRegisteredPlanProjection(state, plan, planRel, planSHA, round, workspace, artifactDigest, occurredAt)
 		},
 	})
 	if err != nil {

@@ -192,14 +192,19 @@
         },
         "round_entry": {
           "type": ["object", "null"],
-          "description": "The transition that opened the active S7 round. TR-012 entries carry the exact change_impact evidence reference used to freeze the post-repair baseline.",
+          "description": "The transition that opened the active S7 round. TR-012 entries carry the exact repair handoff and change_impact evidence references used to freeze the post-repair baseline.",
           "additionalProperties": false,
           "required": ["transition_id", "round", "baseline_generation", "change_impact_ref"],
           "properties": {
             "transition_id": {"type": "string", "minLength": 1},
             "round": {"type": "integer", "minimum": 1},
             "baseline_generation": {"type": "integer", "minimum": 0},
-            "change_impact_ref": {"type": ["string", "null"], "minLength": 1}
+            "change_impact_ref": {"type": ["string", "null"], "minLength": 1},
+            "repair_handoff_ref": {"type": ["string", "null"], "minLength": 1},
+            "repair_handoff_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+            "implementation_baseline_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+            "review_plan_seed_ref": {"type": ["string", "null"]},
+            "review_plan_seed_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
           }
         },
         "plan": {
@@ -319,6 +324,112 @@
                 },
                 "drain_policy": {"enum": ["complete_required_claims", "immediate_stop"]},
                 "sealed_at": {"type": "string"}
+              }
+            }
+          ]
+        },
+        "investigation": {
+          "description": "The S8 InvestigationCase intake pointer. The Case artifact is the authority; this runtime field is only its CAS-pinned identity and status projection.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "case_id",
+                "path",
+                "sha256",
+                "revision",
+                "status",
+                "source_finding_ids",
+                "observation_batch_id",
+                "updated_at"
+              ],
+              "properties": {
+                "case_id": {"type": "string", "pattern": "^investigation-case-[A-Za-z0-9._-]+$"},
+                "path": {"type": "string", "minLength": 1},
+                "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "revision": {"type": "integer", "minimum": 1},
+                "status": {"enum": ["investigating", "contract_review", "contract_approved", "routed", "blocked", "closed"]},
+                "route": {"type": ["string", "null"], "enum": ["s9_repair", "s2_spec_rework", "human_req_change", "s7_no_change", "investigate_more", "duplicate", null]},
+                "route_reason": {"type": ["string", "null"]},
+                "route_consumed_at": {"type": ["string", "null"]},
+                "route_consumer": {"type": ["string", "null"]},
+                "next_action": {"type": ["string", "null"]},
+                "source_finding_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1}
+                },
+                "observation_batch_id": {"type": "string", "minLength": 1},
+                "updated_at": {"type": "string", "minLength": 1},
+                "repair_contract_ref": {"type": "string", "minLength": 1},
+                "repair_contract_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "canonical_case_id": {"type": ["string", "null"], "minLength": 1},
+                "canonical_case_ref": {"type": ["string", "null"], "minLength": 1},
+                "canonical_case_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+              }
+            }
+          ]
+        },
+        "repair": {
+          "description": "The S9 RepairSession pointer. Domain artifacts remain authoritative; Runtime pins their identity, revision and current next action for CAS recovery.",
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "session_id", "case_id", "contract_id", "contract_ref", "contract_sha256",
+                "path", "sha256", "revision", "status", "updated_at", "next_action"
+              ],
+              "properties": {
+                "session_id": {"type": "string", "pattern": "^repair-session-[A-Za-z0-9._-]+$"},
+                "case_id": {"type": "string", "pattern": "^investigation-case-[A-Za-z0-9._-]+$"},
+                "contract_id": {"type": "string", "pattern": "^repair-contract-[A-Za-z0-9._-]+$"},
+                "contract_ref": {"type": "string", "minLength": 1},
+                "contract_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "path": {"type": "string", "minLength": 1},
+                "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "revision": {"type": "integer", "minimum": 1},
+                "status": {"enum": ["contract_ready", "planning", "reproducing", "repairing", "impact_reconciliation", "targeted_reverification", "ready_for_full_review", "blocked", "stale", "closed"]},
+                "plan_ref": {"type": ["string", "null"]},
+                "plan_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "plan_report_ref": {"type": ["string", "null"]},
+                "plan_report_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "plan_report_refs": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}, "uniqueItems": true},
+                "assignment_id": {"type": ["string", "null"], "pattern": "^repair-assignment-[A-Za-z0-9._-]+$"},
+                "assignment_owners": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+                "result_ref": {"type": ["string", "null"]},
+                "result_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "result_refs": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}, "uniqueItems": true},
+                "changeset_ref": {"type": ["string", "null"]},
+                "changeset_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "impact_ref": {"type": ["string", "null"]},
+                "impact_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "targeted_reverification_refs": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+                "targeted_reverification_artifacts": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["path", "sha256"],
+                    "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}
+                  },
+                  "uniqueItems": true
+                },
+                "handoff_ref": {"type": ["string", "null"]},
+                "handoff_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "failure_route": {"type": ["string", "null"], "enum": ["fail_same_cause", "fail_new_cause", "blocked", "scope_changed", "stale", null]},
+                "blocker_resolved_by": {"type": ["string", "null"], "minLength": 1},
+                "blocker_resolution": {"type": ["string", "null"], "minLength": 1},
+                "blocker_resolved_at": {"type": ["string", "null"], "minLength": 1},
+                "review_plan_seed_ref": {"type": ["string", "null"]},
+                "review_plan_seed_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "implementation_baseline_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "updated_at": {"type": "string", "minLength": 1},
+                "next_action": {"type": "string", "minLength": 1}
               }
             }
           ]
@@ -1688,7 +1799,8 @@
             "document_verifier",
             "delivery_verifier",
             "qa",
-            "e2e_browser"
+            "e2e_browser",
+            "investigator"
           ]
         },
         "status": {
@@ -1819,6 +1931,7 @@
             "e2e_review",
             "bug",
             "targeted_reverification",
+            "repair_handoff",
             "clean_round",
             "acceptance",
             "release_audit",

@@ -123,6 +123,48 @@ func TestPreStageActivationEnvelopeSkipsApprovalMode(t *testing.T) {
 	}
 }
 
+func TestPreStageActivationEnvelopeRejectsAuthoringPlaceholderAgentID(t *testing.T) {
+	_, err := assignment.PreStageActivationEnvelope(t.TempDir(), "wg-placeholder", "TASK-placeholder", "TODO(planner):agent-id-for-qa", "plan_checkpoint", assignment.ActivationSourceEntry{})
+	if err == nil {
+		t.Fatal("pre-stage must reject an authoring placeholder identity")
+	}
+	if !strings.Contains(err.Error(), "authoring placeholder") {
+		t.Fatalf("pre-stage error should explain the replacement, got %v", err)
+	}
+}
+
+func TestAutoAdvanceToWorkingRejectsAuthoringPlaceholderAgentID(t *testing.T) {
+	outcome, err := assignment.AutoAdvanceToWorking(assignment.AutoChainInput{
+		Root:        t.TempDir(),
+		StatePath:   filepath.Join(t.TempDir(), "loop-state.json"),
+		JournalPath: filepath.Join(t.TempDir(), "loop-events.jsonl"),
+		AgentID:     "TODO(planner):agent-id-for-qa",
+		PlanPath:    "plan-report.json",
+	})
+	if err != nil {
+		t.Fatalf("invalid identity should be a non-blocking observer skip, got error: %v", err)
+	}
+	if outcome.Chained {
+		t.Fatalf("placeholder identity must not auto-chain: %#v", outcome)
+	}
+	if !strings.Contains(outcome.Reason, "authoring placeholder") {
+		t.Fatalf("skip reason should explain how to replace the placeholder, got %q", outcome.Reason)
+	}
+}
+
+func TestAgentBeginRejectsAuthoringPlaceholderBeforeRecoveryLookup(t *testing.T) {
+	_, _, err := assignment.AgentBegin(t.TempDir(), filepath.Join(t.TempDir(), "loop-state.json"), filepath.Join(t.TempDir(), "loop-events.jsonl"), assignment.AgentBeginRequest{
+		AgentID:  "TODO(planner):agent-id-for-qa",
+		PlanPath: "plan-report.json",
+	})
+	if err == nil {
+		t.Fatal("agent-begin must reject an authoring placeholder before reading runtime state")
+	}
+	if !strings.Contains(err.Error(), "authoring placeholder") {
+		t.Fatalf("agent-begin error should explain how to replace the placeholder, got %v", err)
+	}
+}
+
 // TestAutoAdvanceToWorkingChainsPlanCheckpointAgent is the happy-path test
 // for the PostToolUse(SendMessage) auto-chain: from a registered
 // plan_checkpoint agent in reading state, one AutoAdvanceToWorking call
@@ -297,15 +339,15 @@ func writeAutoChainPlanReport(t *testing.T, dir string, revision int) (string, s
 		"runtime_id": "loop-REQ-002", "expected_runtime_revision": revision,
 		"agent_id": "agent-ver-req-gap", "agent_definition_ref": ".claude/agents/delivery-verifier.md",
 		"task_id": "TASK-012", "bug_id": nil, "team_id": "workgroup-delivery-round-1",
-		"occurred_at": "2026-08-18T00:00:00Z",
+		"occurred_at":   "2026-08-18T00:00:00Z",
 		"assignment_id": "assignment-ver-req-gap", "assignment_revision": 1,
-		"objective":   "Verify the locked TASK-012 requirement gap coverage",
+		"objective":     "Verify the locked TASK-012 requirement gap coverage",
 		"planned_paths": []string{"docs/reports/review/REV-001.json"},
-		"steps":        []any{map[string]any{"description": "verify REQ gap", "target": "docs/reports/review/REV-001.json"}},
+		"steps":         []any{map[string]any{"description": "verify REQ gap", "target": "docs/reports/review/REV-001.json"}},
 		"assertion_checks": []any{map[string]any{
 			"assertion": "all REQ clauses covered", "oracle": "clause map complete",
 		}},
-		"dependencies":  []string{},
+		"dependencies":   []string{},
 		"risks_blockers": []string{},
 	}
 	data, err := json.Marshal(message)

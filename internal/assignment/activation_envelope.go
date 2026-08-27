@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/identity"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
@@ -70,6 +71,9 @@ func PreStageActivationEnvelope(root, workgroupID, taskID, agentID, dispatchMode
 	}
 	if agentID == "" {
 		return "", fmt.Errorf("activation envelope: agent_id is required")
+	}
+	if err := identity.ValidateAgentID(agentID); err != nil {
+		return "", fmt.Errorf("activation envelope: %w", err)
 	}
 	envelope := buildActivationEnvelope(agentID, source)
 	rel := activationEnvelopePath(root, workgroupID, taskID, agentID)

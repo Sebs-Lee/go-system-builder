@@ -248,7 +248,7 @@ func SeedSealedObservationBatch(t *testing.T, root string, state map[string]any)
 		"drained_assignment_ids": []string{"assignment-dv-1", "assignment-qa-1", "assignment-e2e-1"},
 		"drain_policy": "complete_required_claims",
 		"claim_coverage_summary": map[string]any{
-			"total_required": 3, "pass": 2, "finding": 1, "not_applicable": 0, "blocked": 0, "plan_revision": 1,
+			"total_required": 3, "pass": 2, "finding": 1, "not_applicable": 0, "blocked": 0, "blocked_claims": []any{}, "plan_revision": 1,
 		},
 		"cancelled_or_non_gating_assignment_ids": []string{},
 		"unobserved_claim_ids":                   []string{},

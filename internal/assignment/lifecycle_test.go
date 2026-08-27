@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/assignment"
@@ -56,6 +57,16 @@ func TestAdvanceAgentRequiresReadbackApprovalBeforeActivation(t *testing.T) {
 	data, _ := json.Marshal(activated.State)
 	if err := semantic.ValidateRuntimeBytes(root, data); err != nil {
 		t.Fatalf("Agent lifecycle produced invalid runtime: %v", err)
+	}
+}
+
+func TestAdvanceAgentRejectsAuthoringPlaceholderAgentID(t *testing.T) {
+	_, err := assignment.AdvanceAgent(t.TempDir(), "loop-state.json", "loop-events.jsonl", assignment.AgentEventRequest{
+		AgentID: "TODO(planner):agent-id-for-qa",
+		Event:   "work_started",
+	})
+	if err == nil || !strings.Contains(err.Error(), "authoring placeholder") {
+		t.Fatalf("expected authoring-placeholder rejection before message lookup, got %v", err)
 	}
 }
 

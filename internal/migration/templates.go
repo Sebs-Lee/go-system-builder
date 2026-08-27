@@ -104,8 +104,9 @@ func ValidateTemplates(root string) error {
 		{
 			path: "docs/reports/bugs/BUG-template.md",
 			required: []string{
-				"Canonical BUG", "Root Cause Investigation", "impact analysis",
-				"targeted original-responsibility re-check", "complete review round",
+				"Canonical BUG", "InvestigationCase", "RepairContract",
+				"## 2. Root Cause and Causal Model", "## 3. Approved Repair Contract Projection",
+				"Targeted source-Finding verification", "complete S7 round",
 			},
 		},
 		{

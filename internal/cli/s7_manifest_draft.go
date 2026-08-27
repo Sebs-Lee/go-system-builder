@@ -49,6 +49,6 @@ func runS7ManifestDraft(root, assignmentID, out string, stdout io.Writer) int {
 	for _, note := range notes {
 		fmt.Fprintf(stdout, "note: %s\n", note)
 	}
-	fmt.Fprintf(stdout, "next: replace the TODO(planner) markers, then dispatch with `runtime register-workgroup --manifest %s --task-id <TASK> --task <path>`\n", out)
+	fmt.Fprintf(stdout, "next: replace every TODO(planner) marker — especially `agent_id` with the real platform Agent identity — then dispatch with `runtime register-workgroup --manifest %s --task-id <TASK> --task <path>`; registration rejects authoring placeholders\n", out)
 	return 0
 }

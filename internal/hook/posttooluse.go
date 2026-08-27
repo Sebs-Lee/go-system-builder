@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/identity"
 	"github.com/entroforge/go-system-builder/internal/policy"
 )
 
@@ -82,29 +83,47 @@ type AgentRow struct {
 // tool_input.teammate_name → the sole agent waiting on its plan checkpoint.
 func identifySender(input policy.Input, agents []AgentRow) string {
 	if input.AgentID != "" {
-		for _, a := range agents {
-			if a.ID == input.AgentID {
-				return a.ID
+		if identity.ValidateAgentID(input.AgentID) == nil {
+			for _, a := range agents {
+				if identity.ValidateAgentID(a.ID) != nil {
+					continue
+				}
+				if a.ID == input.AgentID {
+					return a.ID
+				}
 			}
 		}
 	}
 	if input.TeammateName != "" {
-		for _, a := range agents {
-			if a.ID == input.TeammateName {
-				return a.ID
+		if identity.ValidateAgentID(input.TeammateName) == nil {
+			for _, a := range agents {
+				if identity.ValidateAgentID(a.ID) != nil {
+					continue
+				}
+				if a.ID == input.TeammateName {
+					return a.ID
+				}
 			}
 		}
 	}
 	if teammate, _ := input.ToolInput["teammate_name"].(string); teammate != "" {
-		for _, a := range agents {
-			if a.ID == teammate {
-				return a.ID
+		if identity.ValidateAgentID(teammate) == nil {
+			for _, a := range agents {
+				if identity.ValidateAgentID(a.ID) != nil {
+					continue
+				}
+				if a.ID == teammate {
+					return a.ID
+				}
 			}
 		}
 	}
 	// Fallback: exactly one agent waiting on its plan checkpoint.
 	var candidates []string
 	for _, a := range agents {
+		if identity.ValidateAgentID(a.ID) != nil {
+			continue
+		}
 		if a.State == "reading" || a.State == "understanding_submitted" {
 			candidates = append(candidates, a.ID)
 		}
