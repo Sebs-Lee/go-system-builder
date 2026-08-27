@@ -158,6 +158,7 @@ type Finding struct {
 	ClaimID         string       `json:"claim_id"`
 	Lens            string       `json:"lens"`
 	Severity        string       `json:"severity"`
+	Blocking        *bool        `json:"blocking,omitempty"`
 	Expected        string       `json:"expected"`
 	AuthorityRefs   []string     `json:"authority_refs"`
 	Observed        string       `json:"observed"`

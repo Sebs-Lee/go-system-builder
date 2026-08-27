@@ -193,7 +193,8 @@ func evidenceEntries(state map[string]any) []map[string]any {
 	return out
 }
 
-// openBlockingBugs returns the IDs of P0 BUG entities in a blocking state.
+// openBlockingBugs returns the IDs of business-blocking BUG entities (P0, or
+// any severity with blocking=true) in a blocking state.
 func openBlockingBugs(state map[string]any) []string {
 	entities, ok := state["entities"].(map[string]any)
 	if !ok {
@@ -256,9 +257,38 @@ func closedBugsMissingTargetedEvidence(state map[string]any, currentRound int) [
 	return missing
 }
 
+// isBlockingBug decides whether a BUG entity blocks the clean round
+// (RC-02, L3-S7 §10.1): blocking is the explicit business judgment, never a
+// severity synonym. A BUG blocks when
+//
+//   - severity is P0 (implicit blocking=true, backward compatible), or
+//   - the blocking field reads true (bool, or the string "true" from
+//     hand-recovered/re-imported state).
+//
+// A non-P0 BUG with blocking=true blocks exactly like a P0; a non-P0 BUG
+// without the marker does not. The stored entity is map[string]any, so the
+// flag is read defensively (bool / string forms) rather than via a typed
+// struct — the same pattern as bug_lifecycle.readBugInt.
 func isBlockingBug(bug map[string]any) bool {
-	severity, _ := bug["severity"].(string)
-	return severity == "P0"
+	if severity, _ := bug["severity"].(string); severity == "P0" {
+		return true
+	}
+	return readBugBool(bug["blocking"])
+}
+
+// readBugBool parses the blocking flag from the decoded runtime entity.
+// Accepts bool (normal JSON decode), and the string "true"/"false" for
+// recovery/import paths that re-serialize flags as text. Anything else is
+// not a blocking claim.
+func readBugBool(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	default:
+		return false
+	}
 }
 
 func hasTargetedReverificationEvidence(state map[string]any, currentRound int, bugID string) bool {

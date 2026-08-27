@@ -38,6 +38,10 @@
       "enum": ["P0", "P1", "P2", "P3"],
       "description": "P0/security/data-destructive findings stop the line: the ObservationBatch seals immediately with explicit capture gaps instead of draining the remaining Claims."
     },
+    "blocking": {
+      "type": "boolean",
+      "description": "Explicit business-blocking marker (RC-02, L3-S7 §10.1). The Reviewer's business judgment that this Finding blocks the business flow regardless of severity; P0 Findings are implicitly blocking=true and may omit the field. A blocking Finding's canonical BUG blocks the clean round until closed with targeted re-verification."
+    },
     "expected": {
       "type": "string",
       "minLength": 1

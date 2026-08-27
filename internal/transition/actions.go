@@ -756,6 +756,14 @@ func actionRecordFindingBatch(state map[string]any, ctx *ActionContext) (ActionR
 			"same_contract_failure_count": 0,
 			"original_finder_agent_ids":   []any{finder},
 		}
+		// RC-02 (L3-S7 §10.1): blocking is a business judgment carried from
+		// the Finding, never a severity synonym. P0 is implicitly blocking;
+		// a non-P0 Finding with blocking=true stays blocking downstream.
+		if findingBlocking, ok := row["blocking"].(bool); ok {
+			newBug["blocking"] = findingBlocking
+		} else if severity == "P0" {
+			newBug["blocking"] = true
+		}
 		bugs = append(bugs, newBug)
 		registered++
 		registeredIDs = append(registeredIDs, nextID)

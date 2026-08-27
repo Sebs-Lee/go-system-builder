@@ -358,6 +358,13 @@ func validate(data []byte, expectedType string, requireClean bool) (Summary, err
 		if risk.Severity != "P0" && risk.Severity != "P1" && risk.Severity != "P2" && risk.Severity != "P3" {
 			issues = append(issues, fmt.Sprintf("%s.severity must be P0, P1, P2, or P3", row))
 		}
+		// RC-02 (S10-10): a P0 risk is business-blocking by definition. It
+		// must be routed through blocking_findings (S7/S8/S9 or pause) and
+		// cannot be parked as a monitored non-blocking risk that silently
+		// rides into S11.
+		if risk.Severity == "P0" {
+			issues = append(issues, fmt.Sprintf("%s.severity is P0; P0 risks are business-blocking and must be routed through blocking_findings with a resolution route (S7/S8/S9 or pause), not parked as a monitored risk entering S11", row))
+		}
 	}
 	for i, debt := range manifest.TechnicalDebt {
 		row := fmt.Sprintf("technical_debt[%d] (%s)", i, debt.ID)

@@ -228,6 +228,85 @@ func TestCleanRoundFailsOnOpenBlockingBug(t *testing.T) {
 	assertCheckFailed(t, result, "no_open_blocking_bugs")
 }
 
+// RC-02 (L3-S7 §10.1): blocking is the explicit business judgment, never a
+// severity synonym. A P1 BUG with blocking=true must block the clean round
+// exactly like a P0 — severity alone cannot launder a business blocker into
+// a clean round.
+func TestCleanRoundFailsOnOpenP1BusinessBlockingBug(t *testing.T) {
+	state := cleanState(cleanStateSpec{
+		round:      1,
+		planStatus: "clean",
+		claims:     map[string]map[string]any{"claim-qa-1": passClaim("ev-r1")},
+		evidence: []map[string]any{
+			reviewEvidence("ev-r1", "review_result", 1, "valid"),
+			reviewEvidence("clean-round-r1", "clean_round", 1, "valid"),
+		},
+		bugs: []map[string]any{{
+			"id": "BUG-002", "severity": "P1", "blocking": true, "state": "accepted",
+		}},
+	})
+	result := verification.EvaluateCleanRound(state)
+	assertCheckFailed(t, result, "no_open_blocking_bugs")
+}
+
+// The blocking flag also survives a string-typed round trip (recovery/import
+// paths re-serialize flags as text).
+func TestCleanRoundFailsOnOpenP2BlockingBugWithStringFlag(t *testing.T) {
+	state := cleanState(cleanStateSpec{
+		round:      1,
+		planStatus: "clean",
+		claims:     map[string]map[string]any{"claim-qa-1": passClaim("ev-r1")},
+		evidence: []map[string]any{
+			reviewEvidence("ev-r1", "review_result", 1, "valid"),
+			reviewEvidence("clean-round-r1", "clean_round", 1, "valid"),
+		},
+		bugs: []map[string]any{{
+			"id": "BUG-003", "severity": "P2", "blocking": "true", "state": "fixing",
+		}},
+	})
+	result := verification.EvaluateCleanRound(state)
+	assertCheckFailed(t, result, "no_open_blocking_bugs")
+}
+
+// A closed P1 blocking BUG owes the same targeted re-verification as a P0.
+func TestCleanRoundFailsWhenClosedP1BlockingBugLacksReverification(t *testing.T) {
+	state := cleanState(cleanStateSpec{
+		round:      1,
+		planStatus: "clean",
+		claims:     map[string]map[string]any{"claim-qa-1": passClaim("ev-r1")},
+		evidence: []map[string]any{
+			reviewEvidence("ev-r1", "review_result", 1, "valid"),
+			reviewEvidence("clean-round-r1", "clean_round", 1, "valid"),
+		},
+		bugs: []map[string]any{{
+			"id": "BUG-002", "severity": "P1", "blocking": true, "state": "closed",
+		}},
+	})
+	result := verification.EvaluateCleanRound(state)
+	assertCheckFailed(t, result, "no_open_blocking_bugs")
+}
+
+// A non-P0 BUG without the blocking marker stays non-blocking: ordinary
+// defects drain through the finding path without stopping the round.
+func TestCleanRoundPassesWithNonBlockingP1Bug(t *testing.T) {
+	state := cleanState(cleanStateSpec{
+		round:      2,
+		planStatus: "clean",
+		claims:     map[string]map[string]any{"claim-qa-1": passClaim("ev-r2")},
+		evidence: []map[string]any{
+			reviewEvidence("ev-r2", "review_result", 2, "valid"),
+			reviewEvidence("clean-round-r2", "clean_round", 2, "valid"),
+		},
+		bugs: []map[string]any{{
+			"id": "BUG-004", "severity": "P1", "blocking": false, "state": "closed",
+		}},
+	})
+	result := verification.EvaluateCleanRound(state)
+	if !result.Passed {
+		t.Fatalf("non-blocking P1 BUG must not stop the clean round: %v", result.Reasons)
+	}
+}
+
 func TestCleanRoundFailsWhenClosedBlockingBugLacksTargetedReverification(t *testing.T) {
 	state := cleanState(cleanStateSpec{
 		round:      1,

@@ -10,6 +10,44 @@ import (
 	"testing"
 )
 
+// validAcceptanceManifest returns a clean, complete acceptance manifest
+// (no audit_area rows — that hard category is release-audit-only).
+func validAcceptanceManifest(t *testing.T) []byte {
+	t.Helper()
+	items := []any{}
+	counterevidence := []any{}
+	for _, item := range []struct{ id, category string }{
+		{"REQ-1", "requirement"},
+		{"CONTRACT-1", "contract"},
+		{"PATH-1", "changed_path"},
+	} {
+		items = append(items, map[string]any{
+			"id": item.id, "category": item.category, "source_refs": []string{"source:" + item.id},
+			"expected": "expected " + item.id, "oracle": "oracle " + item.id, "owner": "S10 reviewer",
+			"evidence_refs": []string{"ev-audit"}, "disposition": "pass",
+		})
+		counterevidence = append(counterevidence, map[string]any{
+			"id": "CE-" + item.id, "inventory_id": item.id, "question": "what disproves " + item.id + "?",
+			"evidence_refs": []string{"ev-check"}, "outcome": "pass",
+		})
+	}
+	data, err := json.Marshal(map[string]any{
+		"schema_version": "1.0.0", "manifest_type": "acceptance", "runtime_id": "loop-1",
+		"baseline_generation": 1, "review_round": 1, "coverage_inventory": items,
+		"counterevidence": counterevidence, "risks": []any{}, "technical_debt": []any{},
+		"blocking_findings": []any{},
+		"metrics": map[string]any{
+			"requirement_coverage": 1, "contract_coverage": 1, "changed_path_coverage": 1,
+			"unknown_count": 0, "unsupported_pass_count": 0,
+			"unowned_risk_count": 0, "untracked_debt_count": 0, "blocking_finding_count": 0,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal acceptance manifest: %v", err)
+	}
+	return data
+}
+
 func TestValidateManifestAcceptsCompleteAcceptanceAudit(t *testing.T) {
 	data := []byte(`{
   "schema_version": "1.0.0",
@@ -320,4 +358,52 @@ func blockedManifest(t *testing.T, manifestType string) []byte {
 		t.Fatalf("marshal blocked manifest: %v", err)
 	}
 	return data
+}
+
+// RC-02 (S10-10): a P0 risk is business-blocking by definition. Parking it
+// as a monitored non-blocking risk lets a known blocker ride into S11; the
+// manifest must refuse it.
+func TestValidateManifestRejectsP0RiskAsNonBlocking(t *testing.T) {
+	data := validAcceptanceManifest(t)
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	decoded["risks"] = []any{map[string]any{
+		"id": "RISK-1", "severity": "P0", "impact": "data loss on rollback",
+		"owner": "Release Auditor", "tracking_ref": "TASK-1", "recovery_point": "pre-deploy snapshot",
+	}}
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	_, err = Validate(encoded, ManifestAcceptance)
+	if err == nil {
+		t.Fatal("a P0 risk must not be parkable as a non-blocking risk entering S11")
+	}
+	for _, want := range []string{"RISK-1", "P0", "blocking_findings"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not identify %q", err, want)
+		}
+	}
+}
+
+// A P1 risk remains a monitorable non-blocking risk with owner/tracking.
+func TestValidateManifestAcceptsP1Risk(t *testing.T) {
+	data := validAcceptanceManifest(t)
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	decoded["risks"] = []any{map[string]any{
+		"id": "RISK-2", "severity": "P1", "impact": "slower cold start",
+		"owner": "Release Auditor", "tracking_ref": "TASK-2", "recovery_point": "n/a",
+	}}
+	encoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if _, err := Validate(encoded, ManifestAcceptance); err != nil {
+		t.Fatalf("a P1 risk is monitorable and must validate: %v", err)
+	}
 }

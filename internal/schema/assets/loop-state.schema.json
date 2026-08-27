@@ -1607,6 +1607,10 @@
         "severity": {
           "enum": ["P0", "P1", "P2", "P3"]
         },
+        "blocking": {
+          "type": "boolean",
+          "description": "Explicit business-blocking marker carried from the Finding into the canonical BUG (RC-02). P0 Findings are implicitly blocking=true."
+        },
         "observation_mode": {
           "enum": ["user_flow", "api_flow", "command_flow", "state_transition", "code_inspection"]
         },
@@ -1712,6 +1716,10 @@
             "P2",
             "P3"
           ]
+        },
+        "blocking": {
+          "type": "boolean",
+          "description": "Explicit business-blocking marker (RC-02, L3-S7 §10.1). P0 BUGs are implicitly blocking=true; a non-P0 BUG with blocking=true blocks the clean round exactly like a P0 — blocking is a business judgment, never a severity synonym."
         },
         "attempt_count": {
           "type": "integer",

@@ -876,6 +876,9 @@ func validateFindings(plan *Plan, assignment *PlanAssignment, result *Result) er
 		if err := validator.ValidateBytes("finding.schema.json", data); err != nil {
 			return fmt.Errorf("finding %s schema: %w", finding.FindingID, err)
 		}
+		if finding.Blocking != nil && finding.Severity == "P0" && !*finding.Blocking {
+			return fmt.Errorf("finding %s is P0 with blocking=false; P0 is implicitly business-blocking (L3-S7 §10.1) — either drop the field or fix the severity", finding.FindingID)
+		}
 		if !failByClaim[finding.ClaimID] {
 			return fmt.Errorf("finding %s references claim %s which has no fail conclusion in this result", finding.FindingID, finding.ClaimID)
 		}
@@ -1102,7 +1105,7 @@ func applyFindings(
 				return fmt.Errorf("finding %s already exists; Findings are immutable — add a FindingSupplement instead of reusing the id", artifact.finding.FindingID)
 			}
 		}
-		findings = append(findings, map[string]any{
+		newRow := map[string]any{
 			"finding_id":       artifact.finding.FindingID,
 			"path":             artifact.rel,
 			"sha256":           artifact.sha,
@@ -1114,7 +1117,18 @@ func applyFindings(
 			"original_finder":  result.ProducerAgentID,
 			"review_round":     round,
 			"created_at":       occurredAt.UTC().Format(time.RFC3339Nano),
-		})
+		}
+		// RC-02: carry the explicit business-blocking marker into the entity
+		// row so the clean-round evaluator sees the same blocking judgment as
+		// the Reviewer. P0 rows persist the implicit blocking=true; a non-P0
+		// blocking Finding persists blocking=true; an ordinary non-blocking
+		// Finding carries no field (backward-compatible shape).
+		if artifact.finding.Blocking != nil {
+			newRow["blocking"] = *artifact.finding.Blocking
+		} else if artifact.finding.Severity == "P0" {
+			newRow["blocking"] = true
+		}
+		findings = append(findings, newRow)
 		if err := appendEvidence(state, map[string]any{
 			"id":                  artifact.finding.FindingID,
 			"kind":                "finding",

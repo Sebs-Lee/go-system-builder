@@ -627,6 +627,62 @@ func TestSubmitResultRejectsClaimSetMismatch(t *testing.T) {
 	}
 }
 
+// RC-02 (L3-S7 §10.1): blocking is a business judgment carried with the
+// Finding. A P0 Finding is implicitly blocking=true and must not claim
+// blocking=false; a non-P0 Finding may carry blocking=true and keeps the
+// marker through the entity row.
+func TestSubmitResultRejectsP0FindingWithBlockingFalse(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
+	plan, _, _ := LoadPlan(root, snap.State)
+
+	p0 := codeInspectionFinding("finding-p0-1", "claim-qa-1")
+	p0.Severity = "P0"
+	no := false
+	p0.Blocking = &no
+	p0.Encounter.CaptureGaps = []string{"stopped before the destructive path"}
+	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
+		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "pass"},
+		[]Finding{p0})
+	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "blocking=false") {
+		t.Fatalf("P0 with blocking=false must be rejected, got %v", err)
+	}
+}
+
+func TestSubmitResultCarriesBlockingMarkerIntoFindingEntity(t *testing.T) {
+	root := t.TempDir()
+	statePath, journalPath := writeState(t, root, baseVerificationState())
+	snap := registerFixturePlan(t, root, statePath, journalPath)
+	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
+	plan, _, _ := LoadPlan(root, snap.State)
+
+	yes := true
+	finding := codeInspectionFinding("finding-qa-1", "claim-qa-1")
+	finding.Blocking = &yes // P1, business-blocking
+	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
+		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "pass"},
+		[]Finding{finding})
+	snap, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
+		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
+	})
+	if err != nil {
+		t.Fatalf("SubmitResult: %v", err)
+	}
+	rows := snap.State["entities"].(map[string]any)["findings"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("finding rows = %d, want 1", len(rows))
+	}
+	row := rows[0].(map[string]any)
+	if row["blocking"] != true {
+		t.Fatalf("blocking marker not persisted on the finding entity row: %v", row)
+	}
+}
+
 func TestSubmitResultRejectsBuilderProducer(t *testing.T) {
 	root := t.TempDir()
 	state := baseVerificationState()

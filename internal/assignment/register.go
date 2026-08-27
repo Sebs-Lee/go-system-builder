@@ -443,6 +443,7 @@ type RegisterBugRequest struct {
 	ExpectedRevision     int
 	BugID                string   // must match ^BUG-[0-9]{3,}$
 	Severity             string   // P0..P3
+	Blocking             *bool    // explicit business-blocking marker (RC-02); nil = P0 implicit true, non-P0 false
 	FindingSource        string   // path to the finding source document
 	EvidenceRefs         []string // paths to evidence files
 	RootCause            string   // free text
@@ -585,6 +586,15 @@ func RegisterBug(root, statePath, journalPath string, req RegisterBugRequest) (l
 				"same_contract_failure_count": 0,
 				"original_finder_agent_ids":   []any{req.ReporterAgentID},
 			}
+			// RC-02 (L3-S7 §10.1): persist the explicit business-blocking
+			// marker. P0 is implicitly blocking=true; a non-P0 BUG may still
+			// be business-blocking via blocking=true. Blocking is a business
+			// judgment, never a severity synonym.
+			blocking := req.Severity == "P0"
+			if req.Blocking != nil {
+				blocking = *req.Blocking
+			}
+			newBug["blocking"] = blocking
 			entities["bugs"] = append(bugs, newBug)
 			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			return nil
