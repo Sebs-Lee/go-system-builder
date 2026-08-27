@@ -66,6 +66,16 @@ const (
 	// validated PlanReport. It is deliberately separate from the generic L4
 	// first-write rule so the recovery packet names the repair assignment.
 	RuleRepairAssignmentScope = "repair_assignment_scope"
+	// RulePhaseProductWrite closes the RC-04 phase bare windows (S8-1,
+	// S9-5, S10-4): every post-implementation lifecycle — verification,
+	// bug_resolution (all sub-phases including targeted_reverification),
+	// acceptance, and release_audit — freezes the product surface exactly
+	// like the S7 verification rule. The only product-write exception is the
+	// S9 `fixing` phase, which stays governed by repairAssignmentScopeDecision
+	// and its RepairAllowedWritePaths. The rule is evaluated on the lifecycle
+	// facts alone (no Runtime.Agent dependency), so Investigators, targeted
+	// reverifiers and S10 auditors are all covered by one hard deny.
+	RulePhaseProductWrite = "phase_product_write"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -85,6 +95,7 @@ type AgentContext struct {
 	PlanReportedRef string `json:"plan_reported_ref,omitempty"`
 	// S9 assignment facts are loaded from the immutable RepairPlan and the
 	// validated PlanReport refs. They are never accepted from ToolInput.
+	AssignmentID            string   `json:"assignment_id,omitempty"`
 	RepairAssignmentID      string   `json:"repair_assignment_id,omitempty"`
 	RepairAllowedWritePaths []string `json:"repair_allowed_write_paths,omitempty"`
 	RepairPlanReportRef     string   `json:"repair_plan_report_ref,omitempty"`
@@ -154,6 +165,13 @@ type RuntimeContext struct {
 	// S9 repair pointer projection used by the phase/write barriers. The
 	// policy engine only needs the lifecycle and immutable plan identity; the
 	// hook context loader resolves the per-agent Assignment scope.
+	// AssignmentID / PlanReportedRef carry the dispatched-Assignment facts
+	// (assignment_id keyed, RC-04 S7-3): the first-write barrier reads these
+	// instead of requiring Runtime.Agent, so every PreToolUse evaluation
+	// path sees the barrier even when no AgentContext was resolved.
+	AssignmentID     string `json:"assignment_id,omitempty"`
+	PlanReportedRef  string `json:"plan_reported_ref,omitempty"`
+	DispatchMode     string `json:"dispatch_mode,omitempty"`
 	RepairStatus     string `json:"repair_status,omitempty"`
 	RepairSessionID  string `json:"repair_session_id,omitempty"`
 	RepairPlanRef    string `json:"repair_plan_ref,omitempty"`
@@ -348,6 +366,12 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 		return decision, nil
 	}
 	if decision, blocked := repairPreExecutionWriteDecision(input); blocked {
+		return decision, nil
+	}
+	// RC-04: the phase-level product-write freeze runs after the repair
+	// rules so bug_resolution.planning/reproducing keeps its more specific
+	// repair_write_before_execution rule id (same deny, named recovery).
+	if decision, blocked := phaseProductWriteDecision(input); blocked {
 		return decision, nil
 	}
 	if decision, blocked := assignmentWriteBeforePlanDecision(input); blocked {
@@ -548,10 +572,20 @@ func repairPathMatches(input Input, rawPath, rule string) bool {
 }
 
 // assignmentWriteBeforePlanDecision is the L4 first-write barrier: a
-// dispatched Worker in a pre-plan state (spawned/reading, i.e. before its
-// PLAN_REPORT checkpoint) may not mutate the product surface yet. The rule
-// fires only when the Hook payload identifies a specific Agent — the main
-// session (no Agent context) is out of scope.
+// dispatched Worker in a pre-plan state (spawned/queued/reading, i.e. before
+// its PLAN_REPORT checkpoint) may not mutate the product surface yet.
+//
+// RC-04 (S7-3) close-out: the barrier is now evaluated on the dispatched
+// Assignment identity carried in the lifecycle facts (AssignmentID on the
+// runtime projection, resolved from the agent row / workgroup manifest) and
+// no longer depends on Runtime.Agent being loaded. The old gate
+// (`Runtime.Agent == nil → stand down`) fell asleep on every PreToolUse path
+// that evaluated the rule without hookctx resolution — the controller safety
+// path and any caller that supplies lifecycle facts without an AgentContext —
+// letting a pre-plan Worker write product code unimpeded. The barrier now
+// fires whenever a dispatched-but-pre-plan Assignment (or an agent row still
+// in spawned/queued/reading with a dispatched Assignment) targets the product
+// surface; the main session (no Agent, no Assignment) is out of scope.
 //
 // Exempt surfaces (the reviewer_product_write allow list, aligned with
 // L3-S7 §8 / L4 §10.4):
@@ -564,15 +598,29 @@ func repairPathMatches(input Input, rawPath, rule string) bool {
 // Any other product-surface write while the plan checkpoint is still
 // missing is blocked so the Worker must send PLAN_REPORT first.
 func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
-	if input.Runtime.Agent == nil {
-		return Decision{}, false
-	}
-	agent := input.Runtime.Agent
-	if agent.State != "spawned" && agent.State != "reading" {
-		return Decision{}, false
-	}
-	if agent.PlanReportedRef != "" || agent.DispatchMode == "one_shot" {
-		return Decision{}, false
+	// Dispatched-Assignment fact first (assignment_id keyed barrier): an
+	// assignment-bound input is pre-plan until the barrier facts say
+	// otherwise, regardless of whether an AgentContext was loaded.
+	if input.Runtime.AssignmentID != "" {
+		// The assignment's plan checkpoint is recorded (or the mode is
+		// one_shot: the final message IS the result) — barrier stands down.
+		if input.Runtime.PlanReportedRef != "" || input.Runtime.DispatchMode == "one_shot" {
+			return Decision{}, false
+		}
+	} else {
+		// Fallback: the dispatched agent-row fact. A dispatched Worker's row
+		// is in spawned/queued/reading until the PLAN_REPORT lands. The main
+		// session (no Agent context) is out of scope.
+		agent := input.Runtime.Agent
+		if agent == nil {
+			return Decision{}, false
+		}
+		if agent.State != "spawned" && agent.State != "queued" && agent.State != "reading" {
+			return Decision{}, false
+		}
+		if agent.PlanReportedRef != "" || agent.DispatchMode == "one_shot" {
+			return Decision{}, false
+		}
 	}
 	if input.ToolName == "Bash" {
 		command, _ := input.ToolInput["command"].(string)
@@ -596,10 +644,16 @@ func assignmentWriteBeforePlanDecision(input Input) (Decision, bool) {
 
 func assignmentWriteBeforePlanBlock(input Input) (Decision, bool) {
 	agent := input.Runtime.Agent
+	subject := "dispatched assignment"
+	if input.Runtime.AssignmentID != "" {
+		subject = "assignment " + input.Runtime.AssignmentID
+	} else if agent != nil {
+		subject = fmt.Sprintf("agent %s (%s)", agent.ID, agent.State)
+	}
 	return Decision{
 		Decision: "deny",
 		RuleID:   RuleAssignmentWriteBeforePlan,
-		Reason:   fmt.Sprintf("Agent %s is %s with no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", agent.ID, agent.State),
+		Reason:   fmt.Sprintf("%s has no recorded plan checkpoint; send the PLAN_REPORT (message_type plan_report) first — Main stays silent when the plan is aligned (L4 §7.4)", subject),
 		Recovery: []string{
 			"send the PLAN_REPORT via SendMessage with message_type=plan_report — the PostToolUse(SendMessage) observer records the plan checkpoint (plan_reported_ref) automatically",
 			"then continue — no approval wait in plan_checkpoint mode",
@@ -698,6 +752,118 @@ func reviewerProductWriteBlock(input Input, rawPath string) Decision {
 			"write review evidence and result drafts under .claude/ or docs/reports/",
 			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
 			"if the product implementation must change, submit a ReviewResult with verdict=finding instead (L3-S7: Reviewers never repair)",
+		},
+		Retry: RetryAfterRecoveryValidation,
+	}
+}
+
+// phaseProductWriteDecision closes the RC-04 phase bare windows (S8-1,
+// S9-5, S10-4). The S7 verification freeze previously covered only
+// state=="verification"; every later lifecycle — bug_resolution
+// investigation/bug_report_review/repair_readback/planning/reproducing/
+// targeted_reverification/ready_for_full_review, acceptance, and
+// release_audit — was writable by Investigator/Repairer/reverification/
+// audit agents. This rule applies the same frozen-baseline verdict to all
+// of them, evaluated on lifecycle facts only (no Runtime.Agent dependency),
+// so any agent or the main session sees the same hard deny.
+//
+// The one product-write exception is S9 bug_resolution.fixing: an executing
+// repair Worker may write inside its immutable Assignment scope. The
+// repairPreExecutionWriteDecision / repairAssignmentScopeDecision rules own
+// that phase, so this rule stands down there instead of double-deny.
+//
+// Allow surfaces mirror reviewerProductWriteDecision: the control plane
+// (.claude/), the report projections (docs/reports/ + the S10 evidence
+// baselines docs/reports/acceptance/ and docs/release_audits/), and the
+// ReviewPlan's verification artifact workspace.
+func phaseProductWriteDecision(input Input) (Decision, bool) {
+	if input.Event != "PreToolUse" || !phaseProductWriteFrozen(input) {
+		return Decision{}, false
+	}
+	paths := []string{}
+	mutating := false
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		paths, mutating = bashMutationPaths(command)
+		if !mutating {
+			return Decision{}, false
+		}
+	} else {
+		if !isSideEffectTool(input.ToolName) {
+			return Decision{}, false
+		}
+		rawPath := toolPath(input.ToolInput)
+		if rawPath == "" {
+			return Decision{}, false
+		}
+		paths = []string{rawPath}
+	}
+	for _, path := range paths {
+		if !phaseWritePathAllowed(input, path) {
+			return phaseProductWriteBlock(input, path), true
+		}
+	}
+	if len(paths) > 0 {
+		return Decision{}, false
+	}
+	// A write-capable Bash command whose target cannot be identified is
+	// fail-closed while the product baseline is frozen; a dynamic script can
+	// otherwise mutate the locked implementation while appearing pathless to
+	// the hook.
+	return phaseProductWriteBlock(input, "<dynamic Bash mutation>"), true
+}
+
+// phaseProductWriteFrozen reports whether the current lifecycle freezes the
+// product surface (RC-04 contract item 1): verification (already handled by
+// reviewerProductWriteDecision and excluded to keep its rule id stable) and
+// every non-fixing bug_resolution phase, acceptance, and release_audit.
+func phaseProductWriteFrozen(input Input) bool {
+	switch input.Runtime.CurrentState {
+	case "bug_resolution":
+		// S9 fixing is the only product-write exception; the repair-scope
+		// rules own its write surface.
+		return input.Runtime.CurrentPhase != "fixing"
+	case "acceptance", "release_audit":
+		return true
+	default:
+		return false
+	}
+}
+
+// phaseWritePathAllowed extends the reviewer allow list with the two S10
+// evidence baselines (docs/reports/acceptance/ for ACC artifacts and
+// docs/release_audits/ for release-audit reports — docs/rules/change-control
+// §2) so audit work stays inside the control/report surfaces.
+func phaseWritePathAllowed(input Input, rawPath string) bool {
+	rel := reviewerRelativePath(input, rawPath)
+	for _, prefix := range []string{".claude/evidence/", "docs/reports/", "docs/release_audits/"} {
+		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
+			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
+		}
+	}
+	if workspace := strings.TrimSuffix(filepath.ToSlash(input.Runtime.VerificationWorkspace), "/"); workspace != "" {
+		if rel == workspace || strings.HasPrefix(rel, workspace+"/") {
+			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
+		}
+	}
+	return false
+}
+
+func phaseProductWriteBlock(input Input, rawPath string) Decision {
+	rel := reviewerRelativePath(input, rawPath)
+	cursor := input.Runtime.CurrentState
+	if input.Runtime.CurrentPhase != "" {
+		cursor += "." + input.Runtime.CurrentPhase
+	}
+	return Decision{
+		Decision:     "deny",
+		RuleID:       RulePhaseProductWrite,
+		Reason:       fmt.Sprintf("%s freezes the product surface; %s is outside the allowed write surfaces (.claude/, docs/reports/, docs/release_audits/, and the ReviewPlan verification_artifact_workspace)", cursor, rel),
+		AffectedPath: rel,
+		Recovery: []string{
+			"write investigation, repair and audit artifacts under .claude/ or docs/reports/ (release-audit reports also allow docs/release_audits/)",
+			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
+			"product implementation changes are legal only in bug_resolution.fixing through BeginRepairExecution with an approved RepairContract and a dispatched repair Assignment (S9); verification findings must go through a ReviewResult with verdict=finding instead",
 		},
 		Retry: RetryAfterRecoveryValidation,
 	}

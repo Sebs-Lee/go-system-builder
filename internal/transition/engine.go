@@ -1122,11 +1122,13 @@ func invalidateAllDownstream(state map[string]any, source string) {
 }
 
 // invalidateAllDownstreamAction is the action-registry entry point; same
-// semantics as invalidateAllDownstream.
-func invalidateAllDownstreamAction(state map[string]any, source string) {
+// semantics as invalidateAllDownstream. It returns the number of evidence
+// entries newly invalidated (RC-05: callers that accept an explicit "all"
+// sweep must be able to report what actually changed).
+func invalidateAllDownstreamAction(state map[string]any, source string) int {
 	evidenceSlice, ok := state["evidence"].([]any)
 	if !ok {
-		return
+		return 0
 	}
 	var impacts []impact.EvidenceImpact
 	for _, raw := range evidenceSlice {
@@ -1146,7 +1148,8 @@ func invalidateAllDownstreamAction(state map[string]any, source string) {
 			})
 		}
 	}
-	impact.InvalidateEvidence(state, impacts, source)
+	invalidated := impact.InvalidateEvidence(state, impacts, source)
+	return len(invalidated)
 }
 
 func documentFingerprints(state map[string]any) []any {

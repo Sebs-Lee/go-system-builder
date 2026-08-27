@@ -548,6 +548,128 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 	}})
 }
 
+// bindTargetedReverificationIdentities is the RC-01 identity-binding gate
+// (L1 D6 three-way convergence). It binds the reverification to the dispatched
+// repair chain before the S9 handoff can release a bug for full review:
+//
+//  1. original_assignment_id must be the actual repair assignment that owns
+//     the bug's unit — either the plan assignment (repair-assignment-...) or
+//     its dispatched manifest alias (assignment-s9-...), proven by holding
+//     an entry in assignment_owners;
+//  2. performing_assignment_id must be a dispatched verifier identity from
+//     the active S9 verifier pool (a registered agent in state) and must not
+//     be owned by the repair owner in assignment_owners — an assignment not
+//     known to the session (or an alias of the owner's own assignment) is a
+//     fabricated verifier and is rejected.
+func bindTargetedReverificationIdentities(p map[string]any, plan RepairPlan, value TargetedReverification) error {
+	owners := stringMapField(p["assignment_owners"])
+	if len(owners) == 0 {
+		return errors.New("targeted reverification requires a dispatched repair assignment; assignment_owners is empty so no repair owner exists to verify against")
+	}
+	if !targetedAssignmentDispatched(p, plan, value.OriginalAssignmentID, owners) {
+		return fmt.Errorf("targeted reverification original_assignment_id %q is not the dispatched repair assignment for this bug; use the repair assignment recorded in assignment_owners (%s) or its manifest alias", value.OriginalAssignmentID, strings.Join(ownedAssignments(owners), ", "))
+	}
+	if strings.TrimSpace(value.PerformingAssignmentID) == "" {
+		return errors.New("targeted reverification performing_assignment_id is required")
+	}
+	if owner, isOwned := ownedAssignmentAgents(owners)[value.OriginalAssignmentID]; isOwned && dispatchedVerifierAgentID(value.PerformingAssignmentID, owners) == owner {
+		return fmt.Errorf("targeted reverification is not independent: performing_assignment_id %q resolves to the repair owner %s of %q", value.PerformingAssignmentID, owner, value.OriginalAssignmentID)
+	}
+	if !targetedAssignmentDispatched(p, plan, value.PerformingAssignmentID, owners) {
+		return fmt.Errorf("targeted reverification performing_assignment_id %q is not a dispatched verifier identity in the active S9 assignment pool; the reverification must be performed by a dispatched assignment, not a fabricated ID", value.PerformingAssignmentID)
+	}
+	return nil
+}
+
+// targetedAssignmentDispatched reports whether an assignment identity belongs
+// to the dispatched repair chain: it is either a repair assignment of the
+// current RepairPlan, its registered alias in assignment_owners, or the
+// manifest-alias spelling of such an assignment.
+func targetedAssignmentDispatched(p map[string]any, plan RepairPlan, assignmentID string, owners map[string]string) bool {
+	if assignmentID == "" {
+		return false
+	}
+	for _, assignment := range plan.Assignments {
+		if assignment.AssignmentID == assignmentID || manifestAssignmentAlias(assignment.AssignmentID) == assignmentID {
+			return true
+		}
+	}
+	if _, ok := owners[assignmentID]; ok {
+		return true
+	}
+	for assignment := range owners {
+		if manifestAssignmentAlias(assignment) == assignmentID {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchedVerifierAgentID resolves the performing assignment to the agent
+// that owns it in assignment_owners. Only ownership recorded by the runtime
+// (PlanReport submission or registration binding) counts; an unowned
+// assignment has no agent identity and cannot collide with the owner.
+func dispatchedVerifierAgentID(assignmentID string, owners map[string]string) string {
+	if agent, ok := owners[assignmentID]; ok {
+		return agent
+	}
+	for assignment, agent := range owners {
+		if manifestAssignmentAlias(assignment) == assignmentID {
+			return agent
+		}
+	}
+	return ""
+}
+
+// ownedAssignments lists the assignment IDs recorded in assignment_owners.
+func ownedAssignments(owners map[string]string) []string {
+	result := make([]string, 0, len(owners))
+	for assignment := range owners {
+		result = append(result, assignment)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// ownedAssignmentAgents maps every recorded assignment alias to its owner
+// agent so identity resolution works in both spellings.
+func ownedAssignmentAgents(owners map[string]string) map[string]string {
+	result := make(map[string]string, len(owners))
+	for assignment, agent := range owners {
+		result[assignment] = agent
+		result[manifestAssignmentAlias(assignment)] = agent
+	}
+	return result
+}
+
+// manifestAssignmentAlias mirrors the CLI dispatch identity: dispatching a
+// repair assignment registers the workgroup under
+// assignment-s9-<unit-slug>. Both spellings name the same work item.
+func manifestAssignmentAlias(assignmentID string) string {
+	return "assignment-s9-" + dispatchSlugCompat(strings.TrimPrefix(assignmentID, "repair-assignment-"))
+}
+
+// dispatchSlugCompat reproduces the CLI dispatch slug (lowercase, non
+// alphanumerics collapsed to one dash) so the repair package does not import
+// the CLI.
+func dispatchSlugCompat(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 func CommitTargetedReverification(root, statePath, journalPath string, req CommitTargetedRequest) (runtimepkg.Snapshot, error) {
 	current, writer, err := readRepairRuntime(root, statePath, journalPath)
 	if err != nil {
@@ -578,6 +700,14 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	if value.RuntimeID != currentImpact.RuntimeID || value.BaselineGeneration != currentImpact.BaselineGeneration {
 		return runtimepkg.Snapshot{}, fmt.Errorf("targeted reverification runtime/baseline does not match current ChangeImpact")
 	}
+	planRef, err := pointerArtifact(p, "plan_ref", "plan_sha256", "current RepairPlan")
+	if err != nil {
+		return runtimepkg.Snapshot{}, err
+	}
+	plan, err := ValidateRepairPlan(root, planRef)
+	if err != nil {
+		return runtimepkg.Snapshot{}, fmt.Errorf("current RepairPlan is invalid: %w", err)
+	}
 	contractRef := ArtifactRef{Path: stringField(p["contract_ref"]), SHA256: stringField(p["contract_sha256"])}
 	contractBytes, err := readArtifact(root, contractRef, "repair-contract.schema.json")
 	if err != nil {
@@ -590,12 +720,36 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	if err := exactContractAssertionCoverage(contractDocument, value.AssertionResults); err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
+	// RC-01 (S9-1): identity-bound independence. The string-inequality check
+	// inside ValidateTargetedReverification is not enough — a Builder can fill
+	// any fabricated "independent" verifier ID. Here the two identities are
+	// bound to the dispatched repair chain: the original must be the actual
+	// repair assignment for this bug (the plan assignment recorded by the
+	// assignment_owners map, or its manifest alias), and the performing
+	// verifier must be a dispatched identity that is not owned by the repair
+	// owner.
 	refs := appendUnique(stringSliceFromAny(p["targeted_reverification_refs"]), req.Reverification.Path)
 	targetedArtifacts := appendArtifactRefFromPointer(p["targeted_reverification_artifacts"], req.Reverification)
 	at := occurred(req.OccurredAt)
-	actor := req.Actor
+	// RC-01 (EH-11): the actor identity is part of the gate evidence. A
+	// silent default would let a machine identity self-endorse the
+	// reverification, so an omitted --actor is a hard rejection. The check
+	// intentionally precedes the identity binding so the actor omission is
+	// the first, most actionable failure.
+	actor := strings.TrimSpace(req.Actor)
 	if actor == "" {
-		actor = "qa"
+		return runtimepkg.Snapshot{}, errors.New("targeted reverification commit requires an explicit actor identity: pass --actor <agent-id> (the independent verifier), not an implicit default")
+	}
+	// RC-01 (S9-1): identity-bound independence. The string-inequality check
+	// inside ValidateTargetedReverification is not enough — a Builder can fill
+	// any fabricated "independent" verifier ID. Here the two identities are
+	// bound to the dispatched repair chain: the original must be the actual
+	// repair assignment for this bug (the plan assignment recorded by the
+	// assignment_owners map, or its manifest alias), and the performing
+	// verifier must be a dispatched identity that is not owned by the repair
+	// owner.
+	if err := bindTargetedReverificationIdentities(p, plan, value); err != nil {
+		return runtimepkg.Snapshot{}, err
 	}
 	if value.Result != "pass" || value.ScopeCompliance != "pass" {
 		route := value.FailureClass

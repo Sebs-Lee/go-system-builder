@@ -249,16 +249,93 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef}); err != nil {
 		t.Fatal(err)
 	}
-	_, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-1", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	// RC-01 fixture strengthening: the performing verifier must be a
+	// dispatched identity. Bind a second owner into the runtime
+	// assignment_owners map so assignment-s9-qa-verifier resolves to an
+	// independent agent (qa) distinct from the repair owner builder-1.
+	// This is the minimal state-level dispatch without inventing a second
+	// repair unit — the verifier pool is not a repair assignment.
+	{
+		raw, readErr := os.ReadFile(statePath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var cur map[string]any
+		if err := json.Unmarshal(raw, &cur); err != nil {
+			t.Fatal(err)
+		}
+		repairMap, _ := cur["review"].(map[string]any)["repair"].(map[string]any)
+		if repairMap == nil {
+			t.Fatalf("repair pointer missing: %#v", cur["review"])
+		}
+		owners, _ := repairMap["assignment_owners"].(map[string]any)
+		if owners == nil {
+			owners = map[string]any{}
+			repairMap["assignment_owners"] = owners
+		}
+		owners["assignment-s9-qa-verifier"] = "qa"
+		next, err := json.MarshalIndent(cur, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(statePath, next, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// RC-01: the reverification identities must be the dispatched repair
+	// chain — the original is the actual repair assignment (its manifest
+	// alias assignment-s9-unit-1), the performing verifier is a dispatched
+	// identity that is not owned by the repair owner builder-1.
+	_, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-1", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier", ContinuityReason: "independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, unrelatedReverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-unrelated", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-independent", ContinuityReason: "unrelated candidate", ImpactID: "impact-unrelated", AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	_, unrelatedReverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-unrelated", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-independent", ContinuityReason: "unrelated candidate", ImpactID: "impact-unrelated", AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: unrelatedReverifyRef}); err == nil {
 		t.Fatal("CommitTargetedReverification must reject a reverification for a non-current ChangeImpact")
+	}
+	// RC-01 negative: the original implementer (builder-1, owner of
+	// repair-assignment-unit-1) cannot self-verify by filling a fabricated
+	// independent verifier ID — the performing identity must resolve to a
+	// dispatched assignment that is not owned by the repair owner.
+	_, fakeVerifierReverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-fake-verifier", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-fake-verifier", ContinuityReason: "fabricated independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: fakeVerifierReverifyRef}); err == nil || !strings.Contains(err.Error(), "not a dispatched verifier identity") {
+		t.Fatalf("CommitTargetedReverification must reject a fabricated performing verifier ID, got %v", err)
+	}
+	// RC-01 negative: the repair owner's own manifest alias is not an
+	// independent verifier either — hand-editing the persisted artifact to
+	// present the same assignment under two spellings must be rejected at
+	// validation time (the artifact pattern forbids the repair-assignment-
+	// spelling, so the alias collision is the realistic owner-disguise form).
+	ownerDisguise, _, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-owner-disguise", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-unit-1x", ContinuityReason: "owner alias self-verification", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disguiseData, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ownerDisguiseRefPath(ownerDisguise))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disguised := strings.Replace(string(disguiseData), `"performing_assignment_id": "assignment-s9-unit-1x"`, `"performing_assignment_id": "assignment-s9-unit-1"`, 1)
+	if disguised == string(disguiseData) {
+		t.Fatalf("owner-disguise fixture did not apply: %s", disguiseData)
+	}
+	disguisePath := filepath.Join(root, filepath.FromSlash(ownerDisguiseRefPath(ownerDisguise)))
+	if err := os.WriteFile(disguisePath, []byte(disguised), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repair.ValidateTargetedReverification(root, repair.ArtifactRef{Path: ownerDisguiseRefPath(ownerDisguise), SHA256: fileHash([]byte(disguised))}); err == nil || !strings.Contains(err.Error(), "not independent") {
+		t.Fatalf("ValidateTargetedReverification must reject the owner alias as performing verifier, got %v", err)
+	}
+	// RC-01 negative: an omitted actor must be a hard rejection — the silent
+	// qa default would let an implicit machine identity endorse the gate.
+	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: ""}, Reverification: fakeVerifierReverifyRef}); err == nil || !strings.Contains(err.Error(), "requires an explicit actor") {
+		t.Fatalf("CommitTargetedReverification must reject an omitted actor, got %v", err)
 	}
 	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: reverifyRef}); err != nil {
 		t.Fatal(err)
@@ -340,6 +417,10 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if !strings.Contains(nextAction, "runtime review-plan revise") {
 		t.Fatalf("TR-012 next_action must explain how to refine the staged seed before dispatch, got %q", nextAction)
 	}
+}
+
+func ownerDisguiseRefPath(value repair.TargetedReverification) string {
+	return ".claude/review/repair/reverification/" + value.ReverificationID + ".json"
 }
 
 func writeRuntimeContract(t *testing.T, root string) (repair.ContractRef, string) {

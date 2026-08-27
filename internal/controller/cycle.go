@@ -879,6 +879,12 @@ func buildSafetyInput(req ControlRequest, snapshot runtime.Snapshot, affected []
 		CurrentState: stateName,
 		CurrentPhase: stringValue(phaseName),
 		Agent:        req.Runtime.Agent,
+		// RC-04 (S7-3): preserve the dispatched-Assignment facts so the
+		// L4 first-write barrier stays awake on the controller safety path,
+		// which evaluates policy without a hookctx-resolved AgentContext.
+		AssignmentID:    req.Runtime.AssignmentID,
+		PlanReportedRef: req.Runtime.PlanReportedRef,
+		DispatchMode:    req.Runtime.DispatchMode,
 	}
 	if bound, ok := snapshot.State["bound_req"].(map[string]any); ok {
 		rt.BoundREQID, _ = bound["id"].(string)

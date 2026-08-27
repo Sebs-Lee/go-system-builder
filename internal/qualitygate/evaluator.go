@@ -13,6 +13,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
@@ -375,10 +376,13 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 		// current-round Finding set with the drain policy respected.
 		applyObservationBatchGate(input, &result)
 	}
-	if result.GateID == "GATE-ACCEPTANCE-COMPLETE" || result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+	if result.GateID == "GATE-ACCEPTANCE-COMPLETE" || result.GateID == "GATE-RELEASE-AUDIT-APPROVED" || result.GateID == "GATE-RELEASE-AUDIT-BLOCKED" {
 		// L3-S10 §1.2: a generic PASS/APPROVED envelope is not enough. The
 		// finite coverage inventory and counterevidence ledger are the
-		// machine-consumed anti-shortcut contract.
+		// machine-consumed anti-shortcut contract. RC-05 (S10-8): the blocked
+		// route re-checks too — a structurally incomplete ledger cannot enter
+		// TR-018 just because its conclusion says "blocked"; the blocked
+		// manifest itself must still be a complete, evidence-linked record.
 		applyS10ManifestGate(input, &result)
 	}
 	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, documents, result.EvidenceRefs)
@@ -387,7 +391,7 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 
 func applyS10ManifestGate(input Input, result *Evaluation) {
 	wanted := map[string]string{"acceptance": "acceptance_record"}
-	if result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+	if result.GateID == "GATE-RELEASE-AUDIT-APPROVED" || result.GateID == "GATE-RELEASE-AUDIT-BLOCKED" {
 		wanted["release_audit"] = "release_audit_record"
 	}
 	for manifestType, evidenceKind := range wanted {
@@ -430,7 +434,7 @@ func applyS10ManifestGate(input Input, result *Evaluation) {
 			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:sha256_mismatch; next: do not edit in place, regenerate the manifest and register a new fingerprinted envelope", manifestType, evidenceID))
 			continue
 		}
-		summary, err := acceptance.Validate(manifestData, manifestType)
+		summary, err := acceptance.ValidateWithBaseline(manifestData, manifestType, s10ExternalBaseline(input))
 		if err != nil {
 			result.Status = StatusUnknown
 			result.ErrorCode = ErrorGateUnknown
@@ -454,6 +458,91 @@ func applyS10ManifestGate(input Input, result *Evaluation) {
 	if len(result.Conflicts) == 0 && len(result.Missing) > 0 {
 		result.Status = StatusNotReady
 	}
+}
+
+// s10ExternalBaseline builds the RC-05 external denominator the S10 manifest
+// must reconcile against. It unions three sources the manifest author does
+// not control:
+//
+//  1. the immutable current-generation completion artifacts, re-derived
+//     through review.BuildCoverageInventoryForRoot when the evaluator has a
+//     repository root (the same exact-set surface S7 froze);
+//  2. change_impact evidence artifacts of the current generation — the
+//     change ledger a repair round authorized;
+//  3. the AffectedPaths of the triggering request, with the explicit "all"
+//     token marking a full-surface declaration (waives the exact-set check).
+//
+// An empty result leaves the self-declared denominator untouched so a gate
+// without a repository root or completion facts does not silently pass (or
+// silently reject) on an unverifiable denominator.
+func s10ExternalBaseline(input Input) acceptance.Baseline {
+	baseline := acceptance.Baseline{}
+	if strings.TrimSpace(strings.Join(input.AffectedPaths, ",")) == "all" || (len(input.AffectedPaths) == 1 && input.AffectedPaths[0] == "all") {
+		baseline.AffectedPathsAll = true
+		return baseline
+	}
+	seen := map[string]struct{}{}
+	add := func(paths []string) {
+		for _, p := range paths {
+			p = strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(p, "\\", "/")), "./")
+			if p == "" || strings.Contains(p, ":") {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			baseline.ChangedPaths = append(baseline.ChangedPaths, p)
+		}
+	}
+	if input.Root != "" {
+		add(review.ChangedPathsForRoot(input.Root, input.Snapshot.State))
+	}
+	add(changeImpactChangedPaths(input))
+	for _, p := range input.AffectedPaths {
+		add([]string{p})
+	}
+	sort.Strings(baseline.ChangedPaths)
+	return baseline
+}
+
+// changeImpactChangedPaths reads changed_artifacts from every current-
+// generation change_impact evidence artifact in the runtime index. A drifted
+// or unreadable artifact contributes nothing (its registration gate already
+// proves it separately); a readable one is an authoritative ledger entry.
+func changeImpactChangedPaths(input Input) []string {
+	if input.Files == nil {
+		return nil
+	}
+	generation := nestedInt(input.Snapshot.State, "baseline", "generation")
+	rawEvidence, _ := input.Snapshot.State["evidence"].([]any)
+	var paths []string
+	for _, raw := range rawEvidence {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || !evidenceKindsEqual("change_impact_record", stringValue(entry["kind"])) ||
+			stringValue(entry["status"]) != "valid" || entry["invalidated_by"] != nil ||
+			intValue(entry["baseline_generation"]) != generation {
+			continue
+		}
+		data, err := input.Files.ReadFile(stringValue(entry["path"]))
+		if err != nil || sha256Hex(data) != stringValue(entry["sha256"]) {
+			continue
+		}
+		var impact struct {
+			ChangedArtifacts []struct {
+				Path string `json:"path"`
+			} `json:"changed_artifacts"`
+		}
+		if json.Unmarshal(data, &impact) != nil {
+			continue
+		}
+		for _, artifact := range impact.ChangedArtifacts {
+			if artifact.Path != "" {
+				paths = append(paths, artifact.Path)
+			}
+		}
+	}
+	return paths
 }
 
 func missingS10EvidenceRefs(input Input, refs []string) []string {

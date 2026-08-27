@@ -78,6 +78,30 @@ type CounterevidenceItem struct {
 	Outcome      string   `json:"outcome"`
 }
 
+// Baseline is the external S10 denominator cross-check input. It is built by
+// the caller (Runtime evidence registration or the Quality Gate) from facts
+// the manifest author does not control: the immutable S6/S9 completion
+// artifacts (BuildCoverageInventory), the change-impact ledger, and the
+// affected-path set of the triggering transition. The manifest's
+// `changed_path` rows must reconcile with this set exactly (RC-05 S10-5):
+// the denominator may no longer be self-declared.
+type Baseline struct {
+	// ChangedPaths is the authoritative repo-relative changed-path set for
+	// the current baseline generation. Empty means "no external projection
+	// is available" — the caller decides whether that is acceptable.
+	ChangedPaths []string
+	// AffectedPathsAll reports that the caller explicitly declared the full
+	// surface (the "all" token), which waives the exact-set comparison.
+	AffectedPathsAll bool
+}
+
+// BuilderResponsibilities are the role identities whose manifest rows must
+// not also be self-certified as the manifest's Owner (RC-05 S10-7). The
+// manifest's owner column is the responsibility matrix: an Agent holding a
+// Builder/BUILD-WORK-PACKAGE responsibility cannot simultaneously claim the
+// Acceptance or Release-Auditor owner seat over its own work.
+var BuilderResponsibilities = []string{"Builder", "BUILD-WORK-PACKAGE", "builder", "build-work-package"}
+
 // AuditArea is one of the eight release-architecture audit areas.
 type AuditArea struct {
 	ID           string   `json:"id"`
@@ -147,7 +171,19 @@ type Summary struct {
 // expectedType must be "acceptance" or "release_audit". Errors name the
 // exact row or metric and include the recovery action an Agent should take.
 func Validate(data []byte, expectedType string) (Summary, error) {
-	return validate(data, expectedType, true)
+	return validate(data, expectedType, true, nil)
+}
+
+// ValidateWithBaseline validates the manifest against an external changed-path
+// denominator (RC-05 S10-5). The S10 coverage inventory may no longer be
+// entirely self-declared: every path in the external baseline must have a
+// `changed_path` row (missing rows are rejected), and every `changed_path`
+// row citing a repo path must trace to the baseline (an invented row is
+// rejected). Baselines carrying no paths (and no explicit "all") leave the
+// self-declared denominator untouched — use them only where no external
+// projection exists.
+func ValidateWithBaseline(data []byte, expectedType string, baseline Baseline) (Summary, error) {
+	return validate(data, expectedType, true, &baseline)
 }
 
 // ValidateForOutcome validates the manifest mode appropriate for an evidence
@@ -157,7 +193,14 @@ func Validate(data []byte, expectedType string) (Summary, error) {
 // why it must return through S7/S8/S9 or pause.
 func ValidateForOutcome(data []byte, expectedType, outcome string) (Summary, error) {
 	requireClean := !allowsUnresolvedOutcome(expectedType, outcome)
-	return validate(data, expectedType, requireClean)
+	return validate(data, expectedType, requireClean, nil)
+}
+
+// ValidateForOutcomeWithBaseline is ValidateForOutcome with the RC-05
+// external changed-path cross-check applied.
+func ValidateForOutcomeWithBaseline(data []byte, expectedType, outcome string, baseline Baseline) (Summary, error) {
+	requireClean := !allowsUnresolvedOutcome(expectedType, outcome)
+	return validate(data, expectedType, requireClean, &baseline)
 }
 
 func allowsUnresolvedOutcome(expectedType, outcome string) bool {
@@ -165,7 +208,7 @@ func allowsUnresolvedOutcome(expectedType, outcome string) bool {
 		(expectedType == ManifestReleaseAudit && outcome == "blocked")
 }
 
-func validate(data []byte, expectedType string, requireClean bool) (Summary, error) {
+func validate(data []byte, expectedType string, requireClean bool, baseline *Baseline) (Summary, error) {
 	var manifest Manifest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -290,8 +333,13 @@ func validate(data []byte, expectedType string, requireClean bool) (Summary, err
 		if strings.TrimSpace(item.Question) == "" {
 			issues = append(issues, fmt.Sprintf("%s.question is required; state what would disprove the conclusion", row))
 		}
+		// RC-05 (S10-13): a counterevidence row is a negative-path check, not
+		// a problem statement. It must hook at least one real evidence
+		// artifact; only the routed `unknown` outcome (a check that genuinely
+		// could not run, recorded on a review_required/blocked route) may
+		// omit it.
 		if len(nonEmpty(item.EvidenceRefs)) == 0 && item.Outcome != "unknown" {
-			issues = append(issues, fmt.Sprintf("%s.evidence_refs is empty; record the negative-path check before marking %s", row, item.Outcome))
+			issues = append(issues, fmt.Sprintf("%s.evidence_refs is empty; record the negative-path check (evidence_ref) before marking %s — a disproof question without evidence is an empty assertion", row, item.Outcome))
 		}
 		for _, ref := range nonEmpty(item.EvidenceRefs) {
 			evidenceRefs[ref] = struct{}{}
@@ -365,11 +413,19 @@ func validate(data []byte, expectedType string, requireClean bool) (Summary, err
 		if risk.Severity == "P0" {
 			issues = append(issues, fmt.Sprintf("%s.severity is P0; P0 risks are business-blocking and must be routed through blocking_findings with a resolution route (S7/S8/S9 or pause), not parked as a monitored risk entering S11", row))
 		}
+		// RC-05: a tracking reference must be locatable after S11 — a free
+		// string cannot be resolved to a URL or a tracker issue id.
+		if ref := strings.TrimSpace(risk.TrackingRef); ref != "" && !validTrackingRef(ref) {
+			issues = append(issues, fmt.Sprintf("%s.tracking_ref %q is neither a URL nor an issue id (expected https?://… or PROJECT-123); a risk must remain reachable after S11", row, risk.TrackingRef))
+		}
 	}
 	for i, debt := range manifest.TechnicalDebt {
 		row := fmt.Sprintf("technical_debt[%d] (%s)", i, debt.ID)
 		if strings.TrimSpace(debt.ID) == "" || strings.TrimSpace(debt.Impact) == "" || strings.TrimSpace(debt.Owner) == "" || strings.TrimSpace(debt.TrackingRef) == "" {
 			issues = append(issues, fmt.Sprintf("%s requires id, impact, owner, and tracking_ref; untracked debt cannot enter S11", row))
+		}
+		if ref := strings.TrimSpace(debt.TrackingRef); ref != "" && !validTrackingRef(ref) {
+			issues = append(issues, fmt.Sprintf("%s.tracking_ref %q is neither a URL nor an issue id (expected https?://… or PROJECT-123); debt must remain reachable after S11", row, debt.TrackingRef))
 		}
 	}
 	for i, finding := range manifest.BlockingFindings {
@@ -377,6 +433,31 @@ func validate(data []byte, expectedType string, requireClean bool) (Summary, err
 		if strings.TrimSpace(finding.ID) == "" || strings.TrimSpace(finding.Route) == "" {
 			issues = append(issues, fmt.Sprintf("%s requires id and route; resolve the blocker through S7/S8/S9 or pause", row))
 		}
+	}
+
+	// RC-05 (S10-7): the coverage_inventory/audit_areas `owner` column is the
+	// S10 responsibility matrix. A Builder / BUILD-WORK-PACKAGE responsibility
+	// is the producer being audited; it cannot also hold the audit owner seat
+	// over its own work (self-certification). Owners of record stay free —
+	// this is a producer/owner split check, not a name allowlist.
+	for i, item := range manifest.CoverageInventory {
+		if isBuilderResponsibility(item.Owner) {
+			issues = append(issues, fmt.Sprintf("coverage_inventory[%d] (%s).owner %q is a Builder responsibility; the responsibility matrix requires owner != builder — assign an independent acceptance/audit owner instead of self-certifying the produced work", i, item.ID, item.Owner))
+		}
+	}
+	for i, area := range manifest.AuditAreas {
+		if isBuilderResponsibility(area.Owner) {
+			issues = append(issues, fmt.Sprintf("audit_areas[%d] (%s).owner %q is a Builder responsibility; the responsibility matrix requires owner != builder — release-audit areas must be owned independently of the builders being audited", i, area.ID, area.Owner))
+		}
+	}
+
+	// RC-05 (S10-5): cross-check the self-declared changed_path rows against
+	// the external denominator. The baseline is derived from immutable
+	// completion artifacts and the change-impact ledger — facts the manifest
+	// author does not control — so a single-row denominator can no longer
+	// manufacture 100% coverage.
+	if baseline != nil {
+		issues = append(issues, baselineChangedPathIssues(manifest.CoverageInventory, *baseline)...)
 	}
 
 	validateMetrics(&issues, manifest.Metrics, categoryCounts, categoryDispositioned, summary, manifest.ManifestType, requireClean)
@@ -388,6 +469,123 @@ func validate(data []byte, expectedType string, requireClean bool) (Summary, err
 	}
 	sort.Strings(summary.EvidenceRefs)
 	return summary, nil
+}
+
+// isBuilderResponsibility reports whether an owner string names a producer
+// responsibility that the S10 audit must be independent of. Matching is
+// case-insensitive on the exact responsibility identities (no substring
+// matching, so "Contract Reviewer" stays legal).
+func isBuilderResponsibility(owner string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(owner))
+	for _, builder := range BuilderResponsibilities {
+		if normalized == strings.ToLower(builder) {
+			return true
+		}
+	}
+	return false
+}
+
+// validTrackingRef accepts an http(s) URL or a tracker issue id of the form
+// PROJECT-123 (letters/digits, at least one letter and one trailing digit).
+func validTrackingRef(ref string) bool {
+	lower := strings.ToLower(ref)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return true
+	}
+	// issue_id: <project>-<digits>, e.g. REQ-003, BUG-42, OPS-1001.
+	dash := strings.Index(ref, "-")
+	if dash <= 0 || dash == len(ref)-1 {
+		return false
+	}
+	for _, r := range ref[:dash] {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_') {
+			return false
+		}
+	}
+	for _, r := range ref[dash+1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// baselineChangedPathIssues reconciles the manifest's changed_path rows with
+// the external denominator (RC-05 S10-5). Both directions are enforced:
+// a baseline path without a coverage row is a missing denominator entry, and
+// a changed_path row citing a repo path outside the baseline is an invented
+// (or stale) surface.
+func baselineChangedPathIssues(inventory []CoverageItem, baseline Baseline) []string {
+	if baseline.AffectedPathsAll || len(baseline.ChangedPaths) == 0 {
+		// No externally-projectionable denominator: nothing to reconcile.
+		return nil
+	}
+	baselineSet := make(map[string]struct{}, len(baseline.ChangedPaths))
+	for _, path := range baseline.ChangedPaths {
+		baselineSet[normalizeBaselinePath(path)] = struct{}{}
+	}
+	covered := make(map[string]struct{}, len(inventory))
+	var issues []string
+	for i, item := range inventory {
+		if item.Category != "changed_path" {
+			continue
+		}
+		for _, ref := range nonEmpty(item.SourceRefs) {
+			normalized := normalizeBaselinePath(ref)
+			if normalized == "" {
+				continue
+			}
+			// Repo paths (contain a "/" or a "." extension) must trace to the
+			// external baseline; abstract ids (REQ-1, docs-scope) stay free.
+			if !looksLikeRepoPath(normalized) {
+				continue
+			}
+			if _, ok := baselineSet[normalized]; !ok {
+				issues = append(issues, fmt.Sprintf("coverage_inventory[%d] (%s).source_refs %q is a changed_path row outside the external changed-surface baseline; regenerate the manifest so every changed_path row cites a path from the current completion/change-impact denominator", i, item.ID, ref))
+				continue
+			}
+			covered[normalized] = struct{}{}
+		}
+	}
+	missing := make([]string, 0, len(baseline.ChangedPaths))
+	for _, path := range baseline.ChangedPaths {
+		normalized := normalizeBaselinePath(path)
+		if _, ok := covered[normalized]; !ok {
+			missing = append(missing, path)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		issues = append(issues, fmt.Sprintf("coverage_inventory is missing changed_path rows for the external changed-surface baseline: %s; the S10 denominator is not self-declared — freeze one changed_path row per changed path with source_refs and evidence", strings.Join(missing, ", ")))
+	}
+	return issues
+}
+
+// looksLikeRepoPath distinguishes repository paths from abstract surface ids
+// in source_refs. A single-segment value with no dot is an id ("REQ-1",
+// "release-scope"); anything with a slash or an extension is a path.
+func looksLikeRepoPath(path string) bool {
+	if strings.Contains(path, "/") {
+		return true
+	}
+	return strings.Contains(filepath.Base(path), ".")
+}
+
+// normalizeBaselinePath canonicalizes a changed-path reference so manifest
+// rows and baseline entries compare equal despite "./" prefixes or
+// backslashes. Values containing a ":" (e.g. "REQ-1#ac-1" anchors) are not
+// repo paths and normalize to "".
+func normalizeBaselinePath(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	path = strings.TrimPrefix(path, "./")
+	if path == "" || strings.Contains(path, ":") {
+		return ""
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	if cleaned == "." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	return cleaned
 }
 
 // ValidateEvidenceArtifact validates the S10-specific part of an evidence

@@ -72,6 +72,9 @@ func ValidateChangeImpact(root string, ref ArtifactRef) (ChangeImpact, error) {
 }
 
 func CreateTargetedReverification(root string, request TargetedReverificationRequest) (TargetedReverification, ArtifactRef, error) {
+	// repairOwnerAssignmentPrefix is the manifest-form alias prefix a repair
+	// owner would use to disguise itself as its own independent verifier.
+	const repairOwnerAssignmentPrefix = "assignment-s9-"
 	if !strings.HasPrefix(request.ReverificationID, "reverify-") {
 		return TargetedReverification{}, ArtifactRef{}, fmt.Errorf("request.ReverificationID must carry the reverify- prefix so Runtime can bind it (got %q)", request.ReverificationID)
 	}
@@ -80,6 +83,14 @@ func CreateTargetedReverification(root string, request TargetedReverificationReq
 	}
 	if request.OriginalAssignmentID == request.PerformingAssignmentID {
 		return TargetedReverification{}, ArtifactRef{}, errors.New("targeted reverification requires an independent verifier: performing_assignment_id must differ from original_assignment_id")
+	}
+	// RC-01 (S9-1): identity-root guard. The reverification artifact itself
+	// must carry evidence-backed assertions; Runtime additionally cross-checks
+	// the two assignment identities against the dispatched repair assignments
+	// and the assignment_owners map (CommitTargetedReverification), so a
+	// fabricated "independent" verifier ID cannot survive create alone.
+	if request.OriginalAssignmentID == repairOwnerAssignmentPrefix {
+		return TargetedReverification{}, ArtifactRef{}, fmt.Errorf("original_assignment_id %q must reference the dispatched repair assignment (repair-assignment-...) or its manifest alias (assignment-s9-...); a self-asserted builder identity is not independent", request.OriginalAssignmentID)
 	}
 	if len(request.AssertionResults) == 0 {
 		return TargetedReverification{}, ArtifactRef{}, errors.New("targeted reverification requires assertion results")
@@ -125,6 +136,15 @@ func ValidateTargetedReverification(root string, ref ArtifactRef) (TargetedRever
 	if value.OriginalAssignmentID == value.PerformingAssignmentID {
 		return TargetedReverification{}, errors.New("targeted reverification is not independent")
 	}
+	// RC-01 (EH-10): the manifest-alias form is the repair owner's dispatch
+	// identity; using it as the performing verifier hides a self-verification
+	// behind a second label.
+	if value.PerformingAssignmentID == "assignment-s9-"+strings.TrimPrefix(value.OriginalAssignmentID, "repair-assignment-") || value.OriginalAssignmentID == "assignment-s9-"+strings.TrimPrefix(value.PerformingAssignmentID, "repair-assignment-") {
+		return TargetedReverification{}, fmt.Errorf("targeted reverification is not independent: %q is the manifest alias of the same repair assignment", value.PerformingAssignmentID)
+	}
+	if err := validateTargetedFailureEvidence(value); err != nil {
+		return TargetedReverification{}, err
+	}
 	seen := map[string]bool{}
 	for _, assertion := range value.AssertionResults {
 		if strings.TrimSpace(assertion.AssertionID) == "" {
@@ -139,6 +159,46 @@ func ValidateTargetedReverification(root string, ref ArtifactRef) (TargetedRever
 		}
 	}
 	return value, nil
+}
+
+// validateTargetedFailureEvidence is the RC-01 (EH-11) failure-direction
+// identity root. A non-pass verdict may only route the repair chain (S8
+// investigation, blocked resume) when at least one failing or blocked
+// assertion carries its own evidence, and the recorded failure_class must
+// agree with the observed assertion results:
+//
+//   - blocked         requires a blocked assertion with non-empty evidence
+//   - fail_same_cause/fail_new_cause require a failing assertion with
+//     non-empty evidence
+//   - scope_changed   is a scope judgment and needs no assertion evidence
+//   - stale           is a baseline judgment and needs no assertion evidence
+//
+// A bare self-declared failure_class with no evidence is rejected at the
+// artifact boundary before Runtime can route on it.
+func validateTargetedFailureEvidence(value TargetedReverification) error {
+	if value.Result == "pass" || value.FailureClass == "" {
+		return nil
+	}
+	needBlocked := value.FailureClass == "blocked"
+	if !needBlocked && value.FailureClass != "fail_same_cause" && value.FailureClass != "fail_new_cause" {
+		// scope_changed / stale carry no assertion-level evidence contract.
+		return nil
+	}
+	want := "fail"
+	if needBlocked {
+		want = "blocked"
+	}
+	for _, assertion := range value.AssertionResults {
+		if assertion.Result != want {
+			continue
+		}
+		for _, evidenceRef := range assertion.EvidenceRefs {
+			if strings.TrimSpace(evidenceRef) != "" {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("failure_class %q requires at least one %s assertion with non-empty evidence_refs; a self-reported failure without evidence cannot route the repair chain", value.FailureClass, want)
 }
 
 func sortedStrings(values []string) []string {

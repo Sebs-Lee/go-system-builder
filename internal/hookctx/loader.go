@@ -64,6 +64,9 @@ type stateFile struct {
 			PromptRef             *string  `json:"prompt_ref"`
 			CompletionReportedRef *string  `json:"completion_reported_ref"`
 			CompletionAckRef      *string  `json:"completion_acknowledged_ref"`
+			// AssignmentID is not stored on the agent row; it is resolved
+			// below from the workgroup manifest. Kept out of this struct —
+			// the load path resolves it via loadAgentAssignmentID.
 		} `json:"agents"`
 		Bugs []struct {
 			ID       string `json:"id"`
@@ -406,6 +409,22 @@ func LoadFull(root, agentID string) (*LoadedContext, error) {
 			if agent.PlanReportedRef != nil {
 				context.Agent.PlanReportedRef = *agent.PlanReportedRef
 			}
+			// RC-04 (S7-3): surface the dispatched-Assignment facts on the
+			// runtime projection itself so the L4 first-write barrier can be
+			// evaluated on every PreToolUse path, including ones that carry
+			// no AgentContext (e.g. the controller safety input). The
+			// assignment is resolved from the same workgroup manifest the
+			// Integrator reads (single deterministic owner rule); ambiguous
+			// rows stay unresolved and the barrier stands down on the
+			// AssignmentID fact but still sees the Agent fallback.
+			context.AssignmentID = loadAgentAssignmentID(root, agent.TaskIDs, agent.ID)
+			if context.Agent != nil {
+				context.Agent.AssignmentID = context.AssignmentID
+			}
+			if agent.PlanReportedRef != nil {
+				context.PlanReportedRef = *agent.PlanReportedRef
+			}
+			context.DispatchMode = agent.DispatchMode
 			// L4 §15.2 P0-1: surface the dispatched task set, team and
 			// registered completion ref so the TaskUpdate self-claim guard
 			// and the TeammateIdle/SubagentStop control path can recognize
@@ -574,6 +593,46 @@ type buildAgentRow struct {
 	CompletionReportedRef string
 	CompletionAckRef      string
 	TaskID                string
+}
+
+// loadAgentAssignmentID resolves the dispatched Assignment for one agent row
+// (RC-04 S7-3). It reuses the workgroup manifest the Integrator reads: for
+// each of the agent's task ids the manifest must name exactly one assignment
+// row owned by the agent (or a single unbound row). The first deterministic
+// match wins; ambiguous multi-assignment rows resolve to "" so callers never
+// invent a binding the manifest does not prove.
+func loadAgentAssignmentID(root string, taskIDs []string, agentID string) string {
+	for _, taskID := range taskIDs {
+		_, manifest := loadWorkgroupManifest(root, taskID)
+		if manifest == nil {
+			continue
+		}
+		match := ""
+		ambiguous := false
+		for _, a := range manifest.Assignments {
+			if a.AssignmentID == "" {
+				continue
+			}
+			if a.AgentID != "" && a.AgentID != agentID {
+				continue
+			}
+			if a.AgentID == "" && len(manifest.Assignments) != 1 {
+				continue
+			}
+			if match != "" && match != a.AssignmentID {
+				ambiguous = true
+				break
+			}
+			match = a.AssignmentID
+		}
+		if ambiguous {
+			continue
+		}
+		if match != "" {
+			return match
+		}
+	}
+	return ""
 }
 
 // buildAssignmentRow materializes one AssignmentContext for an

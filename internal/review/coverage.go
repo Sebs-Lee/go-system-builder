@@ -50,6 +50,22 @@ func BuildCoverageInventoryForRoot(root string, state map[string]any) []Coverage
 	return sortedCoverageItems(items)
 }
 
+// ChangedPathsForRoot returns the changed-surface path set of the current
+// baseline generation without allocating CoverageItem rows. It is the same
+// authoritative projection BuildCoverageInventoryForRoot freezes into the S7
+// plan, exported so the S10 Quality Gate can reconcile a manifest's
+// changed_path denominator against an external anchor (RC-05 S10-5).
+func ChangedPathsForRoot(root string, state map[string]any) []string {
+	projection := buildS7BaselineProjection(root, state)
+	if len(projection.Diagnostics) > 0 {
+		// An unverifiable projection is not a denominator: a caller that
+		// receives diagnostics alongside empty paths must fail closed rather
+		// than reconcile against a partial surface.
+		return nil
+	}
+	return append([]string(nil), projection.ChangedPaths...)
+}
+
 func sortedCoverageItems(items []CoverageItem) []CoverageItem {
 	sort.Slice(items, func(i, j int) bool { return items[i].SourceRef < items[j].SourceRef })
 	return items

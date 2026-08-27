@@ -637,9 +637,35 @@ func actionRecordRepairActivation(state map[string]any, ctx *ActionContext) (Act
 	return actionEvidenceRecorded(ctx, "repair activation")
 }
 func actionInvalidateAffectedEvidence(state map[string]any, ctx *ActionContext) (ActionResult, error) {
+	// RC-05 (S10-6): an empty AffectedPaths list used to degrade into a
+	// silent "no affected evidence to invalidate" commit — the invalidation
+	// write barrier became a no-op exactly when the caller forgot to declare
+	// what changed. The transition now fails closed: declare the affected
+	// paths, or explicitly declare the full surface with the single "all"
+	// token (which the Controller emits only when the request itself
+	// authorizes a full sweep).
 	var changedPaths []string
-	if ctx.Request != nil && len(ctx.Request.AffectedPaths) > 0 {
+	all := false
+	if ctx.Request != nil {
 		changedPaths = append([]string(nil), ctx.Request.AffectedPaths...)
+		if len(changedPaths) == 1 && strings.TrimSpace(changedPaths[0]) == "all" {
+			all = true
+			changedPaths = nil
+		}
+	}
+	if !all && len(changedPaths) == 0 {
+		return ActionResult{Status: "failed", Detail: "affected_paths required for " + ctx.Spec.ID}, fmt.Errorf(
+			"transition %s requires the affected paths of the change: pass --affected-paths <repo-relative paths> (or the single token \"all\" for an explicit full-surface sweep); an empty affected-path list would silently skip invalidating historical PASS evidence (TR-016/TR-007/TR-013/TR-023/PTR-BUG-05)",
+			ctx.Spec.ID,
+		)
+	}
+	if all {
+		invalidated := invalidateAllDownstreamAction(state, ctx.Spec.ID)
+		return ActionResult{
+			Status:          "committed",
+			MutationApplied: invalidated > 0,
+			Detail:          fmt.Sprintf("explicit full-surface sweep: %d evidence entries invalidated", invalidated),
+		}, nil
 	}
 	impacts := impact.ComputeImpact(state, changedPaths)
 	if len(impacts) == 0 {
