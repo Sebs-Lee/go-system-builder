@@ -40,8 +40,9 @@ func TestReviewResultCapturesAcceptsBufferDir(t *testing.T) {
 	if err := os.MkdirAll(bufferDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	lines := `{"sequence":1,"action":"walk error branch","observed":"error dropped at boundary","evidence_refs":["trail.md"]}
-{"sequence":2,"action":"forced failure","observed":"partial state persisted","evidence_refs":["trail.md"]}
+	trailRef := typedEvidenceRef(t, root, "trail.md")
+	lines := `{"sequence":1,"action":"walk error branch","observed":"error dropped at boundary","evidence_refs":["` + trailRef + `"]}
+{"sequence":2,"action":"forced failure","observed":"partial state persisted","evidence_refs":["` + trailRef + `"]}
 `
 	if err := os.WriteFile(filepath.Join(bufferDir, "steps.jsonl"), []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,7 +57,7 @@ func TestReviewResultCapturesAcceptsBufferDir(t *testing.T) {
 		"subject_digest": digest,
 		"claim_results": []any{map[string]any{
 			"claim_id": "claim-qa-1", "conclusion": "fail",
-			"observed": "error path drops the store error", "evidence_refs": []string{"trail.md"},
+			"observed": "error path drops the store error", "evidence_refs": []string{trailRef},
 		}},
 		"findings": []any{map[string]any{
 			"schema_version": "1.0.0", "finding_id": "finding-captures-dir-1",
@@ -66,7 +67,7 @@ func TestReviewResultCapturesAcceptsBufferDir(t *testing.T) {
 			"observed":          "update returns nil after the store write fails",
 			"observation_mode":   "code_inspection",
 			"reproducibility":   "always",
-			"evidence_refs":     []string{"trail.md"},
+			"evidence_refs":     []string{trailRef},
 			"correlation_refs":  []string{"service.go:87"},
 			"visible_impact":    "callers persist partial state under success",
 			"negative_facts":    []string{"delete path propagates correctly"},

@@ -29,12 +29,17 @@ type Plan struct {
 
 // E2EAsset is one existing CASE/PATH asset that a regression_available round
 // claims it can reuse. The file digest is checked at registration and submit.
+// SelectorRef/RouteRef/Environment are the S7-7 (RC-07) executability
+// fingerprint: a reusable asset must declare the selector surface it drives,
+// the route/entry point it covers and the environment it was recorded on —
+// not merely that a spec file mentions the CASE id.
 type E2EAsset struct {
 	AssetID     string `json:"asset_id"`
 	CaseRef     string `json:"case_ref"`
 	Path        string `json:"path"`
 	SHA256      string `json:"sha256"`
 	SelectorRef string `json:"selector_ref,omitempty"`
+	RouteRef    string `json:"route_ref,omitempty"`
 	Environment string `json:"environment,omitempty"`
 }
 
@@ -65,6 +70,10 @@ type Claim struct {
 	RequiredEvidence []string `json:"required_evidence,omitempty"`
 	Applicability    string   `json:"applicability"`
 	NARationale      string   `json:"na_rationale,omitempty"`
+	// NAChecklistID is the explicit N/A checklist the claim's not_applicable
+	// disposition was proven against (S7-9/RC-07). An e2e N/A claim without
+	// one is a silent dimension drop, not a conclusion.
+	NAChecklistID    string   `json:"na_checklist_id,omitempty"`
 	SourceRefs       []string `json:"source_refs"`
 	FocusKey         string   `json:"focus_key,omitempty"`
 	DependsOn        []string `json:"depends_on,omitempty"`

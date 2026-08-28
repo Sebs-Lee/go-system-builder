@@ -89,6 +89,8 @@ func writeColdStartPlan(t *testing.T, root, workspace string) string {
 // assignments (agent-e2e-1 is added to the fixture state).
 func coldStartFixture(t *testing.T, root, statePath, journalPath, workspace string) (int, *Plan) {
 	t.Helper()
+	fixtureEvidenceRoot = root
+	t.Cleanup(func() { fixtureEvidenceRoot = "" })
 	snap, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
 		ExpectedRevision: 1, PlanPath: writeColdStartPlan(t, root, workspace),
 	})
@@ -137,7 +139,7 @@ func writeE2EResultFile(t *testing.T, root string, plan *Plan, resultID, artifac
 		"claim_results": []any{
 			map[string]any{
 				"claim_id": "claim-e2e-1", "conclusion": "pass",
-				"observed": "flow behaves as declared", "evidence_refs": []string{"ev/e2e-run.md"},
+				"observed": "flow behaves as declared", "evidence_refs": []string{fixtureEvidenceRef(t, root, "e2e-run.md")},
 			},
 		},
 		"verdict": "pass",
@@ -281,6 +283,8 @@ func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
 	raw["e2e_assets"] = []any{map[string]any{
 		"asset_id": "asset-settings", "case_ref": "CASE-001", "path": "e2e/settings-save.spec.ts",
 		"sha256": sha256Of(assetBytes),
+		"selector_ref": "testid:save-button", "route_ref": "settings/save",
+		"environment": "chromium/localhost:3000/profile=default",
 	}}
 	regressionPath := filepath.Join(root, "plan-regression.json")
 	regressionBytes, err := json.MarshalIndent(raw, "", "  ")

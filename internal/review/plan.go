@@ -191,6 +191,24 @@ func ValidatePlan(plan *Plan) error {
 			return fmt.Errorf("required claim %s (%s) has no owning Assignment; platform capacity may queue work but never delete coverage (L3-S7 §4.5)", claim.ClaimID, claim.Lens)
 		}
 	}
+	for _, claim := range plan.Claims {
+		if claim.Applicability != "not_applicable" {
+			continue
+		}
+		// S7-9 (RC-07): a not_applicable disposition is only legal when it is
+		// explicitly declared (never inferred) and proven against a checklist.
+		// An empty ui_impact-derived N/A silently dropped the whole E2E
+		// dimension for req pipelines with small bugs.
+		if strings.TrimSpace(claim.NAChecklistID) == "" {
+			return s7GateError(
+				"S7_NA_CHECKLIST_MISSING",
+				fmt.Sprintf("claim %s is not_applicable without an na_checklist_id", claim.ClaimID),
+				[]string{"the N/A disposition carries only a free-text rationale; there is no checklist or impact-analysis artifact the conclusion was verified against"},
+				[]string{"set na_checklist_id to the N/A checklist / impact-analysis artifact id (e.g. bound_req#ui_impact or the §D checklist) and keep na_rationale as the human summary"},
+				"runtime review-plan --file plan.json --expected-revision <N>",
+			)
+		}
+	}
 	justified := plan.CoverageJustification != nil && strings.TrimSpace(*plan.CoverageJustification) != ""
 	for _, lens := range []string{"delivery", "qa"} {
 		if requiredByLens[lens] == 0 && !justified {
@@ -440,17 +458,82 @@ func validateAssignmentOverlap(plan *Plan, claims map[string]Claim) error {
 				continue
 			}
 			if strings.TrimSpace(a.NonOverlapBoundary) != "" && strings.TrimSpace(b.NonOverlapBoundary) != "" &&
-				a.NonOverlapBoundary != b.NonOverlapBoundary {
-				// Both sides wrote a distinct non-overlap boundary: the
-				// required independent-question reason exists.
+				a.NonOverlapBoundary != b.NonOverlapBoundary &&
+				boundaryIsStructurallyDistinct(a, b, claims) {
+				// Both sides wrote a distinct non-overlap boundary AND a
+				// structural split (disjoint target sets or disjoint focus
+				// keys): the required independent-question reason exists.
 				continue
 			}
-			return fmt.Errorf("assignments %s and %s (lens %s) are a duplicated generic review: identical target set %s, identical methods %s and identical oracles %s (L3-S7 §3.4/§4.4). Merge them into one Assignment, or give each a mutually distinct non_overlap_boundary stating the independent question it answers — reading the same files is never a reason to merge different lenses/personas/oracles",
+			if strings.TrimSpace(a.NonOverlapBoundary) != "" && strings.TrimSpace(b.NonOverlapBoundary) != "" &&
+				a.NonOverlapBoundary != b.NonOverlapBoundary &&
+				!boundaryIsStructurallyDistinct(a, b, claims) {
+				return fmt.Errorf("assignments %s and %s (lens %s) declare distinct non_overlap_boundary values but the same target+method set with no structural split: non_overlap_boundary is prose, not a partition (S7-6/RC-07) — %q vs %q. Either make the owned target/focus_key sets actually disjoint, or merge them into one Assignment",
+					a.AssignmentID, b.AssignmentID, a.Lens, a.NonOverlapBoundary, b.NonOverlapBoundary)
+			}
+			return fmt.Errorf("assignments %s and %s (lens %s) are a duplicated generic review: identical target set %s, identical methods %s and identical oracles %s (L3-S7 §3.4/§4.4). Merge them into one Assignment, or give each a mutually distinct non_overlap_boundary backed by disjoint owned target/focus_key sets stating the independent question it answers — reading the same files is never a reason to merge different lenses/personas/oracles",
 				a.AssignmentID, b.AssignmentID, a.Lens,
 				strings.Join(sa.targets, ", "), strings.Join(sa.methods, ", "), strings.Join(sa.oracles, ", "))
 		}
 	}
 	return nil
+}
+
+// boundaryIsStructurallyDistinct is the S7-6 (RC-07) exact-set upgrade of the
+// non_overlap_boundary escape hatch: prose alone can no longer release a
+// duplicated pair. The boundary is accepted only when it is backed by a
+// structural partition the plan itself declares — mutually disjoint claim
+// target sets, or mutually disjoint focus dimensions (claim focus_key values
+// plus the assignments' focus_keys). Two Assignments that read the same
+// targets with the same methods and share every focus dimension are the same
+// review no matter how differently their boundaries are worded.
+func boundaryIsStructurallyDistinct(a, b PlanAssignment, claims map[string]Claim) bool {
+	targetsA, targetsB := map[string]bool{}, map[string]bool{}
+	focusA, focusB := map[string]bool{}, map[string]bool{}
+	collect := func(assignment PlanAssignment, targets, focus map[string]bool) {
+		for _, claimID := range assignment.ClaimIDs {
+			claim, ok := claims[claimID]
+			if !ok {
+				continue
+			}
+			if key := strings.TrimSpace(claim.FocusKey); key != "" {
+				focus[key] = true
+			}
+			if target := strings.TrimSpace(claim.Target); target != "" {
+				targets[target] = true
+			}
+		}
+		for _, key := range assignment.FocusKeys {
+			if key = strings.TrimSpace(key); key != "" {
+				focus[key] = true
+			}
+		}
+	}
+	collect(a, targetsA, focusA)
+	collect(b, targetsB, focusB)
+	if disjoint(targetsA, targetsB) || disjoint(focusA, focusB) {
+		return true
+	}
+	// An Assignment with no declared focus dimensions at all cannot prove a
+	// partition through focus; an empty set is treated as unbounded, not as
+	// disjoint from everything (the same overload rule the cold-start
+	// validator enforces for empty focus_key).
+	if len(focusA) == 0 || len(focusB) == 0 {
+		return false
+	}
+	return false
+}
+
+func disjoint(a, b map[string]bool) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	for key := range a {
+		if b[key] {
+			return false
+		}
+	}
+	return true
 }
 
 // validateColdStartE2EOverload is the §14.1 cold-start overload validator
@@ -492,6 +575,7 @@ func validateColdStartE2EOverload(plan *Plan, claims map[string]Claim) error {
 	}
 	owner := owners[0]
 	dimensions := map[string]bool{}
+	unnamed := 0
 	required := 0
 	for _, claimID := range owner.ClaimIDs {
 		claim, ok := claims[claimID]
@@ -501,6 +585,13 @@ func validateColdStartE2EOverload(plan *Plan, claims map[string]Claim) error {
 		required++
 		if key := strings.TrimSpace(claim.FocusKey); key != "" {
 			dimensions[key] = true
+		} else {
+			// S7-6 (RC-07): an empty focus_key is not a free pass. focus_key is
+			// the plan's only declared carrier for persona/entry/flow-cluster/
+			// negative-path dimensions; a required e2e Claim that names none
+			// cannot be judged discriminable, so it is treated as overload
+			// instead of silently releasing the single-Assignment plan.
+			unnamed++
 		}
 	}
 	for _, key := range owner.FocusKeys {
@@ -508,11 +599,18 @@ func validateColdStartE2EOverload(plan *Plan, claims map[string]Claim) error {
 			dimensions[key] = true
 		}
 	}
-	if required < 2 || len(dimensions) < 2 {
+	if required < 2 {
 		return nil
 	}
-	return fmt.Errorf("e2e_coverage_state=cold_start but %s is the only E2E Assignment and spans %d discriminable focus dimensions (%s) across %d required e2e Claims: the blank coverage matrix is compressed into one generic Agent (L3-S7 §4.3/§4.4). Expand the coverage matrix first (persona/entry/flow cluster/negative path/state/side effect), then split into one behavior-wave E2E Assignment per recoverable flow context inside the verification_artifact_workspace",
-		owner.AssignmentID, len(dimensions), strings.Join(sortedKeys(dimensions), ", "), required)
+	if len(dimensions) < 2 && unnamed == 0 {
+		return nil
+	}
+	if len(dimensions) >= 2 {
+		return fmt.Errorf("e2e_coverage_state=cold_start but %s is the only E2E Assignment and spans %d discriminable focus dimensions (%s) across %d required e2e Claims: the blank coverage matrix is compressed into one generic Agent (L3-S7 §4.3/§4.4). Expand the coverage matrix first (persona/entry/flow cluster/negative path/state/side effect), then split into one behavior-wave E2E Assignment per recoverable flow context inside the verification_artifact_workspace",
+			owner.AssignmentID, len(dimensions), strings.Join(sortedKeys(dimensions), ", "), required)
+	}
+	return fmt.Errorf("e2e_coverage_state=cold_start but %s is the only E2E Assignment and %d of its %d required e2e Claims declare no focus_key: an empty focus_key is overload, not a release (S7-6/RC-07) — focus_key is the declared persona/entry/flow-cluster/negative-path dimension carrier and empty values previously bypassed the overload gate. Declare a concrete focus_key per Claim, or split the matrix into one behavior-wave E2E Assignment per recoverable flow context inside the verification_artifact_workspace",
+		owner.AssignmentID, unnamed, required)
 }
 
 // sortedDistinct returns the sorted unique non-empty values.

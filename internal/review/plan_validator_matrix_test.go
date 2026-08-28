@@ -172,8 +172,16 @@ func TestValidatePlanRegressionRequiresAssetFingerprints(t *testing.T) {
 		AssetID: "asset-settings-save", CaseRef: "CASE-001", Path: "e2e/settings-save.spec.ts",
 		SHA256: strings.Repeat("a", 64),
 	}}
+	// S7-7 (RC-07): a fingerprint alone is not enough — the asset must also
+	// declare the selector/route/environment executability surface.
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "selector/route/environment") {
+		t.Fatalf("regression asset without selector/route/environment fingerprint must be rejected, got %v", err)
+	}
+	plan.E2EAssets[0].SelectorRef = "testid:save-button"
+	plan.E2EAssets[0].RouteRef = "settings/save"
+	plan.E2EAssets[0].Environment = "chromium/localhost:3000/profile=default"
 	if err := ValidatePlan(plan); err != nil {
-		t.Fatalf("regression plan with an asset fingerprint must pass structural validation: %v", err)
+		t.Fatalf("regression plan with a complete asset fingerprint must pass structural validation: %v", err)
 	}
 }
 

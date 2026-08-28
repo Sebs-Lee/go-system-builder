@@ -723,7 +723,20 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 			if err := validateIndexedEvidence(root, row, ref, owner); err != nil {
 				return err
 			}
+			continue
 		}
+		// S7-11 (RC-07): a bare reference that resolves to neither a typed
+		// prefix, a repository path, nor an indexed evidence row is a ghost
+		// reference. It used to pass silently and survive as an
+		// accepted-pending-verdict artifact; now it is unsatisfied evidence
+		// and rejects the whole submit.
+		return s7GateError(
+			"S7_RESULT_EVIDENCE_REF",
+			fmt.Sprintf("%s evidence reference %q is not a valid typed ref and does not resolve to a registered Runtime evidence row", owner, ref),
+			[]string{"bare references are only accepted when they name a registered evidence id; this one matches no indexed row and carries no path:/runtime: prefix"},
+			[]string{"use path:<repo-relative-path>[#sha256=<64 hex>] for a local artifact, runtime:<evidence-id> for a registered Runtime evidence row, or register the artifact first with `runtime evidence add`"},
+			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+		)
 	}
 	return nil
 }
@@ -943,9 +956,23 @@ func validateInvestigationReadiness(finding Finding) error {
 	return nil
 }
 
+// builderDeliveryEvidenceKinds is the whitelist of evidence kinds that carry
+// an S6 Builder delivery this generation (S7-8/RC-07). completion_report is
+// the canonical `runtime task-complete` envelope, but builder_report and
+// agent_completion are persisted Runtime kinds from the evidence catalog that
+// record the same delivery fact through the legacy `runtime evidence add`
+// path. A producer is independent only if none of these carriers name it —
+// checking a single kind would let a Builder self-certify by switching
+// carriers.
+var builderDeliveryEvidenceKinds = map[string]bool{
+	"completion_report": true,
+	"builder_report":    true,
+	"agent_completion":  true,
+}
+
 // validateProducerIndependence enforces the Builder/Reviewer separation
 // edge (L3-S7 §1.4): the producer must not be an Agent that delivered S6
-// product results this generation.
+// product results this generation, on any builder delivery evidence carrier.
 func validateProducerIndependence(state map[string]any, result *Result) error {
 	if result.ProducerAgentID == "" {
 		return fmt.Errorf("producer_agent_id is required")
@@ -954,7 +981,7 @@ func validateProducerIndependence(state map[string]any, result *Result) error {
 	generation := baselineGeneration(state)
 	for _, raw := range evidence {
 		item, _ := raw.(map[string]any)
-		if item == nil || item["kind"] != "completion_report" {
+		if item == nil || !builderDeliveryEvidenceKinds[stringField(item["kind"])] {
 			continue
 		}
 		if intField(item["baseline_generation"]) != generation {
@@ -963,7 +990,7 @@ func validateProducerIndependence(state map[string]any, result *Result) error {
 		producers, _ := item["produced_by"].([]any)
 		for _, producer := range producers {
 			if id, _ := producer.(string); id == result.ProducerAgentID {
-				return fmt.Errorf("producer %s delivered an S6 Builder Result this generation and cannot review it (L3-S7 §1.4 role independence)", result.ProducerAgentID)
+				return fmt.Errorf("producer %s delivered an S6 Builder Result this generation (evidence kind %q) and cannot review it (L3-S7 §1.4 role independence)", result.ProducerAgentID, stringField(item["kind"]))
 			}
 		}
 	}
@@ -1532,11 +1559,11 @@ func buildObservationBatch(
 	routes := []any{}
 	for _, row := range RoundFindings(state) {
 		batchFindingIDs = append(batchFindingIDs, stringField(row["finding_id"]))
-		readiness = append(readiness, map[string]any{
-			"finding_id":   row["finding_id"],
-			"status":       "ready",
-			"capture_gaps": []any{},
-		})
+		// S7-5 (RC-07): readiness is recomputed from the persisted Finding
+		// bytes for the full round, never copied from a previous batch or
+		// hard-coded to ready. A prior-round blocker without a location
+		// anchor must not flow into S8 as ready.
+		readiness = append(readiness, readinessForFindingID(view, row, nil, false))
 		routes = append(routes, map[string]any{
 			"finding_id":    row["finding_id"],
 			"agent_id":      row["original_finder"],
@@ -1545,20 +1572,7 @@ func buildObservationBatch(
 	}
 	for _, finding := range result.Findings {
 		batchFindingIDs = append(batchFindingIDs, finding.FindingID)
-		status := "ready"
-		gaps := finding.Encounter.CaptureGaps
-		if finding.Severity == "P0" && len(gaps) > 0 {
-			status = "ready_with_safety_gaps"
-		}
-		gapValues := make([]any, 0, len(gaps))
-		for _, gap := range gaps {
-			gapValues = append(gapValues, gap)
-		}
-		readiness = append(readiness, map[string]any{
-			"finding_id":   finding.FindingID,
-			"status":       status,
-			"capture_gaps": gapValues,
-		})
+		readiness = append(readiness, readinessForFindingID(view, nil, &finding, true))
 		routes = append(routes, map[string]any{
 			"finding_id":    finding.FindingID,
 			"agent_id":      result.ProducerAgentID,
@@ -1642,6 +1656,87 @@ func buildObservationBatch(
 		"sealed_by":                              "round-consumer",
 		"revision":                               1,
 	}, nil
+}
+
+// readinessForFindingID recomputes one finding's investigation readiness from
+// its own recorded encounter (S7-5/RC-07). Row findings (already persisted)
+// are re-read from their immutable artifact when the entity row is a pointer
+// only; in-memory findings are evaluated directly. A finding is ready only
+// when its investigation anchors survived: last_good_checkpoint, first_bad
+// wall, terminal state, and step-bound evidence (matching
+// validateInvestigationReadiness). Anything less is reported as
+// ready_with_safety_gaps with the concrete gap list so S8 never inherits a
+// readiness claim the finding bytes cannot support.
+func readinessForFindingID(view state_view, row map[string]any, finding *Finding, fromResult bool) map[string]any {
+	findingID := ""
+	var encounter Encounter
+	if finding != nil {
+		findingID = finding.FindingID
+		encounter = finding.Encounter
+	} else if row != nil {
+		findingID = stringField(row["finding_id"])
+		encounter = loadPersistedEncounter(view, row)
+	}
+	gaps := append([]string(nil), encounter.CaptureGaps...)
+	if encounter.LastGoodCheckpoint == "" {
+		gaps = append(gaps, "missing last_good_checkpoint: S8 cannot walk last-good -> wall -> first-bad from a bare symptom")
+	}
+	if finding != nil || fromResult {
+		// In-result findings were already schema-validated; the P0 branch may
+		// legally stop dangerous capture. Persisted rows keep their original
+		// readiness, recomputed from the artifact below.
+		if encounter.TerminalState == "" {
+			gaps = append(gaps, "missing terminal_state: the observation has no recorded end state")
+		}
+	}
+	for _, step := range encounter.Timeline {
+		if len(step.EvidenceRefs) == 0 {
+			gaps = append(gaps, fmt.Sprintf("timeline step %d has no evidence_refs", step.Sequence))
+		}
+	}
+	// The batch schema admits ready and ready_with_safety_gaps; any recomputed
+	// gap downgrades the row so S8 sees the real capture state, never a
+	// hard-coded ready. (A finding that cannot support its own readiness
+	// claim is exactly what S7-5 forbids from flowing into S8.)
+	status := "ready"
+	if len(gaps) > 0 {
+		status = "ready_with_safety_gaps"
+	}
+	gapValues := make([]any, 0, len(gaps))
+	for _, gap := range gaps {
+		gapValues = append(gapValues, gap)
+	}
+	return map[string]any{
+		"finding_id":   findingID,
+		"status":       status,
+		"capture_gaps": gapValues,
+	}
+}
+
+// loadPersistedEncounter re-reads a persisted Finding artifact so readiness is
+// recomputed from the immutable bytes, not from a projection that may lag the
+// evidence on disk.
+func loadPersistedEncounter(view state_view, row map[string]any) Encounter {
+	var encounter Encounter
+	rel := stringField(row["path"])
+	if rel == "" {
+		return encounter
+	}
+	path, err := repositoryContainedPath(view.root, rel)
+	if err != nil {
+		return encounter
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return encounter
+	}
+	var document struct {
+		Encounter Encounter `json:"encounter"`
+	}
+	if json.Unmarshal(data, &document) == nil {
+		return document.Encounter
+	}
+	return encounter
 }
 
 func drainedAssignments(state map[string]any, currentAssignmentID string) []any {

@@ -134,7 +134,7 @@ func writePlanFile(t *testing.T, root string) string {
 				"claim_id": "claim-e2e-na", "lens": "e2e",
 				"target": "n/a", "assertion": "no user surface", "oracle": "impact shows internal only",
 				"method": "impact analysis", "applicability": "not_applicable",
-				"na_rationale": "pure internal change", "source_refs": []string{"REQ-001#ui"},
+				"na_rationale": "pure internal change", "na_checklist_id": "REQ-001#ui_impact", "source_refs": []string{"REQ-001#ui"},
 			},
 		},
 		"assignments": []any{
@@ -167,6 +167,9 @@ func writePlanFile(t *testing.T, root string) string {
 // registerFixturePlan registers the fixture plan and returns the new snapshot.
 func registerFixturePlan(t *testing.T, root, statePath, journalPath string) loopruntime.Snapshot {
 	t.Helper()
+	// Findings built after this point bind real evidence artifacts (S7-11).
+	fixtureEvidenceRoot = root
+	t.Cleanup(func() { fixtureEvidenceRoot = "" })
 	planPath := writePlanFile(t, root)
 	snap, err := RegisterPlan(root, statePath, journalPath, PlanRequest{
 		ExpectedRevision: 1,
@@ -202,6 +205,23 @@ func markDispatched(t *testing.T, root, statePath, journalPath string, snapshot 
 	return next
 }
 
+// fixtureEvidenceRef writes a real evidence artifact under the repository and
+// returns its typed path: reference with the digest bound (S7-11/RC-07: bare
+// refs no longer satisfy the evidence gate, so fixtures bind real files).
+func fixtureEvidenceRef(t *testing.T, root, name string) string {
+	t.Helper()
+	rel := "docs/reports/" + name
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("fixture evidence: " + name + "\n")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return "path:" + rel + "#sha256=" + sha256Of(content)
+}
+
 // writeResultFile builds a ReviewResult JSON covering the given claim
 // conclusions (claimID -> conclusion) with optional findings.
 func writeResultFile(t *testing.T, root string, plan *Plan, assignmentID, resultID, producer, verdict string, conclusions map[string]string, findings []Finding) string {
@@ -210,7 +230,7 @@ func writeResultFile(t *testing.T, root string, plan *Plan, assignmentID, result
 	for claimID, conclusion := range conclusions {
 		claimResults = append(claimResults, map[string]any{
 			"claim_id": claimID, "conclusion": conclusion,
-			"observed": "observed " + claimID, "evidence_refs": []string{"ev/" + claimID + ".md"},
+			"observed": "observed " + claimID, "evidence_refs": []string{fixtureEvidenceRef(t, root, claimID+"-observed.md")},
 		})
 	}
 	payload := map[string]any{
@@ -240,7 +260,26 @@ func writeResultFile(t *testing.T, root string, plan *Plan, assignmentID, result
 	return path
 }
 
+// fixtureEvidenceRoot is set by dispatchedFixture (and any other test that
+// builds findings against a temp repository root) so codeInspectionFinding
+// can bind its evidence to a real artifact on disk (S7-11/RC-07: bare ghost
+// refs no longer satisfy the evidence gate).
+var fixtureEvidenceRoot string
+
 func codeInspectionFinding(findingID, claimID string) Finding {
+	ref := ""
+	if fixtureEvidenceRoot != "" {
+		rel := "docs/reports/" + findingID + "-code-trail.md"
+		path := filepath.Join(fixtureEvidenceRoot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			panic(err)
+		}
+		content := []byte("fixture code-inspection evidence for " + findingID + "\n")
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			panic(err)
+		}
+		ref = "path:" + rel + "#sha256=" + sha256Of(content)
+	}
 	return Finding{
 		SchemaVersion:   "1.0.0",
 		FindingID:       findingID,
@@ -261,7 +300,7 @@ func codeInspectionFinding(findingID, claimID string) Finding {
 			TerminalState:      "success reported on failure",
 		},
 		Reproducibility: "always",
-		EvidenceRefs:    []string{"ev/code-trail.md"},
+		EvidenceRefs:    []string{ref},
 	}
 }
 

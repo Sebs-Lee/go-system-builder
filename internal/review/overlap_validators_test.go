@@ -89,7 +89,7 @@ func TestValidatePlanRejectsDuplicatedGenericReview(t *testing.T) {
 			{ClaimID: "claim-qa-c1", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-qa-c2", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-na", Lens: "e2e", Target: "n/a", Applicability: "not_applicable",
-				NARationale: "pure internal change", SourceRefs: []string{"REQ-1#ui"}},
+				NARationale: "pure internal change", NAChecklistID: "REQ-1#ui_impact", SourceRefs: []string{"REQ-1#ui"}},
 		},
 		[]PlanAssignment{
 			// Identical non_overlap_boundary on all three — the validator's
@@ -132,7 +132,7 @@ func TestValidatePlanAllowsSameReadSetWithDifferentOracle(t *testing.T) {
 			{ClaimID: "claim-qa-3", Lens: "qa", Target: target, Method: method, Oracle: "no unsafe permission", Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-qa-4", Lens: "qa", Target: target, Method: method, Oracle: "no resource leak", Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-na", Lens: "e2e", Target: "n/a", Applicability: "not_applicable",
-				NARationale: "pure internal change", SourceRefs: []string{"REQ-1#ui"}},
+				NARationale: "pure internal change", NAChecklistID: "REQ-1#ui_impact", SourceRefs: []string{"REQ-1#ui"}},
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-qa-1", Lens: "qa", ClaimIDs: []string{"claim-qa-1", "claim-qa-2"},
@@ -147,8 +147,40 @@ func TestValidatePlanAllowsSameReadSetWithDifferentOracle(t *testing.T) {
 	}
 }
 
-// §14.1: 双方都写了互不相同的 non_overlap_boundary——放行。
+// §14.1: 双方都写了互不相同的 non_overlap_boundary，且各自拥有不相交的
+// focus 维度（target+method 集合相同但分区真实存在）——放行。S7-6/RC-07：
+// 纯 prose 边界不再是逃生门。
 func TestValidatePlanAllowsDistinctNonOverlapBoundaries(t *testing.T) {
+	target := "internal/example"
+	method := "code review"
+	oracle := "no dropped error"
+	plan := planWithClaimsAndAssignments(
+		[]Claim{
+			{ClaimID: "claim-qa-a1", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", FocusKey: "error-propagation", SourceRefs: []string{"REQ-1"}},
+			{ClaimID: "claim-qa-a2", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", FocusKey: "error-propagation", SourceRefs: []string{"REQ-1"}},
+			{ClaimID: "claim-qa-b1", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", FocusKey: "state-machine", SourceRefs: []string{"REQ-1"}},
+			{ClaimID: "claim-qa-b2", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", FocusKey: "state-machine", SourceRefs: []string{"REQ-1"}},
+			{ClaimID: "claim-e2e-na", Lens: "e2e", Target: "n/a", Applicability: "not_applicable",
+				NARationale: "pure internal change", NAChecklistID: "REQ-1#ui_impact", SourceRefs: []string{"REQ-1#ui"}},
+		},
+		[]PlanAssignment{
+			{AssignmentID: "assignment-qa-a", Lens: "qa", ClaimIDs: []string{"claim-qa-a1", "claim-qa-a2"},
+				FocusKeys: []string{"error-propagation"},
+				NonOverlapBoundary: "owns error propagation logic", ExecutionWave: "static"},
+			{AssignmentID: "assignment-qa-b", Lens: "qa", ClaimIDs: []string{"claim-qa-b1", "claim-qa-b2"},
+				FocusKeys: []string{"state-machine"},
+				NonOverlapBoundary: "owns state-machine transitions", ExecutionWave: "static"},
+		},
+		"not_applicable",
+	)
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("mutually distinct non_overlap_boundary with a real focus partition must release the pair, got %v", err)
+	}
+}
+
+// §14.1 / S7-6 (RC-07): 互不相同的 non_overlap_boundary 只有 prose、
+// target+method 集合完全一致且无任何结构分区——拒收，prose 不能替代分区。
+func TestValidatePlanRejectsProseOnlyNonOverlapBoundary(t *testing.T) {
 	target := "internal/example"
 	method := "code review"
 	oracle := "no dropped error"
@@ -159,7 +191,7 @@ func TestValidatePlanAllowsDistinctNonOverlapBoundaries(t *testing.T) {
 			{ClaimID: "claim-qa-b1", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-qa-b2", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-na", Lens: "e2e", Target: "n/a", Applicability: "not_applicable",
-				NARationale: "pure internal change", SourceRefs: []string{"REQ-1#ui"}},
+				NARationale: "pure internal change", NAChecklistID: "REQ-1#ui_impact", SourceRefs: []string{"REQ-1#ui"}},
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-qa-a", Lens: "qa", ClaimIDs: []string{"claim-qa-a1", "claim-qa-a2"},
@@ -169,8 +201,16 @@ func TestValidatePlanAllowsDistinctNonOverlapBoundaries(t *testing.T) {
 		},
 		"not_applicable",
 	)
-	if err := ValidatePlan(plan); err != nil {
-		t.Fatalf("mutually distinct non_overlap_boundary must release the pair, got %v", err)
+	err := ValidatePlan(plan)
+	if err == nil {
+		t.Fatal("prose-only non_overlap_boundary over an identical target+method set must be rejected")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "non_overlap_boundary is prose, not a partition") {
+		t.Fatalf("rejection must name the prose-escape gap, got %v", err)
+	}
+	if !strings.Contains(msg, "focus_key") || !strings.Contains(msg, "merge") {
+		t.Fatalf("rejection must point at the structural split or merge, got %v", err)
 	}
 }
 
@@ -184,7 +224,7 @@ func TestValidatePlanAllowsSameReadSetAcrossLenses(t *testing.T) {
 			{ClaimID: "claim-dv-1", Lens: "delivery", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-qa-1", Lens: "qa", Target: target, Method: method, Oracle: oracle, Applicability: "required", SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-na", Lens: "e2e", Target: "n/a", Applicability: "not_applicable",
-				NARationale: "pure internal change", SourceRefs: []string{"REQ-1#ui"}},
+				NARationale: "pure internal change", NAChecklistID: "REQ-1#ui_impact", SourceRefs: []string{"REQ-1#ui"}},
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-dv-1", Lens: "delivery", ClaimIDs: []string{"claim-dv-1"},
@@ -234,6 +274,40 @@ func TestValidatePlanRejectsColdStartSingleAssignmentOverload(t *testing.T) {
 	}
 	if !strings.Contains(msg, "Expand the coverage matrix") {
 		t.Fatalf("rejection must point at the next action (expand coverage matrix), got %v", err)
+	}
+}
+
+// S7-6/RC-07: an empty focus_key is not a free pass. A cold-start plan whose
+// required e2e Claims declare no focus_key at all previously bypassed the
+// overload gate (dimensions < 2 read as "not overloaded"); now the missing
+// dimension carrier IS the overload and registration is rejected.
+func TestValidatePlanRejectsColdStartClaimsAllWithEmptyFocusKey(t *testing.T) {
+	plan := planWithClaimsAndAssignments(
+		[]Claim{
+			{ClaimID: "claim-e2e-flow-a", Lens: "e2e", Target: "flow a", Method: "browser",
+				Oracle: "flow a completes", Applicability: "required",
+				SourceRefs: []string{"REQ-1"}}, // no FocusKey
+			{ClaimID: "claim-e2e-flow-b", Lens: "e2e", Target: "flow b", Method: "browser",
+				Oracle: "flow b completes", Applicability: "required",
+				SourceRefs: []string{"REQ-1"}}, // no FocusKey
+		},
+		[]PlanAssignment{
+			{AssignmentID: "assignment-e2e-all", Lens: "e2e",
+				ClaimIDs:           []string{"claim-e2e-flow-a", "claim-e2e-flow-b"},
+				NonOverlapBoundary: "owns every e2e flow in one pass", ExecutionWave: "behavior"},
+		},
+		"cold_start",
+	)
+	err := ValidatePlan(plan)
+	if err == nil {
+		t.Fatal("cold-start plan with all required e2e claims lacking focus_key must be rejected as overload")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "empty focus_key is overload") {
+		t.Fatalf("rejection must name empty focus_key as overload (S7-6/RC-07), got %v", err)
+	}
+	if !strings.Contains(msg, "assignment-e2e-all") {
+		t.Fatalf("rejection must name the overloaded assignment, got %v", err)
 	}
 }
 

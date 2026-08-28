@@ -21,6 +21,8 @@ import (
 // assignments; returns the snapshot and loaded plan.
 func dispatchedFixture(t *testing.T, root, statePath, journalPath string) (snapshotRevision int, plan *Plan) {
 	t.Helper()
+	fixtureEvidenceRoot = root
+	t.Cleanup(func() { fixtureEvidenceRoot = "" })
 	snap := registerFixturePlan(t, root, statePath, journalPath)
 	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-dv-1", "agent-dv-1")
 	snap = markDispatched(t, root, statePath, journalPath, snap, "assignment-qa-1", "agent-qa-1")
@@ -102,6 +104,48 @@ func TestSubmitResultRejectsAssignmentRevisionMismatch(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "assignment_revision") {
 		t.Fatalf("result from an old plan revision must be rejected, got %v", err)
+	}
+}
+
+// S7-8/RC-07: the Builder/Reviewer independence gate must scan every
+// persisted builder delivery carrier, not just completion_report. A Builder
+// who delivered via builder_report or agent_completion (the legacy
+// `runtime evidence add` kinds) is equally non-independent.
+func TestProducerIndependenceRejectsBuilderDeliveryOnAnyCarrierKind(t *testing.T) {
+	result := &Result{ProducerAgentID: "agent-dv-1"}
+	base := map[string]any{
+		"baseline_generation": 1,
+		"produced_by":         []any{"agent-dv-1"},
+	}
+	state := func(kind string) map[string]any {
+		row := map[string]any{}
+		for k, v := range base {
+			row[k] = v
+		}
+		row["kind"] = kind
+		return map[string]any{"evidence": []any{row}, "baseline": map[string]any{"generation": 1}}
+	}
+	for _, kind := range []string{"completion_report", "builder_report", "agent_completion"} {
+		if err := validateProducerIndependence(state(kind), result); err == nil || !strings.Contains(err.Error(), "role independence") {
+			t.Fatalf("delivery via %s must reject the producer as reviewer, got %v", kind, err)
+		}
+	}
+	// A different agent's delivery does not taint this reviewer.
+	other := map[string]any{
+		"kind": "builder_report", "baseline_generation": 1,
+		"produced_by": []any{"agent-builder-9"},
+		"baseline":    map[string]any{"generation": 1},
+	}
+	if err := validateProducerIndependence(map[string]any{"evidence": []any{other}, "baseline": map[string]any{"generation": 1}}, result); err != nil {
+		t.Fatalf("another agent's delivery must not block the reviewer: %v", err)
+	}
+	// Stale-generation delivery no longer binds.
+	stale := map[string]any{
+		"kind": "completion_report", "baseline_generation": 0,
+		"produced_by": []any{"agent-dv-1"},
+	}
+	if err := validateProducerIndependence(map[string]any{"evidence": []any{stale}, "baseline": map[string]any{"generation": 1}}, result); err != nil {
+		t.Fatalf("stale generation delivery must not block the reviewer: %v", err)
 	}
 }
 
@@ -481,7 +525,7 @@ func TestSubmitResultRejectsTimelineStepWithoutEvidence(t *testing.T) {
 
 	finding := codeInspectionFinding("finding-qa-1", "claim-qa-1")
 	finding.Encounter.Timeline = []TimelineStep{
-		{Sequence: 1, Action: "open the form", ObservedCheckpoint: "form rendered", EvidenceRefs: []string{"shot-1.png"}},
+		{Sequence: 1, Action: "open the form", ObservedCheckpoint: "form rendered", EvidenceRefs: []string{fixtureEvidenceRef(t, root, "timeline-step-1.png")}},
 		{Sequence: 2, Action: "submit", ObservedCheckpoint: "error toast"}, // no evidence bound
 	}
 	path := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
@@ -889,8 +933,8 @@ func TestSubmitResultMergesCaptureBufferIntoEmptyTimeline(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(buffer), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	lines := `{"sequence":1,"action":"open /settings","observed":"page rendered","evidence_refs":["shot-1.png"]}
-{"sequence":2,"action":"toggle flag","observed":"save failed","evidence_refs":["shot-2.png"]}
+	lines := `{"sequence":1,"action":"open /settings","observed":"page rendered","evidence_refs":["` + fixtureEvidenceRef(t, root, "capture-shot-1.png") + `"]}
+{"sequence":2,"action":"toggle flag","observed":"save failed","evidence_refs":["` + fixtureEvidenceRef(t, root, "capture-shot-2.png") + `"]}
 `
 	if err := os.WriteFile(buffer, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
@@ -953,6 +997,8 @@ func patchResultField(t *testing.T, path string, key string, value any) {
 // three assignments (dv-1, qa-1, qa-2) plus the N/A e2e claim.
 func writeThreeAssignmentPlan(t *testing.T, root string) string {
 	t.Helper()
+	fixtureEvidenceRoot = root
+	t.Cleanup(func() { fixtureEvidenceRoot = "" })
 	planPath := writePlanFile(t, root)
 	data, err := os.ReadFile(planPath)
 	if err != nil {

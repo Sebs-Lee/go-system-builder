@@ -26,12 +26,13 @@ import (
 
 // blockedClaimsPatch builds one blocked_claims array entry for
 // patchResultField.
-func blockedClaimsPatch(claimID string, findingIDs []string, kind, detail string) []any {
+func blockedClaimsPatch(t *testing.T, claimID string, findingIDs []string, kind, detail string) []any {
+	t.Helper()
 	ids := make([]any, 0, len(findingIDs))
 	for _, id := range findingIDs {
 		ids = append(ids, id)
 	}
-	evidenceRefs := []any{"ev/" + claimID + "-blocked.md"}
+	evidenceRefs := []any{fixtureEvidenceRef(t, fixtureEvidenceRoot, claimID+"-blocked.md")}
 	if len(findingIDs) > 0 {
 		// A blocked projection must bind to evidence that the runtime can
 		// resolve. The confirmed Finding itself is the minimal canonical
@@ -87,7 +88,7 @@ func TestSubmitResultBlockedByConfirmedFindingSealsWithBinding(t *testing.T) {
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "finding",
 		map[string]string{}, nil)
 	patchResultField(t, dvPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{"finding-qa-1"}, "build", "product no longer compiles after the confirmed finding; no binary to trace"))
+		blockedClaimsPatch(t, "claim-dv-1", []string{"finding-qa-1"}, "build", "product no longer compiles after the confirmed finding; no binary to trace"))
 	snap, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: snap.Revision, AssignmentID: "assignment-dv-1", ResultPath: dvPath,
 	})
@@ -175,7 +176,7 @@ func TestSubmitResultBlockedProjectionRecoveredFromEarlierEnvelope(t *testing.T)
 	qa2 := writeResultFile(t, root, plan, "assignment-qa-2", "review-result-qa-2", "agent-qa-2", "finding",
 		map[string]string{}, nil)
 	patchResultField(t, qa2, "blocked_claims",
-		blockedClaimsPatch("claim-qa-2", []string{"finding-qa-1"}, "start", "service exits on boot with the confirmed defect; no state walk is possible"))
+		blockedClaimsPatch(t, "claim-qa-2", []string{"finding-qa-1"}, "start", "service exits on boot with the confirmed defect; no state walk is possible"))
 	snap, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: snap.Revision, AssignmentID: "assignment-qa-2", ResultPath: qa2,
 	})
@@ -236,8 +237,13 @@ func TestSubmitResultRejectsBlockedWithoutConfirmedFinding(t *testing.T) {
 
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "finding",
 		map[string]string{}, nil)
-	patchResultField(t, dvPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{"finding-ghost"}, "build", "out of tokens, pretending the build is broken"))
+	patchResultField(t, dvPath, "blocked_claims", []any{map[string]any{
+		"claim_id":              "claim-dv-1",
+		"blocking_finding_ids":  []any{"finding-ghost"},
+		"failed_precondition":   map[string]any{"kind": "build", "detail": "out of tokens, pretending the build is broken"},
+		"evidence_refs":         []any{fixtureEvidenceRef(t, root, "claim-dv-1-ghost.md")},
+		"after_repair_required": true,
+	}})
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-dv-1", ResultPath: dvPath,
 	})
@@ -256,7 +262,7 @@ func TestSubmitResultRejectsBlockedWithUnknownEvidence(t *testing.T) {
 	qaPath := writeResultFile(t, root, plan, "assignment-qa-1", "review-result-qa-1", "agent-qa-1", "finding",
 		map[string]string{"claim-qa-1": "fail"},
 		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
-	patchResultField(t, qaPath, "blocked_claims", blockedClaimsPatch("claim-qa-2", []string{"finding-qa-1"}, "build", "the confirmed finding prevents the second claim from starting"))
+	patchResultField(t, qaPath, "blocked_claims", blockedClaimsPatch(t, "claim-qa-2", []string{"finding-qa-1"}, "build", "the confirmed finding prevents the second claim from starting"))
 	// Keep the block declaration structurally valid, but point it at an
 	// evidence id that is neither a state row nor a finding in this result.
 	patchResultField(t, qaPath, "blocked_claims", []any{map[string]any{
@@ -307,7 +313,7 @@ func TestSubmitResultRejectsBlockedWithEmptyBlockingFindings(t *testing.T) {
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "finding",
 		map[string]string{}, nil)
 	patchResultField(t, dvPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{}, "build", "no finding to bind"))
+		blockedClaimsPatch(t, "claim-dv-1", []string{}, "build", "no finding to bind"))
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-dv-1", ResultPath: dvPath,
 	})
@@ -324,7 +330,7 @@ func TestSubmitResultRejectsBlockedWithAfterRepairFalse(t *testing.T) {
 
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "finding",
 		map[string]string{}, nil)
-	entries := blockedClaimsPatch("claim-dv-1", []string{"finding-qa-1"}, "build", "build broken")
+	entries := blockedClaimsPatch(t, "claim-dv-1", []string{"finding-qa-1"}, "build", "build broken")
 	entries[0].(map[string]any)["after_repair_required"] = false
 	patchResultField(t, dvPath, "blocked_claims", entries)
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
@@ -344,7 +350,7 @@ func TestSubmitResultRejectsBlockedWithUnknownPreconditionKind(t *testing.T) {
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "finding",
 		map[string]string{}, nil)
 	patchResultField(t, dvPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{"finding-qa-1"}, "convenience", "not a real precondition"))
+		blockedClaimsPatch(t, "claim-dv-1", []string{"finding-qa-1"}, "convenience", "not a real precondition"))
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-dv-1", ResultPath: dvPath,
 	})
@@ -371,7 +377,7 @@ func TestSubmitResultRejectsBlockedWithPassVerdict(t *testing.T) {
 	dvPath := writeResultFile(t, root, plan, "assignment-dv-1", "review-result-dv-1", "agent-dv-1", "pass",
 		map[string]string{}, nil)
 	patchResultField(t, dvPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{"finding-qa-1"}, "build", "build broken"))
+		blockedClaimsPatch(t, "claim-dv-1", []string{"finding-qa-1"}, "build", "build broken"))
 	_, err = SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: snap.Revision, AssignmentID: "assignment-dv-1", ResultPath: dvPath,
 	})
@@ -391,7 +397,7 @@ func TestSubmitResultRejectsClaimAnsweredByResultAndBlocked(t *testing.T) {
 		map[string]string{"claim-qa-1": "fail", "claim-qa-2": "pass"},
 		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
 	patchResultField(t, qaPath, "blocked_claims",
-		blockedClaimsPatch("claim-qa-2", []string{"finding-qa-1"}, "entry", "double answer"))
+		blockedClaimsPatch(t, "claim-qa-2", []string{"finding-qa-1"}, "entry", "double answer"))
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
 	})
@@ -410,7 +416,7 @@ func TestSubmitResultRejectsBlockedClaimOutsideAssignment(t *testing.T) {
 		map[string]string{"claim-qa-1": "fail"},
 		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
 	patchResultField(t, qaPath, "blocked_claims",
-		blockedClaimsPatch("claim-dv-1", []string{"finding-qa-1"}, "build", "not my claim"))
+		blockedClaimsPatch(t, "claim-dv-1", []string{"finding-qa-1"}, "build", "not my claim"))
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
 	})
@@ -432,7 +438,7 @@ func TestSubmitResultRejectsBlockedNotApplicableClaim(t *testing.T) {
 		map[string]string{"claim-qa-1": "fail"},
 		[]Finding{codeInspectionFinding("finding-qa-1", "claim-qa-1")})
 	patchResultField(t, qaPath, "blocked_claims",
-		blockedClaimsPatch("claim-e2e-na", []string{"finding-qa-1"}, "entry", "n/a claim"))
+		blockedClaimsPatch(t, "claim-e2e-na", []string{"finding-qa-1"}, "entry", "n/a claim"))
 	_, err := SubmitResult(root, statePath, journalPath, SubmitRequest{
 		ExpectedRevision: revision, AssignmentID: "assignment-qa-1", ResultPath: qaPath,
 	})

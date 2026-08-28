@@ -110,6 +110,23 @@ func worktreeProjectRoot(t *testing.T) string {
 	return root
 }
 
+// typedEvidenceRef writes a real evidence artifact under the shared project
+// root and returns its typed path: reference with the digest bound
+// (S7-11/RC-07: bare ghost references are rejected by the evidence gate).
+func typedEvidenceRef(t *testing.T, root, name string) string {
+	t.Helper()
+	rel := "docs/reports/" + name
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("cli fixture evidence: " + name + "\n")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("path:%s#sha256=%x", rel, sha256.Sum256(content))
+}
+
 func runGit(t *testing.T, root string, args ...string) {
 	t.Helper()
 	//nolint:gosec // test-only
@@ -161,6 +178,7 @@ func minimalReviewPlan(t *testing.T, dir, planID string) string {
 				"assertion": "no surface", "oracle": "impact", "method": "impact",
 				"applicability": "not_applicable",
 				"na_rationale":  "pure internal change",
+				"na_checklist_id": "REQ-WORKTREE#ui_impact",
 				"source_refs":   []string{"REQ-WORKTREE#ui"},
 			},
 		},
@@ -323,7 +341,7 @@ func TestReviewResultFromWorktreeWritesToSharedControlPlane(t *testing.T) {
 				"claim_id":      "claim-dv-1",
 				"conclusion":    "pass",
 				"observed":      "trace passes",
-				"evidence_refs": []string{"ev/dv.md"},
+				"evidence_refs": []string{typedEvidenceRef(t, root, "dv.md")},
 			},
 		},
 		"verdict": "pass",

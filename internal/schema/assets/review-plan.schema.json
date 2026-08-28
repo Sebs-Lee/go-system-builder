@@ -78,6 +78,7 @@
           "path": {"type": "string", "minLength": 1},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "selector_ref": {"type": "string"},
+          "route_ref": {"type": "string"},
           "environment": {"type": "string"}
         }
       }
@@ -142,6 +143,11 @@
             "type": "string",
             "description": "Required when applicability=not_applicable: why this Claim does not apply, with evidence."
           },
+          "na_checklist_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required when applicability=not_applicable: the N/A checklist (or impact-analysis artifact id) the conclusion was checked against. A bare rationale with no checklist is not a verifiable N/A (S7-9/RC-07)."
+          },
           "source_refs": {
             "type": "array",
             "minItems": 1,
@@ -167,7 +173,7 @@
               "properties": {"applicability": {"const": "not_applicable"}}
             },
             "then": {
-              "required": ["na_rationale"],
+              "required": ["na_rationale", "na_checklist_id"],
               "properties": {
                 "na_rationale": {"minLength": 8}
               }

@@ -178,11 +178,18 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	// regression_available; any missing required CASE conservatively falls
 	// back to cold_start while keeping one Assignment per CASE.
 	uiImpact := boundREQUIImpact(state)
-	e2eState := "regression_available"
+	if strings.TrimSpace(uiImpact) == "" {
+		// S7-9 (RC-07): a missing/mistyped ui_impact previously followed the
+		// same not_applicable branch as an explicit "none", silently dropping
+		// the whole E2E dimension. The draft refuses to choose for the
+		// Planner: only an explicit "none" may produce the N/A claim.
+		return nil, append(notes, "bound REQ metadata.ui_impact is empty or missing; the E2E coverage state cannot be derived — bind the REQ with an explicit ui_impact value (none | changed | unknown) via the requirement bind path, or add the metadata.ui_impact field, then re-draft (S7-9/RC-07: an empty ui_impact is an error, not an implicit not_applicable)")
+	}
 	var e2eAssets []E2EAsset
 	var verificationWorkspace *string
+	e2eState := "regression_available"
 	switch uiImpact {
-	case "none", "":
+	case "none":
 		e2eState = "not_applicable"
 		claims = append(claims, Claim{
 			ClaimID: "claim-e2e-na-1", Lens: "e2e", Target: "n/a",
@@ -191,6 +198,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			Method:        "impact analysis",
 			Applicability: "not_applicable",
 			NARationale:   "bound REQ declares no UI impact; no entry point or browser-observable behavior is in scope",
+			NAChecklistID: "bound_req#ui_impact",
 			SourceRefs:    []string{"bound_req"},
 		})
 		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; keep the explicit claim-e2e-na-1 Claim with source_refs and na_rationale (it is not dispatched), then verify against the real required surfaces (§4.3) before registering")

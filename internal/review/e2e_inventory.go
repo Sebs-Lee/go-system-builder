@@ -134,9 +134,21 @@ func discoverE2EInventory(root string, state map[string]any) (e2eInventory, []st
 			if !strings.Contains(string(data), caseID) {
 				continue
 			}
+			scenario := caseIDs[caseID]
 			inventory.Assets = append(inventory.Assets, E2EAsset{
 				AssetID: "e2e-asset:" + caseID + ":" + rel,
 				CaseRef: caseID, Path: rel, SHA256: sha,
+				// S7-7 (RC-07): a spec that merely mentions the CASE id — even
+				// in a comment — is not a regression asset by itself. Record
+				// the executability fingerprint the asset gate requires: the
+				// test-id selector surface, the module route/flow refs the
+				// CASE declares, and the module environment tag. The
+				// declaration is validated, not inferred from prose, so
+				// substring matching can never silently become
+				// "regression available".
+				SelectorRef: "testid:" + caseID,
+				RouteRef:    strings.Join(append([]string{scenario.Module}, scenario.FlowRefs...), ","),
+				Environment: "module=" + scenario.Module,
 			})
 		}
 		return nil

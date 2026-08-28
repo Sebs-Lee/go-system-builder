@@ -62,6 +62,7 @@
       "method": "impact analysis",
       "applicability": "not_applicable",
       "na_rationale": "pure internal refactoring with no user-visible surface",
+      "na_checklist_id": "docs/requirements/REQ-001.md#ui_impact",
       "source_refs": ["docs/requirements/REQ-001.md#ui_impact"]
     }
   ],
