@@ -91,7 +91,7 @@
 | 权威事务哈希 | Case revision sha、Contract approved hash、handoff ref+SHA | route / approve / handoff commit | 下游每一跳的前置校验 |
 | activation 哈希链 | plan_report 文件字节级哈希链 | agent lifecycle 事务 | readback/activation fail-closed 实校验 |
 
-> **收敛方向（RC-10 Step B）**：八家族正收敛为三元 `state_hash + evidence_hash + baseline_hash`（其余家族标记 deprecated，校验逐步切换到三元；revision 收敛为 `state_revision + evidence_generation` 二元）。本表各行暂不删除：切换是逐消费者的迁移事务，每一处消费点切换前仍以原家族定义为准。
+> **收敛方向（RC-10 Step B — 已落地）**：`ComputeTriple`/`ComputeRevisionPair`（`internal/runtime/fingerprint.go`）产出三元 `state_hash + evidence_hash + baseline_hash` 与二元 `state_revision + evidence_generation`；首个消费者为 `RefreshFingerprints` 输出 `FingerprintResult.Triple`。八家族表仍保留：切换是逐消费者的迁移事务。
 
 冻结不变量与受控例外：
 
@@ -373,7 +373,7 @@ L2 全局规则「债务登记」（类型/影响/成本/负责人，债可累�
 4. 仍是目标态、暂无代码落点的部分：request/persisted 双形态约定的 schema 化校验（现由示例 README + 测试守护）、§7.3 的人闸交接物最小字段（无独立 entity/schema）、§13 债务登记实体、protected commands 接线、三种 Blocker 合并。写代码时不得以"文档已写"推定已实现。
 5. encounter 字段集是否提升为独立 schema、TR-016 是否改为消费 rich change-impact（现为 AffectedPaths，分母偏窄），均为待 owner 裁决项。
 6. L3 尾部审计块是历史记录；冲突时以各 L3「当前事实」小节及代码为准。本次审查据此修正了 L3-S5 的 two-phase-activation 残留与 L3-S10 干净轮分母旧口径（angle）。
-7. RC-10 观测面（2026-08-28）：journal 以 10k 行为轮转观测阈值（`JournalNeedsRotation`，`internal/runtime/store.go`；暂不实际轮转，见《状态机核心篇》§11）；§3 指纹家族收敛方向为三元 hash + 二元 revision（收敛事务待设计）；review-result submit CAS 事务新增 per-phase 时长指标 `loop_s7_submit_phase_ms`（best-effort，`internal/review/submit.go` + `internal/metrics/s7.go`）。三者均为观测/登记，不新增任何强制。
+7. RC-10 段轮转已落地（2026-08-28）：journal 10k 行阈值触发 `maybeRotateJournalLocked` 归档为 `loop-events.jsonl.archive.<seq>.jsonl` 段（marker 事务+段感知 `inspectJournal`/`journalLineCount`/`journalContains`，见《状态机核心篇》§11）；§3 指纹家族收敛方向为三元 hash + 二元 revision（收敛事务待设计）；review-result submit CAS 事务新增 per-phase 时长指标 `loop_s7_submit_phase_ms`（best-effort，`internal/review/submit.go` + `internal/metrics/s7.go`）。三者均为观测/登记，不新增任何强制。
 
 ---
 

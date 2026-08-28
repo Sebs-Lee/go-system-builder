@@ -42,7 +42,7 @@
 
 ### 1.2 journal 条目形状
 
-JSONL 公共字段：schema_version、runtime_id、event_id、idempotency_key、sequence、event、outcome、actor{type,id}、request_id、baseline_generation、before_revision/after_revision、from/to、evidence_ids、message、occurred_at；transition_committed 类追加 transition_id、gate_id（默认 `MANUAL`）、gate_fingerprint（默认 `sha256:manual`）、producer_responsibility、guard_results、action_results。一致性不变式：tail 的 sequence/event_id 必须等于 cursor 二元组。**当前无轮转上限**（append-only 无限增长，见 §11）。
+JSONL 公共字段：schema_version、runtime_id、event_id、idempotency_key、sequence、event、outcome、actor{type,id}、request_id、baseline_generation、before_revision/after_revision、from/to、evidence_ids、message、occurred_at；transition_committed 类追加 transition_id、gate_id（默认 `MANUAL`）、gate_fingerprint（默认 `sha256:manual`）、producer_responsibility、guard_results、action_results。一致性不变式：tail 的 sequence/event_id 必须等于 cursor 二元组。超过 10k 行时自动归档为段文件 `loop-events.jsonl.archive.<tailSeq>.jsonl`（见 §11，`maybeRotateJournalLocked`，marker 事务段感知）。
 
 ### 1.3 runtime-archive
 
@@ -138,7 +138,7 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 
 核对日 2026-08-28：
 
-1. journal 无轮转/上限机制——长周期项目将无限增长；已新增阈值 10k 行探针 `JournalNeedsRotation`（`internal/runtime/store.go`）与诚实告警，轮转归档待下一批次接入（C5：未观测到失效不上强制，现已具备观测面）。
+1. journal 段轮转已落地（`internal/runtime/store.go: maybeRotateJournalLocked`，阈值 10k 行，`loop-events.jsonl.archive.<seq>.jsonl` 段感知、`inspectJournal`/`journalLineCount`/`journalContains` 跨段合并、marker 事务恢复；`JournalNeedsRotation` 仍作阈值探针，`LOOP_HARNESS_JOURNAL_DIAGNOSTIC` 输出段计数）。剩余边界：归档段不自动 purge，仅按段计数增长。
 2. `max_same_contract_failures` 已接入（见 §7.2 与 bug_lifecycle.go:341），属 opt-in 限次保险，默认 0=unlimited。
 3. integration checkpoint 的持久化通道未接线（internal/runtime/integration_register.go 自述"合同面已就绪待 BUG-06"，当前 loader 返回 nil）；S6 集成事实目前依赖任务侧投影。
 4. GTR-004 桥无生产调用方（S1 已诚实登记）；此类"声明存在但不可达"的条目在 catalog 属合法遗留，但每个都必须有登记处，不允许无主孤儿。

@@ -235,6 +235,7 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 		return err
 	}
 	apply(&snap)
+	retainS7Rounds(&snap, s7RoundRetention)
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode metrics: %w", err)

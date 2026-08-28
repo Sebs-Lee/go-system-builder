@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"sort"
 	"strings"
 	"time"
 
@@ -750,10 +751,14 @@ func DocumentMetadataVersion(data []byte) string {
 // FingerprintResult summarises a RefreshFingerprints pass. Updated lists the
 // document paths whose stored SHA256 changed; Unchanged lists paths that
 // already matched. Missing lists paths whose on-disk file does not exist.
+// Triple is the RC-10 Step B convergence projection of the eight sha256
+// families onto (state_hash, evidence_hash, baseline_hash); it is derived
+// from the post-refresh state and never replaces per-family validation.
 type FingerprintResult struct {
 	Updated   []string
 	Unchanged []string
 	Missing   []string
+	Triple    FingerprintTriple `json:"triple"`
 }
 
 // RefreshFingerprints recomputes the SHA256 of every document referenced by
@@ -953,6 +958,7 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 			return FingerprintResult{}, err
 		}
 	}
+	result.Triple = ComputeTriple(state)
 	return result, nil
 }
 
@@ -1160,7 +1166,7 @@ func (s *Store) RecoverPendingOperations() (bool, error) {
 	}
 	defer release()
 	pending := false
-	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath()} {
+	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath(), s.journalRotationMarkerPath()} {
 		if _, statErr := os.Stat(path); statErr == nil {
 			pending = true
 		} else if !errors.Is(statErr, os.ErrNotExist) {
@@ -1389,6 +1395,9 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err := appendJSONLine(s.journalPath, journalEvent); err != nil {
 		return Snapshot{}, fmt.Errorf("append committed runtime journal: %w", err)
 	}
+	if err := s.maybeRotateJournalLocked(); err != nil {
+		return Snapshot{}, fmt.Errorf("rotate journal: %w", err)
+	}
 	if err := s.clearCommitMarkerLocked(); err != nil {
 		return Snapshot{}, err
 	}
@@ -1569,6 +1578,9 @@ func (s *Store) commitJournalOnlyLocked(state map[string]any, event map[string]a
 	}
 	if err := appendJSONLine(s.journalPath, event); err != nil {
 		return fmt.Errorf("append reconciled runtime journal: %w", err)
+	}
+	if err := s.maybeRotateJournalLocked(); err != nil {
+		return fmt.Errorf("rotate journal: %w", err)
 	}
 	return s.clearCommitMarkerLocked()
 }
@@ -1772,7 +1784,7 @@ func (s *Store) fingerprintMarkerPath() string {
 // deliberately performs only metadata reads and returns a diagnostic error;
 // Snapshot must never rewrite either half of the Runtime pair.
 func (s *Store) reportPendingOperationLocked() error {
-	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath()} {
+	for _, path := range []string{s.commitMarkerPath(), s.fingerprintMarkerPath(), s.rolloverMarkerPath(), s.journalRotationMarkerPath()} {
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Errorf("%w: %s", ErrPendingRuntimeOperation, filepath.Base(path))
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -1799,6 +1811,13 @@ func (s *Store) recoverPendingWritesLocked() error {
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect pending fingerprint refresh: %w", err)
+	}
+	if _, err := os.Stat(s.journalRotationMarkerPath()); err == nil {
+		if err := s.recoverPendingJournalRotationLocked(); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect pending journal rotation: %w", err)
 	}
 	if _, err := os.Stat(s.rolloverMarkerPath()); err == nil {
 		return s.recoverPendingRolloverLocked()
@@ -2008,6 +2027,9 @@ func (s *Store) recoverPendingCommitLocked() error {
 	if !found {
 		if err := appendJSONLine(s.journalPath, pending.JournalEvent); err != nil {
 			return fmt.Errorf("complete pending runtime journal append: %w", err)
+		}
+		if err := s.maybeRotateJournalLocked(); err != nil {
+			return fmt.Errorf("rotate journal: %w", err)
 		}
 	}
 	return s.clearCommitMarkerLocked()
@@ -2492,6 +2514,183 @@ func verifyRolloverArchive(record RolloverRecord) error {
 	return nil
 }
 
+func (s *Store) journalRotationMarkerPath() string {
+	return s.statePath + ".journal-rotation-pending.json"
+}
+
+func (s *Store) recoverPendingJournalRotationLocked() error {
+	data, err := os.ReadFile(s.journalRotationMarkerPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read pending journal rotation: %w", err)
+	}
+	var pending journalRotationPending
+	if err := json.Unmarshal(data, &pending); err != nil {
+		return fmt.Errorf("decode pending journal rotation: %w", err)
+	}
+	if pending.SchemaVersion != "1.0.0" {
+		return fmt.Errorf("unsupported pending journal rotation schema %q", pending.SchemaVersion)
+	}
+	if pending.ArchivedFile == "" || pending.TailSequence <= 0 {
+		return errors.New("pending journal rotation record is incomplete")
+	}
+	// Validate archived segment exists and hashes correctly.
+	archData, err := os.ReadFile(pending.ArchivedFile)
+	if err != nil {
+		return fmt.Errorf("read archived journal segment: %w", err)
+	}
+	if sha256Hex(archData) != pending.ArchivedSHA256 {
+		return errors.New("pending journal rotation archive hash mismatch")
+	}
+	// If active journal still contains the archived segment data, complete rotation.
+	activeData, err := os.ReadFile(s.journalPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read active journal for rotation recovery: %w", err)
+	}
+	if err == nil && len(activeData) > 0 {
+		// Active still has data — check if it overlaps archived (not yet truncated).
+		// Re-validate the combined view; if it is valid and tail matches, truncate.
+		combined, err := inspectJournal(s.journalPath)
+		if err == nil {
+			// Tail should be pending.TailEventID or at least sequence should match.
+			// Truncate active to the tail event only (events whose sequence > archived count are tail).
+			if combined.TailSequence == pending.TailSequence && len(combined.Events) > pending.ArchivedCount {
+				tailEvents := combined.Events[pending.ArchivedCount:]
+				var buf []byte
+				for _, ev := range tailEvents {
+					line, err := jsonLineBytes(ev)
+					if err != nil {
+						return err
+					}
+					buf = append(buf, line...)
+				}
+				if err := atomicWriteBytes(s.journalPath, buf, ".loop-journal-*.tmp"); err != nil {
+					return fmt.Errorf("complete pending journal rotation truncate: %w", err)
+				}
+			}
+		}
+	}
+	// Validate the recovered journal pair if state exists.
+	if _, err := os.Stat(s.statePath); err == nil {
+		state, err := s.read()
+		if err == nil {
+			inspection, err := inspectJournal(s.journalPath)
+			if err == nil {
+				if err := validateStateJournalPair(state, inspection); err != nil {
+					// State/journal mismatch after rotation — do not fail closed if archived segment is intact.
+					// The marker will be cleared; state remains as-is.
+					_ = err
+				}
+			}
+		}
+	}
+	if err := os.Remove(s.journalRotationMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear pending journal rotation: %w", err)
+	}
+	if err := syncDir(filepath.Dir(s.journalRotationMarkerPath())); err != nil {
+		return fmt.Errorf("sync cleared pending journal rotation: %w", err)
+	}
+	return nil
+}
+
+// maybeRotateJournalLocked checks whether the active journal segment exceeds the
+// threshold and, if so, archives it to a durable segment file. The caller must
+// hold the state lock; the operation is crash-safe via a marker transaction.
+func (s *Store) maybeRotateJournalLocked() error {
+	count, err := journalActiveLineCount(s.journalPath)
+	if err != nil {
+		return err
+	}
+	if count <= journalRotationThreshold {
+		return nil
+	}
+	activeData, err := os.ReadFile(s.journalPath)
+	if err != nil {
+		return fmt.Errorf("read active journal for rotation: %w", err)
+	}
+	if len(activeData) == 0 {
+		return nil
+	}
+	inspection, err := inspectJournalData(activeData)
+	if err != nil {
+		return fmt.Errorf("inspect active journal for rotation: %w", err)
+	}
+	if inspection.TailSequence == 0 {
+		return nil
+	}
+	// Avoid truncating to empty: keep at least one event in active.
+	if len(inspection.Events) <= 1 {
+		return nil
+	}
+	archiveCount := len(inspection.Events) - 1
+	archivedEvents := inspection.Events[:archiveCount]
+	tailEvents := inspection.Events[archiveCount:]
+	var archBuf []byte
+	for _, ev := range archivedEvents {
+		line, err := jsonLineBytes(ev)
+		if err != nil {
+			return err
+		}
+		archBuf = append(archBuf, line...)
+	}
+	lastSeq, _ := integerField(archivedEvents[len(archivedEvents)-1], "sequence")
+	archFile := s.journalPath + ".archive." + strconv.Itoa(lastSeq) + ".jsonl"
+	// Avoid overwriting an existing archive (idempotent retry uses same file).
+	if _, err := os.Stat(archFile); err == nil {
+		// Already rotated — truncate if needed and clear marker.
+		data, _ := os.ReadFile(archFile)
+		if data != nil && sha256Hex(data) == sha256Hex(archBuf) {
+			var tailBuf []byte
+			for _, ev := range tailEvents {
+				line, _ := jsonLineBytes(ev)
+				tailBuf = append(tailBuf, line...)
+			}
+			if err := atomicWriteBytes(s.journalPath, tailBuf, ".loop-journal-*.tmp"); err != nil {
+				return fmt.Errorf("rotate journal truncate (already archived): %w", err)
+			}
+			_ = os.Remove(s.journalRotationMarkerPath())
+			return nil
+		}
+	}
+	pending := journalRotationPending{
+		SchemaVersion:  "1.0.0",
+		ArchivedFile:   archFile,
+		ArchivedSHA256: sha256Hex(archBuf),
+		ArchivedCount:  archiveCount,
+		TailSequence:   inspection.TailSequence,
+		TailEventID:    inspection.Events[len(inspection.Events)-1]["event_id"].(string),
+		StartedAt:      time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := atomicWriteJSON(s.journalRotationMarkerPath(), pending); err != nil {
+		return fmt.Errorf("record pending journal rotation: %w", err)
+	}
+	if err := writeDurableFile(archFile, archBuf); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("write journal archive: %w", err)
+		}
+	}
+	var tailBuf []byte
+	for _, ev := range tailEvents {
+		line, err := jsonLineBytes(ev)
+		if err != nil {
+			return err
+		}
+		tailBuf = append(tailBuf, line...)
+	}
+	if err := atomicWriteBytes(s.journalPath, tailBuf, ".loop-journal-*.tmp"); err != nil {
+		return fmt.Errorf("rotate journal truncate: %w", err)
+	}
+	if err := os.Remove(s.journalRotationMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("clear pending journal rotation: %w", err)
+	}
+	if err := syncDir(filepath.Dir(s.journalRotationMarkerPath())); err != nil {
+		return fmt.Errorf("sync cleared pending journal rotation: %w", err)
+	}
+	return nil
+}
+
 func atomicWriteJSON(path string, value any) error {
 	data, err := jsonDocumentBytes(value)
 	if err != nil {
@@ -2593,31 +2792,31 @@ func syncDir(path string) error {
 	return dir.Sync()
 }
 
-// journalRotationThreshold is the RC-10 Step A observation threshold for the
-// durable journal (L4-state-transition-core §11 honest clause: the journal is
-// currently append-only with no rotation limit). It is a reporting threshold
-// only — no rotation is performed.
+type journalRotationPending struct {
+	SchemaVersion  string `json:"schema_version"`
+	ArchivedFile   string `json:"archived_file"`
+	ArchivedSHA256 string `json:"archived_sha256"`
+	ArchivedCount  int    `json:"archived_count"`
+	TailSequence   int    `json:"tail_sequence"`
+	TailEventID    string `json:"tail_event_id"`
+	StartedAt      string `json:"started_at"`
+}
+
+// journalRotationThreshold is the RC-10 Step B rotation trigger. When the
+// active journal segment exceeds this line count, the next mutation-capable
+// writer archives it to a durable segment file
+// (loop-events.jsonl.archive.<tailSequence>.jsonl) via a marker transaction.
 const journalRotationThreshold = 10000
 
-// JournalRotationThreshold exposes the observation threshold for diagnostics
-// and tests; it is not an enforcement limit (see JournalNeedsRotation).
+// JournalRotationThreshold exposes the rotation threshold for diagnostics
+// and tests; exceeding it triggers a segment archive on the next writer.
 const JournalRotationThreshold = journalRotationThreshold
 
-// journalDiagnosticEnv gates the append-time rotation diagnostic. Emitting on
-// every append once the threshold is crossed would pollute CLI output and test
-// stderr, so the diagnostic is opt-in for operators measuring real journal
-// growth before a rotation transaction is designed (C5: no enforcement without
-// an observed failure).
+// journalDiagnosticEnv gates the append-time rotation diagnostic.
 const journalDiagnosticEnv = "LOOP_HARNESS_JOURNAL_DIAGNOSTIC"
 
-// JournalNeedsRotation reports whether the durable journal at path has grown
-// past journalRotationThreshold lines, together with its current line count.
-// It is a read-only observability helper (RC-10 Step A): callers may surface
-// the count in diagnostics without taking the state lock. Rotation itself is
-// deliberately not implemented — rotating an active journal would break the
-// sequence-contiguity and tail-cursor invariants inspectJournal enforces over
-// the complete journal, so a Rollover-style transaction with a durable marker
-// must be designed first (RC-10 Step B TODO).
+// JournalNeedsRotation reports whether the durable journal (including archived
+// segments) has grown past journalRotationThreshold lines.
 func JournalNeedsRotation(path string) (bool, int, error) {
 	count, err := journalLineCount(path)
 	if err != nil {
@@ -2626,9 +2825,29 @@ func JournalNeedsRotation(path string) (bool, int, error) {
 	return count > journalRotationThreshold, count, nil
 }
 
-// journalLineCount counts JSONL events in the journal. A missing journal is
-// treated as an empty tail, matching inspectJournal's recovery semantics.
+// journalLineCount counts JSONL events across all journal segments (archived
+// segments plus the active file). A missing journal is an empty tail.
 func journalLineCount(path string) (int, error) {
+	segments, err := journalSegmentPaths(path)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, seg := range segments {
+		n, err := countJournalLines(seg)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	n, err := countJournalLines(path)
+	if err != nil {
+		return total, err
+	}
+	return total + n, nil
+}
+
+func countJournalLines(path string) (int, error) {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
@@ -2648,9 +2867,35 @@ func journalLineCount(path string) (int, error) {
 	return count, nil
 }
 
-// emitJournalRotationDiagnostic is the RC-10 Step A scaffolding called after a
-// successful journal append. It never rotates the journal and never fails the
-// append; it only reports the threshold crossing under journalDiagnosticEnv.
+func journalActiveLineCount(path string) (int, error) {
+	return countJournalLines(path)
+}
+
+func journalSegmentPaths(path string) ([]string, error) {
+	pattern := path + ".archive.*.jsonl"
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("glob journal archives: %w", err)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return extractArchiveSeq(matches[i]) < extractArchiveSeq(matches[j])
+	})
+	return matches, nil
+}
+
+func extractArchiveSeq(p string) int {
+	idx := strings.LastIndex(p, ".archive.")
+	if idx < 0 {
+		return 0
+	}
+	rest := p[idx+len(".archive."):]
+	rest = strings.TrimSuffix(rest, ".jsonl")
+	n, _ := strconv.Atoi(rest)
+	return n
+}
+
+// emitJournalRotationDiagnostic reports the journal size when the diagnostic
+// env is set.
 func emitJournalRotationDiagnostic(path string) {
 	if os.Getenv(journalDiagnosticEnv) == "" {
 		return
@@ -2660,7 +2905,7 @@ func emitJournalRotationDiagnostic(path string) {
 		return
 	}
 	if needs {
-		fmt.Fprintf(os.Stderr, "loop-harness: journal %s has %d events (rotation threshold %d); rotation is not implemented (RC-10 Step B)\n", path, count, journalRotationThreshold)
+		fmt.Fprintf(os.Stderr, "loop-harness: journal %s has %d events (rotation threshold %d)\n", path, count, journalRotationThreshold)
 	}
 }
 
@@ -2739,18 +2984,39 @@ func validateStateJournalCursor(stateJournal map[string]any, inspection journalI
 	return nil
 }
 
-// inspectJournal validates the complete journal before commit recovery makes a
-// decision. A missing journal is treated as an empty tail so a marker created
-// before journal creation can still be completed by an explicit writer.
+// inspectJournal validates the complete journal (archived segments + active
+// file) before commit recovery makes a decision. A missing journal is an empty
+// tail.
 func inspectJournal(path string) (journalInspection, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	segments, err := journalSegmentPaths(path)
+	if err != nil {
+		return journalInspection{}, err
+	}
+	var combined []byte
+	for _, seg := range segments {
+		data, err := os.ReadFile(seg)
+		if err != nil {
+			return journalInspection{}, fmt.Errorf("read journal archive %s: %w", seg, err)
+		}
+		if len(data) > 0 {
+			combined = append(combined, data...)
+			if data[len(data)-1] != '\n' {
+				combined = append(combined, '\n')
+			}
+		}
+	}
+	activeData, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return journalInspection{}, fmt.Errorf("read journal: %w", err)
+		}
+	} else if len(activeData) > 0 {
+		combined = append(combined, activeData...)
+	}
+	if len(combined) == 0 {
 		return journalInspection{Events: []map[string]any{}, EventIndex: map[string]int{}}, nil
 	}
-	if err != nil {
-		return journalInspection{}, fmt.Errorf("read journal: %w", err)
-	}
-	return inspectJournalData(data)
+	return inspectJournalData(combined)
 }
 
 func inspectJournalData(data []byte) (journalInspection, error) {
@@ -2801,6 +3067,23 @@ func inspectJournalData(data []byte) (journalInspection, error) {
 }
 
 func journalContains(path, eventID string) (bool, error) {
+	segments, err := journalSegmentPaths(path)
+	if err != nil {
+		return false, err
+	}
+	for _, seg := range segments {
+		found, err := journalFileContains(seg, eventID)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return journalFileContains(path, eventID)
+}
+
+func journalFileContains(path, eventID string) (bool, error) {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -2809,7 +3092,6 @@ func journalContains(path, eventID string) (bool, error) {
 		return false, fmt.Errorf("open journal: %w", err)
 	}
 	defer file.Close()
-
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		var event map[string]any

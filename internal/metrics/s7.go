@@ -234,3 +234,115 @@ func writeClaimLeadTime(b *strings.Builder, values map[string]DurationStats, rou
 		fmt.Fprintf(b, "  %s{claim=%q} count=%d sum_ms=%d\n", metricS7ClaimLeadTime, label, stats.Count, stats.SumMS)
 	}
 }
+
+// s7RoundRetention caps round-keyed S7 maps retained in the durable snapshot.
+// Only round-keyed families are capped; outcome/phase-keyed families are
+// bounded by their own vocabularies and left uncapped.
+const s7RoundRetention = 20
+
+func retainS7Rounds(snap *Snapshot, keep int) {
+	if keep <= 0 {
+		return
+	}
+	trimRoundGauge := func(m map[string]int64) {
+		if len(m) <= keep {
+			return
+		}
+		type entry struct {
+			round int
+			key   string
+		}
+		entries := make([]entry, 0, len(m))
+		for k := range m {
+			r, ok := roundFromLabel(k)
+			if !ok {
+				continue
+			}
+			entries = append(entries, entry{round: r, key: k})
+		}
+		// Sort descending by round, keep the highest `keep` rounds, delete the rest.
+		// For S7ClaimLeadTime the key is r<round>:<claim_id> — group by round.
+		sort.Slice(entries, func(i, j int) bool { return entries[i].round > entries[j].round })
+		keepRounds := make(map[int]struct{})
+		for _, e := range entries {
+			if len(keepRounds) >= keep {
+				break
+			}
+			keepRounds[e.round] = struct{}{}
+		}
+		for k := range m {
+			r, ok := roundFromLabel(k)
+			if !ok {
+				continue
+			}
+			if _, keep := keepRounds[r]; !keep {
+				delete(m, k)
+			}
+		}
+	}
+	trimRoundDuration := func(m map[string]DurationStats) {
+		if len(m) <= keep {
+			return
+		}
+		type entry struct {
+			round int
+			key   string
+		}
+		entries := make([]entry, 0, len(m))
+		for k := range m {
+			r, ok := roundFromLabel(k)
+			if !ok {
+				continue
+			}
+			entries = append(entries, entry{round: r, key: k})
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].round > entries[j].round })
+		keepRounds := make(map[int]struct{})
+		for _, e := range entries {
+			if len(keepRounds) >= keep {
+				break
+			}
+			keepRounds[e.round] = struct{}{}
+		}
+		for k := range m {
+			r, ok := roundFromLabel(k)
+			if !ok {
+				continue
+			}
+			if _, keep := keepRounds[r]; !keep {
+				delete(m, k)
+			}
+		}
+	}
+	trimRoundGauge(snap.S7Assignments)
+	trimRoundGauge(snap.S7Claims)
+	trimRoundGauge(snap.S7PlanRevision)
+	trimRoundGauge(snap.S7Findings)
+	trimRoundDuration(snap.S7FirstFindingToSeal)
+	trimRoundGauge(snap.S7CleanRounds)
+	trimRoundDuration(snap.S7ClaimLeadTime)
+}
+
+func roundFromLabel(label string) (int, bool) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return 0, false
+	}
+	// S7ClaimLeadTime shape: r<round>:<claim_id>
+	if strings.HasPrefix(label, "r") {
+		colon := strings.Index(label, ":")
+		if colon > 1 {
+			n, err := strconv.Atoi(label[1:colon])
+			if err == nil && n > 0 {
+				return n, true
+			}
+		}
+		return 0, false
+	}
+	n, err := strconv.Atoi(label)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
