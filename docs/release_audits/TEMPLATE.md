@@ -87,6 +87,20 @@ the human-readable explanation and cannot replace the ledger. After
 validation, register the envelope with `runtime evidence add`; do not invoke
 `runtime transition` manually.
 
+### 2.3 Markdown 渲染（single source）
+
+本模板各节的表格正文由 S10 manifest 渲染生成，而不是手工维护的第二份载体：
+manifest 是机器事实的唯一来源，Markdown 只是其人类可读投影。
+
+```text
+loop-harness s10 manifest render --file <release-audit-manifest.json> \
+  --output docs/reports/audits/<audit-id>.md
+```
+
+渲染前 manifest 必须先通过 `s10 manifest validate`；渲染器不自行校验之外
+的事实。手工编辑渲染产物不会改变 Gate 消费的 JSON ledger；如需修改结论，
+修改 manifest 后重新渲染。
+
 ## 3. State Machine Audit
 
 ### 3.1 Impacted States

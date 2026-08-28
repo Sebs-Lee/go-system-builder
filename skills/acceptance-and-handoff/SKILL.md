@@ -90,8 +90,10 @@ Automation stops before squash merge, main-branch publication, or formal release
 
 ## Machine-checked S10 artifact
 
-The human ACC and release-audit Markdown is paired with a small JSON ledger.
-Its shape authority is `internal/schema/assets/s10-audit-manifest.schema.json`.
+The human ACC and release-audit Markdown is rendered from the JSON manifest —
+the manifest is the single source, the Markdown is its human-readable
+projection. Its shape authority is
+`internal/schema/assets/s10-audit-manifest.schema.json`.
 Copyable starting shapes are `docs/examples/s10/acceptance-manifest.json` and
 `docs/examples/s10/release-audit-manifest.json`; replace their placeholder
 facts with the current Runtime evidence.
@@ -100,6 +102,8 @@ The normal handoff is:
 ```text
 loop-harness s10 manifest validate --root <root> \
   --file <manifest.json> --type <acceptance|release_audit>
+loop-harness s10 manifest render --root <root> \
+  --file <manifest.json> [--output <report.md>]
 loop-harness runtime evidence add --root <root> \
   --expected-revision <N> --id <id> --kind <acceptance|release_audit> \
   --path <envelope.json> --produced-by <agent> --responsibility <role>

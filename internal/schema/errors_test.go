@@ -12,7 +12,9 @@ import (
 )
 
 // completionReport returns a valid completion_report envelope; drop removes
-// one required field to force a oneOf failure.
+// one hard-required base field to force a oneOf failure. (Extension fields
+// are only warn-tier — see WarnMissingExtensionFields — so dropping one of
+// them no longer produces a hard validation error.)
 func completionReport(drop string) map[string]any {
 	message := map[string]any{
 		"schema_version":            "1.0.0",
@@ -54,7 +56,7 @@ func mustJSON(t *testing.T, value any) []byte {
 
 func TestOneOfPruningReportsClosestBranchOnly(t *testing.T) {
 	validator := schema.NewEmbeddedValidator()
-	data := mustJSON(t, completionReport("summary"))
+	data := mustJSON(t, completionReport("correlation_id"))
 
 	err := validator.ValidateBytes("agent-message.schema.json", data)
 	if err == nil {
@@ -63,7 +65,7 @@ func TestOneOfPruningReportsClosestBranchOnly(t *testing.T) {
 	pruned := err.Error()
 
 	// The real missing field survives pruning.
-	if !strings.Contains(pruned, "summary") {
+	if !strings.Contains(pruned, "correlation_id") {
 		t.Errorf("pruned error must still name the missing field, got:\n%s", pruned)
 	}
 	// The identified branch is named; irrelevant branches are not expanded.
@@ -161,12 +163,12 @@ func TestNonOneOfFailuresPassThroughUnchanged(t *testing.T) {
 // case: the real-world schema nests the discriminator split one level deep
 // inside the root marker, and the older "root-level only" implementation
 // missed it for the realistic missing-field case. Here the instance omits
-// `summary` (the only completionReport-only field) while keeping
+// `correlation_id` (a base field required by every branch) while keeping
 // message_type=completion_report, so the only failing branch is
 // completionReport and the pruned output must highlight it.
 func TestPruningLocatesNestedDiscriminatorOneOf(t *testing.T) {
 	validator := schema.NewEmbeddedValidator()
-	data := mustJSON(t, completionReport("summary"))
+	data := mustJSON(t, completionReport("correlation_id"))
 
 	t.Setenv(schema.SchemaVerboseEnv, "1")
 	verboseErr := validator.ValidateBytes("agent-message.schema.json", data)
@@ -185,7 +187,7 @@ func TestPruningLocatesNestedDiscriminatorOneOf(t *testing.T) {
 	if !strings.Contains(pruned, "completionReport") {
 		t.Errorf("pruned output must name the matching branch, got:\n%s", pruned)
 	}
-	if !strings.Contains(pruned, "summary") {
+	if !strings.Contains(pruned, "correlation_id") {
 		t.Errorf("pruned output must still call out the missing field, got:\n%s", pruned)
 	}
 	if !strings.Contains(pruned, schema.SchemaVerboseEnv) {

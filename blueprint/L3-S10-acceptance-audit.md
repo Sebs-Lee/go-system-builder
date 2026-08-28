@@ -386,7 +386,7 @@ S10 Agent 的“完成”不是交一份看起来完整的 Markdown，而是让�
 
 ### 5.3 当前实现与未闭合缺口
 
-1. **ACC/审计 Markdown 正文不被机器解析**：gate 不理解正文的自然语言、16 节解释或表格语义；机器完整性由配套 S10 manifest 承载，正文仍是人类解释材料；
+1. **ACC/审计 Markdown 正文由 manifest 渲染（RC-11）**：gate 仍不解析正文语义；机器完整性由配套 S10 manifest 单一来源承载，正文用 `loop-harness s10 manifest render` 从 manifest 生成，作为人类解释投影，不再是手工维护的第二载体（C-5 关闭：消除 Markdown/manifest 漂移面）；
 2. **`record_acc`/`record_release_audit` 仍只确认 evidence context**：不会把 Markdown 正文摘要写进 Runtime；manifest 在 evidence 注册前和 Gate 消费时分别校验；
 3. **acceptance gate 不再是单通用证据门**：除 acceptance + current clean-round 外，还要求绑定、哈希匹配且通过 S10 acceptance manifest 的 coverage/counterevidence/metrics；
 4. **release-audit approval 同样显式要求 current clean-round**：`GATE-RELEASE-AUDIT-APPROVED` 同时消费当前轮 clean-round、acceptance 和 release-audit manifest；manifest 与当前 runtime、baseline、S7 round 绑定，并重新校验哈希；

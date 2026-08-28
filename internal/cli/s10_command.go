@@ -21,9 +21,9 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 	if wantsHelp(args) {
 		name := compactHelpName(args)
 		if name == "" {
-			name = "<status|manifest validate>"
+			name = "<status|manifest validate|manifest render>"
 		}
-		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, and route defects back through S7→S8→S9.")
+		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, render its Markdown report, and route defects back through S7→S8→S9.")
 		return 0
 	}
 	if len(args) == 0 {
@@ -42,9 +42,12 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 }
 
 func runS10Manifest(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "validate" {
-		fmt.Fprintln(stderr, "s10 manifest requires <validate>")
+	if len(args) == 0 || (args[0] != "validate" && args[0] != "render") {
+		fmt.Fprintln(stderr, "s10 manifest requires <validate|render>")
 		return 2
+	}
+	if args[0] == "render" {
+		return runS10ManifestRender(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("s10 manifest validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -103,6 +106,84 @@ func runS10Manifest(args []string, stdout, stderr io.Writer) int {
 		"metrics":               summary.Metrics,
 		"next":                  next,
 	})
+}
+
+// runS10ManifestRender renders the 16-section ACC/release-audit Markdown
+// from a validated manifest (RC-11 C-5: the Markdown is a projection of the
+// manifest, not a second hand-maintained carrier). The manifest must pass the
+// same validation the Gate runs; output goes to stdout or --output.
+func runS10ManifestRender(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("s10 manifest render", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "s10 manifest render")
+	root := flags.String("root", ".", "repository root")
+	file := flags.String("file", "", "S10 manifest JSON path relative to repository root")
+	kind := flags.String("type", "", "manifest type: acceptance or release_audit (default: read manifest_type)")
+	output := flags.String("output", "", "write the Markdown to this repository-relative path instead of stdout")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if strings.TrimSpace(*file) == "" {
+		fmt.Fprintln(stderr, "s10 manifest render requires --file <manifest.json>; next: validate the manifest first with `loop-harness s10 manifest validate --file <path>`")
+		return 2
+	}
+	manifestPath, err := safeS10Path(*root, *file)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: %v\n", err)
+		return 1
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: read %s: %v; next: validate the manifest first with `loop-harness s10 manifest validate --file <path>`\n", *file, err)
+		return 1
+	}
+	manifestType := strings.TrimSpace(*kind)
+	if manifestType == "" {
+		var header struct {
+			ManifestType string `json:"manifest_type"`
+		}
+		if err := json.Unmarshal(data, &header); err != nil {
+			fmt.Fprintf(stderr, "s10 manifest render: %v\n", err)
+			return 1
+		}
+		manifestType = header.ManifestType
+	}
+	// A routed outcome keeps its unresolved rows by design; rendering must
+	// not require a clean ledger, only the structural completeness the Gate
+	// enforces either way.
+	summary, err := acceptance.ValidateForOutcome(data, manifestType, "review_required")
+	if err != nil {
+		summary, err = acceptance.ValidateForOutcome(data, manifestType, "blocked")
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: %v; next: fix the named rows with `loop-harness s10 manifest validate --file <path>`, then re-render\n", err)
+		return 1
+	}
+	var manifest acceptance.Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: decode manifest: %v\n", err)
+		return 1
+	}
+	rendered := acceptance.RenderMarkdown(manifest, summary)
+	if strings.TrimSpace(*output) == "" {
+		fmt.Fprint(stdout, rendered)
+		return 0
+	}
+	outputPath, err := safeS10Path(*root, *output)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: %v\n", err)
+		return 1
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: create output directory: %v\n", err)
+		return 1
+	}
+	if err := os.WriteFile(outputPath, []byte(rendered), 0o644); err != nil {
+		fmt.Fprintf(stderr, "s10 manifest render: write %s: %v\n", *output, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "rendered %s manifest Markdown to %s\n", manifestType, *output)
+	return 0
 }
 
 type s10StatusProjection struct {

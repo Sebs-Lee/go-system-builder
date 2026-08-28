@@ -1,8 +1,10 @@
 // Package acceptance owns the small, machine-readable S10 audit manifest.
 //
-// The Markdown ACC and release-audit reports remain the human-readable
-// records. This package validates only the finite completion ledger that the
-// Quality Gate needs to consume; it does not attempt to parse prose tables.
+// The manifest is the single source: the Markdown ACC and release-audit
+// reports are rendered from it (RenderMarkdown) — they are the
+// human-readable projection, never a second hand-maintained carrier. This
+// package validates the finite completion ledger that the Quality Gate needs
+// to consume; it does not attempt to parse prose tables.
 package acceptance
 
 import (
