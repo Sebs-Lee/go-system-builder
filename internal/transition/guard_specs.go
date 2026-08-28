@@ -25,7 +25,7 @@ type GuardSpec struct {
 var guardSpecRegistry = map[string]GuardSpec{
 	"acc_complete": {
 		ID:    "acc_complete",
-		Check: "An acceptance evidence item recorded for the current review round is referenced from runtime.evidence[] and its fingerprint matches the on-disk acceptance record.",
+		Check: "A valid acceptance evidence entry for the current baseline generation and review round exists in runtime.evidence[] and its registered sha256 still matches the on-disk acceptance record (RC-06 S10-14: invalidated, stale-round or drifted ACC envelopes are rejected, not attested).",
 	},
 	"activation_scope_still_valid": {
 		ID:    "activation_scope_still_valid",
@@ -39,10 +39,6 @@ var guardSpecRegistry = map[string]GuardSpec{
 		ID:    "all_builder_tasks_in_review",
 		Check: "Every TASK assignment in the current Builder workgroup has reached at least the `reported` state in runtime.entities.tasks[].state.",
 	},
-	"all_required_dimensions_passed": {
-		ID:    "all_required_dimensions_passed",
-		Check: "verification.EvaluateCleanRound reports that every required verification dimension (delivery, qa, and any risk-triggered dimensions) has a current `pass` verdict for the active review round.",
-	},
 	"all_targeted_reverification_passed": {
 		ID:    "all_targeted_reverification_passed",
 		Check: "Every P0 BUG in runtime.entities.bugs[] has advanced past `retesting`/`fixing`/`investigating` so no blocking bug remains awaiting targeted re-verification.",
@@ -54,10 +50,6 @@ var guardSpecRegistry = map[string]GuardSpec{
 	"blocker_recorded": {
 		ID:    "blocker_recorded",
 		Check: "A blocker evidence item describing the impediment is referenced from runtime.evidence[] for the agent (or task) that raised `work_blocked`/`task_blocked`.",
-	},
-	"blocking_findings_present": {
-		ID:    "blocking_findings_present",
-		Check: "At least one finding evidence item with severity=blocking exists for the current review round, referencing a canonical BUG.",
 	},
 	"bug_closing_contract_complete": {
 		ID:    "bug_closing_contract_complete",
@@ -135,14 +127,6 @@ var guardSpecRegistry = map[string]GuardSpec{
 		ID:    "human_abort_approved",
 		Check: "The transition's evidence validation enforces that the cited human_decision evidence is current and scoped to `runtime_abort:<runtime_id>@<revision>` (human_decision_scope on TR-021/TR-030) — one approval authorizes exactly one abort at one revision; the guard body itself only rejects an empty evidence map.",
 	},
-	"no_invalidated_pass_evidence": {
-		ID:    "no_invalidated_pass_evidence",
-		Check: "verification.EvaluateCleanRound reports no `pass` evidence in runtime.evidence[] carries an `invalidated_at` stamp for the active review round.",
-	},
-	"no_open_blocking_bugs": {
-		ID:    "no_open_blocking_bugs",
-		Check: "No BUG with severity=P0 in runtime.entities.bugs[] remains in an open state (`investigating`, `accepted`, `assigned`, `fixing`, `retesting`) for the current review round.",
-	},
 	"no_accepted_bugs": {
 		ID:    "no_accepted_bugs",
 		Check: "No BUG in runtime.entities.bugs[] for the current review round is in state `accepted`, `assigned`, `fixing`, or `retesting`. Used by TR-022 to confirm a finding-level Loop exit to verification is safe (no accepted BUG requires the S9 repair flow).",
@@ -193,7 +177,7 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"release_audit_approved": {
 		ID:    "release_audit_approved",
-		Check: "A release-audit approval evidence item referencing docs/release_audits/ and signed by an authorized actor is recorded in runtime.evidence[].",
+		Check: "A valid release_audit evidence entry for the current baseline generation and review round exists in runtime.evidence[] and its registered sha256 still matches the on-disk audit record (RC-06 S10-14: the guard resolves and re-hashes the artifact instead of attesting an evidence map).",
 	},
 	"repair_activation_recorded": {
 		ID:    "repair_activation_recorded",
@@ -251,10 +235,6 @@ var guardSpecRegistry = map[string]GuardSpec{
 		ID:    "root_cause_evidence_complete",
 		Check: "A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.",
 	},
-	"same_review_round": {
-		ID:    "same_review_round",
-		Check: "verification.EvaluateCleanRound reports that every `pass` evidence item under consideration was recorded against runtime.review.round, so the round cannot close on stale evidence from a prior round.",
-	},
 	"targeted_reverification_complete": {
 		ID:    "targeted_reverification_complete",
 		Check: "A targeted-reverification evidence item is referenced from runtime.evidence[] confirming the re-test for the specific BUG has passed before the BUG moves from `retesting` to `closed`.",
@@ -274,10 +254,6 @@ var guardSpecRegistry = map[string]GuardSpec{
 	"updated_req_locked": {
 		ID:    "updated_req_locked",
 		Check: "The updated REQ file referenced by the re-bind request declares status=locked with a strictly higher version than the currently bound REQ, and its sha256 matches the on-disk file.",
-	},
-	"verification_phase_clean_round_passed": {
-		ID:    "verification_phase_clean_round_passed",
-		Check: "verification.EvaluateCleanRound reports that runtime.review.clean_round equals runtime.review.round, i.e. a complete clean round has just been recorded for the active round.",
 	},
 	"verification_team_manifest_complete": {
 		ID:    "verification_team_manifest_complete",

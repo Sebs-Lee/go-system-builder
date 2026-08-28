@@ -154,7 +154,7 @@
             "register_design_documents"
           ],
           "required_evidence": [],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -187,7 +187,7 @@
             "register_locked_contracts"
           ],
           "required_evidence": [],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -362,7 +362,7 @@
             "observation_batch_record",
             "root_cause_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -397,7 +397,7 @@
           "required_evidence": [
             "bug_batch_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -429,7 +429,7 @@
           "required_evidence": [
             "bug_batch_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -493,7 +493,7 @@
           "required_evidence": [
             "activation_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -529,7 +529,7 @@
             "repair_record",
             "change_impact_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -563,7 +563,7 @@
           "required_evidence": [
             "targeted_reverification_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -616,7 +616,7 @@
           "required_evidence": [
             "targeted_reverification_record"
           ],
-          "on_guard_failure": "warn_and_retry",
+          "on_guard_failure": "reject",
           "auto_trigger": {
             "enabled": true,
             "event": "PreToolUse",
@@ -996,7 +996,7 @@
         "register_planning_tasks"
       ],
       "required_evidence": [],
-      "on_guard_failure": "warn_and_retry",
+      "on_guard_failure": "reject",
       "auto_trigger": {
         "enabled": true,
         "event": "PreToolUse",
@@ -1128,7 +1128,7 @@
       "required_evidence": [
         "builder_report_record"
       ],
-      "on_guard_failure": "warn_and_retry",
+      "on_guard_failure": "reject",
       "auto_trigger": {
         "enabled": true,
         "event": "PreToolUse",
@@ -1495,7 +1495,7 @@
         "acceptance_record",
         "change_impact_record"
       ],
-      "on_guard_failure": "warn_and_retry",
+      "on_guard_failure": "reject",
       "auto_trigger": {
         "enabled": true,
         "event": "PreToolUse",

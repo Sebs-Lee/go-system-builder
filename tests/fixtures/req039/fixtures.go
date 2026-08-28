@@ -71,12 +71,24 @@ func FreshRoot(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"docs/loop-definition.json", "docs/hook-policy.json"} {
+	for _, rel := range []string{
+		"docs/loop-definition.json",
+		"docs/hook-policy.json",
+		// RC-06 (S10-3): the protected-release policy rule loads the
+		// data-driven protected-commands table from the runtime root; the
+		// fixture must ship the real table so Bash classification sees the
+		// production surface instead of failing closed on a missing file.
+		"docs/release_audits/protected_commands.json",
+	} {
 		data, err := os.ReadFile(filepath.Join(repo, rel))
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
-		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+		target := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

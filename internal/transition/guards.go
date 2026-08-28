@@ -135,12 +135,18 @@ func InitGuardRegistry() {
 		// never computed. The real evaluation lives in
 		// GATE-BUILDER-BATCH-READY's applyBuilderBatchCompleteness (exact
 		// TR-003 set, per-task completion + verified integration).
-		"blocking_findings_present":             evidenceBackedGuard("blocking_findings_present"),
-		"same_review_round":                     evidenceBackedGuard("same_review_round"),
-		"all_required_dimensions_passed":        evidenceBackedGuard("all_required_dimensions_passed"),
-		"no_invalidated_pass_evidence":          evidenceBackedGuard("no_invalidated_pass_evidence"),
-		"no_open_blocking_bugs":                 evidenceBackedGuard("no_open_blocking_bugs"),
-		"verification_phase_clean_round_passed": evidenceBackedGuard("verification_phase_clean_round_passed"),
+		// RC-06 (S7-4): the six clean-round-shaped stub names below were
+		// registered but never declared by any transition in
+		// docs/loop-definition.json — guard-theater inventory. Their real
+		// semantics live in `verification.EvaluateCleanRound`, which the
+		// DECLARED clean-round guards (clean_round_valid on TR-009,
+		// clean_round_still_valid on TR-015/TR-017) already delegate to:
+		//   all_required_dimensions_passed / same_review_round /
+		//   no_invalidated_pass_evidence / no_open_blocking_bugs /
+		//   verification_phase_clean_round_passed
+		// The five ReviewPlan-finding-shaped stubs (blocking_findings_present
+		// among them) had no declared consumer either; the S7 exit contract
+		// is observation_batch_sealed (TR-008) + clean_round_valid (TR-009).
 		// L3-S7 P0: the S7 exit guards are real semantic checks over the
 		// ReviewPlan projection — TR-008 requires the sealed ObservationBatch
 		// carrying the exact Finding set; TR-009 recomputes the machine
@@ -150,13 +156,13 @@ func InitGuardRegistry() {
 		// L3-S7 P1: the angle_complete guards are retired with the whole
 		// angle lifecycle — their intent lives in ReviewPlan Claims
 		// (claim.source_refs), enforced by the plan validator.
-		"acc_complete":            evidenceBackedGuard("acc_complete"),
+		"acc_complete":            guardACCCurrentFn,
 		"clean_round_still_valid": evidenceBackedGuard("clean_round_still_valid"),
 		// L3-S7: TR-010/TR-011 no longer capture the checkpoint themselves —
 		// the review verdict transaction did. This guard proves the single
 		// authoritative checkpoint exists before the cursor moves.
 		"pause_checkpoint_recorded":               evidenceBackedGuard("pause_checkpoint_recorded"),
-		"release_audit_approved":                  evidenceBackedGuard("release_audit_approved"),
+		"release_audit_approved":                  guardReleaseAuditCurrentFn,
 		"resume_checkpoint_valid":                 evidenceBackedGuard("resume_checkpoint_valid"),
 		"baselines_unchanged":                     evidenceBackedGuard("baselines_unchanged"),
 		"updated_req_locked":                      evidenceBackedGuard("updated_req_locked"),
@@ -223,11 +229,13 @@ func InitGuardRegistry() {
 	semanticChecks := map[string]bool{
 		"no_other_active_loop": true, "resume_checkpoint_valid": true,
 		"contracts_checked": true, "tasks_checked": true,
-		"same_review_round": true, "all_required_dimensions_passed": true,
-		"no_invalidated_pass_evidence": true, "no_open_blocking_bugs": true,
-		"verification_phase_clean_round_passed": true, "clean_round_still_valid": true,
+		"clean_round_still_valid":   true,
 		"pause_checkpoint_recorded": true,
-		"planning_complete":         true, "all_targeted_reverification_passed": true,
+		// RC-06 (S10-14): both guards now resolve + re-hash their evidence
+		// artifact on disk, so they are honest semantic checks.
+		"acc_complete":           true,
+		"release_audit_approved": true,
+		"planning_complete":      true, "all_targeted_reverification_passed": true,
 		"ui_impact_resolved": true, "scenario_bridge_checked": true,
 		"req_baseline_unchanged":   true,
 		"observation_batch_sealed": true, "clean_round_valid": true,
@@ -273,7 +281,10 @@ func evidenceBackedGuard(name string) GuardFn {
 			if pause, ok := state["pause"].(map[string]any); !ok || pause == nil {
 				return fmt.Errorf("%s: pause checkpoint missing", name)
 			}
-		case "same_review_round", "all_required_dimensions_passed", "no_invalidated_pass_evidence", "no_open_blocking_bugs", "verification_phase_clean_round_passed", "clean_round_still_valid":
+		case "clean_round_still_valid":
+			// RC-06 (S7-4): the only DECLARED clean-round delegate left in
+			// the switch. The five undeclared clean-round-shaped stub names
+			// were removed from the registry (see InitGuardRegistry).
 			result := verification.EvaluateCleanRound(state)
 			if !result.Passed {
 				return fmt.Errorf("%s: clean-round evaluation failed: %v", name, result.Reasons)
@@ -303,6 +314,92 @@ func guardCleanRoundValidFn(state map[string]any, _ map[string]string) error {
 		return fmt.Errorf("clean_round_valid: %v", result.Reasons)
 	}
 	return nil
+}
+
+// guardACCCurrentFn is the real body behind TR-015/TR-017's acc_complete
+// guard (RC-06, S10-14 — formerly an evidenceBackedGuard stub that accepted
+// any non-empty evidence map). It requires a CURRENT acceptance evidence
+// entry in runtime.evidence[] whose on-disk artifact still matches its
+// registered sha256: an invalidated, stale-round, or drifted ACC no longer
+// satisfies the release-audit precondition. The same resolution rules as
+// the engine's validateCurrentEvidence apply (status=valid, current baseline
+// generation, current review round, fingerprint match), so the guard cannot
+// be satisfied by a re-used or re-hashed envelope.
+func guardACCCurrentFn(state map[string]any, _ map[string]string) error {
+	if err := requireCurrentEvidenceKind(state, "acceptance"); err != nil {
+		return fmt.Errorf("acc_complete: %w", err)
+	}
+	return nil
+}
+
+// guardReleaseAuditCurrentFn is the real body behind TR-017's
+// release_audit_approved guard (RC-06, S10-14 — same stub lineage as
+// acc_complete). It requires a CURRENT release_audit evidence entry whose
+// registered fingerprint still matches the on-disk audit record.
+func guardReleaseAuditCurrentFn(state map[string]any, _ map[string]string) error {
+	if err := requireCurrentEvidenceKind(state, "release_audit"); err != nil {
+		return fmt.Errorf("release_audit_approved: %w", err)
+	}
+	return nil
+}
+
+// requireCurrentEvidenceKind scans runtime.evidence[] for a valid entry of
+// the supplied kind registered against the current baseline generation and
+// review round, then re-hashes the artifact on disk. Returns a descriptive
+// error when no such entry exists (fail-closed: an empty evidence list is a
+// rejection, not a pass).
+func requireCurrentEvidenceKind(state map[string]any, kind string) error {
+	items, _ := state["evidence"].([]any)
+	baseline, _ := state["baseline"].(map[string]any)
+	review, _ := state["review"].(map[string]any)
+	var found map[string]any
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok || item["status"] != "valid" {
+			continue
+		}
+		if itemKind, _ := item["kind"].(string); itemKind != kind {
+			continue
+		}
+		if integer(item["baseline_generation"]) != integer(baseline["generation"]) {
+			continue
+		}
+		if evidenceRound := integer(item["review_round"]); evidenceRound > 0 && evidenceRound != integer(review["round"]) {
+			continue
+		}
+		found = item
+		break
+	}
+	if found == nil {
+		return fmt.Errorf("no valid %s evidence entry for the current baseline/round — record the artifact before advancing", kind)
+	}
+	rel, _ := found["path"].(string)
+	clean := filepath.Clean(rel)
+	if rel == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s evidence %v carries unsafe path %q", kind, found["id"], rel)
+	}
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	data, err := os.ReadFile(filepath.Join(root, clean))
+	if err != nil {
+		return fmt.Errorf("%s evidence %v unreadable at %s: %w", kind, found["id"], rel, err)
+	}
+	sum := sha256.Sum256(data)
+	actual := fmt.Sprintf("%x", sum[:])
+	want, _ := found["sha256"].(string)
+	if want == "" || actual != want {
+		return fmt.Errorf("%s evidence %v fingerprint drifted (registered %s…, on disk %s…) — re-record the artifact", kind, found["id"], want[:min(12, len(want))], actual[:12])
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // guardObservationBatchSealedFn is the real body behind TR-008's

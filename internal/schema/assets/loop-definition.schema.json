@@ -299,7 +299,7 @@
           }
         },
         "on_guard_failure": {
-          "enum": ["reject", "warn_and_retry", "pause"]
+          "enum": ["reject", "pause"]
         },
         "auto_trigger": {
           "$ref": "#/$defs/autoTrigger"
@@ -458,7 +458,7 @@
           "pattern": "^runtime_[a-z]+$"
         },
         "on_guard_failure": {
-          "enum": ["reject", "warn_and_retry", "pause"]
+          "enum": ["reject", "pause"]
         },
         "auto_trigger": {
           "$ref": "#/$defs/autoTrigger"

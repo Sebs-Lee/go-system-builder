@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/impact"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/verification"
 )
 
 // ResumeSentinel is the Loop Definition TR-019 sentinel that resolves to the
@@ -93,6 +94,16 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	}
 	resolved, err := resolveCatalog(catalog, request.TransitionID, currentState, currentPhase)
 	if err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	// RC-06 (S10-2): forbidden_events were decoded into the catalog but never
+	// consumed by Apply — the "strong_block" table was documentation. The two
+	// acceptance/release-audit strong blocks are now a hard pre-Apply barrier:
+	// no clean round, no ACC, no release audit — regardless of what evidence
+	// refs the caller supplies. `clean_round_still_valid` re-checks this inside
+	// the mutation, but the catalog declaration itself must gate Apply
+	// fail-closed (create_acc_without_clean_round / run_release_audit_without_acc).
+	if err := enforceForbiddenEvents(catalog, resolved.Spec, current); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateRequest(root, current, resolved.Spec, request); err != nil {
@@ -271,6 +282,45 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	// Inject the root-aware semantic validator at the composition boundary.
 	// Runtime owns the commit boundary but does not import this package.
 	return store.Update(request.ExpectedRevision, mutation)
+}
+
+// enforceForbiddenEvents is the Apply-time consumer of the Loop Definition's
+// strong_block forbidden_events table (RC-06, S10-2). Before this barrier the
+// table was only read by conformance tests; a caller with a hand-built
+// evidence map could fire TR-015/TR-017 with an empty or stale clean round and
+// the runtime would record the ACC anyway.
+//
+// Event → predicate mapping:
+//   - create_acc_without_clean_round (TR-015 acceptance→release_audit): the
+//     machine CleanRound must evaluate PASS over the current runtime.
+//   - run_release_audit_without_acc (TR-017 release_audit→awaiting_human_release):
+//     identical predicate — the audit's own release_audit_record evidence does
+//     not substitute for the ACC precondition.
+//
+// The barrier is evaluated pre-Apply against the current snapshot (fail-closed
+// on an unreadable review section) so no journal row is written for a refused
+// mutation.
+func enforceForbiddenEvents(catalog *Catalog, spec TransitionSpec, state map[string]any) error {
+	fe, declared := catalog.ForbiddenEvents["create_acc_without_clean_round"]
+	if !declared {
+		// Fail closed: a definition that drops the declaration loses its
+		// acceptance barrier and must refuse to run rather than degrade.
+		return fmt.Errorf("loop definition no longer declares forbidden event create_acc_without_clean_round; refusal to evaluate TR-015/TR-017 without it")
+	}
+	switch spec.ID {
+	case "TR-015", "TR-017":
+	default:
+		_ = fe
+		return nil
+	}
+	result := verification.EvaluateCleanRound(state)
+	if !result.Passed {
+		return fmt.Errorf(
+			"forbidden event %s: transition %s rejected — no valid clean round for review round %d: %v",
+			fe.Event, spec.ID, result.ReviewRound, result.Reasons,
+		)
+	}
+	return nil
 }
 
 func resolveCatalog(catalog *Catalog, id, currentState string, currentPhase any) (resolvedTransition, error) {

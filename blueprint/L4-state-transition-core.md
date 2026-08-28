@@ -74,7 +74,7 @@ guard 与 action 都是**注册表模式**（70 个 guard / 49 个 action 各一
 
 ### 5.2 on_guard_failure 的真实现状
 
-definition 允许 `warn_and_retry | reject` 两值，但**引擎本身不分支于此**：guard 失败一律返回错误交给调用方。warn_and_retry 的实际语义 = PreToolUse 触发路径允许整改后重试。这是如实登记的现状；若未来要区分退避策略，属于本文件的修订事项而不是 handler 的局部发明。
+definition 现在只允许 `reject | pause` 两值（RC-06/C-12：`warn_and_retry` 声明已被整体删除——引擎从不分支于此，guard 失败一律返回错误交给调用方；名不符实的枚举值只会制造虚假承诺）。整改后重试的语义仍由 PreToolUse 触发路径本身承载；若未来要引入真正的退避策略，属于本文件的修订事项而不是 handler 的局部发明。
 
 ### 5.3 迁移内校验
 
@@ -143,7 +143,7 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 3. integration checkpoint 的持久化通道未接线（internal/runtime/integration_register.go 自述"合同面已就绪待 BUG-06"，当前 loader 返回 nil）；S6 集成事实目前依赖任务侧投影。
 4. GTR-004 桥无生产调用方（S1 已诚实登记）；此类"声明存在但不可达"的条目在 catalog 属合法遗留，但每个都必须有登记处，不允许无主孤儿。
 5. `automation.eligible=false` 与 Controller 空 switch 是双防线而非重复——前者管声明完整性，后者管运行时硬保证；评估删除任一层均需修订本节。
-6. `warn_and_retry` 未被引擎消费（§5.2）；现状可用但语义名不符实，改名或实现择一，列入待议。
+6. ~~`warn_and_retry` 未被引擎消费~~ 已关闭（RC-06/C-12，2026-08-28）：全部 12 处声明改为 `reject`，schema 枚举收敛为 `reject | pause`，引擎行为与声明一致。
 
 ## 12. DoD
 

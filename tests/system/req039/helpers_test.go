@@ -74,13 +74,22 @@ func freshRoot(t *testing.T) string {
 	for _, rel := range []string{
 		"docs/loop-definition.json",
 		"docs/hook-policy.json",
+		// RC-06 (S10-3): the protected-release policy rule loads the
+		// data-driven protected-commands table from the runtime root; the
+		// fixture must ship the real table so Bash classification sees the
+		// production surface instead of failing closed on a missing file.
+		"docs/release_audits/protected_commands.json",
 	} {
 		source := filepath.Join(repoRoot(t), rel)
 		data, err := os.ReadFile(source)
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
-		if err := os.WriteFile(filepath.Join(root, rel), data, 0o644); err != nil {
+		target := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -131,7 +140,7 @@ func systemPlanningState(t *testing.T, root, phase string, revision int) map[str
 	if err := os.MkdirAll(filepath.Dir(reqPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	reqBytes := []byte("# REQ-039\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n"+
+	reqBytes := []byte("# REQ-039\n\n> 状态：locked\n> 版本：v1.0.0\n> UI impact：none\n\n" +
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-001 | controller | 控制平面 | A1 | Must |\n")
 	if err := os.WriteFile(reqPath, reqBytes, 0o644); err != nil {
 		t.Fatal(err)

@@ -88,10 +88,14 @@ func TestCT03907_OrdinaryGitOpsAllowSystem(t *testing.T) {
 	state := systemPlanningState(t, root, "design", 1)
 	writeSystemState(t, root, state)
 
+	// RC-06 (S10-3): the protected-commands table is now wired into the
+	// PreToolUse enforce path, so `git push origin develop` (protected
+	// release-branch row) and `npm publish` (HS-005) are hard-denied by
+	// design. The allow surface here is ordinary non-release git work.
 	for _, command := range []string{
 		"git merge feature/req-039",
-		"git push origin develop",
-		"npm publish --dry-run",
+		"git status --porcelain",
+		"git log --oneline -5",
 	} {
 		body := req039fixtures.PreToolUseBody("session-ct-039-07-sys", "Bash", map[string]any{
 			"command": command,

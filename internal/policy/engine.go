@@ -76,6 +76,14 @@ const (
 	// facts alone (no Runtime.Agent dependency), so Investigators, targeted
 	// reverifiers and S10 auditors are all covered by one hard deny.
 	RulePhaseProductWrite = "phase_product_write"
+	// RuleProtectedReleaseCommand wires the data-driven protected-commands
+	// table (docs/release_audits/protected_commands.json) into the PreToolUse
+	// enforce path (RC-06, S10-3 — formerly dead code: classifier.MatchProtectedCommands
+	// was only reachable from tests). git push to protected refs, formal
+	// releases, publishes, infra applies and shell wrappers are hard-denied
+	// regardless of lifecycle stage; the human release boundary is the only
+	// authorized path (forbidden event automated_formal_release).
+	RuleProtectedReleaseCommand = "protected_release_command"
 )
 
 // AgentContext carries the activated-agent view that downstream packages
@@ -354,6 +362,13 @@ func (e *Engine) HasRule(id string) bool {
 
 func (e *Engine) Evaluate(input Input) (Decision, error) {
 	if decision, blocked := unknownMCPToolDecision(input); blocked {
+		return decision, nil
+	}
+	// RC-06 (S10-3): the protected-release table evaluates first so a
+	// protected command is refused even when a later, more lifecycle-specific
+	// rule would also match. Fail-closed: an unreadable/malformed table
+	// denies the command rather than letting it through unclassified.
+	if decision, blocked := protectedReleaseDecision(input); blocked {
 		return decision, nil
 	}
 	if decision, blocked := lockedArtifactDecision(input); blocked {
@@ -1114,6 +1129,74 @@ func bashMutationPaths(command string) ([]string, bool) {
 		mutating = true
 	}
 	return paths, mutating
+}
+
+// protectedReleaseDecision implements RC-06 (S10-3): the protected-commands
+// table drives a hard deny on the PreToolUse enforce path. The table is
+// data-driven (docs/release_audits/protected_commands.json) and matched via
+// classifier.Resolve + classifier.MatchProtectedCommands, which were
+// previously reachable only from tests. ProjectRoot comes from the runtime
+// projection; when it is empty the table cannot be located and the check is
+// skipped (the safety path without a runtime root has no data-driven reason
+// to evaluate, and unknownMCPTool/locked-artifact rules still apply).
+func protectedReleaseDecision(input Input) (Decision, bool) {
+	if input.ToolName != "Bash" {
+		return Decision{}, false
+	}
+	command, _ := input.ToolInput["command"].(string)
+	if strings.TrimSpace(command) == "" {
+		return Decision{}, false
+	}
+	root := input.Runtime.ProjectRoot
+	if strings.TrimSpace(root) == "" {
+		return Decision{}, false
+	}
+	table, err := classifier.LoadProtectedCommands(root)
+	if err != nil || len(table) == 0 {
+		// Fail closed: a broken or missing table means the release surface
+		// is unclassified — refuse the Bash call with the same rule id so
+		// the caller sees the boundary instead of a silent allow.
+		return Decision{
+			Decision:       "deny",
+			RuleID:         RuleProtectedReleaseCommand,
+			Reason:         "protected_commands table unreadable (" + err.Error() + "); refusing unclassified Bash",
+			ParsedCommand:  command,
+			Stage:          input.Runtime.CurrentStage,
+			Recovery:       []string{"repair docs/release_audits/protected_commands.json before running shell commands"},
+			Retry:          RetryAfterRecoveryValidation,
+			HumanRequired:  false,
+			MatchedRuleIDs: []string{RuleProtectedReleaseCommand},
+		}, true
+	}
+	resolved, err := classifier.Resolve(command)
+	if err != nil {
+		return Decision{}, false
+	}
+	// Attribution: the squash-merge shape has its own retained rule
+	// (squashMergeDecision below, BE-039 §6.2). Defer to it so wire
+	// consumers keep seeing reason=squash_merge for that family.
+	if parsed, ok := classifier.ParseSquashMerge(command); ok {
+		_ = parsed
+		return Decision{}, false
+	}
+	matched, reason, err := classifier.MatchProtectedCommands(resolved, table)
+	if err != nil || !matched {
+		return Decision{}, false
+	}
+	if reason == "" {
+		reason = "protected release command"
+	}
+	return Decision{
+		Decision:       "deny",
+		RuleID:         RuleProtectedReleaseCommand,
+		Reason:         reason,
+		ParsedCommand:  command,
+		Stage:          input.Runtime.CurrentStage,
+		Recovery:       []string{"the human release boundary (TR-017 → TR-023) is the only authorized release path"},
+		Retry:          RetryNever,
+		HumanRequired:  false,
+		MatchedRuleIDs: []string{RuleProtectedReleaseCommand},
+	}, true
 }
 
 func squashMergeDecision(input Input) (Decision, bool) {

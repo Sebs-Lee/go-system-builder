@@ -624,8 +624,16 @@ func actionRecordPlanningCheckpoint(state map[string]any, ctx *ActionContext) (A
 func actionRecordDocumentResult(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "document result")
 }
+
+// actionRecordBugDrafts is PTR-BUG-01's legacy compatibility action
+// (RC-06, S8-9). PTR-BUG-01 is declared as a legacy projection path only
+// (see its loop-definition.json description): the real BUG-draft producer on
+// the modern path is record_finding_batch (TR-008), which derives drafts from
+// the sealed ObservationBatch with content-hash dedup. This stub therefore
+// only asserts that current evidence context exists — it must not grow real
+// draft-creation logic, or the two paths would diverge on identity rules.
 func actionRecordBugDrafts(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	return actionEvidenceRecorded(ctx, "bug drafts")
+	return actionEvidenceRecorded(ctx, "bug drafts (legacy PTR-BUG-01 projection)")
 }
 func actionRecordCanonicalBugBatch(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	return actionEvidenceRecorded(ctx, "canonical bug batch")
