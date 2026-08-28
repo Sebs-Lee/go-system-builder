@@ -38,6 +38,7 @@ func TestRegisterHypothesisCreatesImmutableCaseRevisionAndHistory(t *testing.T) 
 			"refute":  "the field is identical across the boundary",
 		},
 		SourceFindingIDs: []string{"finding-1", "finding-2"},
+		EvidenceRefs:     []string{"evidence://schema-drift"},
 		AssignmentID:     "assignment-hypothesis-1",
 	})
 	if err != nil {
@@ -93,9 +94,31 @@ func TestRegisterHypothesisRequiresBoundAssignment(t *testing.T) {
 		Discriminator:        "inspect both sides of the boundary",
 		ExpectedOutcomes:     map[string]any{"support": "drift", "refute": "no drift"},
 		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "assignment_id") || !strings.Contains(err.Error(), "assignment- prefix") {
 		t.Fatalf("unbound hypothesis error = %v, want Assignment binding guidance", err)
+	}
+}
+
+func TestRegisterHypothesisRequiresEvidenceRefs(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer := investigationPointer(t, fixture)
+	_, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, investigation.HypothesisRequest{
+		ExpectedRevision:     1,
+		ExpectedCaseRevision: 1,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		HypothesisID:         "hypothesis-evidence-free",
+		Statement:            "the boundary contract is inconsistent",
+		Invariant:            "the boundary has one owner",
+		Discriminator:        "inspect both sides of the boundary",
+		ExpectedOutcomes:     map[string]any{"support": "drift", "refute": "no drift"},
+		SourceFindingIDs:     []string{"finding-1"},
+		AssignmentID:         "assignment-evidence-free",
+	})
+	if err == nil || !strings.Contains(err.Error(), "evidence_refs") || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("evidence-free hypothesis error = %v, want evidence_refs guidance", err)
 	}
 }
 
@@ -113,6 +136,7 @@ func TestCaseWorkflowRejectsStaleRevisionAndHashDrift(t *testing.T) {
 		Discriminator:        "inspect both sides of the boundary",
 		ExpectedOutcomes:     map[string]any{"support": "drift", "refute": "no drift"},
 		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
 		AssignmentID:         "assignment-hypothesis-stale",
 	}
 	_, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, request)
@@ -142,6 +166,7 @@ func TestSubmitHypothesisResultRequiresRegisteredHypothesisAndFindingSubset(t *t
 		Discriminator:        "compare request and DTO fields",
 		ExpectedOutcomes:     map[string]any{"support": "field drift", "refute": "no drift"},
 		SourceFindingIDs:     []string{"finding-1", "finding-2"},
+		EvidenceRefs:         []string{"evidence://boundary"},
 		AssignmentID:         "assignment-boundary",
 	}
 	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
@@ -183,6 +208,7 @@ func TestSubmitHypothesisResultRejectsUnboundFollowUpHypothesis(t *testing.T) {
 		Discriminator:        "trace the value across the boundary",
 		ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
 		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
 		AssignmentID:         "assignment-primary",
 	}
 	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
@@ -231,6 +257,7 @@ func TestUpdateCaseRouteIsDeterministicAndPreservesExactFindings(t *testing.T) {
 		Discriminator:        "compare generated schema and DTO",
 		ExpectedOutcomes:     map[string]any{"support": "mismatch", "refute": "match"},
 		SourceFindingIDs:     []string{"finding-1", "finding-2"},
+		EvidenceRefs:         []string{"evidence://root"},
 		AssignmentID:         "assignment-root",
 	}
 	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
@@ -256,23 +283,55 @@ func TestUpdateCaseRouteIsDeterministicAndPreservesExactFindings(t *testing.T) {
 		t.Fatalf("SubmitHypothesisResult() error = %v", err)
 	}
 	pointer = investigationPointer(t, fixture)
+	// S8-4: the leading hypothesis must be discriminated — register a
+	// competing hypothesis and refute it before the s9_repair route.
+	competing := register
+	competing.ExpectedRevision = 3
+	competing.ExpectedCaseRevision = 3
+	competing.ExpectedCaseSHA256 = pointer["sha256"].(string)
+	competing.HypothesisID = "hypothesis-competitor"
+	competing.AssignmentID = "assignment-competitor"
+	competing.EvidenceRefs = []string{"evidence://competitor"}
+	competing.Statement = "a caching layer drops the update between the two boundaries"
+	competing.ExpectedOutcomes = map[string]any{"support": "cache is stale while the schema matches", "refute": "cache is coherent"}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, competing); err != nil {
+		t.Fatalf("RegisterHypothesis(competitor) error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, investigation.HypothesisResultRequest{
+		ExpectedRevision:     4,
+		ExpectedCaseRevision: 4,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         competing.HypothesisID,
+		AssignmentID:         competing.AssignmentID,
+		Method:               "read-only cache inspection",
+		EvidenceRefs:         []string{"evidence-cache-inspection"},
+		SourceBoundaryRefs:   []string{"finding-1:boundary"},
+		Observed:             "the cache is coherent while the schema drift persists",
+		Counterfactual:       "a stale cache would mask the schema drift",
+		Result:               "refuted",
+	}); err != nil {
+		t.Fatalf("SubmitHypothesisResult(refuted) error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
 	snapshot, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
-		ExpectedRevision:     3,
-		ExpectedCaseRevision: 3,
+		ExpectedRevision:     5,
+		ExpectedCaseRevision: 5,
 		ExpectedCaseSHA256:   pointer["sha256"].(string),
 		CaseID:               register.CaseID,
 		Route:                "s9_repair",
 		RouteReason:          "supported causal model identifies an implementation boundary repair",
 		PrimaryRootCause:     "two incompatible payload authorities drift",
 		CausalModel:          map[string]any{"trigger": "new field", "propagation": "decoder drops field"},
-		BlastRadius:          map[string]any{"surfaces": []any{"request", "response"}},
-		DetectionGap:         map[string]any{"missing": "contract assertion"},
+		BlastRadius:          map[string]any{"paths": []any{"internal/api/request.go", "internal/api/response.go"}},
+		DetectionGap:         map[string]any{"gap_type": "contract", "evidence_refs": []any{"evidence://boundary"}},
 	})
 	if err != nil {
 		t.Fatalf("UpdateCaseRoute() error = %v", err)
 	}
-	if snapshot.Revision != 4 {
-		t.Fatalf("runtime revision = %d, want 4", snapshot.Revision)
+	if snapshot.Revision != 6 {
+		t.Fatalf("runtime revision = %d, want 6", snapshot.Revision)
 	}
 	finalPointer := investigationPointerFromState(t, snapshot.State)
 	caseDocument := readCaseDocument(t, fixture.root, finalPointer["path"].(string))
@@ -283,14 +342,313 @@ func TestUpdateCaseRouteIsDeterministicAndPreservesExactFindings(t *testing.T) {
 		t.Fatalf("source Finding set changed: %#v", got)
 	}
 	if _, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
-		ExpectedRevision:     4,
-		ExpectedCaseRevision: 4,
+		ExpectedRevision:     6,
+		ExpectedCaseRevision: 6,
 		ExpectedCaseSHA256:   finalPointer["sha256"].(string),
 		CaseID:               register.CaseID,
 		Route:                "s9_repair",
 		RouteReason:          "duplicate conflicting route attempt",
 	}); err == nil || !strings.Contains(err.Error(), "deterministic") {
 		t.Fatalf("inconsistent route update error = %v, want deterministic route guidance", err)
+	}
+}
+
+// discriminatedCaseFixture drives a Case through register -> supported ->
+// refuted and returns the latest Runtime pointer coordinates. The caller can
+// then corrupt individual causal-material fields to prove each gate rejects.
+func discriminatedCaseFixture(t *testing.T, fixture *intakeFixture) (map[string]any, string, string) {
+	t.Helper()
+	pointer := investigationPointer(t, fixture)
+	register := investigation.HypothesisRequest{
+		ExpectedRevision:     1,
+		ExpectedCaseRevision: 1,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		HypothesisID:         "hypothesis-boundary",
+		AssignmentID:         "assignment-boundary",
+		Statement:            "the boundary drops the required value",
+		Invariant:            "the value survives the boundary",
+		Discriminator:        "trace the value through the boundary",
+		ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
+		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
+	}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
+		t.Fatalf("RegisterHypothesis() error = %v", err)
+	}
+	competing := register
+	competing.ExpectedRevision = 2
+	competing.ExpectedCaseRevision = 2
+	competing.ExpectedCaseSHA256 = investigationPointer(t, fixture)["sha256"].(string)
+	competing.HypothesisID = "hypothesis-cache"
+	competing.AssignmentID = "assignment-cache"
+	competing.EvidenceRefs = []string{"evidence://cache"}
+	competing.Statement = "the request cache serves a stale payload without the value"
+	competing.ExpectedOutcomes = map[string]any{"support": "cache holds a stale payload", "refute": "cache is coherent"}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, competing); err != nil {
+		t.Fatalf("RegisterHypothesis(cache) error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	supported := investigation.HypothesisResultRequest{
+		ExpectedRevision:     3,
+		ExpectedCaseRevision: 3,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         register.HypothesisID,
+		AssignmentID:         register.AssignmentID,
+		Method:               "read-only boundary trace",
+		EvidenceRefs:         []string{"evidence://boundary-trace"},
+		SourceBoundaryRefs:   []string{"service.go:87"},
+		Observed:             "the value is dropped at the decoder",
+		Counterfactual:       "an aligned decoder preserves the value",
+		Result:               "supported",
+		ExplainsFindingIDs:   []string{"finding-1"},
+	}
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, supported); err != nil {
+		t.Fatalf("SubmitHypothesisResult(supported) error = %v", err)
+	}
+	refuted := investigation.HypothesisResultRequest{
+		ExpectedRevision:     4,
+		ExpectedCaseRevision: 4,
+		ExpectedCaseSHA256:   investigationPointer(t, fixture)["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         competing.HypothesisID,
+		AssignmentID:         competing.AssignmentID,
+		Method:               "read-only cache inspection",
+		EvidenceRefs:         []string{"evidence://cache-inspection"},
+		SourceBoundaryRefs:   []string{"service.go:87"},
+		Observed:             "the cache is coherent while the decoder drops the value",
+		Counterfactual:       "a stale cache would also drop the value",
+		Result:               "refuted",
+	}
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, refuted); err != nil {
+		t.Fatalf("SubmitHypothesisResult(refuted) error = %v", err)
+	}
+	return investigationPointer(t, fixture), register.CaseID, "assignment-cache"
+}
+
+// seedCausalClosure writes a complete causal closure into the current Case
+// revision, then applies the given mutation so a test can remove exactly one
+// required element.
+func seedCausalClosure(t *testing.T, fixture *intakeFixture, pointer map[string]any, mutate func(map[string]any) error) map[string]any {
+	t.Helper()
+	runtimeRevision := currentRuntimeRevision(t, fixture)
+	snapshot, err := investigation.UpdateCase(fixture.root, fixture.statePath, fixture.journalPath, investigation.CaseRevisionRequest{
+		ExpectedRevision:     runtimeRevision,
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		Operation:            "seed_causal_closure",
+		Mutate: func(document map[string]any) error {
+			document["causal_model"] = map[string]any{"trigger": "payload crosses boundary", "propagation": "decoder drops value"}
+			document["primary_root_cause"] = "the decoder drops the required value"
+			document["blast_radius"] = map[string]any{"paths": []any{"internal/service/decoder.go"}}
+			document["detection_gap"] = map[string]any{"gap_type": "test", "evidence_refs": []any{"evidence://boundary"}}
+			if mutate != nil {
+				return mutate(document)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed causal closure: %v", err)
+	}
+	return investigationPointerFromState(t, snapshot.State)
+}
+
+// currentRuntimeRevision reads the live Runtime revision through the store so
+// tests can compose mutations without hard-coding CAS coordinates.
+func currentRuntimeRevision(t *testing.T, fixture *intakeFixture) int {
+	t.Helper()
+	snapshot, err := runtime.NewStore(fixture.statePath, fixture.journalPath).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot.Revision
+}
+
+func integerPointerRevision(pointer map[string]any) int {
+	switch value := pointer["revision"].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
+}
+
+func routeClosedCase(t *testing.T, fixture *intakeFixture, pointer map[string]any, blastRadius, detectionGap map[string]any) error {
+	t.Helper()
+	_, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		Route:                "s9_repair",
+		RouteReason:          "supported causal model identifies an implementation boundary repair",
+		PrimaryRootCause:     "the decoder drops the required value",
+		CausalModel:          map[string]any{"trigger": "payload crosses boundary", "propagation": "decoder drops value"},
+		BlastRadius:          blastRadius,
+		DetectionGap:         detectionGap,
+	})
+	return err
+}
+
+// TestUpdateCaseRouteRejectsHollowBlastRadius proves the S8-3 negative case:
+// a blast_radius without a non-empty path set must never open an s9_repair
+// route, no matter how polished the rest of the dossier looks.
+func TestUpdateCaseRouteRejectsHollowBlastRadius(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer, _, _ := discriminatedCaseFixture(t, fixture)
+	pointer = seedCausalClosure(t, fixture, pointer, nil)
+	// Remove the blast_radius paths so the artifact carries a hollow object.
+	pointer = func() map[string]any {
+		snapshot, err := investigation.UpdateCase(fixture.root, fixture.statePath, fixture.journalPath, investigation.CaseRevisionRequest{
+			ExpectedRevision:     6,
+			ExpectedCaseRevision: 6,
+			ExpectedCaseSHA256:   pointer["sha256"].(string),
+			CaseID:               "investigation-case-observation-batch-r1",
+			Operation:            "hollow_blast_radius",
+			Mutate: func(document map[string]any) error {
+				document["blast_radius"] = map[string]any{}
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatalf("hollow blast radius: %v", err)
+		}
+		return investigationPointerFromState(t, snapshot.State)
+	}()
+	err := routeClosedCase(t, fixture, pointer, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "blast_radius") || !strings.Contains(err.Error(), "paths") {
+		t.Fatalf("hollow blast_radius error = %v, want non-empty path set guidance", err)
+	}
+}
+
+// TestUpdateCaseRouteRejectsDetectionGapWithoutTypeAndEvidence proves the
+// S8-3 detection_gap shape: a gap must name gap_type and bind evidence_refs.
+func TestUpdateCaseRouteRejectsDetectionGapWithoutTypeAndEvidence(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer, _, _ := discriminatedCaseFixture(t, fixture)
+	pointer = seedCausalClosure(t, fixture, pointer, func(document map[string]any) error {
+		document["detection_gap"] = map[string]any{"note": "no contract test"}
+		return nil
+	})
+	err := routeClosedCase(t, fixture, pointer, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "gap_type") {
+		t.Fatalf("detection_gap without gap_type error = %v, want gap_type guidance", err)
+	}
+
+	fixture2 := readyCaseFixture(t, []string{"finding-1"})
+	pointer2, _, _ := discriminatedCaseFixture(t, fixture2)
+	pointer2 = seedCausalClosure(t, fixture2, pointer2, func(document map[string]any) error {
+		document["detection_gap"] = map[string]any{"gap_type": "test", "evidence_refs": []any{}}
+		return nil
+	})
+	err = routeClosedCase(t, fixture2, pointer2, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "evidence_refs") {
+		t.Fatalf("detection_gap without evidence_refs error = %v, want evidence_refs guidance", err)
+	}
+}
+
+// TestUpdateCaseRouteRejectsSingleSupportedWithoutRefutation proves the S8-4
+// negative case: one supported hypothesis with zero refuted results and no
+// no_competing_hypothesis declaration must be rejected as an untested
+// conclusion.
+func TestUpdateCaseRouteRejectsSingleSupportedWithoutRefutation(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer := investigationPointer(t, fixture)
+	register := investigation.HypothesisRequest{
+		ExpectedRevision:     1,
+		ExpectedCaseRevision: 1,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		HypothesisID:         "hypothesis-only",
+		AssignmentID:         "assignment-only",
+		Statement:            "the boundary drops the required value",
+		Invariant:            "the value survives the boundary",
+		Discriminator:        "trace the value through the boundary",
+		ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
+		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
+	}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
+		t.Fatalf("RegisterHypothesis() error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, investigation.HypothesisResultRequest{
+		ExpectedRevision:     2,
+		ExpectedCaseRevision: 2,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         register.HypothesisID,
+		AssignmentID:         register.AssignmentID,
+		Method:               "read-only boundary trace",
+		EvidenceRefs:         []string{"evidence://boundary-trace"},
+		SourceBoundaryRefs:   []string{"service.go:87"},
+		Observed:             "the value is dropped at the decoder",
+		Counterfactual:       "an aligned decoder preserves the value",
+		Result:               "supported",
+		ExplainsFindingIDs:   []string{"finding-1"},
+	}); err != nil {
+		t.Fatalf("SubmitHypothesisResult() error = %v", err)
+	}
+	pointer = seedCausalClosure(t, fixture, investigationPointer(t, fixture), nil)
+	err := routeClosedCase(t, fixture, pointer, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "refuted") || !strings.Contains(err.Error(), "no_competing_hypothesis") {
+		t.Fatalf("single-supported route error = %v, want competing-hypothesis guidance", err)
+	}
+}
+
+// TestUpdateCaseRouteAcceptsExplicitNoCompetingHypothesis proves the S8-4
+// positive alternative: an explicit declaration may substitute for the
+// refuted result.
+func TestUpdateCaseRouteAcceptsExplicitNoCompetingHypothesis(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer := investigationPointer(t, fixture)
+	register := investigation.HypothesisRequest{
+		ExpectedRevision:     1,
+		ExpectedCaseRevision: 1,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		HypothesisID:         "hypothesis-only",
+		AssignmentID:         "assignment-only",
+		Statement:            "the boundary drops the required value",
+		Invariant:            "the value survives the boundary",
+		Discriminator:        "trace the value through the boundary",
+		ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
+		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
+	}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
+		t.Fatalf("RegisterHypothesis() error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, investigation.HypothesisResultRequest{
+		ExpectedRevision:     2,
+		ExpectedCaseRevision: 2,
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         register.HypothesisID,
+		AssignmentID:         register.AssignmentID,
+		Method:               "read-only boundary trace",
+		EvidenceRefs:         []string{"evidence://boundary-trace"},
+		SourceBoundaryRefs:   []string{"service.go:87"},
+		Observed:             "the value is dropped at the decoder",
+		Counterfactual:       "an aligned decoder preserves the value",
+		Result:               "supported",
+		ExplainsFindingIDs:   []string{"finding-1"},
+	}); err != nil {
+		t.Fatalf("SubmitHypothesisResult() error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	pointer = seedCausalClosure(t, fixture, pointer, func(document map[string]any) error {
+		document["no_competing_hypothesis"] = "the sealed occurrence admits only one credible mechanism; every alternative requires an artifact that does not exist in this runtime"
+		return nil
+	})
+	if err := routeClosedCase(t, fixture, pointer, nil, nil); err != nil {
+		t.Fatalf("explicit no_competing_hypothesis route error = %v, want accepted route", err)
 	}
 }
 
@@ -309,6 +667,7 @@ func TestUpdateCaseRouteCanReopenInvestigateMoreAfterNewEvidence(t *testing.T) {
 		Discriminator:        "trace the value through the boundary",
 		ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
 		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
 	}
 	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
 		t.Fatalf("RegisterHypothesis() error = %v", err)
@@ -346,17 +705,51 @@ func TestUpdateCaseRouteCanReopenInvestigateMoreAfterNewEvidence(t *testing.T) {
 		t.Fatalf("SubmitHypothesisResult() after investigate_more error = %v", err)
 	}
 	pointer = investigationPointerFromState(t, snapshot.State)
+	// S8-4: discriminate the leading hypothesis before the causal closure —
+	// refute the competing cache mechanism through its own assignment.
+	competing := register
+	competing.ExpectedRevision = 4
+	competing.ExpectedCaseRevision = 4
+	competing.ExpectedCaseSHA256 = investigationPointer(t, fixture)["sha256"].(string)
+	competing.HypothesisID = "hypothesis-cache"
+	competing.AssignmentID = "assignment-cache"
+	competing.EvidenceRefs = []string{"evidence://cache"}
+	competing.Statement = "the request cache serves a stale payload without the value"
+	competing.ExpectedOutcomes = map[string]any{"support": "cache holds a stale payload", "refute": "cache is coherent"}
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, competing); err != nil {
+		t.Fatalf("RegisterHypothesis(cache) error = %v", err)
+	}
+	pointer = investigationPointerFromState(t, snapshot.State)
+	competingResult := investigation.HypothesisResultRequest{
+		ExpectedRevision:     5,
+		ExpectedCaseRevision: 5,
+		ExpectedCaseSHA256:   investigationPointer(t, fixture)["sha256"].(string),
+		CaseID:               register.CaseID,
+		HypothesisID:         competing.HypothesisID,
+		AssignmentID:         competing.AssignmentID,
+		Method:               "read-only cache inspection",
+		EvidenceRefs:         []string{"evidence-cache-inspection"},
+		SourceBoundaryRefs:   []string{"service.go:87"},
+		Observed:             "the cache is coherent while the decoder drops the value",
+		Counterfactual:       "a stale cache would also drop the value",
+		Result:               "refuted",
+	}
+	if _, err := investigation.SubmitHypothesisResult(fixture.root, fixture.statePath, fixture.journalPath, competingResult); err != nil {
+		t.Fatalf("SubmitHypothesisResult(refuted cache) error = %v", err)
+	}
+	pointer = investigationPointerFromState(t, snapshot.State)
+	pointer = investigationPointer(t, fixture)
 	snapshot, err = investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
-		ExpectedRevision:     4,
-		ExpectedCaseRevision: 4,
+		ExpectedRevision:     6,
+		ExpectedCaseRevision: 6,
 		ExpectedCaseSHA256:   pointer["sha256"].(string),
 		CaseID:               register.CaseID,
 		Route:                "s9_repair",
 		RouteReason:          "new supported evidence closes the causal chain",
 		PrimaryRootCause:     "the decoder drops the required value",
 		CausalModel:          map[string]any{"trigger": "payload crosses boundary", "propagation": "decoder drops value"},
-		BlastRadius:          map[string]any{"surfaces": []any{"service"}},
-		DetectionGap:         map[string]any{"missing": "boundary contract assertion"},
+		BlastRadius:          map[string]any{"paths": []any{"internal/service/decoder.go"}},
+		DetectionGap:         map[string]any{"gap_type": "test", "evidence_refs": []any{"evidence://boundary"}},
 	})
 	if err != nil {
 		t.Fatalf("re-route to s9_repair error = %v", err)
@@ -372,6 +765,101 @@ func TestUpdateCaseRouteCanReopenInvestigateMoreAfterNewEvidence(t *testing.T) {
 	}
 	if history[0].(map[string]any)["to"] != "investigate_more" || history[1].(map[string]any)["from"] != "investigate_more" || history[1].(map[string]any)["to"] != "s9_repair" {
 		t.Fatalf("route_history = %#v, want investigate_more -> s9_repair", history)
+	}
+}
+
+// TestInvestigateMoreReRouteRequiresNewEvidenceFingerprint proves the S8-7
+// freshness contract: after an investigate_more checkpoint, a re-route is
+// unlocked by new evidence_ref content (a changed evidence fingerprint), not
+// by a bare count increase or a recycled reference.
+func TestInvestigateMoreReRouteRequiresNewEvidenceFingerprint(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer, caseID, _ := discriminatedCaseFixture(t, fixture)
+
+	// Route to investigate_more first; the checkpoint records the current
+	// evidence fingerprint. The Case is discriminated but not causally closed,
+	// so investigate_more is a legitimate disposition.
+	snapshot, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		Route:                "investigate_more",
+		RouteReason:          "the mechanism needs one more discriminator before repair",
+	})
+	if err != nil {
+		t.Fatalf("initial investigate_more route error = %v", err)
+	}
+
+	// Recycle the same evidence: a new hypothesis whose evidence_refs duplicate
+	// an existing reference does not change the fingerprint and must be
+	// rejected as a mechanical unlock.
+	pointer = investigationPointerFromState(t, snapshot.State)
+	recycled := investigation.HypothesisRequest{
+		ExpectedRevision:     snapshot.Revision,
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		HypothesisID:         "hypothesis-recycled",
+		AssignmentID:         "assignment-recycled",
+		Statement:            "the boundary drops the required value for a second reason",
+		Invariant:            "the value survives the boundary",
+		Discriminator:        "trace the value through the boundary again",
+		ExpectedOutcomes:     map[string]any{"support": "the value is dropped again", "refute": "the value survives"},
+		SourceFindingIDs:     []string{"finding-1"},
+		EvidenceRefs:         []string{"evidence://boundary"},
+	}
+	snapshot, err = investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, recycled)
+	if err != nil {
+		t.Fatalf("RegisterHypothesis(recycled evidence) error = %v", err)
+	}
+	pointer = investigationPointerFromState(t, snapshot.State)
+	_, err = investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		Route:                "investigate_more",
+		RouteReason:          "attempting a second checkpoint without new evidence content",
+	})
+	if err == nil || !strings.Contains(err.Error(), "new hypothesis or result evidence") {
+		t.Fatalf("recycled-evidence re-route error = %v, want freshness guidance", err)
+	}
+
+	// A genuinely new evidence_ref changes the fingerprint and unlocks the
+	// re-entry point.
+	pointer = investigationPointer(t, fixture)
+	fresh := recycled
+	fresh.ExpectedRevision = snapshot.Revision
+	fresh.ExpectedCaseRevision = integerPointerRevision(pointer)
+	fresh.ExpectedCaseSHA256 = pointer["sha256"].(string)
+	fresh.HypothesisID = "hypothesis-fresh"
+	fresh.AssignmentID = "assignment-fresh"
+	fresh.EvidenceRefs = []string{"evidence://fresh-probe"}
+	fresh.Statement = "a second decoder mapping drops the value"
+	if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, fresh); err != nil {
+		t.Fatalf("RegisterHypothesis(fresh evidence) error = %v", err)
+	}
+	pointer = investigationPointer(t, fixture)
+	snapshot, err = investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		Route:                "investigate_more",
+		RouteReason:          "a new discriminator probe was registered with fresh evidence",
+	})
+	if err != nil {
+		t.Fatalf("fresh-evidence re-route error = %v, want accepted route", err)
+	}
+	finalPointer := investigationPointerFromState(t, snapshot.State)
+	document := readCaseDocument(t, fixture.root, finalPointer["path"].(string))
+	history, ok := document["route_history"].([]any)
+	if !ok || len(history) != 2 {
+		t.Fatalf("route_history = %#v, want two investigate_more checkpoints", document["route_history"])
+	}
+	if first, second := history[0].(map[string]any), history[1].(map[string]any); first["evidence_fingerprint"] == second["evidence_fingerprint"] {
+		t.Fatalf("second checkpoint must carry a new evidence fingerprint: %v vs %v", first["evidence_fingerprint"], second["evidence_fingerprint"])
 	}
 }
 

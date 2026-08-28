@@ -202,8 +202,9 @@ func prepareCaseForContractApproval(t *testing.T, fixture *intakeFixture) {
 	caseDocument["unexplained_finding_ids"] = []any{}
 	caseDocument["causal_model"] = map[string]any{"trigger": "payload crosses boundary", "violated_invariant": "one owner", "faulty_mechanism": "duplicate schema", "propagation": "decoder rejects fields", "symptoms": []any{"finding-1", "finding-2"}}
 	caseDocument["primary_root_cause"] = "the payload contract has two incompatible owners"
-	caseDocument["blast_radius"] = map[string]any{"surfaces": []any{"internal/api"}}
-	caseDocument["detection_gap"] = map[string]any{"missing": "contract drift test"}
+	caseDocument["blast_radius"] = map[string]any{"paths": []any{"internal/api"}}
+	caseDocument["detection_gap"] = map[string]any{"gap_type": "contract", "evidence_refs": []any{"evidence://drift"}}
+	caseDocument["no_competing_hypothesis"] = "the sealed occurrence is only consistent with the payload-contract drift mechanism"
 	caseDocument["route"] = "s9_repair"
 	caseDocument["route_reason"] = "implementation boundary must be repaired"
 	updatedCase, err := json.MarshalIndent(caseDocument, "", "  ")

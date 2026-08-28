@@ -320,11 +320,8 @@ func requireRepairReadyCase(document map[string]any) error {
 	if strings.TrimSpace(stringField(document["primary_root_cause"])) == "" {
 		return errors.New("primary_root_cause is missing")
 	}
-	if !nonEmptyObject(document["blast_radius"]) {
-		return errors.New("blast_radius is missing or empty")
-	}
-	if !nonEmptyObject(document["detection_gap"]) {
-		return errors.New("detection_gap is missing or empty")
+	if err := validateCausalClosure(document); err != nil {
+		return err
 	}
 	if stringField(document["route"]) != "s9_repair" {
 		return fmt.Errorf("route is %q, want s9_repair", stringField(document["route"]))

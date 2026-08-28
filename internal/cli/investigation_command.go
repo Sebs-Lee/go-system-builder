@@ -372,6 +372,8 @@ func runRuntimeInvestigationHypothesisRegister(args []string, stdout, stderr io.
 	refute := flags.String("refute", "", "expected outcome if the hypothesis is false")
 	var sourceFindings stringListFlag
 	flags.Var(&sourceFindings, "source-finding", "source Finding id; repeatable or comma-separated")
+	var evidenceRefs stringListFlag
+	flags.Var(&evidenceRefs, "evidence", "evidence ref backing the hypothesis; repeatable or comma-separated")
 	occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -405,6 +407,7 @@ func runRuntimeInvestigationHypothesisRegister(args []string, stdout, stderr io.
 		Discriminator:        *discriminator,
 		ExpectedOutcomes:     map[string]any{"support": *support, "refute": *refute},
 		SourceFindingIDs:     splitRepeatableValues(sourceFindings),
+		EvidenceRefs:         splitRepeatableValues(evidenceRefs),
 		OccurredAt:           occurredAt,
 	})
 	if err != nil {
@@ -522,6 +525,7 @@ func runRuntimeInvestigationRoute(args []string, stdout, stderr io.Writer) int {
 	detectionGapFile := flags.String("detection-gap-file", "", "s9_repair: JSON file with the detection gap")
 	canonicalCaseID := flags.String("canonical-case-id", "", "duplicate: the canonical Case id")
 	reassessmentEvidence := flags.String("reassessment-evidence", "", "S9 targeted-failure artifact path(s), comma-separated; required when reopening an approved Case")
+	noCompetingHypothesis := flags.String("no-competing-hypothesis", "", "explicit declaration that no competing hypothesis was credible; substitutes for a refuted result in causal closure (S8-4)")
 	occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -593,6 +597,7 @@ func runRuntimeInvestigationRoute(args []string, stdout, stderr io.Writer) int {
 		DetectionGap:                   detectionGap,
 		CanonicalCaseID:                strings.TrimSpace(*canonicalCaseID),
 		CausalReassessmentEvidenceRefs: reassessmentRefs,
+		NoCompetingHypothesis:          strings.TrimSpace(*noCompetingHypothesis),
 		OccurredAt:                     occurredAt,
 	})
 	if err != nil {
@@ -997,11 +1002,16 @@ func runRuntimeInvestigationStatus(args []string, stdout, stderr io.Writer) int 
 		if repairRecovery == nil {
 			next = fmt.Sprintf("open S9 with `runtime repair session open --root %s --session-id <session> --created-by <agent>`; it consumes approved RepairContract (repair_contract_ref=%s)", *root, stringValue(pointer["repair_contract_ref"]))
 		}
-	case "contract_review":
-		next = "complete and approve the draft RepairContract with runtime investigation contract approve"
 	case "blocked":
 		next = "resolve the Case blocker, then re-read the Case board before continuing"
 	}
+	// RC-06 (S8-8): the former `case "contract_review":` branch here was a
+	// ghost phase — no code path ever sets an InvestigationCase to
+	// contract_review (contract.go transitions investigating →
+	// contract_approved directly), so the branch was unreachable. The
+	// contract_review value remains legal in the loop-state schema enums
+	// (reserved for the future human review boundary) but has no CLI
+	// behavior.
 	return encodeJSON(stdout, map[string]any{
 		"case":            pointer,
 		"board":           board,
@@ -1139,6 +1149,7 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 	pendingHypotheses := []string{}
 	awaitingResultHypotheses := []string{}
 	completedHypotheses := []string{}
+	unknownDispatchHypotheses := []string{}
 	for _, hypothesis := range hypotheses {
 		id := stringValue(hypothesis["hypothesis_id"])
 		if id == "" {
@@ -1146,7 +1157,12 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 		}
 		if _, ok := resultByHypothesis[id]; ok {
 			completedHypotheses = append(completedHypotheses, id)
-		} else if state != nil && investigationAssignmentDispatched(root, state, stringValue(hypothesis["assignment_id"])) {
+		} else if state == nil {
+			// S8-10: the --all aggregate reads Case artifacts without the
+			// Runtime state, so dispatch cannot be verified. Mark the
+			// dispatch state unknown instead of guessing "pending".
+			unknownDispatchHypotheses = append(unknownDispatchHypotheses, id)
+		} else if investigationAssignmentDispatched(root, state, stringValue(hypothesis["assignment_id"])) {
 			awaitingResultHypotheses = append(awaitingResultHypotheses, id)
 		} else {
 			pendingHypotheses = append(pendingHypotheses, id)
@@ -1170,10 +1186,11 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 		"source_finding_ids":      sourceFindingIDs,
 		"unexplained_finding_ids": unexplained,
 		"hypothesis_summary": map[string]any{
-			"total":           len(hypotheses),
-			"pending":         pendingHypotheses,
-			"awaiting_result": awaitingResultHypotheses,
-			"completed":       completedHypotheses,
+			"total":            len(hypotheses),
+			"pending":          pendingHypotheses,
+			"awaiting_result":  awaitingResultHypotheses,
+			"completed":        completedHypotheses,
+			"dispatch_unknown": unknownDispatchHypotheses,
 		},
 		"ready_for_contract": len(unexplained) == 0 && stringValue(document["route"]) == "s9_repair",
 		"next_action":        nextAction,

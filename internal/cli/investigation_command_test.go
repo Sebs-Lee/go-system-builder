@@ -107,6 +107,18 @@ func TestRuntimeInvestigationIngestCLICommitsCasePointer(t *testing.T) {
 	}
 	if cases, ok := aggregate["cases"].([]any); !ok || len(cases) == 0 {
 		t.Fatalf("status --all must expose the Case aggregate: %#v", aggregate)
+	} else {
+		// S8-10: the aggregate has no Runtime state, so it must never guess a
+		// dispatch verdict. Undischarged hypotheses must land in
+		// dispatch_unknown rather than pending or awaiting_result. This
+		// ingest-only root has no hypotheses, so the buckets must all be
+		// empty rather than misclassified.
+		board := cases[0].(map[string]any)["hypothesis_summary"].(map[string]any)
+		for _, key := range []string{"pending", "awaiting_result", "dispatch_unknown"} {
+			if bucket := board[key].([]any); len(bucket) != 0 {
+				t.Fatalf("aggregate without hypotheses must keep %s empty, got %v", key, bucket)
+			}
+		}
 	}
 
 	// A read-only status view must fail closed when the pinned Case file drifts;
@@ -326,8 +338,9 @@ func prepareCLIInvestigationCase(t *testing.T, root string) {
 	caseDocument["unexplained_finding_ids"] = []any{}
 	caseDocument["causal_model"] = map[string]any{"trigger": "payload crosses boundary", "violated_invariant": "one owner", "faulty_mechanism": "duplicate schema", "propagation": "decoder rejects fields", "symptoms": []any{"finding-1"}}
 	caseDocument["primary_root_cause"] = "the payload contract has two incompatible owners"
-	caseDocument["blast_radius"] = map[string]any{"surfaces": []any{"internal/api"}}
-	caseDocument["detection_gap"] = map[string]any{"missing": "contract drift test"}
+	caseDocument["blast_radius"] = map[string]any{"paths": []any{"internal/api"}}
+	caseDocument["detection_gap"] = map[string]any{"gap_type": "test", "evidence_refs": []any{"evidence://contract-drift"}}
+	caseDocument["no_competing_hypothesis"] = "the single boundary hypothesis explains the finding; no alternative mechanism was credible"
 	caseDocument["route"] = "s9_repair"
 	caseDocument["route_reason"] = "implementation boundary must be repaired"
 	updatedCase, err := json.MarshalIndent(caseDocument, "", "  ")
@@ -440,7 +453,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		"--invariant", "every store error reaches the caller",
 		"--discriminator", "force the store failure and observe the boundary",
 		"--support", "boundary returns nil", "--refute", "boundary propagates",
-		"--source-finding", "finding-1")
+		"--source-finding", "finding-1", "--evidence", ".claude/evidence/observation-batch-r1.json")
 	if code != 0 {
 		t.Fatalf("hypothesis register code=%d stderr=%s stdout=%s", code, errOut, out)
 	}
@@ -527,13 +540,13 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 	if err := os.WriteFile(causalPath, causalBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	blast := map[string]any{"affected_paths": []string{"internal/example/service.go"}}
+	blast := map[string]any{"paths": []string{"internal/example/service.go"}}
 	blastBytes, _ := json.Marshal(blast)
 	blastPath := filepath.Join(root, "blast.json")
 	if err := os.WriteFile(blastPath, blastBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gap := map[string]any{"why_missed": "no forced-failure test"}
+	gap := map[string]any{"gap_type": "test", "evidence_refs": []string{".claude/evidence/observation-batch-r1.json"}}
 	gapBytes, _ := json.Marshal(gap)
 	gapPath := filepath.Join(root, "gap.json")
 	if err := os.WriteFile(gapPath, gapBytes, 0o644); err != nil {
@@ -571,7 +584,8 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		"--expected-case-revision", fmtInt(status.Case.Revision), "--expected-case-sha256", status.Case.SHA256,
 		"--route", "s9_repair", "--reason", "single explained root cause",
 		"--primary-root-cause", "the boundary discards the store error",
-		"--causal-model-file", "causal.json", "--blast-radius-file", "blast.json", "--detection-gap-file", "gap.json")
+		"--causal-model-file", "causal.json", "--blast-radius-file", "blast.json", "--detection-gap-file", "gap.json",
+		"--no-competing-hypothesis", "the single boundary hypothesis explains the finding; no alternative mechanism was credible")
 	if code != 0 {
 		t.Fatalf("route code=%d stderr=%s stdout=%s", code, errOut, out)
 	}

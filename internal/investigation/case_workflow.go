@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,7 +33,8 @@ type CaseRevisionRequest struct {
 
 // HypothesisRequest registers one falsifiable S8 hypothesis inside a Case.
 // SourceFindingIDs may be a subset of the Case exact set, but can never add
-// or replace a source Finding.
+// or replace a source Finding. EvidenceRefs must carry at least one content
+// reference: an evidence-free hypothesis cannot be dispatched or falsified.
 type HypothesisRequest struct {
 	ExpectedRevision     int
 	ExpectedCaseRevision int
@@ -45,6 +47,7 @@ type HypothesisRequest struct {
 	Discriminator        string
 	ExpectedOutcomes     map[string]any
 	SourceFindingIDs     []string
+	EvidenceRefs         []string
 	OccurredAt           time.Time
 }
 
@@ -94,7 +97,11 @@ type RouteRequest struct {
 	DetectionGap                   map[string]any
 	CanonicalCaseID                string
 	CausalReassessmentEvidenceRefs []EvidenceReference
-	OccurredAt                     time.Time
+	// NoCompetingHypothesis, when non-empty, records the S8-4 declaration that
+	// no competing hypothesis was credible enough to warrant a discriminator;
+	// it substitutes for the refuted-hypothesis result in causal closure.
+	NoCompetingHypothesis string
+	OccurredAt            time.Time
 }
 
 // UpdateCase commits an arbitrary, package-local Case revision mutation. The
@@ -126,6 +133,10 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
+	evidenceRefs, err := nonEmptyStrings(request.EvidenceRefs, "Hypothesis.evidence_refs")
+	if err != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
@@ -151,6 +162,7 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 				"discriminator":      strings.TrimSpace(request.Discriminator),
 				"expected_outcomes":  cloneMap(request.ExpectedOutcomes),
 				"source_finding_ids": stringSliceAny(sourceIDs),
+				"evidence_refs":      stringSliceAny(evidenceRefs),
 				"status":             "open",
 			})
 			document["hypotheses"] = hypothesesToAny(hypotheses)
@@ -323,6 +335,9 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 			if strings.TrimSpace(request.PrimaryRootCause) != "" {
 				candidate["primary_root_cause"] = strings.TrimSpace(request.PrimaryRootCause)
 			}
+			if strings.TrimSpace(request.NoCompetingHypothesis) != "" {
+				candidate["no_competing_hypothesis"] = strings.TrimSpace(request.NoCompetingHypothesis)
+			}
 			if len(request.CausalModel) > 0 {
 				candidate["causal_model"] = cloneMap(request.CausalModel)
 			}
@@ -397,6 +412,7 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 				"case_revision":           integerValueOrZero(document["revision"]),
 				"hypothesis_count":        len(hypotheses),
 				"hypothesis_result_count": len(results),
+				"evidence_fingerprint":    evidenceFingerprint(document),
 				"occurred_at":             occurredAt.UTC().Format(time.RFC3339Nano),
 			})
 			document["route_history"] = hypothesesToAny(history)
@@ -412,26 +428,56 @@ type canonicalCaseReference struct {
 }
 
 // routeHasNewEvidence compares the current immutable Case board with the
-// last investigate_more route. It deliberately uses counts rather than a
-// second mutable checkpoint: every new hypothesis or result already creates a
-// Case revision, and the route history records the counts at the checkpoint.
+// last investigate_more route. The freshness gate is content-based, not
+// count-based (S8-7): the route history records a fingerprint of the
+// evidence_ref set at the checkpoint and a new route is allowed only when a
+// new evidence_ref (hash-differentiated content) has appeared since.
 func routeHasNewEvidence(document map[string]any) bool {
 	history, _ := objectArrayAllowEmpty(document["route_history"], "InvestigationCase.route_history")
-	lastHypotheses := -1
-	lastResults := -1
+	lastFingerprint := ""
+	found := false
 	for index := len(history) - 1; index >= 0; index-- {
 		if stringField(history[index]["to"]) == "investigate_more" {
-			lastHypotheses = integerValueOrZero(history[index]["hypothesis_count"])
-			lastResults = integerValueOrZero(history[index]["hypothesis_result_count"])
+			lastFingerprint = stringField(history[index]["evidence_fingerprint"])
+			found = true
 			break
 		}
 	}
-	if lastHypotheses < 0 && lastResults < 0 {
+	if !found {
 		return false
 	}
+	return evidenceFingerprint(document) != lastFingerprint
+}
+
+// evidenceFingerprint hashes the sorted set of evidence refs carried by the
+// Case's hypotheses and hypothesis results. Any new evidence_ref — even
+// inside a pre-existing count — changes the fingerprint, while re-routing
+// with recycled or phantom evidence does not.
+func evidenceFingerprint(document map[string]any) string {
+	values := make([]string, 0, 8)
 	hypotheses, _ := objectArrayAllowEmpty(document["hypotheses"], "InvestigationCase.hypotheses")
+	for _, hypothesis := range hypotheses {
+		values = append(values, stringSliceValues(hypothesis["evidence_refs"])...)
+	}
 	results, _ := objectArrayAllowEmpty(document["hypothesis_results"], "InvestigationCase.hypothesis_results")
-	return len(hypotheses) > lastHypotheses || len(results) > lastResults
+	for _, result := range results {
+		values = append(values, stringSliceValues(result["evidence_refs"])...)
+	}
+	sort.Strings(values)
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return sha256Hex([]byte(strings.Join(unique, "\x00")))
 }
 
 func resolveCanonicalCase(root, currentCaseID, canonicalCaseID string) (canonicalCaseReference, error) {
@@ -673,7 +719,10 @@ func deterministicCaseRoute(document map[string]any) string {
 	}
 	caseIDs, _ := stringSlice(document["source_finding_ids"], "source_finding_ids")
 	explained := supportedExplainedFindingIDs(document)
-	if len(difference(caseIDs, explained)) != 0 || !nonEmptyObject(document["causal_model"]) || strings.TrimSpace(stringField(document["primary_root_cause"])) == "" || !nonEmptyObject(document["blast_radius"]) || !nonEmptyObject(document["detection_gap"]) {
+	if len(difference(caseIDs, explained)) != 0 || !nonEmptyObject(document["causal_model"]) || strings.TrimSpace(stringField(document["primary_root_cause"])) == "" {
+		return "investigate_more"
+	}
+	if err := validateCausalClosure(document); err != nil {
 		return "investigate_more"
 	}
 	return "s9_repair"
@@ -682,6 +731,11 @@ func deterministicCaseRoute(document map[string]any) string {
 func validateRoute(route string, document map[string]any, request RouteRequest, reassessment bool) error {
 	if route == "s9_repair" {
 		if deterministicCaseRoute(document) != "s9_repair" {
+			// Surface the exact structural reason instead of the generic
+			// determinism error so the Investigator can close the specific gap.
+			if err := causalClosureDefect(document); err != nil {
+				return err
+			}
 			return errors.New("route is not deterministic: every source Finding must be explained by supported results and causal closure must be complete")
 		}
 		if strings.TrimSpace(request.PrimaryRootCause) == "" && strings.TrimSpace(stringField(document["primary_root_cause"])) == "" {
@@ -689,12 +743,6 @@ func validateRoute(route string, document map[string]any, request RouteRequest, 
 		}
 		if len(request.CausalModel) == 0 && !nonEmptyObject(document["causal_model"]) {
 			return errors.New("s9_repair requires causal_model")
-		}
-		if len(request.BlastRadius) == 0 && !nonEmptyObject(document["blast_radius"]) {
-			return errors.New("s9_repair requires blast_radius")
-		}
-		if len(request.DetectionGap) == 0 && !nonEmptyObject(document["detection_gap"]) {
-			return errors.New("s9_repair requires detection_gap")
 		}
 	}
 	if route == "investigate_more" && !reassessment && deterministicCaseRoute(document) != "investigate_more" {
@@ -704,6 +752,23 @@ func validateRoute(route string, document map[string]any, request RouteRequest, 
 		return errors.New("duplicate route requires canonical_case_id")
 	}
 	return nil
+}
+
+// causalClosureDefect reports the first missing S8 causal-material element.
+// It returns nil when the Case document satisfies the closure contract.
+func causalClosureDefect(document map[string]any) error {
+	caseIDs, _ := stringSlice(document["source_finding_ids"], "source_finding_ids")
+	explained := supportedExplainedFindingIDs(document)
+	if len(difference(caseIDs, explained)) != 0 {
+		return fmt.Errorf("route is not deterministic: source Findings remain unexplained: %v", difference(caseIDs, explained))
+	}
+	if !nonEmptyObject(document["causal_model"]) {
+		return errors.New("route is not deterministic: causal_model is missing or empty")
+	}
+	if strings.TrimSpace(stringField(document["primary_root_cause"])) == "" {
+		return errors.New("route is not deterministic: primary_root_cause is missing")
+	}
+	return validateCausalClosure(document)
 }
 
 func validateAssignmentID(value, field string) error {
@@ -838,6 +903,9 @@ func validateNewHypothesis(hypothesis map[string]any, caseIDs []string) error {
 	if err := validateAssignmentID(stringField(hypothesis["assignment_id"]), "new hypothesis.assignment_id"); err != nil {
 		return err
 	}
+	if _, err := nonEmptyStrings(stringSliceValues(hypothesis["evidence_refs"]), "new hypothesis.evidence_refs"); err != nil {
+		return err
+	}
 	expected, ok := hypothesis["expected_outcomes"].(map[string]any)
 	if !ok || strings.TrimSpace(stringField(expected["support"])) == "" || strings.TrimSpace(stringField(expected["refute"])) == "" {
 		return errors.New("new hypothesis expected_outcomes must name non-empty support and refute outcomes")
@@ -847,6 +915,113 @@ func validateNewHypothesis(hypothesis map[string]any, caseIDs []string) error {
 		return err
 	}
 	return subsetOf(ids, caseIDs, "new hypothesis source_finding_ids")
+}
+
+// stringSliceValues reads a raw JSON string array without failing the caller;
+// validation of individual entries is left to nonEmptyStrings.
+func stringSliceValues(value any) []string {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text, _ := item.(string)
+		result = append(result, text)
+	}
+	return result
+}
+
+// validateBlastRadius enforces the S8-3 repair contract: blast_radius must
+// name the concrete surface set the mechanism can pollute. An empty object,
+// an empty path set, or a paths entry without content fails closed before a
+// hollow causal dossier can reach S9.
+func validateBlastRadius(blastRadius map[string]any) error {
+	if blastRadius == nil {
+		return errors.New("blast_radius is missing or empty")
+	}
+	paths := stringSliceValues(blastRadius["paths"])
+	if len(paths) == 0 {
+		return errors.New("blast_radius.paths must name at least one surface, endpoint, artifact, or data set the mechanism can pollute")
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for index, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("blast_radius.paths[%d] must be a non-empty path or surface id", index)
+		}
+		if _, exists := seen[path]; exists {
+			return fmt.Errorf("blast_radius.paths contains duplicate entry %q", path)
+		}
+		seen[path] = struct{}{}
+	}
+	return nil
+}
+
+// validateDetectionGap enforces the S8-3 repair contract: detection_gap must
+// declare its type and bind at least one evidence reference so the repair
+// stage can assert the closing detection. A free-text-only gap is rejected.
+func validateDetectionGap(detectionGap map[string]any) error {
+	if detectionGap == nil {
+		return errors.New("detection_gap is missing or empty")
+	}
+	if strings.TrimSpace(stringField(detectionGap["gap_type"])) == "" {
+		return errors.New("detection_gap.gap_type is required (test | contract | type | monitoring | process)")
+	}
+	if !oneOf(strings.TrimSpace(stringField(detectionGap["gap_type"])), "test", "contract", "type", "monitoring", "process") {
+		return fmt.Errorf("detection_gap.gap_type %q is not a supported detection layer (test | contract | type | monitoring | process)", stringField(detectionGap["gap_type"]))
+	}
+	refs := stringSliceValues(detectionGap["evidence_refs"])
+	if len(refs) == 0 {
+		return errors.New("detection_gap.evidence_refs must bind at least one evidence reference showing why the gap exists")
+	}
+	for index, ref := range refs {
+		if strings.TrimSpace(ref) == "" {
+			return fmt.Errorf("detection_gap.evidence_refs[%d] must be a non-empty evidence reference", index)
+		}
+	}
+	return nil
+}
+
+// competingHypothesisState answers whether the Case demonstrates that the
+// leading hypothesis survived contact with at least one competing hypothesis.
+// It is satisfied either by at least one refuted hypothesis result or by the
+// explicit no_competing_hypothesis declaration on the Case.
+func competingHypothesisState(document map[string]any) (refuted int, declaredNone bool) {
+	results, _ := objectArrayAllowEmpty(document["hypothesis_results"], "hypothesis_results")
+	for _, result := range results {
+		if stringField(result["result"]) == "refuted" {
+			refuted++
+		}
+	}
+	if strings.TrimSpace(stringField(document["no_competing_hypothesis"])) != "" {
+		declaredNone = true
+	}
+	return refuted, declaredNone
+}
+
+// requireCompetingHypothesisClosure enforces the S8-4 repair contract: a
+// single supported result must never be the only discriminative evidence
+// behind an s9_repair route.
+func requireCompetingHypothesisClosure(document map[string]any) error {
+	refuted, declaredNone := competingHypothesisState(document)
+	if refuted >= 1 || declaredNone {
+		return nil
+	}
+	return errors.New("causal closure requires the leading hypothesis to be discriminated: record at least one refuted hypothesis result, or declare no_competing_hypothesis with the reason no alternative mechanism was credible")
+}
+
+// validateCausalClosure composes the structural S8 causal-material checks
+// shared by the deterministic s9_repair route and Contract approval.
+func validateCausalClosure(document map[string]any) error {
+	if err := requireCompetingHypothesisClosure(document); err != nil {
+		return err
+	}
+	blastRadius, _ := document["blast_radius"].(map[string]any)
+	if err := validateBlastRadius(blastRadius); err != nil {
+		return err
+	}
+	detectionGap, _ := document["detection_gap"].(map[string]any)
+	return validateDetectionGap(detectionGap)
 }
 
 func objectArray(value any, field string) ([]map[string]any, error) {
