@@ -428,6 +428,17 @@
                 "review_plan_seed_ref": {"type": ["string", "null"]},
                 "review_plan_seed_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
                 "implementation_baseline_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+                "authority_fingerprint": {
+                  "description": "RC-09 (S9-4): repository baseline digest captured when each RepairSession opened, keyed by session id. Repair commits re-verify the live digest against the pinned fingerprint and fail stale on drift.",
+                  "type": "object",
+                  "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+                },
+                "required_reverification_ids": {
+                  "description": "RC-09 (S9-6): targeted reverification ids the ChangeImpact declared as mandatory. Repair handoff is blocked until every id resolves to a committed targeted_reverification artifact.",
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1},
+                  "uniqueItems": true
+                },
                 "updated_at": {"type": "string", "minLength": 1},
                 "next_action": {"type": "string", "minLength": 1}
               }

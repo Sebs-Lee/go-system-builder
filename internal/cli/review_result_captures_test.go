@@ -62,25 +62,25 @@ func TestReviewResultCapturesAcceptsBufferDir(t *testing.T) {
 		"findings": []any{map[string]any{
 			"schema_version": "1.0.0", "finding_id": "finding-captures-dir-1",
 			"claim_id": "claim-qa-1", "lens": "qa", "severity": "P1",
-			"expected": "the store error propagates to the caller",
-			"authority_refs":     []string{"docs/contracts/CONTRACTS-001.md#errors"},
-			"observed":          "update returns nil after the store write fails",
-			"observation_mode":   "code_inspection",
-			"reproducibility":   "always",
-			"evidence_refs":     []string{trailRef},
-			"correlation_refs":  []string{"service.go:87"},
-			"visible_impact":    "callers persist partial state under success",
-			"negative_facts":    []string{"delete path propagates correctly"},
-			"open_questions":    []string{"does any caller rely on the drop?"},
+			"expected":         "the store error propagates to the caller",
+			"authority_refs":   []string{"docs/contracts/CONTRACTS-001.md#errors"},
+			"observed":         "update returns nil after the store write fails",
+			"observation_mode": "code_inspection",
+			"reproducibility":  "always",
+			"evidence_refs":    []string{trailRef},
+			"correlation_refs": []string{"service.go:87"},
+			"visible_impact":   "callers persist partial state under success",
+			"negative_facts":   []string{"delete path propagates correctly"},
+			"open_questions":   []string{"does any caller rely on the drop?"},
 			"encounter": map[string]any{
-				"journey_summary":    "walked update error handling",
-				"inspection_entry":   "internal/example/service.go:Update",
-				"symbol_trail":       "Update -> store.Write (error dropped)",
+				"journey_summary":      "walked update error handling",
+				"inspection_entry":     "internal/example/service.go:Update",
+				"symbol_trail":         "Update -> store.Write (error dropped)",
 				"last_good_checkpoint": "store.Write returns a typed error",
-				"wall_action":        "the error return is discarded",
+				"wall_action":          "the error return is discarded",
 				"first_bad_checkpoint": "Update returns nil although the write failed",
-				"terminal_state":     "caller commits and reports success",
-				"timeline":           []any{},
+				"terminal_state":       "caller commits and reports success",
+				"timeline":             []any{},
 			},
 		}},
 		"verdict": "finding",
@@ -121,8 +121,6 @@ func TestReviewResultCapturesAcceptsBufferDir(t *testing.T) {
 		t.Fatalf("buffer dir must merge its steps.jsonl into the empty timeline, got %d steps: %s", len(timeline), findingBytes)
 	}
 }
-
-
 
 // subjectDigestForPlan computes the frozen-baseline digest from the
 // registered plan file (subjectDigestFor hardcodes the worktree fixture id).

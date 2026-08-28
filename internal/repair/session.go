@@ -81,9 +81,22 @@ func CreateRepairPlan(root string, request PlanRequest) (RepairPlan, ArtifactRef
 		if len(unit.Scope) > 0 {
 			scope = unit.Scope
 		}
-		unitAssertions := assertionIDs
-		if len(unit.AssertionIDs) > 0 {
-			unitAssertions = unit.AssertionIDs
+		// RC-09 (S9-12): assertion coverage must be declared, not inherited.
+		// A unit with its own assertion_ids keeps exactly those; a unit
+		// without them no longer silently receives the FULL contract
+		// assertion surface — that implicit copy coarsened the reverification
+		// surface (a one-file fix forced the verifier to re-prove every
+		// assertion). The full surface is still reachable, but only through
+		// the explicit declaration assertion_ids: ["all"] in the approved
+		// RepairContract, which the planner expands here to the exact slot
+		// list.
+		unitAssertions := unit.AssertionIDs
+		if len(unitAssertions) == 1 && unitAssertions[0] == "all" {
+			unitAssertions = assertionIDs
+		} else if len(unitAssertions) == 0 {
+			return RepairPlan{}, ArtifactRef{}, fmt.Errorf(
+				"RepairContract unit %s declares no assertion_ids; S9 requires an explicit per-unit assertion list (e.g. [\"symptom-1\"]) or the explicit full-surface declaration [\"all\"] — coverage is no longer silently copied from the whole Contract",
+				unit.ID)
 		}
 		document.Assignments = append(document.Assignments, RepairAssignment{
 			AssignmentID: "repair-assignment-" + unit.ID, UnitIDs: []string{unit.ID}, Status: "queued",
@@ -171,7 +184,15 @@ func validateRepairPlanSemantics(root string, document RepairPlan) error {
 			assignedUnits[unitID] = assignment.AssignmentID
 			expectedDependencies = append(expectedDependencies, unit.DependsOn...)
 			expectedLocks = append(expectedLocks, unit.ResourceLocks...)
-			if err := exactIDs(unit.AssertionIDs, assignment.AssertionIDs); err != nil && len(unit.AssertionIDs) > 0 {
+			// RC-09 (S9-12): a unit declaring assertion_ids: ["all"] is the
+			// explicit full-surface form; the Assignment already carries the
+			// expanded slot list, so compare against that expansion instead
+			// of the literal "all" token.
+			expectedAssertions := unit.AssertionIDs
+			if len(expectedAssertions) == 1 && expectedAssertions[0] == "all" {
+				expectedAssertions = assignment.AssertionIDs
+			}
+			if err := exactIDs(expectedAssertions, assignment.AssertionIDs); err != nil && len(expectedAssertions) > 0 {
 				return fmt.Errorf("RepairAssignment %s assertion coverage: %w", assignment.AssignmentID, err)
 			}
 			for _, path := range assignment.Scope {

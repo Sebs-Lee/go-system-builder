@@ -32,7 +32,7 @@ func TestS9EvidenceChainRequiresImpactAndIndependentReverification(t *testing.T)
 	}
 	reverify, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-1", RuntimeID: "loop-REQ-001", BugID: "BUG-001", BaselineGeneration: 1,
-		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "independent verification", ImpactID: impact.ImpactID,
+		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "test://verifier-log: independent verification", ImpactID: impact.ImpactID,
 		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test-1"}}}, ScopeCompliance: "pass", Result: "pass",
 	})
 	if err != nil || reverify.Result != "pass" || reverifyRef.SHA256 == "" {
@@ -57,7 +57,7 @@ func TestS9EvidenceChainAcceptsCanonicalCaseIdentityWithoutBugID(t *testing.T) {
 	}
 	reverification, ref, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-case-only", RuntimeID: impact.RuntimeID, CaseID: "investigation-case-001", BaselineGeneration: 1,
-		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "independent verification", ImpactID: impact.ImpactID,
+		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "test://verifier-log: independent verification", ImpactID: impact.ImpactID,
 		AssertionResults: []repair.AssertionResult{{AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}}, ScopeCompliance: "pass", Result: "pass",
 	})
 	if err != nil || reverification.CaseID == "" || ref.SHA256 == "" {
@@ -461,7 +461,7 @@ func TestTargetedFailurePersistsTypedRecoveryRoute(t *testing.T) {
 	}
 	value, ref, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-failure-route", RuntimeID: impact.RuntimeID, BugID: "BUG-039", BaselineGeneration: 1,
-		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "independent verifier found a new causal symptom", ImpactID: impact.ImpactID,
+		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "test://new-symptom: independent verifier found a new causal symptom", ImpactID: impact.ImpactID,
 		AssertionResults: []repair.AssertionResult{{AssertionID: "root-1", Result: "fail", EvidenceRefs: []string{"test://root-fail"}}}, ScopeCompliance: "pass", Result: "fail", FailureClass: "fail_new_cause",
 	})
 	if err != nil || value.FailureClass != "fail_new_cause" || ref.SHA256 == "" {
@@ -492,4 +492,113 @@ func writeFile(t *testing.T, root, relative, contents string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestRepairPlanRejectsUnitWithoutExplicitAssertionDeclaration is the RC-09
+// (S9-12) negative case: the planner used to silently copy the FULL contract
+// assertion surface onto any unit that declared no assertion_ids of its own,
+// inflating the reverification surface. Coverage must now be declared — a
+// per-unit list, or the explicit ["all"] full-surface form.
+func TestRepairPlanRejectsUnitWithoutExplicitAssertionDeclaration(t *testing.T) {
+	root := t.TempDir()
+	value := map[string]any{
+		"schema_version": "1.0.0", "repair_contract_id": "repair-contract-implicit", "case_id": "investigation-case-implicit", "revision": 2, "status": "approved", "source_finding_ids": []string{"finding-implicit"},
+		"root_cause_statement": "implicit assertion copy", "violated_invariant": "one authority", "causal_model_ref": "case://implicit/model", "architecture_intent": "explicit coverage",
+		"repair_units":        []map[string]any{{"id": "unit-1", "description": "no assertion declaration"}},
+		"prospective_scope":   []string{"internal/api"}, "forbidden_scope": []string{"docs/requirements"},
+		"symptom_assertions": []string{"value persists"}, "root_invariant_assertions": []string{"one authority"}, "detection_gap_assertions": []string{"contract catches drift"}, "stop_escalation_conditions": []string{"scope expands"},
+		"approved_by": "human", "approved_at": "2026-08-25T00:00:00Z", "approval_hash": repeatHex("a", 64),
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	rel := ".claude/review/investigation/contracts/repair-contract-implicit-r2.json"
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contractRef := repair.ContractRef{Path: rel, SHA256: fileHash(data)}
+	_, sessionRef, err := repair.CreateRepairSession(root, repair.SessionRequest{
+		Contract: contractRef, SessionID: "repair-session-implicit", RuntimeID: "loop-REQ-039", ReqID: "REQ-039", BaselineGeneration: 1, CreatedBy: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repair.CreateRepairPlan(root, repair.PlanRequest{Contract: contractRef, Session: sessionRef, PlanID: "repair-plan-implicit", CreatedBy: "main"}); err == nil || !strings.Contains(err.Error(), "declares no assertion_ids") {
+		t.Fatalf("plan compile must reject a unit without an explicit assertion declaration, got %v", err)
+	}
+
+	// The explicit ["all"] declaration still reaches the full surface.
+	value["repair_units"] = []map[string]any{{"id": "unit-1", "description": "explicit full surface", "assertion_ids": []string{"all"}}}
+	data, err = json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contractRef.SHA256 = fileHash(data)
+	_, sessionRef, err = repair.CreateRepairSession(root, repair.SessionRequest{
+		Contract: contractRef, SessionID: "repair-session-implicit-all", RuntimeID: "loop-REQ-039", ReqID: "REQ-039", BaselineGeneration: 1, CreatedBy: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := repair.CreateRepairPlan(root, repair.PlanRequest{Contract: contractRef, Session: sessionRef, PlanID: "repair-plan-implicit-all", CreatedBy: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Assignments[0]; strings.Join(got.AssertionIDs, ",") != "symptom-1,root-1,gap-1" {
+		t.Fatalf("explicit all expansion = %v, want symptom-1,root-1,gap-1", got.AssertionIDs)
+	}
+}
+
+// TestTargetedReverificationRejectsUnanchoredContinuityReason is the RC-09
+// (S9-11) negative case: continuity_reason used to be silently defaulted to
+// "independent verification after repair", letting the original-finder
+// continuity be satisfied by auto-generated prose. A reason with no evidence
+// anchor is now rejected at the artifact boundary.
+func TestTargetedReverificationRejectsUnanchoredContinuityReason(t *testing.T) {
+	root := t.TempDir()
+	contractRef, _ := writeRuntimeContract(t, root)
+	_, sessionRef, err := repair.CreateRepairSession(root, repair.SessionRequest{
+		Contract: contractRef, SessionID: "repair-session-continuity", RuntimeID: "loop-REQ-039", ReqID: "REQ-039", BaselineGeneration: 1, CreatedBy: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repair.CreateRepairPlan(root, repair.PlanRequest{Contract: contractRef, Session: sessionRef, PlanID: "repair-plan-continuity", CreatedBy: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	base := repair.TargetedReverificationRequest{
+		ReverificationID: "reverify-continuity", RuntimeID: "loop-REQ-039", BugID: "BUG-100", BaselineGeneration: 1,
+		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa",
+		ImpactID: "impact-continuity", AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}},
+		ScopeCompliance: "pass", Result: "pass",
+	}
+	for _, reason := range []string{"", "independent verification after repair", "a thorough manual recheck with no anchor"} {
+		request := base
+		request.ContinuityReason = reason
+		if _, _, err := repair.CreateTargetedReverification(root, request); err == nil || !strings.Contains(err.Error(), "continuity_reason must cite at least one evidence reference") {
+			t.Fatalf("continuity_reason %q must be rejected for lacking an evidence anchor, got %v", reason, err)
+		}
+	}
+	// Anchored reasons are accepted.
+	request := base
+	request.ContinuityReason = "test://verifier-run: independent verification after repair"
+	request.ReverificationID = "reverify-continuity-anchored"
+	if _, _, err := repair.CreateTargetedReverification(root, request); err != nil {
+		t.Fatalf("anchored continuity_reason must be accepted: %v", err)
+	}
+	request.ReverificationID = "reverify-continuity-evidence-path"
+	request.ContinuityReason = "evidence/reverify-red.json shows the original failure"
+	if _, _, err := repair.CreateTargetedReverification(root, request); err != nil {
+		t.Fatalf("evidence-path continuity_reason must be accepted: %v", err)
+	}
 }

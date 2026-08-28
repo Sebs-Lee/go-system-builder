@@ -5,7 +5,7 @@
   "baseline_generation": 4,
   "original_assignment_id": "repair-assignment-unit-1",
   "performing_assignment_id": "assignment-qa-independent-1",
-  "continuity_reason": "independent verification of the approved root and detection-gap assertions after repair",
+  "continuity_reason": "test://reverify-log: independent verification of the approved root and detection-gap assertions after repair",
   "impact_id": "impact-example",
   "assertion_results": [
     {

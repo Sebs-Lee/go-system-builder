@@ -95,8 +95,14 @@ func CreateTargetedReverification(root string, request TargetedReverificationReq
 	if len(request.AssertionResults) == 0 {
 		return TargetedReverification{}, ArtifactRef{}, errors.New("targeted reverification requires assertion results")
 	}
-	if request.ContinuityReason == "" {
-		request.ContinuityReason = "independent verification after repair"
+	// RC-09 (S9-11): the continuity chain must be anchored, not narrated.
+	// The old default ("independent verification after repair") let the
+	// original-finder continuity be satisfied by auto-generated prose. The
+	// reason must now reference at least one evidence artifact (any
+	// "scheme://id" or evidence/<file> path the verifier actually produced);
+	// a bare sentence with no anchor is rejected at the artifact boundary.
+	if err := validateContinuityReasonEvidence(request.ContinuityReason); err != nil {
+		return TargetedReverification{}, ArtifactRef{}, err
 	}
 	reverification := TargetedReverification{
 		SchemaVersion: "1.0.0", RecordType: "targeted_reverification", ReverificationID: request.ReverificationID,
@@ -199,6 +205,23 @@ func validateTargetedFailureEvidence(value TargetedReverification) error {
 		}
 	}
 	return fmt.Errorf("failure_class %q requires at least one %s assertion with non-empty evidence_refs; a self-reported failure without evidence cannot route the repair chain", value.FailureClass, want)
+}
+
+// validateContinuityReasonEvidence is the RC-09 (S9-11) anchor check: the
+// continuity_reason must cite at least one evidence reference so the
+// original-finder continuity claim is verifiable instead of auto-filled
+// prose. A reference is any non-empty token containing a scheme separator
+// ("test://red", "runtime://blocker") or an evidence file path
+// ("evidence/….json").
+func validateContinuityReasonEvidence(reason string) error {
+	for _, token := range strings.FieldsFunc(reason, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == ',' || r == ';' || r == '(' || r == ')'
+	}) {
+		if strings.Contains(token, "://") || strings.HasPrefix(token, "evidence/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("continuity_reason must cite at least one evidence reference (e.g. \"test://red-check output\" or \"evidence/reverify-red.json\"); a self-declared sentence with no evidence anchor cannot establish the original-finder continuity chain (got %q)", strings.TrimSpace(reason))
 }
 
 func sortedStrings(values []string) []string {

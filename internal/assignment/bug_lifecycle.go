@@ -10,6 +10,7 @@ import (
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
 // BugEventRequest drives a BUG entity lifecycle transition.
@@ -333,17 +334,22 @@ func bugIDFor(bug map[string]any) string {
 }
 
 // checkRetryLimits enforces the runtime configuration.repair limits before a
-// BUG is sent back to investigation for another attempt. The limits are:
+// BUG is sent back to investigation for another attempt. RC-09 (S9-7): this
+// is a thin adapter over the canonical transition.CheckRepairLimit — the
+// limit semantics live in exactly one place (internal/transition), and this
+// path raises the same typed *transition.RepairLimitError the GTR-004 bridge
+// recognizes, instead of a locally-formatted error the dispatcher cannot
+// catch.
 //
-//   - max_attempts_per_bug: absolute cap on how many times a single BUG may
-//     cycle through investigation. Exceeding it means the BUG cannot be fixed
-//     within the allowed budget and must pause the Loop for human decision.
-//   - max_same_contract_failures: cap on consecutive Closing Contract failures
-//     for the same BUG. Exceeding it means the contract itself may be wrong.
+// max_same_contract_failures stays local: it caps consecutive Closing
+// Contract failures for the same BUG and has no CheckRepairLimit equivalent.
 //
 // Both limits default to 0 (unlimited) when the configuration is absent, so
 // the check is opt-in via the runtime configuration block.
 func checkRetryLimits(state map[string]any, bug map[string]any, nextAttempt int) error {
+	if limit := transition.CheckRepairLimit(state, withAttemptCount(bug, nextAttempt)); limit != nil {
+		return limit
+	}
 	configuration, ok := state["configuration"].(map[string]any)
 	if !ok {
 		return nil
@@ -351,13 +357,6 @@ func checkRetryLimits(state map[string]any, bug map[string]any, nextAttempt int)
 	repair, ok := configuration["repair"].(map[string]any)
 	if !ok {
 		return nil
-	}
-	maxAttempts := readBugInt(repair, "max_attempts_per_bug")
-	if maxAttempts > 0 && nextAttempt > maxAttempts {
-		id, _ := bug["id"].(string)
-		return fmt.Errorf(
-			"BUG %s exceeded max_attempts_per_bug (%d): attempt %d; pause the Loop for human decision",
-			id, maxAttempts, nextAttempt)
 	}
 	maxSameContract := readBugInt(repair, "max_same_contract_failures")
 	if maxSameContract > 0 {
@@ -370,4 +369,17 @@ func checkRetryLimits(state map[string]any, bug map[string]any, nextAttempt int)
 		}
 	}
 	return nil
+}
+
+// withAttemptCount returns a shallow view of bug whose attempt_count reads as
+// nextAttempt. The lifecycle evaluates the limit against the attempt it is
+// about to commit, which is one higher than the persisted count.
+func withAttemptCount(bug map[string]any, nextAttempt int) map[string]any {
+	view := make(map[string]any, len(bug)+1)
+	for key, value := range bug {
+		view[key] = value
+	}
+	view["attempt_count"] = nextAttempt
+	view["id"], _ = bug["id"].(string)
+	return view
 }
