@@ -764,7 +764,7 @@
         },
         "manual_ref": {
           "type": "string",
-          "const": ".claude/bin/loop-harness.md"
+          "enum": ["loop-harness.md", ".claude/bin/loop-harness.md"]
         },
         "primary_skill": {
           "type": "string",

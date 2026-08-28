@@ -24,7 +24,13 @@ import (
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
-const loopManualRef = ".claude/bin/loop-harness.md"
+const loopManualRef = "loop-harness.md"
+
+// loopManualFallbackRef is the alternate on-disk location for the agent-facing
+// Manual (some harness generations install it under .claude/bin/). Guidance
+// always names the primary path first and mentions the fallback only in
+// recovery packets, so a stale install location can still be found.
+const loopManualFallbackRef = ".claude/bin/loop-harness.md"
 
 // buildGuidance is the positive side of the Hook control plane. It deliberately
 // consumes projectNext/buildNextProjection, the same projection used by
@@ -1219,7 +1225,7 @@ func fallbackGuidance(event string) *policy.Guidance {
 		Blocked:        true,
 		Blocker:        "the Runtime snapshot could not be safely reconciled",
 		Instruction:    "",
-		Recovery:       []string{"read docs/agent-protocol.md#cursor-mapping", "read .claude/bin/loop-harness.md", "run loop-harness runtime reconcile --root ."},
+		Recovery:       []string{"read docs/agent-protocol.md#cursor-mapping", "read " + loopManualRef + " (fallback: " + loopManualFallbackRef + ")", "run loop-harness runtime reconcile --root ."},
 		Automation:     []string{"normal continuation is suspended until the Runtime cursor is reconciled"},
 	}
 	guidance.Instruction = formatGuidanceInstruction(*guidance)

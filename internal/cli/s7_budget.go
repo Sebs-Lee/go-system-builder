@@ -139,7 +139,7 @@ func applyS7BudgetGateway(next *nextProjection, state map[string]any) {
 	next.ProtocolRef = "docs/agent-protocol.md#s7"
 	next.Objective = "obtain the human decision for an exhausted S7 full-review budget"
 	next.Action = "stop automation and submit `runtime s7-budget-decision --file <decision.json> --expected-revision <N> --actor <user>` with increase_budget or return_to_governance"
-	next.PrimarySkill = "loop-orchestration"
+	next.PrimarySkill = PrimarySkillS7
 	next.Missing = []string{"s7_budget_decision"}
 	next.DoneWhen = []string{"the decision is recorded in Runtime evidence", "increase_budget updates max_full_review_rounds or return_to_governance routes to planning"}
 	next.HumanRequired = true

@@ -391,15 +391,25 @@ func submitResult(
 			result.ResultID, result.AssignmentID, result.Verdict),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
+			// RC-10 observability: per-phase durations of the submit CAS
+			// transaction (loop_s7_submit_phase_ms{phase}). Best-effort — the
+			// `_ =` discard mirrors recordRoundMetrics and never fails the
+			// verb. phaseTotal timers cover the whole closure; seal/clean are
+			// recorded by recordRoundMetrics consumers below, not here.
+			applyStart := time.Now()
 			if err := applyResultConsumption(state, plan, assignment, &result, resultRel, resultSHA, responsibility, generation, round, occurredAt); err != nil {
 				return err
 			}
+			_ = metrics.RecordS7SubmitPhase(root, "result_consumption", time.Since(applyStart).Milliseconds())
+			findingsStart := time.Now()
 			if err := applyFindings(state, &result, findingArtifacts, round, occurredAt); err != nil {
 				return err
 			}
+			_ = metrics.RecordS7SubmitPhase(root, "findings", time.Since(findingsStart).Milliseconds())
 			// A stop verdict and both terminal round transitions close the
 			// admission gate before this CAS returns. Promoting a queued
 			// Assignment here would dispatch new work after P0/pause/seal.
+			advanceStart := time.Now()
 			if !sealNow && !cleanNow && result.Verdict != "req_change_required" && result.Verdict != "release_blocked" {
 				if err := releaseQueuedReviewAssignments(state); err != nil {
 					return err
@@ -408,6 +418,7 @@ func submitResult(
 			if err := advanceReviewerAgent(state, &result, resultRepoPath, occurredAt); err != nil {
 				return err
 			}
+			_ = metrics.RecordS7SubmitPhase(root, "advance", time.Since(advanceStart).Milliseconds())
 			reviewMap := state["review"].(map[string]any)
 			lifecycleMap := state["lifecycle"].(map[string]any)
 			switch result.Verdict {
@@ -415,9 +426,11 @@ func submitResult(
 				// One authoritative checkpoint in the verdict transaction;
 				// TR-010/TR-011 then carry only the result evidence
 				// (L3-S7 §9.2, §13.1 dual-carrier removal).
+				pauseStart := time.Now()
 				if err := capturePauseCheckpoint(state, "S7 review verdict: "+result.Verdict, occurredAt); err != nil {
 					return err
 				}
+				_ = metrics.RecordS7SubmitPhase(root, "pause", time.Since(pauseStart).Milliseconds())
 				setPlanStatus(reviewMap, lifecycleMap, "paused")
 				return nil
 			}
@@ -429,16 +442,20 @@ func submitResult(
 				}
 			}
 			if sealNow {
+				sealStart := time.Now()
 				if err := applyObservationBatch(state, batchID, batchRel, batchSHA, result.Findings, round, occurredAt); err != nil {
 					return err
 				}
+				_ = metrics.RecordS7SubmitPhase(root, "seal", time.Since(sealStart).Milliseconds())
 				setPlanStatus(reviewMap, lifecycleMap, "observation_sealed")
 				return nil
 			}
 			if cleanNow {
+				cleanStart := time.Now()
 				if err := applyCleanRound(state, cleanRel, cleanSHA, round, occurredAt); err != nil {
 					return err
 				}
+				_ = metrics.RecordS7SubmitPhase(root, "clean", time.Since(cleanStart).Milliseconds())
 				setPlanStatus(reviewMap, lifecycleMap, "clean")
 				reviewMap["clean_round"] = round
 				return nil

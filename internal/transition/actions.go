@@ -627,7 +627,8 @@ func actionRecordDocumentResult(state map[string]any, ctx *ActionContext) (Actio
 
 // actionRecordBugDrafts is PTR-BUG-01's legacy compatibility action
 // (RC-06, S8-9). PTR-BUG-01 is declared as a legacy projection path only
-// (see its loop-definition.json description): the real BUG-draft producer on
+// (deprecated: legacy compatibility; see loop-harness.md "Legacy (PTR-BUG)";
+// see its loop-definition.json description): the real BUG-draft producer on
 // the modern path is record_finding_batch (TR-008), which derives drafts from
 // the sealed ObservationBatch with content-hash dedup. This stub therefore
 // only asserts that current evidence context exists — it must not grow real

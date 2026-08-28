@@ -293,7 +293,24 @@ func runS7Status(root string, stdout io.Writer) int {
 	} else {
 		fmt.Fprintln(stdout, "all required claims dispositioned; round consumer closes on the next submit")
 	}
+	// Wave readiness (RC-12, minimal explainability): when a behavior-wave
+	// Assignment exists but static claims are still open, name the gate and
+	// how many static claims remain — one line, no separate --explain flag.
+	if planErr == nil && plan != nil && hasBehaviorWaveAssignment(plan) && !review.StaticClaimsSettled(state, plan) {
+		fmt.Fprintf(stdout, "wave readiness: behavior dispatch is blocked — %d static-wave claim(s) still awaiting a disposition (L3-S7 §5.2-5.3)\n", review.RemainingStaticClaims(state, plan))
+	}
 	return 0
+}
+
+// hasBehaviorWaveAssignment reports whether the plan dispatches any
+// behavior-wave Assignment (the wave gated behind static-claim settlement).
+func hasBehaviorWaveAssignment(plan *review.Plan) bool {
+	for _, assignment := range plan.Assignments {
+		if assignment.ExecutionWave == "behavior" {
+			return true
+		}
+	}
+	return false
 }
 
 func s7RoundEntryLabel(transitionID string) string {

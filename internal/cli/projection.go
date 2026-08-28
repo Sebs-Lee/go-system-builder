@@ -19,6 +19,15 @@ type stageContract struct {
 	DoneWhen  []string
 }
 
+// PrimarySkill is the single source of truth for the S7 verification round's
+// `primary_skill` projection value (RC-12 FL-4). `projectNext` (run.go), the
+// S7 budget gateway, and docs/agent-protocol.md §S7 must all name the same
+// Methodology Skill; controller.go projects this value verbatim into
+// guidance and the recovery read order (.claude/skills/<skill>/SKILL.md).
+// Focus-specific DV/QA/E2E Skills are per-Assignment dispatch facts, not the
+// round's primary_skill.
+const PrimarySkillS7 = "loop-orchestration"
+
 var projectionContracts = map[string]stageContract{
 	"S0":                 {"produce one human-locked requirement (draft via requirement-funnel; binding is the S1 action)", []string{"docs/requirements/"}, []string{"human_locked_req"}, []string{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"}},
 	"S2":                 {"complete architecture and any required UI design package", []string{"bound REQ", "docs/design/", "docs/rules/"}, []string{"architecture_record"}, []string{"architecture decisions cover the contract boundary", "any UI-impacting module has a complete target design package"}},

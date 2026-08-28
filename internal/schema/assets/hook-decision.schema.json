@@ -131,7 +131,7 @@
         "objective": {"type": "string", "minLength": 1},
         "action": {"type": "string", "minLength": 1},
         "protocol_ref": {"type": "string", "minLength": 1},
-        "manual_ref": {"type": "string", "const": ".claude/bin/loop-harness.md"},
+        "manual_ref": {"type": "string", "enum": ["loop-harness.md", ".claude/bin/loop-harness.md"]},
         "primary_skill": {"type": "string", "minLength": 1},
         "read": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "read_order": {"type": "array", "items": {"type": "string", "minLength": 1}},

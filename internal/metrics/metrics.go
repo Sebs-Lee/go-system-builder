@@ -61,6 +61,9 @@ type Snapshot struct {
 	S7Findings           map[string]int64         `json:"loop_s7_findings_total,omitempty"`
 	S7FirstFindingToSeal map[string]DurationStats `json:"loop_s7_first_finding_to_seal_ms,omitempty"`
 	S7CleanRounds        map[string]int64         `json:"loop_s7_clean_rounds_total,omitempty"`
+	// S7SubmitPhases records per-phase durations of the review-result submit
+	// CAS transaction (RC-10; see RecordS7SubmitPhase in s7.go).
+	S7SubmitPhases map[string]DurationStats `json:"loop_s7_submit_phase_ms,omitempty"`
 }
 
 // Store persists metrics for one repository root.
@@ -96,6 +99,7 @@ func emptySnapshot() Snapshot {
 		S7Findings:                     map[string]int64{},
 		S7FirstFindingToSeal:           map[string]DurationStats{},
 		S7CleanRounds:                  map[string]int64{},
+		S7SubmitPhases:                 map[string]DurationStats{},
 	}
 }
 
@@ -150,6 +154,9 @@ func (s *Store) Read() (Snapshot, error) {
 	}
 	if snap.S7CleanRounds == nil {
 		snap.S7CleanRounds = map[string]int64{}
+	}
+	if snap.S7SubmitPhases == nil {
+		snap.S7SubmitPhases = map[string]DurationStats{}
 	}
 	return snap, nil
 }

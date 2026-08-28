@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `71e7037cd687c5b9b2c1c844c091aaba5c4118532bf208ac156d4637f8c2e133`
+- **Loop definition SHA-256**: `082fa55027edaa1a382f7b8eb1e7bb963b36f559b0cb66bb2dcc28abb7121232`
 
 ---
 
@@ -91,15 +91,12 @@ _Phase: bug_resolution_
 - [`PTR-BUG-09`](#ptr-bug-09) repair_readback → planning — S9 enters planning with a dispatchable Assignment set; no implementation write is authorized yet.
 - [`PTR-BUG-10`](#ptr-bug-10) planning → reproducing — Builders report their intended repair and failing pre-fix signal before execution.
 - [`PTR-BUG-11`](#ptr-bug-11) reproducing → fixing — Only the explicit execution checkpoint releases implementation writes.
-- [`PTR-BUG-01`](#ptr-bug-01) investigation → bug_report_review — Legacy compatibility transition only.
-- [`PTR-BUG-02`](#ptr-bug-02) bug_report_review → repair_readback — Legacy compatibility projection only.
-- [`PTR-BUG-03`](#ptr-bug-03) bug_report_review → investigation — Legacy compatibility projection only.
-- [`PTR-BUG-08`](#ptr-bug-08) investigation → repair_readback — Legacy compatibility projection only.
-- [`PTR-BUG-04`](#ptr-bug-04) repair_readback → fixing — Legacy compatibility projection only.
 - [`PTR-BUG-05`](#ptr-bug-05) fixing → targeted_reverification — Every repair invalidates affected historical PASS evidence before recheck.
 - [`PTR-BUG-06`](#ptr-bug-06) targeted_reverification → ready_for_full_review — A targeted pass never substitutes for the full review round; it records the S9-to-S7 handoff checkpoint.
 - [`PTR-BUG-12`](#ptr-bug-12) investigation → targeted_reverification — After an environmental or authority blocker is resolved, reopen the existing targeted verification checkpoint; runtime hard-checks status=blocked, failure_route=blocked, and a non-empty resolution reason.
 - [`PTR-BUG-07`](#ptr-bug-07) targeted_reverification → investigation — Failed repair verification returns to the same InvestigationCase for causal reassessment; it does not create a new BUG draft unless the causal model genuinely differs.
+
+See [Legacy (PTR-BUG)](#legacy-ptr-bug) at the end of this Manual for the legacy compatibility transitions (PTR-BUG-01..04, PTR-BUG-08).
 
 _Phase: planning_
 
@@ -379,7 +376,7 @@ _acceptance → release_audit_
 
 Release audit starts only from current ACC and clean-round evidence.
 
-- `acc_complete` [evidence_attestation] — An acceptance evidence item recorded for the current review round is referenced from runtime.evidence[] and its fingerprint matches the on-disk acceptance record.
+- `acc_complete` [semantic_check] — A valid acceptance evidence entry for the current baseline generation and review round exists in runtime.evidence[] and its registered sha256 still matches the on-disk acceptance record (RC-06 S10-14: invalidated, stale-round or drifted ACC envelopes are rejected, not attested).
 - `clean_round_still_valid` [semantic_check] — verification.EvaluateCleanRound still reports a passing clean round at the current baseline generation, so neither baselines nor evidence drifted between round capture and release.
 
 Evidence: `acceptance_record`, `clean_round_record`
@@ -430,8 +427,8 @@ _release_audit → awaiting_human_release_
 
 Approved or approved-with-risk audit reaches the human release boundary.
 
-- `release_audit_approved` [evidence_attestation] — A release-audit approval evidence item referencing docs/release_audits/ and signed by an authorized actor is recorded in runtime.evidence[].
-- `acc_complete` [evidence_attestation] — An acceptance evidence item recorded for the current review round is referenced from runtime.evidence[] and its fingerprint matches the on-disk acceptance record.
+- `release_audit_approved` [semantic_check] — A valid release_audit evidence entry for the current baseline generation and review round exists in runtime.evidence[] and its registered sha256 still matches the on-disk audit record (RC-06 S10-14: the guard resolves and re-hashes the artifact instead of attesting an evidence map).
+- `acc_complete` [semantic_check] — A valid acceptance evidence entry for the current baseline generation and review round exists in runtime.evidence[] and its registered sha256 still matches the on-disk acceptance record (RC-06 S10-14: invalidated, stale-round or drifted ACC envelopes are rejected, not attested).
 - `clean_round_still_valid` [semantic_check] — verification.EvaluateCleanRound still reports a passing clean round at the current baseline generation, so neither baselines nor evidence drifted between round capture and release.
 
 Evidence: `release_audit_record`, `acceptance_record`, `clean_round_record`
@@ -734,99 +731,6 @@ Only the explicit execution checkpoint releases implementation writes.
 
 _No guards._
 
-### `PTR-BUG-01` {#ptr-bug-01}
-
-_investigation → bug_report_review_
-
-Legacy compatibility transition only. If an older implementation emits bug_drafts_ready, the resulting BUG records are projections that must be reconciled into an InvestigationCase; new paths keep the Case status in its artifact and do not create a second runtime phase machine.
-
-- `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
-
-Evidence: `observation_batch_record`, `root_cause_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `observation_batch_record`: `--evidence observation_batch_record=<reference>`
-  Accepted kinds: `observation_batch`
-- `root_cause_record`: `--evidence root_cause_record=<reference>`
-  Accepted kinds: `bug`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-01` to inspect current candidates.
-
-### `PTR-BUG-02` {#ptr-bug-02}
-
-_bug_report_review → repair_readback_
-
-Legacy compatibility projection only. A canonical BUG acceptance event cannot authorize S9 unless an approved RepairContract is already present; new paths do not enter bug_report_review.
-
-- `canonical_bug_mapping_complete` [evidence_attestation] — Each finding evidence item in the round maps to a canonical BUG id in runtime.entities.bugs[] so the verification phase cannot advance on unresolved duplicates.
-- `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
-
-Evidence: `bug_batch_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
-  Accepted kinds: `bug`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-02` to inspect current candidates.
-
-### `PTR-BUG-03` {#ptr-bug-03}
-
-_bug_report_review → investigation_
-
-Legacy compatibility projection only. Rejected BUG projections return to the InvestigationCase rather than creating another per-Finding BUG draft.
-
-_No guards._
-
-Evidence: `bug_batch_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
-  Accepted kinds: `bug`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-03` to inspect current candidates.
-
-### `PTR-BUG-08` {#ptr-bug-08}
-
-_investigation → repair_readback_
-
-Legacy compatibility projection only. The current S8 main path is `runtime investigation contract approve`, which writes immutable approved Case/Contract revisions, pins their hashes, and enters S9 repair_readback directly; it does not invoke this PTR-BUG-08 catalog transition. No canonical BUG acceptance is required or sufficient.
-
-- `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
-- `bug_closing_contract_complete` [evidence_attestation] — The single-BUG closing contract (root-cause, repair plan, and reverification plan) described in docs/rules/bugfix-review.md is referenced by evidence for the BUG leaving `investigating`.
-- `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
-
-Evidence: `root_cause_record`, `repair_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `root_cause_record`: `--evidence root_cause_record=<reference>`
-  Accepted kinds: `bug`
-- `repair_record`: `--evidence repair_record=<reference>`
-  Accepted kinds: `bug`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-08` to inspect current candidates.
-
-### `PTR-BUG-04` {#ptr-bug-04}
-
-_repair_readback → fixing_
-
-Legacy compatibility projection only. Current S9 dispatch uses `runtime repair dispatch` for each RepairAssignment, then the explicit `runtime repair execution begin` checkpoint releases implementation writes.
-
-- `repair_understanding_approved` [evidence_attestation] — An understanding-approval evidence item is referenced from runtime.evidence[] confirming the assigned Builder understood the root-cause writeup before activation.
-- `repair_activation_recorded` [evidence_attestation] — A repair-activation evidence item is referenced from runtime.evidence[] confirming the assigned Builder has started the repair task recorded in runtime.entities.tasks[].
-
-Evidence: `activation_record`
-
-Evidence bindings (copy into `runtime transition`):
-
-- `activation_record`: `--evidence activation_record=<reference>`
-  Accepted kinds: `agent_activation`
-
-If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-04` to inspect current candidates.
-
 ### `PTR-BUG-05` {#ptr-bug-05}
 
 _fixing → targeted_reverification_
@@ -1014,4 +918,106 @@ Evidence bindings (copy into `runtime transition`):
   Accepted kinds: `human_decision`
 
 If a binding is missing, retry with the command above; run `loop-harness explain GTR-006` to inspect current candidates.
+
+
+## Legacy (PTR-BUG)
+
+_These four transitions are legacy compatibility paths only. They exist so
+pre-S9 journals and synthetic fixtures still replay; new code must use the
+S8 InvestigationCase / S9 repair machinery above instead. See also the
+authority-transaction note in the Contents preamble (S8-REPAIR-CONTRACT-APPROVAL
+is the real S8→S9 authority; PTR-BUG-08 is its legacy-catalog alias)._ 
+
+### `PTR-BUG-01` {#ptr-bug-01}
+
+_investigation → bug_report_review_
+
+Legacy compatibility transition only. If an older implementation emits bug_drafts_ready, the resulting BUG records are projections that must be reconciled into an InvestigationCase; new paths keep the Case status in its artifact and do not create a second runtime phase machine.
+
+- `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
+
+Evidence: `observation_batch_record`, `root_cause_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `observation_batch_record`: `--evidence observation_batch_record=<reference>`
+  Accepted kinds: `observation_batch`
+- `root_cause_record`: `--evidence root_cause_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-01` to inspect current candidates.
+
+### `PTR-BUG-02` {#ptr-bug-02}
+
+_bug_report_review → repair_readback_
+
+Legacy compatibility projection only. A canonical BUG acceptance event cannot authorize S9 unless an approved RepairContract is already present; new paths do not enter bug_report_review.
+
+- `canonical_bug_mapping_complete` [evidence_attestation] — Each finding evidence item in the round maps to a canonical BUG id in runtime.entities.bugs[] so the verification phase cannot advance on unresolved duplicates.
+- `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
+
+Evidence: `bug_batch_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-02` to inspect current candidates.
+
+### `PTR-BUG-03` {#ptr-bug-03}
+
+_bug_report_review → investigation_
+
+Legacy compatibility projection only. Rejected BUG projections return to the InvestigationCase rather than creating another per-Finding BUG draft.
+
+_No guards._
+
+Evidence: `bug_batch_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `bug_batch_record`: `--evidence bug_batch_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-03` to inspect current candidates.
+
+### `PTR-BUG-08` {#ptr-bug-08}
+
+_investigation → repair_readback_
+
+Legacy compatibility projection only. The current S8 main path is `runtime investigation contract approve`, which writes immutable approved Case/Contract revisions, pins their hashes, and enters S9 repair_readback directly; it does not invoke this PTR-BUG-08 catalog transition. No canonical BUG acceptance is required or sufficient.
+
+- `root_cause_evidence_complete` [evidence_attestation] — A root-cause evidence item (failure mode, triggering input, and minimal-repro path) is referenced from runtime.evidence[] for the BUG promoted out of `investigating`.
+- `bug_closing_contract_complete` [evidence_attestation] — The single-BUG closing contract (root-cause, repair plan, and reverification plan) described in docs/rules/bugfix-review.md is referenced by evidence for the BUG leaving `investigating`.
+- `bug_closing_contracts_complete` [evidence_attestation] — Every BUG raised in the current review round has its closing-contract evidence referenced from runtime.evidence[] before the verification phase can advance.
+
+Evidence: `root_cause_record`, `repair_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `root_cause_record`: `--evidence root_cause_record=<reference>`
+  Accepted kinds: `bug`
+- `repair_record`: `--evidence repair_record=<reference>`
+  Accepted kinds: `bug`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-08` to inspect current candidates.
+
+### `PTR-BUG-04` {#ptr-bug-04}
+
+_repair_readback → fixing_
+
+Legacy compatibility projection only. Current S9 dispatch uses `runtime repair dispatch` for each RepairAssignment, then the explicit `runtime repair execution begin` checkpoint releases implementation writes.
+
+- `repair_understanding_approved` [evidence_attestation] — An understanding-approval evidence item is referenced from runtime.evidence[] confirming the assigned Builder understood the root-cause writeup before activation.
+- `repair_activation_recorded` [evidence_attestation] — A repair-activation evidence item is referenced from runtime.evidence[] confirming the assigned Builder has started the repair task recorded in runtime.entities.tasks[].
+
+Evidence: `activation_record`
+
+Evidence bindings (copy into `runtime transition`):
+
+- `activation_record`: `--evidence activation_record=<reference>`
+  Accepted kinds: `agent_activation`
+
+If a binding is missing, retry with the command above; run `loop-harness explain PTR-BUG-04` to inspect current candidates.
 

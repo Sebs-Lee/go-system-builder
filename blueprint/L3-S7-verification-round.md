@@ -369,7 +369,7 @@ ObservationBatch 只打包事实，不做语义去重，也不预分配 canonica
 
 对所有普通 Finding，`claim_coverage_summary` 是 seal 条件：初始及一次受控 revision 后的 required Claims 必须全部得到 `pass / finding / not_applicable / blocked` exact disposition。工具只在已有 Finding 客观导致 build/start/entry/precondition 不成立、继续操作无信息增益或不安全时，把 `blocked` 投影为 `blocked_by_confirmed_finding`；它不是 PASS，也不能满足修复后新轮的 Claim。普通环境/凭证/工具缺失复用 Assignment BLOCKER 留在 S7，不能伪装成产品因果 blocker；尚未计划或因省 token 未执行的验证面不能 seal。P0/安全/数据破坏的 immediate-stop 例外必须显式保留未完成 Claims，供后续安全新轮恢复。
 
-Evidence freeze 是 `verification result submit` 前后的原子子步骤和短生命周期 capture buffer，不新增 `capturing` phase、人工审批或独立恢复账。若进程中断，恢复依据仍是 Assignment + capture artifacts + Result draft。
+Evidence freeze 是 `runtime review-result submit` 前后的原子子步骤和短生命周期 capture buffer，不新增 `capturing` phase、人工审批或独立恢复账。若进程中断，恢复依据仍是 Assignment + capture artifacts + Result draft。
 
 ### 3.8 CleanRound
 
@@ -729,7 +729,7 @@ S7_DISPATCH_LOOP()
 | 浏览器/测试/CLI/trace wrapper | 自动记录 material action、checkpoint、sanitized input、时间戳、network/console/state refs | 执行动作自然产生 capture buffer，不要求 Agent 另写日志 |
 | fail observer/PostToolUse | 冻结失败前后 evidence window，提示标注 last-good/wall/first-bad | 撞墙当下保全易失现场；不启动修复 |
 | ReviewResult/Finding scaffold | 逐 Claim conclusion、observed、encounter summary、failure boundary、evidence binding、capture gaps | 只要求人补机器无法判断的语义 |
-| `verification result submit` | schema、身份、scope、fingerprint、coverage、encounter/investigation readiness、verdict 校验 | Result/Finding 进入控制面的唯一入口 |
+| `runtime review-result submit` | schema、身份、scope、fingerprint、coverage、encounter/investigation readiness、verdict 校验 | Result/Finding 进入控制面的唯一入口 |
 | TeammateIdle/SubagentStop | 计划不能当交卷，缺 Result 不能结束 | Worker 停止前必经路径 |
 | Round consumer | 自动聚合、finding/pause 路由、Claim coverage 求差与 CleanRound 计算 | 普通 Finding 继续发现；不接受人工 aggregate PASS |
 | SessionStart/PreCompact | 当前 round、running/queued/blocked Assignments、未消费 Result、Claim coverage 缺口和唯一下一步 | 跨会话恢复；平台容量不足不丢 queued coverage |
@@ -739,14 +739,14 @@ S7_DISPATCH_LOOP()
 ```text
 REVIEW RESULT REJECTED: claim QA-UNIT-TEST has no observed result or evidence_refs.
 Next: update review-result-17.json for QA-UNIT-TEST, then rerun
-loop-harness verification result submit --assignment assignment-qa-fund --result ...
+loop-harness runtime review-result submit --assignment assignment-qa-fund --result ...
 ```
 
 不能把整份 S7 或 `agent-protocol.md` 注入每次 Hook。
 
 ## 9. ReviewResult 提交与出口事务
 
-### 9.1 `verification result submit` 的原子职责
+### 9.1 `runtime review-result submit` 的原子职责
 
 一次提交必须在同一 revision/CAS 事务中：
 
@@ -1281,7 +1281,7 @@ S7 的交付边界是“可调查的观察事实”，不是根因结论：
 - 验证：`go test ./...`、`validate --all`、`doctor` 通过；新增 pending artifact、TR-012 baseline 缺失/完整注册矩阵测试。
 
 1. 定义 ReviewPlan/Claim/ReviewResult/Finding/FindingSupplement/ObservationBatch/CleanRound schema；ReviewPlan 只持有单一 required Claim set，静态/E2E/discovery 是计算视图；verification-artifact workspace 仅为 E2E cold start 可选能力，Finding 内含按 observation mode 判别的 encounter，不新增顶层 Failure Episode 状态机；
-2. 实现 `verification result init/submit`；
+2. 实现 `runtime review-result submit`（`verification result` 为历史幽灵动词，已收口至 `runtime review-result submit`；`verification` 仅保留 `clean-round`）；
 3. Result submit 从 capture buffer 固化 encounter、校验 investigation readiness，并原子登记 Finding、pause checkpoint 和路由事实；实现 cannot-clean、剩余 Claim drain 与 batch seal；冻结 subject、Pinned Plan 或 E2E workspace 漂移必须把 ReviewPlan 持久化为 `stale`，而不是只返回一次性错误；
 4. plan validator 校验 required DV/QA focus 与 E2E persona/flow/surface → Claim → Assignment → oracle coverage，将静态 Claim 设为行为 E2E 顺序前置，并拒绝 Agent/token 上限裁剪 required coverage或无 source 的范围扩张；
 5. clean evaluator 按当前 ReviewPlan exact set 核验 conclusion/producer/round/fingerprint；

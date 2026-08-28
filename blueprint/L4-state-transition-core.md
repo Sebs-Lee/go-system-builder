@@ -70,7 +70,7 @@ JSONL 公共字段：schema_version、runtime_id、event_id、idempotency_key、
 
 ### 5.1 注册表架构与两类 guard
 
-guard 与 action 都是**注册表模式**（70 个 guard / 49 个 action 各一表），LoadCatalog 启动期 fail-closed 校验：definition 里声明的每个标识符必须在注册表中存在。guard 分两类：`GuardSemanticCheck`（真实语义判定：clean-round 七检查、baseline 指纹比对、exact-set 封批等）与 `GuardEvidenceAttestation`（要求必填 evidence 槽位已解析的在场性检查，槽位合法性由 evidence catalog 另行守护）。**面向新迁移的纪律：禁止再挂接标注为旧模式的 guard 影子**（guards.go 中有显式的防过度工程警示注释：新 transition 只接两类注册项之一，其余一律走 action 或不做）。
+guard 与 action 都是**注册表模式**（编译后实测：59 个 guard / 48 个 action 各一表，由 `transition.GuardNames()` / `transition.ActionNames()` 枚举），LoadCatalog 启动期 fail-closed 校验：definition 里声明的每个标识符必须在注册表中存在。注意 registry 与 definition 是两个集合：代码注册表是全集（59/48），`docs/loop-definition.json`（顶层 + global + phase 机 + entity lifecycle 合计 81 条 transition 声明）只引用其中被实际接线的子集（58 个 unique guard / 33 个 unique action 引用）——registry ⊇ definition 是不变式，两者数字不一致不是漂移。guard 分两类：`GuardSemanticCheck`（真实语义判定：clean-round 七检查、baseline 指纹比对、exact-set 封批等）与 `GuardEvidenceAttestation`（要求必填 evidence 槽位已解析的在场性检查，槽位合法性由 evidence catalog 另行守护）。**面向新迁移的纪律：禁止再挂接标注为旧模式的 guard 影子**（guards.go 中有显式的防过度工程警示注释：新 transition 只接两类注册项之一，其余一律走 action 或不做）。
 
 ### 5.2 on_guard_failure 的真实现状
 
@@ -106,7 +106,7 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 | 字段 | 默认 | 消费点 |
 |:--|:--|:--|
 | configuration.repair.max_attempts_per_bug | 3 | 超限抛 RepairLimitError（升级为人信号）|
-| configuration.repair.max_same_contract_failures | 2 | **当前无读取点**（schema 保留，§11 如实登记）|
+| configuration.repair.max_same_contract_failures | 2 | 已接入：internal/assignment/bug_lifecycle.go:341 checkRetryLimits → readBugInt(repair, "max_same_contract_failures")，超限拒绝并报 exceeded max_same_contract_failures |
 | configuration.repair.max_full_review_rounds | 5 | 开新轮 action 内做超限判定 |
 | …last_budget_decision | null | increase_budget / return_to_governance 决策的完整审计对象（证据 id、前后预算值、authorized_by、committed_revision 十字段）|
 
@@ -138,8 +138,8 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 
 核对日 2026-08-28：
 
-1. journal 无轮转/上限机制——长周期项目将无限增长；是否引入分段归档待实战观测数据（C5：未观测到失效不上强制）。
-2. `max_same_contract_failures` 目前无读取点，属 schema 先行的占位保险；要么接线要么在下次修订时移除，不留第三种状态。
+1. journal 无轮转/上限机制——长周期项目将无限增长；已新增阈值 10k 行探针 `JournalNeedsRotation`（`internal/runtime/store.go`）与诚实告警，轮转归档待下一批次接入（C5：未观测到失效不上强制，现已具备观测面）。
+2. `max_same_contract_failures` 已接入（见 §7.2 与 bug_lifecycle.go:341），属 opt-in 限次保险，默认 0=unlimited。
 3. integration checkpoint 的持久化通道未接线（internal/runtime/integration_register.go 自述"合同面已就绪待 BUG-06"，当前 loader 返回 nil）；S6 集成事实目前依赖任务侧投影。
 4. GTR-004 桥无生产调用方（S1 已诚实登记）；此类"声明存在但不可达"的条目在 catalog 属合法遗留，但每个都必须有登记处，不允许无主孤儿。
 5. `automation.eligible=false` 与 Controller 空 switch 是双防线而非重复——前者管声明完整性，后者管运行时硬保证；评估删除任一层均需修订本节。

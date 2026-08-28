@@ -132,9 +132,19 @@ func stopIdleBlock(event string, agent *policy.AgentContext) policy.Decision {
 	case event == "TeammateIdle":
 		ruleID = RuleTeammateIdleResumeAssignment
 		reason = fmt.Sprintf("teammate %s went idle after the plan but before the assignment Result; the plan is not the deliverable (L4 §7.4)", agent.ID)
-		recovery = []string{
-			"continue the current assignment",
-			"register the Result (`runtime task-complete`, or a completion_report/blocker_report via SendMessage) before going idle",
+		if agent.AssignmentID != "" {
+			// S7-10 (RC-12): an S7 ReviewPlan Assignment's deliverable is a
+			// Canonical ReviewResult, not the S6 `task-complete` verb — name
+			// the actual submit path when the plan checkpoint was recorded.
+			recovery = []string{
+				"continue the current assignment",
+				"register the Result via `runtime review-result submit --assignment-id " + agent.AssignmentID + " --result <result.json>` (or a completion_report/blocker_report via SendMessage) before going idle",
+			}
+		} else {
+			recovery = []string{
+				"continue the current assignment",
+				"register the Result (`runtime task-complete`, or a completion_report/blocker_report via SendMessage) before going idle",
+			}
 		}
 	case !planRecorded:
 		ruleID = RuleSubagentStopMissingResult
@@ -146,9 +156,18 @@ func stopIdleBlock(event string, agent *policy.AgentContext) policy.Decision {
 	default:
 		ruleID = RuleSubagentStopMissingResult
 		reason = fmt.Sprintf("subagent %s is treating the plan as its final response; a PLAN_REPORT is not the Result (L4 §16.1)", agent.ID)
-		recovery = []string{
-			"continue executing the planned steps in this turn",
-			"register the Result before stopping; if the session already ended, Main must SendMessage the same agent id — never spawn a replacement",
+		if agent.AssignmentID != "" {
+			// S7-10 (RC-12): see the TeammateIdle branch — S7 Assignments
+			// deliver via review-result submit, not `runtime task-complete`.
+			recovery = []string{
+				"continue executing the planned steps in this turn",
+				"register the Result via `runtime review-result submit --assignment-id " + agent.AssignmentID + " --result <result.json>` before stopping; if the session already ended, Main must SendMessage the same agent id — never spawn a replacement",
+			}
+		} else {
+			recovery = []string{
+				"continue executing the planned steps in this turn",
+				"register the Result before stopping; if the session already ended, Main must SendMessage the same agent id — never spawn a replacement",
+			}
 		}
 	}
 	return policy.Decision{

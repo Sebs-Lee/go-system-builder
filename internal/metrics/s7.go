@@ -24,6 +24,7 @@ const (
 	metricS7Findings           = "loop_s7_findings_total"
 	metricS7FirstFindingToSeal = "loop_s7_first_finding_to_seal_ms"
 	metricS7CleanRounds        = "loop_s7_clean_rounds_total"
+	metricS7SubmitPhase        = "loop_s7_submit_phase_ms"
 )
 
 // RecordS7RoundShape pins the round's plan shape gauges: Assignment count,
@@ -66,6 +67,27 @@ func RecordS7ClaimLeadTime(root string, round int, claimID string, durationMS in
 		stats.Count++
 		stats.SumMS += durationMS
 		snap.S7ClaimLeadTime[label] = stats
+	})
+}
+
+// RecordS7SubmitPhase records one phase-duration sample for the review-result
+// submit CAS transaction under loop_s7_submit_phase_ms{phase}. phase is a
+// fixed vocabulary (result_consumption | findings | advance | seal | clean |
+// pause); unknown phases are still recorded under their own label — the
+// vocabulary is caller-owned, and the map is bounded by the phases submit.go
+// actually emits. An empty root is a no-op (metrics are best-effort).
+func RecordS7SubmitPhase(root string, phase string, durationMS int64) error {
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+	if durationMS < 0 {
+		durationMS = 0
+	}
+	return NewStore(root).mutate(func(snap *Snapshot) {
+		stats := snap.S7SubmitPhases[normalizeLabel(phase, "unknown")]
+		stats.Count++
+		stats.SumMS += durationMS
+		snap.S7SubmitPhases[normalizeLabel(phase, "unknown")] = stats
 	})
 }
 
@@ -127,6 +149,7 @@ func FormatS7(root string, round int) (string, error) {
 	writeClaimLeadTime(&b, snap.S7ClaimLeadTime, round)
 	writeRoundDuration(&b, metricS7FirstFindingToSeal, snap.S7FirstFindingToSeal, round)
 	writeRoundGauge(&b, metricS7CleanRounds, snap.S7CleanRounds, round)
+	writeSubmitPhases(&b, snap.S7SubmitPhases)
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
@@ -169,6 +192,24 @@ func writeRoundDuration(b *strings.Builder, name string, values map[string]Durat
 	for _, label := range labels {
 		stats := values[label]
 		fmt.Fprintf(b, "  %s{round=%q} count=%d sum_ms=%d\n", name, label, stats.Count, stats.SumMS)
+	}
+}
+
+// writeSubmitPhases renders loop_s7_submit_phase_ms. It is not round-scoped
+// (the CAS transaction spans a single round already), so it renders the phase
+// label directly and only appears when at least one phase was recorded.
+func writeSubmitPhases(b *strings.Builder, values map[string]DurationStats) {
+	if len(values) == 0 {
+		return
+	}
+	labels := make([]string, 0, len(values))
+	for label := range values {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		stats := values[label]
+		fmt.Fprintf(b, "  %s{phase=%q} count=%d sum_ms=%d\n", metricS7SubmitPhase, label, stats.Count, stats.SumMS)
 	}
 }
 

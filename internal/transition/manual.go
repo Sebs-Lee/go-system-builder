@@ -42,6 +42,7 @@ func RenderManual(def *LoopDefinition, opts ManualOptions) string {
 	writeTopLevelTransitions(&b, def)
 	writePhaseTransitions(&b, def)
 	writeGlobalTransitions(&b, def)
+	writeLegacyPTRBUGSection(&b, def)
 	return b.String()
 }
 
@@ -103,6 +104,18 @@ func RenderTransition(def *LoopDefinition, id string) string {
 
 // internal helpers -------------------------------------------------------
 
+// legacyPTRBUG marks the deprecated legacy-compatibility transitions (RC-11
+// C-8). They stay in the loop definition for journal-replay compatibility,
+// but the Manual collapses them into a Legacy (PTR-BUG) section at the end so
+// the main Contents index only surfaces the paths an agent should consider.
+var legacyPTRBUG = map[string]bool{
+	"PTR-BUG-01": true,
+	"PTR-BUG-02": true,
+	"PTR-BUG-03": true,
+	"PTR-BUG-04": true,
+	"PTR-BUG-08": true,
+}
+
 func writeHeader(b *strings.Builder, opts ManualOptions) {
 	target := opts.TargetPath
 	if target == "" {
@@ -139,7 +152,15 @@ func writeTOC(b *strings.Builder, def *LoopDefinition) {
 		}
 		fmt.Fprintf(b, "\n_Phase: %s_\n\n", owner)
 		for _, t := range machine.Transitions {
+			if legacyPTRBUG[t.ID] {
+				// C-8: legacy compatibility transitions are collapsed into
+				// the Legacy (PTR-BUG) section at the end of the Manual.
+				continue
+			}
 			fmt.Fprintf(b, "- [`%s`](#%s) %s → %s — %s\n", t.ID, anchor(t.ID), t.From, t.To, oneLineDescription(t.Description))
+		}
+		if owner == "bug_resolution" {
+			fmt.Fprintf(b, "\nSee [Legacy (PTR-BUG)](#legacy-ptr-bug) at the end of this Manual for the legacy compatibility transitions (PTR-BUG-01..04, PTR-BUG-08).\n")
 		}
 	}
 	if len(def.GlobalTransitions) > 0 {
@@ -171,9 +192,47 @@ func writePhaseTransitions(b *strings.Builder, def *LoopDefinition) {
 		}
 		fmt.Fprintf(b, "## Phase transitions: %s\n\n", owner)
 		for _, t := range machine.Transitions {
+			if legacyPTRBUG[t.ID] {
+				// C-8: rendered in writeLegacyPTRBUGSection instead.
+				continue
+			}
 			writeTransition(b, t)
 		}
 	}
+}
+
+// writeLegacyPTRBUGSection appends the collapsed Legacy (PTR-BUG) section
+// (RC-11 C-8) after the global transitions. It re-renders the deprecated
+// legacy-compatibility transitions verbatim so anchors keep resolving, but
+// keeps them out of the main Contents index and phase-transition sections.
+func writeLegacyPTRBUGSection(b *strings.Builder, def *LoopDefinition) {
+	fmt.Fprintf(b, "\n## Legacy (PTR-BUG)\n\n")
+	fmt.Fprintf(b, "_These four transitions are legacy compatibility paths only. They exist so\n")
+	fmt.Fprintf(b, "pre-S9 journals and synthetic fixtures still replay; new code must use the\n")
+	fmt.Fprintf(b, "S8 InvestigationCase / S9 repair machinery above instead. See also the\n")
+	fmt.Fprintf(b, "authority-transaction note in the Contents preamble (S8-REPAIR-CONTRACT-APPROVAL\n")
+	fmt.Fprintf(b, "is the real S8→S9 authority; PTR-BUG-08 is its legacy-catalog alias)._ \n\n")
+	wrote := false
+	for _, owner := range sortedPhaseOwners(def) {
+		for _, t := range def.PhaseMachines[owner].Transitions {
+			if legacyPTRBUG[t.ID] {
+				writeTransition(b, t)
+				wrote = true
+			}
+		}
+	}
+	if !wrote {
+		fmt.Fprintf(b, "_No legacy transitions declared._\n\n")
+	}
+}
+
+func sortedPhaseOwners(def *LoopDefinition) []string {
+	owners := make([]string, 0, len(def.PhaseMachines))
+	for owner := range def.PhaseMachines {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+	return owners
 }
 
 func writeGlobalTransitions(b *strings.Builder, def *LoopDefinition) {
@@ -374,6 +433,9 @@ func oneLineDescription(s string) string {
 func ManualFilename() string { return "loop-harness.md" }
 
 // ManualTargetPath returns the conventional target-project path.
+// Both this and the repo-root placement (ManualFilename) are valid Manual
+// locations; semantic.ValidateManualAgreement checks them in that order
+// (RC-11 F-5: guidance names the root copy primary, this one is the fallback).
 func ManualTargetPath() string {
 	return filepath.ToSlash(filepath.Join(".claude", "bin", ManualFilename()))
 }

@@ -1,6 +1,7 @@
 package hook_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/hook"
@@ -38,12 +39,20 @@ func TestPostToolUseObservationLadder(t *testing.T) {
 			wantRecord: true, wantAgent: "agent-qa-1",
 		},
 		{
-			name: "sole reading agent fallback",
+			name: "unidentifiable sender stays silent with actionable reason",
+			input: policy.Input{
+				ToolName:  "SendMessage",
+				ToolInput: map[string]any{"message_type": "blocker_report"},
+			},
+			wantRecord: false, // S7-12: no lifecycle-state guessing
+		},
+		{
+			name: "missing agent_id reason is actionable",
 			input: policy.Input{
 				ToolName:  "SendMessage",
 				ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
 			},
-			wantRecord: true, wantAgent: "agent-qa-1",
+			wantRecord: false, // S7-12: no sole-reading fallback
 		},
 		{
 			name: "unrelated tool passes silently",
@@ -75,7 +84,7 @@ func TestPostToolUseObservationLadder(t *testing.T) {
 				ToolName:  "SendMessage",
 				ToolInput: map[string]any{"message_type": "blocker_report"},
 			},
-			wantRecord: true, wantAgent: "agent-qa-1", // sole waiting agent fallback
+			wantRecord: false, // S7-12: no sole waiting-agent fallback
 		},
 	}
 	for _, tc := range cases {
@@ -91,7 +100,9 @@ func TestPostToolUseObservationLadder(t *testing.T) {
 	}
 }
 
-// Ambiguity must fail silent, never guess.
+// Ambiguity must fail silent, never guess — even when exactly one agent is
+// waiting on its plan checkpoint (S7-12: parallel dispatch makes the old
+// "sole reading agent" heuristic unsafe).
 func TestPostToolUseAmbiguousFallbackSilent(t *testing.T) {
 	agents := []hook.AgentRow{
 		{ID: "agent-a", State: "reading"},
@@ -103,6 +114,21 @@ func TestPostToolUseAmbiguousFallbackSilent(t *testing.T) {
 	}, agents)
 	if obs.Recorded {
 		t.Fatalf("ambiguous sender must not record, got %q", obs.AgentID)
+	}
+}
+
+// S7-12: even a single waiting agent must not be guessed from lifecycle
+// state; the reason must name the actionable fix instead.
+func TestPostToolUseSoleWaitingAgentNotGuessed(t *testing.T) {
+	obs := hook.HandlePostToolUse(policy.Input{
+		ToolName:  "SendMessage",
+		ToolInput: map[string]any{"message_type": "plan_report", "plan_ref": ".claude/plan-report.json"},
+	}, []hook.AgentRow{{ID: "agent-solo", State: "reading"}})
+	if obs.Recorded || obs.AgentID != "" {
+		t.Fatalf("sole-reading fallback must not attribute a sender: %#v", obs)
+	}
+	if !strings.Contains(obs.Reason, "S7-12: missing agent_id") {
+		t.Fatalf("reason must name S7-12 with the actionable fix, got %q", obs.Reason)
 	}
 }
 

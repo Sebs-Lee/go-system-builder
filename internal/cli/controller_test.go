@@ -63,7 +63,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.ProtocolRef != "docs/agent-protocol.md#s7" {
 		t.Fatalf("unexpected protocol ref: %q", guidance.ProtocolRef)
 	}
-	if guidance.ManualRef != ".claude/bin/loop-harness.md" {
+	if guidance.ManualRef != loopManualRef {
 		t.Fatalf("unexpected manual ref: %q", guidance.ManualRef)
 	}
 	if guidance.PrimarySkill != "team-planning" {
@@ -75,7 +75,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if !strings.Contains(guidance.Instruction, "docs/agent-protocol.md#s7") {
 		t.Fatalf("instruction must contain protocol ref: %q", guidance.Instruction)
 	}
-	if !strings.Contains(guidance.Instruction, ".claude/bin/loop-harness.md") {
+	if !strings.Contains(guidance.Instruction, loopManualRef) {
 		t.Fatalf("instruction must contain manual ref: %q", guidance.Instruction)
 	}
 }

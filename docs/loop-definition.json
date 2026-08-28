@@ -2217,6 +2217,11 @@
       "id": "INV-016",
       "statement": "Runtime recovery restores state, phase and entity checkpoints without chat history.",
       "enforcement": "combined"
+    },
+    {
+      "id": "INV-017",
+      "statement": "Documentation fact: the compiled Go registry is the superset of the transition references declared here — 59 guards / 48 actions are registered (transition.GuardNames / transition.ActionNames) while this file's 81 transition declarations reference 58 unique guards / 33 unique actions. Registry >= definition is the invariant: every identifier referenced here MUST exist in the registry (LoadCatalog fail-closed check), but registry entries may exist without a declared consumer. Do not treat the count difference as documentation drift.",
+      "enforcement": "schema"
     }
   ]
 }

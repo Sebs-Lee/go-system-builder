@@ -1,0 +1,164 @@
+{
+  "findings": [
+    {
+      "title": "S8→S9→新S7 回路约需 20 个手工 CAS 动词，且无请求文件脚手架，远非一键触发",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/action_catalog.go",
+      "line": 55,
+      "severity": "high",
+      "category": "fluency",
+      "description": "从 sealed ObservationBatch 到 RepairHandoff 需要手工串联：investigation ingest → hypothesis register → dispatch → hypothesis result → route（3个 --*-file）→ contract approve → repair session open → plan compile → dispatch(每Assignment) → plan-report submit(每Assignment) → execution begin → result submit(每Assignment) → changeset compute → impact create → impact commit → targeted create → targeted commit → handoff create → handoff commit，共约20次写入命令、6份手写JSON请求文件。对比之下 S7 有 s7 draft 和 s7 manifest-draft 两个脚手架生成器，S8/S9 完全没有对应物——操作员只能打开 docs/examples/s7-s9/ 逐字段手抄。任何一步的 Case SHA/断言槽位不匹配都要中断重读状态再重试。",
+      "failure_scenario": "操作员在 impact commit 后发现 targeted create 要求的 ImpactID 与当前 Runtime 不一致（example 占位值未替换），需回退读三个 status 板；一次错填 symptom-N 槽位被拒后整个红前检链条重来。",
+      "evidence": "action_catalog.go S8/S9 节列出全部裸动词无编排；skills/bug-resolution/SKILL.md 第72行把整条 S9 链压成一个不可导航的超长步骤；docs/examples/s7-s9/ 只有静态示例没有 scaffold 命令。"
+    },
+    {
+      "title": "Wave A→Wave B 两波调度对操作员几乎不透明：只能在 register-workgroup 拒绝报错时才感知",
+      "file": "/home/songhao/Documents/go-system-builder/internal/review/manifest_draft.go",
+      "line": 207,
+      "severity": "high",
+      "category": "fluency",
+      "description": "blueprint 用整整两节（L3-S7 §5.2–5.3）定义两波调度，但实现层唯一的暴露点是 manifest-draft 返回的一条 note（\"behavior-wave Assignment: register-workgroup rejects it until every required static Claim has a disposition\"）。s7 status 看板按 lens 分组打印 Claims/Assignments，但不打印任何 Assignment 的 execution_wave 字段、不显示'静态 Claims 是否已收口、行为波已解锁几条'的整体进度。操作员的唯一感知途径是先撞一次注册拒绝。",
+      "failure_scenario": "操作员想尽快并行派出全部 E2E Assignments，逐个 register-workgroup，前 N 个都成功返回却发现行为波全部排队或拒绝，回头重读 blueprint §5 才明白依赖规则；看板从头到尾没提示当前处于哪一波。",
+      "evidence": "grep 显示 'wave' 在 internal/cli 全部非测试代码中零命中（仅行为注记措辞）；s7_status.go 的 claims/assignments 输出段均无 wave 列；agent-protocol.md 仅第529行一句括号带过 'behavior-wave registration unlocks only after the static Claims settle'。"
+    },
+    {
+      "title": "进入 S7 的必读面是三份巨型文档叠加，渐进披露失效于入口",
+      "file": "/home/songhao/Documents/go-system-builder/docs/agent-protocol.md",
+      "line": 527,
+      "severity": "high",
+      "category": "fluency",
+      "description": "S7 入口的一致性由三层承载：loop-harness.md 第7条是一个约700词的单项 bullet（把 seed 注册、digest 重抄、capture 步骤、budget 门全塞进一段）；agent-protocol.md #s7 的 actions[1] 是约500词单段（计划生成、E2E 映射、typed evidence、TODO 替换、受控 revise 全部内联）；权威细节又指向 blueprint/L3-S7（1587行）。'SessionStart 读最小集'的设计意图被这三层的长度抵消——操作员在敲下第一条 s7 draft 命令前必须消化近两千行文本，而其中大半与他当前的第一步无关。",
+      "failure_scenario": "新 Main 会话在 compact 后重入 S7：Hook 包给了 Next，但它指向的三处说明互相引用循环（manual 指向 protocol §s7，protocol 指向 control-plane-map，map 再指回 blueprint），第一动作到底改不改上一轮 plan、要不要刷新 SHA 无法从任一单独来源确定。",
+      "evidence": "loop-harness.md line 27 为单条 bullet；agent-protocol.md line 527 为单段 action；blueprint/L3-S7 为 1587 行。相比之下 S8/S9 各自成功维持了较窄的入口协议。"
+    },
+    {
+      "title": "S7 的 primary_skill 身份不一致：agent-protocol 表、CLI 投影和可用 Skill 目录各说各话",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/run.go",
+      "line": 511,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "agent-protocol.md 阶段表将 S7 的 primary_skill 写为 'L4 dispatch + focus-specific DV/QA/E2E Skills'（不是合法 Skill ID），而 CLI next 投影在 S7 返回 'loop-orchestration'。协议同时声明 unknown Skill IDs 会被拒绝。S7 实际存在的规划/评估方法分散在 loop-orchestration、team-planning、clean-round-evaluation、bug-resolution 四张卡里，没有任何一张自我声明'S7 规划时用我'。",
+      "failure_scenario": "操作员按 protocol 表寻找名为 'focus-specific DV/QA/E2E' 的 skill 加载失败；或者盲信 next 输出加载 loop-orchestration，发现里面根本没有 S7 Claim 生成顺序、focus 分组这些真正需要的方法论，只能回落 blueprint 自学。",
+      "evidence": "run.go:511-519 返回 ('S7','loop-orchestration',...)；agent-protocol.md 阶段表第103行 S7 行 primary_skill='L4 dispatch + focus-specific DV/QA/E2E Skills'；skills/ 目录中不存在同名技能。"
+    },
+    {
+      "title": "顶层 usage 行枚举遗漏 s7/s6/tasks 等主力命令，帮助系统自我隐藏",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/run.go",
+      "line": 139,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "顶层 usage 串为 `<init|req|status|next|ready|validate|dry-run|hook|doctor|health|actions|runtime|team|impact|verification|release-graph|capture|e2e-coverage|scenario|contracts|s10|manual|explain>`，漏掉了 s7、s6、tasks——而 s7 正是操作频率最高的阶段命令组。未知命令会得到这个列表，操作员据此推断 's7' 不存在而去 runtime 子树里翻找。",
+      "failure_scenario": "操作员误记命令后输入 `loop-harness s7 stauts`，错误提示列出全部命令却没有 s7，转而在 runtime 下试探多个错误动词浪费多轮。",
+      "evidence": "run.go:139 usage 字符串；对比 run.go:195 case \"s7\" 确认命令真实存在。"
+    },
+    {
+      "title": "'何时允许查 status' 的口径自相矛盾：恢复条款禁止正常调用，示例文档却要求每条命令间刷新",
+      "file": "/home/songhao/Documents/go-system-builder/loop-harness.md",
+      "line": 23,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "manual 第3条说 'do not call status/next during normal continuation'（仅完整性恢复时才用），而 docs/examples/s7-s9/README.md 要求 'Refresh runtime investigation status between CAS-writing commands and copy its current Case revision/SHA'（每条写入命令前必查），clean-round-evaluation 技能又直接指示运行 s7 status 和 verification clean-round。同一操作序列里，'什么时候读板子' 有三种相互冲突的说法。",
+      "failure_scenario": "谨慎型操作员遵守 manual 条款不去查 status，直接拿上次记住的 case-sha 提交 hypothesis register 被 CAS 拒绝；激进型操作员每步查表却担心违反'recovery only'纪律。两者都无法从文档确定正确频率。",
+      "evidence": "loop-harness.md line 23；docs/examples/s7-s9/README.md 中间段落 'Refresh ... between CAS-writing commands'；skills/clean-round-evaluation/SKILL.md procedure step 1。"
+    },
+    {
+      "title": "--expected-revision 的文档要求与实现脱节：多数命令支持省略自动解析，文档仍强制人工握手",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/run.go",
+      "line": 2200,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "resolveExpectedRevision 在 flag 省略(-1)时会自动读取当前 revision，注释明说'the flag just removes the hand-shake step of reading the state first'。但 action_catalog、agent-protocol S9 动作列表和 examples README 仍在每个命令模板里写死 --expected-revision <N> 并要求先读 status。真正不能省略的是另一套 expected-case-revision/--expected-case-sha256（Case 级），但文档没有区分这两类的强制级别，操作员把 Runtime revision 手抄流程当成普遍必需仪式执行。",
+      "failure_scenario": "操作员花额外一轮查每次 revision 并引入抄写错误；更糟的是把'Read it with status'的心智迁到 Case SHA 上以为也可省略，反而被 reject。",
+      "evidence": "run.go:2203-2215 自动解析逻辑及注释；repair_command.go 与 investigation_command.go 共用 resolveExpectedRevision；examples README 通篇 '<N>' 占位并强调刷新。"
+    },
+    {
+      "title": "Investigator 卡的 S9 失败重入段落文字损坏，恰是最关键的恢复路径",
+      "file": "/home/songhao/Documents/go-system-builder/agents/investigator.md",
+      "line": 62,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "Re-enter after S9 targeted failure 一节的首句拼接了两份残稿：'If `runtime investigation status` shows a Case reopened from S9, read every `read the recorded `causal_reassessment_refs[]` from `runtime investigation status` (they are listed on the Case board); causal_reassessment_refs[]` artifact before...'——嵌套反引号打断句子，同一标识符出现两次。这是 targeted 失败回 S8 时调查员唯一该读的操作说明。",
+      "failure_scenario": "S9 targeted fail 后重派 Investigator，卡上第一条指令语义破碎，Agent 只能猜测 causal_reassessment_refs 的来源（碰巧结论对了，但属于隐式知识救场而非引导生效）。",
+      "evidence": "agents/investigator.md Re-entry 段原文包含嵌套未闭合的反引号和重复短语。"
+    },
+    {
+      "title": "S9 命名税过高：双 PlanReport、四类 revision/hash、assignment-s9-* 别名与 repair-assignment-* 双轨并存",
+      "file": "/home/songhao/Documents/go-system-builder/docs/agent-protocol.md",
+      "line": 201,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "操作员必须同时持有四个心智账本：(a) 通用 agent-message PLAN_REPORT 与领域 repair_plan_report 是两道门且互不替代；(b) 四种 revision（Runtime 无上限 / ReviewPlan 最多1次 revise / Case 每次 mutation 新 hash / Artifact SHA）；(c) 平台 manifest 里的 assignment-s9-* 只是别名，领域 repair-assignment-* 必须另现；(d) PTR-BUG-* 兼容 id 与 S8-REPAIR-CONTRACT-APPROVAL 权威 id 并存。任何一项混淆都会撞 hard deny。",
+      "failure_scenario": "Builder 把领域 repair-plan-report.json 当 SendMessage(plan_ref=...) 发送，PostToolUse 校验 envelope 失败；或把 RepairContract.revision 误当全局 revision 用于 CAS，提交被拒。",
+      "evidence": "agent-protocol.md §2 '不要混淆的四种 revision/hash' 表 + §3 两个 plan report 说明；agents/backend-builder.md S9 Repair Contract 节重复同一警告（说明作者也知道这是高频混淆点）。"
+    },
+    {
+      "title": "ReviewResult 的 typed evidence 引用语法动物园：path:<p>#sha256=<64hex> 与裸 path: 语义不同却共用前缀",
+      "file": "/home/songhao/Documents/go-system-builder/docs/agent-protocol.md",
+      "line": 530,
+      "severity": "low",
+      "category": "fluency",
+      "description": "同一 `path:` 前缀有两种信任级别：带 #sha256= 的做漂移检测、裸 path: 只是'兼容性存在性证据'。加上 console:/network:/runtime:/screenshot:/state:/timeline:/trace: 七种外部符号型 ref 和三处捕获绑定方式（capture step 缓冲区、--captures 合并、Result 内联 timeline），Reviewer 在写第一份 Result 前要掌握一个没有集中语法表的微语言。",
+      "failure_scenario": "Reviewer 写了裸 path: 引用以为是防漂移证据，submit 通过（兼容模式）但失去冻结校验；后续 baseline 变化时无法检测出证据失效，直到 S10 才暴露。",
+      "evidence": "agent-protocol.md #s7 actions[3] 与 loop-harness.md line 28 'Typed path evidence may use path:<repo-relative>#sha256=<64-hex>...bare path: is compatibility-only existence evidence'。"
+    },
+    {
+      "title": "S7 注册前没有 dry-run 校验入口：TODO(planner) 清理质量只能靠 register 时的整包拒绝反馈",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/run.go",
+      "line": 1476,
+      "severity": "low",
+      "category": "fluency",
+      "description": "s7 draft 生成的计划在 DV oracle、QA target/method/oracle、E2E persona/flow 多处埋 TODO(planner)，语义门只在 runtime review-plan 注册时才校验并一次性拒绝。没有 `review-plan validate --file` 类预检动词，Planner 每轮修改都要走完整的注册事务来获得校验反馈。",
+      "failure_scenario": "Planner 修完一处 TODO 注册，被拒，修第二处再注册再被拒；在冻结基线敏感的多轮返工里消耗额外的 Revision 与注意力。",
+      "evidence": "internal/review/draft.go 149-249 的多处 TODO 注入点；agent-protocol.md 529 行 'semantic registration gate rejects the literal marker'——校验点只有 registration gate 一个；对比 s10 已提供独立 `s10 manifest validate` 先行动词。"
+    },
+    {
+      "title": "S10 双载体记账：16 节 Markdown 正文无人消费，机器只认 manifest，重复劳动落在操作员身上",
+      "file": "/home/songhao/Documents/go-system-builder/blueprint/L3-S10-acceptance-audit.md",
+      "line": 389,
+      "severity": "medium",
+      "category": "fluency",
+      "description": "ACC/release-audit 的 Markdown 正文没有领域 schema 消费者（§5.3 第1条自认），真正的机检由 s10-audit-manifest.schema.json 承载。于是审计者要在两份媒介里各维护一遍事实：Markdown 写结论与人读解释，JSON manifest 冻结 coverage_inventory、每项一条 counterevidence、八审计区和硬指标。\\Blueprint 称之为有意取舍，但对单操作员而言这是纯加倍的誊写工作，且两份之间的同步靠纪律而非工具。",
+      "failure_scenario": "审计者在 Markdown 里修正了一条 AC 结论却忘记更新 manifest 对应行的 conclusion/evidence_refs，validate 拒绝后 diff 两份文件才发现漂移；八审计区每区的 counterevidence 都要走一遍这种对齐。",
+      "evidence": "L3-S10 §1.4 'ACC 和 release audit 的 Markdown 正文仍没有领域 schema 消费者'+§5.3 第1条；skill acceptance-and-handoff 第7步同时要求两份产物；docs/examples/s10/ 提供形状但无双写同步机制。"
+    },
+    {
+      "title": "S7 budget 决策文件的 JSON 形状只存在于散文段落中间，没有示例文件落地",
+      "file": "/home/songhao/Documents/go-system-builder/docs/agent-protocol.md",
+      "line": 535,
+      "severity": "low",
+      "category": "fluency",
+      "description": "budget_gate 的 decision 文件必须精确携带 runtime_id/expected_revision/review_round/previous_max_full_review_rounds/new_max_full_review_rounds/reason/authorized_by 七字段，形状锚点是 agent-protocol.md 内联的 ```json 块，而不是像 s10/s7-s9 那样有 docs/examples/ 下的可复制文件。round N of M 触发人闸时（通常是会话压缩后、上下文最脆弱的时刻），操作员要从长段落里凭记忆拼装并猜 current_revision 从哪取。",
+      "failure_scenario": "预算耗尽的恢复场景本身容易发生在 compact 之后：操作员找不到 decision 形状参考（不知道它在 protocol §s7 中段），写了缺 created_at 或 authorized_by 的文件被 CAS 拒绝，pending round-opening transition 继续悬置。",
+      "evidence": "agent-protocol.md budget_decision_shape 内联块；ls docs/examples/ 仅 s10 与 s7-s9 两目录，无 budget-decision 示例；loop-harness.md 第9条同样只给动词不给形状指针。"
+    },
+    {
+      "title": "machine 出口的推进依赖下一次 PreToolUse 自然事件，seal 之后的静默等待无计时兜底",
+      "file": "/home/songhao/Documents/go-system-builder/loop-harness.md",
+      "line": 27,
+      "severity": "low",
+      "category": "fluency",
+      "description": "s7 status 会正确提示 'sealed as ... the next PreToolUse auto-commits TR-008 (do not invoke the transition CLI)'，但这意味着 cursor 推进需要操作员随后再发起任意一次可被 matcher 覆盖的工具调用（Write/Edit/Bash/Task/mcp__.*）。若最后一件事只是查看只读产物或结束回合，Runtime 就停在已 seal 但未推进的状态直到下一个自然事件。",
+      "failure_scenario": "操作员在 seal 后关闭终端，次日 SessionStart 虽然会补推，但当日内他若依赖 cursor 已到 S8 的假设去安排 Sub-agent 派发会拿到滞后投影。",
+      "evidence": "settings.json PreToolUse matcher 定义了哪些动作触发 Controller；loop-harness.md line 27 '(do not invoke the transition CLI)' 明确禁用手推但没有给出'主动制造一次事件'的动作建议。"
+    },
+    {
+      "title": "命令的人类教练走 stderr、机器 JSON 走 stdout，管道消费场景丢失下一步指引",
+      "file": "/home/songhao/Documents/go-system-builder/internal/cli/repair_command.go",
+      "line": 333,
+      "severity": "low",
+      "category": "fluency",
+      "description": "核心 coach 语句（如 dispatch 后的 'next: send one generic PLAN_REPORT..., the S9 authority is the domain runtime repair plan-report'）统一 fprintf(stderr)，stdout 只有 JSON。交互式使用没问题，但操作员一旦 `... | jq` 或脚本化采集 stdout 保存执行记录，next_action 教练就消失在输出里；JSON 里虽有 next_action 字段，但并非每个动词都保证含完整下一动词文案（如 repair session open 的 JSON 里就没有 next 键）。",
+      "failure_scenario": "操作员按仓库惯例把每步 stdout 存入执行日志，事后复盘时日志里只有状态对象没有衔接指引，接续步骤靠回忆或重读文档。",
+      "evidence": "repair_command.go runRuntimeRepairDispatch 用 stderr 打印教练、encodeJSON(stdout,...) 里才带 next_action；runRuntimeRepairSessionOpen 的 stdout JSON 无 next 字段，教练只在 stderr。"
+    },
+    {
+      "title": "manual 的 Phase transitions 目录保留了 8 个 legacy PTR-BUG 条目，占据故障排查时的视觉带宽",
+      "file": "/home/songhao/Documents/go-system-builder/loop-harness.md",
+      "line": 94,
+      "severity": "low",
+      "category": "fluency",
+      "description": "Contents 里 PTR-BUG-01/02/03/04/05/06/07/08/12 九条中有六条标注 'Legacy compatibility projection only'，且每条仍附带完整的 guard/evidence binding 模板（如 PTR-BUG-08 的三条 guard）。新路径 Agent 被反复告诫'只使用领域命令和 next_action，不要手工选择或伪造 PTR'，那这批带完整绑定语法的目录条目对操作员就是持续性的诱惑与噪声——尤其当某个 gate 名字恰好出现在报错里时（LOOP_GATE_UNKNOWN 场景）。",
+      "failure_scenario": "操作员在 legacy 投影产生的 journal 事件里看到 PTR-BUG-08，顺着手册目录找到它的 evidence bindings 开始按 'runtime transition' 路径排查，而正确路径其实是 investigation contract approve 的 CAS 指针。",
+      "evidence": "loop-harness.md Contents + Transitions 区 §PTR-BUG-01..12 各节；agent-protocol.md §4 末段明说这些是内部/兼容 id '不是新的授权入口'。"
+    }
+  ]
+}

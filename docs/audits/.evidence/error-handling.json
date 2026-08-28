@@ -1,0 +1,164 @@
+{
+  "findings": [
+    {
+      "title": "场景1（部分兜底）：CleanRound 七检查为机器重算，谎报无法直接通过，但 blocking 判定只认 P0",
+      "file": "/home/songhao/Documents/go-system-builder/internal/verification/clean_round.go",
+      "line": 259,
+      "severity": "high",
+      "category": "error-handling",
+      "description": "拦截链完整确认：TR-009 的 clean_round_valid 守卫(guards.go:300)与 GATE-VERIFY-CLEAN-ROUND-PASSED(evaluator.go:368)以及 TR-008 观测批守卫都调用同一个纯函数 EvaluateCleanRound 重算七项检查，agent 手写的聚合 PASS 无法替代机器快照(clean_round_snapshot_registered)；plan status=clean 只能在回合消费 CAS 内部写入，评审判定基于逐 Claim disposition 而非可信聚合。但兜底链条存在一个被系统自身注释承认的窄化：isBlockingBug 仅当 severity=='P0' 时才把 BUG 计入 no_open_blocking_bugs / closedBugsMissingTargetedEvidence。若一个真实 defect 被登记为 P1/P2 且 entity state 处于 accepted/investigating 等，清洁轮仍可放行。",
+      "failure_scenario": "verifier 把真实缺陷降级为 P1 Finding，并在闭环后（BUG 处于非 P0 拦截语义之外的任何状态）提交 clean round：全部七检查通过，S7→S10 直接成行，P1 缺陷永远不进入 S8/S9 链路。",
+      "evidence": "clean_round.go:259-262 `func isBlockingBug(bug map[string]any) bool { severity,_ := bug[\"severity\"].(string); return severity == \"P0\" }`；同一假设在 transition/guards.go:549-554 的注释中自认 'Canonical blocking severity is P0'。守卫文件头部 TODO(BUG-GUARDS-OVER-ENGINEERED, guards.go:104-112) 承认多数 guard 是空壳。"
+    },
+    {
+      "title": "场景1（缺口）：不存在 energy function；结构性完备的假 pass 可闭合清洁轮——oracle 语义深度无机器复核",
+      "file": "/home/songhao/Documents/go-system-builder/internal/review/submit.go",
+      "line": 158,
+      "severity": "medium",
+      "category": "error-handling",
+      "description": "代码库中没有任何『能量函数』实现（全仓 grep 无此概念）。兜底仅到结构与一致性层面：claim 集合精确划分、证据 sha256 复核、frozen_subjects 漂移检测(submit.go:158 verifyFrozenSubjects)、regression fingerprint 重验、producer 独立性（拒绝本代交付过 completion_report 的 producer）。若 verifier 提交结构上完备、证据哈希自洽、但断言本体是空洞正向结论（弱 oracle）的 claim_results，七检查全部会通过——机器无法判断断言是否真正检验了缺陷面。这是本机制的公认边界而非可注入的崩溃点。",
+      "failure_scenario": "恶意/失职 reviewer 为每个 Claim 编造 method=static 的浅断言并附自产证据：清洁轮成立且无机器层手段反驳，只能依赖 S10 反证账本和人工审计补位。",
+      "evidence": "EvaluateCleanRound(clean_round.go:47-179) 全部七项均为状态字段级一致性与引用有效性检查；无断言语义评估路径。"
+    },
+    {
+      "title": "场景2（部分兜底）：N/A 只能由 Plan 声明、reviewer 结论侧完全封死，但零 DV/QA 责任门被自由文本绕过",
+      "file": "/home/songhao/Documents/go-system-builder/internal/review/plan.go",
+      "line": 194,
+      "severity": "high",
+      "category": "error-handling",
+      "description": "已确认兜底：N/A 是计划处置而非评审结论——Plan 校验拒绝派发 N/A claim('assignment %s dispatches not_applicable claim %s')；submit 的 CAS 内部再次拒绝给 N/A claim 提交结果(submit.go:1034)；blocked 投影也拒绝绑定 N/A(blocked.go:84)。e2e 维度还有计数硬门(plan.go e2e_coverage_state 校验：not_applicable 强制要求 naByLens['e2e']>0 并禁止 workspace)。但 DV/QA 双维度的零必答问题允许只需 CoverageJustification 为任意非空白字符串即可跳过——这是一个远弱于 N/A 处置链的自由文本旁路。",
+      "failure_scenario": "Planner 将 delivery 与 qa 全部声明为零必答 Claim，附一句 \"本变更无可验证表面\" 的 justified 文案：门打开，两条核心验证维度整体蒸发，S7 回合可以在没有独立质量维度的情况下宣布清洁。",
+      "evidence": "plan.go:194 `justified := plan.CoverageJustification != nil && strings.TrimSpace(*plan.CoverageJustification) != \"\"` —— 只做 TrimSpace 非空判断，无内容、来源或反驳要求；对照 e2e 分支要求的 na_reason + 数量互锁。"
+    },
+    {
+      "title": "场景2（确认兜底）：N/A 三重封口链完整",
+      "file": "/home/songhao/Documents/go-system-builder/internal/review/blocked.go",
+      "line": 84,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "注入『reviewer 用 N/A 吞掉必查维度』在三条路径上都被截住：(a) plan 注册期拒绝为 N/A claim 创建 assignment；(b) 结果提交期拒绝消耗 N/A claim 的 result；(c) site_lost/blocked 投影同样拒绝 N/A。被滥用的剩余面只在 Planner 侧（见上一条），Agent 评审侧无洞。",
+      "failure_scenario": "对 required claim 提交 applicability=not_applicable 的 ReviewResult：预期报错 'claim %s is not_applicable in the plan; N/A is a plan disposition, never a Reviewer conclusion'。",
+      "evidence": "submit.go:1034; plan.go N/A dispatch 拒绝分支; blocked.go:83-85 与 188-190 两处同型拒绝。"
+    },
+    {
+      "title": "场景3（部分兜底）：整批单 Case + 不可变 source_finding_ids 限制错聚类扩散，但聚类本身无机器复核且 grouping_rationale 无最低要求",
+      "file": "/home/songhao/Documents/go-system-builder/internal/investigation/intake.go",
+      "line": 64,
+      "severity": "medium",
+      "category": "error-handling",
+      "description": "机制事实：S8 Ingest 不做自由聚类——它强制一个 sealed ObservationBatch 映射到一个新 Case，Case 的 source_finding_ids 必须与批的 finding_ids 精确相等(exactFindingSet, intake.go:112)，之后在 updateCaseRevision 中跨修订不可变(case_workflow.go: exactFindingSetWithDetails)。Runtime 已指向其他 Batch/Case 时 ErrIngestConflict 拒绝覆盖(rejectExistingInvestigation)。因此『把无关 Finding 并进一个 Case 导致根因误判』只能发生在批内（即源于 S7 seal 时的全量集），跨 Case 污染被阻断；而 delete-group-reingest 也被 ErrIngestConflict+exclusive write 封死。缺口：grouping_rationale 仅要求非空字符串(intake.go:64)，没有任何机器判定分组因果性，根因误判的下游拦截只有 hypothesis 判别器证伪链路。",
+      "failure_scenario": "S7 一次 immediate_stop 塞入了确实相关的两个域的 Finding（这在 S7 守卫下合法），S8 的误判只能靠后续 hypothesis 支持/反驳结果暴露；若无新假设登记，错误聚类不会被机器层发现。",
+      "evidence": "intake.go:63-66 rationale 非空校验；intake.go:112-117 exactFindingSet + validateFindingArtifacts(Finding 工件 schema/path/sha256 重哈希)；ErrAlreadyIngested/ErrIngestConflict(intake.go:29-33, 126-128)。"
+    },
+    {
+      "title": "场景4（确认兜底+低危残留）：hypothesis 注册即强制可证伪三件套，inconclusive 有路由死锁防护但无强制终止",
+      "file": "/home/songhao/Documents/go-system-builder/internal/investigation/case_workflow.go",
+      "line": 669,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "注册期 RegisterHypothesis 要求 statement+invariant+discriminator 非空且 ExpectedOutcomes>=2 且必须同时含 support 与 refute 结果；SubmitHypothesisResult 拒绝无方法/观测/反事实/evidence_refs 的结果，且 explain/do-not-explain 必须⊆Case source findings，防伪子集漂移。deterministicCaseRoute(case_workflow.go:669-671) 在 unexplained>0 或存在 inconclusive 时永不放行 s9_repair；investigate_more 自旋被 routeHasNewEvidence(按修订计数增长)拦截；terminal 路线除 causal_reassessment 外不可变。兜底成立：『不可证伪的假设卡死 S9』表现为进入受限循环而非静默放行——按设计即是失败封闭。残留：等待人类/新证据的悬挂 Case 没有 TTL 或升级动作，只能靠显式换路线（从 investigate_more 显式 routing 到其它 supported route 是允许的逃逸口）。",
+      "failure_scenario": "agent 对同一 hypothesis 反复提交 inconclusive：第 N 次 route investigate_more 被 'register a new discriminator or submit its result before routing again' 拒绝；无自动终止，但也不会推进到 S9。",
+      "evidence": "case_workflow.go:163-170(注册≥2 outcomes)、255(unexplained 重算)、295-346(route 校验)、335-337(anti-spin)、669-671(deterministic 门)、escape 口 311-314(existing==investigate_more 允许显式改路线)。"
+    },
+    {
+      "title": "场景5（强兜底）：三道闸构成 scope 硬门——hook 预写屏障 + 提交期双重 exact-set + 实际磁盘 diff 权威",
+      "file": "/home/songhao/Documents/go-system-builder/internal/repair/artifact.go",
+      "line": 155,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "完整拦截链：(1) PreToolUse 层 repair_write_before_execution(policy/engine.go:424-459) 使 planning/reproducing 阶段产品面写 deny（含动态 Bash 命令 fail-closed）；fixing 阶段 repair_assignment_scope(engine.go:465-495) 按 hookctx 从不可变 Plan/PlanReport 载入的 RepairAllowedWritePaths 精确前缀匹配，越界写直接 deny。(2) SubmitRepairResult(result.go:98 scopeAllows: forbidden_scope 优先命中即 hard-deny、prospective_scope 未命中即拒) + 每个 artifact 还要落在具体 RepairAssignment.Scope 内(result.go:101-110)，pass 携带 scope_deviations 一律拒(result.go:145-147)。(3) CommitChangeImpact(runtime.go:514-529) 以 ComputeSessionChangeset(实际 Session baseline vs 当前仓库, artifact.go:221-263) 为权威做两次 exactChangedArtifactSet：修复 agent 既不能少报也不能多报，每个条目 sha256 内容绑定。注意删文件：deleted 条目强制携带 base 哈希(result.go:96)，ComputeSessionChangeset 将其记为 deleted 并用 baseline sha，机制闭合。残余弱点见下一条（baseline 捕获排除了 .claude/.git）。",
+      "failure_scenario": "Builder 在 forbidden_scope 下改文件：(1) 修复执行期写入即被 hook deny；(2) 若 hook 被绕过（直接进程外编辑），result 列出该路径则 scopeAllows 报 'inside forbidden_scope'，不列出则在 exact-set 对照实际 diff 时报 missing_or_changed；双路径均截断。",
+      "evidence": "artifact.go:155-167 scopeAllows；result.go:96-123(sha 校验含 deleted 特例)；runtime.go:514/525/529 三集合相等性校验；policy/engine.go:424/465 双阶段写屏障；多 assignment 会话退化口径 changedArtifactsWithinActual(result.go:129) 只拦“报了却没改”，最终在 handoff(runtime.go:1346-1355) 再度以 Changeset 复核完整等集，漏报仍在终点被捕获。"
+    },
+    {
+      "title": "场景5/6（缝隙）：session baseline 排除 .claude/.git 导致控制面写入不计入 diff——与 .claude 含审查产物相冲突的面",
+      "file": "/home/songhao/Documents/go-system-builder/internal/repair/artifact.go",
+      "line": 190,
+      "severity": "medium",
+      "category": "error-handling",
+      "description": "captureRepositoryBaseline 显式 SkipDir '.git' 和 '.claude'（注释称控制面运行时会被改动）。ComputeSessionChangeset 继承这一排除，于是修复会话期间对 .claude/ 下任何文件的篡改/回滚（包括修改自身历史 RepairPlan、tuning 证据、甚至试图覆盖 handoff 之后将被 pin 的工件名）完全不进入 diff 权威，也就不受 ChangeImpact 三重 exact-set 约束。单靠 O_EXCL(writeImmutable) 防『新建同名』，但不防『删除后重建到不同内容』这种对未再生工件的破坏——因为 diff 根本看不见它们。Product-surface 范围内的漏报/超报风险已被消除，但控制面的完整性此处仅依赖运行时自身的 hash-pin 读路径(LoadPlan/pointerArtifact 校验)。",
+      "failure_scenario": "修复执行者发现某计划报告对自己不利：删除 .claude/review/repair/ 下的旧 Evidence 工件或在 .claude 内植入伪造引用文件。ComputeSessionChangeset 为空/不含这些路径，ChangeImpact 无需申报，未被命中钉哈希读路径的工件被无声地丢失或替换。",
+      "evidence": "artifact.go:188-195 `parts[0]==\".git\" || parts[0]==\".claude\"` 即返回 SkipDir/nil；对比 review.LoadPlan 对 plan 文件的逐次哈希校验——同样保护并未泛化到所有 repair 证据读取入口。"
+    },
+    {
+      "title": "场景6（强兜底）：ChangeImpact 漏报被实际 diff 权威与闸口复检两端夹死",
+      "file": "/home/songhao/Documents/go-system-builder/internal/repair/runtime.go",
+      "line": 529,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "CommitChangeImpact 先做 RepairResult batch ↔ ChangeImpact.ChangedArtifacts exact-set(514)，再与 ComputeSessionChangeset 的实际磁盘差异 exact-set(529)，比较键含 sha256；任何条目缺 sha 直接报错(changedArtifactSet)。Handoff 提交时(1346-1355)又以当前指针环境重新比对 Changeset 与 ChangeImpact 各一次。同时 impact 自身还要求每个 changed artifact 被 decision.Scope 覆盖(evidence.go:30-46)。唯一可达的‘漏报’通道就是上一条的 .claude 盲区；产品面内漏报不成立。被动防御还包括 ComputeImpact 失效被改动证据路径+声明的 invalidated/superseded IDs(runtime.go:540-545)。",
+      "failure_scenario": "builder 实际改了 3 个文件只申报 2 个：提交 impact 时第二组 exact-set 直接报 'missing_or_changed'，事务不落盘。",
+      "evidence": "runtime.go:506-548(两个 exactChangedArtifactSet + InvalidateEvidence 应用)；runtime.go:1352-1355(handoff 复检)；evidence.go:22-46(decision 覆盖校验)。"
+    },
+    {
+      "title": "场景7（重大缺口）：目标 reverification 的独立性只有『字符串不等』，未绑定真实 agent 身份——原实现者可轻松自验",
+      "file": "/home/songhao/Documents/go-system-builder/internal/repair/evidence.go",
+      "line": 125,
+      "severity": "critical",
+      "category": "error-handling",
+      "description": "CreateTargetedReverification(81-83) 与 ValidateTargetedReverification(125-127) 仅校验 original_assignment_id != performing_assignment_id 这两个字面值。两者都是请求 JSON 里自报的字段：调用者可以填原 assignment='assignment-a1'、performer='assignment-qx'，但实际上仍是同一个 Builder 进程执行。CommitTargetedReverification(runtime.go:551-617) 全程不验证 PerformingAssignmentID 是否对应真实存在的派遣 Assignment、是否属于另一位 agent，也不对照 assignment_owners(runtime.go:215-217, 338-340 中已有 owner 数据可用却未被使用) 或 agent entities——actor 默认直接落在 'qa'(runtime.go:597-599)。TR-012/PTR-BUG-06 的 all_targeted_reverification_passed 守卫也只看 severity==P0 的 bug 状态机位置(guards.go:531-561)，不看执行者身份。因此 L3-S9 §7.1 的『verifier 不得参与该单元实现』在这条最关键的失败恢复回路上没有任何机器执行者身份挂钩。",
+      "failure_scenario": "被 point-fix 式修复劫持的原 Builder 自己执行 targeted reverification：JSON 里随便填另一个 assignment 名字，写 performant-pass 断言结果，Commit 通过 → ready_for_full_review → S7 种子闭合了一个从未被第三方独立验证过的修复。",
+      "evidence": "evidence.go:78-82 与 125-127(仅字面比较)；repair/runtime.go:593-599(refs 追加 + actor 默认 'qa'，无 owner 对照)；handoff.go:146-155(targeted 仅校验 impact_id 归属)；grep 全仓 'PerformingAssignmentID' 除模型/两处比较外无任何消费点。"
+    },
+    {
+      "title": "场景7（补充守卫事实）：失败方向的伪装同样可行——failure_class 自报且无身份根",
+      "file": "/home/songhao/Documents/go-system-builder/internal/repair/runtime.go",
+      "line": 600,
+      "severity": "medium",
+      "category": "error-handling",
+      "description": "CommitTargetedReverification 在非 pass/scope_compliance!=pass 时把 failure_route 直接取自自报 FailureClass(600-607)，reassessment 逃生所需 evidence_refs 也由请求方给出。结合上一条的身份数据缺失，同一方既能伪装成功也能伪装失败来操纵 S8→S9 循环半径。contract assertion 精确槽位覆盖(exactContractAssertionCoverage, 685+)确实将每条 symptom-N/root-N/gap-N 锁定为一次性强制结果，这一半兜底扎实。",
+      "failure_scenario": "操纵者填 failure_class=scope_changed 将修复推向重开 Contract，或者反向直接报 pass 结束循环；两种伪报都不触发身份数据校验。",
+      "evidence": "runtime.go:600-611 与 685+；FailureClass 默认填充逻辑 evidence.go:103-111 全部信任输入。"
+    },
+    {
+      "title": "场景8（强兜底）：coverage_inventory 造假被反证账本+度量重算+双层哈希绑定正面拦截",
+      "file": "/home/songhao/Documents/go-system-builder/internal/acceptance/manifest.go",
+      "line": 310,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "拦截点：(1) 每 PASS 行必须有 evidence_refs，否则 UnsupportedPassCount++ 并以 issue 拒绝(249-265)；not_applicable 必须 na_reason。(2) 每个库存行都必须恰好有一条 counterevidence，缺失整份 manifest 失败(310-319)；counterevidence outcome!=unknown 时 refs 不得为空(293-295)。(3) 四类覆盖率指标不是自报可 100%——validateMetrics(452+) 按 category 行数实际重算 want=dispositioned/total 并要求 |value-want|<1e-6；unsupported_pass_count/unknown_count/blocking_finding_count 同样重算比对。(4) 注册入口 RecordEvidence(runtime/evidence.go:73) 调 acceptance.ValidateEvidenceArtifact 做 envelope.ManifestSHA 与磁盘字节比对、repo 内符号链接逃逸检查(428-450)；Quality Gate GATE-ACCEPTANCE-COMPLETE/GATE-RELEASE-AUDIT-APPROVED(evaluator.go:388-457) 第三次重复校验，并将 summary.EvidenceRefs 对照当前 valid/valid-generation/有效 sha 的 Runtime 证据逐个可用性核查(missingS10EvidenceRefs, 459-489)+binding_matches 三元(runtime,baseline,round) 实时匹配(498-513)。注：changed_path 维度的真实性来自上游 S7——validateCoverageInventory(review/coverage.go:138-159) 强制从完成信封改投影出的 ChangedPaths 表里每一路既有 inventory 行又有 Claim source_ref 又有 frozen_subjects 哈希；修复链则由 s7_seed 从 ChangeImpact.ChangedArtifacts 机械生成，杜绝手编分母。",
+      "failure_scenario": "agent 写 coverage_inventory 只包含其修好的对象并声明 100% 覆盖：required categories 行缺失/metrics≠重算值/缺 counterevidence/refs 非 current-valid 证据四个方向都会让 validate 失败；手工 file 编辑又会因 sha 绑定使 envelope/gate 报 mismatch。",
+      "evidence": "manifest.go:205-207(空库存拒)、249-265(未支撑 PASS 拒)、267-275(必需类目)、287-289(孤立 counterevidence 拒)、310-319(反证全覆盖)、452-507(metrics 重算)；evaluator.go:420-450(gate 内第三次核对+binding matches)；s7_seed.go:21-35(seed 库存源自 impact 数组)；coverage.go:138-159(S7 changed-path 三向闭合)。"
+    },
+    {
+      "title": "场景8（低危残余）：ValidateForOutcome 的 review_required/blocked 放宽使未决清单可入库，依赖 outcome 字段自报",
+      "file": "/home/songhao/Documents/go-system-builder/internal/acceptance/manifest.go",
+      "line": 158,
+      "severity": "medium",
+      "category": "error-handling",
+      "description": "envelope.Conclusion 完全由注册方提供；allowsUnresolvedOutcome 判定只看 conclusion 字符串。恶意注册者恒填 review_required/blocked 可以把带 unknown/fail 行、阻塞发现非零的 manifest 登记为 valid 证据条目。真正的‘不算过审’兜底在于这些 kind 的证据只有接到对应 Gate（GATE-ACCEPTANCE-COMPLETE 只搜 PASS/APPROVED 类 envelope 语境 + acc_complete/clean_round_still_valid 作为 TR-015/TR-017 语义检查才推 Cursor）才会生效——因为这两条目又恰恰是 guards.go 里 evidenceBackedGuard 的壳，守卫强度取决于 evaluateGeneratedEvidence 目前的连接状态，形成较弱环节。",
+      "failure_scenario": "反复注册 review_required envelope + 大量 unknown 行的证据簇，制造‘有账本在管’的观感延迟 release_audit 推进；机器不会立刻拒绝，只会不上锁 TR-015/TR-017 所需的干净门槛。",
+      "evidence": "manifest.go:158-166(requireClean 由 conclusion 决定)；manifest.go:388-426(envelope Conclusion 直通)；guards.go:153-154 acc_complete/clean_round_still_valid 注册于 evidenceBackedGuard 开关（本轮初读确认它们委托 EvaluateCleanRound 但 acc_complete 本体不做清单相关校验）。"
+    },
+    {
+      "title": "场景9（确认兜底）：目录解析+Apply 内二次游标断言+CAS revision 构成非法跃迁三层拦截，S7→S10 直跳不存在编译进定义的边",
+      "file": "/home/songhao/Documents/go-system-builder/internal/transition/engine.go",
+      "line": 276,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "第一层：resolveCatalog 要求源光标精确匹配 spec.From/FromPhase(phase/global 各自分派)，未知跃迁直接 'unknown transition %q'。loop-definition.json 里 verification 的出口边只有 TR-008(observation_batch_sealed)→bug_resolution、TR-009(clean_round_valid)→acceptance、TR-010/011→paused；不存在 verification→acceptance 绕开 TR-009 的其它 Top-level/Phase/GTR 边，GTR 系列 To 都不是 acceptance/release_audit/release_authorized。第二层：Update() 在 store 锁内 acquireLock(O_EXCL, staleLockAge=30s) 先 recoverPendingWritesLocked 再 applyMutation，mutation.Apply 中再次断言 lifecycle 光标(engine.go:166-194)，消除了预读窗口中的 TOCTOU。第三层：ExpectedRevision CAS + EventIndex 事件 ID 幂等唯一(store.go:1285-1287)。catalog LoadCatalog fail-closed：未注册的 guard/action/actor/gate 全部拒绝启动(catalog.go:237-331, 527-539)。",
+      "failure_scenario": "invoker 从 verification.phase=planned 直发 TR-015 acceptance→release_audit：resolveCatalog 报 'transition TR-015 rejects source state verification'；就算伪造 Tool 边入参，Apply 中 lifecycle[state]!=='acceptance' 再次拒绝。",
+      "evidence": "engine.go:276-316(resolveCatalog 三路匹配)、168-194(Apply 内第二次游标断言)、196-213(guard 全数逐条求值)；docs/loop-definition.json 顶-level 跃迁清单(本次 dump)：verification 出口仅 008/009/010/011；store.go:1043-1052, 1271-1273, 1285-1296。"
+    },
+    {
+      "title": "场景9（短板记录）：多条 S7/S8/S9 关键守卫仍是 evidence_backed_guard 壳，过渡合法性合法但无语义——壳口径与说明书承诺不符",
+      "file": "/home/songhao/Documents/go-system-builder/internal/transition/guards.go",
+      "line": 165,
+      "severity": "high",
+      "category": "error-handling",
+      "description": "'original_finder_reverification_complete'(PTR-BUG-06 入口旁路使用)、'root_cause_evidence_complete'(PTR-BUG-01)、'canonical_bug_mapping_complete'、'bug_closing_contracts_complete'、'acc_complete' 等注册在 evidenceBackedGuard('name') 上，body 只检查 len(evidence)!=0(guards.go:282-285)。这些语义实际被搬到别处执行：deterministicCaseRoute 校验四要素齐备才能走 s9_repair、OpenRepairSession 要 contract_approved、CreateTargetedReverification 用 contractDocument 精确槽位。所以非法跃迁本身被封死（场景9 主防线仍在），但守卫注册表的名字承诺与实现强度不一致这一点本身就是 reviewer-tools 团队自己注释掉的债务；CLI 只要能凑出一枚 fingerprint 合法的证据映射即可通过相应 TR 的守卫调用（尽管下游再校验最终会卡住业务推进）。",
+      "failure_scenario": "手工构造 TR-012 请求附带任意一枚 fingerprint-matched 证据（如一块无关哈希片）：all_targeted_reverification_passed 是真的(status 机检查)，但 bug_phase_ready_for_full_review/other-name 式调用在同一入口上通不过 empty-evidence 校验而已——进一步动作仍会在 repair runtime verb 深处被 contract/status 绑定卡死，不会造成业务失真，但审计里这些 guard_result 记录为 pass 造成误导。",
+      "evidence": "guards.go:113-222 注册表与 164-174 的局部段；guards.go:265-287 evidenceBackedGuard 开关；TR-012 附加守卫 bug_phase_ready_for_full_review 该名单未列入 semanticChecks(223-234)；guards.go:104-112 官方 TODO 注释原文承认模式。"
+    },
+    {
+      "title": "场景10（确认兜底）：两 agent 同时提交被 文件锁 + CAS + event_id 幂等 + Apply 内业务断言 四重序列化",
+      "file": "/home/songhao/Documents/go-system-builder/internal/runtime/store.go",
+      "line": 1043,
+      "severity": "low",
+      "category": "error-handling",
+      "description": "每个 Store.Update 都先在 statePath+'.lock' 上 spin-acquire(O_EXCL, 5s 超时, removeExpiredLock 按 mtime 30 秒回收僵死锁, store.go:2757-2794)；持锁内才读状态、断言 revision==expected、检查 journal 光标(state/journal tail 双向配对, validateStateJournalPair 2623-)、EventIndex 冲突(1285-1287) 后 mutate+fsync-atomic-write(swap temp rename)+journal append 再清 marker(1368-1395)。即使绕过 Store 直接并发，ReviewResult 第二提交会在 Apply 中撞 'assignment %s already has a consumed ReviewResult' 与 producer!=dispatched-agent 校验(submit.go:996)双保险；RepairResult 同理(owner 校验 runtime.go:338-340 + validateRepairAssignmentReady 二次提交拒绝)。事件本身的幂等由 IdempotencyKey 保证非空并由 marker 与 journalEvent 相互校验(validatePendingCommitCoherence 一致)。",
+      "failure_scenario": "A/B 同时提交各自 assignment 的 result：第二个 Update 在锁上等待 → 进入时 revision 已变 → ErrStaleRevision，要求重读 snapshot（错误信息自带 next 步骤）；若两者抢同一 assignment，胜者的 CAS 落盘后，败者即便重试也落到 consumed 断言拒绝。单写故障(crash in-write)由 pending-commit marker + Reconcile 补齐，journal/state/tail 三向失谐时报文指明 `runtime reconcile` 恢复命令。",
+      "evidence": "store.go:1043-1052(lock 包裹)、1285-1287(EventID 冲突即拒)、1315-1321(sequence+last_event_id 双写)、1368-1395(marker→state→journal→clearMarker 顺序)；store.go:2757-2794(acquireLock)、2796+(removeExpiredLock)；submit.go:996 消费唯一性；repair/runtime.go:338-340 生产者归属校验。"
+    }
+  ]
+}

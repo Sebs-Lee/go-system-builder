@@ -776,6 +776,33 @@ func StaticClaimsSettled(state map[string]any, plan *Plan) bool {
 	return true
 }
 
+// RemainingStaticClaims counts required static-wave claims still awaiting a
+// final disposition. It is the explainability number behind the wave gate
+// (RC-12): the s7 status board and manifest-draft notes print it so an agent
+// can see how far the behavior wave is from dispatch without re-deriving the
+// count from raw state.
+func RemainingStaticClaims(state map[string]any, plan *Plan) int {
+	waveByClaim := map[string]string{}
+	for _, assignment := range plan.Assignments {
+		for _, claimID := range assignment.ClaimIDs {
+			waveByClaim[claimID] = assignment.ExecutionWave
+		}
+	}
+	dispositions := Dispositions(state)
+	remaining := 0
+	for _, claim := range plan.Claims {
+		if claim.Applicability == "not_applicable" || waveByClaim[claim.ClaimID] != "static" {
+			continue
+		}
+		switch dispositions[claim.ClaimID].Disposition {
+		case "pass", "finding", "blocked":
+		default:
+			remaining++
+		}
+	}
+	return remaining
+}
+
 // RoundFindings lists the finding entity rows for the current review round.
 func RoundFindings(state map[string]any) []map[string]any {
 	round := currentReviewRound(state)

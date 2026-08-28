@@ -56,7 +56,8 @@ or a proposed local patch.
 ## Re-entry after S9 targeted failure
 
 If `runtime investigation status` shows a Case reopened from S9, read every
-`read the recorded `causal_reassessment_refs[]` from `runtime investigation status` (they are listed on the Case board); causal_reassessment_refs[]` artifact before registering new hypotheses. The
+`causal_reassessment_refs[]` entry recorded on the Case board before
+registering new hypotheses. The
 targeted result is new causal evidence, not a replacement for the original
 S7 Finding. The re-entry command is:
 

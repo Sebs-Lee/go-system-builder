@@ -65,7 +65,7 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	for _, expected := range []string{
 		"LOOP RECOVERY",
 		"docs/agent-protocol.md#s2",
-		".claude/bin/loop-harness.md",
+		"loop-harness.md",
 		"Next:",
 	} {
 		if !strings.Contains(message, expected) {

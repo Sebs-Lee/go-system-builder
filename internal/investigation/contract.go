@@ -33,8 +33,9 @@ type ContractRequest struct {
 // CAS-pins the approved Contract into Runtime. It deliberately does not create
 // a BUG or require a legacy BUG acceptance: it advances the lifecycle through
 // S8-REPAIR-CONTRACT-APPROVAL so S9 consumes the approved Contract through the
-// pointer recorded here. The old PTR-BUG-08 catalog entry remains only for
-// legacy BUG projections and is not used by the Case/Contract authority path.
+// pointer recorded here. The old PTR-BUG-08 catalog entry (deprecated: legacy
+// compatibility) remains only for legacy BUG projections and is not used by
+// the Case/Contract authority path.
 func ApproveContract(root, statePath, journalPath string, request ContractRequest) (runtime.Snapshot, error) {
 	if strings.TrimSpace(root) == "" {
 		return runtime.Snapshot{}, actionableContractError("repository root is required")

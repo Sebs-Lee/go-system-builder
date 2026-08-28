@@ -2593,6 +2593,77 @@ func syncDir(path string) error {
 	return dir.Sync()
 }
 
+// journalRotationThreshold is the RC-10 Step A observation threshold for the
+// durable journal (L4-state-transition-core §11 honest clause: the journal is
+// currently append-only with no rotation limit). It is a reporting threshold
+// only — no rotation is performed.
+const journalRotationThreshold = 10000
+
+// JournalRotationThreshold exposes the observation threshold for diagnostics
+// and tests; it is not an enforcement limit (see JournalNeedsRotation).
+const JournalRotationThreshold = journalRotationThreshold
+
+// journalDiagnosticEnv gates the append-time rotation diagnostic. Emitting on
+// every append once the threshold is crossed would pollute CLI output and test
+// stderr, so the diagnostic is opt-in for operators measuring real journal
+// growth before a rotation transaction is designed (C5: no enforcement without
+// an observed failure).
+const journalDiagnosticEnv = "LOOP_HARNESS_JOURNAL_DIAGNOSTIC"
+
+// JournalNeedsRotation reports whether the durable journal at path has grown
+// past journalRotationThreshold lines, together with its current line count.
+// It is a read-only observability helper (RC-10 Step A): callers may surface
+// the count in diagnostics without taking the state lock. Rotation itself is
+// deliberately not implemented — rotating an active journal would break the
+// sequence-contiguity and tail-cursor invariants inspectJournal enforces over
+// the complete journal, so a Rollover-style transaction with a durable marker
+// must be designed first (RC-10 Step B TODO).
+func JournalNeedsRotation(path string) (bool, int, error) {
+	count, err := journalLineCount(path)
+	if err != nil {
+		return false, 0, err
+	}
+	return count > journalRotationThreshold, count, nil
+}
+
+// journalLineCount counts JSONL events in the journal. A missing journal is
+// treated as an empty tail, matching inspectJournal's recovery semantics.
+func journalLineCount(path string) (int, error) {
+	file, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("open journal for line count: %w", err)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	count := 0
+	for scanner.Scan() {
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return count, fmt.Errorf("scan journal for line count: %w", err)
+	}
+	return count, nil
+}
+
+// emitJournalRotationDiagnostic is the RC-10 Step A scaffolding called after a
+// successful journal append. It never rotates the journal and never fails the
+// append; it only reports the threshold crossing under journalDiagnosticEnv.
+func emitJournalRotationDiagnostic(path string) {
+	if os.Getenv(journalDiagnosticEnv) == "" {
+		return
+	}
+	needs, count, err := JournalNeedsRotation(path)
+	if err != nil {
+		return
+	}
+	if needs {
+		fmt.Fprintf(os.Stderr, "loop-harness: journal %s has %d events (rotation threshold %d); rotation is not implemented (RC-10 Step B)\n", path, count, journalRotationThreshold)
+	}
+}
+
 func appendJSONLine(path string, value any) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -2610,6 +2681,7 @@ func appendJSONLine(path string, value any) error {
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync journal: %w", err)
 	}
+	emitJournalRotationDiagnostic(path)
 	return nil
 }
 

@@ -204,7 +204,11 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		}
 	}
 	if planned.ExecutionWave == "behavior" {
-		notes = append(notes, "behavior-wave Assignment: register-workgroup rejects it until every required static Claim has a disposition (L3-S7 §5.2-5.3)")
+		note := "behavior-wave Assignment: register-workgroup rejects it until every required static Claim has a disposition (L3-S7 §5.2-5.3)"
+		if remaining := RemainingStaticClaims(state, plan); remaining > 0 {
+			note += fmt.Sprintf("; wave readiness: %d static-wave claim(s) still awaiting a disposition", remaining)
+		}
+		notes = append(notes, note)
 	}
 
 	runtimeID, _ := state["runtime_id"].(string)

@@ -122,12 +122,17 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  actions     Canonical Agent action catalog and compatibility notes")
 	fmt.Fprintln(stdout, "  runtime     Runtime helpers (including investigation intake, S9 repair transactions and terminal rollover)")
 	fmt.Fprintln(stdout, "  team        Team manifest + responsibility checks")
+	fmt.Fprintln(stdout, "  s6          S6 workgroup scaffolding + TASK generation")
+	fmt.Fprintln(stdout, "  s7          S7 ReviewPlan drafting, manifest scaffold and status (read-only)")
+	fmt.Fprintln(stdout, "  s10         Acceptance/release-audit manifest validation and status (read-only)")
+	fmt.Fprintln(stdout, "  tasks       TASK discovery/coverage listing (read-only)")
+	fmt.Fprintln(stdout, "  contracts   Locked contract set inspection (read-only)")
+	fmt.Fprintln(stdout, "  capture     Observation capture buffer (console/network/step evidence)")
 	fmt.Fprintln(stdout, "  impact      Evidence invalidation analysis")
 	fmt.Fprintln(stdout, "  verification Verification round evaluators")
 	fmt.Fprintln(stdout, "  release-graph Release-graph topological assertions")
 	fmt.Fprintln(stdout, "  e2e-coverage  Score E2E scenario inventory fidelity (REQ-039)")
 	fmt.Fprintln(stdout, "  scenario      Generate and validate module fact-driven scenario packages")
-	fmt.Fprintln(stdout, "  s10           Acceptance/release-audit manifest validation and status (read-only)")
 	fmt.Fprintln(stdout, "  manual      Render the gate-level manual")
 	fmt.Fprintln(stdout, "  explain     Per-transition details (explain <TR-xxx>)")
 	fmt.Fprintln(stdout)
@@ -136,7 +141,7 @@ func printTopLevelUsage(stdout io.Writer) {
 
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|health|actions|runtime|team|impact|verification|release-graph|capture|e2e-coverage|scenario|contracts|s10|manual|explain>")
+		fmt.Fprintln(stderr, "usage: loop-harness <init|req|status|next|ready|validate|dry-run|hook|doctor|health|actions|runtime|team|s6|s7|tasks|contracts|capture|impact|verification|release-graph|e2e-coverage|scenario|s10|manual|explain>")
 		fmt.Fprintln(stderr, "manual:  see .claude/bin/loop-harness.md (gate-level specification)")
 		fmt.Fprintln(stderr, "explain: loop-harness explain <TR-xxx> (per-transition details)")
 		return 2
@@ -508,7 +513,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "verification":
 		switch phase {
 		case "planned":
-			return "S7", "loop-orchestration", "scaffold the ReviewPlan via `loop-harness s7 draft --out plan.json`, fill the TODO oracles, and register via `runtime review-plan --file plan.json`"
+			return "S7", PrimarySkillS7, "scaffold the ReviewPlan via `loop-harness s7 draft --out plan.json`, fill the TODO oracles, and register via `runtime review-plan --file plan.json`"
 		case "running", "cannot_clean", "discovery_draining":
 			return "S7", "team-planning", "read `loop-harness s7 status`, scaffold each Assignment with `loop-harness s7 manifest-draft --assignment <id>`, register via `runtime register-workgroup`, and consume each Canonical ReviewResult via `runtime review-result submit`"
 		case "observation_sealed":
@@ -516,7 +521,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "clean":
 			return "S7", "acceptance-and-handoff", "machine CleanRound recorded; the next PreToolUse auto-commits TR-009 to advance into S10 — do not call the transition CLI"
 		}
-		return "S7", "loop-orchestration", "recover the verification round with `loop-harness s7 status`; if no plan is registered, run `s7 draft`, otherwise scaffold the exact Assignment with `s7 manifest-draft` and register it"
+		return "S7", PrimarySkillS7, "recover the verification round with `loop-harness s7 status`; if no plan is registered, run `s7 draft`, otherwise scaffold the exact Assignment with `s7 manifest-draft` and register it"
 	case "bug_resolution":
 		switch phase {
 		case "investigation":
@@ -1056,7 +1061,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		reqSHA256 := flags.String("req-sha256", "", "locked REQ SHA-256 for TR-001")
 		reqApprovedBy := flags.String("req-approved-by", "", "locked REQ approver for TR-001")
 		reqApprovedAt := flags.String("req-approved-at", "", "locked REQ approval time for TR-001")
-		paramsRaw := flags.String("params", "", "JSON object of guard params (used by generated-evidence transitions like PTR-BUG-02)")
+		paramsRaw := flags.String("params", "", "JSON object of guard params (used by generated-evidence transitions like PTR-BUG-02)") // deprecated: legacy compatibility
 		var evidence stringListFlag
 		flags.Var(&evidence, "evidence", "required evidence kind=reference; repeatable")
 		if err := flags.Parse(args[1:]); err != nil {

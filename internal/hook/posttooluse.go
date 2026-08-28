@@ -9,9 +9,11 @@
 //
 // Payload identification (platform reality: subagent payloads may not carry
 // agent_id): payload agent_id → tool_input.teammate_name matched against
-// entities.agents[].id → the sole agent in reading/understanding_submitted
-// state as a last-resort fallback. If identification fails, the observation
-// is silently skipped (exit 0) — never fabricate an agent binding.
+// entities.agents[].id. If identification fails, the observation is silently
+// skipped (exit 0) with an actionable reason — never fabricate an agent
+// binding, and never guess one from lifecycle state (S7-12, RC-12: the old
+// "sole reading agent" fallback could attribute a plan_report to the wrong
+// agent when several Workers were dispatched in parallel).
 package hook
 
 import (
@@ -58,7 +60,11 @@ func HandlePostToolUse(input policy.Input, agents []AgentRow) PostToolUseObserva
 	}
 	agentID := identifySender(input, agents)
 	if agentID == "" {
-		return PostToolUseObservation{Message: messageType, Reason: "sender not identifiable (payload carries no agent_id/teammate_name match)"}
+		// S7-12 (RC-12): the observation stays fail-open (exit 0, no block),
+		// but the reason now names the actionable fix instead of silently
+		// dropping the envelope — the payload must carry an explicit agent_id
+		// (or a teammate_name that matches a registered agent).
+		return PostToolUseObservation{Message: messageType, Reason: "S7-12: missing agent_id — re-send the SendMessage payload with agent_id set to the dispatched agent id (or a teammate_name that matches a registered agent); nothing was recorded"}
 	}
 	return PostToolUseObservation{
 		Recorded:  true,
@@ -80,7 +86,11 @@ type AgentRow struct {
 
 // identifySender applies the identification ladder: payload agent_id →
 // official top-level teammate_name (2.1.218 Agent Teams payloads) →
-// tool_input.teammate_name → the sole agent waiting on its plan checkpoint.
+// tool_input.teammate_name. There is deliberately no lifecycle-state
+// fallback (S7-12): guessing a sender from "whoever is in reading" can
+// mis-attribute a plan_report when several Workers are dispatched in
+// parallel, so an unidentifiable sender must surface an explicit, actionable
+// gap instead.
 func identifySender(input policy.Input, agents []AgentRow) string {
 	if input.AgentID != "" {
 		if identity.ValidateAgentID(input.AgentID) == nil {
@@ -118,19 +128,10 @@ func identifySender(input policy.Input, agents []AgentRow) string {
 			}
 		}
 	}
-	// Fallback: exactly one agent waiting on its plan checkpoint.
-	var candidates []string
-	for _, a := range agents {
-		if identity.ValidateAgentID(a.ID) != nil {
-			continue
-		}
-		if a.State == "reading" || a.State == "understanding_submitted" {
-			candidates = append(candidates, a.ID)
-		}
-	}
-	if len(candidates) == 1 {
-		return candidates[0]
-	}
+	// S7-12 (RC-12): no lifecycle-state guessing. When no explicit identity
+	// was carried on the payload, return an actionable reason naming the fix
+	// instead of attributing the message to whichever agent happens to be
+	// waiting on its plan checkpoint.
 	return ""
 }
 
