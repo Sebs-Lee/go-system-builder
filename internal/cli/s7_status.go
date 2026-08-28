@@ -74,15 +74,19 @@ func runS7Command(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("s7 status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "repository root")
+	explain := flags.Bool("explain", false, "expand the wave-readiness one-liner into A-completeness / B-admission / next-verb lines")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	return runS7Status(*root, stdout)
+	return runS7Status(*root, stdout, *explain)
 }
 
 // runS7Status reads the current runtime state and prints the S7 review
-// board to stdout. It performs no writes.
-func runS7Status(root string, stdout io.Writer) int {
+// board to stdout. It performs no writes. When explain is set, the
+// wave-readiness one-liner is expanded into three named lines
+// (RC-12 Step A): static-wave A-completeness, behavior-wave B-admission,
+// and the exact next CLI verb.
+func runS7Status(root string, stdout io.Writer, explain bool) int {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	store := runtime.NewStore(statePath, journalPath)
@@ -293,13 +297,38 @@ func runS7Status(root string, stdout io.Writer) int {
 	} else {
 		fmt.Fprintln(stdout, "all required claims dispositioned; round consumer closes on the next submit")
 	}
-	// Wave readiness (RC-12, minimal explainability): when a behavior-wave
-	// Assignment exists but static claims are still open, name the gate and
-	// how many static claims remain — one line, no separate --explain flag.
-	if planErr == nil && plan != nil && hasBehaviorWaveAssignment(plan) && !review.StaticClaimsSettled(state, plan) {
-		fmt.Fprintf(stdout, "wave readiness: behavior dispatch is blocked — %d static-wave claim(s) still awaiting a disposition (L3-S7 §5.2-5.3)\n", review.RemainingStaticClaims(state, plan))
+	// Wave readiness (RC-12): when a behavior-wave Assignment exists, name
+	// the gate. The compact one-liner renders only while the static set is
+	// unsettled; `--explain` always renders, so an agent can confirm the
+	// B-admission flip after the last static claim settles. Read-only: no
+	// new state is consulted.
+	if planErr == nil && plan != nil && hasBehaviorWaveAssignment(plan) {
+		remaining := review.RemainingStaticClaims(state, plan)
+		if explain {
+			printS7WaveExplain(stdout, state, plan, remaining)
+		} else if !review.StaticClaimsSettled(state, plan) {
+			fmt.Fprintf(stdout, "wave readiness: behavior dispatch is blocked — %d static-wave claim(s) still awaiting a disposition (L3-S7 §5.2-5.3)\n", remaining)
+		}
 	}
 	return 0
+}
+
+// printS7WaveExplain renders the three-line --explain expansion of the wave
+// gate (RC-12 Step A): A-completeness counts the static-wave claims that
+// still need a final disposition, B-admission states whether the behavior
+// wave may dispatch right now, and next-verb names the exact CLI action
+// that unblocks or advances it. Read-only: it reuses the registered plan
+// and runtime projection; no new state is consulted.
+func printS7WaveExplain(stdout io.Writer, state map[string]any, plan *review.Plan, remaining int) {
+	fmt.Fprintf(stdout, "explain A-completeness: %d required static-wave claim(s) still awaiting a pass/finding/blocked disposition (static settled=%t)\n",
+		remaining, review.StaticClaimsSettled(state, plan))
+	if remaining > 0 {
+		fmt.Fprintln(stdout, "explain B-admission: behavior-wave dispatch is BLOCKED — `runtime register-workgroup` rejects a behavior Assignment until A settles (L3-S7 §5.2-5.3)")
+		fmt.Fprintln(stdout, "explain next-verb: `loop-harness runtime review-result submit --assignment-id <static-assignment-id> --result <result.json>` to settle the remaining static claims, then re-run `loop-harness s7 status --explain`")
+		return
+	}
+	fmt.Fprintln(stdout, "explain B-admission: behavior-wave dispatch is ADMITTED — every required static claim has a final disposition")
+	fmt.Fprintln(stdout, "explain next-verb: `loop-harness s7 manifest-draft --assignment <behavior-assignment-id> --out <manifest.json>` then `loop-harness runtime register-workgroup --manifest <manifest.json> --task-id <TASK> --task <task.md>`")
 }
 
 // hasBehaviorWaveAssignment reports whether the plan dispatches any

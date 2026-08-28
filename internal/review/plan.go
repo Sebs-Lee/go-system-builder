@@ -204,7 +204,7 @@ func ValidatePlan(plan *Plan) error {
 				"S7_NA_CHECKLIST_MISSING",
 				fmt.Sprintf("claim %s is not_applicable without an na_checklist_id", claim.ClaimID),
 				[]string{"the N/A disposition carries only a free-text rationale; there is no checklist or impact-analysis artifact the conclusion was verified against"},
-				[]string{"set na_checklist_id to the N/A checklist / impact-analysis artifact id (e.g. bound_req#ui_impact or the §D checklist) and keep na_rationale as the human summary"},
+				[]string{"set na_checklist_id to the N/A checklist / impact-analysis artifact id (e.g. bound_req#ui_impact or na-checklist-template-1 — fill every section of docs/design/NA-checklist-template.md: scope / impact / evidence / alternative / sign-off) and keep na_rationale as the human summary"},
 				"runtime review-plan --file plan.json --expected-revision <N>",
 			)
 		}

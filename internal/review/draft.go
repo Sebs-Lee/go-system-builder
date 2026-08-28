@@ -198,7 +198,10 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			Method:        "impact analysis",
 			Applicability: "not_applicable",
 			NARationale:   "bound REQ declares no UI impact; no entry point or browser-observable behavior is in scope",
-			NAChecklistID: "bound_req#ui_impact",
+			// The id references the checklist template this N/A was checked
+			// against (RC-12: docs/design/NA-checklist-template.md); a bare
+			// rationale without a named checklist is not a verifiable N/A.
+			NAChecklistID: "na-checklist-template-1#bound_req#ui_impact",
 			SourceRefs:    []string{"bound_req"},
 		})
 		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; keep the explicit claim-e2e-na-1 Claim with source_refs and na_rationale (it is not dispatched), then verify against the real required surfaces (§4.3) before registering")

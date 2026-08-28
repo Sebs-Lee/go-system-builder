@@ -841,6 +841,11 @@ func runRuntimeInvestigationIngest(args []string, stdout, stderr io.Writer) int 
 	expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
 	caseID := flags.String("case-id", "", "optional InvestigationCase id")
 	groupingRationale := flags.String("grouping-rationale", "", "why this sealed Finding set is a provisional grouping")
+	// RC-12 (S8 intake scaffold): --emit-template writes a dry-run scaffold —
+	// Case shape, RouteRequest draft, RepairContract placeholder — from the
+	// batch that Ingest is about to consume. It never writes Runtime state;
+	// the real Case is still created by the CAS in investigation.Ingest.
+	emitTemplate := flags.String("emit-template", "", "write a case-template.json scaffold (Case + RouteRequest draft + RepairContract placeholder) to this path, or `-` for stdout; dry-run only")
 	occurredAtValue := flags.String("occurred-at", "", "RFC3339 transition time")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -873,6 +878,16 @@ func runRuntimeInvestigationIngest(args []string, stdout, stderr io.Writer) int 
 		return 1
 	}
 	pointer := investigationPointer(snapshot.State)
+	// RC-12 (S8 intake scaffold): after the Case exists, render the scaffold
+	// from the same facts. A template write failure must not undo the ingest
+	// (the CAS already committed), so it degrades to a non-zero exit with the
+	// Case pointer left intact for retry.
+	if strings.TrimSpace(*emitTemplate) != "" {
+		if err := writeInvestigationCaseTemplate(*root, pointer, strings.TrimSpace(*emitTemplate), stdout, stderr); err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime investigation ingest --emit-template", err))
+			return 1
+		}
+	}
 	fmt.Fprintf(stderr, "investigation ingest: Case %s is investigating; consume S7 batch %s; next: dispatch hypothesis questions, do not create a BUG\n", pointer["case_id"], pointer["observation_batch_id"])
 	return encodeJSON(stdout, map[string]any{
 		"case_id":              pointer["case_id"],
@@ -883,6 +898,116 @@ func runRuntimeInvestigationIngest(args []string, stdout, stderr io.Writer) int 
 		"observation_batch_id": pointer["observation_batch_id"],
 		"revision":             snapshot.Revision,
 	})
+}
+
+// writeInvestigationCaseTemplate renders the S8 intake scaffold (RC-12 Step
+// C) to --emit-template's path, or stdout when the path is "-". The scaffold
+// is a dry-run artifact only: it mirrors the just-ingested Case facts and
+// pre-fills the RouteRequest / RepairContract placeholders the S8 round must
+// fill in, but it never writes Runtime state and must not be submitted
+// directly (route/contract verbs validate against the live Case revision).
+func writeInvestigationCaseTemplate(root string, pointer map[string]any, target string, stdout, stderr io.Writer) error {
+	caseRel := stringValue(pointer["path"])
+	caseBytes, err := os.ReadFile(resolveRootPath(root, caseRel))
+	if err != nil {
+		return fmt.Errorf("read ingested Case %s: %w", caseRel, err)
+	}
+	var caseDocument map[string]any
+	if err := json.Unmarshal(caseBytes, &caseDocument); err != nil {
+		return fmt.Errorf("decode ingested Case %s: %w", caseRel, err)
+	}
+	caseID := stringValue(pointer["case_id"])
+	sourceFindings := stringSliceAny(pointer["source_finding_ids"])
+	if len(sourceFindings) == 0 {
+		sourceFindings = stringSliceAny(caseDocument["source_finding_ids"])
+	}
+	revision := intFieldCLI(pointer["revision"])
+	if revision == 0 {
+		revision = intFieldCLI(caseDocument["revision"])
+	}
+	if revision < 1 {
+		return fmt.Errorf("Case %s revision is not readable; regenerate the scaffold after `runtime investigation status` confirms the Case", caseID)
+	}
+
+	// RouteRequest draft: the fields Route() validates are pre-named; the
+	// agent replaces every TODO placeholder with real causal facts.
+	routeDraft := map[string]any{
+		"template":                "route-request-draft",
+		"case_id":                 caseID,
+		"expected_case_sha256":    stringValue(pointer["sha256"]),
+		"route":                   "TODO(s9_repair|investigate_more|duplicate|s2_spec_rework|human_req_change|s7_no_change)",
+		"route_reason":            "TODO(why this disposition)",
+		"primary_root_cause":      "TODO(one-sentence root cause; required for s9_repair)",
+		"causal_model_file":       "TODO(JSON file path with the causal model; see docs/examples/s7-s9/causal-model.json)",
+		"blast_radius_file":       "TODO(JSON file path; see docs/examples/s7-s9/blast-radius.json)",
+		"detection_gap_file":      "TODO(JSON file path; see docs/examples/s7-s9/detection-gap.json)",
+		"unexplained_finding_ids": stringSliceAny(caseDocument["unexplained_finding_ids"]),
+		"next_verb":               fmt.Sprintf("runtime investigation route --case-id %s --route <route> --reason <...> --expected-case-revision %d --expected-case-sha256 <sha> [--causal-model-file <...> --blast-radius-file <...> --detection-gap-file <...>]", caseID, revision),
+	}
+
+	// RepairContract placeholder: mirrors repair-contract.schema.json's
+	// required fields (status stays draft; approval happens only through
+	// `runtime investigation contract approve`).
+	contractPlaceholder := map[string]any{
+		"template":             "repair-contract-placeholder",
+		"schema_version":       "1.0.0",
+		"repair_contract_id":   fmt.Sprintf("repair-contract-%s", dispatchSlug(caseID)),
+		"case_id":              caseID,
+		"revision":             revision,
+		"status":               "draft",
+		"source_finding_ids":   sourceFindings,
+		"root_cause_statement": "TODO(fill after the route settles on s9_repair)",
+		"violated_invariant":   "TODO(the invariant the defect violated)",
+		"causal_model_ref":     fmt.Sprintf("case://%s/causal-model", caseID),
+		"architecture_intent":  "TODO(what the repaired architecture restores)",
+		"repair_units": []any{map[string]any{
+			"id":            "repair-unit-1",
+			"description":   "TODO(one bounded repair unit; every unit needs scope + assertion_ids before approval)",
+			"scope":         []string{},
+			"assertion_ids": []string{},
+		}},
+		"prospective_scope":          []string{},
+		"forbidden_scope":            []string{},
+		"symptom_assertions":         []string{"TODO(symptom-1: ...)"},
+		"root_invariant_assertions":  []string{"TODO(root-1: ...)"},
+		"detection_gap_assertions":   []string{"TODO(gap-1: ...)"},
+		"stop_escalation_conditions": []string{"TODO(when the repair must stop and escalate)"},
+		"next_verb":                  fmt.Sprintf("runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --expected-case-revision %d --expected-case-sha256 <sha>", caseID, revision),
+	}
+
+	document := map[string]any{
+		"template":                    "case-template",
+		"case_id":                     caseID,
+		"case_path":                   caseRel,
+		"case_sha256":                 stringValue(pointer["sha256"]),
+		"case_revision":               revision,
+		"status":                      stringValue(pointer["status"]),
+		"observation_batch_id":        stringValue(pointer["observation_batch_id"]),
+		"source_finding_ids":          sourceFindings,
+		"grouping_rationale":          caseDocument["grouping_rationale"],
+		"unexplained_finding_ids":     stringSliceAny(caseDocument["unexplained_finding_ids"]),
+		"route_request_draft":         routeDraft,
+		"repair_contract_placeholder": contractPlaceholder,
+		"disclosure":                  "dry-run scaffold only — do not submit this file; fill the TODO markers and run the named next verbs against the live Case",
+	}
+	data, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode case template: %w", err)
+	}
+	data = append(data, '\n')
+	if target == "-" {
+		fmt.Fprint(stderr, "investigation ingest --emit-template: scaffold below (stdout; dry-run, not written to disk)\n")
+		_, err = stdout.Write(data)
+		return err
+	}
+	absolute := resolveRootPath(root, target)
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+		return fmt.Errorf("create template directory: %w", err)
+	}
+	if err := os.WriteFile(absolute, data, 0o644); err != nil {
+		return fmt.Errorf("write case template %s: %w", target, err)
+	}
+	return nil
 }
 
 func runRuntimeInvestigationContractApprove(args []string, stdout, stderr io.Writer) int {

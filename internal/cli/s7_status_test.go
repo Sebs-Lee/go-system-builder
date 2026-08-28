@@ -109,7 +109,7 @@ func TestS7StatusIncludesMetricsSummary(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if code := runS7Status(root, &out); code != 0 {
+	if code := runS7Status(root, &out, false); code != 0 {
 		t.Fatalf("runS7Status exit = %d, output:\n%s", code, out.String())
 	}
 	for _, want := range []string{
