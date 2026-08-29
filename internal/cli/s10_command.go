@@ -23,7 +23,7 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 	if wantsHelp(args) {
 		name := compactHelpName(args)
 		if name == "" {
-			name = "<status|manifest validate|manifest render|manifest scaffold>"
+			name = "<status|manifest init|manifest validate|manifest render|manifest scaffold>"
 		}
 		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, render its Markdown report, scaffold a copyable manifest/envelope shape, and route defects back through S7→S8→S9.")
 		return 0
@@ -44,12 +44,15 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 }
 
 func runS10Manifest(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "validate" && args[0] != "render" && args[0] != "scaffold") {
-		fmt.Fprintln(stderr, "s10 manifest requires <validate|render|scaffold>")
+	if len(args) == 0 || (args[0] != "validate" && args[0] != "render" && args[0] != "scaffold" && args[0] != "init") {
+		fmt.Fprintln(stderr, "s10 manifest requires <init|validate|render|scaffold>")
 		return 2
 	}
 	if args[0] == "scaffold" {
 		return runS10ManifestScaffold(args[1:], stdout, stderr)
+	}
+	if args[0] == "init" {
+		return runS10ManifestInit(args[1:], stdout, stderr)
 	}
 	if args[0] == "render" {
 		return runS10ManifestRender(args[1:], stdout, stderr)
@@ -111,6 +114,129 @@ func runS10Manifest(args []string, stdout, stderr io.Writer) int {
 		"metrics":               summary.Metrics,
 		"next":                  next,
 	})
+}
+
+// runS10ManifestInit (RC-18 F-H2) emits the missing manifest scaffold: the
+// `scaffold` verb covers the evidence envelope, but the manifest itself — the
+// finite coverage_inventory plus counterevidence ledger the schema requires —
+// previously had to be copied out of the examples by reading source. The
+// template carries the full s10-audit-manifest.schema.json required set
+// (including metrics.audit_area_coverage for release_audit) with every
+// agent-supplied fact as a <PLACEHOLDER>, so it can never validate or be
+// registered verbatim: filling the placeholders is the work. `--emit-template
+// -` writes to stdout; any other path is written exclusively (never
+// overwriting an existing file). Dry-run: Runtime state is untouched.
+func runS10ManifestInit(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("s10 manifest init", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "s10 manifest init")
+	root := flags.String("root", ".", "repository root")
+	manifestType := flags.String("type", "", "manifest type to scaffold: acceptance or release_audit")
+	emitTemplate := flags.String("emit-template", "-", "write the manifest template to this repository-relative path, or `-` for stdout")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	kind := strings.TrimSpace(*manifestType)
+	if kind != "acceptance" && kind != "release_audit" {
+		fmt.Fprintln(stderr, "s10 manifest init requires --type acceptance or --type release_audit; next: pick the manifest the current cursor needs, then fill every <PLACEHOLDER> and run `loop-harness s10 manifest validate --file <path> --type <type>`")
+		return 2
+	}
+	template := s10ManifestTemplate(kind)
+	data, err := json.MarshalIndent(template, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest init: %v\n", err)
+		return 1
+	}
+	data = append(data, '\n')
+	target := strings.TrimSpace(*emitTemplate)
+	if target == "-" || target == "" {
+		fmt.Fprintln(stderr, "s10 manifest init: manifest template below (stdout; dry-run, not written to disk) — replace every <PLACEHOLDER>, then validate with `loop-harness s10 manifest validate --file <path> --type "+kind+"`")
+		if _, err := stdout.Write(data); err != nil {
+			fmt.Fprintf(stderr, "s10 manifest init: write stdout: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	targetPath, err := safeS10Path(*root, target)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest init: %v\n", err)
+		return 1
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		fmt.Fprintf(stderr, "s10 manifest init: create template directory: %v\n", err)
+		return 1
+	}
+	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest init: %s already exists or is not writable: %v; never overwrite a manifest in place — pick a new path or edit the existing file\n", target, err)
+		return 1
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(targetPath)
+		fmt.Fprintf(stderr, "s10 manifest init: write %s: %v\n", target, err)
+		return 1
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(targetPath)
+		fmt.Fprintf(stderr, "s10 manifest init: close %s: %v\n", target, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "wrote %s manifest template to %s; replace every <PLACEHOLDER>, then validate with `loop-harness s10 manifest validate --file %s --type %s`\n", kind, target, target, kind)
+	return 0
+}
+
+// s10ManifestTemplate builds the minimal-yet-complete manifest shape for the
+// requested type. Fields the schema requires but only the audit can fill stay
+// <PLACEHOLDER>; nothing outside the schema's additionalProperties:false set
+// is emitted, so the filled template cannot be rejected for unknown fields.
+func s10ManifestTemplate(manifestType string) map[string]any {
+	metrics := map[string]any{
+		"requirement_coverage":   "<COVERAGE-0-TO-1>",
+		"contract_coverage":      "<COVERAGE-0-TO-1>",
+		"changed_path_coverage":  "<COVERAGE-0-TO-1>",
+		"unknown_count":          "<COUNT>",
+		"unsupported_pass_count": "<COUNT>",
+		"unowned_risk_count":     "<COUNT>",
+		"untracked_debt_count":   "<COUNT>",
+		"blocking_finding_count": "<COUNT>",
+	}
+	if manifestType == "release_audit" {
+		metrics["audit_area_coverage"] = "<COVERAGE-0-TO-1>"
+	}
+	return map[string]any{
+		"schema_version":      "1.0.0",
+		"manifest_type":       manifestType,
+		"runtime_id":          "<RUNTIME-ID>",
+		"baseline_generation": "<BASELINE-GENERATION-INT>",
+		"review_round":        "<REVIEW-ROUND-INT>",
+		"coverage_inventory": []any{
+			map[string]any{
+				"id":            "<INVENTORY-ID>",
+				"category":      "<requirement|contract|changed_path>",
+				"source_refs":   []any{"<SOURCE-REF>"},
+				"expected":      "<EXPECTED-CLAIM>",
+				"oracle":        "<FALSIFYING-ORACLE>",
+				"owner":         "<OWNER-ROLE>",
+				"evidence_refs": []any{"<EVIDENCE-ID>"},
+				"disposition":   "<pass|not_applicable|unknown|fail>",
+			},
+		},
+		"counterevidence": []any{
+			map[string]any{
+				"id":            "<COUNTEREVIDENCE-ID>",
+				"inventory_id":  "<INVENTORY-ID>",
+				"question":      "<WHAT-WOULD-PROVE-THE-CLAIM-FALSE>",
+				"evidence_refs": []any{"<EVIDENCE-ID>"},
+				"outcome":       "<pass|not_applicable|unknown|fail>",
+			},
+		},
+		"audit_areas":       []any{},
+		"risks":             []any{},
+		"technical_debt":    []any{},
+		"blocking_findings": []any{},
+		"metrics":           metrics,
+	}
 }
 
 // runS10ManifestScaffold (RC-18 F-H2) writes a copyable starting shape for

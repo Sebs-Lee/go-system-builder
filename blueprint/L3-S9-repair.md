@@ -121,7 +121,7 @@ S9 入口只接受一份通过 S8 §8.4 和 §10 原子批准的 RepairContract�
 - prospective/forbidden scope；
 - assertion set 与 impact expectations。
 
-每次 PLAN_REPORT、首次写入、RepairResult submit、impact reconcile 和 targeted submit 都复验该锁。如果 Contract revision、REQ/design authority 或 implementation baseline 发生未声明变化，当前 session 标记 `stale`，停止继续消费。不得让一个旧计划在新 authority 上悄悄执行。
+每次 PLAN_REPORT、首次写入、RepairResult submit、impact create/commit 和 targeted submit 都复验该锁。如果 Contract revision、REQ/design authority 或 implementation baseline 发生未声明变化，当前 session 标记 `stale`，停止继续消费。不得让一个旧计划在新 authority 上悄悄执行。
 
 ### 2.3 S9 如何使用 Findings
 
@@ -465,9 +465,9 @@ ChangeImpact 必须生成三类差异：
 
 `unexpected_changed` 不能由 Builder 自行批准。若它改变 root-cause intent 或 authority，回 S8；若暴露规格错误，回 S2；若仅是同一 Contract 下可证明的实现伴随物，Main 更新 RepairPlan revision并保留审计，而不篡改 RepairContract。
 
-### 6.4 Impact reconcile 事务
+### 6.4 Impact create/commit 事务
 
-`repair impact reconcile` 应原子：
+`repair impact create|commit` 应原子：
 
 1. 锁定最终 actual diff exact set；
 2. 计算依赖传播和四类 evidence disposition；
@@ -538,7 +538,7 @@ Targeted verifier 不通过阅读 Builder 的解释来判定 PASS；它消费结
 
 ### 8.2 原子 handoff 事务
 
-`repair handoff submit` 应在一个事务中：
+`repair handoff create|commit` 应在一个事务中：
 
 1. 锁定所有 Contract、RepairResult、ChangeImpact、TargetedReverification hashes；
 2. 复算批次 completeness；
@@ -587,7 +587,7 @@ TargetedReverification 回答的是“这个 Contract 的因果断言是否成�
 5. 观察 first-write barrier、scope/forbidden-path Hook 和 progress events。
 6. 消费 Canonical RepairResult；对 blocked/conflict/stale 立即路由。
 7. 由 Result submit 按 DAG 依赖和共享锁判定 ready/queued；按 `runtime repair status` 的 `queue_reason` 重试下一 Assignment，直到全部 units 完成。
-8. 合并后运行 `repair impact reconcile`，以 actual diff 更新 evidence validity。
+8. 合并后运行 `repair impact create` / `repair impact commit`，以 actual diff 更新 evidence validity。
 9. 派发独立 TargetedReverification。
 10. 全部 PASS 后原子生成 RepairHandoff 和 S7 新轮。
 
@@ -615,10 +615,10 @@ Main 不应逐步遥控 Agent，也不应通过“你现在到哪一步”高频
 | first-write barrier | valid plan report、active unit、current Contract hash、path scope | Hard deny |
 | file/tool Hook | forbidden scope、共享 write owner、高风险操作审批 | Hard deny/approval |
 | `repair result submit` | actual diff、before-red、unit completeness、checks、scope | Hard deny + atomic persist |
-| `repair impact reconcile` | session-wide diff、dependency propagation、evidence validity exact set | Hard deny + atomic update |
+| `repair impact create/commit` | session-wide diff、dependency propagation、evidence validity exact set | Hard deny + atomic update |
 | targeted assignment | original facts、Contract assertions、ChangeImpact、read-only product scope | Generated prompt + hard write deny |
 | `targeted result submit` | assertion completeness、fresh evidence、independence、scope | Hard deny + route |
-| `repair handoff submit` | batch completeness、no open unit、new baseline、new S7 round | Hard deny + atomic transition |
+| `repair handoff create/commit` | batch completeness、no open unit、new baseline、new S7 round | Hard deny + atomic transition |
 | Stop/idle/session restore | result checkpoint、non-idle execution、recoverable state | Runtime governance |
 
 协议正文只保留“为什么”；Agent 真正走到每个动作时，工具只展示此刻必须知道的约束、缺失字段和唯一合法下一步。这样可以降低上下文成本，也避免读过长文后仍在关键入口忘记执行。

@@ -8,6 +8,7 @@
   "required": [
     "schema_version",
     "observation_batch_id",
+    "conclusion",
     "evidence_id",
     "kind",
     "runtime_id",

@@ -739,7 +739,7 @@ S7_DISPATCH_LOOP()
 ```text
 REVIEW RESULT REJECTED: claim QA-UNIT-TEST has no observed result or evidence_refs.
 Next: update review-result-17.json for QA-UNIT-TEST, then rerun
-loop-harness runtime review-result submit --assignment assignment-qa-fund --result ...
+loop-harness runtime review-result submit --assignment-id assignment-qa-fund --result ...
 ```
 
 不能把整份 S7 或 `agent-protocol.md` 注入每次 Hook。

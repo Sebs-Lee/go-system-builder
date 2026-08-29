@@ -92,7 +92,10 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 	store := runtime.NewStore(statePath, journalPath)
 	snapshot, err := store.Snapshot()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read runtime: %v\n", err)
+		// RC-18 (F-M2): an uninitialized or locked Runtime surfaces as a bare
+		// lock/read error here; name the recovery path instead, mirroring the
+		// s10 status guidance.
+		fmt.Fprintf(os.Stderr, "s7 status: read runtime: %v; next: the Runtime may not be initialized or its lock is stuck — run `loop-harness init` to initialize, or `loop-harness runtime recover inspect` before starting S7\n", err)
 		return 1
 	}
 	state := snapshot.State

@@ -36,7 +36,10 @@ func TestIngestRejectsMissingObservationBatchWithRecoveryCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("Ingest() must reject a missing observation batch")
 	}
-	assertErrorMentions(t, err, "observation_batch", "runtime investigation ingest")
+	assertErrorMentions(t, err, "observation_batch", "s7 status --explain")
+	if strings.Contains(err.Error(), "runtime investigation ingest") {
+		t.Errorf("no-batch error must not point back at this ingest command (RC-18 F-H1): %q", err.Error())
+	}
 }
 
 func TestIngestRejectsObservationBatchHashDrift(t *testing.T) {
@@ -191,6 +194,158 @@ func TestIngestCreatesCaseAndCommitsInvestigationPointer(t *testing.T) {
 	}
 }
 
+// setIntakeLifecycle overrides the fixture lifecycle cursor. The RC-18
+// phase-gate test uses it to move the cursor back to verification.running.
+func setIntakeLifecycle(t *testing.T, fixture *intakeFixture, state, phase string) {
+	t.Helper()
+	data, err := os.ReadFile(fixture.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["lifecycle"] = map[string]any{"state": state, "phase": phase, "phase_revision": 0}
+	updated, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.statePath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestIngestRejectsWrongLifecycleCursor covers the RC-18 phase gate: ingest is
+// only legal at bug_resolution.investigation (TR-008 or a human defect
+// decision), so a batch pointer that survives into another cursor — or a
+// replay after route consume left the phase — must fail closed with a
+// phase-specific recovery hint, never with the ingest self-loop.
+func TestIngestRejectsWrongLifecycleCursor(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setIntakeLifecycle(t, fixture, "verification", "running")
+
+	_, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the cursor does not authorize S8 intake yet",
+	})
+	if err == nil {
+		t.Fatal("Ingest() must reject a verification cursor")
+	}
+	assertErrorMentions(t, err, "bug_resolution.investigation", "verification.running", "runtime investigation status")
+	if strings.Contains(err.Error(), "state.review") {
+		t.Errorf("phase-gate error must describe the lifecycle cursor, not the batch pointer: %q", err.Error())
+	}
+}
+
+// TestIngestAllowsBugResolutionInvestigationCursor proves the phase gate admits
+// exactly the cursor TR-008 opens and that the ingested Case projects the
+// sealed batch's claim-coverage facts into the boundary views (RC-18 S8-M1).
+func TestIngestAllowsBugResolutionInvestigationCursorAndProjectsBatchViews(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-2", "finding-1"})
+	setIntakeLifecycle(t, fixture, "bug_resolution", "investigation")
+
+	snapshot, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "TR-008 opened S8 with an exact Finding set",
+	})
+	if err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	caseRel := snapshot.State["review"].(map[string]any)["investigation"].(map[string]any)["path"].(string)
+	caseData := mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(caseRel)))
+	if err := schema.NewEmbeddedValidator().ValidateBytes("review-investigation-case.schema.json", caseData); err != nil {
+		t.Fatalf("InvestigationCase schema: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(caseData, &document); err != nil {
+		t.Fatal(err)
+	}
+	// failure_boundary_refs: one finding:<id> ref per source Finding.
+	boundaries := document["failure_boundary_refs"].([]any)
+	if len(boundaries) != 2 || boundaries[0] != "finding:finding-1" || boundaries[1] != "finding:finding-2" {
+		t.Fatalf("failure_boundary_refs = %#v, want sorted finding refs", boundaries)
+	}
+	// evidence_gaps: an array (never JSON null) even when nothing is blocked.
+	if _, isArray := document["evidence_gaps"].([]any); !isArray {
+		t.Fatalf("evidence_gaps = %#v, want an array", document["evidence_gaps"])
+	}
+	if got := document["baseline_digest"]; got != strings.Repeat("a", 64) {
+		t.Fatalf("baseline_digest = %v, want the sealed subject digest", got)
+	}
+}
+
+// TestIngestProjectsBlockedClaimsIntoEvidenceGaps proves blocked Claims and
+// unobserved Claims land in evidence_gaps with their preconditions, and that
+// blocked evidence refs join failure_boundary_refs.
+func TestIngestProjectsBlockedClaimsIntoEvidenceGaps(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	// Re-seal the batch with one blocked claim and one unobserved claim.
+	batchPath := filepath.Join(fixture.root, filepath.FromSlash(fixture.batchRel))
+	data := mustRead(t, batchPath)
+	var batch map[string]any
+	if err := json.Unmarshal(data, &batch); err != nil {
+		t.Fatal(err)
+	}
+	batch["claim_coverage_summary"].(map[string]any)["blocked"] = 1
+	batch["claim_coverage_summary"].(map[string]any)["blocked_claims"] = []any{
+		map[string]any{
+			"claim_id":              "claim-intake-1",
+			"blocking_finding_ids":  []any{"finding-1"},
+			"failed_precondition":   map[string]any{"kind": "build", "detail": "the module does not compile in the verification workspace"},
+			"evidence_refs":         []any{"evidence://intake-build-log"},
+			"after_repair_required": true,
+			"result_id":             "review-result-r1",
+		},
+	}
+	batch["unobserved_claim_ids"] = []any{"claim-intake-9"}
+	sealed, err := json.MarshalIndent(batch, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed = append(sealed, '\n')
+	if err := os.WriteFile(batchPath, sealed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setObservationBatchPointer(t, fixture, hash(sealed))
+	setIntakeLifecycle(t, fixture, "bug_resolution", "investigation")
+
+	snapshot, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "blocked claims must surface as investigation evidence gaps",
+	})
+	if err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	caseRel := snapshot.State["review"].(map[string]any)["investigation"].(map[string]any)["path"].(string)
+	var document map[string]any
+	if err := json.Unmarshal(mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(caseRel))), &document); err != nil {
+		t.Fatal(err)
+	}
+	gaps := document["evidence_gaps"].([]any)
+	if len(gaps) != 2 {
+		t.Fatalf("evidence_gaps = %#v, want one blocked + one unobserved entry", gaps)
+	}
+	blocked, _ := gaps[0].(string)
+	if !strings.Contains(blocked, "claim-intake-1") || !strings.Contains(blocked, "finding-1") || !strings.Contains(blocked, "build") {
+		t.Fatalf("blocked gap = %q, want claim/finding/precondition projection", blocked)
+	}
+	unobserved, _ := gaps[1].(string)
+	if !strings.Contains(unobserved, "claim-intake-9") {
+		t.Fatalf("unobserved gap = %q, want the unobserved claim projection", unobserved)
+	}
+	boundaries := document["failure_boundary_refs"].([]any)
+	found := false
+	for _, raw := range boundaries {
+		if ref, _ := raw.(string); ref == "evidence://intake-build-log" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("failure_boundary_refs = %#v, want the blocked claim's evidence ref", boundaries)
+	}
+}
+
 func TestIngestRejectsStaleRevisionBeforeCreatingCase(t *testing.T) {
 	fixture := newIntakeFixture(t, []string{"finding-1"})
 
@@ -255,7 +410,10 @@ func newIntakeFixture(t *testing.T, pointerIDs []string) *intakeFixture {
 	}
 	state["runtime_id"] = "loop-REQ-INTAKE"
 	state["revision"] = 0
-	state["lifecycle"] = map[string]any{"state": "verification", "phase": "running", "phase_revision": 0}
+	// The default fixture cursor is the one TR-008 opens: bug_resolution.
+	// investigation. Tests that need a different cursor override it through
+	// setIntakeLifecycle (e.g. the RC-18 phase-gate rejection test below).
+	state["lifecycle"] = map[string]any{"state": "bug_resolution", "phase": "investigation", "phase_revision": 0}
 	state["baseline"] = map[string]any{"generation": 3, "captured_at": "2026-08-25T00:00:00Z"}
 	state["review"] = map[string]any{
 		"round":             1,

@@ -880,12 +880,14 @@ func runRuntimeInvestigationIngest(args []string, stdout, stderr io.Writer) int 
 	pointer := investigationPointer(snapshot.State)
 	// RC-12 (S8 intake scaffold): after the Case exists, render the scaffold
 	// from the same facts. A template write failure must not undo the ingest
-	// (the CAS already committed), so it degrades to a non-zero exit with the
-	// Case pointer left intact for retry.
+	// (the CAS already committed) and must not masquerade as an ingest
+	// failure either (RC-18): the ingest result JSON still streams and the
+	// ErrAlreadyIngested idempotent-retry path is self-explaining, so the
+	// failure degrades to a warning on stderr with exit 0 — the caller
+	// regenerates the scaffold after `runtime investigation status`.
 	if strings.TrimSpace(*emitTemplate) != "" {
 		if err := writeInvestigationCaseTemplate(*root, pointer, strings.TrimSpace(*emitTemplate), stdout, stderr); err != nil {
-			fmt.Fprintln(stderr, formatFailure("runtime investigation ingest --emit-template", err))
-			return 1
+			fmt.Fprintf(stderr, "investigation ingest: warning: --emit-template failed (%v); the Case ingest itself committed — re-run the scaffold after `runtime investigation status`\n", err)
 		}
 	}
 	fmt.Fprintf(stderr, "investigation ingest: Case %s is investigating; consume S7 batch %s; next: dispatch hypothesis questions, do not create a BUG\n", pointer["case_id"], pointer["observation_batch_id"])
@@ -1304,12 +1306,21 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 	if route := stringValue(document["route"]); route != "" {
 		nextAction = investigationRouteNextAction(route, pointer)
 	}
+	// RC-18 S8-H3: surface the baseline-drift warning on the status board so
+	// the investigator sees the stale-baseline fact at read time, not only in
+	// the journal message recorded by the last Case revision.
+	var baselineDrift string
+	if reviewMap := mapFieldCLI(state, "review"); reviewMap != nil {
+		baselineDrift = stringValue(reviewMap["investigation_baseline_drift"])
+	}
 	return map[string]any{
 		"case_id":                 stringValue(pointer["case_id"]),
 		"status":                  stringValue(document["status"]),
 		"route":                   stringValue(document["route"]),
 		"source_finding_ids":      sourceFindingIDs,
 		"unexplained_finding_ids": unexplained,
+		"baseline_digest":         stringValue(document["baseline_digest"]),
+		"baseline_drift_warning":  baselineDrift,
 		"hypothesis_summary": map[string]any{
 			"total":            len(hypotheses),
 			"pending":          pendingHypotheses,

@@ -328,6 +328,13 @@
             }
           ]
         },
+        "investigation_baseline_drift": {
+          "description": "RC-18 S8-H3: the latest baseline-digest drift warning from investigation Case revisions, or null while the Case baseline matches the frozen ReviewPlan subjects. Read-only projection for `runtime investigation status`; the Case artifact's pinned baseline_digest is never rewritten.",
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string", "minLength": 1}
+          ]
+        },
         "investigation": {
           "description": "The S8 InvestigationCase intake pointer. The Case artifact is the authority; this runtime field is only its CAS-pinned identity and status projection.",
           "oneOf": [

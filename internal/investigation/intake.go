@@ -23,6 +23,19 @@ import (
 
 const intakeNextCommand = "runtime investigation ingest --root ."
 
+// intakeSealNext is the no-batch recovery hint (RC-18 F-H1): it must never
+// point back at this ingest command. Retrying ingest can never create the
+// batch — the pointer only appears once S7 seals an ObservationBatch — so a
+// self-referencing hint turns the first rejection into a dead loop.
+const intakeSealNext = "next: `loop-harness s7 status --explain` to read the current round, then dispatch or submit the remaining Assignments (`runtime review-result submit --assignment-id <id> --result <result.json>`) so the round consumer seals the ObservationBatch; only then re-run this ingest"
+
+// intakePhaseNext is the RC-18 lifecycle-guard hint for the phase gate below:
+// the Runtime cursor is not bug_resolution.investigation, so the batch pointer
+// (if any) is not consumable yet. TR-008 (verification.observation_sealed ->
+// bug_resolution.investigation) or a human defect decision must move the
+// cursor first — re-running ingest can never do that.
+const intakePhaseNext = "next: run `runtime investigation status` to inspect the current cursor; TR-008 (a sealed ObservationBatch handed off from verification.observation_sealed) or a human defect decision must open bug_resolution.investigation before this ingest is legal"
+
 // ErrAlreadyIngested means the current Runtime already points at the same
 // ObservationBatch/Case. It is intentionally an error so a caller cannot
 // mistake an idempotent retry for a new investigation revision.
@@ -49,6 +62,38 @@ type observationBatch struct {
 	BaselineGeneration int      `json:"baseline_generation"`
 	SubjectDigest      string   `json:"subject_digest"`
 	FindingIDs         []string `json:"finding_ids"`
+	// RC-18 S8-M1: claim_coverage_summary / blocked_claims / unobserved_claim_ids
+	// were previously never decoded, so the S8 boundary views derived from them
+	// stayed empty at intake. The schema already makes them required.
+	ClaimCoverageSummary claimCoverageSummary `json:"claim_coverage_summary"`
+	UnobservedClaimIDs   []string             `json:"unobserved_claim_ids"`
+}
+
+// claimCoverageSummary mirrors the sealed ObservationBatch projection
+// (observation-batch.schema.json): the round's Claim dispositions and the
+// blocked Claims with their blocking Finding bindings.
+type claimCoverageSummary struct {
+	TotalRequired int            `json:"total_required"`
+	Pass          int            `json:"pass"`
+	Finding       int            `json:"finding"`
+	NotApplicable int            `json:"not_applicable"`
+	Blocked       int            `json:"blocked"`
+	BlockedClaims []blockedClaim `json:"blocked_claims"`
+	PlanRevision  int            `json:"plan_revision"`
+}
+
+type blockedClaim struct {
+	ClaimID             string             `json:"claim_id"`
+	BlockingFindingIDs  []string           `json:"blocking_finding_ids"`
+	FailedPrecondition  failedPrecondition `json:"failed_precondition"`
+	EvidenceRefs        []string           `json:"evidence_refs"`
+	AfterRepairRequired bool               `json:"after_repair_required"`
+	ResultID            string             `json:"result_id"`
+}
+
+type failedPrecondition struct {
+	Kind   string `json:"kind"`
+	Detail string `json:"detail"`
 }
 
 // Ingest consumes the sealed ObservationBatch pointer in state.review,
@@ -71,6 +116,18 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 	}
 	if current.Revision != request.ExpectedRevision {
 		return runtime.Snapshot{}, fmt.Errorf("%w: expected %d but Runtime is at %d; next: %s", runtime.ErrStaleRevision, request.ExpectedRevision, current.Revision, intakeNextCommand)
+	}
+	// RC-18 lifecycle gate: only TR-008 (verification.observation_sealed ->
+	// bug_resolution.investigation) or a human defect decision may open S8
+	// intake (docs/loop-definition.json bug_resolution.investigation
+	// entry_condition). Without this gate a stale batch pointer left behind by
+	// a phase change — or a Case-route replay after route_consume clears the
+	// pointer and leaves the phase — could enter the Case write path.
+	lifecycle, _ := current.State["lifecycle"].(map[string]any)
+	if state := stringField(lifecycle["state"]); state != "bug_resolution" || stringField(lifecycle["phase"]) != "investigation" {
+		return runtime.Snapshot{}, actionableError(
+			"investigation intake requires lifecycle bug_resolution.investigation but the Runtime cursor is %s.%s; %s",
+			stringField(lifecycle["state"]), stringField(lifecycle["phase"]), intakePhaseNext)
 	}
 
 	pointer, err := observationBatchPointer(current.State)
@@ -160,7 +217,6 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 		occurredAt = time.Now().UTC()
 	}
 	runtimeID := stringField(current.State["runtime_id"])
-	lifecycle, _ := current.State["lifecycle"].(map[string]any)
 	cursor := map[string]any{"state": stringField(lifecycle["state"]), "phase": lifecycle["phase"]}
 	pointerMap := map[string]any{
 		"case_id":              caseID,
@@ -225,11 +281,11 @@ type batchPointer struct {
 func observationBatchPointer(state map[string]any) (batchPointer, error) {
 	review, ok := state["review"].(map[string]any)
 	if !ok || review == nil {
-		return batchPointer{}, actionableError("state.review is missing; S7 must seal an ObservationBatch before S8 intake")
+		return batchPointer{}, fmt.Errorf("state.review is missing; S7 must seal an ObservationBatch before S8 intake; %s", intakeSealNext)
 	}
 	raw, ok := review["observation_batch"].(map[string]any)
 	if !ok || raw == nil {
-		return batchPointer{}, actionableError("state.review.observation_batch is missing; S7 must seal an ObservationBatch before S8 intake")
+		return batchPointer{}, fmt.Errorf("state.review.observation_batch is missing; S7 must seal an ObservationBatch before S8 intake; %s", intakeSealNext)
 	}
 	pointer := batchPointer{BatchID: stringField(raw["batch_id"]), Path: stringField(raw["path"]), SHA256: stringField(raw["sha256"])}
 	if pointer.BatchID == "" {
@@ -250,6 +306,12 @@ func observationBatchPointer(state map[string]any) (batchPointer, error) {
 }
 
 func buildInitialCase(caseID string, batch observationBatch, batchRef, batchSHA, rationale string, baseline int) ([]byte, error) {
+	// RC-18 S8-M1: project the sealed Claim-coverage facts into the boundary
+	// views instead of leaving them permanently empty. failure_boundary_refs
+	// and evidence_gaps are content-addressed observations of what the sealed
+	// batch already proves; cross_layer_trace stays null because the batch
+	// carries no cross-layer topology and S8 never fabricates one.
+	boundaryRefs, evidenceGaps := projectBatchViews(batch)
 	document := map[string]any{
 		"schema_version":           "1.0.0",
 		"case_id":                  caseID,
@@ -263,9 +325,9 @@ func buildInitialCase(caseID string, batch observationBatch, batchRef, batchSHA,
 		"baseline_digest":          batch.SubjectDigest,
 		"grouping_rationale":       strings.TrimSpace(rationale),
 		"unexplained_finding_ids":  sortedStrings(batch.FindingIDs),
-		"failure_boundary_refs":    []string{},
+		"failure_boundary_refs":    boundaryRefs,
 		"cross_layer_trace":        nil,
-		"evidence_gaps":            []string{},
+		"evidence_gaps":            evidenceGaps,
 		"hypotheses":               []any{},
 		"hypothesis_results":       []any{},
 		"causal_model":             nil,
@@ -281,6 +343,50 @@ func buildInitialCase(caseID string, batch observationBatch, batchRef, batchSHA,
 		return nil, fmt.Errorf("encode InvestigationCase: %w", err)
 	}
 	return append(data, '\n'), nil
+}
+
+// projectBatchViews derives the initial failure_boundary_refs and
+// evidence_gaps views from the sealed ObservationBatch. failure_boundary_refs
+// names every source Finding artifact (its existence and hash were verified by
+// validateFindingArtifacts) plus every blocked Claim's evidence refs — the
+// boundaries the investigation must explain or resolve. evidence_gaps records
+// one entry per blocked Claim (the failed precondition and the after-repair
+// obligation) and per unobserved Claim (an immediate-stop capture gap).
+func projectBatchViews(batch observationBatch) ([]string, []string) {
+	boundarySet := map[string]struct{}{}
+	for _, findingID := range batch.FindingIDs {
+		if id := strings.TrimSpace(findingID); id != "" {
+			boundarySet["finding:"+id] = struct{}{}
+		}
+	}
+	// Never nil: the Case schema requires evidence_gaps to be an array, and a
+	// nil slice JSON-encodes as null (breaking every downstream schema check
+	// when no Claim is blocked or unobserved).
+	gaps := []string{}
+	for _, blocked := range batch.ClaimCoverageSummary.BlockedClaims {
+		if strings.TrimSpace(blocked.ClaimID) == "" {
+			continue
+		}
+		for _, ref := range blocked.EvidenceRefs {
+			if ref = strings.TrimSpace(ref); ref != "" {
+				boundarySet[ref] = struct{}{}
+			}
+		}
+		gaps = append(gaps, fmt.Sprintf(
+			"claim %s blocked by findings [%s]: precondition %s — %s (after-repair re-verification required)",
+			blocked.ClaimID, strings.Join(sortedStrings(blocked.BlockingFindingIDs), ", "),
+			strings.TrimSpace(blocked.FailedPrecondition.Kind), strings.TrimSpace(blocked.FailedPrecondition.Detail)))
+	}
+	for _, claimID := range batch.UnobservedClaimIDs {
+		if id := strings.TrimSpace(claimID); id != "" {
+			gaps = append(gaps, "claim "+id+" unobserved: immediate-stop capture gap; the repaired round owes this Claim a disposition")
+		}
+	}
+	boundaries := make([]string, 0, len(boundarySet))
+	for ref := range boundarySet {
+		boundaries = append(boundaries, ref)
+	}
+	return sortedStrings(boundaries), gaps
 }
 
 func rejectExistingInvestigation(state map[string]any, caseID, batchID string) error {

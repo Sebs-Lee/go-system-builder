@@ -362,3 +362,68 @@ func validS10ManifestJSON(t *testing.T, kind string) []byte {
 	}
 	return data
 }
+
+// TestS10ManifestInitEmitsSchemaCompleteTemplate covers RC-18 F-H2: the init
+// verb scaffolds a manifest template that already carries the full
+// s10-audit-manifest.schema.json required set (audit_area_coverage included
+// for release_audit), so an Agent never has to reverse-engineer the envelope
+// from source. Every agent-supplied fact stays a <PLACEHOLDER>.
+func TestS10ManifestInitEmitsSchemaCompleteTemplate(t *testing.T) {
+	for _, manifestType := range []string{"acceptance", "release_audit"} {
+		var stdout, stderr bytes.Buffer
+		code := cli.Run([]string{"s10", "manifest", "init", "--type", manifestType}, strings.NewReader(""), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("s10 manifest init --type %s failed: code=%d stderr=%s", manifestType, code, stderr.String())
+		}
+		var template map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &template); err != nil {
+			t.Fatalf("template is not JSON: %v", err)
+		}
+		if template["schema_version"] != "1.0.0" || template["manifest_type"] != manifestType {
+			t.Fatalf("unexpected template header: %#v", template)
+		}
+		metrics, _ := template["metrics"].(map[string]any)
+		if metrics == nil {
+			t.Fatalf("template metrics missing: %#v", template)
+		}
+		if _, hasAudit := metrics["audit_area_coverage"]; hasAudit != (manifestType == "release_audit") {
+			t.Fatalf("metrics.audit_area_coverage presence = %v for %s", hasAudit, manifestType)
+		}
+		for _, key := range []string{"coverage_inventory", "counterevidence", "risks", "technical_debt", "blocking_findings"} {
+			if _, ok := template[key]; !ok {
+				t.Fatalf("template is missing required key %s: %#v", key, template)
+			}
+		}
+		if template["runtime_id"] != "<RUNTIME-ID>" || template["baseline_generation"] != "<BASELINE-GENERATION-INT>" {
+			t.Fatalf("template must keep agent-supplied facts as <PLACEHOLDER> tokens: %#v", template)
+		}
+	}
+}
+
+// TestS10ManifestInitRejectsUnknownTypeAndRefusesOverwrite proves the init
+// verb fails closed on an unknown --type and never overwrites an existing
+// manifest file (O_EXCL).
+func TestS10ManifestInitRejectsUnknownTypeAndRefusesOverwrite(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"s10", "manifest", "init", "--type", "chaos"}, strings.NewReader(""), &stdout, &stderr); code == 0 {
+		t.Fatal("unknown --type must be rejected")
+	}
+
+	root := t.TempDir()
+	existing := filepath.Join(root, "manifest.json")
+	if err := os.WriteFile(existing, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"s10", "manifest", "init", "--type", "acceptance", "--root", root, "--emit-template", "manifest.json"}, strings.NewReader(""), &stdout, &stderr); code == 0 {
+		t.Fatal("init must refuse to overwrite an existing manifest")
+	}
+	data, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "{}" {
+		t.Fatalf("existing manifest was modified: %q", data)
+	}
+}

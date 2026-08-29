@@ -411,6 +411,16 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		"batch_id": "observation-batch-r1", "path": batchRel, "sha256": sha256HexForCLI(data),
 		"finding_ids": []any{"finding-1"}, "drain_policy": "complete_required_claims", "sealed_at": "2026-08-25T00:00:00Z",
 	}
+	// RC-14 attestation: the hypothesis/register + result verbs validate every
+	// non-anchor --evidence against the runtime evidence index, so the sealed
+	// batch must also be a current-generation index entry, not just a pointer.
+	state["evidence"] = append(state["evidence"].([]any), map[string]any{
+		"id": "observation-batch-r1", "kind": "observation_batch", "path": batchRel, "sha256": sha256HexForCLI(data),
+		"status": "valid", "baseline_generation": 1, "review_round": 1,
+		"produced_by": []any{"round-consumer"}, "invalidated_by": nil,
+		"invalidation_rule": nil, "invalidation_reason": nil,
+		"responsibility_id": "Orchestrator", "scope_refs": []any{},
+	})
 	seedCLIFinding(t, root, state)
 	req039fixtures.WriteState(t, root, state)
 
@@ -453,7 +463,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		"--invariant", "every store error reaches the caller",
 		"--discriminator", "force the store failure and observe the boundary",
 		"--support", "boundary returns nil", "--refute", "boundary propagates",
-		"--source-finding", "finding-1", "--evidence", ".claude/evidence/observation-batch-r1.json")
+		"--source-finding", "finding-1", "--evidence", "observation-batch-r1")
 	if code != 0 {
 		t.Fatalf("hypothesis register code=%d stderr=%s stdout=%s", code, errOut, out)
 	}
@@ -489,7 +499,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		"--expected-case-revision", fmtInt(status.Case.Revision), "--expected-case-sha256", status.Case.SHA256,
 		"--hypothesis-id", "hyp-1", "--assignment-id", "assignment-s8-hyp-1", "--method", "forced failure", "--observed", "nil under store error",
 		"--counterfactual", "a propagating boundary would surface the typed error",
-		"--evidence", ".claude/evidence/observation-batch-r1.json", "--evidence", "evidence://boundary-trace",
+		"--evidence", "observation-batch-r1", "--evidence", "evidence://boundary-trace",
 		"--result", "supported", "--explains", "finding-1", "--source-boundary", "service.go:87", "--source-boundary", "decoder.go:12")
 	if code != 0 {
 		t.Fatalf("hypothesis result code=%d stderr=%s stdout=%s", code, errOut, out)
@@ -519,7 +529,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		t.Fatalf("expected one hypothesis result, got %#v", caseDocument["hypothesis_results"])
 	}
 	resultDocument := results[0].(map[string]any)
-	if got := resultDocument["evidence_refs"].([]any); len(got) != 2 || got[0] != ".claude/evidence/observation-batch-r1.json" || got[1] != "evidence://boundary-trace" {
+	if got := resultDocument["evidence_refs"].([]any); len(got) != 2 || got[0] != "observation-batch-r1" || got[1] != "evidence://boundary-trace" {
 		t.Fatalf("repeated --evidence values were not preserved: %#v", got)
 	}
 	if got := resultDocument["source_boundary_refs"].([]any); len(got) != 2 || got[0] != "service.go:87" || got[1] != "decoder.go:12" {
@@ -546,7 +556,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 	if err := os.WriteFile(blastPath, blastBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gap := map[string]any{"gap_type": "test", "evidence_refs": []string{".claude/evidence/observation-batch-r1.json"}}
+	gap := map[string]any{"gap_type": "test", "evidence_refs": []string{"observation-batch-r1"}}
 	gapBytes, _ := json.Marshal(gap)
 	gapPath := filepath.Join(root, "gap.json")
 	if err := os.WriteFile(gapPath, gapBytes, 0o644); err != nil {
