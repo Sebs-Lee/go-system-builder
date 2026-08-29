@@ -11,6 +11,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
@@ -379,7 +380,14 @@ func inspectS10Artifact(root string, state map[string]any, manifestType string) 
 		if sha256HexForArtifact(manifestData) != envelope.ManifestSHA {
 			return s10InvalidArtifact(result, "manifest hash mismatch; do not edit in place, regenerate and re-register")
 		}
-		summary, err := acceptance.ValidateForOutcome(manifestData, manifestType, result.Conclusion)
+		// RC-16: status/gate single source. The same qualitygate.S10ExternalBaseline
+		// builder that feeds the gate's ValidateForOutcomeWithBaseline is used here,
+		// so `s10 status` and the gate can never diverge on the external denominator.
+		baseline, baselineErr := qualitygate.S10ExternalBaseline(root, state, nil)
+		if baselineErr != nil {
+			return s10InvalidArtifact(result, "external changed-surface baseline is unverifiable: "+baselineErr.Error()+"; next: restore the current-generation completion artifacts so the changed-surface denominator can be re-derived, then re-run `s10 status`")
+		}
+		summary, err := acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, result.Conclusion, baseline)
 		if err != nil {
 			return s10InvalidArtifact(result, err.Error())
 		}
@@ -396,11 +404,17 @@ func inspectS10Artifact(root string, state map[string]any, manifestType string) 
 		result.AuditAreaCount = summary.AuditAreaCount
 		result.EvidenceRefsCount = len(summary.EvidenceRefs)
 		result.Metrics = summary.Metrics
+		// RC-16: routed outcomes are no longer surfaced before the strict
+		// reference audit — the same missingS10EvidenceRefs audit the gate
+		// applies must pass for every outcome, so `s10 status` cannot declare
+		// a route ready on a ledger the gate would reject.
+		if missing := missingS10EvidenceRefsInStateWithSelf(root, state, result.EvidenceID, summary.EvidenceRefs); len(missing) > 0 {
+			return s10InvalidArtifact(result, "manifest references evidence not registered as current valid Runtime evidence: "+strings.Join(missing, ", ")+"; ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id; register those evidence artifacts first, then regenerate and re-register this manifest")
+		}
 		if result.Conclusion == "blocked" || result.Conclusion == "review_required" {
 			// Routed outcomes keep their unresolved rows by design
-			// (acceptance.ValidateForOutcome); their evidence ledger may not
-			// fully resolve, and the route itself is the actionable fact.
-			// Surface the route before any strict reference audit.
+			// (acceptance.ValidateForOutcomeWithBaseline); the route itself is
+			// the actionable fact once the ledger audit passes.
 			result.State = result.Conclusion
 			if result.Conclusion == "blocked" {
 				result.Next = "let the Controller take TR-018 to paused with the recorded blocker; do not call runtime transition"
@@ -408,9 +422,6 @@ func inspectS10Artifact(root string, state map[string]any, manifestType string) 
 				result.Next = "let the Controller route TR-016 back to S7 for a fresh complete round; do not call runtime transition"
 			}
 			return result
-		}
-		if missing := missingS10EvidenceRefsInStateWithSelf(root, state, result.EvidenceID, summary.EvidenceRefs); len(missing) > 0 {
-			return s10InvalidArtifact(result, "manifest references evidence not registered as current valid Runtime evidence: "+strings.Join(missing, ", ")+"; ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id; register those evidence artifacts first, then regenerate and re-register this manifest")
 		}
 		result.State = "ready"
 		result.Next = "let the Controller evaluate the S10 gate; do not call runtime transition or release commands"

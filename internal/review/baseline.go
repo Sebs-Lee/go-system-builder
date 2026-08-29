@@ -63,14 +63,14 @@ func completionChangedPaths(root string, entry map[string]any) ([]string, error)
 	}
 	data, err := os.ReadFile(absolute)
 	if err != nil {
-		// Older fixtures and pre-canonical runtimes may retain only the
-		// scope_refs projection. Keep that compatibility path when the
-		// indexed artifact was never materialized; any materialized artifact
-		// is still required to pass the digest and JSON checks below.
-		if os.IsNotExist(err) {
-			return normalizeBaselinePaths(stringSliceValue(entry["scope_refs"])), nil
-		}
-		return nil, fmt.Errorf("artifact cannot be read: %w", err)
+		// RC-16: a registered artifact path that does not exist on disk is no
+		// longer silently bridged with the agent-controllable scope_refs
+		// projection — that fallback let a tampered completion envelope
+		// inflate the changed-surface denominator. The registration path must
+		// fail closed so the S7 projection reports a diagnostic and the S10
+		// gate reports external_baseline_unverifiable instead of waiving the
+		// exact-set check.
+		return nil, fmt.Errorf("completion artifact %q is registered but missing on disk: %w", path, err)
 	}
 	if want := stringField(entry["sha256"]); want != "" && sha256Of(data) != want {
 		return nil, fmt.Errorf("artifact sha256 mismatch: registered %s, disk contains %s", want, sha256Of(data))

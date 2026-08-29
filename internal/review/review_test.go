@@ -1,6 +1,8 @@
 package review
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -724,12 +726,25 @@ func TestSubmitResultCarriesBlockingMarkerIntoFindingEntity(t *testing.T) {
 
 func TestSubmitResultRejectsBuilderProducer(t *testing.T) {
 	root := t.TempDir()
-	state := baseVerificationState()
 	// A completion_report from agent-qa-1 this generation makes it a Builder.
+	// RC-16: the registered artifact must exist on disk with a matching
+	// sha256 — the S7 projection no longer bridges a missing artifact with
+	// the agent-controllable scope_refs.
+	envelopeRel := ".claude/evidence/x.json"
+	envelopeAbs := filepath.Join(root, filepath.FromSlash(envelopeRel))
+	if err := os.MkdirAll(filepath.Dir(envelopeAbs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := []byte(`{"kind":"completion_report","changed_paths":[]}`)
+	if err := os.WriteFile(envelopeAbs, envelope, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(envelope)
+	state := baseVerificationState()
 	state["evidence"] = []any{map[string]any{
 		"id": "ev-completion-1", "kind": "completion_report", "baseline_generation": 1,
 		"produced_by": []any{"agent-qa-1"}, "status": "valid",
-		"path": ".claude/evidence/x.json", "sha256": strings.Repeat("a", 64),
+		"path": envelopeRel, "sha256": hex.EncodeToString(sum[:]),
 		"review_round": nil, "invalidated_by": nil, "invalidation_rule": nil,
 		"invalidation_reason": nil, "responsibility_id": "BUILD-WORK-PACKAGE", "scope_refs": []any{},
 	}}

@@ -1,6 +1,8 @@
 package review
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -515,12 +517,26 @@ func TestRegisterPlanIgnoresPriorGenerationTasks(t *testing.T) {
 
 func TestRegisterPlanRejectsChangedSurfaceCoverageGap(t *testing.T) {
 	root := t.TempDir()
+	// RC-16: the S7 projection verifies the completion envelope against disk
+	// (a registered artifact path must exist and match its sha256), so the
+	// fixture writes the real envelope instead of relying on the removed
+	// missing-artifact scope_refs fallback.
+	envelopeRel := ".claude/evidence/completion-surface.json"
+	envelopeAbs := filepath.Join(root, filepath.FromSlash(envelopeRel))
+	if err := os.MkdirAll(filepath.Dir(envelopeAbs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	envelope := []byte(`{"kind":"completion_report","changed_paths":["internal/example/service.go"]}`)
+	if err := os.WriteFile(envelopeAbs, envelope, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(envelope)
 	state := baseVerificationState()
 	state["evidence"] = []any{map[string]any{
 		"id":                  "ev-completion-surface-1",
 		"kind":                "completion_report",
-		"path":                ".claude/evidence/completion-surface.json",
-		"sha256":              strings.Repeat("a", 64),
+		"path":                envelopeRel,
+		"sha256":              hex.EncodeToString(sum[:]),
 		"status":              "valid",
 		"baseline_generation": 1,
 		"review_round":        nil,

@@ -55,15 +55,31 @@ func BuildCoverageInventoryForRoot(root string, state map[string]any) []Coverage
 // authoritative projection BuildCoverageInventoryForRoot freezes into the S7
 // plan, exported so the S10 Quality Gate can reconcile a manifest's
 // changed_path denominator against an external anchor (RC-05 S10-5).
+//
+// RC-16: callers that must distinguish "a verifiably empty surface" from "an
+// unverifiable projection" (diagnostics present) must use
+// ChangedPathsForRootDetailed — a nil return here is intentionally ambiguous
+// for backwards compatibility, and the S10 gate now fails closed on it.
 func ChangedPathsForRoot(root string, state map[string]any) []string {
+	paths, _ := ChangedPathsForRootDetailed(root, state)
+	return paths
+}
+
+// ChangedPathsForRootDetailed is ChangedPathsForRoot with the projection
+// diagnostics exposed (RC-16). A non-empty diagnostics slice means the
+// completion-envelope projection could not be fully verified: the returned
+// path set is not a denominator, and the caller must fail closed (the S10
+// gate reports external_baseline_unverifiable) rather than reconcile against
+// a partial or self-declared surface.
+func ChangedPathsForRootDetailed(root string, state map[string]any) ([]string, []string) {
 	projection := buildS7BaselineProjection(root, state)
 	if len(projection.Diagnostics) > 0 {
 		// An unverifiable projection is not a denominator: a caller that
 		// receives diagnostics alongside empty paths must fail closed rather
 		// than reconcile against a partial surface.
-		return nil
+		return nil, projection.Diagnostics
 	}
-	return append([]string(nil), projection.ChangedPaths...)
+	return append([]string(nil), projection.ChangedPaths...), nil
 }
 
 func sortedCoverageItems(items []CoverageItem) []CoverageItem {

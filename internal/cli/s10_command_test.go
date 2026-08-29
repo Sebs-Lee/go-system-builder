@@ -271,6 +271,13 @@ func TestS10StatusReportsBlockedManifestRoute(t *testing.T) {
 		"id": "ev-audit", "kind": "release_audit", "path": "release-audit.json",
 		"sha256": sha256Hex(envelopeData), "status": "valid", "baseline_generation": 1, "review_round": 1,
 	}}
+	// RC-16: the status path now applies the same evidence-reference audit as
+	// the gate for every outcome, so each referenced id must resolve to a
+	// current, SHA-verified evidence artifact on disk.
+	supportData := []byte("supporting evidence for the blocked release audit")
+	if err := os.WriteFile(filepath.Join(root, "support.json"), supportData, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{
 		"ev:REQ-AC-001", "ev:CONTRACT-001", "ev:PATH-001", "ev:AUDIT-001",
 		"ev:counter:REQ-AC-001", "ev:counter:CONTRACT-001", "ev:counter:PATH-001", "ev:counter:AUDIT-001",
@@ -279,7 +286,7 @@ func TestS10StatusReportsBlockedManifestRoute(t *testing.T) {
 		"ev:area:verification_evidence", "ev:area:docs_release_scope",
 	} {
 		evidence = append(evidence, map[string]any{
-			"id": id, "kind": "support", "path": "support.json", "sha256": "",
+			"id": id, "kind": "human_decision", "path": "support.json", "sha256": sha256Hex(supportData),
 			"status": "valid", "baseline_generation": 1, "review_round": 1,
 		})
 	}

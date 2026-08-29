@@ -654,6 +654,159 @@ func TestReleaseAuditGateRequiresCurrentCleanRound(t *testing.T) {
 	}
 }
 
+// RC-16 (S10-M1): the review_required acceptance route runs the same S10
+// manifest gate as the complete/blocked routes, so a tampered (re-hashed or
+// otherwise edited) manifest body cannot pass the gate unverified.
+func TestAcceptanceReviewRequiredGateRejectsTamperedManifest(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	input := s10ReviewRequiredInput(t, "GATE-ACCEPTANCE-REVIEW-REQUIRED", "TR-016", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	files := input.Files.(memoryFiles)
+	files["s10/acceptance-manifest.json"] = manifest
+	// Simulate post-registration tampering: the manifest body on disk drifts
+	// from the sha the envelope pinned.
+	tampered, err := json.Marshal(replaceManifestEvidenceRef(t, manifest, "ev-clean", "ev-acc"))
+	if err != nil {
+		t.Fatalf("marshal tampered manifest: %v", err)
+	}
+	files["s10/acceptance-manifest.json"] = tampered
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusUnknown || result.ErrorCode != qualitygate.ErrorGateUnknown {
+		t.Fatalf("status = %q code=%q conflicts=%v, want unknown/%s for a tampered review_required manifest", result.Status, result.ErrorCode, result.Conflicts, qualitygate.ErrorGateUnknown)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:sha256_mismatch") {
+		t.Fatalf("conflicts = %#v, want a sha256_mismatch conflict", result.Conflicts)
+	}
+}
+
+// RC-16 (S10-M1): an honest review_required route must satisfy the gate once
+// its manifest is structurally complete, evidence-linked, and hash-pinned —
+// the outcome-aware ValidateForOutcomeWithBaseline path (requireClean=false).
+func TestAcceptanceReviewRequiredGateSatisfiedWithUnresolvedRows(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	var decoded map[string]any
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	// Two unresolved rows that explain why the round must restart: one unknown
+	// coverage row and one unknown counterevidence outcome. A requireClean
+	// validation rejects both; the routed outcome keeps them.
+	items := decoded["coverage_inventory"].([]any)
+	items[0].(map[string]any)["disposition"] = "unknown"
+	counterevidence := decoded["counterevidence"].([]any)
+	counterevidence[0].(map[string]any)["outcome"] = "unknown"
+	decoded["counterevidence"] = counterevidence
+	// Metrics must stay derived from the frozen rows: the unknown coverage row
+	// drops requirement coverage and both unresolved rows raise unknown_count.
+	metrics := decoded["metrics"].(map[string]any)
+	metrics["requirement_coverage"] = 0
+	metrics["unknown_count"] = 2
+	manifest, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	input := s10ReviewRequiredInput(t, "GATE-ACCEPTANCE-REVIEW-REQUIRED", "TR-016", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusSatisfied {
+		t.Fatalf("status = %q missing=%v conflicts=%v, want satisfied for an honest review_required route", result.Status, result.Missing, result.Conflicts)
+	}
+}
+
+// RC-16 (S10-H3): a completion artifact registered in the runtime index but
+// missing from disk makes the external changed-surface denominator
+// unverifiable. The gate must fail closed with an external_baseline_unverifiable
+// conflict instead of silently waiving the exact-set check.
+func TestS10GateFailsClosedWhenExternalBaselineUnverifiable(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	root := t.TempDir()
+	manifest := validS10Manifest(t, "acceptance")
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Root = root
+	files := input.Files.(memoryFiles)
+	files["s10/acceptance-manifest.json"] = manifest
+	// A current-generation completion envelope whose artifact was never
+	// materialized: the projection cannot verify the denominator.
+	envelope := []byte(`{"kind":"completion_report","changed_paths":["internal/api/handler.go"],"reviewed_paths":[]}` + "\n")
+	files["evidence/ev-completion.json"] = envelope
+	input.Snapshot.State["evidence"] = append(input.Snapshot.State["evidence"].([]any), map[string]any{
+		"id": "ev-completion", "kind": "completion_report", "path": "evidence/ev-completion.json",
+		"sha256": sha256Hex(envelope), "status": "valid", "baseline_generation": 1,
+		"review_round": nil, "produced_by": []any{"builder-1"}, "invalidated_by": nil,
+		"responsibility_id": "BUILD-WORK-PACKAGE", "scope_refs": []any{"internal/api/handler.go"},
+	})
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusUnknown || result.ErrorCode != qualitygate.ErrorGateUnknown {
+		t.Fatalf("status = %q code=%q, want unknown/%s when the external baseline is unverifiable", result.Status, result.ErrorCode, qualitygate.ErrorGateUnknown)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:external_baseline_unverifiable") {
+		t.Fatalf("conflicts = %#v, want external_baseline_unverifiable", result.Conflicts)
+	}
+}
+
+func s10ReviewRequiredInput(t *testing.T, gateID, transitionID string, extra map[string]any) qualitygate.Input {
+	t.Helper()
+	// The audit-manifest binding lives on the acceptance_record envelope the
+	// gate re-hashes, so the caller's audit fields must reach s10GateInput's
+	// envelope builder — not just the change_impact companion evidence.
+	merged := map[string]any{
+		"conclusion":      "review_required",
+		"requested_event": "acceptance_review_required",
+	}
+	for key, value := range extra {
+		merged[key] = value
+	}
+	input := s10GateInput(t, gateID, transitionID, "acceptance", merged)
+	// The gate requires the change_impact_record companion evidence.
+	impactEnvelope := map[string]any{
+		"schema_version":          "1.0.0",
+		"evidence_id":             "ev-impact",
+		"kind":                    "change_impact",
+		"runtime_id":              "loop-test",
+		"baseline_generation":     1,
+		"review_round":            2,
+		"producer_agent_id":       "s10-agent",
+		"producer_responsibility": "Acceptance",
+		"conclusion":              "recorded",
+		"requested_event":         "",
+		"created_at":              "2026-07-29T00:00:00Z",
+	}
+	impactData, err := json.Marshal(impactEnvelope)
+	if err != nil {
+		t.Fatalf("marshal impact evidence: %v", err)
+	}
+	input.Files.(memoryFiles)["evidence/ev-impact.json"] = impactData
+	input.Snapshot.State["evidence"] = append(input.Snapshot.State["evidence"].([]any), map[string]any{
+		"id": "ev-impact", "kind": "change_impact", "path": "evidence/ev-impact.json",
+		"sha256": sha256Hex(impactData), "status": "valid", "baseline_generation": 1,
+		"review_round": 2, "produced_by": []any{"s10-agent"}, "invalidated_by": nil,
+		"responsibility_id": "Acceptance", "scope_refs": []any{},
+	})
+	return input
+}
+
 func replaceManifestEvidenceRef(t *testing.T, data []byte, from, to string) []byte {
 	t.Helper()
 	var decoded any
