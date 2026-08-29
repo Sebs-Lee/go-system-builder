@@ -755,6 +755,11 @@ func DocumentMetadataVersion(data []byte) string {
 // Triple is the RC-10 Step B convergence projection of the eight sha256
 // families onto (state_hash, evidence_hash, baseline_hash); it is derived
 // from the post-refresh state and never replaces per-family validation.
+// RC-17 anchor: this result is the canonical doctor/reconcile diagnostic
+// surface — `loop-harness doctor` and `runtime reconcile` report Triple
+// drift from here instead of re-deriving any family hash (see
+// fingerprint.go for the two-layer decision; new diagnostics must consume
+// the triple, never mint a ninth family).
 type FingerprintResult struct {
 	Updated   []string
 	Unchanged []string
@@ -959,6 +964,10 @@ func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 			return FingerprintResult{}, err
 		}
 	}
+	// RC-17 anchor: derive the observation triple from the post-refresh state
+	// so doctor/reconcile consumers verify one number triple instead of
+	// re-deriving family rules. The families written above stay the
+	// enforcement layer (see fingerprint.go two-layer decision).
 	result.Triple = ComputeTriple(state)
 	return result, nil
 }

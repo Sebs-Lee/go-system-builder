@@ -236,6 +236,7 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 	}
 	apply(&snap)
 	retainS7Rounds(&snap, s7RoundRetention)
+	pruneDeadFamilies(&snap)
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode metrics: %w", err)
@@ -244,6 +245,59 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 		return fmt.Errorf("write metrics: %w", err)
 	}
 	return nil
+}
+
+// maxTrackedFamilies documents the RC-17 family budget: the durable snapshot
+// tracks sixteen loop_* families — seven core control-plane families plus
+// nine S7 round/outcome families — and every one is wired at both ends:
+//   - core seven: recorded by controller/cycle.go, cli/controller.go,
+//     cli/run.go and integration/integrate.go; rendered by FormatDoctor /
+//     FormatHealth;
+//   - S9 nine: recorded from review submit/supplement (RecordS7RoundShape,
+//     RecordS7ResultSubmit, RecordS7SubmitPhase, ...); all rendered by
+//     FormatS7 (cli/s7_status.go).
+//
+// The audit's "15→≤10, remove S7PlanRevision as zero-consumer" does not
+// survive contact with the wiring: S7PlanRevision has live producers
+// (RecordS7RoundShape via review/supplement.go and review/submit.go) and a
+// live renderer (FormatS7), so it is kept and documented instead of cut. The
+// cap is therefore a review guard, not a quota — adding a seventeenth family
+// requires either retiring a dead one in the same change or extending this
+// comment with the new producer/consumer pair. Enforced by
+// TestTrackedFamilyBudget.
+const maxTrackedFamilies = 16
+
+// pruneDeadFamilies trims unparseable labels out of the round-keyed S7 maps
+// before the snapshot is persisted. Round-keyed families may only carry
+// labels that roundFromLabel understands (the "r<N>" / numeric round forms
+// written by the recorders); a label outside that vocabulary is a dead key
+// from a legacy or corrupt writer — it can never be rendered by FormatS7
+// (roundLabelVisible), never trimmed by retainS7Rounds (which skips it when
+// computing retention), and would otherwise survive every write forever.
+// Unlike retainS7Rounds this runs on every mutation, not only when the map
+// exceeds the retention cap. Callers hold the store lock (mutate).
+func pruneDeadFamilies(snap *Snapshot) {
+	pruneGauge := func(m map[string]int64) {
+		for label := range m {
+			if _, ok := roundFromLabel(label); !ok {
+				delete(m, label)
+			}
+		}
+	}
+	pruneDuration := func(m map[string]DurationStats) {
+		for label := range m {
+			if _, ok := roundFromLabel(label); !ok {
+				delete(m, label)
+			}
+		}
+	}
+	pruneGauge(snap.S7Assignments)
+	pruneGauge(snap.S7Claims)
+	pruneGauge(snap.S7PlanRevision)
+	pruneGauge(snap.S7Findings)
+	pruneGauge(snap.S7CleanRounds)
+	pruneDuration(snap.S7FirstFindingToSeal)
+	pruneDuration(snap.S7ClaimLeadTime)
 }
 
 func atomicWriteMetrics(path string, data []byte) error {

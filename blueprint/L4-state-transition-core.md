@@ -66,6 +66,8 @@ JSONL 公共字段：schema_version、runtime_id、event_id、idempotency_key、
 
 提交固定四步：**pending marker 落盘 → state 原子写 → journal 追加 → 清除 marker**。三个专用 marker（路径均为 state 文件旁路）：commitPending（`.pending.json`）、statePending（`.fingerprint.json`，指纹刷新专用且不 bump revision）、rolloverPending（`.rollover.json`）。恢复器按 **commit → fingerprint → rollover** 顺序尝试收敛，各自校验源/目标哈希配对后才放行——半写状态永远可从磁盘重建（D1 的物理兜底）。底层原语统一为临时文件+rename+syncDir；journal 追加以 O_APPEND+Sync 收口。
 
+> **RC-10d 决策（RC-17 收尾）：review-result 提交的巨事务不拆段。** S7 的 result submit 在单 CAS 事务内串行完成结果消耗、findings 落账、轮次推进、seal/clean/pause 分支（见 `internal/review/submit.go`），审计曾建议拆为多段 CAS。决策：**接受巨事务**。理由：拆段会在段间引入半完成窗口——各段之间轮次可见但未收敛，消费方（轮次调度、退出守卫、P0 抑制）会在中间态上做出错误仲裁，而崩溃安全本就由 §4 的四步写序兜底，拆段不增加任何恢复能力，只增加中间态类别。替代方案是观测不拆分：`RecordS7SubmitPhase` 按 `result_consumption / findings / advance / pause / seal / clean` 六相记录段内耗时（`loop_s7_submit_phase_ms`，经 FormatS7 渲染）。**拆分阈值：仅当六相观测显示 p95 > 100ms**（锁持有时间成为调度瓶颈）才重开拆段议题；当前无证据达到该阈值，故不拆。
+
 ## 5. 迁移引擎
 
 ### 5.1 注册表架构与两类 guard
@@ -158,3 +160,4 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 | 日期 | 版本 | 变更 | 依据 |
 |:--|:--|:--|:--|
 | 2026-08-28 | v0.1.0 | 初版：把散落在 runtime store/transition engine/catalog/controller 各处的存储模型、CAS 本体、崩溃协议、实体生命周期索引、迁移引擎、自动推进仲裁、失效与预算事务、归档边界、对账命令族收拢为单一权威；从控制面草案中接管迁移形态学与引擎细节；登记六项诚实缺口（含 warn_and_retry 名实不符） | owner 批准的基石抽取批次（其二）；五问自测见 §0 |
+| 2026-08-29 | v0.1.1 | §4 追加 RC-10d 巨事务决策：submit 单 CAS 不拆段，以 RecordS7SubmitPhase 六相观测替代，p95>100ms 才重开 | RC-17 复杂度债收尾 |

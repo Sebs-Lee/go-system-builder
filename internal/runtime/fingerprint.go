@@ -28,6 +28,20 @@ import (
 // re-deriving eight family rules. A row missing either `path` or `sha256`
 // is skipped — an unregistered reference contributes nothing rather than
 // poisoning the aggregate.
+//
+// RC-17 decision (audit "cut-or-complete", resolved as COMPLETE, not
+// deprecate): the eight sha256 fingerprint families stay — they are the
+// per-surface validation anchors consumed by transition gates and recovery,
+// and migrating every consumer is a per-consumer transaction out of RC-17
+// scope (see L4-runtime-control-plane §3 convergence note). ComputeTriple /
+// ComputeRevisionPair are therefore retained as the observation layer on top
+// of the families, with these standing rules:
+//   - new consumers must consume the triple / pair, never mint a ninth
+//     family;
+//   - the triple is derived, never persisted into runtime state — it lives
+//     only in housekeeping output (FingerprintResult.Triple) and diagnostics;
+//   - the family layer remains the sole enforcement surface: gate checks
+//     that need a fingerprint compare a stored family hash, not the triple.
 type FingerprintTriple struct {
 	StateHash    string `json:"state_hash"`
 	EvidenceHash string `json:"evidence_hash"`
@@ -66,7 +80,11 @@ func ComputeTriple(state map[string]any) FingerprintTriple {
 // ComputeRevisionPair derives the RC-10 Step B revision binary from a runtime
 // state map: the state CAS revision and the evidence generation
 // (`baseline.generation`, 0 when the baseline is uncaptured or absent).
-// A present revision=0 is distinguished from absent by key existence.
+// Absent vs present-but-zero is distinguished by key existence — both decode
+// to 0 (audit R-L7: a freshly bound runtime legitimately holds revision 0, so
+// the value cannot be used alone to signal "no revision recorded"; callers
+// needing that distinction must check key presence on the source state, since
+// the pair's int return cannot carry it).
 func ComputeRevisionPair(state map[string]any) (StateRevision, EvidenceGeneration) {
 	revision := 0
 	if _, ok := state["revision"]; ok {
