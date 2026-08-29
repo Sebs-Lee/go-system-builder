@@ -532,7 +532,7 @@ Main/Architect 批准 RepairContract 时，权威事务只负责：
 6. 持久化 approved RepairContract hash；
 7. 更新 Case `contract_approved` 并返回唯一下一动作。
 
-当前实现的最小入口是 `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor>`：它要求 draft 覆盖 Case 的 exact Finding set，以不可变的新 Case/Contract 修订写入 hash，并通过同一个 Runtime CAS 将生命周期推进到 `bug_resolution.repair_readback`。它不在审批失败时创建 BUG，也不把 Markdown/BUG 投影伪装成权威；S9 以 Runtime 指针中的 Contract ref/hash 作为唯一入口。
+当前实现的最小入口是 `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>`：它要求 draft 覆盖 Case 的 exact Finding set，并要求当前 Runtime revision 下由该 approver 产生、绑定 `s8_contract_approval:<runtime_id>@<revision>` 的 `human_decision` evidence，同时校验人审阅的 draft SHA-256。通过后以不可变的新 Case/Contract 修订写入 hash，并通过同一个 Runtime CAS 将生命周期推进到 `bug_resolution.repair_readback`。它不在审批失败时创建 BUG，也不把 Markdown/BUG 投影伪装成权威；S9 以 Runtime 指针中的 Contract ref/hash 作为唯一入口。
 
 canonical Problem/BUG、人读报告、S9 work-package 和 Finding mapping 都是批准后的幂等投影，可以重试生成；它们不再和 Case/Contract 共享一个过大的跨域事务。只有所有受当前 route 约束的 Cases 都 ready，才推进 Macro-stage。
 

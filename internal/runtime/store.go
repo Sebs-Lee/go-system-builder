@@ -2557,28 +2557,41 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 	// RC-13: marker-driven truncation. The active journal may still hold the
 	// archived prefix because the rotate was interrupted after writing the
 	// archive but before truncating the active segment. We must NOT rely on
-	// inspectJournalData's contiguous-sequence check, which rejects the
-	// duplicate archived prefix still in active. Instead, slice the active
-	// journal at pending.ArchivedCount events, verify the resulting tail
-	// matches pending.TailSequence, and rewrite active. If the active
-	// journal is already truncated (smaller or equal to ArchivedCount),
-	// recovery is a no-op.
+	// full-journal contiguous-sequence check, which rejects the duplicate
+	// archived prefix still in active and cannot parse an already-truncated
+	// tail that starts above sequence one. Instead, inspect the active segment,
+	// slice it at pending.ArchivedCount when the archived prefix is present,
+	// or validate the tail-only suffix when the atomic truncation already won.
 	activeData, err := os.ReadFile(s.journalPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read active journal for rotation recovery: %w", err)
 	}
 	if err == nil && len(activeData) > 0 {
-		activeInspection, aerr := inspectJournalData(activeData)
+		activeInspection, aerr := inspectJournalSegmentData(activeData)
 		if aerr != nil {
 			return fmt.Errorf("pending journal rotation active journal invalid: %w", aerr)
 		}
-		// Truncation is complete when the active journal already holds only
-		// the tail (size <= ArchivedCount). Validate the tail matches the
-		// marker invariant and proceed without rewriting.
-		if len(activeInspection.Events) > pending.ArchivedCount {
-			if activeInspection.TailSequence != pending.TailSequence {
-				return fmt.Errorf("pending journal rotation active tail sequence %d does not match marker tail sequence %d", activeInspection.TailSequence, pending.TailSequence)
+		if activeInspection.TailSequence != pending.TailSequence {
+			return fmt.Errorf("pending journal rotation active tail sequence %d does not match marker tail sequence %d", activeInspection.TailSequence, pending.TailSequence)
+		}
+		// Truncation is complete when the active journal is the suffix that
+		// starts at the marker's tail sequence. This is the crash window after
+		// the atomic active-file rewrite but before the marker was cleared; the
+		// segment parser accepts its non-one starting sequence and the merged
+		// pair is validated below.
+		firstSequence, _ := integerField(activeInspection.Events[0], "sequence")
+		if len(activeInspection.Events) < pending.ArchivedCount {
+			if firstSequence != pending.TailSequence || len(activeInspection.Events) != 1 {
+				return fmt.Errorf("pending journal rotation active event count %d is less than marker archived count %d and is not the expected tail-only suffix; refusing partial-truncate recovery", len(activeInspection.Events), pending.ArchivedCount)
 			}
+			archiveInspection, archiveErr := inspectJournalSegmentData(archData)
+			if archiveErr != nil {
+				return fmt.Errorf("pending journal rotation archived segment invalid: %w", archiveErr)
+			}
+			if archiveInspection.TailSequence != pending.TailSequence-1 {
+				return fmt.Errorf("pending journal rotation archive tail sequence %d does not precede marker tail sequence %d", archiveInspection.TailSequence, pending.TailSequence)
+			}
+		} else if len(activeInspection.Events) > pending.ArchivedCount {
 			tailEvents := activeInspection.Events[pending.ArchivedCount:]
 			var buf []byte
 			for _, ev := range tailEvents {
@@ -2591,16 +2604,8 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 			if err := atomicWriteBytes(s.journalPath, buf, ".loop-journal-*.tmp"); err != nil {
 				return fmt.Errorf("complete pending journal rotation truncate: %w", err)
 			}
-		} else if len(activeInspection.Events) == pending.ArchivedCount {
-			// Already truncated: verify the tail of the archived segment
-			// matches the marker's TailSequence. The active journal is empty
-			// or only the last tail event remains; either is acceptable as
-			// long as the post-truncate invariant is satisfied.
-			if activeInspection.TailSequence != 0 && activeInspection.TailSequence != pending.TailSequence {
-				return fmt.Errorf("pending journal rotation already-truncated active tail sequence %d does not match marker tail sequence %d", activeInspection.TailSequence, pending.TailSequence)
-			}
-		} else if len(activeInspection.Events) < pending.ArchivedCount {
-			return fmt.Errorf("pending journal rotation active event count %d is less than marker archived count %d; refusing partial-truncate recovery", len(activeInspection.Events), pending.ArchivedCount)
+		} else {
+			return fmt.Errorf("pending journal rotation active event count %d equals marker archived count %d but does not contain a tail-only suffix; refusing ambiguous recovery", len(activeInspection.Events), pending.ArchivedCount)
 		}
 	}
 	// Validate the recovered journal pair if state exists — fail-closed on
@@ -2649,7 +2654,7 @@ func (s *Store) maybeRotateJournalLocked() error {
 	if len(activeData) == 0 {
 		return nil
 	}
-	inspection, err := inspectJournalData(activeData)
+	inspection, err := inspectJournalSegmentData(activeData)
 	if err != nil {
 		return fmt.Errorf("inspect active journal for rotation: %w", err)
 	}
@@ -3100,12 +3105,24 @@ func inspectJournal(path string) (journalInspection, error) {
 }
 
 func inspectJournalData(data []byte) (journalInspection, error) {
+	return inspectJournalSegmentDataFrom(data, 1)
+}
+
+// inspectJournalSegmentData validates one active/archive segment while
+// allowing its first sequence to be greater than one. Active journal files
+// are retained as the tail after rotation, so their first event may be the
+// sequence immediately following an archived segment.
+func inspectJournalSegmentData(data []byte) (journalInspection, error) {
+	return inspectJournalSegmentDataFrom(data, 0)
+}
+
+func inspectJournalSegmentDataFrom(data []byte, firstSequence int) (journalInspection, error) {
 	inspection := journalInspection{
 		Events:     make([]map[string]any, 0),
 		EventIndex: make(map[string]int),
 	}
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	expectedSequence := 1
+	expectedSequence := firstSequence
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var event map[string]any
@@ -3116,6 +3133,9 @@ func inspectJournalData(data []byte) (journalInspection, error) {
 			return journalInspection{}, err
 		}
 		sequence, err := integerField(event, "sequence")
+		if expectedSequence == 0 {
+			expectedSequence = sequence
+		}
 		if err != nil || sequence != expectedSequence {
 			return journalInspection{}, fmt.Errorf("journal sequence %d is not contiguous; expected %d", sequence, expectedSequence)
 		}

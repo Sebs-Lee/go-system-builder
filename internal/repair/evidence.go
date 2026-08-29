@@ -19,12 +19,10 @@ func CreateChangeImpact(root string, request ChangeImpactRequest) (ChangeImpact,
 		return ChangeImpact{}, ArtifactRef{}, errors.New("ChangeImpact requires positive baseline, a source Bug or Case id, change types, changed artifacts, and decisions")
 	}
 	// RC-14 (S9-M3): decision=reverify is the formal hand-off back to the
-	// targeted reverification gate. The artifact boundary does NOT enforce
-	// required_reverification_ids here (operators may author a placeholder
-	// impact and back-fill the reverification list in a later commit);
-	// the consumer side (CommitChangeImpact → bindRequiredReverificationIDs
-	// in runtime.go) is the authoritative gate and rejects a reverify
-	// decision that resolves to a ghost reverification id.
+	// targeted reverification gate. The artifact boundary preserves the
+	// declared obligation set; CommitChangeImpact registers that set on the
+	// Runtime pointer, and CommitRepairHandoff consumes it after the downstream
+	// TargetedReverification artifacts have been created and committed.
 	changed := append([]ArtifactRef(nil), request.ChangedArtifacts...)
 	for i := range changed {
 		if changed[i].ID == "" {

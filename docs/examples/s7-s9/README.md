@@ -19,7 +19,7 @@ current revision.
 
 | Request file | Command that consumes it |
 |:---|:---|
-| `repair-contract-draft.json` | `loop-harness runtime investigation contract approve --case-id <case> --file repair-contract-draft.json --approved-by <actor>` |
+| `repair-contract-draft.json` | `loop-harness runtime investigation contract approve --case-id <case> --file repair-contract-draft.json --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>` |
 | `repair-plan-report.json` | `loop-harness runtime repair plan-report submit --file repair-plan-report.json --expected-revision <N> --actor <agent>` |
 | `repair-result.json` | `loop-harness runtime repair result submit --file repair-result.json --expected-revision <N> --actor <agent>` |
 | `change-impact.json` | `loop-harness runtime repair impact create --file change-impact.json`, then `... impact commit --file <created-impact.json>` |
@@ -89,7 +89,9 @@ these examples are not valid evidence for a real run.
      --case-id investigation-case-... \
      --expected-revision <runtime-rev> \
      --file repair-contract-draft.json \
-     --approved-by main-session
+     --approved-by main-session \
+     --approval-hash <draft-sha256> \
+     --approval-evidence-id <human-decision-id>
    ```
 
    Refresh `runtime investigation status` between CAS-writing commands and

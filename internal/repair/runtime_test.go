@@ -594,16 +594,14 @@ func TestS9TransitionIDWhitelist(t *testing.T) {
 
 
 
-// TestChangeImpactRequiredReverificationIDsAreBound is the RC-09 (S9-6)
-// negative case: required_reverification_ids used to be a ghost field — no
-// producer enforcement, no consumer check — so a "required" reverification
-// could silently never happen. The producer-side projection must record the
-// declared set on the runtime pointer, and a declared ID that never resolves
-// to a committed reverification artifact must block the handoff.
-func TestChangeImpactRequiredReverificationIDsAreBound(t *testing.T) {
-	// Producer gate: an impact declaring a required ID that does not resolve
-	// to a persisted reverification artifact is a ghost obligation. The gate
-	// lives in CommitChangeImpact; drive it through a minimal runtime chain.
+// TestChangeImpactRequiredReverificationIDsAreRegistered is the RC-09 (S9-6)
+// ordering case: required_reverification_ids is registered as a durable
+// obligation when ChangeImpact commits. The downstream TargetedReverification
+// artifact is created and committed afterward; RepairHandoff remains the
+// consumer that blocks any missing required ID.
+func TestChangeImpactRequiredReverificationIDsAreRegistered(t *testing.T) {
+	// Drive the standard Impact commit → Targeted create/commit ordering through
+	// a minimal runtime chain.
 	root := req039fixtures.FreshRoot(t)
 	state := req039fixtures.BaseState(t, root, "bug_resolution", "repair_readback", 0)
 	contractRef, contractSHA := writeRuntimeContract(t, root)
@@ -646,15 +644,25 @@ func TestChangeImpactRequiredReverificationIDsAreBound(t *testing.T) {
 	if _, _, _, err := repair.SubmitRepairResultToRuntime(root, statePath, journalPath, repair.SubmitResultRuntimeRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 4, Actor: "builder-1"}, Result: repair.RepairResultRequest{ResultID: "repair-result-reqids", ProducerAgentID: "builder-1", UnitResults: []repair.RepairUnitResult{{UnitID: "unit-1", Status: "pass", EvidenceRefs: []string{"test://unit"}}}, ChangedArtifacts: []repair.ChangedArtifact{{Path: "internal/api/payload.go", SHA256: fileHash(changedData), Status: "added"}}, Checks: []repair.RepairCheck{{Name: "post-fix", Command: "go test ./...", Result: "pass", EvidenceRefs: []string{"test://green"}}}, Result: "pass"}}); err != nil {
 		t.Fatal(err)
 	}
-	// The impact declares a required reverification ID that has no artifact
-	// behind it: the producer gate must reject the impact commit.
-	impactRequest := repair.ChangeImpactRequest{ImpactID: "impact-reqids", RuntimeID: "loop-req039-ct", ReqID: "REQ-039", BaselineGeneration: 1, SourceBugIDs: []string{"BUG-001"}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-api", Path: "internal/api/payload.go", SHA256: fileHash(changedData)}}, Decisions: []repair.ImpactDecision{{SourceID: "BUG-001", TargetID: "claim-1", Relation: "invalidates", RuleID: "IM-API", Decision: "reverify", ResponsibilityID: nil, Scope: []string{"internal/api/payload.go"}, Rationale: "repair changed the boundary", RecoveryEvidence: []string{"test://unit"}}}, EscalationLevel: "assignment", RequiredReverificationIDs: []string{"reverify-ghost"}, AnalyzedBy: "qa"}
+	// The impact declares a required reverification ID before its downstream
+	// TargetedReverification exists. Impact commit must register the obligation
+	// and move the Runtime to targeted_reverification.
+	impactRequest := repair.ChangeImpactRequest{ImpactID: "impact-reqids", RuntimeID: "loop-req039-ct", ReqID: "REQ-039", BaselineGeneration: 1, SourceBugIDs: []string{"BUG-001"}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-api", Path: "internal/api/payload.go", SHA256: fileHash(changedData)}}, Decisions: []repair.ImpactDecision{{SourceID: "BUG-001", TargetID: "claim-1", Relation: "invalidates", RuleID: "IM-API", Decision: "reverify", ResponsibilityID: nil, Scope: []string{"internal/api/payload.go"}, Rationale: "repair changed the boundary", RecoveryEvidence: []string{"test://unit"}}}, EscalationLevel: "assignment", RequiredReverificationIDs: []string{"reverify-reqids"}, AnalyzedBy: "qa"}
 	_, impactRef, err := repair.CreateChangeImpact(root, impactRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef}); err == nil || !strings.Contains(err.Error(), "required_reverification_ids entry") {
-		t.Fatalf("impact commit must reject a ghost required_reverification_ids entry, got %v", err)
+	snapshot, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef})
+	if err != nil {
+		t.Fatalf("impact commit must register downstream reverification obligation before artifact creation: %v", err)
+	}
+	if snapshot.State["lifecycle"].(map[string]any)["phase"] != "targeted_reverification" {
+		t.Fatalf("impact commit phase = %#v, want targeted_reverification", snapshot.State["lifecycle"])
+	}
+	repairPointer := snapshot.State["review"].(map[string]any)["repair"].(map[string]any)
+	ids, ok := repairPointer["required_reverification_ids"].([]any)
+	if !ok || len(ids) != 1 || ids[0] != "reverify-reqids" {
+		t.Fatalf("required reverification obligation = %#v, want [reverify-reqids]", repairPointer["required_reverification_ids"])
 	}
 }
 

@@ -1087,7 +1087,7 @@ func s10ManifestData(t *testing.T, state map[string]any, manifestType string, re
 		items = append(items, map[string]any{
 			"id": item.id, "category": item.category, "source_refs": []string{"fixture:" + item.id},
 			"expected": "fixture expected " + item.id, "oracle": "fixture oracle " + item.id,
-			"owner": "S10 fixture reviewer", "evidence_refs": []string{"ev-acc"},
+			"owner": "S10 fixture reviewer", "evidence_refs": []string{"ev-clean-pass"},
 			"disposition": "pass",
 		})
 		counterevidence = append(counterevidence, map[string]any{
@@ -1110,7 +1110,7 @@ func s10ManifestData(t *testing.T, state map[string]any, manifestType string, re
 	if manifestType == "release_audit" {
 		areas := []any{}
 		for _, id := range []string{"state_machine", "transaction_uow", "concurrency_idempotency", "data_migration", "call_sites_topology", "observability_errors", "verification_evidence", "docs_release_scope"} {
-			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-audit"}})
+			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-clean-pass"}})
 		}
 		manifest["audit_areas"] = areas
 	}

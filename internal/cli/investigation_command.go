@@ -636,7 +636,7 @@ func investigationRouteNextAction(route string, pointer map[string]any) string {
 	switch route {
 	case "s9_repair":
 		caseID := stringValue(pointer["case_id"])
-		return fmt.Sprintf("draft the RepairContract for Case %s, then run `runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor>`", caseID, caseID)
+		return fmt.Sprintf("draft the RepairContract for Case %s, record a matching human_decision evidence item, then run `runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>`", caseID, caseID)
 	case "investigate_more":
 		return "register a new falsifiable hypothesis or submit its result before routing again"
 	case "duplicate":
@@ -974,7 +974,7 @@ func writeInvestigationCaseTemplate(root string, pointer map[string]any, target 
 		"root_invariant_assertions":  []string{"TODO(root-1: ...)"},
 		"detection_gap_assertions":   []string{"TODO(gap-1: ...)"},
 		"stop_escalation_conditions": []string{"TODO(when the repair must stop and escalate)"},
-		"next_verb":                  fmt.Sprintf("runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --expected-case-revision %d --expected-case-sha256 <sha>", caseID, revision),
+		"next_verb":                  fmt.Sprintf("runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id> --expected-case-revision %d --expected-case-sha256 <sha>", caseID, revision),
 	}
 
 	document := map[string]any{
@@ -1023,12 +1023,14 @@ func runRuntimeInvestigationContractApprove(args []string, stdout, stderr io.Wri
 	caseID := flags.String("case-id", "", "active InvestigationCase id")
 	contractPath := flags.String("file", "", "draft RepairContract path")
 	approvedBy := flags.String("approved-by", "", "approving human or orchestrator identity")
+	approvalHash := flags.String("approval-hash", "", "sha256 of the exact draft reviewed by the approver")
+	approvalEvidenceID := flags.String("approval-evidence-id", "", "valid human_decision evidence id scoped to this S8 approval")
 	occurredAtValue := flags.String("occurred-at", "", "RFC3339 transition time")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if strings.TrimSpace(*caseID) == "" || strings.TrimSpace(*contractPath) == "" || strings.TrimSpace(*approvedBy) == "" {
-		fmt.Fprintln(stderr, "runtime investigation contract approve requires --case-id, --file and --approved-by; approval is the S8→S9 authority transaction")
+	if strings.TrimSpace(*caseID) == "" || strings.TrimSpace(*contractPath) == "" || strings.TrimSpace(*approvedBy) == "" || strings.TrimSpace(*approvalHash) == "" || strings.TrimSpace(*approvalEvidenceID) == "" {
+		fmt.Fprintln(stderr, "runtime investigation contract approve requires --case-id, --file, --approved-by, --approval-hash and --approval-evidence-id; approval is the S8→S9 authority transaction")
 		return 2
 	}
 	resolvedRevision, err := resolveExpectedRevision(*root, *statePath, *expectedRevision)
@@ -1045,11 +1047,13 @@ func runRuntimeInvestigationContractApprove(args []string, stdout, stderr io.Wri
 		}
 	}
 	snapshot, err := investigation.ApproveContract(resolveRootPath(*root, "."), resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), investigation.ContractRequest{
-		ExpectedRevision: resolvedRevision,
-		CaseID:           strings.TrimSpace(*caseID),
-		ContractPath:     *contractPath,
-		ApprovedBy:       *approvedBy,
-		OccurredAt:       occurredAt,
+		ExpectedRevision:   resolvedRevision,
+		CaseID:             strings.TrimSpace(*caseID),
+		ContractPath:       *contractPath,
+		ApprovedBy:         *approvedBy,
+		ApprovalHash:       strings.TrimSpace(*approvalHash),
+		ApprovalEvidenceID: strings.TrimSpace(*approvalEvidenceID),
+		OccurredAt:         occurredAt,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime investigation contract approve", err))

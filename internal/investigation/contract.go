@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
-const contractNextCommand = "runtime investigation contract approve --root . --case-id <case> --file <draft> --approved-by <actor>"
+const contractNextCommand = "runtime investigation contract approve --root . --case-id <case> --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>"
 
 // ContractRequest carries the caller's Runtime CAS revision and the human or
 // orchestrator identity that approves a draft RepairContract. Approval is a
@@ -26,9 +27,8 @@ const contractNextCommand = "runtime investigation contract approve --root . --c
 // recomputes and compares, so a mid-approval swap is rejected). Approval
 // evidence is a human_boundary gate: ApprovalEvidenceID must resolve to
 // valid human_decision evidence produced by ApprovedBy and scoped to
-// "s8_contract_approval:<runtime_id>@<revision>". Both fields are optional
-// during the CLI-wiring migration window; when omitted the legacy behavior
-// is retained and the approval is recorded with approver_id only.
+// "s8_contract_approval:<runtime_id>@<revision>". Both fields are required;
+// an approver name by itself is not an approval receipt.
 type ContractRequest struct {
 	ExpectedRevision    int
 	CaseID              string
@@ -68,6 +68,8 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	if strings.TrimSpace(request.ApprovedBy) == "" {
 		return runtime.Snapshot{}, actionableContractError("approved_by is required; record the approving human or orchestrator identity")
 	}
+	approvalHash := strings.TrimSpace(request.ApprovalHash)
+	approvalEvidenceID := strings.TrimSpace(request.ApprovalEvidenceID)
 
 	store := runtime.NewStore(statePath, journalPath)
 	current, err := store.Snapshot()
@@ -119,6 +121,9 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	if err := requireRepairReadyCase(caseDocument); err != nil {
 		return runtime.Snapshot{}, actionableContractError("InvestigationCase %s is not ready for RepairContract approval: %v", request.CaseID, err)
 	}
+	if err := validateContractBaseline(root, current.State, caseDocument); err != nil {
+		return runtime.Snapshot{}, actionableContractError("InvestigationCase %s baseline is not current: %v", request.CaseID, err)
+	}
 
 	contractRel, err := relativeContractPath(root, request.ContractPath)
 	if err != nil {
@@ -157,24 +162,20 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		return runtime.Snapshot{}, actionableContractError("RepairContract source_finding_ids must be an exact Finding set: %v", err)
 	}
 
-	// RC-15 (S9-H5): the approval hash is recomputed over the draft bytes
-	// actually read here and compared against the caller's pinned value. The
-	// human reviewed one draft; this transaction must approve exactly those
-	// bytes, not whatever is on disk at commit time.
-	if strings.TrimSpace(request.ApprovalHash) != "" {
-		if request.ApprovalHash != sha256Hex(draftBytes) {
-			return runtime.Snapshot{}, actionableContractError("approval_hash does not match the draft on disk: pinned %s but draft is %s; re-read the draft and record the decision against the current bytes", request.ApprovalHash, sha256Hex(draftBytes))
-		}
+	// RC-15 (S9-H5/H6): ordering — exact-set and causal-closure are
+	// reported first so callers fix the Case/draft before pinning the
+	// approval receipt. Then validate the human-boundary receipt.
+	if approvalHash == "" {
+		return runtime.Snapshot{}, actionableContractError("approval_hash is required; pin the exact draft bytes reviewed by the approver")
 	}
-	// RC-15 (S9-H6): approval authority is a human boundary. The approver
-	// must be backed by valid human_decision evidence produced by the same
-	// identity and scoped to this verb, runtime, and revision — reusing the
-	// store.go validateLifecycleApproval shape so one human_decision receipt
-	// cannot authorize a different verb or replay after the revision moves.
-	if strings.TrimSpace(request.ApprovalEvidenceID) != "" {
-		if err := validateContractApprovalEvidence(current.State, strings.TrimSpace(request.ApprovedBy), strings.TrimSpace(request.ApprovalEvidenceID), current.Revision); err != nil {
-			return runtime.Snapshot{}, actionableContractError("%v", err)
-		}
+	if approvalHash != sha256Hex(draftBytes) {
+		return runtime.Snapshot{}, actionableContractError("approval_hash does not match the draft on disk: pinned %s but draft is %s; re-read the draft and record the decision against the current bytes", approvalHash, sha256Hex(draftBytes))
+	}
+	if approvalEvidenceID == "" {
+		return runtime.Snapshot{}, actionableContractError("approval_evidence_id is required; cite valid human_decision evidence for this S8 approval")
+	}
+	if err := validateContractApprovalEvidence(current.State, strings.TrimSpace(request.ApprovedBy), approvalEvidenceID, current.Revision); err != nil {
+		return runtime.Snapshot{}, actionableContractError("%v", err)
 	}
 
 	approvedAt := request.OccurredAt
@@ -258,7 +259,7 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		RuntimeID:              runtimeID,
 		From:                   cursor,
 		To:                     nextCursor,
-		EvidenceIDs:            []string{request.CaseID, contractID},
+		EvidenceIDs:            []string{request.CaseID, contractID, approvalEvidenceID},
 		RequestID:              "investigation-contract-approve",
 		BaselineGeneration:     baseline,
 		GateID:                 "S8-REPAIR-CONTRACT-APPROVAL",
@@ -306,6 +307,78 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	return snapshot, nil
 }
 
+// validateContractBaseline rechecks the S7 subject digest at the S8 authority
+// boundary. Case revisions surface ReviewPlan drift as a warning, but an
+// approval may happen without another Case mutation; therefore Contract
+// approval must independently re-read the sealed ObservationBatch and any
+// current ReviewPlan pointer before it can transfer authority to S9.
+func validateContractBaseline(root string, state, caseDocument map[string]any) error {
+	pinnedDigest := strings.TrimSpace(stringField(caseDocument["baseline_digest"]))
+	if pinnedDigest == "" {
+		return errors.New("Case baseline_digest is missing; re-ingest from a sealed ObservationBatch")
+	}
+	pinnedGeneration, err := integerValue(caseDocument["baseline_generation"])
+	if err != nil {
+		return fmt.Errorf("Case baseline_generation is invalid: %w", err)
+	}
+	runtimeGeneration, err := baselineGeneration(state)
+	if err != nil {
+		return fmt.Errorf("Runtime baseline.generation is invalid: %w", err)
+	}
+	if pinnedGeneration != runtimeGeneration {
+		return fmt.Errorf("Case baseline_generation %d does not match Runtime baseline.generation %d; re-ingest after the current baseline is sealed", pinnedGeneration, runtimeGeneration)
+	}
+	reviewState, _ := state["review"].(map[string]any)
+	if warning := strings.TrimSpace(stringField(reviewState["investigation_baseline_drift"])); warning != "" {
+		return fmt.Errorf("%s; re-verify the Case against the current S7 baseline before approval", warning)
+	}
+
+	batchPointer, err := observationBatchPointer(state)
+	if err != nil {
+		return fmt.Errorf("sealed ObservationBatch is unavailable: %w", err)
+	}
+	batchPath, err := repositoryPath(root, batchPointer.Path)
+	if err != nil {
+		return fmt.Errorf("ObservationBatch path is invalid: %w", err)
+	}
+	batchBytes, err := os.ReadFile(batchPath)
+	if err != nil {
+		return fmt.Errorf("read sealed ObservationBatch %q: %w", batchPointer.Path, err)
+	}
+	actualBatchSHA := sha256Hex(batchBytes)
+	if actualBatchSHA != batchPointer.SHA256 {
+		return fmt.Errorf("sealed ObservationBatch %q sha256 drifted: state pins %s but disk is %s", batchPointer.Path, batchPointer.SHA256, actualBatchSHA)
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("observation-batch.schema.json", batchBytes); err != nil {
+		return fmt.Errorf("sealed ObservationBatch %q schema is invalid: %w", batchPointer.Path, err)
+	}
+	var batch observationBatch
+	if err := json.Unmarshal(batchBytes, &batch); err != nil {
+		return fmt.Errorf("decode sealed ObservationBatch %q: %w", batchPointer.Path, err)
+	}
+	if batch.RuntimeID != stringField(state["runtime_id"]) {
+		return fmt.Errorf("ObservationBatch runtime_id %q does not match Runtime %q", batch.RuntimeID, stringField(state["runtime_id"]))
+	}
+	if batch.BaselineGeneration != pinnedGeneration {
+		return fmt.Errorf("ObservationBatch baseline_generation %d does not match Case baseline_generation %d", batch.BaselineGeneration, pinnedGeneration)
+	}
+	if batch.SubjectDigest != pinnedDigest {
+		return fmt.Errorf("baseline_digest drift: Case pins %s but sealed ObservationBatch now declares %s", pinnedDigest, batch.SubjectDigest)
+	}
+
+	if review.PlanPointerFromState(state) != nil {
+		plan, _, err := review.LoadPlan(root, state)
+		if err != nil {
+			return fmt.Errorf("current ReviewPlan cannot be revalidated: %w", err)
+		}
+		currentDigest := review.SubjectDigest(plan)
+		if currentDigest != pinnedDigest {
+			return fmt.Errorf("baseline_digest drift: Case pins %s but current ReviewPlan subjects digest to %s", pinnedDigest, currentDigest)
+		}
+	}
+	return nil
+}
+
 // contractApprovalScope is the human_boundary scope prefix for the
 // S8→S9 contract approval. It mirrors the runtime_rollover / runtime_governance
 // prefixes used by store.go validateLifecycleApproval so one human_decision
@@ -331,7 +404,7 @@ func validateContractApprovalEvidence(state map[string]any, approvedBy, evidence
 			return nil
 		}
 	}
-	return fmt.Errorf("contract approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s:%s@%d; record the decision with `runtime human-decision` before approving the Contract", evidenceID, approvedBy, contractApprovalScope, runtimeID, revision)
+	return fmt.Errorf("contract approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s:%s@%d; register the decision artifact with `runtime evidence add --kind human_decision --scope-ref %s:%s@%d` before approving the Contract", evidenceID, approvedBy, contractApprovalScope, runtimeID, revision, contractApprovalScope, runtimeID, revision)
 }
 
 // containsStringAny reports whether the decoded string list contains value.

@@ -180,6 +180,66 @@ func TestRecoverPendingJournalRotationTruncatesActiveWithArchivedPrefix(t *testi
 	}
 }
 
+// RC-13 R-H1 regression: if the process crashes after the atomic active-file
+// rewrite but before clearing the marker, recovery must recognize the
+// already-truncated tail, validate the archive + tail pair, and clear the
+// marker without dropping the tail or attempting a second truncation.
+func TestRecoverPendingJournalRotationAcceptsAlreadyTruncatedActiveTail(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "loop-state.json")
+	journalPath := filepath.Join(dir, "loop-events.jsonl")
+	writeStateForRotationTest(t, statePath, "loop-test", 100, "evt-arch-100")
+
+	var archivedSeq []byte
+	for i := 1; i <= 99; i++ {
+		archivedSeq = append(archivedSeq, rotationEventLine(t, "loop-test", i)...)
+	}
+	archiveFile := journalPath + ".archive.99.jsonl"
+	if err := os.WriteFile(archiveFile, archivedSeq, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// This is the post-truncation, pre-marker-clear crash state.
+	activeTail := rotationEventLine(t, "loop-test", 100)
+	if err := os.WriteFile(journalPath, activeTail, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := map[string]any{
+		"schema_version":  "1.0.0",
+		"archived_file":   archiveFile,
+		"archived_sha256": sha256HexForTest(archivedSeq),
+		"archived_count":  99,
+		"tail_sequence":   100,
+		"tail_event_id":   "evt-arch-100",
+		"started_at":      "2026-08-29T00:00:00Z",
+	}
+	markerPath := statePath + ".journal-rotation-pending.json"
+	if err := os.WriteFile(markerPath, mustJSON(t, marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	completed, err := runtime.NewWriter(statePath, journalPath, dir, integrityTestValidator{}).RecoverPendingOperations()
+	if err != nil {
+		t.Fatalf("RecoverPendingOperations: %v", err)
+	}
+	if !completed {
+		t.Fatal("already-truncated journal rotation should be reported as completed")
+	}
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rotation marker not cleared: %v", err)
+	}
+	if got := mustRead(t, journalPath); string(got) != string(activeTail) {
+		t.Fatalf("active tail changed during idempotent recovery: %q", got)
+	}
+
+	completed, err = runtime.NewWriter(statePath, journalPath, dir, integrityTestValidator{}).RecoverPendingOperations()
+	if err != nil {
+		t.Fatalf("second RecoverPendingOperations: %v", err)
+	}
+	if completed {
+		t.Fatal("second recovery without a marker should be a no-op")
+	}
+}
+
 // RC-13 R-M2 acceptance: when state.journal.last_sequence does not match
 // the post-recovery tail, validateStateJournalPair must fail and the
 // marker must remain on disk for `runtime reconcile` to inspect.

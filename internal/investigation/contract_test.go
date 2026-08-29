@@ -1,16 +1,17 @@
 package investigation_test
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/investigation"
+	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
 func TestApproveContractRequiresExactCaseFindingCoverage(t *testing.T) {
@@ -66,17 +67,20 @@ func TestApproveContractCommitsApprovedContractAndCaseRevision(t *testing.T) {
 	}
 	prepareCaseForContractApproval(t, fixture)
 	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1", "finding-2"})
+	approvalHash, approvalEvidenceID, expectedRevision := registerContractApprovalEvidence(t, fixture, contractPath)
 	snapshot, err := investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
-		ExpectedRevision: 1,
-		CaseID:           "investigation-case-observation-batch-r1",
-		ContractPath:     contractPath,
-		ApprovedBy:       "main-session",
+		ExpectedRevision:   expectedRevision,
+		CaseID:             "investigation-case-observation-batch-r1",
+		ContractPath:       contractPath,
+		ApprovedBy:         "main-session",
+		ApprovalHash:       approvalHash,
+		ApprovalEvidenceID: approvalEvidenceID,
 	})
 	if err != nil {
 		t.Fatalf("ApproveContract() error = %v", err)
 	}
-	if snapshot.Revision != 2 {
-		t.Fatalf("revision = %d, want 2", snapshot.Revision)
+	if snapshot.Revision != expectedRevision+1 {
+		t.Fatalf("revision = %d, want %d", snapshot.Revision, expectedRevision+1)
 	}
 	lifecycle := snapshot.State["lifecycle"].(map[string]any)
 	if lifecycle["phase"] != "repair_readback" {
@@ -134,6 +138,59 @@ func TestApproveContractCommitsApprovedContractAndCaseRevision(t *testing.T) {
 	}
 }
 
+func TestApproveContractRequiresApprovalReceipt(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setContractLifecycle(t, fixture)
+	if _, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the sealed batch is the provisional grouping boundary",
+	}); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	prepareCaseForContractApproval(t, fixture)
+	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
+	draftBytes, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
+		ExpectedRevision: 1,
+		CaseID:           "investigation-case-observation-batch-r1",
+		ContractPath:     contractPath,
+		ApprovedBy:       "main-session",
+		ApprovalHash:     hash(draftBytes),
+	})
+	if err == nil || !strings.Contains(err.Error(), "approval_evidence_id is required") {
+		t.Fatalf("ApproveContract() error = %v, want approval evidence requirement", err)
+	}
+}
+
+func TestApproveContractRejectsBaselineDrift(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setContractLifecycle(t, fixture)
+	if _, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the sealed batch is the provisional grouping boundary",
+	}); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	prepareCaseForContractApproval(t, fixture)
+	setContractReviewPlan(t, fixture)
+	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
+	approvalHash, approvalEvidenceID, expectedRevision := registerContractApprovalEvidence(t, fixture, contractPath)
+	_, err := investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
+		ExpectedRevision:   expectedRevision,
+		CaseID:             "investigation-case-observation-batch-r1",
+		ContractPath:       contractPath,
+		ApprovedBy:         "main-session",
+		ApprovalHash:       approvalHash,
+		ApprovalEvidenceID: approvalEvidenceID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "baseline_digest drift") {
+		t.Fatalf("ApproveContract() error = %v, want baseline drift rejection", err)
+	}
+}
+
 func writeContractDraft(t *testing.T, root string, findingIDs []string) string {
 	t.Helper()
 	draft := map[string]any{
@@ -159,6 +216,85 @@ func writeContractDraft(t *testing.T, root string, findingIDs []string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func registerContractApprovalEvidence(t *testing.T, fixture *intakeFixture, contractPath string) (string, string, int) {
+	t.Helper()
+	draftBytes, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	approvalHash := hash(draftBytes)
+	evidenceID := "ev-contract-approval"
+	decisionBytes, err := json.MarshalIndent(map[string]any{
+		"decision":      "approve_contract",
+		"approved_by":   "main-session",
+		"approval_hash": approvalHash,
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionBytes = append(decisionBytes, '\n')
+	decisionRel := ".claude/decisions/contract-approval.json"
+	decisionPath := filepath.Join(fixture.root, filepath.FromSlash(decisionRel))
+	if err := os.MkdirAll(filepath.Dir(decisionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decisionPath, decisionBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current, err := runtime.NewStore(fixture.statePath, fixture.journalPath).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID, _ := current.State["runtime_id"].(string)
+	approvalRevision := current.Revision + 1
+	next, err := runtime.RecordEvidence(fixture.root, fixture.statePath, fixture.journalPath, runtime.EvidenceRequest{
+		ExpectedRevision: current.Revision,
+		ID:               evidenceID,
+		Kind:             "human_decision",
+		Path:             decisionRel,
+		ProducedBy:       []string{"main-session"},
+		ScopeRefs:        []string{fmt.Sprintf("s8_contract_approval:%s@%d", runtimeID, approvalRevision)},
+		Validator:        semantic.RuntimeCandidateValidator{},
+	})
+	if err != nil {
+		t.Fatalf("RecordEvidence(contract approval) error = %v", err)
+	}
+	return approvalHash, evidenceID, next.Revision
+}
+
+func setContractReviewPlan(t *testing.T, fixture *intakeFixture) {
+	t.Helper()
+	planBytes := []byte(`{"review_plan_id":"review-plan-drift","frozen_subjects":[{"path":"internal/service/decoder.go","sha256":"` + strings.Repeat("b", 64) + `"}]}` + "\n")
+	planRel := ".claude/review/plans/review-plan-drift.json"
+	planPath := filepath.Join(fixture.root, filepath.FromSlash(planRel))
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, planBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(fixture.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["review"].(map[string]any)["plan"] = map[string]any{
+		"plan_id": "review-plan-drift", "path": planRel, "sha256": hash(planBytes), "revision": 1,
+		"review_round": 1, "status": "running", "e2e_coverage_state": "not_applicable",
+		"submitted_at": "2026-08-25T00:00:00Z",
+	}
+	updated, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.statePath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func setContractLifecycle(t *testing.T, fixture *intakeFixture) {
@@ -268,17 +404,14 @@ func TestApproveContractAcceptsCurrentApprovalHash(t *testing.T) {
 	}
 	prepareCaseForContractApproval(t, fixture)
 	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
-	draftBytes, err := os.ReadFile(contractPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(draftBytes)
+	approvalHash, approvalEvidenceID, expectedRevision := registerContractApprovalEvidence(t, fixture, contractPath)
 	snapshot, err := investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
-		ExpectedRevision: 1,
-		CaseID:           "investigation-case-observation-batch-r1",
-		ContractPath:     contractPath,
-		ApprovedBy:       "main-session",
-		ApprovalHash:     hex.EncodeToString(sum[:]),
+		ExpectedRevision:   expectedRevision,
+		CaseID:             "investigation-case-observation-batch-r1",
+		ContractPath:       contractPath,
+		ApprovedBy:         "main-session",
+		ApprovalHash:       approvalHash,
+		ApprovalEvidenceID: approvalEvidenceID,
 	})
 	if err != nil {
 		t.Fatalf("ApproveContract() error = %v", err)
@@ -333,11 +466,17 @@ func TestApproveContractRejectsForeignHumanDecisionScope(t *testing.T) {
 	if err := os.WriteFile(fixture.statePath, append(updated, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
+	draftBytes, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
 		ExpectedRevision:   1,
 		CaseID:             "investigation-case-observation-batch-r1",
-		ContractPath:       writeContractDraft(t, fixture.root, []string{"finding-1"}),
+		ContractPath:       contractPath,
 		ApprovedBy:         "main-session",
+		ApprovalHash:       hash(draftBytes),
 		ApprovalEvidenceID: "ev-foreign-decision",
 	})
 	if err == nil || !strings.Contains(err.Error(), "s8_contract_approval") {

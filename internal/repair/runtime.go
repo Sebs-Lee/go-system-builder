@@ -611,23 +611,10 @@ func shortDigest(digest string) string {
 	return digest
 }
 
-// bindRequiredReverificationIDs is the RC-09 (S9-6) producer-side gate for
-// required_reverification_ids. Every declared ID must resolve to a persisted
-// TargetedReverification artifact; a declared-but-nonexistent ID is a ghost
-// obligation and rejects the ChangeImpact instead of silently passing.
-func bindRequiredReverificationIDs(root string, impact ChangeImpact) error {
-	for _, id := range impact.RequiredReverificationIDs {
-		ref := ArtifactRef{Path: ".claude/review/repair/reverification/" + id + ".json"}
-		if _, err := ValidateTargetedReverification(root, ref); err != nil {
-			return fmt.Errorf("ChangeImpact required_reverification_ids entry %q does not resolve to a valid targeted reverification: %w", id, err)
-		}
-	}
-	return nil
-}
-
 // requiredReverificationIDs projects the impact's required set into the
 // runtime pointer so the outstanding obligations are auditable state. The
-// projection is a plain copy: the consuming gate is the exact-set check in
+// projection is a plain copy: the producer registers the obligation at Impact
+// commit, and the consuming gate is the exact-set check in
 // CommitRepairHandoff, which compares this list against the actually
 // committed reverification IDs.
 func requiredReverificationIDs(impact ChangeImpact) []any {
@@ -708,14 +695,11 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 	if err := exactChangedArtifactSet(resultArtifacts, actualArtifacts, "RepairResult batch", "actual Session diff"); err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
-	// RC-09 (S9-6): required_reverification_ids is a consumed gate, not a
-	// ghost field. Each declared ID must resolve to a real reverification
-	// artifact, and the next S9 phase cannot start until every one of them is
-	// committed to the Runtime. The pointer records the outstanding set so
-	// CommitTargetedReverification can clear it.
-	if err := bindRequiredReverificationIDs(root, impactDocument); err != nil {
-		return runtimepkg.Snapshot{}, err
-	}
+	// RC-09 (S9-6): register required_reverification_ids as the durable
+	// obligation for the next phase. The TargetedReverification artifact is a
+	// downstream result and is intentionally created/committed after this
+	// transaction. CommitRepairHandoff consumes the pointer's obligation and
+	// rejects any missing required IDs before S9 can close.
 	at := occurred(req.OccurredAt)
 	actor := req.Actor
 	if actor == "" {

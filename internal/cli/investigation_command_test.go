@@ -201,9 +201,37 @@ func TestRuntimeInvestigationContractApproveCLIHandsOffToS9(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	approvalHash := sha256HexForCLI(append(append([]byte(nil), contractBytes...), '\n'))
+	decision := map[string]any{"decision": "approve_contract", "approved_by": "main-session", "approval_hash": approvalHash}
+	decisionBytes, err := json.MarshalIndent(decision, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionRel := ".claude/decisions/contract-approval.json"
+	decisionPath := filepath.Join(root, filepath.FromSlash(decisionRel))
+	if err := os.MkdirAll(filepath.Dir(decisionPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decisionPath, append(decisionBytes, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	approvalEvidenceID := "ev-contract-approval"
+	approvalExpectedRevision := readStateRevision(t, root)
 	stdout.Reset()
 	stderr.Reset()
-	code = cli.Run([]string{"runtime", "investigation", "contract", "approve", "--root", root, "--case-id", "investigation-case-observation-batch-r1", "--file", contractPath, "--approved-by", "main-session"}, strings.NewReader(""), &stdout, &stderr)
+	code = cli.Run([]string{
+		"runtime", "evidence", "add", "--root", root,
+		"--expected-revision", fmt.Sprint(approvalExpectedRevision), "--id", approvalEvidenceID,
+		"--kind", "human_decision", "--path", decisionRel, "--produced-by", "main-session",
+		"--scope-ref", fmt.Sprintf("s8_contract_approval:%s@%d", req039fixtures.RuntimeIDFromState(state), approvalExpectedRevision+1),
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contract approval evidence code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.Run([]string{"runtime", "investigation", "contract", "approve", "--root", root, "--case-id", "investigation-case-observation-batch-r1", "--file", contractPath, "--approved-by", "main-session", "--approval-hash", approvalHash, "--approval-evidence-id", approvalEvidenceID}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contract approve code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -603,7 +631,7 @@ func TestRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T) {
 		t.Fatalf("route output must expose the s9_repair disposition: %s", out)
 	}
 	if !strings.Contains(errOut, "draft the RepairContract") ||
-		!strings.Contains(errOut, "runtime investigation contract approve --case-id investigation-case-observation-batch-r1 --file <draft> --approved-by <actor>") {
+		!strings.Contains(errOut, "runtime investigation contract approve --case-id investigation-case-observation-batch-r1 --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>") {
 		t.Fatalf("route coaching must point at the RepairContract step: %s", errOut)
 	}
 }
