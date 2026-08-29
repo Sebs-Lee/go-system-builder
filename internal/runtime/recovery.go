@@ -759,6 +759,7 @@ func knownRecoverySourcePendingPaths(statePath string) []string {
 		statePath + ".commit-pending.json",
 		statePath + ".fingerprint-pending.json",
 		statePath + ".rollover-pending.json",
+		statePath + ".journal-rotation-pending.json",
 	}
 }
 
