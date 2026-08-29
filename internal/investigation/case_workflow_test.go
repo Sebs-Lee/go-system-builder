@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1031,4 +1032,209 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestInvestigateMoreLivelockCapRejects covers RC-15 (S9-T2/L1): after the
+// investigate_more attempt chain reaches the livelock cap (default 5) the
+// route verb fails closed with an actionable converge instruction instead of
+// allowing another silent re-entry. Each attempt is legitimately fresh: the
+// test registers a new hypothesis with new evidence before re-routing, which
+// is exactly the mechanical unlock the fingerprint gate requires — proving
+// the cap bites on content-valid re-entry chains, not just stale ones.
+func TestInvestigateMoreLivelockCapRejects(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	_, caseID, _ := discriminatedCaseFixture(t, fixture)
+	pointer := investigationPointer(t, fixture)
+
+	// First route: the discriminated but not causally closed Case may enter
+	// investigate_more legitimately.
+	if _, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		Route:                "investigate_more",
+		RouteReason:          "the mechanism needs one more discriminator before repair",
+	}); err != nil {
+		t.Fatalf("initial investigate_more route error = %v", err)
+	}
+
+	// Four more full unlock cycles: new hypothesis (new evidence) → re-route.
+	// After the 5th investigate_more entry the cap is reached; the 6th route
+	// is rejected even with fresh evidence available.
+	for attempt := 0; attempt < 4; attempt++ {
+		pointer = investigationPointer(t, fixture)
+		register := investigation.HypothesisRequest{
+			ExpectedRevision:     currentRuntimeRevision(t, fixture),
+			ExpectedCaseRevision: integerPointerRevision(pointer),
+			ExpectedCaseSHA256:   pointer["sha256"].(string),
+			CaseID:               caseID,
+			HypothesisID:         fmt.Sprintf("hypothesis-cap-%d", attempt),
+			AssignmentID:         fmt.Sprintf("assignment-cap-%d", attempt),
+			Statement:            fmt.Sprintf("mechanism variant %d drops the value", attempt),
+			Invariant:            "the value survives the boundary",
+			Discriminator:        "trace the value through the boundary",
+			ExpectedOutcomes:     map[string]any{"support": "the value is dropped", "refute": "the value survives"},
+			SourceFindingIDs:     []string{"finding-1"},
+			EvidenceRefs:         []string{fmt.Sprintf("evidence://cap-variant-%d", attempt)},
+		}
+		if _, err := investigation.RegisterHypothesis(fixture.root, fixture.statePath, fixture.journalPath, register); err != nil {
+			t.Fatalf("RegisterHypothesis(cap-%d) error = %v", attempt, err)
+		}
+		pointer = investigationPointer(t, fixture)
+		if _, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+			ExpectedRevision:     currentRuntimeRevision(t, fixture),
+			ExpectedCaseRevision: integerPointerRevision(pointer),
+			ExpectedCaseSHA256:   pointer["sha256"].(string),
+			CaseID:               caseID,
+			Route:                "investigate_more",
+			RouteReason:          "the variant needs another discriminator round",
+		}); err != nil {
+			t.Fatalf("investigate_more unlock route %d error = %v", attempt, err)
+		}
+	}
+
+	// The 6th route hits the cap even though a fresh hypothesis could be
+	// registered: the Case must converge on a concrete disposition now.
+	pointer = investigationPointer(t, fixture)
+	_, err := investigation.UpdateCaseRoute(fixture.root, fixture.statePath, fixture.journalPath, investigation.RouteRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               caseID,
+		Route:                "investigate_more",
+		RouteReason:          "one more unbounded re-entry",
+	})
+	if err == nil {
+		t.Fatal("expected investigate_more route beyond the livelock cap to fail")
+	}
+	if !strings.Contains(err.Error(), "investigate_more attempts exhausted") {
+		t.Fatalf("expected livelock cap error, got %v", err)
+	}
+}
+
+// TestUpdateCaseRevisionWarnsOnBaselineDigestDrift covers RC-18 S8-H3: every
+// Case revision recomputes the frozen ReviewPlan subject digest. When the
+// pinned baseline_digest no longer matches, the warning lands in the journal
+// message and in review.investigation_baseline_drift for the status board —
+// and the pinned digest itself is never rewritten to bless the drift.
+func TestUpdateCaseRevisionWarnsOnBaselineDigestDrift(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer := investigationPointer(t, fixture)
+
+	planRel := ".claude/review/plans/review-plan-drift.json"
+	planBytes := []byte(`{"review_plan_id":"review-plan-drift","frozen_subjects":[{"path":"internal/service/decoder.go","sha256":"` + strings.Repeat("b", 64) + `"}]}` + "\n")
+	planPath := filepath.Join(fixture.root, filepath.FromSlash(planRel))
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, planBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planSum := sha256.Sum256(planBytes)
+	setStateReviewPlan(t, fixture, "review-plan-drift", planRel, hex.EncodeToString(planSum[:]))
+
+	snapshot, err := investigation.UpdateCase(fixture.root, fixture.statePath, fixture.journalPath, investigation.CaseRevisionRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		Operation:            "drift_probe",
+		Mutate:               func(document map[string]any) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("UpdateCase() error = %v", err)
+	}
+
+	// Status-board outlet: the drift warning is readable at review.investigation_baseline_drift.
+	warning, _ := snapshot.State["review"].(map[string]any)["investigation_baseline_drift"].(string)
+	if !strings.Contains(warning, "baseline_digest drift") || !strings.Contains(warning, strings.Repeat("a", 64)) {
+		t.Fatalf("investigation_baseline_drift = %q, want the pinned-digest drift warning", warning)
+	}
+	// Journal outlet: the revision event message carries the warning.
+	event := readLastJournalEvent(t, fixture.journalPath)
+	if !strings.Contains(event["message"].(string), "WARNING baseline_digest drift") {
+		t.Fatalf("journal message = %#v, want the drift warning", event["message"])
+	}
+	// The pinned digest in the Case artifact is never rewritten.
+	caseRel := snapshot.State["review"].(map[string]any)["investigation"].(map[string]any)["path"].(string)
+	var document map[string]any
+	if err := json.Unmarshal(mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(caseRel))), &document); err != nil {
+		t.Fatal(err)
+	}
+	if got := document["baseline_digest"]; got != strings.Repeat("a", 64) {
+		t.Fatalf("baseline_digest = %v, want the pinned digest unchanged (drift is warned, never blessed)", got)
+	}
+}
+
+// TestUpdateCaseRevisionClearsBaselineDriftWhenBaselineMatches proves the
+// drift projection is cleared (set back to null) once the frozen subjects
+// digest to the pinned value again.
+func TestUpdateCaseRevisionClearsBaselineDriftWhenBaselineMatches(t *testing.T) {
+	fixture := readyCaseFixture(t, []string{"finding-1"})
+	pointer := investigationPointer(t, fixture)
+
+	planRel := ".claude/review/plans/review-plan-aligned.json"
+	planBytes := []byte(`{"review_plan_id":"review-plan-aligned","frozen_subjects":[]}` + "\n")
+	planPath := filepath.Join(fixture.root, filepath.FromSlash(planRel))
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, planBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The subject digest of an empty frozen_subjects list is sha256("");
+	// seed the Case with that pinned digest so the recomputation matches.
+	emptyDigest := sha256.Sum256([]byte(""))
+	planSum := sha256.Sum256(planBytes)
+	setStateReviewPlan(t, fixture, "review-plan-aligned", planRel, hex.EncodeToString(planSum[:]))
+
+	_, err := investigation.UpdateCase(fixture.root, fixture.statePath, fixture.journalPath, investigation.CaseRevisionRequest{
+		ExpectedRevision:     currentRuntimeRevision(t, fixture),
+		ExpectedCaseRevision: integerPointerRevision(pointer),
+		ExpectedCaseSHA256:   pointer["sha256"].(string),
+		CaseID:               "investigation-case-observation-batch-r1",
+		Operation:            "align_baseline",
+		Mutate: func(document map[string]any) error {
+			document["baseline_digest"] = hex.EncodeToString(emptyDigest[:])
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateCase() error = %v", err)
+	}
+	snapshot, err := runtime.NewStore(fixture.statePath, fixture.journalPath).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drift := snapshot.State["review"].(map[string]any)["investigation_baseline_drift"]; drift != nil {
+		t.Fatalf("investigation_baseline_drift = %v, want nil when the baseline matches", drift)
+	}
+}
+
+// setStateReviewPlan pins a ReviewPlan pointer into review.plan so SubjectDigest
+// can be recomputed during Case revisions.
+func setStateReviewPlan(t *testing.T, fixture *intakeFixture, planID, planRel, planSHA string) {
+	t.Helper()
+	data, err := os.ReadFile(fixture.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	review := document["review"].(map[string]any)
+	review["plan"] = map[string]any{
+		"plan_id": planID, "path": planRel, "sha256": planSHA, "revision": 1,
+		"review_round": 1, "status": "running",
+		"e2e_coverage_state": "not_applicable", "submitted_at": "2026-08-25T00:00:00Z",
+	}
+	updated, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.statePath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

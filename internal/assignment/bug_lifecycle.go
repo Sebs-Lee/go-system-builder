@@ -180,12 +180,22 @@ func AdvanceBug(root, statePath, journalPath string, request BugEventRequest) (l
 			if resolved.To == "investigating" {
 				attempts := readBugInt(located, "attempt_count")
 				nextAttempt := attempts + 1
+				// RC-15 (S9-M4/M5): closing_contract_failed also increments
+				// same_contract_failure_count so the consecutive-contract-
+				// failure cap becomes reachable. The pass path resets the
+				// streak counter.
+				if request.Event == "closing_contract_failed" {
+					located["same_contract_failure_count"] = readBugInt(located, "same_contract_failure_count") + 1
+				}
 				// Enforce repair limits before committing the retry. The limits
 				// come from runtime configuration.repair.
 				if err := checkRetryLimits(state, located, nextAttempt); err != nil {
 					return err
 				}
 				located["attempt_count"] = nextAttempt
+			}
+			if request.Event == "closing_contract_passed" && resolved.To == "closed" {
+				located["same_contract_failure_count"] = 0
 			}
 			// Record the fix path when reported.
 			if request.Event == "fix_reported" {
@@ -343,6 +353,8 @@ func bugIDFor(bug map[string]any) string {
 //
 // max_same_contract_failures stays local: it caps consecutive Closing
 // Contract failures for the same BUG and has no CheckRepairLimit equivalent.
+// RC-15 (S9-M5): it raises the same typed *transition.RepairLimitError so the
+// GTR-004 bridge (adapter.DispatchRepairLimitExceeded) can pause the Loop.
 //
 // Both limits default to 0 (unlimited) when the configuration is absent, so
 // the check is opt-in via the runtime configuration block.
@@ -364,8 +376,8 @@ func checkRetryLimits(state map[string]any, bug map[string]any, nextAttempt int)
 		if sameContractFailures >= maxSameContract {
 			id, _ := bug["id"].(string)
 			return fmt.Errorf(
-				"BUG %s exceeded max_same_contract_failures (%d): contract may be wrong; pause the Loop",
-				id, maxSameContract)
+				"BUG %s exceeded max_same_contract_failures (%d): contract may be wrong; pause the Loop: %w",
+				id, maxSameContract, &transition.RepairLimitError{BugID: id, Attempts: sameContractFailures, Max: maxSameContract})
 		}
 	}
 	return nil

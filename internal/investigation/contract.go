@@ -20,12 +20,23 @@ const contractNextCommand = "runtime investigation contract approve --root . --c
 // orchestrator identity that approves a draft RepairContract. Approval is a
 // single transaction: the immutable approved Contract and the next immutable
 // Case revision are written before the Runtime pointer is advanced.
+//
+// RC-15 (S9-H5/H6) approval authority: ApprovalHash pins the exact draft
+// bytes the human reviewed (sha256 of the on-disk draft; the server
+// recomputes and compares, so a mid-approval swap is rejected). Approval
+// evidence is a human_boundary gate: ApprovalEvidenceID must resolve to
+// valid human_decision evidence produced by ApprovedBy and scoped to
+// "s8_contract_approval:<runtime_id>@<revision>". Both fields are optional
+// during the CLI-wiring migration window; when omitted the legacy behavior
+// is retained and the approval is recorded with approver_id only.
 type ContractRequest struct {
-	ExpectedRevision int
-	CaseID           string
-	ContractPath     string
-	ApprovedBy       string
-	OccurredAt       time.Time
+	ExpectedRevision    int
+	CaseID              string
+	ContractPath        string
+	ApprovedBy          string
+	ApprovalHash        string
+	ApprovalEvidenceID  string
+	OccurredAt          time.Time
 }
 
 // ApproveContract validates a draft against the active InvestigationCase,
@@ -146,6 +157,26 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		return runtime.Snapshot{}, actionableContractError("RepairContract source_finding_ids must be an exact Finding set: %v", err)
 	}
 
+	// RC-15 (S9-H5): the approval hash is recomputed over the draft bytes
+	// actually read here and compared against the caller's pinned value. The
+	// human reviewed one draft; this transaction must approve exactly those
+	// bytes, not whatever is on disk at commit time.
+	if strings.TrimSpace(request.ApprovalHash) != "" {
+		if request.ApprovalHash != sha256Hex(draftBytes) {
+			return runtime.Snapshot{}, actionableContractError("approval_hash does not match the draft on disk: pinned %s but draft is %s; re-read the draft and record the decision against the current bytes", request.ApprovalHash, sha256Hex(draftBytes))
+		}
+	}
+	// RC-15 (S9-H6): approval authority is a human boundary. The approver
+	// must be backed by valid human_decision evidence produced by the same
+	// identity and scoped to this verb, runtime, and revision — reusing the
+	// store.go validateLifecycleApproval shape so one human_decision receipt
+	// cannot authorize a different verb or replay after the revision moves.
+	if strings.TrimSpace(request.ApprovalEvidenceID) != "" {
+		if err := validateContractApprovalEvidence(current.State, strings.TrimSpace(request.ApprovedBy), strings.TrimSpace(request.ApprovalEvidenceID), current.Revision); err != nil {
+			return runtime.Snapshot{}, actionableContractError("%v", err)
+		}
+	}
+
 	approvedAt := request.OccurredAt
 	if approvedAt.IsZero() {
 		approvedAt = time.Now().UTC()
@@ -155,6 +186,9 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	approved["status"] = "approved"
 	approved["approved_by"] = strings.TrimSpace(request.ApprovedBy)
 	approved["approved_at"] = approvedAt.UTC().Format(time.RFC3339Nano)
+	// RC-15: approver_id is the audit alias of approved_by recorded at
+	// approval time so downstream consumers read one canonical field.
+	approved["approver_id"] = strings.TrimSpace(request.ApprovedBy)
 	approved["approval_hash"] = sha256Hex(draftBytes)
 	approvedBytes, err := json.MarshalIndent(approved, "", "  ")
 	if err != nil {
@@ -270,6 +304,55 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		return runtime.Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// contractApprovalScope is the human_boundary scope prefix for the
+// S8→S9 contract approval. It mirrors the runtime_rollover / runtime_governance
+// prefixes used by store.go validateLifecycleApproval so one human_decision
+// receipt authorizes exactly one verb at one revision.
+const contractApprovalScope = "s8_contract_approval"
+
+// validateContractApprovalEvidence enforces that the cited human_decision
+// evidence is valid, produced by the named approver, and scoped to
+// "s8_contract_approval:<runtime_id>@<revision>". A decision from another
+// verb, another identity, or another revision is rejected.
+func validateContractApprovalEvidence(state map[string]any, approvedBy, evidenceID string, revision int) error {
+	items, ok := state["evidence"].([]any)
+	if !ok {
+		return errors.New("runtime evidence must be an array")
+	}
+	runtimeID := stringField(state["runtime_id"])
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item == nil || stringField(item["id"]) != evidenceID || stringField(item["kind"]) != "human_decision" || stringField(item["status"]) != "valid" {
+			continue
+		}
+		if containsStringAny(item["produced_by"], approvedBy) && containsStringAny(item["scope_refs"], fmt.Sprintf("%s:%s@%d", contractApprovalScope, runtimeID, revision)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("contract approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s:%s@%d; record the decision with `runtime human-decision` before approving the Contract", evidenceID, approvedBy, contractApprovalScope, runtimeID, revision)
+}
+
+// containsStringAny reports whether the decoded string list contains value.
+func containsStringAny(raw any, value string) bool {
+	switch values := raw.(type) {
+	case []any:
+		for _, item := range values {
+			if text, _ := item.(string); text == value {
+				return true
+			}
+		}
+	case []string:
+		for _, text := range values {
+			if text == value {
+				return true
+			}
+		}
+	case string:
+		return values == value
+	}
+	return false
 }
 
 func activeCasePointer(state map[string]any, caseID string) (map[string]any, error) {

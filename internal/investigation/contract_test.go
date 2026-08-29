@@ -1,6 +1,8 @@
 package investigation_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -222,5 +224,123 @@ func prepareCaseForContractApproval(t *testing.T, fixture *intakeFixture) {
 	}
 	if err := os.WriteFile(fixture.statePath, append(updatedState, '\n'), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestApproveContractRejectsApprovalHashMismatch covers RC-15 (S9-H5): the
+// approval hash is recomputed over the draft bytes the server reads and a
+// pinned mismatch (the human reviewed different bytes than what is on disk at
+// commit time) is rejected before any artifact is written.
+func TestApproveContractRejectsApprovalHashMismatch(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setContractLifecycle(t, fixture)
+	if _, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the sealed batch is the provisional grouping boundary",
+	}); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	prepareCaseForContractApproval(t, fixture)
+	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
+	_, err := investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
+		ExpectedRevision: 1,
+		CaseID:           "investigation-case-observation-batch-r1",
+		ContractPath:     contractPath,
+		ApprovedBy:       "main-session",
+		ApprovalHash:     strings.Repeat("0", 64),
+	})
+	if err == nil || !strings.Contains(err.Error(), "approval_hash does not match") {
+		t.Fatalf("ApproveContract() error = %v, want approval_hash mismatch guidance", err)
+	}
+}
+
+// TestApproveContractAcceptsCurrentApprovalHash covers RC-15 (S9-H5): a
+// pinned hash that matches the on-disk draft bytes is accepted and the
+// approved artifact records the approver identity for audit.
+func TestApproveContractAcceptsCurrentApprovalHash(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setContractLifecycle(t, fixture)
+	if _, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the sealed batch is the provisional grouping boundary",
+	}); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	prepareCaseForContractApproval(t, fixture)
+	contractPath := writeContractDraft(t, fixture.root, []string{"finding-1"})
+	draftBytes, err := os.ReadFile(contractPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(draftBytes)
+	snapshot, err := investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
+		ExpectedRevision: 1,
+		CaseID:           "investigation-case-observation-batch-r1",
+		ContractPath:     contractPath,
+		ApprovedBy:       "main-session",
+		ApprovalHash:     hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		t.Fatalf("ApproveContract() error = %v", err)
+	}
+	pointer := snapshot.State["review"].(map[string]any)["investigation"].(map[string]any)
+	approvedBytes, err := os.ReadFile(filepath.Join(fixture.root, filepath.FromSlash(pointer["repair_contract_ref"].(string))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var approved map[string]any
+	if err := json.Unmarshal(approvedBytes, &approved); err != nil {
+		t.Fatal(err)
+	}
+	if approved["approver_id"] != "main-session" {
+		t.Fatalf("approver_id = %v, want main-session", approved["approver_id"])
+	}
+}
+
+// TestApproveContractRejectsForeignHumanDecisionScope covers RC-15 (S9-H6):
+// when an approval evidence id is supplied it must be valid human_decision
+// evidence produced by the approver and scoped to
+// s8_contract_approval:<runtime_id>@<revision>. An evidence id scoped to
+// another verb/revision (or produced by a different identity) is rejected.
+func TestApproveContractRejectsForeignHumanDecisionScope(t *testing.T) {
+	fixture := newIntakeFixture(t, []string{"finding-1"})
+	setContractLifecycle(t, fixture)
+	if _, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{
+		ExpectedRevision:  0,
+		GroupingRationale: "the sealed batch is the provisional grouping boundary",
+	}); err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	prepareCaseForContractApproval(t, fixture)
+	// Seed a human_decision evidence item with a foreign scope.
+	data, err := os.ReadFile(fixture.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["evidence"] = []any{map[string]any{
+		"id": "ev-foreign-decision", "kind": "human_decision", "path": "evidence://foreign",
+		"status": "valid", "produced_by": []any{"main-session"},
+		"scope_refs": []any{"runtime_budget:loop-test@99"},
+	}}
+	updated, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.statePath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = investigation.ApproveContract(fixture.root, fixture.statePath, fixture.journalPath, investigation.ContractRequest{
+		ExpectedRevision:   1,
+		CaseID:             "investigation-case-observation-batch-r1",
+		ContractPath:       writeContractDraft(t, fixture.root, []string{"finding-1"}),
+		ApprovedBy:         "main-session",
+		ApprovalEvidenceID: "ev-foreign-decision",
+	})
+	if err == nil || !strings.Contains(err.Error(), "s8_contract_approval") {
+		t.Fatalf("ApproveContract() error = %v, want human_boundary scope rejection", err)
 	}
 }

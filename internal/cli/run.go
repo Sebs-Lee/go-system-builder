@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/adapter"
 	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/audit"
 	"github.com/entroforge/go-system-builder/internal/change"
@@ -1680,6 +1681,23 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			Params:           params,
 		})
 		if err != nil {
+			// RC-15 (S9-M5/T1): a typed *transition.RepairLimitError from the
+			// BUG lifecycle is bridged through adapter.DispatchRepairLimitExceeded
+			// (GTR-004) so the runtime enters paused with a real pause_record
+			// instead of only printing the limit failure. The failed AdvanceBug
+			// never committed, so the Runtime revision is still resolvedRevision
+			// — the CAS must pin that revision, not revision+1. The dispatch
+			// error, if any, is reported; the original limit error is otherwise
+			// surfaced after the pause is committed.
+			nextSnapshot, dispatchErr := adapter.DispatchRepairLimitExceeded(*root, *statePath, *journalPath, resolvedRevision, err)
+			if dispatchErr == nil {
+				if encodeErr := json.NewEncoder(stdout).Encode(nextSnapshot); encodeErr != nil {
+					fmt.Fprintf(stderr, "encode paused snapshot: %v\n", encodeErr)
+					return 1
+				}
+				fmt.Fprintln(stderr, formatFailure("runtime bug-event", err)+"; runtime paused via GTR-004")
+				return 1
+			}
 			fmt.Fprintln(stderr, formatFailure("runtime bug-event", err))
 			return 1
 		}

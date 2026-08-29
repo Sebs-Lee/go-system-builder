@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	reviewpkg "github.com/entroforge/go-system-builder/internal/review"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
 type RuntimeRequest struct {
@@ -525,9 +527,17 @@ func checkS9AuthorityFreshness(root string, pointer map[string]any, pending []Ch
 	}
 	fingerprint := stringMapField(pointer["authority_fingerprint"])[session.SessionID]
 	if fingerprint == "" {
-		// Sessions opened before the fingerprint channel existed carry no
-		// authority claim; nothing to compare, so the gate cannot fire.
-		return nil
+		// RC-15 (S9-T2/L1): an empty fingerprint means the session carries no
+		// authority claim at all — the gate cannot verify the repair surface,
+		// so fail closed instead of silently passing. Sessions opened before
+		// the fingerprint channel existed (legacy state) are released only
+		// through the explicit migration escape hatch
+		// LOOP_ALLOW_EMPTY_FINGERPRINT=1; a fresh session always records the
+		// fingerprint at open (runtime.go OpenRepairSession).
+		if os.Getenv("LOOP_ALLOW_EMPTY_FINGERPRINT") == "1" {
+			return nil
+		}
+		return fmt.Errorf("RepairSession %s has no authority_fingerprint on the Runtime pointer; the S9 authority gate cannot verify the repair surface — re-baseline the case through S8/S9 planning (migration escape: LOOP_ALLOW_EMPTY_FINGERPRINT=1)", session.SessionID)
 	}
 	claimed, err := claimedRepairChanges(root, pointer, pending)
 	if err != nil {
@@ -552,6 +562,20 @@ func checkS9AuthorityFreshness(root string, pointer map[string]any, pending []Ch
 		}
 	}
 	return nil
+}
+
+// ValidateAuthorityFreshness exposes the RC-09 (S9-4) authority gate (with the
+// RC-15 empty-fingerprint fail-closed behavior) for tests and tooling that
+// need to probe the gate without committing an S9 artifact.
+func ValidateAuthorityFreshness(root string, pointer map[string]any, pending []ChangedArtifact) error {
+	return checkS9AuthorityFreshness(root, pointer, pending)
+}
+
+// BindTargetedReverificationIdentitiesForTest exposes the RC-01/RC-15
+// identity-binding gate for tests that need to exercise owner-binding
+// semantics against a synthetic pointer.
+func BindTargetedReverificationIdentitiesForTest(p map[string]any, plan RepairPlan, value TargetedReverification) error {
+	return bindTargetedReverificationIdentities(p, plan, value)
 }
 
 // claimedRepairChanges collects every changed-artifact path the repair has
@@ -723,7 +747,11 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 //     the active S9 verifier pool (a registered agent in state) and must not
 //     be owned by the repair owner in assignment_owners — an assignment not
 //     known to the session (or an alias of the owner's own assignment) is a
-//     fabricated verifier and is rejected.
+//     fabricated verifier and is rejected;
+//  3. RC-15 (S9-H8): the original repair assignment must carry a non-empty
+//     owner (a claimed PlanReport) and the performing identity must resolve
+//     to a different agent — an unowned original or an unclaimed performing
+//     assignment has no agent identity to bind and cannot prove independence.
 func bindTargetedReverificationIdentities(p map[string]any, plan RepairPlan, value TargetedReverification) error {
 	owners := stringMapField(p["assignment_owners"])
 	if len(owners) == 0 {
@@ -732,14 +760,30 @@ func bindTargetedReverificationIdentities(p map[string]any, plan RepairPlan, val
 	if !targetedAssignmentDispatched(p, plan, value.OriginalAssignmentID, owners) {
 		return fmt.Errorf("targeted reverification original_assignment_id %q is not the dispatched repair assignment for this bug; use the repair assignment recorded in assignment_owners (%s) or its manifest alias", value.OriginalAssignmentID, strings.Join(ownedAssignments(owners), ", "))
 	}
+	// RC-15 (S9-H8): assignment-level owner binding. The original repair
+	// assignment must be claimed by a known agent; an empty owner means the
+	// PlanReport never bound an identity and the reverification would be
+	// comparing against a ghost.
+	originalOwner := dispatchedVerifierAgentID(value.OriginalAssignmentID, owners)
+	if strings.TrimSpace(originalOwner) == "" {
+		return fmt.Errorf("targeted reverification original_assignment_id %q has no recorded owner in assignment_owners; submit its PlanReport so the repair owner identity is bound before an independent verifier is selected", value.OriginalAssignmentID)
+	}
 	if strings.TrimSpace(value.PerformingAssignmentID) == "" {
 		return errors.New("targeted reverification performing_assignment_id is required")
 	}
-	if owner, isOwned := ownedAssignmentAgents(owners)[value.OriginalAssignmentID]; isOwned && dispatchedVerifierAgentID(value.PerformingAssignmentID, owners) == owner {
-		return fmt.Errorf("targeted reverification is not independent: performing_assignment_id %q resolves to the repair owner %s of %q", value.PerformingAssignmentID, owner, value.OriginalAssignmentID)
+	performingOwner := dispatchedVerifierAgentID(value.PerformingAssignmentID, owners)
+	if performingOwner == originalOwner {
+		return fmt.Errorf("targeted reverification is not independent: performing_assignment_id %q resolves to the repair owner %s of %q", value.PerformingAssignmentID, originalOwner, value.OriginalAssignmentID)
 	}
 	if !targetedAssignmentDispatched(p, plan, value.PerformingAssignmentID, owners) {
 		return fmt.Errorf("targeted reverification performing_assignment_id %q is not a dispatched verifier identity in the active S9 assignment pool; the reverification must be performed by a dispatched assignment, not a fabricated ID", value.PerformingAssignmentID)
+	}
+	// RC-15 (S9-H8): a performing identity that dispatches nothing and is
+	// claimed by nobody is still a fabricated verifier even if its spelling
+	// passes the plan-member check — require a recorded owner so the agent
+	// identity is always resolvable.
+	if strings.TrimSpace(performingOwner) == "" {
+		return fmt.Errorf("targeted reverification performing_assignment_id %q is not claimed by any agent in assignment_owners; an unclaimed verifier identity cannot be bound to a responsible agent", value.PerformingAssignmentID)
 	}
 	return nil
 }
@@ -1094,6 +1138,40 @@ func exactContractAssertionCoverage(contract map[string]any, results []Assertion
 	return nil
 }
 
+// checkS9HandoffBudget is the RC-15 (S9-M1/T1) explicit full-review-round
+// budget gate for CommitRepairHandoff. It returns the typed
+// *transition.RepairLimitError when review.round has already reached
+// configuration.repair.max_full_review_rounds: the handoff is the only site
+// that increments review.round, so an over-budget handoff would silently
+// open an unbounded S7 round chain. The limit is structural (the same field
+// the S7 budget-decision verb raises), reads 0 as "unlimited", and never
+// fires on a missing configuration block.
+func checkS9HandoffBudget(state map[string]any) error {
+	repair, ok := mapField(state, "configuration")["repair"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	max := 0
+	switch v := repair["max_full_review_rounds"].(type) {
+	case float64:
+		max = int(v)
+	case int:
+		max = v
+	}
+	if max <= 0 {
+		return nil
+	}
+	review, ok := state["review"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	round := integerValue(review["round"])
+	if round < max {
+		return nil
+	}
+	return fmt.Errorf("%w", &transition.RepairLimitError{BugID: stringField(repairPointer(state)["case_id"]), Attempts: round, Max: max})
+}
+
 func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffRequest) (runtimepkg.Snapshot, error) {
 	current, writer, err := readRepairRuntime(root, statePath, journalPath)
 	if err != nil {
@@ -1109,6 +1187,16 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	// RC-09 (S9-4): the handoff seeds the next S7 round from the changed
 	// surface; a drifted baseline would seed the wrong round — block it.
 	if err := checkS9AuthorityFreshness(root, p, nil); err != nil {
+		return runtimepkg.Snapshot{}, err
+	}
+	// RC-15 (S9-M1/T1): the handoff is the only site that opens a new full
+	// review round (review.round++ below), so the budget gate lives here, not
+	// inside the transition engine. A handoff submitted when the round
+	// counter has already reached max_full_review_rounds raises the typed
+	// *transition.RepairLimitError so the cli bridge dispatches GTR-004 and
+	// the Loop pauses for a human budget decision instead of silently
+	// opening round N+1. Unlimited when the limit is absent or zero.
+	if err := checkS9HandoffBudget(current.State); err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
 	handoff, err := ValidateRepairHandoff(root, req.Handoff)
@@ -1418,6 +1506,11 @@ func pointerArtifact(pointer map[string]any, pathKey, hashKey, label string) (Ar
 	return ref, nil
 }
 
+// validateCurrentRepairResult is the singular compatibility wrapper kept for
+// callers that expect exactly one Assignment result. RC-15 (S9-H7/T2
+// shadow-field convergence): the plural validateCurrentRepairResults is the
+// single authority — it already accepts a single result_ref for legacy
+// pointers — and every live S9 commit path calls the plural form directly.
 func validateCurrentRepairResult(root string, state, pointer map[string]any) (RepairResult, error) {
 	results, err := validateCurrentRepairResults(root, state, pointer)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/transition"
 	req039fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 )
 
@@ -653,5 +655,223 @@ func TestChangeImpactRequiredReverificationIDsAreBound(t *testing.T) {
 	}
 	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef}); err == nil || !strings.Contains(err.Error(), "required_reverification_ids entry") {
 		t.Fatalf("impact commit must reject a ghost required_reverification_ids entry, got %v", err)
+	}
+}
+
+// TestCommitRepairHandoffBudgetGateRejectsOverBudgetRound covers RC-15
+// (S9-M1/T1): the handoff is the only site that opens a new full review
+// round, so when review.round has already reached max_full_review_rounds the
+// commit raises the typed *transition.RepairLimitError (which the CLI bridge
+// dispatches through GTR-004) instead of silently opening round N+1.
+func TestCommitRepairHandoffBudgetGateRejectsOverBudgetRound(t *testing.T) {
+	root, statePath, journalPath, handoffRef := overBudgetHandoffFixture(t)
+
+	// Round already equals the configured budget (1): the handoff must be
+	// rejected with the typed limit error before review.round is incremented.
+	state := req039fixtures.ReadState(t, root)
+	state["configuration"].(map[string]any)["repair"].(map[string]any)["max_full_review_rounds"] = 1
+	state["review"].(map[string]any)["round"] = 1
+	req039fixtures.WriteState(t, root, state)
+	current, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, commitErr := repair.CommitRepairHandoff(root, statePath, journalPath, repair.CommitHandoffRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: "main"}, Handoff: handoffRef})
+	var limitErr *transition.RepairLimitError
+	if commitErr == nil || !errors.As(commitErr, &limitErr) {
+		t.Fatalf("CommitRepairHandoff() error = %v, want *transition.RepairLimitError", commitErr)
+	}
+	if limitErr.Max != 1 {
+		t.Fatalf("RepairLimitError.Max = %d, want 1", limitErr.Max)
+	}
+	after, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State["review"].(map[string]any)["round"] != float64(1) {
+		t.Fatalf("review.round must not advance on a rejected handoff: %v", after.State["review"].(map[string]any)["round"])
+	}
+}
+
+// overBudgetHandoffFixture drives the full S9 chain to a ready_for_full_review
+// pointer with a staged handoff, reusing the same sequence as
+// TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor.
+func overBudgetHandoffFixture(t *testing.T) (string, string, string, repair.ArtifactRef) {
+	t.Helper()
+	root := req039fixtures.FreshRoot(t)
+	state := req039fixtures.BaseState(t, root, "bug_resolution", "repair_readback", 0)
+	contractRef, contractSHA := writeRuntimeContract(t, root)
+	state["review"].(map[string]any)["investigation"] = map[string]any{"case_id": "investigation-case-1", "path": ".claude/review/investigation/cases/investigation-case-1-r2.json", "sha256": repeatHex("b", 64), "revision": 2, "status": "contract_approved", "source_finding_ids": []any{"finding-1"}, "observation_batch_id": "observation-batch-1", "updated_at": "2026-08-25T00:00:00Z", "repair_contract_ref": contractRef.Path, "repair_contract_sha256": contractSHA}
+	req039fixtures.WriteState(t, root, state)
+	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath, journalPath := filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")
+	_, _, sessionRef, err := repair.OpenRepairSession(root, statePath, journalPath, repair.OpenSessionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 0, Actor: "main"}, SessionID: "repair-session-budget", CreatedBy: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, planRef, err := repair.CompileRepairPlan(root, statePath, journalPath, repair.CompilePlanRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 1, Actor: "main"}, PlanID: "repair-plan-budget", CreatedBy: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, planReportRef, err := repair.CreatePlanReport(root, repair.PlanReportRequest{Session: sessionRef, Plan: planRef, AssignmentID: "repair-assignment-unit-1", AgentID: "builder-1", ReportID: "repair-plan-report-budget", PlanText: "restore the payload authority", RedChecks: []repair.RepairCheck{{Name: "original failure", Command: "go test ./internal/api", Result: "fail", EvidenceRefs: []string{"test://red"}}}, ProposedPaths: []string{"internal/api/payload.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repair.SubmitRepairPlanReportToRuntime(root, statePath, journalPath, repair.SubmitPlanReportRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 2, Actor: "builder-1"}, Report: planReportRef}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repair.BeginRepairExecution(root, statePath, journalPath, repair.BeginRepairExecutionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 3, Actor: "main"}}); err != nil {
+		t.Fatal(err)
+	}
+	changedPath := writeFile(t, root, "internal/api/payload.go", "package api\n")
+	changedData, _ := os.ReadFile(changedPath)
+	_, _, resultRef, err := repair.SubmitRepairResultToRuntime(root, statePath, journalPath, repair.SubmitResultRuntimeRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 4, Actor: "builder-1"}, Result: repair.RepairResultRequest{ResultID: "repair-result-budget", ProducerAgentID: "builder-1", UnitResults: []repair.RepairUnitResult{{UnitID: "unit-1", Status: "pass", EvidenceRefs: []string{"test://unit-1"}}}, ChangedArtifacts: []repair.ChangedArtifact{{Path: "internal/api/payload.go", SHA256: fileHash(changedData), Status: "added"}}, Checks: []repair.RepairCheck{{Name: "post-fix", Command: "go test ./...", Result: "pass", EvidenceRefs: []string{"test://green"}}}, Result: "pass"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	impact, impactRef, err := repair.CreateChangeImpact(root, repair.ChangeImpactRequest{ImpactID: "impact-budget", RuntimeID: "loop-req039-ct", ReqID: "REQ-039", BaselineGeneration: 1, SourceBugIDs: []string{"BUG-001"}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-api", Path: "internal/api/payload.go", SHA256: fileHash(changedData)}}, Decisions: []repair.ImpactDecision{{SourceID: "BUG-001", TargetID: "claim-1", Relation: "invalidates", RuleID: "IM-API", Decision: "reverify", ResponsibilityID: nil, Scope: []string{"internal/api/payload.go"}, Rationale: "repair changed the boundary", RecoveryEvidence: []string{resultRef.Path}}}, EscalationLevel: "assignment", AnalyzedBy: "qa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef}); err != nil {
+		t.Fatal(err)
+	}
+	// Bind an independent verifier owner so the targeted reverification passes
+	// the RC-15 identity gate.
+	{
+		raw, readErr := os.ReadFile(statePath)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var cur map[string]any
+		if err := json.Unmarshal(raw, &cur); err != nil {
+			t.Fatal(err)
+		}
+		repairMap, _ := cur["review"].(map[string]any)["repair"].(map[string]any)
+		owners, _ := repairMap["assignment_owners"].(map[string]any)
+		if owners == nil {
+			owners = map[string]any{}
+			repairMap["assignment_owners"] = owners
+		}
+		owners["assignment-s9-qa-verifier"] = "qa"
+		next, err := json.MarshalIndent(cur, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(statePath, next, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-budget", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier", ContinuityReason: "test://verifier-log: independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: reverifyRef}); err != nil {
+		t.Fatal(err)
+	}
+	var persistedSession repair.RepairSession
+	sessionData, err := os.ReadFile(filepath.Join(root, sessionRef.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(sessionData, &persistedSession); err != nil {
+		t.Fatal(err)
+	}
+	changeset, err := repair.ComputeSessionChangesetRecord(root, persistedSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changesetRef, err := repair.PersistChangeset(root, changeset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, handoffRef, err := repair.CreateRepairHandoff(root, repair.HandoffRequest{HandoffID: "repair-handoff-budget", Session: sessionRef, Plan: planRef, Contract: contractRef, Result: resultRef, Changeset: changesetRef, ChangeImpact: impactRef, TargetedReverifications: []repair.ArtifactRef{reverifyRef}, HandedOffBy: "main", NextAction: "S7 full review", OccurredAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The budget gate runs before the CAS commit, so the handoff can be
+	// replayed against the current revision snapshot taken by the test.
+	return root, statePath, journalPath, handoffRef
+}
+
+// TestCheckS9AuthorityFreshnessEmptyFingerprintFailsClosed covers RC-15
+// (S9-T2/L1): an S9 session pointer without an authority fingerprint no
+// longer passes silently; the gate fails closed unless the explicit
+// migration escape LOOP_ALLOW_EMPTY_FINGERPRINT=1 is set.
+func TestCheckS9AuthorityFreshnessEmptyFingerprintFailsClosed(t *testing.T) {
+	root := req039fixtures.FreshRoot(t)
+	state := req039fixtures.BaseState(t, root, "bug_resolution", "repair_readback", 0)
+	contractRef, contractSHA := writeRuntimeContract(t, root)
+	state["review"].(map[string]any)["investigation"] = map[string]any{"case_id": "investigation-case-1", "path": ".claude/review/investigation/cases/investigation-case-1-r2.json", "sha256": repeatHex("b", 64), "revision": 2, "status": "contract_approved", "source_finding_ids": []any{"finding-1"}, "observation_batch_id": "observation-batch-1", "updated_at": "2026-08-25T00:00:00Z", "repair_contract_ref": contractRef.Path, "repair_contract_sha256": contractSHA}
+	req039fixtures.WriteState(t, root, state)
+	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statePath, journalPath := filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")
+	sessionRef, _, _, err := repair.OpenRepairSession(root, statePath, journalPath, repair.OpenSessionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 0, Actor: "main"}, SessionID: "repair-session-legacy", CreatedBy: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a legacy session pointer: no authority fingerprint channel.
+	raw, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var cur map[string]any
+	if err := json.Unmarshal(raw, &cur); err != nil {
+		t.Fatal(err)
+	}
+	pointer := cur["review"].(map[string]any)["repair"].(map[string]any)
+	pointer["authority_fingerprint"] = map[string]any{}
+	_ = sessionRef
+	// Exported validation wrapper: fail closed by default…
+	err = repair.ValidateAuthorityFreshness(root, pointer, nil)
+	if err == nil || !strings.Contains(err.Error(), "no authority_fingerprint") {
+		t.Fatalf("empty fingerprint error = %v, want fail-closed guidance", err)
+	}
+	// …and releasable only through the explicit migration escape hatch.
+	t.Setenv("LOOP_ALLOW_EMPTY_FINGERPRINT", "1")
+	if err := repair.ValidateAuthorityFreshness(root, pointer, nil); err != nil {
+		t.Fatalf("migration escape must release a legacy session, got %v", err)
+	}
+}
+
+// TestBindTargetedReverificationRejectsUnownedIdentities covers RC-15
+// (S9-H8): the original repair assignment must carry a non-empty recorded
+// owner, the performing identity must resolve to a different agent, and an
+// unclaimed performing spelling is a fabricated verifier even when it passes
+// the plan-membership check.
+func TestBindTargetedReverificationRejectsUnownedIdentities(t *testing.T) {
+	plan := repair.RepairPlan{PlanID: "repair-plan-owner", Assignments: []repair.RepairAssignment{{AssignmentID: "repair-assignment-unit-1", UnitIDs: []string{"unit-1"}}}}
+
+	// Case 1: original assignment present in the plan but never claimed by a
+	// PlanReport (no assignment_owners entry) — the owner is a ghost.
+	unownedPointer := map[string]any{"assignment_owners": map[string]any{"assignment-s9-qa-verifier": "qa"}}
+	err := repair.BindTargetedReverificationIdentitiesForTest(unownedPointer, plan, repair.TargetedReverification{OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier"})
+	if err == nil || !strings.Contains(err.Error(), "has no recorded owner") {
+		t.Fatalf("unowned original error = %v, want no-recorded-owner rejection", err)
+	}
+
+	// Case 2: performing identity resolves to the same agent as the owner.
+	ownedPointer := map[string]any{"assignment_owners": map[string]any{"repair-assignment-unit-1": "builder-1", "assignment-s9-qa-verifier": "builder-1"}}
+	err = repair.BindTargetedReverificationIdentitiesForTest(ownedPointer, plan, repair.TargetedReverification{OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier"})
+	if err == nil || !strings.Contains(err.Error(), "not independent") {
+		t.Fatalf("same-agent verifier error = %v, want independence rejection", err)
+	}
+
+	// Case 3: performing assignment dispatched in the plan but claimed by
+	// nobody — an unclaimed verifier identity cannot be bound.
+	unclaimedPerforming := map[string]any{"assignment_owners": map[string]any{"repair-assignment-unit-1": "builder-1"}}
+	err = repair.BindTargetedReverificationIdentitiesForTest(unclaimedPerforming, plan, repair.TargetedReverification{OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-unit-1-unclaimed"})
+	if err == nil || !strings.Contains(err.Error(), "not a dispatched verifier identity") {
+		t.Fatalf("unclaimed performing error = %v, want dispatched-identity rejection", err)
+	}
+
+	// Case 4 (positive): distinct claimed owners in both spellings bind.
+	validPointer := map[string]any{"assignment_owners": map[string]any{"repair-assignment-unit-1": "builder-1", "assignment-s9-qa-verifier": "qa"}}
+	if err := repair.BindTargetedReverificationIdentitiesForTest(validPointer, plan, repair.TargetedReverification{OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier"}); err != nil {
+		t.Fatalf("valid independent binding error = %v", err)
 	}
 }

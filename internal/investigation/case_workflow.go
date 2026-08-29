@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -335,6 +336,34 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 	if err := validateEvidenceReferences(root, request.CausalReassessmentEvidenceRefs); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
+	// RC-15 (S9-M1/T2/L1): investigate_more is the one intentional Case
+	// re-entry point, but an unbounded chain of investigate_more routes is a
+	// livelock. Cap the attempt chain before the CAS transaction starts: the
+	// number of prior investigate_more entries in route_history is checked
+	// against configuration.repair.max_full_review_rounds (independent
+	// default 5 when the configuration is absent), and over the limit the
+	// caller is routed to the blocked/duplicate decision instead of another
+	// silent re-entry.
+	if strings.TrimSpace(request.Route) == "investigate_more" {
+		if snapshot, readErr := runtime.NewStore(statePath, journalPath).Snapshot(); readErr == nil {
+			if pointer, pointerErr := mutableCasePointer(snapshot.State, request.CaseID, "case_routed"); pointerErr == nil {
+				if document, docErr := readCaseDocument(root, stringField(pointer["path"])); docErr == nil {
+					if history, histErr := objectArrayAllowEmpty(document["route_history"], "InvestigationCase.route_history"); histErr == nil {
+						attempts := 0
+						for _, entry := range history {
+							if stringField(entry["to"]) == "investigate_more" {
+								attempts++
+							}
+						}
+						maxAttempts := configuredMaxInvestigateAttempts(snapshot.State)
+						if attempts >= maxAttempts {
+							return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "investigate_more attempts exhausted: %d of max %d; the Case must converge on a concrete disposition — route it to duplicate (with canonical_case_id), s2_spec_rework, human_req_change, or pause for a human decision", attempts, maxAttempts)
+						}
+					}
+				}
+			}
+		}
+	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
@@ -626,6 +655,19 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	if err := exactFindingSetWithDetails(caseIDs, nextIDs); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "source Finding exact set is immutable: %v", err)
 	}
+	// RC-18 S8-H3: the Case pins the digest of the S7 frozen baseline it was
+	// ingested from. Recompute that digest on every revision so a subject
+	// tampering between intake and investigation becomes observable instead of
+	// silently inheriting the old pin. The pinned value is never rewritten —
+	// changing it would bless the drift — so the mutation message carries the
+	// warning into the journal and the status board surfaces it to the caller.
+	driftWarning := ""
+	if plan, _, planErr := review.LoadPlan(root, current.State); planErr == nil {
+		if digest := review.SubjectDigest(plan); digest != stringField(nextDocument["baseline_digest"]) {
+			driftWarning = fmt.Sprintf("baseline_digest drift: Case pins %s but the frozen ReviewPlan subjects now digest to %s; the investigation baseline is stale — re-verify findings against the current baseline before causal closure",
+				stringField(nextDocument["baseline_digest"]), digest)
+		}
+	}
 	nextDocument["case_id"] = request.CaseID
 	nextDocument["revision"] = request.ExpectedCaseRevision + 1
 	occurredAt := request.OccurredAt
@@ -690,7 +732,7 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 		GateID:                 "S8-INVESTIGATION-CASE-REVISION",
 		GateFingerprint:        "sha256:investigation-case-revision-v1",
 		ProducerResponsibility: "S8 Investigation",
-		Message:                fmt.Sprintf("%s: %s revision %d", nonEmpty(request.Operation, "case_revision_updated"), request.CaseID, nextRevision),
+		Message:                driftJournalMessage(nonEmpty(request.Operation, "case_revision_updated"), request.CaseID, nextRevision, driftWarning),
 		OccurredAt:             occurredAt,
 		Apply: func(state map[string]any) error {
 			review, ok := state["review"].(map[string]any)
@@ -724,6 +766,9 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 			existing["route_consumed_at"] = nextDocument["route_consumed_at"]
 			existing["route_consumer"] = nextDocument["route_consumer"]
 			existing["next_action"] = nextDocument["next_action"]
+			// RC-18 S8-H3 status-board outlet: keep the latest drift warning
+			// (or clear it) so `runtime investigation status` shows it.
+			review["investigation_baseline_drift"] = driftWarningPointer(driftWarning)
 			existing["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			return nil
@@ -734,6 +779,68 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 		return runtime.Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// defaultMaxInvestigateAttempts is the independent livelock cap for the
+// investigate_more route chain when the runtime does not configure a limit.
+const defaultMaxInvestigateAttempts = 5
+
+// configuredMaxInvestigateAttempts reads the investigate_more attempt cap
+// from configuration.repair.max_full_review_rounds and falls back to the
+// independent S8 default when the configuration is absent.
+func configuredMaxInvestigateAttempts(state map[string]any) int {
+	configuration, _ := state["configuration"].(map[string]any)
+	repair, ok := configuration["repair"].(map[string]any)
+	if !ok {
+		return defaultMaxInvestigateAttempts
+	}
+	switch v := repair["max_full_review_rounds"].(type) {
+	case float64:
+		if int(v) >= 1 {
+			return int(v)
+		}
+	case int:
+		if v >= 1 {
+			return v
+		}
+	}
+	return defaultMaxInvestigateAttempts
+}
+
+// readCaseDocument loads the on-disk Case document the Runtime pointer pins.
+func readCaseDocument(root, caseRel string) (map[string]any, error) {
+	casePath, err := repositoryPath(root, caseRel)
+	if err != nil {
+		return nil, err
+	}
+	caseBytes, err := os.ReadFile(casePath)
+	if err != nil {
+		return nil, err
+	}
+	var document map[string]any
+	if err := json.Unmarshal(caseBytes, &document); err != nil {
+		return nil, err
+	}
+	return document, nil
+}
+
+// driftJournalMessage appends the RC-18 baseline-drift warning (S8-H3) to the
+// journal message when present. Empty warnings leave the message unchanged.
+func driftJournalMessage(operation, caseID string, revision int, driftWarning string) string {
+	message := fmt.Sprintf("%s: %s revision %d", operation, caseID, revision)
+	if driftWarning != "" {
+		message += "; WARNING " + driftWarning
+	}
+	return message
+}
+
+// driftWarningPointer maps the drift warning into the state value the status
+// board reads: the warning string when drifted, nil when the baseline matches.
+func driftWarningPointer(driftWarning string) any {
+	if driftWarning == "" {
+		return nil
+	}
+	return driftWarning
 }
 
 func deterministicCaseRoute(document map[string]any) string {
@@ -1128,7 +1235,6 @@ func nonEmpty(value, fallback string) string {
 	}
 	return value
 }
-
 
 func currentReviewRound(state map[string]any) int {
 	review, _ := state["review"].(map[string]any)
