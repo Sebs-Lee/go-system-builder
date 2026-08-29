@@ -754,6 +754,13 @@ func inspectRecoveryPendingSources(request RecoveryRequest) ([]recoveryPendingSo
 	return sources, nil
 }
 
+// KnownRecoverySourcePendingPaths returns the canonical list of Runtime
+// pending marker paths that a recovery plan can declare in
+// SourcePendingSHA256. Exported for tests and operator tooling.
+func KnownRecoverySourcePendingPaths(statePath string) []string {
+	return knownRecoverySourcePendingPaths(statePath)
+}
+
 func knownRecoverySourcePendingPaths(statePath string) []string {
 	return []string{
 		statePath + ".commit-pending.json",
@@ -834,6 +841,15 @@ func completePendingRecovery(prepared preparedRecovery, marker recoveryPendingMa
 	if err := retireRecoverySourcePending(request, marker.Manifest.SourcePending); err != nil {
 		return RecoveryResult{}, err
 	}
+	// RC-13 contract: a rotation marker that survived the atomic apply means
+	// it was created concurrently (between inspect and retire) or its
+	// retirement failed silently. Either way the state/journal pair has
+	// diverged from the operator's declared plan; refuse to claim the
+	// recovery applied and surface a `reconcile` hint so the marker is not
+	// orphaned and the next writer does not write through a stale pair.
+	if err := verifyPostApplyPendingRetired(request); err != nil {
+		return RecoveryResult{}, err
+	}
 
 	if err := injectRecoveryFailure(request, RecoveryBeforeManifest); err != nil {
 		return RecoveryResult{}, err
@@ -853,6 +869,32 @@ func completePendingRecovery(prepared preparedRecovery, marker recoveryPendingMa
 		return RecoveryResult{}, fmt.Errorf("sync recovery active directory: %w", err)
 	}
 	return recoveryResult(request, manifest, false, retried), nil
+}
+
+func verifyPostApplyPendingRetired(request RecoveryRequest) error {
+	for _, path := range knownRecoverySourcePendingPaths(request.StatePath) {
+		data, exists, err := readOptionalFile(path)
+		if err != nil {
+			return fmt.Errorf("post-apply pending marker check: %w", err)
+		}
+		if !exists {
+			continue
+		}
+		// A pending marker that survived the atomic state/journal replace
+		// must be the rotation marker (or any other Runtime pending marker)
+		// racing with recovery. The plan-driven recovery claimed the
+		// candidate was applied, but the runtime still has a marker that
+		// could rewrite state/journal. Surface the conflict and require
+		// the operator to `runtime reconcile` so the marker is retired
+		// before any subsequent writer observes the active pair.
+		relative := recoveryPath(request.Root, path)
+		return &RecoveryConflictError{
+			PlanID:  request.PlanID,
+			PlanSHA: request.PlanSHA,
+			Reason:  fmt.Sprintf("Runtime pending marker %s survived atomic replace; run `runtime reconcile` to retire it (sha256=%s)", relative, sha256Hex(data)),
+		}
+	}
+	return nil
 }
 
 func retireRecoverySourcePending(request RecoveryRequest, artifacts []RecoveryArtifact) error {

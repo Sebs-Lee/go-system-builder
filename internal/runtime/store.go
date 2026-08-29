@@ -2543,7 +2543,7 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 	if pending.SchemaVersion != "1.0.0" {
 		return fmt.Errorf("unsupported pending journal rotation schema %q", pending.SchemaVersion)
 	}
-	if pending.ArchivedFile == "" || pending.TailSequence <= 0 {
+	if pending.ArchivedFile == "" || pending.TailSequence <= 0 || pending.ArchivedCount <= 0 {
 		return errors.New("pending journal rotation record is incomplete")
 	}
 	// Validate archived segment exists and hashes correctly.
@@ -2554,54 +2554,58 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 	if sha256Hex(archData) != pending.ArchivedSHA256 {
 		return errors.New("pending journal rotation archive hash mismatch")
 	}
-	// If active journal still contains the archived segment data, complete rotation.
-	// Use marker-driven truncation (ArchivedCount) rather than relying on
-	// combined continuity, which is broken when active still holds the archived prefix.
+	// RC-13: marker-driven truncation. The active journal may still hold the
+	// archived prefix because the rotate was interrupted after writing the
+	// archive but before truncating the active segment. We must NOT rely on
+	// inspectJournalData's contiguous-sequence check, which rejects the
+	// duplicate archived prefix still in active. Instead, slice the active
+	// journal at pending.ArchivedCount events, verify the resulting tail
+	// matches pending.TailSequence, and rewrite active. If the active
+	// journal is already truncated (smaller or equal to ArchivedCount),
+	// recovery is a no-op.
 	activeData, err := os.ReadFile(s.journalPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read active journal for rotation recovery: %w", err)
 	}
 	if err == nil && len(activeData) > 0 {
-		combined, err := inspectJournal(s.journalPath)
-		if err == nil {
-			if combined.TailSequence == pending.TailSequence && len(combined.Events) > pending.ArchivedCount {
-				tailEvents := combined.Events[pending.ArchivedCount:]
-				var buf []byte
-				for _, ev := range tailEvents {
-					line, err := jsonLineBytes(ev)
-					if err != nil {
-						return err
-					}
-					buf = append(buf, line...)
-				}
-				if err := atomicWriteBytes(s.journalPath, buf, ".loop-journal-*.tmp"); err != nil {
-					return fmt.Errorf("complete pending journal rotation truncate: %w", err)
-				}
+		activeInspection, aerr := inspectJournalData(activeData)
+		if aerr != nil {
+			return fmt.Errorf("pending journal rotation active journal invalid: %w", aerr)
+		}
+		// Truncation is complete when the active journal already holds only
+		// the tail (size <= ArchivedCount). Validate the tail matches the
+		// marker invariant and proceed without rewriting.
+		if len(activeInspection.Events) > pending.ArchivedCount {
+			if activeInspection.TailSequence != pending.TailSequence {
+				return fmt.Errorf("pending journal rotation active tail sequence %d does not match marker tail sequence %d", activeInspection.TailSequence, pending.TailSequence)
 			}
-		} else {
-			// Combined is non-contiguous (duplicate archived prefix still in active).
-			// Fall back to marker-driven slice of the active segment alone.
-			activeInspection, aerr := inspectJournalData(activeData)
-			if aerr != nil {
-				return fmt.Errorf("pending journal rotation active journal invalid: %w", aerr)
-			}
-			if len(activeInspection.Events) > pending.ArchivedCount && activeInspection.TailSequence == pending.TailSequence {
-				tailEvents := activeInspection.Events[pending.ArchivedCount:]
-				var buf []byte
-				for _, ev := range tailEvents {
-					line, err := jsonLineBytes(ev)
-					if err != nil {
-						return err
-					}
-					buf = append(buf, line...)
+			tailEvents := activeInspection.Events[pending.ArchivedCount:]
+			var buf []byte
+			for _, ev := range tailEvents {
+				line, err := jsonLineBytes(ev)
+				if err != nil {
+					return err
 				}
-				if err := atomicWriteBytes(s.journalPath, buf, ".loop-journal-*.tmp"); err != nil {
-					return fmt.Errorf("complete pending journal rotation truncate (marker-driven): %w", err)
-				}
+				buf = append(buf, line...)
 			}
+			if err := atomicWriteBytes(s.journalPath, buf, ".loop-journal-*.tmp"); err != nil {
+				return fmt.Errorf("complete pending journal rotation truncate: %w", err)
+			}
+		} else if len(activeInspection.Events) == pending.ArchivedCount {
+			// Already truncated: verify the tail of the archived segment
+			// matches the marker's TailSequence. The active journal is empty
+			// or only the last tail event remains; either is acceptable as
+			// long as the post-truncate invariant is satisfied.
+			if activeInspection.TailSequence != 0 && activeInspection.TailSequence != pending.TailSequence {
+				return fmt.Errorf("pending journal rotation already-truncated active tail sequence %d does not match marker tail sequence %d", activeInspection.TailSequence, pending.TailSequence)
+			}
+		} else if len(activeInspection.Events) < pending.ArchivedCount {
+			return fmt.Errorf("pending journal rotation active event count %d is less than marker archived count %d; refusing partial-truncate recovery", len(activeInspection.Events), pending.ArchivedCount)
 		}
 	}
-	// Validate the recovered journal pair if state exists — fail-closed on mismatch.
+	// Validate the recovered journal pair if state exists — fail-closed on
+	// mismatch. RC-13 contract: retain the marker and return the error so
+	// the operator can run `runtime reconcile` to align state and journal.
 	if _, err := os.Stat(s.statePath); err == nil {
 		state, err := s.read()
 		if err == nil {
@@ -2610,6 +2614,10 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 				return fmt.Errorf("pending journal rotation journal invalid after recovery: %w", err)
 			}
 			if err := validateStateJournalPair(state, inspection); err != nil {
+				// Fail-closed: keep the marker and surface the mismatch so
+				// callers (Snapshot/Update) refuse to write through a
+				// diverged state/journal pair. The marker remains on disk
+				// for the operator to inspect and reconcile.
 				return fmt.Errorf("rotation recovery: state/journal mismatch: %w", err)
 			}
 		}
@@ -2899,27 +2907,68 @@ func journalActiveLineCount(path string) (int, error) {
 	return countJournalLines(path)
 }
 
+// JournalSegmentPaths returns the sorted (by rotation sequence) list of
+// archive segment paths for the given active journal. Non-numeric archive
+// names are filtered out so they cannot participate in the contiguous
+// merge performed by inspectJournal. Exported for tests and tooling.
+func JournalSegmentPaths(path string) ([]string, error) {
+	return journalSegmentPaths(path)
+}
+
+// ExtractArchiveSeq returns the rotation sequence encoded in an archive
+// file name of the form `<journal>.archive.<sequence>.jsonl`. A
+// non-numeric or missing sequence is reported as math.MaxInt so the
+// file sorts to the end (and is filtered out by JournalSegmentPaths).
+func ExtractArchiveSeq(p string) int {
+	return extractArchiveSeq(p)
+}
+
 func journalSegmentPaths(path string) ([]string, error) {
 	pattern := path + ".archive.*.jsonl"
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("glob journal archives: %w", err)
 	}
-	sort.Slice(matches, func(i, j int) bool {
-		return extractArchiveSeq(matches[i]) < extractArchiveSeq(matches[j])
+	// Filter out files whose archive sequence cannot be parsed. The
+	// marker-driven rotation guarantees `.archive.<sequence>.jsonl`
+	// naming; any non-numeric or malformed segment is a stray file that
+	// must not participate in the contiguous merge (otherwise inspectJournal
+	// would fail on its malformed JSONL).
+	filtered := make([]string, 0, len(matches))
+	for _, m := range matches {
+		if _, ok := parseArchiveSeq(m); !ok {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		left, _ := parseArchiveSeq(filtered[i])
+		right, _ := parseArchiveSeq(filtered[j])
+		return left < right
 	})
-	return matches, nil
+	return filtered, nil
 }
 
-func extractArchiveSeq(p string) int {
+// parseArchiveSeq extracts the rotation sequence from an archive path of
+// the form `<journal>.archive.<sequence>.jsonl`. The second return value
+// is false when the segment name is non-numeric or otherwise malformed.
+func parseArchiveSeq(p string) (int, bool) {
 	idx := strings.LastIndex(p, ".archive.")
 	if idx < 0 {
-		return math.MaxInt
+		return 0, false
 	}
 	rest := p[idx+len(".archive."):]
 	rest = strings.TrimSuffix(rest, ".jsonl")
 	n, err := strconv.Atoi(rest)
 	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func extractArchiveSeq(p string) int {
+	n, ok := parseArchiveSeq(p)
+	if !ok {
 		return math.MaxInt
 	}
 	return n
