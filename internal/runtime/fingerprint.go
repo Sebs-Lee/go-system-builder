@@ -66,10 +66,11 @@ func ComputeTriple(state map[string]any) FingerprintTriple {
 // ComputeRevisionPair derives the RC-10 Step B revision binary from a runtime
 // state map: the state CAS revision and the evidence generation
 // (`baseline.generation`, 0 when the baseline is uncaptured or absent).
+// A present revision=0 is distinguished from absent by key existence.
 func ComputeRevisionPair(state map[string]any) (StateRevision, EvidenceGeneration) {
 	revision := 0
-	if revisionValue := fingerprintTolerantInt(state["revision"]); revisionValue > 0 {
-		revision = revisionValue
+	if _, ok := state["revision"]; ok {
+		revision = fingerprintTolerantInt(state["revision"])
 	}
 	generation := 0
 	if baseline, ok := state["baseline"].(map[string]any); ok {

@@ -301,8 +301,8 @@ func ValidatePlan(plan *Plan) error {
 // generated TODO(planner) token is unambiguously unfinished plan content.
 func rejectPlannerPlaceholders(plan *Plan) error {
 	check := func(kind, id, value string) error {
-		if strings.Contains(value, "TODO(planner)") {
-			return fmt.Errorf("%s %s still contains TODO(planner); replace the draft placeholder with a concrete target/assertion/oracle/method before registering the ReviewPlan", kind, id)
+		if strings.Contains(value, "TODO(planner)") || strings.Contains(value, "PLANNER-REFINE") {
+			return fmt.Errorf("%s %s still contains TODO(planner)/PLANNER-REFINE; replace the draft placeholder with a concrete target/assertion/oracle/method before registering the ReviewPlan", kind, id)
 		}
 		return nil
 	}

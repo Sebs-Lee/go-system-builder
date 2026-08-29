@@ -240,9 +240,40 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 	if err != nil {
 		return fmt.Errorf("encode metrics: %w", err)
 	}
-	if err := os.WriteFile(s.path, append(data, '\n'), 0o644); err != nil {
+	if err := atomicWriteMetrics(s.path, append(data, '\n')); err != nil {
 		return fmt.Errorf("write metrics: %w", err)
 	}
+	return nil
+}
+
+func atomicWriteMetrics(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, ".loop-metrics-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	_ = f.Sync()
 	return nil
 }
 
@@ -467,17 +498,32 @@ func normalizeMilestoneFailureReason(value string) string {
 }
 
 func acquireLock(path string, timeout time.Duration) (func(), error) {
+	owner := fmt.Sprintf("%d:%d", os.Getpid(), time.Now().UnixNano())
 	backoff := 5 * time.Millisecond
 	const maxBackoff = 50 * time.Millisecond
+	const staleAge = 30 * time.Second
 	deadline := time.Now().Add(timeout)
 	for {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
+			_, _ = file.WriteString(owner)
 			_ = file.Close()
-			return func() { _ = os.Remove(path) }, nil
+			return func() {
+				data, err := os.ReadFile(path)
+				if err == nil && strings.TrimSpace(string(data)) == owner {
+					_ = os.Remove(path)
+				}
+			}, nil
 		}
 		if !errors.Is(err, os.ErrExist) {
 			return nil, err
+		}
+		// Stale reclaim: if lock file is older than staleAge, remove it.
+		if info, statErr := os.Stat(path); statErr == nil {
+			if time.Since(info.ModTime()) > staleAge {
+				_ = os.Remove(path)
+				continue
+			}
 		}
 		if time.Now().After(deadline) {
 			return nil, errors.New("metrics lock timeout")

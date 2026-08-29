@@ -249,6 +249,12 @@ func ValidateAgentMessages(root string) error {
 		if err := validator.ValidateFile("agent-message.schema.json", relative); err != nil {
 			return fmt.Errorf("%s: %w", filepath.ToSlash(relative), err)
 		}
+		data, err := os.ReadFile(filepath.Join(root, relative))
+		if err == nil {
+			if warnings := schema.WarnMissingExtensionFields(data); len(warnings) > 0 {
+				_ = warnings
+			}
+		}
 	}
 	return nil
 }
