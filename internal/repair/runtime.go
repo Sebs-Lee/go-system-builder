@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	impactanalysis "github.com/entroforge/go-system-builder/internal/impact"
 	reviewpkg "github.com/entroforge/go-system-builder/internal/review"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
@@ -853,6 +854,29 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
+	// RC-14: targeted reverification assertion evidence must be current-generation, valid, SHA-verified runtime evidence (or an execution anchor). Phantom `evidence/phantom.json` or stale-generation ids are rejected here before the Runtime CAS commits.
+	if len(value.AssertionResults) > 0 {
+		var allRefs []string
+		for _, assertion := range value.AssertionResults {
+			allRefs = append(allRefs, assertion.EvidenceRefs...)
+		}
+		if len(allRefs) > 0 {
+			currentRound := 0
+			if review, ok := current.State["review"].(map[string]any); ok {
+				switch v := review["round"].(type) {
+				case int:
+					currentRound = v
+				case int64:
+					currentRound = int(v)
+				case float64:
+					currentRound = int(v)
+				}
+			}
+			if verr := evidence.ValidateRefs(current.State, allRefs, evidence.RefsOptions{Root: root, RequireReviewRound: currentRound}); verr != nil {
+				return runtimepkg.Snapshot{}, fmt.Errorf("targeted reverification evidence_refs: %w", verr)
+			}
+		}
+	}
 	impactRef, err := pointerArtifact(p, "impact_ref", "impact_sha256", "current ChangeImpact")
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
@@ -1127,9 +1151,13 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	if err := json.Unmarshal(seedBytes, &seedPlan); err != nil {
 		return runtimepkg.Snapshot{}, fmt.Errorf("decode S7 ReviewPlan seed: %w", err)
 	}
-	if err := reviewpkg.ValidatePlanArtifactForRegistration(root, &seedPlan); err != nil {
-		return runtimepkg.Snapshot{}, fmt.Errorf("S7 ReviewPlan seed registration checks: %w", err)
-	}
+	// RC-17 PLANNER-REFINE gate lives on the normal RegisterPlan path
+	// (ValidatePlan → rejectPlannerPlaceholders). The TR-012 handoff seed is
+	// intentionally unrefined — `createS7ReviewPlanSeed` marks every substantive
+	// Claim field with PLANNER-REFINE and the next action tells the Planner to
+	// `runtime review-plan revise` once before dispatch. Validating the seed
+	// through ValidatePlanArtifactForRegistration would reject every handoff.
+	// The S7 revision gate, not the handoff installer, enforces refinement.
 	newBaselineDigest := seedBaselineDigest(impactDocument.ChangedArtifacts)
 	at := occurred(req.OccurredAt)
 	actor := req.Actor

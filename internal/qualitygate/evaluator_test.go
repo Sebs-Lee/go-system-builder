@@ -614,7 +614,7 @@ func TestReleaseAuditGateRequiresAllAuditAreas(t *testing.T) {
 
 func TestReleaseAuditGateRequiresCurrentCleanRound(t *testing.T) {
 	evaluator := newTestEvaluator(t)
-	acceptanceManifest := replaceManifestEvidenceRef(t, validS10Manifest(t, "acceptance"), "ev-clean", "ev-acc")
+	acceptanceManifest := replaceManifestEvidenceRef(t, validS10Manifest(t, "acceptance"), "ev-clean", "ev-audit")
 	releaseManifest := replaceManifestEvidenceRef(t, validS10Manifest(t, "release_audit"), "ev-clean", "ev-acc")
 	input := s10GateInput(t, "GATE-RELEASE-AUDIT-APPROVED", "TR-017", "release_audit", map[string]any{
 		"audit_manifest_path":   "s10/release-audit-manifest.json",
@@ -1061,7 +1061,7 @@ func validS10Manifest(t *testing.T, kind string) []byte {
 		items = append(items, map[string]any{
 			"id": item.id, "category": item.category, "source_refs": []string{"source:" + item.id},
 			"expected": "expected " + item.id, "oracle": "oracle " + item.id, "owner": "S10 reviewer",
-			"evidence_refs": []string{"ev-acc"}, "disposition": "pass",
+			"evidence_refs": []string{"ev-clean"}, "disposition": "pass",
 		})
 		counterevidence = append(counterevidence, map[string]any{
 			"id": "CE-" + item.id, "inventory_id": item.id, "question": "what disproves " + item.id + "?",
@@ -1084,7 +1084,7 @@ func validS10Manifest(t *testing.T, kind string) []byte {
 	if kind == "release_audit" {
 		areas := []any{}
 		for _, id := range []string{"state_machine", "transaction_uow", "concurrency_idempotency", "data_migration", "call_sites_topology", "observability_errors", "verification_evidence", "docs_release_scope"} {
-			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-audit"}})
+			areas = append(areas, map[string]any{"id": id, "conclusion": "pass", "owner": "Release Auditor", "evidence_refs": []string{"ev-clean"}})
 		}
 		manifest["audit_areas"] = areas
 	}

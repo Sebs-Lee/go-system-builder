@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -137,6 +138,15 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
+	// RC-14: unified evidence attestation — every Hypothesis.evidence_refs entry must be
+	// an execution anchor (://) or a current-generation, valid, SHA-verified Runtime
+	// evidence id. Phantom `evidence/phantom.json` or stale-generation ids are rejected
+	// here before the Case revision is written.
+	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
+		if verr := evidence.ValidateRefs(snapshot.State, evidenceRefs, evidence.RefsOptions{Root: root, RequireReviewRound: currentReviewRound(snapshot.State)}); verr != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", verr)
+		}
+	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
@@ -192,6 +202,11 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	evidenceRefs, err := nonEmptyStrings(request.EvidenceRefs, "HypothesisResult.evidence_refs")
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+	}
+	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
+		if verr := evidence.ValidateRefs(snapshot.State, evidenceRefs, evidence.RefsOptions{Root: root, RequireReviewRound: currentReviewRound(snapshot.State)}); verr != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", verr)
+		}
 	}
 	boundaryRefs, err := nonEmptyStrings(request.SourceBoundaryRefs, "HypothesisResult.source_boundary_refs")
 	if err != nil {
@@ -263,6 +278,15 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 				"explains_finding_ids":            stringSliceAny(explains),
 				"does_not_explain":                stringSliceAny(doesNotExplain),
 			})
+			// S8-H1 supplement: keep the falsifiable status machine honest — the
+			// hypothesis is no longer open once its result is recorded.
+			for _, hypothesis := range hypotheses {
+				if stringField(hypothesis["hypothesis_id"]) == request.HypothesisID {
+					hypothesis["status"] = request.Result
+					break
+				}
+			}
+			document["hypotheses"] = hypothesesToAny(hypotheses)
 			document["hypothesis_results"] = hypothesesToAny(results)
 			document["unexplained_finding_ids"] = stringSliceAny(difference(caseIDs, supportedExplainedFindingIDs(document)))
 			if len(request.NewHypotheses) > 0 {
@@ -1103,6 +1127,27 @@ func nonEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+
+func currentReviewRound(state map[string]any) int {
+	review, _ := state["review"].(map[string]any)
+	if review == nil {
+		return 0
+	}
+	switch v := review["round"].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	default:
+		return 0
+	}
 }
 
 func caseWorkflowError(caseID, format string, args ...any) error {

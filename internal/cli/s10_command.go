@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
@@ -21,9 +22,9 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 	if wantsHelp(args) {
 		name := compactHelpName(args)
 		if name == "" {
-			name = "<status|manifest validate|manifest render>"
+			name = "<status|manifest validate|manifest render|manifest scaffold>"
 		}
-		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, render its Markdown report, and route defects back through S7→S8→S9.")
+		printCommandHelp(stdout, "loop-harness s10 "+name, "S10 is a read-only macro audit: inspect status, validate the finite manifest, render its Markdown report, scaffold a copyable manifest/envelope shape, and route defects back through S7→S8→S9.")
 		return 0
 	}
 	if len(args) == 0 {
@@ -42,9 +43,12 @@ func runS10Command(args []string, stdout, stderr io.Writer) int {
 }
 
 func runS10Manifest(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || (args[0] != "validate" && args[0] != "render") {
-		fmt.Fprintln(stderr, "s10 manifest requires <validate|render>")
+	if len(args) == 0 || (args[0] != "validate" && args[0] != "render" && args[0] != "scaffold") {
+		fmt.Fprintln(stderr, "s10 manifest requires <validate|render|scaffold>")
 		return 2
+	}
+	if args[0] == "scaffold" {
+		return runS10ManifestScaffold(args[1:], stdout, stderr)
 	}
 	if args[0] == "render" {
 		return runS10ManifestRender(args[1:], stdout, stderr)
@@ -106,6 +110,64 @@ func runS10Manifest(args []string, stdout, stderr io.Writer) int {
 		"metrics":               summary.Metrics,
 		"next":                  next,
 	})
+}
+
+// runS10ManifestScaffold (RC-18 F-H2) writes a copyable starting shape for
+// the S10 evidence envelope — the missing scaffold the manifest examples did
+// not cover. The envelope is the fingerprinted artifact `runtime evidence
+// add --kind acceptance|release_audit` registers, so the template carries the
+// required conclusion plus the audit_manifest_path/sha256 binding to a
+// manifest the caller has already validated. `--type accepted|blocked` picks
+// the release-audit conclusion; every fact an Agent must supply stays a
+// <PLACEHOLDER> so the scaffold can never be registered verbatim. The
+// command is dry-run: it never writes Runtime state.
+func runS10ManifestScaffold(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("s10 manifest scaffold", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	bindUsage(flags, "s10 manifest scaffold")
+	kind := flags.String("type", "accepted", "conclusion to scaffold: accepted or blocked")
+	manifestPath := flags.String("manifest", "s10/manifest.json", "validated S10 manifest path the envelope binds (repository-relative)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	conclusion := strings.TrimSpace(*kind)
+	if conclusion != "accepted" && conclusion != "blocked" {
+		fmt.Fprintln(stderr, "s10 manifest scaffold requires --type accepted or --type blocked (the conclusion recorded in the envelope; use `--outcome` on manifest validate for review_required)")
+		return 2
+	}
+	manifest := strings.TrimSpace(*manifestPath)
+	envelope := map[string]any{
+		"schema_version":          "1.0.0",
+		"evidence_id":             "<EVIDENCE-ID>",
+		"kind":                    "release_audit",
+		"runtime_id":              "<RUNTIME-ID>",
+		"baseline_generation":     "<BASELINE-GENERATION-INT>",
+		"review_round":            "<REVIEW-ROUND-INT>",
+		"producer_agent_id":       "<PRODUCER-AGENT-ID>",
+		"producer_responsibility": "<Release Auditor|Acceptance>",
+		"subject_refs":            []any{},
+		"conclusion":              conclusion,
+		"audit_manifest_path":     manifest,
+		"audit_manifest_sha256":   "<SHA256-OF-MANIFEST-FILE>",
+		"disclosure":              "dry-run scaffold only — replace every <PLACEHOLDER> with current Runtime facts, then register with `loop-harness runtime evidence add --expected-revision <N> --id <id> --kind release_audit --path <envelope.json> --produced-by <agent> --responsibility <role>`; never edit a registered envelope in place",
+	}
+	if conclusion == "accepted" {
+		envelope["conclusion"] = "approved"
+		envelope["disclosure"] = strings.Replace(envelope["disclosure"].(string), "--kind release_audit", "--kind release_audit (or --kind acceptance for the S10 acceptance envelope)", 1)
+	}
+	data, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest scaffold: %v\n", err)
+		return 1
+	}
+	data = append(data, '\n')
+	fmt.Fprintln(stderr, "s10 manifest scaffold: envelope template below (stdout; dry-run, not written to disk)")
+	_, err = stdout.Write(data)
+	if err != nil {
+		fmt.Fprintf(stderr, "s10 manifest scaffold: write stdout: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // runS10ManifestRender renders the 16-section ACC/release-audit Markdown
@@ -347,7 +409,7 @@ func inspectS10Artifact(root string, state map[string]any, manifestType string) 
 			}
 			return result
 		}
-		if missing := missingS10EvidenceRefsInState(root, state, summary.EvidenceRefs); len(missing) > 0 {
+		if missing := missingS10EvidenceRefsInStateWithSelf(root, state, result.EvidenceID, summary.EvidenceRefs); len(missing) > 0 {
 			return s10InvalidArtifact(result, "manifest references evidence not registered as current valid Runtime evidence: "+strings.Join(missing, ", ")+"; ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id; register those evidence artifacts first, then regenerate and re-register this manifest")
 		}
 		result.State = "ready"
@@ -371,21 +433,48 @@ func stateEvidence(state map[string]any) []any {
 
 // missingS10EvidenceRefsInState mirrors the gate's evidence-reference audit
 // (qualitygate.missingS10EvidenceRefs): an id only counts as available when
-// the registered entry is valid, current-generation, and its on-disk file
-// still hashes to the recorded fingerprint. Keeping both consumers identical
-// prevents `s10 status` from declaring ready on a ledger the gate would
-// reject (2026-08-28 walkthrough defect C).
+// the registered entry is valid, current-generation, SHA-verified, kind-registered,
+// round-bound, and not the envelope's own self-proof. Execution anchors (://)
+// never satisfy S10 manifest refs. Keeping both consumers identical prevents
+// `s10 status` from declaring ready on a ledger the gate would reject
+// (2026-08-28 walkthrough defect C; RC-14 phantom/self-proof).
 func missingS10EvidenceRefsInState(root string, state map[string]any, refs []string) []string {
+	return missingS10EvidenceRefsInStateWithSelf(root, state, "", refs)
+}
+
+func missingS10EvidenceRefsInStateWithSelf(root string, state map[string]any, selfID string, refs []string) []string {
 	currentGeneration := integerValue(nestedStateValue(state, "baseline", "generation"))
+	currentRound := integerValue(nestedStateValue(state, "review", "round"))
 	available := make(map[string]struct{})
 	for _, raw := range stateEvidence(state) {
 		entry, _ := raw.(map[string]any)
-		if entry == nil || stringValue(entry["status"]) != "valid" || entry["invalidated_by"] != nil || integerValue(entry["baseline_generation"]) != currentGeneration {
+		if entry == nil || stringValue(entry["status"]) != "valid" || integerValue(entry["baseline_generation"]) != currentGeneration {
 			continue
 		}
+		if v := entry["invalidated_by"]; v != nil {
+			if str, ok := v.(string); ok {
+				if stringValue(str) != "" {
+					continue
+				}
+			} else {
+				continue
+			}
+		}
 		id := stringValue(entry["id"])
+		if id == "" || id == selfID {
+			continue
+		}
+		if currentRound > 0 {
+			if r := integerValue(entry["review_round"]); r != 0 && r != currentRound {
+				continue
+			}
+		}
+		kind := stringValue(entry["kind"])
+		if kind != "" && !evidence.DefaultCatalog().IsRegisteredKind(kind) {
+			continue
+		}
 		path := stringValue(entry["path"])
-		if id == "" || path == "" {
+		if path == "" {
 			continue
 		}
 		full, pathErr := safeS10Path(root, path)
@@ -400,11 +489,23 @@ func missingS10EvidenceRefsInState(root string, state map[string]any, refs []str
 	}
 	missing := make([]string, 0)
 	for _, ref := range refs {
+		if stringValue(ref) == "" {
+			missing = append(missing, ref)
+			continue
+		}
+		if containsExecutionAnchor(ref) {
+			missing = append(missing, ref)
+			continue
+		}
 		if _, ok := available[ref]; !ok {
 			missing = append(missing, ref)
 		}
 	}
 	return missing
+}
+
+func containsExecutionAnchor(ref string) bool {
+	return strings.Contains(ref, "://")
 }
 
 func nestedStateValue(state map[string]any, parent, child string) any {

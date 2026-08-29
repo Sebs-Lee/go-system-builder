@@ -149,6 +149,9 @@ func normalizePath(path string) string {
 
 func pathMatches(path, rule string) bool {
 	path, rule = normalizePath(path), normalizePath(rule)
+	if rule == "all" {
+		return true
+	}
 	return path == rule || strings.HasPrefix(path, strings.TrimSuffix(rule, "/")+"/")
 }
 

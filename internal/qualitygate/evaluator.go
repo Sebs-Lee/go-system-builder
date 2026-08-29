@@ -441,7 +441,7 @@ func applyS10ManifestGate(input Input, result *Evaluation) {
 			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:invalid:%s", manifestType, evidenceID, err))
 			continue
 		}
-		if missing := missingS10EvidenceRefs(input, summary.EvidenceRefs); len(missing) > 0 {
+		if missing := missingS10EvidenceRefs(input, evidenceID, summary.EvidenceRefs); len(missing) > 0 {
 			result.Status = StatusUnknown
 			result.ErrorCode = ErrorGateUnknown
 			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:evidence_ref_missing:%s; next: register the referenced current evidence first, then regenerate and re-register the manifest envelope (ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id)", manifestType, evidenceID, strings.Join(missing, ",")))
@@ -545,21 +545,46 @@ func changeImpactChangedPaths(input Input) []string {
 	return paths
 }
 
-func missingS10EvidenceRefs(input Input, refs []string) []string {
+func missingS10EvidenceRefs(input Input, selfID string, refs []string) []string {
 	if len(refs) == 0 {
 		return nil
 	}
 	currentGeneration := nestedInt(input.Snapshot.State, "baseline", "generation")
+	currentRound := nestedInt(input.Snapshot.State, "review", "round")
 	available := make(map[string]struct{})
 	rawEvidence, _ := input.Snapshot.State["evidence"].([]any)
 	for _, raw := range rawEvidence {
 		entry, _ := raw.(map[string]any)
-		if entry == nil || stringValue(entry["status"]) != "valid" || entry["invalidated_by"] != nil || intValue(entry["baseline_generation"]) != currentGeneration {
+		if entry == nil || stringValue(entry["status"]) != "valid" || intValue(entry["baseline_generation"]) != currentGeneration {
 			continue
 		}
+		// RC-14: invalidated_by empty string is treated as nil (not invalidated); only non-empty invalidates.
+		if v := entry["invalidated_by"]; v != nil {
+			if str, ok := v.(string); ok {
+				if stringValue(str) != "" {
+					continue
+				}
+			} else {
+				continue
+			}
+		}
 		id := stringValue(entry["id"])
+		if id == "" || id == selfID {
+			continue
+		}
+		// RC-14: when entry carries a review_round, it must match currentRound; round-less evidence is not round-bound and remains available.
+		if currentRound > 0 {
+			if round := intValue(entry["review_round"]); round != 0 && round != currentRound {
+				continue
+			}
+		}
+		// RC-14: kind must be a registered evidence kind (phantom kinds rejected).
+		kind := stringValue(entry["kind"])
+		if kind != "" && !evidence.DefaultCatalog().IsRegisteredKind(kind) {
+			continue
+		}
 		path := stringValue(entry["path"])
-		if id == "" || input.Files == nil || path == "" {
+		if input.Files == nil || path == "" {
 			continue
 		}
 		data, err := input.Files.ReadFile(path)
@@ -570,6 +595,15 @@ func missingS10EvidenceRefs(input Input, refs []string) []string {
 	}
 	missing := make([]string, 0)
 	for _, ref := range refs {
+		if strings.TrimSpace(ref) == "" {
+			missing = append(missing, ref)
+			continue
+		}
+		// RC-14: execution anchors (://) are not runtime evidence ids; they cannot satisfy S10 manifest refs.
+		if strings.Contains(ref, "://") {
+			missing = append(missing, ref)
+			continue
+		}
 		if _, ok := available[ref]; !ok {
 			missing = append(missing, ref)
 		}

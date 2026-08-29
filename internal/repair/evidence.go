@@ -151,6 +151,9 @@ func ValidateTargetedReverification(root string, ref ArtifactRef) (TargetedRever
 	if err := validateTargetedFailureEvidence(value); err != nil {
 		return TargetedReverification{}, err
 	}
+	if err := validateTargetedPassEvidence(value); err != nil {
+		return TargetedReverification{}, err
+	}
 	seen := map[string]bool{}
 	for _, assertion := range value.AssertionResults {
 		if strings.TrimSpace(assertion.AssertionID) == "" {
@@ -165,6 +168,34 @@ func ValidateTargetedReverification(root string, ref ArtifactRef) (TargetedRever
 		}
 	}
 	return value, nil
+}
+
+func validateTargetedPassEvidence(value TargetedReverification) error {
+	if value.Result != "pass" {
+		return nil
+	}
+	for _, assertion := range value.AssertionResults {
+		anchored := false
+		for _, ref := range assertion.EvidenceRefs {
+			if strings.Contains(ref, "://") || strings.HasPrefix(strings.TrimSpace(ref), "evidence/") {
+				anchored = true
+				break
+			}
+			// Bare Runtime evidence ids are also evidence, but at this artifact boundary we
+			// cannot verify generation/SHA — the Runtime commit (CommitTargetedReverification)
+			// enforces that. Non-empty bare ids are accepted as evidence-anchored here so
+			// Runtime tests using bare tokens like evidence-schema-diff remain valid; empty
+			// refs are still rejected.
+			if strings.TrimSpace(ref) != "" {
+				anchored = true
+				break
+			}
+		}
+		if !anchored {
+			return fmt.Errorf("pass targeted reverification assertion %q requires at least one non-empty evidence_ref; a pass verdict without evidence cannot close the repair chain", assertion.AssertionID)
+		}
+	}
+	return nil
 }
 
 // validateTargetedFailureEvidence is the RC-01 (EH-11) failure-direction

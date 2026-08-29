@@ -25,7 +25,7 @@ func TestReleaseAuditBlockedGateDoesNotRequireTransitionProducedPauseRecord(t *t
 	// This test supplies a minimal valid release_audit manifest so the gate
 	// can satisfy on the evidence alone; the produced pause_record remains
 	// ProducedByTransition and must still not appear as a missing prerequisite.
-	manifest := buildReleaseAuditBlockedManifest(t, "ev-release-blocked")
+	manifest := buildReleaseAuditBlockedManifest(t, "ev-support")
 	manifestPath := "s10/release-audit-manifest.json"
 	evidenceData := []byte(`{"schema_version":"1.0.0","evidence_id":"ev-release-blocked","kind":"release_audit","runtime_id":"loop-test","baseline_generation":1,"review_round":1,"producer_agent_id":"release-auditor-1","producer_responsibility":"Release Auditor","conclusion":"blocked","requested_event":"release_audit_blocked","audit_manifest_path":"` + manifestPath + `","audit_manifest_sha256":"` + sha256HexLocal(manifest) + `"}`)
 	input := Input{
@@ -37,17 +37,25 @@ func TestReleaseAuditBlockedGateDoesNotRequireTransitionProducedPauseRecord(t *t
 				"baseline":   map[string]any{"generation": 1},
 				"review":     map[string]any{"round": 1},
 				"documents":  []any{},
-				"evidence": []any{map[string]any{
-					"id": "ev-release-blocked", "kind": "release_audit", "path": "evidence/release.json",
-					"sha256": sha256HexLocal(evidenceData), "status": "valid", "baseline_generation": 1,
-					"review_round": 1, "produced_by": []any{"release-auditor-1"}, "invalidated_by": nil,
-					"responsibility_id": "Release Auditor", "scope_refs": []any{},
-				}},
+				"evidence": []any{
+					map[string]any{
+						"id": "ev-release-blocked", "kind": "release_audit", "path": "evidence/release.json",
+						"sha256": sha256HexLocal(evidenceData), "status": "valid", "baseline_generation": 1,
+						"review_round": 1, "produced_by": []any{"release-auditor-1"}, "invalidated_by": nil,
+						"responsibility_id": "Release Auditor", "scope_refs": []any{},
+					},
+					map[string]any{
+						"id": "ev-support", "kind": "clean_round", "path": "evidence/support.json",
+						"sha256": sha256HexLocal([]byte(`{"kind":"clean_round","support":true}`)), "status": "valid", "baseline_generation": 1,
+						"review_round": 1, "produced_by": []any{"support-agent"}, "invalidated_by": nil,
+						"responsibility_id": "QA", "scope_refs": []any{},
+					},
+				},
 			},
 		},
 		GateID:       "GATE-RELEASE-AUDIT-BLOCKED",
 		TransitionID: "TR-018",
-		Files:        memFiles{"evidence/release.json": evidenceData, manifestPath: manifest},
+		Files:        memFiles{"evidence/release.json": evidenceData, "evidence/support.json": []byte(`{"kind":"clean_round","support":true}`), manifestPath: manifest},
 	}
 
 	result, err := NewEvaluator(registry).Evaluate(context.Background(), input)

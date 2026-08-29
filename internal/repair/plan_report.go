@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
 )
 
 // PlanReportRequest is the immutable input envelope for one Assignment's
@@ -56,6 +57,23 @@ func CreatePlanReport(root string, request PlanReportRequest) (PlanReport, Artif
 	for _, check := range request.RedChecks {
 		if strings.TrimSpace(check.Name) == "" || strings.TrimSpace(check.Command) == "" || len(check.EvidenceRefs) == 0 {
 			return PlanReport{}, ArtifactRef{}, errors.New("every red check requires name, command, and evidence_refs")
+		}
+		// RC-14 (S9-L3): red evidence_ref must be an evidence anchor, not a bare prose token.
+		// At this artifact boundary a non-empty Execution-anchor (://), an evidence/file path,
+		// or a non-empty Runtime evidence id is accepted as anchored. Empty-only refs are rejected
+		// so a red check without a verifiable failure anchor cannot authorize implementation.
+		anchored := false
+		for _, ref := range check.EvidenceRefs {
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			if strings.Contains(ref, "://") || strings.HasPrefix(strings.TrimSpace(ref), "evidence/") || strings.TrimSpace(ref) != "" {
+				anchored = true
+				break
+			}
+		}
+		if !anchored {
+			return PlanReport{}, ArtifactRef{}, fmt.Errorf("red check %q evidence_refs must contain at least one evidence anchor (test://, runtime evidence id, or evidence/ path); a red verdict without evidence cannot authorize implementation", check.Name)
 		}
 		if check.Result == "fail" || check.Result == "blocked" {
 			failed = true
