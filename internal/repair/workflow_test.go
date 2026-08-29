@@ -26,14 +26,14 @@ func TestS9EvidenceChainRequiresImpactAndIndependentReverification(t *testing.T)
 	if _, _, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-1", RuntimeID: "loop-REQ-001", BugID: "BUG-001", BaselineGeneration: 1,
 		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-builder", ImpactID: impact.ImpactID,
-		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test-1"}}}, ScopeCompliance: "pass", Result: "pass",
+		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test://reverify-log"}}}, ScopeCompliance: "pass", Result: "pass",
 	}); err == nil || !strings.Contains(err.Error(), "independent") {
 		t.Fatalf("same assignment should be rejected: %v", err)
 	}
 	reverify, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-1", RuntimeID: "loop-REQ-001", BugID: "BUG-001", BaselineGeneration: 1,
 		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-qa", ContinuityReason: "test://verifier-log: independent verification", ImpactID: impact.ImpactID,
-		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test-1"}}}, ScopeCompliance: "pass", Result: "pass",
+		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test://reverify-log"}}}, ScopeCompliance: "pass", Result: "pass",
 	})
 	if err != nil || reverify.Result != "pass" || reverifyRef.SHA256 == "" {
 		t.Fatalf("CreateTargetedReverification() = %#v, %v", reverify, err)

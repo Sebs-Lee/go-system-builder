@@ -59,21 +59,24 @@ func CreatePlanReport(root string, request PlanReportRequest) (PlanReport, Artif
 			return PlanReport{}, ArtifactRef{}, errors.New("every red check requires name, command, and evidence_refs")
 		}
 		// RC-14 (S9-L3): red evidence_ref must be an evidence anchor, not a bare prose token.
-		// At this artifact boundary a non-empty Execution-anchor (://), an evidence/file path,
-		// or a non-empty Runtime evidence id is accepted as anchored. Empty-only refs are rejected
-		// so a red check without a verifiable failure anchor cannot authorize implementation.
+		// At this artifact boundary the red check must cite at least one
+		// execution-anchor (scheme://) reference — a bare prose token or an
+		// evidence/... file path is no longer accepted because the bare
+		// non-empty loophole let a red verdict authorize implementation
+		// without a verifiable failure trace. Heavy execution replay is left
+		// to the S9 commit boundary; the artifact boundary enforces shape.
 		anchored := false
 		for _, ref := range check.EvidenceRefs {
 			if strings.TrimSpace(ref) == "" {
 				continue
 			}
-			if strings.Contains(ref, "://") || strings.HasPrefix(strings.TrimSpace(ref), "evidence/") || strings.TrimSpace(ref) != "" {
+			if strings.Contains(strings.TrimSpace(ref), "://") {
 				anchored = true
 				break
 			}
 		}
 		if !anchored {
-			return PlanReport{}, ArtifactRef{}, fmt.Errorf("red check %q evidence_refs must contain at least one evidence anchor (test://, runtime evidence id, or evidence/ path); a red verdict without evidence cannot authorize implementation", check.Name)
+			return PlanReport{}, ArtifactRef{}, fmt.Errorf("red check %q evidence_refs must contain at least one execution-anchor (test://, runtime://, etc.); a red verdict without a verifiable failure trace cannot authorize implementation", check.Name)
 		}
 		if check.Result == "fail" || check.Result == "blocked" {
 			failed = true

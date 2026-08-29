@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -144,8 +143,13 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	// evidence id. Phantom `evidence/phantom.json` or stale-generation ids are rejected
 	// here before the Case revision is written.
 	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
-		if verr := evidence.ValidateRefs(snapshot.State, evidenceRefs, evidence.RefsOptions{Root: root, RequireReviewRound: currentReviewRound(snapshot.State)}); verr != nil {
-			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", verr)
+		if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
+			State:              snapshot.State,
+			Root:               root,
+			RequireSHA:         true,
+			RequireReviewRound: currentReviewRound(snapshot.State),
+		}); err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", err)
 		}
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
@@ -205,8 +209,13 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
 	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
-		if verr := evidence.ValidateRefs(snapshot.State, evidenceRefs, evidence.RefsOptions{Root: root, RequireReviewRound: currentReviewRound(snapshot.State)}); verr != nil {
-			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", verr)
+		if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
+			State:              snapshot.State,
+			Root:               root,
+			RequireSHA:         true,
+			RequireReviewRound: currentReviewRound(snapshot.State),
+		}); err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", err)
 		}
 	}
 	boundaryRefs, err := nonEmptyStrings(request.SourceBoundaryRefs, "HypothesisResult.source_boundary_refs")
@@ -280,10 +289,14 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 				"does_not_explain":                stringSliceAny(doesNotExplain),
 			})
 			// S8-H1 supplement: keep the falsifiable status machine honest — the
-			// hypothesis is no longer open once its result is recorded.
+			// hypothesis is no longer open once its result is recorded. The
+			// schema accepts "open | supported | refuted | inconclusive"; a
+			// supported result is the verified terminal, a refuted or
+			// inconclusive result is the closed terminal.
+			hypothesisStatus := request.Result
 			for _, hypothesis := range hypotheses {
 				if stringField(hypothesis["hypothesis_id"]) == request.HypothesisID {
-					hypothesis["status"] = request.Result
+					hypothesis["status"] = hypothesisStatus
 					break
 				}
 			}

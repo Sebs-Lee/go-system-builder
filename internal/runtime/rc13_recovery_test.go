@@ -2,7 +2,6 @@ package runtime_test
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"testing"
 

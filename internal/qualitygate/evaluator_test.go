@@ -1146,6 +1146,74 @@ func reviewGateInput(t *testing.T, evidenceRound int) qualitygate.Input {
 	}
 }
 
+// TestMissingS10EvidenceRefsRejectsPhantom proves the RC-14 (S10-H1)
+// phantom-reference defense: an S10 manifest coverage row that cites a
+// non-existent evidence id is reported as a missing reference instead of
+// silently accepted as content. Execution anchors (scheme://) are likewise
+// rejected because they are not runtime evidence ids and cannot satisfy the
+// S10 reference contract.
+func TestMissingS10EvidenceRefsRejectsPhantom(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	var decoded map[string]any
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	items := decoded["coverage_inventory"].([]any)
+	items[0].(map[string]any)["evidence_refs"] = []string{"evidence/phantom.json"}
+	manifest, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:evidence_ref_missing") {
+		t.Fatalf("conflicts = %#v, want phantom evidence_ref_missing", result.Conflicts)
+	}
+}
+
+// TestS10SelfEvidenceRefRejectsEnvelopeSelfProof proves the RC-14 (S10-H1)
+// self-proof defense: the S10 envelope's own id (ev-acc) cannot satisfy an
+// evidence_ref in the same manifest. The missingS10EvidenceRefs gate skips
+// the envelope's own id from `available` so an envelope that lists itself
+// as its own evidence is reported as a missing reference instead of
+// silently closing the gate.
+func TestS10SelfEvidenceRefRejectsEnvelopeSelfProof(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	manifest := validS10Manifest(t, "acceptance")
+	var decoded map[string]any
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	items := decoded["coverage_inventory"].([]any)
+	items[0].(map[string]any)["evidence_refs"] = []string{"ev-acc"}
+	manifest, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:evidence_ref_missing") {
+		t.Fatalf("conflicts = %#v, want self-proof evidence_ref_missing", result.Conflicts)
+	}
+}
+
 func s10GateInput(t *testing.T, gateID, transitionID, lifecycleState string, extra map[string]any) qualitygate.Input {
 	t.Helper()
 	addEvidence := func(id, kind, responsibility, conclusion string) (map[string]any, []byte) {
