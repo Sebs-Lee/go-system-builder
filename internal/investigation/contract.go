@@ -30,13 +30,13 @@ const contractNextCommand = "runtime investigation contract approve --root . --c
 // "s8_contract_approval:<runtime_id>@<revision>". Both fields are required;
 // an approver name by itself is not an approval receipt.
 type ContractRequest struct {
-	ExpectedRevision    int
-	CaseID              string
-	ContractPath        string
-	ApprovedBy          string
-	ApprovalHash        string
-	ApprovalEvidenceID  string
-	OccurredAt          time.Time
+	ExpectedRevision   int
+	CaseID             string
+	ContractPath       string
+	ApprovedBy         string
+	ApprovalHash       string
+	ApprovalEvidenceID string
+	OccurredAt         time.Time
 }
 
 // ApproveContract validates a draft against the active InvestigationCase,
@@ -120,6 +120,9 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	}
 	if err := requireRepairReadyCase(caseDocument); err != nil {
 		return runtime.Snapshot{}, actionableContractError("InvestigationCase %s is not ready for RepairContract approval: %v", request.CaseID, err)
+	}
+	if err := validateCausalClosureEvidence(root, current.State, caseDocument); err != nil {
+		return runtime.Snapshot{}, actionableContractError("InvestigationCase %s causal closure evidence is not current: %v", request.CaseID, err)
 	}
 	if err := validateContractBaseline(root, current.State, caseDocument); err != nil {
 		return runtime.Snapshot{}, actionableContractError("InvestigationCase %s baseline is not current: %v", request.CaseID, err)

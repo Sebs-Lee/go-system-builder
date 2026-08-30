@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -625,6 +626,198 @@ func requiredReverificationIDs(impact ChangeImpact) []any {
 	return outstanding
 }
 
+// validateChangeImpactEvidenceLedger is the S9 disposition consumer. The
+// ChangeImpact artifact is allowed to describe a rich ledger, but its lists
+// only become authoritative after Runtime proves that every named evidence
+// item exists, is in the active baseline, and has a coherent disposition.
+// RecoveryEvidence is checked against either the current Runtime evidence
+// index, a content-addressed local path, or a hash-pinned S9 artifact already
+// held by the repair pointer; arbitrary path strings are not recovery proof.
+func validateChangeImpactEvidenceLedger(root string, state, pointer map[string]any, impact ChangeImpact, committed bool) error {
+	byID := map[string]map[string]any{}
+	if raw, ok := state["evidence"].([]any); ok {
+		for _, item := range raw {
+			entry, _ := item.(map[string]any)
+			if entry != nil && strings.TrimSpace(stringField(entry["id"])) != "" {
+				byID[stringField(entry["id"])] = entry
+			}
+		}
+	}
+
+	dispositions := []struct {
+		name   string
+		ids    []string
+		status string
+	}{
+		{"invalidated_evidence_ids", impact.InvalidatedEvidenceIDs, "invalid"},
+		{"superseded_evidence_ids", impact.SupersededEvidenceIDs, "superseded"},
+		{"retained_evidence_ids", impact.RetainedEvidenceIDs, "valid"},
+	}
+	seen := map[string]string{}
+	for _, disposition := range dispositions {
+		for _, rawID := range disposition.ids {
+			id := strings.TrimSpace(rawID)
+			if id == "" {
+				return fmt.Errorf("ChangeImpact %s contains an empty evidence id", disposition.name)
+			}
+			if prior := seen[id]; prior != "" {
+				return fmt.Errorf("ChangeImpact evidence %q appears in both %s and %s", id, prior, disposition.name)
+			}
+			seen[id] = disposition.name
+			entry, ok := byID[id]
+			if !ok {
+				return fmt.Errorf("ChangeImpact %s references unregistered Runtime evidence %q", disposition.name, id)
+			}
+			status := stringField(entry["status"])
+			if status == "" {
+				status = "valid"
+			}
+			if committed {
+				if status != disposition.status {
+					return fmt.Errorf("ChangeImpact %s evidence %q has status %q after commit, want %q", disposition.name, id, status, disposition.status)
+				}
+			} else if disposition.name == "superseded_evidence_ids" && status != "valid" {
+				return fmt.Errorf("ChangeImpact superseded evidence %q has status %q before commit, want valid", id, status)
+			} else if disposition.name == "retained_evidence_ids" && status != "valid" {
+				return fmt.Errorf("ChangeImpact retained evidence %q has status %q, want valid", id, status)
+			}
+			if generation := integerValue(entry["baseline_generation"]); generation != baselineGeneration(state) {
+				return fmt.Errorf("ChangeImpact %s evidence %q belongs to baseline_generation %d, want %d", disposition.name, id, generation, baselineGeneration(state))
+			}
+		}
+	}
+
+	// A retained item needs a decision row whose target is that exact evidence
+	// id. Its rationale is the machine-auditable reason for retaining it; this
+	// prevents a top-level retained list from becoming an unconnected claim.
+	for _, id := range impact.RetainedEvidenceIDs {
+		matched := false
+		for _, decision := range impact.Decisions {
+			if decision.Decision == "retain" && strings.TrimSpace(decision.TargetID) == strings.TrimSpace(id) && strings.TrimSpace(decision.Rationale) != "" {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("ChangeImpact retained evidence %q has no retain decision targeting that id with a rationale", id)
+		}
+	}
+
+	// Retained evidence must be outside the mechanically impacted surface. A
+	// human assertion cannot override the dependency graph's conservative
+	// invalidation result.
+	changedPaths := make([]string, 0, len(impact.ChangedArtifacts))
+	for _, artifact := range impact.ChangedArtifacts {
+		changedPaths = append(changedPaths, artifact.Path)
+	}
+	for _, item := range impactanalysis.ComputeImpact(state, changedPaths) {
+		if seen[item.EvidenceID] == "retained_evidence_ids" {
+			return fmt.Errorf("ChangeImpact retained evidence %q overlaps changed surface %q; retain requires dependency/content proof outside the impact", item.EvidenceID, item.ScopeRef)
+		}
+	}
+
+	for index, decision := range impact.Decisions {
+		if strings.TrimSpace(decision.SourceID) == "" || strings.TrimSpace(decision.TargetID) == "" || strings.TrimSpace(decision.Rationale) == "" {
+			return fmt.Errorf("ChangeImpact decision %d requires source_id, target_id, and rationale", index)
+		}
+		if decision.Decision == "retain" && len(decision.RecoveryEvidence) == 0 {
+			return fmt.Errorf("ChangeImpact retain decision %q requires recovery_evidence proving the retained item", decision.TargetID)
+		}
+		if decision.Decision == "supersede" && len(decision.RecoveryEvidence) == 0 {
+			return fmt.Errorf("ChangeImpact supersede decision %q requires recovery_evidence for the replacement", decision.TargetID)
+		}
+		for _, ref := range decision.RecoveryEvidence {
+			if err := validateImpactRecoveryEvidence(root, state, pointer, ref); err != nil {
+				return fmt.Errorf("ChangeImpact decision %q recovery_evidence %q: %w", decision.TargetID, ref, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateImpactRecoveryEvidence(root string, state, pointer map[string]any, rawRef string) error {
+	ref := strings.TrimSpace(rawRef)
+	if ref == "" {
+		return errors.New("reference is empty")
+	}
+	if strings.Contains(ref, "://") {
+		parts := strings.SplitN(ref, "://", 2)
+		if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return errors.New("external recovery reference must contain a scheme and subject")
+		}
+		return nil
+	}
+	if strings.HasPrefix(ref, "path:") {
+		rel, want, err := parseImpactPathEvidenceRef(ref)
+		if err != nil {
+			return err
+		}
+		path, err := repositoryPath(root, rel)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read local recovery artifact: %w", err)
+		}
+		if got := sha256Bytes(data); got != want {
+			return fmt.Errorf("local recovery artifact digest mismatch: got %s, want %s", got, want)
+		}
+		return nil
+	}
+	if err := evidence.ValidateRefs(state, []string{ref}, evidence.RefsOptions{Root: root}); err == nil {
+		return nil
+	}
+	for _, artifact := range currentRepairArtifactRefs(pointer) {
+		if normalizePath(artifact.Path) != normalizePath(ref) {
+			continue
+		}
+		if _, err := readArtifact(root, artifact, ""); err != nil {
+			return fmt.Errorf("pinned recovery artifact is not readable: %w", err)
+		}
+		return nil
+	}
+	return errors.New("recovery reference is neither a current Runtime evidence id nor a hash-pinned S9 artifact or execution anchor")
+}
+
+func parseImpactPathEvidenceRef(ref string) (string, string, error) {
+	rel := strings.TrimPrefix(ref, "path:")
+	marker := "#sha256="
+	index := strings.Index(rel, marker)
+	if index < 0 {
+		return "", "", errors.New("local recovery path must carry #sha256=<64 hex>")
+	}
+	want := rel[index+len(marker):]
+	rel = rel[:index]
+	if strings.TrimSpace(rel) == "" || len(want) != 64 {
+		return "", "", errors.New("local recovery path requires a non-empty path and exactly 64 hexadecimal digest characters")
+	}
+	if _, err := hex.DecodeString(want); err != nil {
+		return "", "", fmt.Errorf("local recovery path digest is not hexadecimal: %w", err)
+	}
+	return rel, want, nil
+}
+
+func currentRepairArtifactRefs(pointer map[string]any) []ArtifactRef {
+	if pointer == nil {
+		return nil
+	}
+	refs := []ArtifactRef{}
+	for _, pair := range [][2]string{
+		{"path", "sha256"}, {"contract_ref", "contract_sha256"}, {"plan_ref", "plan_sha256"},
+		{"plan_report_ref", "plan_report_sha256"}, {"result_ref", "result_sha256"}, {"changeset_ref", "changeset_sha256"},
+		{"impact_ref", "impact_sha256"}, {"handoff_ref", "handoff_sha256"}, {"review_plan_seed_ref", "review_plan_seed_sha256"},
+	} {
+		if path, hash := stringField(pointer[pair[0]]), stringField(pointer[pair[1]]); path != "" && hash != "" {
+			refs = append(refs, ArtifactRef{Path: path, SHA256: hash})
+		}
+	}
+	for _, key := range []string{"plan_report_refs", "result_refs", "targeted_reverification_artifacts"} {
+		refs = append(refs, existingArtifactRefs(pointer[key])...)
+	}
+	return refs
+}
+
 func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactRequest) (runtimepkg.Snapshot, error) {
 	current, writer, err := readRepairRuntime(root, statePath, journalPath)
 	if err != nil {
@@ -672,6 +865,9 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 	if err := exactChangedArtifactSet(resultArtifacts, impactDocument.ChangedArtifacts, "RepairResult batch", "ChangeImpact"); err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
+	if err := validateChangeImpactEvidenceLedger(root, current.State, p, impactDocument, false); err != nil {
+		return runtimepkg.Snapshot{}, err
+	}
 	sessionRef, err := pointerArtifact(p, "path", "sha256", "current RepairSession")
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
@@ -705,13 +901,29 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 	if actor == "" {
 		actor = "orchestrator"
 	}
+	supersededIDs := map[string]bool{}
+	retainedIDs := map[string]bool{}
+	for _, id := range impactDocument.SupersededEvidenceIDs {
+		supersededIDs[id] = true
+	}
+	for _, id := range impactDocument.RetainedEvidenceIDs {
+		retainedIDs[id] = true
+	}
 	return writer.Update(req.ExpectedRevision, runtimepkg.Mutation{EventID: fmt.Sprintf("evt-s9-impact-r%d", req.ExpectedRevision+1), TransitionID: whitelistChecked("PTR-BUG-05"), Event: "change_impact_reconciled", Actor: actor, IdempotencyKey: fmt.Sprintf("runtime:s9:impact:%s:%d", req.Impact.Path, req.ExpectedRevision), RuntimeID: stringField(current.State["runtime_id"]), EvidenceIDs: []string{req.Impact.Path}, From: cursor(current.State), To: map[string]any{"state": "bug_resolution", "phase": "targeted_reverification"}, RequestID: "s9-impact-reconcile", BaselineGeneration: baselineGeneration(current.State), GateID: "S9-IMPACT-RECONCILE", GateFingerprint: "sha256:s9-impact-reconcile-v1", ProducerResponsibility: "S9 Repair", OccurredAt: at, Apply: func(state map[string]any) error {
 		updateRepairPointer(state, map[string]any{"impact_ref": req.Impact.Path, "impact_sha256": req.Impact.SHA256, "status": "targeted_reverification", "required_reverification_ids": requiredReverificationIDs(impactDocument), "updated_at": at.Format(time.RFC3339Nano), "next_action": "submit independent targeted reverification"})
 		changedPaths := make([]string, 0, len(impactDocument.ChangedArtifacts))
 		for _, artifact := range impactDocument.ChangedArtifacts {
 			changedPaths = append(changedPaths, artifact.Path)
 		}
-		impactanalysis.InvalidateEvidence(state, impactanalysis.ComputeImpact(state, changedPaths), impactDocument.ImpactID)
+		impacted := impactanalysis.ComputeImpact(state, changedPaths)
+		unlisted := make([]impactanalysis.EvidenceImpact, 0, len(impacted))
+		for _, item := range impacted {
+			if supersededIDs[item.EvidenceID] || retainedIDs[item.EvidenceID] {
+				continue
+			}
+			unlisted = append(unlisted, item)
+		}
+		impactanalysis.InvalidateEvidence(state, unlisted, impactDocument.ImpactID)
 		invalidateListedEvidence(state, impactDocument.InvalidatedEvidenceIDs, impactDocument.ImpactID, "declared by ChangeImpact")
 		supersedeListedEvidence(state, impactDocument.SupersededEvidenceIDs, impactDocument.ImpactID)
 		setLifecycle(state, "bug_resolution", "targeted_reverification")
@@ -1238,7 +1450,7 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	}
 	return func() (runtimepkg.Snapshot, error) {
 		snapshot, updateErr := writer.Update(req.ExpectedRevision, runtimepkg.Mutation{EventID: fmt.Sprintf("evt-s9-handoff-r%d", req.ExpectedRevision+1), TransitionID: whitelistChecked("TR-012"), Event: "repair_handoff_ready", Actor: actor, IdempotencyKey: fmt.Sprintf("runtime:s9:handoff:%s:%d", req.Handoff.Path, req.ExpectedRevision), RuntimeID: stringField(current.State["runtime_id"]), EvidenceIDs: []string{req.Handoff.Path, seedRef.Path}, From: cursor(current.State), To: map[string]any{"state": "verification", "phase": "running"}, RequestID: "s9-handoff", BaselineGeneration: baselineGeneration(current.State), GateID: "S9-REPAIR-HANDOFF", GateFingerprint: "sha256:s9-repair-handoff-v3", ProducerResponsibility: "S9 Repair", OccurredAt: at, Apply: func(state map[string]any) error {
-			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "review the staged S7 seed; if coverage changes, refine it once with `runtime review-plan revise --file <plan-v2.json> --source-ref path:<change-impact-path> --affected-surface <surface>`, then dispatch Delivery + QA + E2E assignments", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
+			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "review the staged S7 seed; if coverage changes, refine it once with `runtime review-plan revise --file <plan-v2.json> --source-ref runtime:<change-impact-evidence-id> --affected-surface <surface>`, then dispatch Delivery + QA + E2E assignments", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
 			review := ensureObject(state, "review")
 			round := integerValue(review["round"])
 			round++
@@ -1852,6 +2064,9 @@ func validateHandoffAgainstCurrentRepair(root string, state, pointer map[string]
 	}
 	impact, err := ValidateChangeImpact(root, handoff.ChangeImpactRef)
 	if err != nil {
+		return err
+	}
+	if err := validateChangeImpactEvidenceLedger(root, state, pointer, impact, true); err != nil {
 		return err
 	}
 	if err := exactChangedArtifactSet(resultArtifacts, changeset.Artifacts, "RepairResult batch", "Changeset"); err != nil {

@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/evidence"
-	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
@@ -451,7 +449,19 @@ func applyS10ManifestGate(input Input, result *Evaluation) {
 			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:external_baseline_unverifiable:%s; next: restore the current-generation completion artifacts so the changed-surface denominator can be re-derived, then re-run the gate", manifestType, evidenceID, baselineErr))
 			continue
 		}
-		summary, err := acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline)
+		var summary acceptance.Summary
+		if input.Root != "" && acceptance.S10AuthorityAvailable(input.Snapshot.State) {
+			authority, authorityErr := acceptance.BuildS10InventoryAuthority(input.Root, input.Snapshot.State, baseline)
+			if authorityErr != nil {
+				result.Status = StatusUnknown
+				result.ErrorCode = ErrorGateUnknown
+				result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:authoritative_inventory_unverifiable:%s; next: restore the current bound REQ, contract/TASK registrations, and pinned S7 ReviewPlan before re-running the gate", manifestType, evidenceID, authorityErr))
+				continue
+			}
+			summary, err = acceptance.ValidateForOutcomeWithBaselineAndAuthority(manifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline, authority)
+		} else {
+			summary, err = acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline)
+		}
 		if err != nil {
 			result.Status = StatusUnknown
 			result.ErrorCode = ErrorGateUnknown
@@ -499,38 +509,7 @@ func applyS10ManifestGate(input Input, result *Evaluation) {
 // (no diagnostics, no paths) returns a Baseline with no ChangedPaths, which
 // leaves the self-declared denominator untouched.
 func S10ExternalBaseline(root string, state map[string]any, affectedPaths []string) (acceptance.Baseline, error) {
-	baseline := acceptance.Baseline{}
-	if strings.TrimSpace(strings.Join(affectedPaths, ",")) == "all" || (len(affectedPaths) == 1 && affectedPaths[0] == "all") {
-		baseline.AffectedPathsAll = true
-		return baseline, nil
-	}
-	seen := map[string]struct{}{}
-	add := func(paths []string) {
-		for _, p := range paths {
-			p = strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(p, "\\", "/")), "./")
-			if p == "" || strings.Contains(p, ":") {
-				continue
-			}
-			if _, ok := seen[p]; ok {
-				continue
-			}
-			seen[p] = struct{}{}
-			baseline.ChangedPaths = append(baseline.ChangedPaths, p)
-		}
-	}
-	if root != "" {
-		paths, diagnostics := review.ChangedPathsForRootDetailed(root, state)
-		if len(diagnostics) > 0 {
-			return acceptance.Baseline{}, fmt.Errorf("external changed-surface baseline is unverifiable: %s", strings.Join(diagnostics, "; "))
-		}
-		add(paths)
-	}
-	add(changeImpactChangedPathsState(root, state))
-	for _, p := range affectedPaths {
-		add([]string{p})
-	}
-	sort.Strings(baseline.ChangedPaths)
-	return baseline, nil
+	return acceptance.BuildS10ExternalBaseline(root, state, affectedPaths)
 }
 
 // s10ExternalBaseline is the gate-side wrapper over S10ExternalBaseline. The
@@ -601,19 +580,6 @@ func changeImpactChangedPaths(input Input) []string {
 		return nil
 	}
 	return changeImpactChangedPathsRead(input.Snapshot.State, input.Files.ReadFile)
-}
-
-// changeImpactChangedPathsState is the CLI-facing change_impact ledger reader
-// (S10ExternalBaseline has no FileView): it reads each registered artifact
-// from disk under the repository root. A drifted or unreadable artifact
-// contributes nothing (its registration gate already proves it separately).
-func changeImpactChangedPathsState(root string, state map[string]any) []string {
-	if root == "" {
-		return nil
-	}
-	return changeImpactChangedPathsRead(state, func(path string) ([]byte, error) {
-		return os.ReadFile(filepath.Join(root, path))
-	})
 }
 
 func changeImpactChangedPathsRead(state map[string]any, readFile func(string) ([]byte, error)) []string {

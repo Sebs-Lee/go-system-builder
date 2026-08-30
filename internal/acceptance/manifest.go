@@ -16,6 +16,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -95,6 +96,111 @@ type Baseline struct {
 	// AffectedPathsAll reports that the caller explicitly declared the full
 	// surface (the "all" token), which waives the exact-set comparison.
 	AffectedPathsAll bool
+}
+
+// InventoryAuthority is the finite S10 denominator reconstructed from facts
+// outside the manifest author: the bound REQ, current contract/TASK document
+// registrations, the pinned S7 ReviewPlan claims, and the external changed
+// surface. The manifest must contain exactly these ids for the corresponding
+// categories; its rows remain the human-owned expected/oracle/evidence ledger.
+//
+// The category names deliberately mirror the source facts rather than adding
+// another machine state. `task` and `claim` are additional inventory rows;
+// their coverage is still accounted for by the ordinary disposition and
+// counterevidence checks, while the three S10 metric categories retain their
+// Blueprint meaning.
+type InventoryAuthority struct {
+	RequirementIDs []string
+	ContractIDs    []string
+	TaskIDs        []string
+	ClaimIDs       []string
+	ChangedPaths   []string
+}
+
+var s10RequirementToken = regexp.MustCompile(`\b(?:FR|NFR)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
+
+// BuildS10ExternalBaseline reconstructs the changed-path denominator from
+// current, fingerprinted completion/change-impact evidence plus the paths of
+// the triggering request. It is intentionally implemented in this package so
+// Runtime registration, the CLI and the Quality Gate consume one rule.
+//
+// A registered completion artifact that cannot be read, hash-verified, or
+// decoded is an authority failure. Returning an empty baseline in that case
+// would silently hand the denominator back to the manifest author.
+func BuildS10ExternalBaseline(root string, state map[string]any, affectedPaths []string) (Baseline, error) {
+	baseline := Baseline{}
+	for _, path := range affectedPaths {
+		if strings.EqualFold(strings.TrimSpace(path), "all") {
+			baseline.AffectedPathsAll = true
+			return baseline, nil
+		}
+	}
+	seen := map[string]struct{}{}
+	add := func(path string) {
+		if normalized := normalizeBaselinePath(path); normalized != "" {
+			if _, ok := seen[normalized]; ok {
+				return
+			}
+			seen[normalized] = struct{}{}
+			baseline.ChangedPaths = append(baseline.ChangedPaths, normalized)
+		}
+	}
+	generation := nestedS10Int(state, "baseline", "generation")
+	rawEvidence, _ := state["evidence"].([]any)
+	for _, raw := range rawEvidence {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || intValueS10(entry["baseline_generation"]) != generation || stringValue(entry["status"]) != "valid" || !s10EvidenceIsLive(entry["invalidated_by"]) {
+			continue
+		}
+		kind := strings.TrimSpace(stringValue(entry["kind"]))
+		if kind != "completion_report" && kind != "change_impact" {
+			continue
+		}
+		id := stringValue(entry["id"])
+		data, err := readAuthoritativeS10File(root, stringValue(entry["path"]), stringValue(entry["sha256"]), "evidence "+id)
+		if err != nil {
+			return Baseline{}, err
+		}
+		switch kind {
+		case "completion_report":
+			var completion struct {
+				ChangedPaths []string `json:"changed_paths"`
+			}
+			if err := json.Unmarshal(data, &completion); err != nil {
+				return Baseline{}, fmt.Errorf("S10 inventory authority completion evidence %s is invalid JSON: %w", id, err)
+			}
+			for _, path := range completion.ChangedPaths {
+				add(path)
+			}
+		case "change_impact":
+			var impact struct {
+				ChangedArtifacts []struct {
+					Path string `json:"path"`
+				} `json:"changed_artifacts"`
+			}
+			if err := json.Unmarshal(data, &impact); err != nil {
+				return Baseline{}, fmt.Errorf("S10 inventory authority change-impact evidence %s is invalid JSON: %w", id, err)
+			}
+			for _, artifact := range impact.ChangedArtifacts {
+				add(artifact.Path)
+			}
+		}
+	}
+	for _, path := range affectedPaths {
+		add(path)
+	}
+	sort.Strings(baseline.ChangedPaths)
+	return baseline, nil
+}
+
+func s10EvidenceIsLive(value any) bool {
+	if value == nil {
+		return true
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	return false
 }
 
 // BuilderResponsibilities are the role identities whose manifest rows must
@@ -203,6 +309,278 @@ func ValidateForOutcome(data []byte, expectedType, outcome string) (Summary, err
 func ValidateForOutcomeWithBaseline(data []byte, expectedType, outcome string, baseline Baseline) (Summary, error) {
 	requireClean := !allowsUnresolvedOutcome(expectedType, outcome)
 	return validate(data, expectedType, requireClean, &baseline)
+}
+
+// ValidateForOutcomeWithAuthority adds the finite inventory exact-set check
+// to ValidateForOutcome. It is used by the S10 production paths once the
+// current Runtime and pinned S7 plan are available.
+func ValidateForOutcomeWithAuthority(data []byte, expectedType, outcome string, authority InventoryAuthority) (Summary, error) {
+	summary, err := ValidateForOutcome(data, expectedType, outcome)
+	if err != nil {
+		return summary, err
+	}
+	return validateInventoryAuthority(data, summary, authority)
+}
+
+// ValidateForOutcomeWithBaselineAndAuthority is the complete S10 validator:
+// structural/outcome checks, external changed-path reconciliation, and the
+// exact finite inventory derived from authoritative runtime facts.
+func ValidateForOutcomeWithBaselineAndAuthority(data []byte, expectedType, outcome string, baseline Baseline, authority InventoryAuthority) (Summary, error) {
+	summary, err := ValidateForOutcomeWithBaseline(data, expectedType, outcome, baseline)
+	if err != nil {
+		return summary, err
+	}
+	return validateInventoryAuthority(data, summary, authority)
+}
+
+// S10AuthorityAvailable reports whether the Runtime has the minimum
+// production pointers needed to reconstruct the non-self-declared S10
+// denominator. Rootless/unit-test callers intentionally stay on the legacy
+// structural validator; a real S10 round has a registered pinned ReviewPlan.
+func S10AuthorityAvailable(state map[string]any) bool {
+	bound, boundOK := state["bound_req"].(map[string]any)
+	review, reviewOK := state["review"].(map[string]any)
+	plan, planOK := review["plan"].(map[string]any)
+	return boundOK && strings.TrimSpace(stringValue(bound["id"])) != "" &&
+		boundOK && strings.TrimSpace(stringValue(bound["path"])) != "" &&
+		reviewOK && planOK && strings.TrimSpace(stringValue(plan["path"])) != ""
+}
+
+// BuildS10InventoryAuthority reconstructs the S10 finite denominator from
+// the current Runtime and repository. Every referenced document and the S7
+// plan is hash-verified before its ids are admitted. A missing or drifted
+// source is an authority-construction error, not an empty denominator.
+func BuildS10InventoryAuthority(root string, state map[string]any, baseline Baseline) (InventoryAuthority, error) {
+	if strings.TrimSpace(root) == "" {
+		return InventoryAuthority{}, fmt.Errorf("S10 inventory authority requires a repository root")
+	}
+	if !S10AuthorityAvailable(state) {
+		return InventoryAuthority{}, fmt.Errorf("S10 inventory authority is unavailable: current Runtime must contain a bound REQ and a pinned current-round ReviewPlan")
+	}
+	authority := InventoryAuthority{}
+
+	bound := state["bound_req"].(map[string]any)
+	reqID := strings.TrimSpace(stringValue(bound["id"]))
+	reqPath := strings.TrimSpace(stringValue(bound["path"]))
+	reqSHA := strings.TrimSpace(stringValue(bound["sha256"]))
+	reqData, err := readAuthoritativeS10File(root, reqPath, reqSHA, "bound REQ")
+	if err != nil {
+		return InventoryAuthority{}, err
+	}
+	reqTokens := sortedUniqueStrings(s10RequirementToken.FindAllString(string(reqData), -1))
+	if len(reqTokens) == 0 {
+		// A locked REQ without machine-labelled FR/NFR rows is still one
+		// explicit requirement object; it cannot make the category vanish.
+		authority.RequirementIDs = []string{reqID}
+	} else {
+		for _, token := range reqTokens {
+			authority.RequirementIDs = append(authority.RequirementIDs, reqID+"/"+token)
+		}
+	}
+
+	generation := nestedS10Int(state, "baseline", "generation")
+	rawDocuments, _ := state["documents"].([]any)
+	for _, raw := range rawDocuments {
+		document, _ := raw.(map[string]any)
+		if document == nil || intValueS10(document["generation"]) != generation {
+			continue
+		}
+		kind := strings.TrimSpace(stringValue(document["kind"]))
+		id := strings.TrimSpace(stringValue(document["id"]))
+		path := strings.TrimSpace(stringValue(document["path"]))
+		sha := strings.TrimSpace(stringValue(document["sha256"]))
+		if kind != "contract" && kind != "task" {
+			continue
+		}
+		if id == "" || path == "" || sha == "" {
+			return InventoryAuthority{}, fmt.Errorf("S10 inventory authority cannot use current %s document with missing id/path/sha256", kind)
+		}
+		if _, err := readAuthoritativeS10File(root, path, sha, kind+" "+id); err != nil {
+			return InventoryAuthority{}, err
+		}
+		switch kind {
+		case "contract":
+			authority.ContractIDs = append(authority.ContractIDs, id)
+		case "task":
+			// A TASK is in the S10 denominator for its Closing Contract,
+			// not merely because a task file happens to be registered.
+			authority.TaskIDs = append(authority.TaskIDs, id+"#closing-contract")
+		}
+	}
+
+	planPointer := state["review"].(map[string]any)["plan"].(map[string]any)
+	planPath := strings.TrimSpace(stringValue(planPointer["path"]))
+	planSHA := strings.TrimSpace(stringValue(planPointer["sha256"]))
+	planData, err := readAuthoritativeS10File(root, planPath, planSHA, "pinned S7 ReviewPlan")
+	if err != nil {
+		return InventoryAuthority{}, err
+	}
+	var plan struct {
+		ReviewRound        int `json:"review_round"`
+		BaselineGeneration int `json:"baseline_generation"`
+		Claims             []struct {
+			ClaimID string `json:"claim_id"`
+		} `json:"claims"`
+	}
+	if err := json.Unmarshal(planData, &plan); err != nil {
+		return InventoryAuthority{}, fmt.Errorf("decode pinned S7 ReviewPlan for S10 inventory authority: %w", err)
+	}
+	if plan.ReviewRound != nestedS10Int(state, "review", "round") || plan.BaselineGeneration != generation {
+		return InventoryAuthority{}, fmt.Errorf("pinned S7 ReviewPlan is not bound to the current S10 round/baseline")
+	}
+	for _, claim := range plan.Claims {
+		if id := strings.TrimSpace(claim.ClaimID); id != "" {
+			authority.ClaimIDs = append(authority.ClaimIDs, id)
+		}
+	}
+	if len(authority.ClaimIDs) == 0 {
+		return InventoryAuthority{}, fmt.Errorf("pinned S7 ReviewPlan has no claims; S10 cannot freeze the review denominator")
+	}
+
+	authority.RequirementIDs = sortedUniqueStrings(authority.RequirementIDs)
+	authority.ContractIDs = sortedUniqueStrings(authority.ContractIDs)
+	authority.TaskIDs = sortedUniqueStrings(authority.TaskIDs)
+	authority.ClaimIDs = sortedUniqueStrings(authority.ClaimIDs)
+	if !baseline.AffectedPathsAll {
+		for _, path := range baseline.ChangedPaths {
+			if normalized := normalizeBaselinePath(path); normalized != "" {
+				authority.ChangedPaths = append(authority.ChangedPaths, normalized)
+			}
+		}
+		authority.ChangedPaths = sortedUniqueStrings(authority.ChangedPaths)
+	}
+	return authority, nil
+}
+
+func validateInventoryAuthority(data []byte, summary Summary, authority InventoryAuthority) (Summary, error) {
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return summary, fmt.Errorf("decode S10 manifest for authoritative inventory check: %w", err)
+	}
+	issues := inventoryAuthorityIssues(manifest.CoverageInventory, authority)
+	if len(issues) > 0 {
+		return summary, fmt.Errorf("S10 manifest invalid: %s; next: regenerate coverage_inventory from the current bound REQ, contracts, TASK Closing Contracts, pinned S7 Claims, and changed-path baseline, then validate and register a new fingerprinted envelope", strings.Join(issues, "; "))
+	}
+	return summary, nil
+}
+
+func inventoryAuthorityIssues(inventory []CoverageItem, authority InventoryAuthority) []string {
+	expected := map[string][]string{
+		"requirement": authority.RequirementIDs,
+		"contract":    authority.ContractIDs,
+		"task":        authority.TaskIDs,
+		"claim":       authority.ClaimIDs,
+	}
+	if len(authority.ChangedPaths) > 0 {
+		ids := make([]string, 0, len(authority.ChangedPaths))
+		for _, path := range authority.ChangedPaths {
+			ids = append(ids, "path:"+path)
+		}
+		expected["changed_path"] = ids
+	}
+	actual := map[string]map[string]struct{}{}
+	for _, item := range inventory {
+		if actual[item.Category] == nil {
+			actual[item.Category] = map[string]struct{}{}
+		}
+		actual[item.Category][strings.TrimSpace(item.ID)] = struct{}{}
+	}
+	var issues []string
+	for category, ids := range expected {
+		if len(ids) == 0 {
+			continue
+		}
+		want := make(map[string]struct{}, len(ids))
+		for _, id := range ids {
+			want[id] = struct{}{}
+		}
+		var missing, extra []string
+		for _, id := range ids {
+			if _, ok := actual[category][id]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		for id := range actual[category] {
+			if _, ok := want[id]; !ok {
+				extra = append(extra, id)
+			}
+		}
+		sort.Strings(missing)
+		sort.Strings(extra)
+		if len(missing) > 0 {
+			issues = append(issues, fmt.Sprintf("authoritative %s inventory is missing %s", category, strings.Join(missing, ", ")))
+		}
+		if len(extra) > 0 {
+			issues = append(issues, fmt.Sprintf("%s inventory contains ids outside the authoritative set: %s", category, strings.Join(extra, ", ")))
+		}
+	}
+	return issues
+}
+
+func readAuthoritativeS10File(root, path, wantSHA, label string) ([]byte, error) {
+	resolved, err := safeManifestPath(root, path)
+	if err != nil {
+		return nil, fmt.Errorf("S10 inventory authority %s: %w", label, err)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("S10 inventory authority %s is unreadable: %w", label, err)
+	}
+	if strings.TrimSpace(wantSHA) == "" {
+		return nil, fmt.Errorf("S10 inventory authority %s has no registered sha256", label)
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != wantSHA {
+		return nil, fmt.Errorf("S10 inventory authority %s drifted: registered sha256 %s does not match disk", label, wantSHA)
+	}
+	return data, nil
+}
+
+func nestedS10Int(value map[string]any, parent, child string) int {
+	if child == "" {
+		return intValueS10(value[parent])
+	}
+	nested, _ := value[parent].(map[string]any)
+	return intValueS10(nested[child])
+}
+
+func intValueS10(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func stringValue(value any) string {
+	s, _ := value.(string)
+	return s
+}
+
+func sortedUniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func allowsUnresolvedOutcome(expectedType, outcome string) bool {
@@ -595,6 +973,23 @@ func normalizeBaselinePath(path string) string {
 // responsibility of the existing Runtime/Quality Gate checks; this helper
 // only closes the envelope -> immutable manifest edge.
 func ValidateEvidenceArtifact(root, kind string, envelopeData []byte) error {
+	manifestData, expectedType, conclusion, err := readS10ManifestData(root, kind, envelopeData)
+	if err != nil {
+		return err
+	}
+	if expectedType == "" {
+		return nil
+	}
+	if _, err := ValidateForOutcome(manifestData, expectedType, conclusion); err != nil {
+		return fmt.Errorf("S10 %s evidence manifest is invalid: %w", expectedType, err)
+	}
+	return nil
+}
+
+// readS10ManifestData resolves and fingerprint-checks the immutable manifest
+// named by an S10 evidence envelope. Callers then apply the appropriate
+// outcome/baseline/authority validator to the returned manifest bytes.
+func readS10ManifestData(root, kind string, envelopeData []byte) ([]byte, string, string, error) {
 	expectedType := ""
 	switch kind {
 	case ManifestAcceptance, "acceptance_record":
@@ -602,7 +997,7 @@ func ValidateEvidenceArtifact(root, kind string, envelopeData []byte) error {
 	case ManifestReleaseAudit, "release_audit_record":
 		expectedType = ManifestReleaseAudit
 	default:
-		return nil
+		return nil, "", "", nil
 	}
 	var envelope struct {
 		ManifestPath string `json:"audit_manifest_path"`
@@ -610,26 +1005,94 @@ func ValidateEvidenceArtifact(root, kind string, envelopeData []byte) error {
 		Conclusion   string `json:"conclusion"`
 	}
 	if err := json.Unmarshal(envelopeData, &envelope); err != nil {
-		return fmt.Errorf("S10 %s evidence envelope is not valid JSON: %w", expectedType, err)
+		return nil, "", "", fmt.Errorf("S10 %s evidence envelope is not valid JSON: %w", expectedType, err)
 	}
 	if strings.TrimSpace(envelope.ManifestPath) == "" || strings.TrimSpace(envelope.ManifestSHA) == "" {
-		return fmt.Errorf("S10 %s evidence requires audit_manifest_path and audit_manifest_sha256; validate the manifest first with `loop-harness s10 manifest validate --file <path> --type %s`, then register a new envelope", expectedType, expectedType)
+		return nil, "", "", fmt.Errorf("S10 %s evidence requires audit_manifest_path and audit_manifest_sha256; validate the manifest first with `loop-harness s10 manifest validate --file <path> --type %s`, then register a new envelope", expectedType, expectedType)
 	}
 	manifestPath, err := safeManifestPath(root, envelope.ManifestPath)
 	if err != nil {
-		return fmt.Errorf("S10 %s evidence manifest path: %w", expectedType, err)
+		return nil, "", "", fmt.Errorf("S10 %s evidence manifest path: %w", expectedType, err)
 	}
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return fmt.Errorf("S10 %s evidence manifest %q is unreadable: %w; validate the referenced file and register a new envelope", expectedType, envelope.ManifestPath, err)
+		return nil, "", "", fmt.Errorf("S10 %s evidence manifest %q is unreadable: %w; validate the referenced file and register a new envelope", expectedType, envelope.ManifestPath, err)
 	}
 	if sum := sha256.Sum256(manifestData); hex.EncodeToString(sum[:]) != envelope.ManifestSHA {
-		return fmt.Errorf("S10 %s evidence audit_manifest_sha256 does not match %q; do not edit in place, regenerate the manifest and register a new envelope", expectedType, envelope.ManifestPath)
+		return nil, "", "", fmt.Errorf("S10 %s evidence audit_manifest_sha256 does not match %q; do not edit in place, regenerate the manifest and register a new envelope", expectedType, envelope.ManifestPath)
 	}
-	if _, err := ValidateForOutcome(manifestData, expectedType, envelope.Conclusion); err != nil {
-		return fmt.Errorf("S10 %s evidence manifest %q is invalid: %w", expectedType, envelope.ManifestPath, err)
+	return manifestData, expectedType, envelope.Conclusion, nil
+}
+
+// ValidateCurrentS10Evidence is the low-level transition boundary for S10.
+// It reuses the same envelope, external-baseline, and authoritative-inventory
+// validators as the CLI and Quality Gate, so TR-015/TR-017 cannot be advanced
+// with only a structurally valid evidence row.
+func ValidateCurrentS10Evidence(root string, state map[string]any, kind string) error {
+	expectedKind := ManifestAcceptance
+	if kind == ManifestReleaseAudit || kind == "release_audit_record" {
+		expectedKind = ManifestReleaseAudit
 	}
-	return nil
+	items, _ := state["evidence"].([]any)
+	generation := nestedS10Int(state, "baseline", "generation")
+	round := nestedS10Int(state, "review", "round")
+	for _, raw := range items {
+		entry, _ := raw.(map[string]any)
+		if entry == nil || stringValue(entry["status"]) != "valid" {
+			continue
+		}
+		entryKind := stringValue(entry["kind"])
+		if (expectedKind == ManifestAcceptance && entryKind != ManifestAcceptance && entryKind != "acceptance_record") ||
+			(expectedKind == ManifestReleaseAudit && entryKind != ManifestReleaseAudit && entryKind != "release_audit_record") {
+			continue
+		}
+		entryGeneration := intValueS10(entry["generation"])
+		if entryGeneration == 0 {
+			entryGeneration = intValueS10(entry["baseline_generation"])
+		}
+		if entryGeneration != generation {
+			continue
+		}
+		if nestedS10Int(entry, "review_round", "") != round || round < 1 {
+			continue
+		}
+		path := stringValue(entry["path"])
+		sha := stringValue(entry["sha256"])
+		if path == "" || sha == "" {
+			continue
+		}
+		artifactPath, err := safeManifestPath(root, path)
+		if err != nil {
+			return fmt.Errorf("current %s evidence %q path is invalid: %w", expectedKind, stringValue(entry["id"]), err)
+		}
+		data, err := os.ReadFile(artifactPath)
+		if err != nil {
+			return fmt.Errorf("current %s evidence %q is unreadable: %w", expectedKind, stringValue(entry["id"]), err)
+		}
+		sum := sha256.Sum256(data)
+		if got := hex.EncodeToString(sum[:]); got != sha {
+			return fmt.Errorf("current %s evidence %q sha256 drifted: registered %s, disk %s", expectedKind, stringValue(entry["id"]), sha, got)
+		}
+		manifestData, _, conclusion, err := readS10ManifestData(root, expectedKind, data)
+		if err != nil {
+			return err
+		}
+		baseline, err := BuildS10ExternalBaseline(root, state, nil)
+		if err != nil {
+			return fmt.Errorf("current %s evidence external baseline is unverifiable: %w", expectedKind, err)
+		}
+		if S10AuthorityAvailable(state) {
+			authority, err := BuildS10InventoryAuthority(root, state, baseline)
+			if err != nil {
+				return fmt.Errorf("current %s evidence authoritative inventory is unverifiable: %w", expectedKind, err)
+			}
+			_, err = ValidateForOutcomeWithBaselineAndAuthority(manifestData, expectedKind, conclusion, baseline, authority)
+			return err
+		}
+		_, err = ValidateForOutcomeWithBaseline(manifestData, expectedKind, conclusion, baseline)
+		return err
+	}
+	return fmt.Errorf("no valid current %s evidence entry for baseline_generation %d/review_round %d", expectedKind, generation, round)
 }
 
 func safeManifestPath(root, value string) (string, error) {

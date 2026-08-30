@@ -142,15 +142,17 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	// an execution anchor (://) or a current-generation, valid, SHA-verified Runtime
 	// evidence id. Phantom `evidence/phantom.json` or stale-generation ids are rejected
 	// here before the Case revision is written.
-	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
-		if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
-			State:              snapshot.State,
-			Root:               root,
-			RequireSHA:         true,
-			RequireReviewRound: currentReviewRound(snapshot.State),
-		}); err != nil {
-			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", err)
-		}
+	snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot()
+	if serr != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for Hypothesis.evidence_refs attestation: %v", serr)
+	}
+	if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
+		State:              snapshot.State,
+		Root:               root,
+		RequireSHA:         true,
+		RequireReviewRound: currentReviewRound(snapshot.State),
+	}); err != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", err)
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		ExpectedRevision:     request.ExpectedRevision,
@@ -208,15 +210,17 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	if snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot(); serr == nil {
-		if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
-			State:              snapshot.State,
-			Root:               root,
-			RequireSHA:         true,
-			RequireReviewRound: currentReviewRound(snapshot.State),
-		}); err != nil {
-			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", err)
-		}
+	snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot()
+	if serr != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for HypothesisResult.evidence_refs attestation: %v", serr)
+	}
+	if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
+		State:              snapshot.State,
+		Root:               root,
+		RequireSHA:         true,
+		RequireReviewRound: currentReviewRound(snapshot.State),
+	}); err != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", err)
 	}
 	boundaryRefs, err := nonEmptyStrings(request.SourceBoundaryRefs, "HypothesisResult.source_boundary_refs")
 	if err != nil {
@@ -439,6 +443,9 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 			if strings.TrimSpace(request.PrimaryRootCause) != "" {
 				document["primary_root_cause"] = strings.TrimSpace(request.PrimaryRootCause)
 			}
+			if strings.TrimSpace(request.NoCompetingHypothesis) != "" {
+				document["no_competing_hypothesis"] = strings.TrimSpace(request.NoCompetingHypothesis)
+			}
 			if len(request.CausalModel) > 0 {
 				document["causal_model"] = cloneMap(request.CausalModel)
 			}
@@ -660,6 +667,11 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	nextDocument := cloneMap(currentDocument)
 	if err := request.Mutate(nextDocument); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+	}
+	if request.Operation == "case_routed" && stringField(nextDocument["route"]) == "s9_repair" {
+		if err := validateCausalClosureEvidence(root, current.State, nextDocument); err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "causal closure evidence: %v", err)
+		}
 	}
 	nextIDs, err := stringSlice(nextDocument["source_finding_ids"], "InvestigationCase.source_finding_ids")
 	if err != nil {
@@ -1166,6 +1178,28 @@ func validateCausalClosure(document map[string]any) error {
 	}
 	detectionGap, _ := document["detection_gap"].(map[string]any)
 	return validateDetectionGap(detectionGap)
+}
+
+// validateCausalClosureEvidence is the Runtime-backed half of the S8 causal
+// closure gate. Structural validation alone is not enough for detection-gap
+// evidence: every ref that can authorize the S8→S9 route must resolve through
+// the same current-generation/SHA evidence validator used by hypotheses and
+// hypothesis results.
+func validateCausalClosureEvidence(root string, state, document map[string]any) error {
+	if err := validateCausalClosure(document); err != nil {
+		return err
+	}
+	detectionGap, _ := document["detection_gap"].(map[string]any)
+	refs := stringSliceValues(detectionGap["evidence_refs"])
+	if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{
+		State:              state,
+		Root:               root,
+		RequireSHA:         true,
+		RequireReviewRound: currentReviewRound(state),
+	}); err != nil {
+		return fmt.Errorf("detection_gap.evidence_refs: %w", err)
+	}
+	return nil
 }
 
 func objectArray(value any, field string) ([]map[string]any, error) {

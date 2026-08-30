@@ -626,7 +626,7 @@ func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, r
 }
 
 // validateResultEvidenceReferences validates references whose syntax declares
-// a local artifact (`path:<repo-relative-path>`) or an indexed runtime
+// a local immutable artifact (`path:<repo-relative-path>#sha256=<64 hex>`) or an indexed runtime
 // Evidence row. Bare refs remain symbolic/external refs for compatibility
 // with browser traces and platform-provided evidence IDs; the explicit path
 // prefix is the low-complexity contract that makes local evidence auditable.
@@ -678,6 +678,15 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 			rel, wantDigest, err := parsePathEvidenceRef(ref)
 			if err != nil {
 				return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
+			}
+			if wantDigest == "" {
+				return s7GateError(
+					"S7_RESULT_EVIDENCE_REF",
+					fmt.Sprintf("%s evidence reference %q has no sha256 digest", owner, ref),
+					[]string{"a local path is mutable and cannot identify immutable evidence without a content digest"},
+					[]string{"append #sha256=<64 hex> or register the artifact as Runtime evidence and use runtime:<evidence-id>"},
+					"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
+				)
 			}
 			if rel == "" {
 				return fmt.Errorf("%s contains an empty evidence reference path", owner)
@@ -751,7 +760,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 			"S7_RESULT_EVIDENCE_REF",
 			fmt.Sprintf("%s evidence reference %q is not a valid typed ref and does not resolve to a registered Runtime evidence row", owner, ref),
 			[]string{"bare references are only accepted when they name a registered evidence id; this one matches no indexed row and carries no path:/runtime: prefix"},
-			[]string{"use path:<repo-relative-path>[#sha256=<64 hex>] for a local artifact, runtime:<evidence-id> for a registered Runtime evidence row, or register the artifact first with `runtime evidence add`"},
+			[]string{"use path:<repo-relative-path>#sha256=<64 hex> for a local artifact, runtime:<evidence-id> for a registered Runtime evidence row, or register the artifact first with `runtime evidence add`"},
 			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 		)
 	}

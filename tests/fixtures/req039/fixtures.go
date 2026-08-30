@@ -1079,9 +1079,13 @@ func s10ManifestData(t *testing.T, state map[string]any, manifestType string, re
 	for _, item := range []struct {
 		id, category string
 	}{
-		{"REQ-AC-001", "requirement"},
+		// The S10 transition guard now consumes the same authoritative
+		// denominator as Runtime/Quality Gate. Keep this fixture aligned with
+		// its bound REQ and pinned ReviewPlan rather than using invented rows.
+		{"REQ-039", "requirement"},
 		{"CONTRACT-001", "contract"},
 		{"PATH-001", "changed_path"},
+		{"claim-qa-1", "claim"},
 		{"AUDIT-001", "audit_area"},
 	} {
 		items = append(items, map[string]any{

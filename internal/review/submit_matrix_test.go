@@ -220,6 +220,20 @@ func TestPathEvidenceReferenceWithDigestRejectsDrift(t *testing.T) {
 	}
 }
 
+func TestPathEvidenceReferenceRequiresDigest(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "evidence", "local-trace.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"event":"save"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateEvidenceRefs(root, map[string]any{}, []string{"path:evidence/local-trace.json"}, "claim claim-qa-1"); err == nil || !strings.Contains(err.Error(), "no sha256 digest") {
+		t.Fatalf("bare local path evidence must be rejected, got %v", err)
+	}
+}
+
 func TestSubmitResultRejectsMissingExplicitEvidencePath(t *testing.T) {
 	root := t.TempDir()
 	statePath, journalPath := writeState(t, root, baseVerificationState())

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -405,5 +406,78 @@ func TestValidateManifestAcceptsP1Risk(t *testing.T) {
 	}
 	if _, err := Validate(encoded, ManifestAcceptance); err != nil {
 		t.Fatalf("a P1 risk is monitorable and must validate: %v", err)
+	}
+}
+
+func TestInventoryAuthorityRejectsShrunkAndInventedRows(t *testing.T) {
+	authority := InventoryAuthority{
+		RequirementIDs: []string{"REQ-040/FR-001", "REQ-040/FR-002"},
+		ContractIDs:    []string{"BE-040"},
+		TaskIDs:        []string{"TASK-040#closing-contract"},
+		ClaimIDs:       []string{"claim-qa-1"},
+		ChangedPaths:   []string{"internal/service.go"},
+	}
+	items := []CoverageItem{
+		{ID: "REQ-040/FR-001", Category: "requirement"},
+		{ID: "CONTRACT-FAKE", Category: "contract"},
+		{ID: "TASK-040#closing-contract", Category: "task"},
+		{ID: "claim-qa-1", Category: "claim"},
+		{ID: "path:internal/service.go", Category: "changed_path"},
+	}
+	issues := inventoryAuthorityIssues(items, authority)
+	joined := strings.Join(issues, "; ")
+	for _, want := range []string{"REQ-040/FR-002", "BE-040", "CONTRACT-FAKE"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("authority issues %q do not identify %q", joined, want)
+		}
+	}
+}
+
+func TestBuildS10InventoryAuthorityUsesPinnedRuntimeFacts(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:])
+	}
+	req := []byte("# REQ-040\n| FR-001 | first |\n| FR-002 | second |\n")
+	contract := []byte("# BE-040\n")
+	task := []byte("# TASK-040\n## Closing Contract\n")
+	plan := []byte(`{"review_plan_id":"review-plan-2","review_round":2,"baseline_generation":1,"claims":[{"claim_id":"claim-qa-1"}]}`)
+	reqSHA := write("docs/requirements/REQ-040.md", req)
+	contractSHA := write("docs/contracts/BE-040.md", contract)
+	taskSHA := write("docs/tasks/TASK-040.md", task)
+	planSHA := write(".claude/review/plans/review-plan-2.json", plan)
+	state := map[string]any{
+		"bound_req": map[string]any{"id": "REQ-040", "path": "docs/requirements/REQ-040.md", "sha256": reqSHA},
+		"baseline":  map[string]any{"generation": 1},
+		"review": map[string]any{
+			"round": 2,
+			"plan":  map[string]any{"path": ".claude/review/plans/review-plan-2.json", "sha256": planSHA},
+		},
+		"documents": []any{
+			map[string]any{"id": "BE-040", "kind": "contract", "path": "docs/contracts/BE-040.md", "sha256": contractSHA, "generation": 1},
+			map[string]any{"id": "TASK-040", "kind": "task", "path": "docs/tasks/TASK-040.md", "sha256": taskSHA, "generation": 1},
+		},
+	}
+	authority, err := BuildS10InventoryAuthority(root, state, Baseline{ChangedPaths: []string{"internal/service.go"}})
+	if err != nil {
+		t.Fatalf("BuildS10InventoryAuthority: %v", err)
+	}
+	if got, want := authority.RequirementIDs, []string{"REQ-040/FR-001", "REQ-040/FR-002"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("requirement authority = %#v, want %#v", got, want)
+	}
+	if got, want := authority.TaskIDs, []string{"TASK-040#closing-contract"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("task authority = %#v, want %#v", got, want)
+	}
+	if got, want := authority.ClaimIDs, []string{"claim-qa-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claim authority = %#v, want %#v", got, want)
 	}
 }

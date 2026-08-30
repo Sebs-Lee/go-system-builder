@@ -92,7 +92,7 @@ func runS10Manifest(args []string, stdout, stderr io.Writer) int {
 		}
 		manifestType = header.ManifestType
 	}
-	summary, err := acceptance.ValidateForOutcome(data, manifestType, strings.TrimSpace(*outcome))
+	summary, err := validateS10ManifestForRepository(*root, data, manifestType, strings.TrimSpace(*outcome))
 	if err != nil {
 		fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
 		return 1
@@ -338,11 +338,12 @@ func runS10ManifestRender(args []string, stdout, stderr io.Writer) int {
 		manifestType = header.ManifestType
 	}
 	// A routed outcome keeps its unresolved rows by design; rendering must
-	// not require a clean ledger, only the structural completeness the Gate
-	// enforces either way.
-	summary, err := acceptance.ValidateForOutcome(data, manifestType, "review_required")
+	// not require a clean ledger, only the completeness the Gate enforces
+	// either way. The repository-aware helper also applies the shared baseline
+	// and authoritative inventory checks when the current Runtime is available.
+	summary, err := validateS10ManifestForRepository(*root, data, manifestType, "review_required")
 	if err != nil {
-		summary, err = acceptance.ValidateForOutcome(data, manifestType, "blocked")
+		summary, err = validateS10ManifestForRepository(*root, data, manifestType, "blocked")
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "s10 manifest render: %v; next: fix the named rows with `loop-harness s10 manifest validate --file <path>`, then re-render\n", err)
@@ -513,7 +514,16 @@ func inspectS10Artifact(root string, state map[string]any, manifestType string) 
 		if baselineErr != nil {
 			return s10InvalidArtifact(result, "external changed-surface baseline is unverifiable: "+baselineErr.Error()+"; next: restore the current-generation completion artifacts so the changed-surface denominator can be re-derived, then re-run `s10 status`")
 		}
-		summary, err := acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, result.Conclusion, baseline)
+		var summary acceptance.Summary
+		if acceptance.S10AuthorityAvailable(state) {
+			authority, authorityErr := acceptance.BuildS10InventoryAuthority(root, state, baseline)
+			if authorityErr != nil {
+				return s10InvalidArtifact(result, "authoritative inventory is unverifiable: "+authorityErr.Error()+"; next: restore the current bound REQ, contract/TASK registrations, and pinned S7 ReviewPlan")
+			}
+			summary, err = acceptance.ValidateForOutcomeWithBaselineAndAuthority(manifestData, manifestType, result.Conclusion, baseline, authority)
+		} else {
+			summary, err = acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, result.Conclusion, baseline)
+		}
 		if err != nil {
 			return s10InvalidArtifact(result, err.Error())
 		}
@@ -648,6 +658,44 @@ func containsExecutionAnchor(ref string) bool {
 func nestedStateValue(state map[string]any, parent, child string) any {
 	nested, _ := state[parent].(map[string]any)
 	return nested[child]
+}
+
+func readOptionalS10State(root string) (map[string]any, error) {
+	path := filepath.Join(root, ".claude", "loop-state.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read S10 Runtime state %s: %w", path, err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, fmt.Errorf("decode S10 Runtime state %s: %w", path, err)
+	}
+	return state, nil
+}
+
+func validateS10ManifestForRepository(root string, data []byte, manifestType, outcome string) (acceptance.Summary, error) {
+	state, err := readOptionalS10State(root)
+	if err != nil {
+		return acceptance.Summary{}, err
+	}
+	if state == nil {
+		return acceptance.ValidateForOutcome(data, manifestType, outcome)
+	}
+	baseline, err := qualitygate.S10ExternalBaseline(root, state, nil)
+	if err != nil {
+		return acceptance.Summary{}, fmt.Errorf("external changed-surface baseline is unverifiable: %w", err)
+	}
+	if !acceptance.S10AuthorityAvailable(state) {
+		return acceptance.ValidateForOutcomeWithBaseline(data, manifestType, outcome, baseline)
+	}
+	authority, err := acceptance.BuildS10InventoryAuthority(root, state, baseline)
+	if err != nil {
+		return acceptance.Summary{}, fmt.Errorf("authoritative inventory is unverifiable: %w", err)
+	}
+	return acceptance.ValidateForOutcomeWithBaselineAndAuthority(data, manifestType, outcome, baseline, authority)
 }
 
 func safeS10Path(root, value string) (string, error) {

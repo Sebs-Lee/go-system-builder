@@ -13,6 +13,8 @@ package transition
 import (
 	"crypto/sha256"
 	"fmt"
+
+	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"os"
@@ -326,7 +328,11 @@ func guardCleanRoundValidFn(state map[string]any, _ map[string]string) error {
 // generation, current review round, fingerprint match), so the guard cannot
 // be satisfied by a re-used or re-hashed envelope.
 func guardACCCurrentFn(state map[string]any, _ map[string]string) error {
-	if err := requireCurrentEvidenceKind(state, "acceptance"); err != nil {
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	if err := acceptance.ValidateCurrentS10Evidence(root, state, "acceptance"); err != nil {
 		return fmt.Errorf("acc_complete: %w", err)
 	}
 	return nil
@@ -337,7 +343,11 @@ func guardACCCurrentFn(state map[string]any, _ map[string]string) error {
 // acc_complete). It requires a CURRENT release_audit evidence entry whose
 // registered fingerprint still matches the on-disk audit record.
 func guardReleaseAuditCurrentFn(state map[string]any, _ map[string]string) error {
-	if err := requireCurrentEvidenceKind(state, "release_audit"); err != nil {
+	root, _ := state["root"].(string)
+	if root == "" {
+		root = "."
+	}
+	if err := acceptance.ValidateCurrentS10Evidence(root, state, "release_audit"); err != nil {
 		return fmt.Errorf("release_audit_approved: %w", err)
 	}
 	return nil

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -528,6 +530,58 @@ func TestAcceptanceGateConsumesStructuredS10Manifest(t *testing.T) {
 	}
 	if result.Status != qualitygate.StatusSatisfied {
 		t.Fatalf("status = %q, want satisfied (missing=%v conflicts=%v)", result.Status, result.Missing, result.Conflicts)
+	}
+}
+
+func TestAcceptanceGateRejectsManifestOutsideAuthoritativeInventory(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	root := t.TempDir()
+	write := func(rel string, data []byte) string {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return sha256Hex(data)
+	}
+	req := []byte("# REQ-TEST\n| FR-001 | required behavior |\n")
+	contract := []byte("# BE-TEST\n")
+	task := []byte("# TASK-TEST\n## Closing Contract\n")
+	plan := []byte(`{"review_plan_id":"review-plan-test","review_round":2,"baseline_generation":1,"claims":[{"claim_id":"claim-qa-1"}]}`)
+	reqSHA := write("docs/requirements/REQ-TEST.md", req)
+	contractSHA := write("docs/contracts/BE-TEST.md", contract)
+	taskSHA := write("docs/tasks/TASK-TEST.md", task)
+	planSHA := write(".claude/review/plans/review-plan-test.json", plan)
+	manifest := validS10Manifest(t, "acceptance")
+	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
+		"audit_manifest_path":   "s10/acceptance-manifest.json",
+		"audit_manifest_sha256": sha256Hex(manifest),
+	})
+	input.Root = root
+	input.Files.(memoryFiles)["s10/acceptance-manifest.json"] = manifest
+	input.Snapshot.State["bound_req"] = map[string]any{
+		"id": "REQ-TEST", "path": "docs/requirements/REQ-TEST.md", "sha256": reqSHA,
+	}
+	input.Snapshot.State["documents"] = []any{
+		map[string]any{"id": "BE-TEST", "kind": "contract", "path": "docs/contracts/BE-TEST.md", "sha256": contractSHA, "generation": 1},
+		map[string]any{"id": "TASK-TEST", "kind": "task", "path": "docs/tasks/TASK-TEST.md", "sha256": taskSHA, "generation": 1},
+	}
+	input.Snapshot.State["review"].(map[string]any)["plan"] = map[string]any{
+		"path": ".claude/review/plans/review-plan-test.json", "sha256": planSHA,
+	}
+
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusUnknown || !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:invalid:") {
+		t.Fatalf("result = status %q conflicts=%#v, want authoritative inventory rejection", result.Status, result.Conflicts)
+	}
+	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:invalid:S10 manifest invalid: authoritative requirement inventory is missing") {
+		t.Fatalf("conflicts = %#v, want missing authoritative requirement", result.Conflicts)
 	}
 }
 

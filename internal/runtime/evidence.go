@@ -93,6 +93,34 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	runtimeID, _ := current["runtime_id"].(string)
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	from := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
+	// S10 registration must consume the same authoritative finite inventory
+	// as the Quality Gate once the Runtime has entered a real review round.
+	// Keep the round-zero bootstrap fixture/legacy path structural-only; a
+	// production S10 state has a bound REQ and pinned ReviewPlan, which makes
+	// the non-self-declared denominator reconstructible here as well.
+	if isS10RoundScopedKind(request.Kind) && acceptance.S10AuthorityAvailable(current) {
+		manifestType := "acceptance"
+		if request.Kind == "release_audit" || request.Kind == "release_audit_record" {
+			manifestType = "release_audit"
+		}
+		var envelope struct {
+			Conclusion string `json:"conclusion"`
+		}
+		if err := json.Unmarshal(data, &envelope); err != nil || strings.TrimSpace(envelope.Conclusion) == "" {
+			return Snapshot{}, fmt.Errorf("S10 %s evidence requires a non-empty conclusion before authoritative inventory validation", manifestType)
+		}
+		baseline, baselineErr := acceptance.BuildS10ExternalBaseline(root, current, nil)
+		if baselineErr != nil {
+			return Snapshot{}, fmt.Errorf("S10 external baseline is unverifiable: %w; restore the current-generation completion/change-impact artifacts", baselineErr)
+		}
+		authority, authorityErr := acceptance.BuildS10InventoryAuthority(root, current, baseline)
+		if authorityErr != nil {
+			return Snapshot{}, fmt.Errorf("S10 authoritative inventory is unverifiable: %w; restore the current bound REQ, contract/TASK registrations, and pinned S7 ReviewPlan", authorityErr)
+		}
+		if _, err := acceptance.ValidateForOutcomeWithBaselineAndAuthority(data, manifestType, strings.TrimSpace(envelope.Conclusion), baseline, authority); err != nil {
+			return Snapshot{}, err
+		}
+	}
 
 	occurredAt := request.OccurredAt
 	if occurredAt.IsZero() {
