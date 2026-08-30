@@ -162,6 +162,13 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 		Operation:            "hypothesis_registered",
 		OccurredAt:           request.OccurredAt,
 		Mutate: func(document map[string]any) error {
+			caseIDs, err := stringSlice(document["source_finding_ids"], "InvestigationCase.source_finding_ids")
+			if err != nil {
+				return err
+			}
+			if err := subsetOf(sourceIDs, caseIDs, "Hypothesis.source_finding_ids"); err != nil {
+				return err
+			}
 			hypotheses, err := objectArray(document["hypotheses"], "InvestigationCase.hypotheses")
 			if err != nil {
 				return err
