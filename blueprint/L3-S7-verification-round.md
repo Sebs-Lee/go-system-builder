@@ -966,7 +966,7 @@ Delivery/QA/E2E 的 `pending/running/passed/finding/blocked/stale` 是从 Claims
 > §13.2–§13.5 的 P0/P1/P2 项至此全部落地；§13.1 下表保留为历史差距记录。
 >
 > **2026-08-18 审计（复杂度审查批次：沙箱代入驱动）**：在沙箱中完整驱动了 planned→draft→注册→派发→plan_report→直通 activation→submit→seal→TR-008 链，修复了 5 个真实缺陷并记录 2 个已知摩擦：
-> - **路由 verdict gate 误伤**（正确性）：TR-010/011 的 gate 把当前轮普通 pass/finding 结果当作 naming-error conflict（BUG-CX-12 的 deferred-conflict 机制误用于"等待稀有 verdict"的 gate），导致健康 round 期间每次 PreToolUse 都显示 gate unknown。新增 `EvidenceRequirement.RoutingVerdict`：路由 gate 的 conclusion 不匹配静默跳过。
+> - **路由 verdict gate 误伤**（正确性）：TR-010/011 的 gate 把当前轮普通 pass/finding 结果当作 naming-error conflict（历史 deferred-conflict 机制误用于"等待稀有 verdict"的 gate），导致健康 round 期间每次 PreToolUse 都显示 gate unknown。新增 `EvidenceRequirement.RoutingVerdict`：路由 gate 的 conclusion 不匹配静默跳过。
 > - **sealed 产物缺 envelope 身份字段**（正确性，被上一条掩盖）：机器生成的 ObservationBatch / CleanRound 文件缺 evidence_id/kind/runtime_id/producer 字段，gate 的信封一致性检查必然 :schema——真实流必然失败。两处构建器 + schema 已补齐。
 > - **doc/CLI 断链**：协议写 `review-result submit` 而 CLI 不消化动词词，flag 静默不解析。已修。
 > - **draft 可用性**：`s7 draft` 缺 created_at 导致注册即 schema 拒绝；`next` 在 planned 阶段不提 draft。已修。

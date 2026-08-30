@@ -157,7 +157,7 @@ payload agent_id → teammate_name（顶层）→ tool_input.teammate_name → �
 5. PostToolUseFailure/ConfigChange 是 audit-only：它们补平台原生信号，不替换已有 wrapper，也不假装拥有拦截能力；写 audit 失败保持 fail-open。
 6. 一切 timeouts 固定 10s：若某 handler 未来需要更长预算，超时后的半途状态必须满足状态机篇的可恢复要求，而不是靠加长 timeout 掩盖。
 
-> 本域现行已登记缺陷与候选锚点的操作化清单（含 P0 级 MCP matcher 盲区、Stop 收工门缺位等 11 项）：[docs/bugs/2026-08-28-hook-anchor-selection.md](../bugs/2026-08-28-hook-anchor-selection.md)。
+> 本域的缺陷登记册属于目标项目的本地迭代产物，不随模板仓库发布。推进候选锚点时，应在目标项目的 `docs/bugs/` 登记册中建立工单，并在完成后回写本域状态列。
 
 ## 11. DoD
 
