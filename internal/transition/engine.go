@@ -804,7 +804,7 @@ func parseUIImpact(content string) (string, error) {
 	// The REQ template carries a second UI-impact declaration in §C (a
 	// human-facing reflection of the top anchor field). A drifted §C value
 	// would silently route a `changed` requirement through the `none` path
-	// (BUG-CX-05): refuse the mismatch and name both values.
+	// Refuse the mismatch and name both values.
 	if echo := sectionCUIImpact(content); echo != "" && !strings.EqualFold(echo, value) {
 		return "", fmt.Errorf("REQ UI impact is inconsistent: top anchor field says %q but the §C reflection says %q — align them (the top field is the machine anchor; §C only reflects it)", value, echo)
 	}

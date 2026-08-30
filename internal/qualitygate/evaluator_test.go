@@ -580,7 +580,7 @@ func TestAcceptanceGateRejectsManifestOutsideAuthoritativeInventory(t *testing.T
 	if result.Status != qualitygate.StatusUnknown || !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:invalid:") {
 		t.Fatalf("result = status %q conflicts=%#v, want authoritative inventory rejection", result.Status, result.Conflicts)
 	}
-	if !containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:invalid:S10 manifest invalid: authoritative requirement inventory is missing") {
+	if !containsConflictFragment(result.Conflicts, "authoritative requirement inventory is missing REQ-TEST/FR-001") {
 		t.Fatalf("conflicts = %#v, want missing authoritative requirement", result.Conflicts)
 	}
 }
@@ -1605,6 +1605,15 @@ func builderBatchInput(t *testing.T) qualitygate.Input {
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsConflictFragment(values []string, fragment string) bool {
+	for _, value := range values {
+		if strings.Contains(value, fragment) {
 			return true
 		}
 	}

@@ -913,7 +913,7 @@ func SeedPlanningDesignComplete(t *testing.T, root string, state map[string]any)
 		t.Fatal(err)
 	}
 	evPath := writeEvidenceFile(t, root, "ev-design.json", evData)
-	// BUG-CX-13 A4: no hand-seeded documents[] — the disk declarations plus
+	// Do not hand-seed documents[] — the disk declarations plus
 	// the gate's disk fallback (pre-commit) and PTR-PLAN-01's
 	// register_design_documents (at commit) carry the chain.
 	state["evidence"] = []any{

@@ -34,8 +34,8 @@ type CrossMatrixEntry struct {
 	NoBranchReason string `json:"no_branch_reason,omitempty"`
 }
 
-// crossMatrixReqRefPattern accepts REQ-level ("REQ-040") and FR-level
-// ("REQ-040/FR-003") references — FR-level is what the AC bridge resolves.
+// crossMatrixReqRefPattern accepts REQ-level ("REQ-001") and FR-level
+// ("REQ-001/FR-003") references — FR-level is what the AC bridge resolves.
 var crossMatrixReqRefPattern = regexp.MustCompile(`^REQ-[A-Z0-9]+(-[A-Z0-9]+)*(?:/FR-[A-Z0-9]+(-[A-Z0-9]+)*)?$`)
 
 func decodeCrossMatrix(data []byte) (CrossMatrix, error) {
@@ -148,7 +148,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	return nil
 }
 
-// splitFRRef splits "REQ-040/FR-003" into ("FR-003", "REQ-040", true);
+// splitFRRef splits "REQ-001/FR-003" into ("FR-003", "REQ-001", true);
 // REQ-level references return ok=false.
 func splitFRRef(ref string) (fr, req string, ok bool) {
 	parts := strings.SplitN(ref, "/", 2)

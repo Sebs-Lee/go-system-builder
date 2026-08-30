@@ -752,7 +752,7 @@ func reconcileGuidance(root, event string, input policy.Input) (policy.Guidance,
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	// A fresh checkout (no state file) is S0, not a recovery case: there is
-	// nothing to reconcile and no lock to take (BUG-CX-01).
+	// nothing to reconcile and no lock to take.
 	if runtimeStateMissing(root) {
 		return *freshStartGuidance(root, event), runtime.Snapshot{}, nil
 	}
@@ -1179,7 +1179,7 @@ func refreshHookControl(root string, request *policy.Input, decision *policy.Dec
 
 // freshStartGuidance covers the state every new project starts in: no
 // loop-state.json yet. That is not a blocked condition — it is S0 with the
-// bind path not yet taken (BUG-CX-01: the former BLOCKED + reconcile
+// bind path not yet taken (the former BLOCKED + reconcile
 // instruction could never succeed on a fresh checkout).
 func freshStartGuidance(root, event string) *policy.Guidance {
 	guidance := &policy.Guidance{

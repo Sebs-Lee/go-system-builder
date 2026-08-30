@@ -425,7 +425,7 @@ func scopeFixtureEvidence(t *testing.T, state map[string]any, ref, scope string)
 	t.Fatalf("scopeFixtureEvidence: evidence %q not found", ref)
 }
 
-// TestTR004InvalidatesConsumedFixRecord pins BUG-CX-11 B2 (the retest the
+// TestTR004InvalidatesConsumedFixRecord verifies the rework retest (the
 // batch-D ledger claimed but did not deliver): the fix_required record that
 // triggers TR-004 is invalidated at commit — without it, a fix that changes
 // no registered document re-selects TR-004 forever.

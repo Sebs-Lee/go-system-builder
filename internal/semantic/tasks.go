@@ -15,11 +15,11 @@ import (
 // presence, and DAG acyclicity. Non-goal: free-text clause semantics.
 
 var (
-	taskStatusField   = regexp.MustCompile(`(?m)^>\s*(?:Status|状态)\s*[:：]\s*(.+?)\s*$`)
-	taskPrimaryField  = regexp.MustCompile(`(?m)^>\s*Primary contract:\s*(\S+)`)
-	taskClauseNumber  = regexp.MustCompile(`§\s*(\d+)`)
-	taskDepReference  = regexp.MustCompile(`^TASK-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
-	taskContractCell  = regexp.MustCompile(`^(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+	taskStatusField  = regexp.MustCompile(`(?m)^>\s*(?:Status|状态)\s*[:：]\s*(.+?)\s*$`)
+	taskPrimaryField = regexp.MustCompile(`(?m)^>\s*Primary contract:\s*(\S+)`)
+	taskClauseNumber = regexp.MustCompile(`§\s*(\d+)`)
+	taskDepReference = regexp.MustCompile(`^TASK-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+	taskContractCell = regexp.MustCompile(`^(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
 )
 
 type TaskCheckResult struct {
@@ -36,14 +36,14 @@ type TaskCheckResult struct {
 }
 
 type taskDocument struct {
-	id        string
-	rel       string
-	status    string
-	contract  string
-	hasClose  bool
-	clauses   []string // expanded "{contract} §{n}"
-	deps      []string
-	problems  []string // parse-level problems surfaced by TasksCheck
+	id            string
+	rel           string
+	status        string
+	contract      string
+	hasClose      bool
+	clauses       []string // expanded "{contract} §{n}"
+	deps          []string
+	problems      []string // parse-level problems surfaced by TasksCheck
 	manifestPaths []string
 	writePaths    []string
 }
@@ -308,7 +308,7 @@ func loadTaskDocuments(root string) ([]*taskDocument, error) {
 					task.deps = append(task.deps, cell)
 				} else {
 					// A silently-dropped dependency is a declared ordering
-					// the DAG never sees (BUG-CX-04): name it.
+					// the DAG never sees: name it.
 					task.problems = append(task.problems, fmt.Sprintf("%s: dependency reference %q is not machine-tracked — only TASK-* ids join the DAG; write cross-task ordering as a TASK dependency or move it to the closing contract", task.id, cell))
 				}
 			}

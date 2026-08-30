@@ -1598,7 +1598,7 @@ func gitCommand(root string, args ...string) *exec.Cmd {
 	return exec.Command("git", full...)
 }
 
-// TestFreshCheckoutSessionStartIsNotBlocked pins BUG-CX-01: a fresh
+// TestFreshCheckoutSessionStartIsNotBlocked verifies that a fresh
 // checkout (no loop-state.json) must receive non-BLOCKED S0 bootstrap
 // guidance, not the corrupted-runtime recovery packet whose reconcile
 // command cannot succeed.

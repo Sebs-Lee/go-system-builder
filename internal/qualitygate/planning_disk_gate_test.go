@@ -2,9 +2,9 @@ package qualitygate_test
 
 import (
 	"context"
-	"path/filepath"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,7 +13,7 @@ import (
 )
 
 // listingFiles extends memoryFiles with directory listing so the evaluator
-// can discover disk-declared artifacts (BUG-CX-07).
+// can discover disk-declared artifacts.
 type listingFiles map[string][]byte
 
 func (m listingFiles) ReadFile(path string) ([]byte, error) {
@@ -47,12 +47,12 @@ func (m listingFiles) ReadDir(dir string) ([]os.DirEntry, error) {
 
 type memoryDirEntry struct{ name string }
 
-func (e memoryDirEntry) Name() string { return e.name }
-func (e memoryDirEntry) IsDir() bool  { return !strings.HasSuffix(e.name, ".md") }
-func (e memoryDirEntry) Type() os.FileMode { return 0 }
+func (e memoryDirEntry) Name() string               { return e.name }
+func (e memoryDirEntry) IsDir() bool                { return !strings.HasSuffix(e.name, ".md") }
+func (e memoryDirEntry) Type() os.FileMode          { return 0 }
 func (e memoryDirEntry) Info() (os.FileInfo, error) { return nil, os.ErrNotExist }
 
-// TestPlanningGatesReadDiskDeclaredArtifacts pins BUG-CX-07: the planning
+// TestPlanningGatesReadDiskDeclaredArtifacts verifies that the planning
 // gates' document precondition must be satisfiable by disk-declared facts
 // (contract Status: locked / task Status: complete) — the registration that
 // documents[] carries is produced by the gated transitions themselves, so
@@ -109,7 +109,7 @@ func TestPlanningGatesReadDiskDeclaredArtifacts(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if result.Status != qualitygate.StatusSatisfied {
-		t.Fatalf("BUG-CX-07: disk-declared locked contract + qualified planning evidence must satisfy the gate without a pre-existing documents[] registration; got status=%q missing=%#v", result.Status, result.Missing)
+		t.Fatalf("disk-declared locked contract + qualified planning evidence must satisfy the gate without a pre-existing documents[] registration; got status=%q missing=%#v", result.Status, result.Missing)
 	}
 }
 
@@ -127,7 +127,7 @@ func TestPlanningGatesStillRefuseWhenDiskAlsoLacks(t *testing.T) {
 	}
 }
 
-// TestPlanningDesignGateReadsDiskDeclaredArchitecture pins BUG-CX-13 A3:
+// TestPlanningDesignGateReadsDiskDeclaredArchitecture verifies that:
 // the S2 exit gate must accept a disk-declared locked architecture document
 // without a pre-existing documents[] registration (the registration happens
 // at PTR-PLAN-01's commit; nothing produced it before, so the organic S2
@@ -178,8 +178,8 @@ func TestPlanningDesignGateReadsDiskDeclaredArchitecture(t *testing.T) {
 		GateID:       "GATE-PLANNING-DESIGN-COMPLETE",
 		Files: listingFiles{
 			"docs/design/architecture/ARCHITECTURE-001.md": archData,
-			"docs/requirements/REQ-001.md":         reqData,
-			"evidence/design.json":                 envelopeData,
+			"docs/requirements/REQ-001.md":                 reqData,
+			"evidence/design.json":                         envelopeData,
 		},
 	}
 	result, err := evaluator.Evaluate(context.Background(), input)
@@ -187,11 +187,11 @@ func TestPlanningDesignGateReadsDiskDeclaredArchitecture(t *testing.T) {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if result.Status != qualitygate.StatusSatisfied {
-		t.Fatalf("BUG-CX-13: disk-declared locked architecture + registered req must satisfy the S2 exit gate; got status=%q missing=%#v conflicts=%v", result.Status, result.Missing, result.Conflicts)
+		t.Fatalf("disk-declared locked architecture + registered req must satisfy the S2 exit gate; got status=%q missing=%#v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
 
-// TestDocumentPassGateFlagsRegisteredDocumentDrift pins BUG-CX-11 B3:
+// TestDocumentPassGateFlagsRegisteredDocumentDrift verifies that:
 // a registered document whose on-disk sha no longer matches must block
 // GATE-DOCUMENT-PASS with the path named — otherwise a document the
 // reviewers never saw can be re-registered from disk and locked into
@@ -233,11 +233,11 @@ func TestDocumentPassGateFlagsRegisteredDocumentDrift(t *testing.T) {
 		}
 	}
 	if !blocked {
-		t.Fatalf("BUG-CX-11: a registered document drifting on disk must produce a document_drift conflict naming the path; got status=%q conflicts=%v missing=%v", result.Status, result.Conflicts, result.Missing)
+		t.Fatalf("a registered document drifting on disk must produce a document_drift conflict naming the path; got status=%q conflicts=%v missing=%v", result.Status, result.Conflicts, result.Missing)
 	}
 }
 
-// TestREVTemplateEnvelopeTeachesTheTruth pins BUG-CX-12 C5: the §0
+// TestREVTemplateEnvelopeTeachesTheTruth verifies that the §0
 // envelope skeleton in REV-template.md, filled with real values, must
 // pass the evaluator's full field validation — if the template drifts
 // from what the machine checks (field renamed, conclusion vocabulary
@@ -262,12 +262,12 @@ func TestREVTemplateEnvelopeTeachesTheTruth(t *testing.T) {
 	contractData := []byte("# BE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	replace := map[string]string{
 		`"填写 REV-{runid}-{resp}（与文件名一致，机器互证）"`: `"ev-dv-spec"`,
-		`"document_review"`:                         `"document_review"`,
-		`"填写当前 runtime id（从 .claude/loop-state.json 顶部复制）"`: `"loop-test"`,
-		`"填写当前 baseline generation（同上）"`: `1`,
-		`"填写你的 agent id（你是谁就写谁——独立性机器核对两条证据互异）"`: `"dv-spec-1"`,
-		`"填写 DV-SPEC-CONSISTENCY 或 DV-TASK-EXECUTABILITY（激活信封指定的职责，错值 gate 直接 Unknown）"`: `"DV-SPEC-CONSISTENCY"`,
-		`"审查完成后回填，三选一：pass / fix_required / req_change_required（与 gate 同词，全流程没有第二套枚举）"`: `"pass"`,
+		`"document_review"`: `"document_review"`,
+		`"填写当前 runtime id（从 .claude/loop-state.json 顶部复制）"`:                                                                  `"loop-test"`,
+		`"填写当前 baseline generation（同上）"`:                                                                                     `1`,
+		`"填写你的 agent id（你是谁就写谁——独立性机器核对两条证据互异）"`:                                                                             `"dv-spec-1"`,
+		`"填写 DV-SPEC-CONSISTENCY 或 DV-TASK-EXECUTABILITY（激活信封指定的职责，错值 gate 直接 Unknown）"`:                                     `"DV-SPEC-CONSISTENCY"`,
+		`"审查完成后回填，三选一：pass / fix_required / req_change_required（与 gate 同词，全流程没有第二套枚举）"`:                                      `"pass"`,
 		`"仅 fix_required 时填 document_fix_required（触发 TR-004 回 planning）；pass 留空；req_change_required 时填 req_change_required"`: `""`,
 		`"填写 ISO 时间戳"`: `"2026-08-18T00:00:00Z"`,
 	}
@@ -330,7 +330,7 @@ func TestREVTemplateEnvelopeTeachesTheTruth(t *testing.T) {
 		}
 	}
 	if !qualified {
-		t.Fatalf("BUG-CX-12: the template-taught envelope must qualify at the gate; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
+		t.Fatalf("the template-taught envelope must qualify at the gate; got status=%q missing=%v conflicts=%v", result.Status, result.Missing, result.Conflicts)
 	}
 }
 
@@ -345,8 +345,8 @@ func TestREVTemplateEnvelopeFixRequiredVariant(t *testing.T) {
 		"schema_version": "1.0.0", "evidence_id": "ev-dv-fix", "kind": "document_review",
 		"runtime_id": "loop-test", "baseline_generation": 1,
 		"producer_agent_id": "dv-spec-1", "producer_responsibility": "DV-SPEC-CONSISTENCY",
-		"subject_refs":     []any{map[string]any{"path": "docs/contracts/BE-001.md", "version": "v1.0.0", "sha256": sha256Hex(contractData)}},
-		"conclusion": "fix_required", "requested_event": "document_fix_required",
+		"subject_refs": []any{map[string]any{"path": "docs/contracts/BE-001.md", "version": "v1.0.0", "sha256": sha256Hex(contractData)}},
+		"conclusion":   "fix_required", "requested_event": "document_fix_required",
 		"created_at": "2026-08-18T00:00:00Z",
 	}
 	envelopeData, _ := json.Marshal(envelope)
@@ -416,11 +416,11 @@ func TestPlanningEnvelopeTeachesTheTruth(t *testing.T) {
 	archData := []byte("# ARCHITECTURE-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	reqData := []byte("# REQ-001\n\n> 状态：locked\n> 版本：v1.0.0\n")
 	replace := map[string]string{
-		`"planning-{design|contracts|tasks}-pass"`:            `"planning-design-pass"`,
+		`"planning-{design|contracts|tasks}-pass"`:              `"planning-design-pass"`,
 		`"planning_design | planning_contract | planning_task"`: `"planning_design"`,
-		`"从 .claude/loop-state.json 顶部复制"`:                `"loop-test"`,
-		`"{当前 baseline generation——数字，如 1}"`:            `1`,
-		`"你的 agent id"`:                                    `"architect-1"`,
+		`"从 .claude/loop-state.json 顶部复制"`:                      `"loop-test"`,
+		`"{当前 baseline generation——数字，如 1}"`:                    `1`,
+		`"你的 agent id"`: `"architect-1"`,
 		`"Architect（S2）/ Contract Planner（S3）/ Task Planner（S4）——gate 按此词白名单，逐字匹配"`: `"Architect"`,
 	}
 	filled := block
@@ -461,7 +461,7 @@ func TestPlanningEnvelopeTeachesTheTruth(t *testing.T) {
 		Files: listingFiles{
 			"docs/design/architecture/ARCHITECTURE-001.md": archData,
 			"docs/requirements/REQ-001.md":                 reqData,
-			"evidence/design.json":                          envelopeData,
+			"evidence/design.json":                         envelopeData,
 		},
 	}
 	result, err := evaluator.Evaluate(context.Background(), input)

@@ -188,7 +188,7 @@ func TestREQListExcludesTerminatedArchiveAndAutoDiscoverySkipsIt(t *testing.T) {
 	}
 }
 
-// TestREQBindAlreadyBoundRoutesToAmendOrUnbind pins BUG-CX-06: re-binding
+// TestREQBindAlreadyBoundRoutesToAmendOrUnbind verifies that re-binding
 // while a REQ is actively bound must name the two legal routes instead of
 // the raw TR-001 source-state rejection.
 func TestREQBindAlreadyBoundRoutesToAmendOrUnbind(t *testing.T) {

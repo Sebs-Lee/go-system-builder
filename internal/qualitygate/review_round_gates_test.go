@@ -266,7 +266,7 @@ func mustRegistry(t *testing.T, catalog *transition.Catalog) *Registry {
 
 // A routing-verdict gate stays not_ready (never unknown) while ordinary
 // results accumulate — conclusion mismatch is the normal state, not a
-// naming conflict (BUG-CX-12's heuristic must not fire here).
+// naming conflict (the heuristic must not fire here).
 func TestRoutingVerdictGateSkipsOrdinaryResults(t *testing.T) {
 	catalog, err := transition.LoadCatalog("../..")
 	if err != nil {

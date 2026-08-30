@@ -667,7 +667,7 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		hasLockedContract = true
 	}
 	if !hasLockedContract {
-		// Phase-aware routing (BUG-CX-04): from the contracts phase the
+		// Phase-aware routing: from the contracts phase the
 		// PTR-PLAN-02 transition is the natural next PreToolUse advance;
 		// from the tasks phase it has already fired and cannot re-fire —
 		// the actionable gap there is the contract file's own Status field.

@@ -974,7 +974,7 @@ func actionRecordAbort(state map[string]any, ctx *ActionContext) (ActionResult, 
 // actionRegisterDesignDocuments runs on PTR-PLAN-01: the architecture
 // document is registered into documents[] the same way contracts (PTR-PLAN-02)
 // and tasks (TR-002) are — S5's review evidence needs a registered design
-// fact to sign over (BUG-CX-13: previously nothing registered kind=design,
+// fact to sign over (previously nothing registered kind=design,
 // so the S2 exit gate could never be satisfied on the organic path).
 func actionRegisterDesignDocuments(state map[string]any, ctx *ActionContext) (ActionResult, error) {
 	registered, err := registerDocumentsFromDisk(actionRoot(state, ctx), state, ctx, "docs/design/architecture", []string{"ARCHITECTURE-"}, "design", "locked")
@@ -993,7 +993,7 @@ func actionRegisterDesignDocuments(state map[string]any, ctx *ActionContext) (Ac
 // record that triggered the rework loop is consumed by this commit — it
 // stays valid forever otherwise, and a fix that touches no registered
 // document would re-select TR-004 on every subsequent PreToolUse (the
-// BUG-CX-11 livelock). Fingerprints still scope the *re-run* side (a
+// livelock). Fingerprints still scope the *re-run* side (a
 // fix that changed documents already invalidates the old pass records by
 // subject mismatch); this action closes the no-drift half.
 func actionInvalidateConsumedReviewEvidence(state map[string]any, ctx *ActionContext) (ActionResult, error) {

@@ -259,7 +259,7 @@ func TestS4TasksCheckEmptyRoot(t *testing.T) {
 	}
 }
 
-// TestTasksCheckFlagsNonTaskDependency pins BUG-CX-04: a dependency row the
+// TestTasksCheckFlagsNonTaskDependency verifies that a dependency row the
 // DAG does not track must be named, not silently dropped.
 func TestTasksCheckFlagsNonTaskDependency(t *testing.T) {
 	root := t.TempDir()
@@ -286,7 +286,7 @@ func TestTasksCheckFlagsNonTaskDependency(t *testing.T) {
 	}
 }
 
-// TestContractsCheckFlagsClauseNumberDrift pins BUG-CX-04: an index cell
+// TestContractsCheckFlagsClauseNumberDrift verifies that an index cell
 // citing a §n the target contract never declares must be flagged.
 func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
 	root := t.TempDir()
@@ -307,7 +307,7 @@ func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
 	}
 }
 
-// TestContractsCheckClauseNumberPrecision pins BUG-CX-10: §1 must not
+// TestContractsCheckClauseNumberPrecision verifies that §1 must not
 // satisfy §10 — clause numbers compare as a set, not substrings.
 func TestContractsCheckClauseNumberPrecision(t *testing.T) {
 	root := t.TempDir()

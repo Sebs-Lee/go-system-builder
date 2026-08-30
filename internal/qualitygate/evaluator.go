@@ -38,7 +38,7 @@ type FileView interface {
 
 // fileDirLister is the optional directory-listing capability a FileView may
 // implement so the planning gates can discover disk-declared artifacts
-// (BUG-CX-07: documents[] registration is produced by the gated transitions
+// (documents[] registration is produced by the gated transitions
 // themselves, so requiring it up front deadlocks the auto-advance path).
 type fileDirLister interface {
 	ReadDir(dir string) ([]os.DirEntry, error)
@@ -146,7 +146,7 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 		return evaluatePlanningDesign(input, result, spec), nil
 	}
 	if input.GateID == "GATE-DOCUMENT-PASS" {
-		// Registered-document drift check (BUG-CX-11 B3): every current-
+		// Registered-document drift check: every current-
 		// generation registered document must still match its disk sha.
 		// Without this, exactSubjects compares against the verified subset
 		// only and a document the reviewers never saw can be re-registered
@@ -231,7 +231,7 @@ func evaluatePlanningDesign(input Input, result Evaluation, spec GateSpec) Evalu
 			relevant = append(relevant, document)
 			continue
 		}
-		// Disk fallback (BUG-CX-13 A3, same family as the planning artifact
+		// Disk fallback (same family as the planning artifact
 		// gates): a locked REQ / ARCH document declared on disk satisfies
 		// the precondition — the registration into documents[] happens at
 		// PTR-PLAN-01's commit.
@@ -275,7 +275,7 @@ func evaluatePlanningArtifact(
 		}
 	}
 	if !found {
-		// Disk fallback (BUG-CX-07): the agent's producible fact is the
+		// Disk fallback: the agent's producible fact is the
 		// file itself — a contract declaring `Status: locked` / a task
 		// declaring `Status: complete` on disk satisfies the gate's
 		// precondition; the commit-time registration into documents[]
@@ -950,7 +950,7 @@ func qualifiedEvidence(
 		// but the same kind legitimately serves several requirements with
 		// different conclusion vocabularies (bug serves finding_record AND
 		// root_cause_record), so the conflict is deferred: it is reported
-		// only when nothing ends up qualifying (BUG-CX-12 M2, without the
+		// only when nothing ends up qualifying (without the
 		// false alarms).
 		if !containsString(requirement.Conclusions, envelope.Conclusion) {
 			if !requirement.RoutingVerdict {

@@ -162,11 +162,11 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q points at unknown contract", id, cell))
 				continue
 			}
-			// Cheap anti-drift check (BUG-CX-04/10): the §n cited in an index
+			// Cheap anti-drift check: the §n cited in an index
 			// cell must exist in the target contract's own clause map —
 			// otherwise the two sides number clauses independently. The
 			// numbers are compared as a set, so §1 cannot satisfy §10
-			// (substring false-negative, BUG-CX-10).
+			// (substring comparison would be a false negative).
 			n := clauseNumberOf(cell)
 			targetData, err := os.ReadFile(target)
 			declared := declaredClauseNumbers(string(targetData))

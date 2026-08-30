@@ -69,7 +69,7 @@ func TestRecoveryReplayUsesStagingPairAndAdvancesThroughPlanning(t *testing.T) {
 
 func TestRecoveryReplayStopsAtFirstNotReady(t *testing.T) {
 	root, state := replayFixture(t)
-	// The planning gates fall back to disk-declared facts (BUG-CX-13), so
+	// The planning gates fall back to disk-declared facts, so
 	// an empty documents[] no longer produces not_ready — remove the disk
 	// architecture document as well to keep this test's intent (a genuine
 	// first-step gap).
