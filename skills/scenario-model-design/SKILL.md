@@ -6,11 +6,11 @@ description: Use when S2 defines or changes a module's facts, business-rule bran
 
 ## Authority
 
-Use `docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md`
-§4–§6 and `docs/rules/scenario-model.md`. The locked business rule is the oracle
-source. A REQ is a `source_refs` input, never the owner of a case, story, flow,
-prototype, fixture, or Playwright copy. Stage legality stays with the Loop
-Definition; this Skill only defines the scenario design practice.
+Use `docs/rules/scenario-model.md` and the generic templates under
+`docs/design/prototypes/`. The locked business rule is the oracle source. A REQ
+is a `source_refs` input, never the owner of a case, story, flow, prototype,
+fixture, or Playwright copy. Stage legality stays with the Loop Definition; this
+Skill only defines the scenario design practice.
 
 ## Applicability
 

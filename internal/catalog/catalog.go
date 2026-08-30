@@ -135,14 +135,15 @@ func ValidateSkill(root string, spec SkillSpec) error {
 		}
 	}
 	// A Skill must cite at least one authoritative source. Shipped runtime
-	// authorities include the Loop Definition, Hook Policy, and Main Spine.
-	// Historical design-rationale docs live under docs/design/loop-engineering/
-	// in the source repository and are allowed only as source-repo references.
+	// authorities include the Loop Definition, Hook Policy, Main Spine, and
+	// reusable rules. Historical design-rationale docs live under
+	// docs/design/loop-engineering/ in the source repository and are allowed only
+	// as source-repo references.
 	if !strings.Contains(body, "docs/loop-definition.json") &&
 		!strings.Contains(body, "docs/agent-protocol.md") &&
 		!strings.Contains(body, "docs/hook-policy.json") &&
-		!strings.Contains(body, "docs/design/loop-engineering/") &&
-		!strings.Contains(body, "docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md") {
+		!strings.Contains(body, "docs/rules/") &&
+		!strings.Contains(body, "docs/design/loop-engineering/") {
 		return fmt.Errorf("skill %s: missing authoritative source reference", spec.Name)
 	}
 	return nil

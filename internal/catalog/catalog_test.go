@@ -77,7 +77,7 @@ version: 1.0.0
 ## Quality Criteria
 ## N/A Criteria
 
-Authority: docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md
+Authority: docs/rules/scenario-model.md
 `)
 	if err := catalog.ValidateSkill(root, catalog.SkillSpec{Name: "scenario-model-design", Category: "best-practice"}); err != nil {
 		t.Fatalf("missing optional category should be accepted: %v", err)
@@ -102,7 +102,7 @@ version: 1.0.0
 ## Quality Criteria
 ## N/A Criteria
 
-Authority: docs/design/architecture/ARCHITECTURE-fact-driven-scenario-verification.md
+Authority: docs/rules/scenario-model.md
 `)
 	err := catalog.ValidateSkill(root, catalog.SkillSpec{Name: "scenario-model-design", Category: "best-practice"})
 	if err == nil || !strings.Contains(err.Error(), "category must be best-practice") {
