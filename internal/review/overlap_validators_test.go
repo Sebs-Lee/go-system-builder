@@ -33,7 +33,7 @@ func planWithClaimsAndAssignments(claims []Claim, assignments []PlanAssignment, 
 		})
 		assignments = append(assignments, PlanAssignment{
 			AssignmentID: "assignment-dv-stub", Lens: "delivery",
-			ClaimIDs: []string{"claim-dv-stub"},
+			ClaimIDs:           []string{"claim-dv-stub"},
 			NonOverlapBoundary: "owns traceability stub", ExecutionWave: "static",
 		})
 	}
@@ -45,7 +45,7 @@ func planWithClaimsAndAssignments(claims []Claim, assignments []PlanAssignment, 
 		})
 		assignments = append(assignments, PlanAssignment{
 			AssignmentID: "assignment-qa-stub", Lens: "qa",
-			ClaimIDs: []string{"claim-qa-stub"},
+			ClaimIDs:           []string{"claim-qa-stub"},
 			NonOverlapBoundary: "owns code-quality stub", ExecutionWave: "static",
 		})
 	}
@@ -165,10 +165,10 @@ func TestValidatePlanAllowsDistinctNonOverlapBoundaries(t *testing.T) {
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-qa-a", Lens: "qa", ClaimIDs: []string{"claim-qa-a1", "claim-qa-a2"},
-				FocusKeys: []string{"error-propagation"},
+				FocusKeys:          []string{"error-propagation"},
 				NonOverlapBoundary: "owns error propagation logic", ExecutionWave: "static"},
 			{AssignmentID: "assignment-qa-b", Lens: "qa", ClaimIDs: []string{"claim-qa-b1", "claim-qa-b2"},
-				FocusKeys: []string{"state-machine"},
+				FocusKeys:          []string{"state-machine"},
 				NonOverlapBoundary: "owns state-machine transitions", ExecutionWave: "static"},
 		},
 		"not_applicable",
@@ -246,16 +246,16 @@ func TestValidatePlanRejectsColdStartSingleAssignmentOverload(t *testing.T) {
 		[]Claim{
 			{ClaimID: "claim-e2e-admin-positive", Lens: "e2e", Target: "admin/positive", Method: "browser",
 				Oracle: "admin creates order successfully", Applicability: "required",
-				FocusKey: "persona=admin|flow=order-create|sign=positive",
+				FocusKey:   "persona=admin|flow=order-create|sign=positive",
 				SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-user-negative", Lens: "e2e", Target: "user/negative", Method: "browser",
 				Oracle: "user sees rejected state on invalid input", Applicability: "required",
-				FocusKey: "persona=user|flow=order-create|sign=negative",
+				FocusKey:   "persona=user|flow=order-create|sign=negative",
 				SourceRefs: []string{"REQ-1"}},
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-e2e-all", Lens: "e2e",
-				ClaimIDs: []string{"claim-e2e-admin-positive", "claim-e2e-user-negative"},
+				ClaimIDs:           []string{"claim-e2e-admin-positive", "claim-e2e-user-negative"},
 				NonOverlapBoundary: "owns every e2e flow in one pass", ExecutionWave: "behavior"},
 		},
 		"cold_start",
@@ -317,16 +317,16 @@ func TestValidatePlanAllowsColdStartSingleDimension(t *testing.T) {
 		[]Claim{
 			{ClaimID: "claim-e2e-admin-positive-1", Lens: "e2e", Target: "admin/positive/1", Method: "browser",
 				Oracle: "admin happy path step 1", Applicability: "required",
-				FocusKey: "persona=admin|flow=order",
+				FocusKey:   "persona=admin|flow=order",
 				SourceRefs: []string{"REQ-1"}},
 			{ClaimID: "claim-e2e-admin-positive-2", Lens: "e2e", Target: "admin/positive/2", Method: "browser",
 				Oracle: "admin happy path step 2", Applicability: "required",
-				FocusKey: "persona=admin|flow=order",
+				FocusKey:   "persona=admin|flow=order",
 				SourceRefs: []string{"REQ-1"}},
 		},
 		[]PlanAssignment{
 			{AssignmentID: "assignment-e2e-one", Lens: "e2e",
-				ClaimIDs: []string{"claim-e2e-admin-positive-1", "claim-e2e-admin-positive-2"},
+				ClaimIDs:           []string{"claim-e2e-admin-positive-1", "claim-e2e-admin-positive-2"},
 				NonOverlapBoundary: "owns the admin order happy path", ExecutionWave: "behavior"},
 		},
 		"cold_start",

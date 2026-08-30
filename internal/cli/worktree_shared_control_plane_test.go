@@ -176,10 +176,10 @@ func minimalReviewPlan(t *testing.T, dir, planID string) string {
 			map[string]any{
 				"claim_id": "claim-e2e-na", "lens": "e2e", "target": "n/a",
 				"assertion": "no surface", "oracle": "impact", "method": "impact",
-				"applicability": "not_applicable",
-				"na_rationale":  "pure internal change",
+				"applicability":   "not_applicable",
+				"na_rationale":    "pure internal change",
 				"na_checklist_id": "REQ-WORKTREE#ui_impact",
-				"source_refs":   []string{"REQ-WORKTREE#ui"},
+				"source_refs":     []string{"REQ-WORKTREE#ui"},
 			},
 		},
 		"assignments": []any{

@@ -29,13 +29,13 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 	state := stateAtVerificationMap(5)
 	state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 	state["pause"] = map[string]any{
-		"from_state":               "verification",
-		"from_phase":               "running",
-		"phase_revision":           float64(1),
-		"baseline_generation":      float64(1),
-		"review_round":             float64(1),
-		"reason":                   "test",
-		"required_human_action":    "test",
+		"from_state":            "verification",
+		"from_phase":            "running",
+		"phase_revision":        float64(1),
+		"baseline_generation":   float64(1),
+		"review_round":          float64(1),
+		"reason":                "test",
+		"required_human_action": "test",
 		"document_fingerprints": []any{
 			map[string]any{
 				"path":    "docs/requirements/REQ-099.md",
@@ -43,7 +43,7 @@ func TestResumeRejectsBaselineDrift(t *testing.T) {
 				"sha256":  "deadbeef0000000000000000000000000000000000000000000000000000ffff",
 			},
 		},
-		"paused_at":                  "2026-01-01T00:00:00Z",
+		"paused_at": "2026-01-01T00:00:00Z",
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",
@@ -79,13 +79,13 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 	state := stateAtVerificationMap(5)
 	state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 	state["pause"] = map[string]any{
-		"from_state":               "verification",
-		"from_phase":               "running",
-		"phase_revision":           float64(1),
-		"baseline_generation":      float64(1),
-		"review_round":             float64(1),
-		"reason":                   "test",
-		"required_human_action":    "test",
+		"from_state":            "verification",
+		"from_phase":            "running",
+		"phase_revision":        float64(1),
+		"baseline_generation":   float64(1),
+		"review_round":          float64(1),
+		"reason":                "test",
+		"required_human_action": "test",
 		"document_fingerprints": []any{
 			map[string]any{
 				"path":    "docs/requirements/REQ-099.md",
@@ -93,7 +93,7 @@ func TestResumePassesWhenBaselinesUnchanged(t *testing.T) {
 				"sha256":  realSHA,
 			},
 		},
-		"paused_at":                  "2026-01-01T00:00:00Z",
+		"paused_at": "2026-01-01T00:00:00Z",
 	}
 	registerFixtureEvidence(t, root, state, map[string]string{
 		"human_decision_record": "docs/reports/human/decision.md",

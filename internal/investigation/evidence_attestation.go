@@ -5,16 +5,16 @@
 // adds the RC-14 specific knobs the plan called out:
 //
 //   - RequireSHA         when true (and Root is non-empty), every ref must
-//                        pass the on-disk SHA256 verification of the
-//                        referenced evidence artifact.
+//     pass the on-disk SHA256 verification of the
+//     referenced evidence artifact.
 //   - RequireKind        whitelist of accepted evidence kinds.
 //   - RequireReviewRound, when > 0, every ref must carry that exact
-//                        review_round value.
+//     review_round value.
 //   - RequireExecution, when true, only execution anchors (refs containing
-//                        "://") are accepted — runtime evidence ids are
-//                        rejected. This is the inverse of the default and
-//                        is used by S9 pass / plan_report red-check content
-//                        gates.
+//     "://") are accepted — runtime evidence ids are
+//     rejected. This is the inverse of the default and
+//     is used by S9 pass / plan_report red-check content
+//     gates.
 //
 // The wrapper sits in package investigation so case_workflow and the S9
 // TargetedReverification validation can call it without importing

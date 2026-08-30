@@ -37,10 +37,10 @@ func TestFormatFailureStaleRevisionCarriesNextAction(t *testing.T) {
 	}
 	// Next-action: the recovery recipe must be present.
 	for _, keyword := range []string{
-		"loop-harness status",        // read current revision
-		"--root",                     // required flag of the next command
-		"--expected-revision",        // retry flag for the original verb
-		"runtime reconcile",          // durable cure for concurrent commits
+		"loop-harness status", // read current revision
+		"--root",              // required flag of the next command
+		"--expected-revision", // retry flag for the original verb
+		"runtime reconcile",   // durable cure for concurrent commits
 	} {
 		if !strings.Contains(rendered, keyword) {
 			t.Errorf("rendered line missing recovery keyword %q: %q", keyword, rendered)

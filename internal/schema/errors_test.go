@@ -239,9 +239,9 @@ func TestPruningLocatesNestedDiscriminatorAnyOf(t *testing.T) {
 		// are present-but-empty, so neither minItems: 1 branch succeeds.
 		"claim_results": []any{
 			map[string]any{
-				"claim_id":     "claim-test-1",
-				"conclusion":   "fail",
-				"observed":     "observed something",
+				"claim_id":      "claim-test-1",
+				"conclusion":    "fail",
+				"observed":      "observed something",
 				"evidence_refs": []any{},
 			},
 		},
@@ -309,9 +309,9 @@ func TestAnyOfPartialMatchIsNotPruned(t *testing.T) {
 		"subject_digest":      "0000000000000000000000000000000000000000000000000000000000000000",
 		"claim_results": []any{
 			map[string]any{
-				"claim_id":    "claim-test-1",
-				"conclusion":  "fail",
-				"observed":    "observed something",
+				"claim_id":      "claim-test-1",
+				"conclusion":    "fail",
+				"observed":      "observed something",
 				"evidence_refs": []any{},
 			},
 		},

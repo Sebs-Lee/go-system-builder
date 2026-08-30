@@ -23,7 +23,7 @@ func TestS7S9RequestExamplesTrackRequestContracts(t *testing.T) {
 	type field struct {
 		path  string // top-level key
 		want  string // non-empty expectation for scalar strings; "" = presence only
-		isRef bool  // must be an object with path+sha256
+		isRef bool   // must be an object with path+sha256
 	}
 	cases := map[string][]field{
 		// repair.PlanReportRequest json tags

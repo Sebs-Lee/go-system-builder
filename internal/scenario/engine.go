@@ -491,7 +491,7 @@ func validateSpecs(root, module string, cases []Case, options ValidateOptions) e
 	}
 	if !required {
 		return nil
-}
+	}
 	if coverage.RequiredCases != coverage.CoveredCases || coverage.RequiredPaths != coverage.CoveredPaths {
 		return fmt.Errorf("browser spec coverage incomplete: cases %d/%d paths %d/%d", coverage.CoveredCases, coverage.RequiredCases, coverage.CoveredPaths, coverage.RequiredPaths)
 	}

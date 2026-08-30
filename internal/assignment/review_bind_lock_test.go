@@ -262,12 +262,12 @@ func buildBindReviewState(t *testing.T, fixtures []planAssignmentFixture) (map[s
 	planAssignments := []any{}
 	for _, a := range fixtures {
 		planAssignments = append(planAssignments, map[string]any{
-			"assignment_id":       a.id,
-			"lens":                a.lens,
-			"claim_ids":           a.claims,
+			"assignment_id":        a.id,
+			"lens":                 a.lens,
+			"claim_ids":            a.claims,
 			"non_overlap_boundary": "owns its lock scope",
-			"execution_wave":      "static",
-			"resource_locks":      a.rowLocks,
+			"execution_wave":       "static",
+			"resource_locks":       a.rowLocks,
 		})
 		for _, claimID := range a.claims {
 			planClaims = append(planClaims, map[string]any{
@@ -304,11 +304,11 @@ func buildBindReviewState(t *testing.T, fixtures []planAssignmentFixture) (map[s
 			"round": 1,
 			"plan": map[string]any{
 				"plan_id": "review-plan-bind-lock", "path": pathRel, "sha256": sha,
-				"revision":          1,
-				"review_round":      1,
-				"status":            "running",
+				"revision":           1,
+				"review_round":       1,
+				"status":             "running",
 				"e2e_coverage_state": "not_applicable",
-				"submitted_at":      "2026-08-23T00:00:00Z",
+				"submitted_at":       "2026-08-23T00:00:00Z",
 			},
 			"claims":            map[string]any{},
 			"assignments":       map[string]any{},

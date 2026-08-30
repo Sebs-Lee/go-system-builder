@@ -105,8 +105,8 @@ func TestCleanRoundPassesWhenAllClaimsConsumed(t *testing.T) {
 		round:      1,
 		planStatus: "clean",
 		claims: map[string]map[string]any{
-			"claim-dv-1": passClaim("ev-r1"),
-			"claim-qa-1": passClaim("ev-r2"),
+			"claim-dv-1":  passClaim("ev-r1"),
+			"claim-qa-1":  passClaim("ev-r2"),
 			"claim-e2e-1": passClaim("ev-r3"),
 		},
 		evidence: []map[string]any{
@@ -202,8 +202,8 @@ func TestCleanRoundIgnoresPriorRoundReviewEvidence(t *testing.T) {
 		planStatus: "clean",
 		claims:     map[string]map[string]any{"claim-qa-1": passClaim("ev-r2")},
 		evidence: []map[string]any{
-			reviewEvidence("ev-r1", "review_result", 1, "valid"),   // prior round
-			reviewEvidence("ev-r2", "review_result", 2, "valid"),   // current
+			reviewEvidence("ev-r1", "review_result", 1, "valid"), // prior round
+			reviewEvidence("ev-r2", "review_result", 2, "valid"), // current
 			reviewEvidence("clean-round-r2", "clean_round", 2, "valid"),
 		},
 	})
@@ -381,7 +381,7 @@ func TestCleanRoundPassesWithNotApplicableClaims(t *testing.T) {
 		round:      1,
 		planStatus: "clean",
 		claims: map[string]map[string]any{
-			"claim-qa-1": passClaim("ev-r1"),
+			"claim-qa-1":  passClaim("ev-r1"),
 			"claim-e2e-1": {"disposition": "not_applicable", "applicability": "not_applicable"},
 		},
 		evidence: []map[string]any{

@@ -239,14 +239,14 @@ func SeedSealedObservationBatch(t *testing.T, root string, state map[string]any)
 
 	batchBody := map[string]any{
 		"schema_version": "1.0.0", "observation_batch_id": "observation-batch-r1",
-		"conclusion": "sealed",
+		"conclusion":  "sealed",
 		"evidence_id": "observation-batch-r1", "kind": "observation_batch",
 		"runtime_id": runtimeIDFromState(state), "producer_agent_id": "round-consumer", "producer_responsibility": "Orchestrator",
 		"review_plan_id": "review-plan-fixture-1", "review_round": round, "baseline_generation": 1,
-		"subject_digest":  strings.Repeat("2", 64),
-		"finding_ids":     []string{"finding-qa-1"},
+		"subject_digest":         strings.Repeat("2", 64),
+		"finding_ids":            []string{"finding-qa-1"},
 		"drained_assignment_ids": []string{"assignment-dv-1", "assignment-qa-1", "assignment-e2e-1"},
-		"drain_policy": "complete_required_claims",
+		"drain_policy":           "complete_required_claims",
 		"claim_coverage_summary": map[string]any{
 			"total_required": 3, "pass": 2, "finding": 1, "not_applicable": 0, "blocked": 0, "blocked_claims": []any{}, "plan_revision": 1,
 		},

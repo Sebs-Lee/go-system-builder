@@ -282,7 +282,7 @@ func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
 	raw["verification_artifact_workspace"] = nil
 	raw["e2e_assets"] = []any{map[string]any{
 		"asset_id": "asset-settings", "case_ref": "CASE-001", "path": "e2e/settings-save.spec.ts",
-		"sha256": sha256Of(assetBytes),
+		"sha256":       sha256Of(assetBytes),
 		"selector_ref": "testid:save-button", "route_ref": "settings/save",
 		"environment": "chromium/localhost:3000/profile=default",
 	}}

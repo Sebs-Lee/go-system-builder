@@ -73,11 +73,11 @@ type Claim struct {
 	// NAChecklistID is the explicit N/A checklist the claim's not_applicable
 	// disposition was proven against (S7-9/RC-07). An e2e N/A claim without
 	// one is a silent dimension drop, not a conclusion.
-	NAChecklistID    string   `json:"na_checklist_id,omitempty"`
-	SourceRefs       []string `json:"source_refs"`
-	FocusKey         string   `json:"focus_key,omitempty"`
-	DependsOn        []string `json:"depends_on,omitempty"`
-	ResourceLocks    []string `json:"resource_locks,omitempty"`
+	NAChecklistID string   `json:"na_checklist_id,omitempty"`
+	SourceRefs    []string `json:"source_refs"`
+	FocusKey      string   `json:"focus_key,omitempty"`
+	DependsOn     []string `json:"depends_on,omitempty"`
+	ResourceLocks []string `json:"resource_locks,omitempty"`
 }
 
 // PlanAssignment is the Claim responsibility grouping inside the plan

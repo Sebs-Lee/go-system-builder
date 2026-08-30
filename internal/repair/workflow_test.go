@@ -504,8 +504,8 @@ func TestRepairPlanRejectsUnitWithoutExplicitAssertionDeclaration(t *testing.T) 
 	value := map[string]any{
 		"schema_version": "1.0.0", "repair_contract_id": "repair-contract-implicit", "case_id": "investigation-case-implicit", "revision": 2, "status": "approved", "source_finding_ids": []string{"finding-implicit"},
 		"root_cause_statement": "implicit assertion copy", "violated_invariant": "one authority", "causal_model_ref": "case://implicit/model", "architecture_intent": "explicit coverage",
-		"repair_units":        []map[string]any{{"id": "unit-1", "description": "no assertion declaration"}},
-		"prospective_scope":   []string{"internal/api"}, "forbidden_scope": []string{"docs/requirements"},
+		"repair_units":      []map[string]any{{"id": "unit-1", "description": "no assertion declaration"}},
+		"prospective_scope": []string{"internal/api"}, "forbidden_scope": []string{"docs/requirements"},
 		"symptom_assertions": []string{"value persists"}, "root_invariant_assertions": []string{"one authority"}, "detection_gap_assertions": []string{"contract catches drift"}, "stop_escalation_conditions": []string{"scope expands"},
 		"approved_by": "human", "approved_at": "2026-08-25T00:00:00Z", "approval_hash": repeatHex("a", 64),
 	}

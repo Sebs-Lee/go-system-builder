@@ -481,7 +481,6 @@ func repeatHex(value string, count int) string {
 }
 func fileHash(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
-
 // TestRuntimeRepairBlocksOnAuthorityDrift is the RC-09 (S9-4) negative case:
 // after the RepairSession opens and a legitimate RepairResult is committed,
 // the repository baseline drifts — an upstream commit or out-of-band edit to
@@ -591,8 +590,6 @@ func TestS9TransitionIDWhitelist(t *testing.T) {
 		}
 	}
 }
-
-
 
 // TestChangeImpactRequiredReverificationIDsAreRegistered is the RC-09 (S9-6)
 // ordering case: required_reverification_ids is registered as a durable

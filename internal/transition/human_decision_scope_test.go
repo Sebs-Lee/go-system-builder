@@ -16,8 +16,8 @@ func TestHumanDecisionScopeBinding(t *testing.T) {
 		state["lifecycle"] = map[string]any{"state": "paused", "phase": nil, "phase_revision": float64(2)}
 		state["pause"] = map[string]any{
 			"from_state": "verification", "from_phase": "running", "phase_revision": float64(1),
-			"baseline_generation": float64(1), "review_round": nil, 			"reason": "fixture", "required_human_action": "fixture",
-			"document_fingerprints": []any{}, 			"paused_at": "2026-01-01T00:00:00Z",
+			"baseline_generation": float64(1), "review_round": nil, "reason": "fixture", "required_human_action": "fixture",
+			"document_fingerprints": []any{}, "paused_at": "2026-01-01T00:00:00Z",
 		}
 		registerFixtureEvidence(t, root, state, map[string]string{
 			"human_decision_record": "docs/reports/human/decision.md",

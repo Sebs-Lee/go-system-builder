@@ -699,11 +699,11 @@ func writeExecFailureMarker(captureDir, assignmentID string, step review.Capture
 // that exceeds the flush cap still completes — the wrapper drops the
 // overflow but records that it did so.
 type pendingPassthrough struct {
-	rec    *streamRecorder
-	cap    int64
-	total  int64
-	head   []byte
-	headN  int
+	rec     *streamRecorder
+	cap     int64
+	total   int64
+	head    []byte
+	headN   int
 	witheld bool
 }
 

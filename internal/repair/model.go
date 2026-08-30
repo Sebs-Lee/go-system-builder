@@ -66,11 +66,11 @@ type RepairSession struct {
 	// authority for the session's live status and the implementation baseline
 	// digest written by CommitRepairHandoff; these artifact fields are
 	// captured at session creation and are NOT consulted by any commit gate.
-	BaselineDigest     string        `json:"baseline_digest"`
-	Status             string        `json:"status"`
-	CreatedBy          string        `json:"created_by"`
-	CreatedAt          time.Time     `json:"-"`
-	CreatedAtText      string        `json:"created_at"`
+	BaselineDigest string    `json:"baseline_digest"`
+	Status         string    `json:"status"`
+	CreatedBy      string    `json:"created_by"`
+	CreatedAt      time.Time `json:"-"`
+	CreatedAtText  string    `json:"created_at"`
 }
 
 type PlanRequest struct {
@@ -251,30 +251,30 @@ type ChangeImpactRequest struct {
 }
 
 type ChangeImpact struct {
-	SchemaVersion             string           `json:"schema_version"`
-	RecordType                string           `json:"record_type"`
-	ImpactID                  string           `json:"impact_id"`
-	RuntimeID                 string           `json:"runtime_id"`
-	ReqID                     string           `json:"req_id"`
-	BaselineGeneration        int              `json:"baseline_generation"`
-	SourceBugIDs              []string         `json:"source_bug_ids"`
-	SourceCaseIDs             []string         `json:"source_case_ids,omitempty"`
-	ChangeTypes               []string         `json:"change_types"`
-	ChangedArtifacts          []ArtifactRef    `json:"changed_artifacts"`
-	Decisions                 []ImpactDecision `json:"decisions"`
-	EscalationLevel           string           `json:"escalation_level"`
-	InvalidatedEvidenceIDs    []string         `json:"invalidated_evidence_ids"`
-	SupersededEvidenceIDs     []string         `json:"superseded_evidence_ids"`
+	SchemaVersion          string           `json:"schema_version"`
+	RecordType             string           `json:"record_type"`
+	ImpactID               string           `json:"impact_id"`
+	RuntimeID              string           `json:"runtime_id"`
+	ReqID                  string           `json:"req_id"`
+	BaselineGeneration     int              `json:"baseline_generation"`
+	SourceBugIDs           []string         `json:"source_bug_ids"`
+	SourceCaseIDs          []string         `json:"source_case_ids,omitempty"`
+	ChangeTypes            []string         `json:"change_types"`
+	ChangedArtifacts       []ArtifactRef    `json:"changed_artifacts"`
+	Decisions              []ImpactDecision `json:"decisions"`
+	EscalationLevel        string           `json:"escalation_level"`
+	InvalidatedEvidenceIDs []string         `json:"invalidated_evidence_ids"`
+	SupersededEvidenceIDs  []string         `json:"superseded_evidence_ids"`
 	// RC-15 (S9-H7/T2 shadow-field convergence): RetainedEvidenceIDs and the
 	// per-decision RecoveryEvidence entries are shadow declarations recorded
 	// at impact creation. The consumed gates are the Runtime evidence index
 	// (invalidate/supersede applied in CommitChangeImpact) and
 	// required_reverification_ids; these lists are audit-only and no commit
 	// gate reads them.
-	RetainedEvidenceIDs       []string         `json:"retained_evidence_ids"`
-	RequiredReverificationIDs []string         `json:"required_reverification_ids"`
-	AnalyzedBy                string           `json:"analyzed_by"`
-	AnalyzedAt                string           `json:"analyzed_at"`
+	RetainedEvidenceIDs       []string `json:"retained_evidence_ids"`
+	RequiredReverificationIDs []string `json:"required_reverification_ids"`
+	AnalyzedBy                string   `json:"analyzed_by"`
+	AnalyzedAt                string   `json:"analyzed_at"`
 }
 
 type AssertionResult struct {

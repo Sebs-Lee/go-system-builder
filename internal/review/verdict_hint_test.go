@@ -32,15 +32,15 @@ func TestVerdictHintRejectsVerdictFail(t *testing.T) {
 	}
 	msg := hint.Error()
 	for _, keyword := range []string{
-		"verdict=\"fail\"",                 // names the offending value
-		"\"finding\"",                      // redirect to the right value
-		"findings[]",                       // names the required payload field
-		"claim_results[].conclusion",       // names where per-Claim failures live
-		"pass",                             // enumerates valid values
-		"finding",                          // enumerates valid values
-		"req_change_required",              // enumerates valid values
-		"release_blocked",                  // enumerates valid values
-		"L3-S7 §3.5",                       // anchors the spec section
+		"verdict=\"fail\"",           // names the offending value
+		"\"finding\"",                // redirect to the right value
+		"findings[]",                 // names the required payload field
+		"claim_results[].conclusion", // names where per-Claim failures live
+		"pass",                       // enumerates valid values
+		"finding",                    // enumerates valid values
+		"req_change_required",        // enumerates valid values
+		"release_blocked",            // enumerates valid values
+		"L3-S7 §3.5",                 // anchors the spec section
 	} {
 		if !strings.Contains(msg, keyword) {
 			t.Errorf("hint must contain %q, got:\n%s", keyword, msg)
@@ -70,10 +70,10 @@ func TestVerdictHintAllowsValidVerdicts(t *testing.T) {
 func TestVerdictHintIgnoresMissingOrNonStringVerdict(t *testing.T) {
 	cases := map[string][]byte{
 		"missing verdict":     []byte(`{"result_id":"review-result-1"}`),
-		"null verdict":         []byte(`{"verdict":null,"result_id":"review-result-1"}`),
-		"numeric verdict":      []byte(`{"verdict":1,"result_id":"review-result-1"}`),
-		"boolean verdict":      []byte(`{"verdict":true,"result_id":"review-result-1"}`),
-		"unparseable payload":  []byte(`{not json`),
+		"null verdict":        []byte(`{"verdict":null,"result_id":"review-result-1"}`),
+		"numeric verdict":     []byte(`{"verdict":1,"result_id":"review-result-1"}`),
+		"boolean verdict":     []byte(`{"verdict":true,"result_id":"review-result-1"}`),
+		"unparseable payload": []byte(`{not json`),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -89,9 +89,9 @@ func TestVerdictHintIgnoresMissingOrNonStringVerdict(t *testing.T) {
 // caught by accident. The gate is strict: only "fail" triggers.
 func TestVerdictHintOnlyFiresOnStringFail(t *testing.T) {
 	cases := map[string][]byte{
-		"verdict=failure":  []byte(`{"verdict":"failure"}`),
-		"verdict=FAIL":     []byte(`{"verdict":"FAIL"}`),
-		"verdict=passed":   []byte(`{"verdict":"passed"}`),
+		"verdict=failure": []byte(`{"verdict":"failure"}`),
+		"verdict=FAIL":    []byte(`{"verdict":"FAIL"}`),
+		"verdict=passed":  []byte(`{"verdict":"passed"}`),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -115,7 +115,7 @@ func TestVerdictHintMarshalledRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("marshalled verdict=fail payload must trigger the hint")
 	}
-		if !strings.Contains(hint.Error(), "\"finding\"") {
-			t.Fatalf("marshalled payload must still carry the redirect, got: %v", hint)
-		}
+	if !strings.Contains(hint.Error(), "\"finding\"") {
+		t.Fatalf("marshalled payload must still carry the redirect, got: %v", hint)
+	}
 }

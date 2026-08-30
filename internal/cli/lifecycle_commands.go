@@ -2,8 +2,8 @@ package cli
 
 import (
 	"crypto/sha256"
-	"errors"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
