@@ -174,7 +174,7 @@ REQ 只能作为来源，不能创建需求私有设计或测试副本。任何�
 
 | 关系 | 文档 | 路径 | 状态 |
 |:--|:--|:--|:--|
-| downstream | 任务看板 | `docs/tasks/index.md` | draft / executing / completed |
+| downstream | 任务看板 | `docs/tasks/index-REQ-{id}.md` | draft / executing / completed |
 | evidence | Review round manifest | `{team-manifest-path}` | pending / complete |
 | evidence | Delivery verification | `docs/reports/review/REV-{id}.md` | pending / PASS |
 | evidence | QA evidence | `docs/reports/qa/QA-{id}.md` | pending / PASS |

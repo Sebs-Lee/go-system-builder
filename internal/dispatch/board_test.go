@@ -35,6 +35,16 @@ func boardFixture(t *testing.T) (string, map[string]any) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	definition, err := os.ReadFile("../../docs/loop-definition.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	git := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)

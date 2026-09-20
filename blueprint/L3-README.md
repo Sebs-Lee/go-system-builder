@@ -55,7 +55,7 @@ worktree 生命周期、显式开发/发布分支与主会话回收职责统一�
 | `PreToolUse` | **状态切换主力**：控制循环→质量门评估→满足则自动迁移（CAS）→安全决策（越界写拦截/锁定产物阻断） |
 | `PreToolUse`（子代理派发匹配） | **派发前预检提醒**：单人 vs 团队？角色模板选对没？worktree 隔离？team_name 带了吗？ |
 | `SubagentStart` | 派发瞬间提醒（预检答案落地、任务简报要求） |
-| `PostToolUse`（`SendMessage` / `Agent` / `SubagentHandback`） | 收集消息与报告、记录待接收事实，并在父会话可注入事件提示回收；async_launched 不是完成 |
+| `PostToolUse`（`SendMessage` / `Agent` / `Task` / `SubagentHandback` / `Bash`） | 收集消息与报告、提示回收；父会话 Agent 返回及 Harness 派发/完成/集成命令后刷新 S6 调度摘要；普通 Bash 不投递，async_launched 不是完成 |
 | `SubagentStop` | 按 L4 判定是否已有 canonical Result、结果是否待消费，以及应允许停止、阻止停止还是进入恢复路由 |
 | `TeammateIdle` | 按 L4 区分正常交卷、计划缺失、异常 idle 与阻塞；只在责任仍可继续时唤醒同一 Worker，不自动派发下一任务 |
 | `PreCompact` | 持久化可恢复检查点（给下一个 SessionStart） |

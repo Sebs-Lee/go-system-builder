@@ -1154,7 +1154,9 @@ func executionBatchTasks(state map[string]any) []string {
 // reached `verified` or beyond. The checkpoint files are the Integrator's
 // authoritative record; a FileView without directory listing makes them
 // unobservable, which is surfaced as missing per task by the caller (fail
-// closed, not silently skipped).
+// closed, not silently skipped). Report-bound checkpoints also pass through
+// the merge-receipt guard so this legacy projection cannot release a
+// successor from an unreachable target.
 func verifiedIntegrationTaskIDs(input Input) map[string]bool {
 	integrated := make(map[string]bool)
 	lister, ok := input.Files.(fileDirLister)
@@ -1176,16 +1178,15 @@ func verifiedIntegrationTaskIDs(input Input) map[string]bool {
 		if err != nil {
 			continue
 		}
-		var checkpoint struct {
-			TaskID string `json:"task_id"`
-			State  string `json:"state"`
-		}
+		var checkpoint dispatchCheckpoint
 		if json.Unmarshal(data, &checkpoint) != nil || checkpoint.TaskID == "" {
 			continue
 		}
 		switch checkpoint.State {
 		case "verified", "acknowledged", "cleanup_pending", "complete":
-			integrated[checkpoint.TaskID] = true
+			if checkpointMergeValid(input, checkpoint) {
+				integrated[checkpoint.TaskID] = true
+			}
 		}
 	}
 	return integrated

@@ -553,45 +553,18 @@ func TestRuntimeRegisterWorkgroupCommand(t *testing.T) {
 // different (or empty) state file than the writer opens and the verb
 // aborts with a stale-revision gate even when the runtime is unchanged.
 //
-// Strategy: reuse the real project root so the semantic runtime validator
-// has its docs/, agents/, skills/, etc. trees in place. The runtime
-// schema constrains journal.path to .claude/loop-events.jsonl, so we save
-// and restore .claude/loop-state.json and .claude/loop-events.jsonl
-// around the test, plant a fresh state file with a unique manifest_id,
-// and chdir to an unrelated temp dir so cwd != --root.
+// Use an isolated project with real template assets, then chdir away from it.
+// The regression must neither require nor overwrite the operator's Runtime.
 func TestRuntimeRegisterWorkgroupCommandAnchorsAgainstRoot(t *testing.T) {
-	root := func() string {
-		abs, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
+	root := acFixtureRoot(t)
+	for _, rel := range []string{"docs", "agents", "skills", "internal/cli/testdata"} {
+		if err := copyDir(filepath.Join(repoRoot(t), rel), filepath.Join(root, rel)); err != nil {
 			t.Fatal(err)
 		}
-		return abs
-	}()
-
+	}
 	stateDir := filepath.Join(root, ".claude")
 	canonicalState := filepath.Join(stateDir, "loop-state.json")
 	canonicalJournal := filepath.Join(stateDir, "loop-events.jsonl")
-
-	// Save and restore the canonical runtime state + journal so the
-	// test cannot corrupt the operator's runtime.
-	origState, err := os.ReadFile(canonicalState)
-	if err != nil {
-		t.Fatalf("snapshot canonical state: %v", err)
-	}
-	origJournal, err := os.ReadFile(canonicalJournal)
-	if err != nil {
-		// A fresh test run may not have a journal yet; treat missing as
-		// empty bytes and only restore if the file exists pre-test.
-		origJournal = nil
-	}
-	t.Cleanup(func() {
-		_ = os.WriteFile(canonicalState, origState, 0o644)
-		if origJournal != nil {
-			_ = os.WriteFile(canonicalJournal, origJournal, 0o644)
-		} else {
-			_ = os.Remove(canonicalJournal)
-		}
-	})
 
 	suffix := fmt.Sprintf("anchor-%d", os.Getpid())
 	stateBytes, err := schema.ReadAsset("loop-state.example.json")

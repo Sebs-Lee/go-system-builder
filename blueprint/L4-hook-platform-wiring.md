@@ -41,7 +41,7 @@ Hook 是 D2 的物理载体：所有把控必须挂在结构上必经的路径�
 | 事件 | matcher | 行为类别 |
 |:--|:--|:--|
 | `PreToolUse` | `Write\|Edit\|MultiEdit\|Bash\|NotebookEdit\|Task\|TaskUpdate\|Agent\|mcp__.*` | enforce（§4；PowerShell 仍按 B11 暂缓）|
-| `PostToolUse` | `SendMessage\|Agent\|SubagentHandback` | observe + 主会话交付提醒；不能撤销已完成动作 |
+| `PostToolUse` | `SendMessage\|Agent\|Task\|SubagentHandback\|Bash` | observe + 主会话交付/调度提醒；不能撤销已完成动作 |
 | `PostToolUseFailure` | `*` | observe（原生失败审计；不阻断）|
 | `SessionStart` / `SubagentStart` | （全匹配） | guidance（Agent 上下文）|
 | `PreCompact` | （全匹配） | persist（保存恢复检查点；不靠输出注入上下文）|
@@ -111,6 +111,8 @@ adapter 三戒律（本域宪法，源码注释已固化）：① adapter 不拥
 Stop/SubagentStop 的 additionalContext 会让会话继续，不能用于 worktree 回收软提醒。SubagentStop 的执行反馈属于子会话；需要主会话处理的回收提醒先写 checkpoint，在父会话 PostToolUse(Agent)、PreToolUse 或 SessionStart 投递。去重按事实版本与接收会话；仅成功输出后的投递记录不能冒充 Agent 已处理。
 
 Agent 工具 `tool_response.status=async_launched` 是启动而非完成。使用 SubagentHandback 的子会话从该工具 `tool_input.message` 收集报告，不能将最终 closing text 当正文。报告抵达仍不等于已提交、已合并或已接收。
+
+父会话 Agent 返回（兼容旧 Task 工具）以及 Bash 中 Harness 的 register-workgroup、task-complete、task-integrate 完成后，直接在现有 PostToolUse 提醒中追加 S6 只读派发投影；此路径不运行 Controller 迁移周期。普通 Bash、异步启动、worker 上下文和非 building 阶段不投递派发摘要。SendMessage 的 plan checkpoint 观察和自动激活保持独立语义。
 
 PreCompact、WorktreeCreate/Remove 等丢弃消息字段的事件不承担 Agent 提醒。上下文限制长度，完整信息以权威记录路径引用。必须在最新 Claude Code 的隔离测试项目验证实际 Agent 接收和接收对象；仅 JSON 合法、stdout 有字或本地 CLI 可执行均不能宣称平台验收完成。
 

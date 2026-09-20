@@ -17,16 +17,13 @@ import (
 )
 
 // TestL4AuditAssignmentAndTaskCompletionRefsShareCanonicalSource is an
-// opt-in failing probe for the cross-stage S6 -> Integrator boundary. The
+// regression for the cross-stage S6 -> Integrator boundary. The
 // canonical task-complete command derives one Builder Result envelope, but
 // the Hook assignment projection may still expose the original wire message
 // as CompletionRef. The Integrator consumes the assignment projection while
 // the planned quality gate consumes task.completion_report_ref; these must
 // identify the same bytes before a verified checkpoint can be trusted.
 func TestL4AuditAssignmentAndTaskCompletionRefsShareCanonicalSource(t *testing.T) {
-	if os.Getenv("L4_AUDIT_REPRO") != "1" {
-		t.Skip("set L4_AUDIT_REPRO=1 to run the known cross-stage source-binding probe")
-	}
 
 	root := freshRoot(t)
 	repo := setupGitWorktreeFixture(t, root)
@@ -88,10 +85,9 @@ func TestL4AuditAssignmentAndTaskCompletionRefsShareCanonicalSource(t *testing.T
 	if assignmentRef == "" {
 		t.Fatalf("assignment-ti was not projected after task-complete: %#v", loaded.Assignments)
 	}
-	if assignmentRef == taskRef {
-		t.Fatalf("source-binding probe no longer reproduces: assignment CompletionRef=%q, task completion_report_ref=%q", assignmentRef, taskRef)
+	if assignmentRef != taskRef {
+		t.Fatalf("canonical Result references diverged: assignment CompletionRef=%q, task completion_report_ref=%q", assignmentRef, taskRef)
 	}
-	t.Logf("before integration, assignment CompletionRef=%q diverges from task completion_report_ref=%q", assignmentRef, taskRef)
 
 	// Continue through the real S6 -> Integrator boundary so the mismatch is
 	// observable in the durable checkpoint, rather than only in projections.

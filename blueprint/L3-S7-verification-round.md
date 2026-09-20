@@ -340,6 +340,8 @@ last_good_checkpoint → wall_action → first_bad_checkpoint
 
 复杂度控制遵循“短摘要 + 自动 trace”：Reviewer 只负责 `journey_summary`、failure boundary 和专业判断；浏览器、测试 runner、CLI wrapper 与 trace collector 自动生成 timeline、时间戳、请求/响应、console、状态快照和 hashes。大量 raw data 只作为 typed evidence 保存，Finding 不复制正文。无法自动采集时才允许人工最小记录。
 
+`capture exec` 的自动输出用于认证 PASS 时，还必须随捕获记录核对执行前后的冻结输入、计划与 Assignment 身份、执行目录中的未声明产品漂移，以及输出文件摘要；可在脏目录采集诊断，但不能把不同输入的成功归给冻结基线。原始 `command_output:` 引用可直接提交，改写成同一自动产物的 `path:` 引用不免除核对。详见 [Capture provenance contract](../docs/rules/capture-provenance.md)。
+
 Finding 禁止将以下内容写成已确认事实：`root_cause`、`repair_scope`、`suggested_fix`、canonical BUG mapping。S7 可以观察“填写后不显示”和“填写后无法保存”，但不能仅凭直觉将二者合并为“后端 DTO 错误”。
 
 原 Finding 永不覆盖更新。S8 需要补充判别信息时，通过 original finder 产生 `FindingSupplement`，追加新的 observation/evidence/correlation refs，并保持 `supplements_finding_id` 和独立 hash；Supplement 不用于补做 S7 本应交付的基础现场。

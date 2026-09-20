@@ -10,9 +10,6 @@ import (
 )
 
 func TestBranchAuditMaintenancePreservesReviewedSubjects(t *testing.T) {
-	if os.Getenv("BRANCH_AUDIT_REPRO") != "1" {
-		t.Skip("set BRANCH_AUDIT_REPRO=1 to run unresolved maintenance acceptance probes")
-	}
 	for _, command := range []string{"fingerprint", "reconcile-policy-ref"} {
 		t.Run(command, func(t *testing.T) {
 			root := s4AuditRegistrationRoot(t)
@@ -57,6 +54,14 @@ func TestBranchAuditMaintenancePreservesReviewedSubjects(t *testing.T) {
 			code = runCLI(t, []string{"runtime", command, "--root", root}, strings.NewReader(""), &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("maintenance command failed before subject check: %d %s %s", code, stdout.String(), stderr.String())
+			}
+			after := readSystemState(t, root)
+			for _, field := range []string{"documents", "entities", "bound_req", "evidence"} {
+				original, _ := json.Marshal(state[field])
+				preserved, _ := json.Marshal(after[field])
+				if !bytes.Equal(original, preserved) {
+					t.Fatalf("%s changed attested %s", command, field)
+				}
 			}
 			code, out, errOut = s4AuditRegister(t, root, manifest, task)
 			if code == 0 {

@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/identity"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
@@ -109,7 +110,7 @@ func buildActivationEnvelope(agentID string, source ActivationSourceEntry) Activ
 // Legacy registrations without a reviewed dispatch plan retain their
 // historical output compatibility.
 func effectiveActivationWritePaths(writePaths, outputPaths []string) []string {
-	return mergeUniqueStringSlices(writePaths, outputPaths)
+	return pathscope.EffectiveWrites(writePaths, outputPaths)
 }
 
 // defaultActivationTools is the dispatch surface every Worker needs. It mirrors

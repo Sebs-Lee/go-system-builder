@@ -213,10 +213,15 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 
 	// 8. Required checks.
 	if len(cfg.RequiredChecks) > 0 {
+		// Pre-merge checks must run in the delivered worker checkout. Running
+		// them against the authority root here can pass or fail on files that
+		// are not part of the candidate; Integrate repeats the same commands
+		// against gitRoot after the merge before recording verified.
+		checkRoot := req.Assignment.WorktreePath
 		for _, command := range cfg.RequiredChecks {
 			res := CheckResult{Command: command}
 			if cfg.CheckRunner != nil {
-				if err := cfg.CheckRunner(ctx, targetRepo, command); err != nil {
+				if err := cfg.CheckRunner(ctx, checkRoot, command); err != nil {
 					res.Status = "fail"
 					res.Output = err.Error()
 				} else {

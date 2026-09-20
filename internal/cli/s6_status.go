@@ -231,6 +231,15 @@ func runS6DispatchStatus(root string, capacity int, asJSON bool, stdout, stderr 
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+	if lifecycle["state"] != "building" {
+		message := "S6 dispatch unavailable in the current lifecycle state; Builder dispatch requires building after S5 approval. Use `loop-harness next` for the current stage."
+		if asJSON {
+			return encodeJSON(stdout, map[string]any{"lifecycle_state": lifecycle["state"], "dispatch_available": false, "next": []string{}, "reason": message})
+		}
+		fmt.Fprintf(stdout, "Lifecycle: %v. %s\n", lifecycle["state"], message)
+		return 0
+	}
 	b, err := dispatch.Load(root, snapshot.State, capacity)
 	if err != nil {
 		fmt.Fprintln(stderr, err)

@@ -121,7 +121,8 @@ func setupGitWorktreeFixture(t *testing.T, root string) gitWorktreeFixture {
 
 func runGitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	// Fixtures must not depend on the developer's global Git identity.
+	cmd := exec.Command("git", append([]string{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

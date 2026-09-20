@@ -6,7 +6,7 @@
 >
 > 五家族分工：[调度](L4-agent-dispatch-governance.md)定义谁行动，[Hook 接线](L4-hook-platform-wiring.md)定义决策如何上总线，[运行时控制面](L4-runtime-control-plane.md)定义内容合规规则与词汇词典，[revision 使用篇](L4-revision-usage.md)定义内部提交序号与命令协调——**本文档是"事实住哪、怎样变更才算合法、崩了怎么自证"的唯一权威**。迁移 ID 五类形态学、guard/action 引擎、auto_trigger 仲裁的本体在此；L2 只保留生命周期概念与全局规则的"存在声明"，各 L3 只写消费。
 >
-> 状态：v0.2.0。【当前实现】均为代码核对结论（核对日 2026-08-28）；意图与现状的差距在 §11 披露。
+> 状态：v0.2.1。【当前实现】均为代码核对结论（核对日 2026-08-28）；意图与现状的差距在 §11 披露。
 
 ## 0. 准入逻辑
 
@@ -148,9 +148,9 @@ Gate → guard → action 必须共享同一来源契约和已解析快照；迁
 | `validate --all` | schema/example 对、contracts/scenario 校验、catalog/skills/agents、migration 模板、runtime 状态可达性、evidence 槽位覆盖 | 零修复，exit 1 |
 | `runtime reconcile` | journal 断尾检测 | **仅修 journal**：追加一条 `journal_reconciled` 补齐游标，绝不改 state/revision |
 | `runtime reconcile-policy-ref` | hook_control.policy_ref 与磁盘漂移 | 重写 policy_ref |
-| `runtime fingerprint` | documents[].sha256 与磁盘 | statePending 协议下重算刷新，不 bump revision |
+| `runtime fingerprint` | definition/policy 元数据与登记产物摘要漂移 | statePending 协议下仅刷新 Harness 元数据；保留 REQ、documents、TASK 与 evidence 的登记摘要并报告漂移，不 bump revision |
 
-设计准则：**能自我修复的限于"可从磁盘无损重建的事实"（journal 尾巴、policy_ref、指纹镜像）；凡涉及判断的事实漂移只能报告给人**。新增对账能力直接沿用此行。
+设计准则：**能自我修复的限于"可从磁盘无损重建的事实"（journal 尾巴、Harness definition/policy 元数据）；凡涉及判断的事实漂移只能报告给人**。正式输入变化走既有变更与复审流程；普通维护不能重新批准已登记的输入或 evidence。集成时显式声明的可变 evidence 刷新仍走独立受控入口，不扩展普通维护权限。新增对账能力直接沿用此行。
 
 ## 10. 与其余文档的分工回收
 
@@ -215,3 +215,5 @@ waves-v1 已增加 `dispatch_plan` documentReference，并接入下列注册/冻
 legacy 已执行 generation 保持恢复能力并显示缺少受审签计划，不补造历史；新规划批次必须满足新交付契约。
 
 修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。
+
+修订记录：2026-09-20 · 依据根目录综合复审 P1 的两条维护入口反例，收窄普通指纹维护到 Harness 元数据；正式输入与证据摘要只能通过既有授权流程更新（L1 D1/D6）。

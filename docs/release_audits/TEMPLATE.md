@@ -28,7 +28,7 @@
 | 关系 | 文档 | 用途 |
 |:---|:---|:---|
 | upstream | `docs/requirements/REQ-{id}.md` | 发布范围 |
-| upstream | `docs/tasks/index.md` | 完成任务 |
+| upstream | `docs/tasks/index-REQ-{id}.md` | 完成任务 |
 | evidence | `docs/reports/review/REV-{id}.md` | 交付正确性 |
 | evidence | `docs/reports/qa/QA-{id}.md` | 工程质量 |
 | evidence | `docs/reports/acceptance/ACC-{id}.md` | 验收与接管 |

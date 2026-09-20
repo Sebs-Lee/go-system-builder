@@ -253,12 +253,7 @@ func TestCompleteTaskResubmissionEscalatesEvidenceID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first submission: %v", err)
 	}
-	// Reset the agent to working for the retry (the fix-and-resubmit path
-	// runs after a failed gate, with the agent already reported).
-	agents := first.State["entities"].(map[string]any)["agents"].([]any)
-	agents[0].(map[string]any)["state"] = "working"
-	first.State["entities"].(map[string]any)["agents"] = agents
-	writeJSON(t, statePath, first.State)
+	// Resubmit directly from reported: both references must advance together.
 
 	second, err := assignment.CompleteTask(root, statePath, journalPath, assignment.CompletionRequest{
 		ExpectedRevision: first.Revision, AgentID: "builder-1", MessagePath: messagePath,
@@ -273,6 +268,11 @@ func TestCompleteTaskResubmissionEscalatesEvidenceID(t *testing.T) {
 	ids := []string{items[0].(map[string]any)["id"].(string), items[1].(map[string]any)["id"].(string)}
 	if ids[0] != "ev-completion-TASK-001-g1" || ids[1] != "ev-completion-TASK-001-g1-r2" {
 		t.Fatalf("evidence ids = %v, want base then -r2", ids)
+	}
+	agents := second.State["entities"].(map[string]any)["agents"].([]any)
+	tasks := second.State["entities"].(map[string]any)["tasks"].([]any)
+	if agents[0].(map[string]any)["completion_reported_ref"] != tasks[0].(map[string]any)["completion_report_ref"] {
+		t.Fatal("resubmission split agent and TASK Result references")
 	}
 	// The retry's envelope file exists on disk under its own name.
 	rel := items[1].(map[string]any)["path"].(string)

@@ -12,6 +12,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
 type Board struct {
@@ -36,7 +37,11 @@ func View(root string, state map[string]any) (*fileview.View, error) {
 	if e != nil {
 		return nil, e
 	}
-	return fileview.New(root, ref, []fileview.Rule{{Path: ".", Source: "git_tree"}, {Path: ".claude", Source: "disk"}})
+	catalog, e := transition.LoadCatalog(root)
+	if e != nil {
+		return nil, e
+	}
+	return fileview.New(root, ref, catalog.Definition.FileSources)
 }
 func Load(root string, state map[string]any, capacity int) (Board, error) {
 	if !qualitygate.HasDispatchPlan(state) {

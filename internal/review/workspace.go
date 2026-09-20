@@ -399,6 +399,9 @@ type CaptureStep struct {
 	Observed   string   `json:"observed"`
 	Evidence   []string `json:"evidence_refs,omitempty"`
 	CapturedAt string   `json:"captured_at"`
+	// Provenance is populated by capture exec. It is optional so legacy
+	// hand-authored `capture step` buffers remain readable and mergeable.
+	Provenance *CaptureProvenance `json:"provenance,omitempty"`
 }
 
 // SanitizeCapture rejects any field that smells like a secret.

@@ -40,7 +40,7 @@ This section is a human-facing summary. It must not override the Loop runtime.
 | design foundation | `docs/design/DESIGN.md` / local / N/A | missing / draft / in-review / provisional / published / superseded | {version or scope; `provisional` is not a lock; `published+PENDING` is a fake lock} |
 | design/UI | `{path}` | {status/N/A} | {version/hash} |
 | contracts | `docs/contracts/CONTRACTS-{id}.md` | {status} | {version/hash} |
-| tasks | `docs/tasks/index.md` | {status} | {version/hash} |
+| tasks | `docs/tasks/index-REQ-{id}.md` | {status} | {version/hash} |
 | runtime | `.claude/loop-state.json` | authoritative | {state / phase / next} |
 
 ## 4. PM Todo

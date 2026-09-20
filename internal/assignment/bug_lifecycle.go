@@ -80,12 +80,17 @@ func AdvanceBug(root, statePath, journalPath string, request BugEventRequest) (l
 	// Optionally validate the message envelope if a path is provided.
 	if request.MessagePath != "" {
 		validator := schema.NewValidator(root)
-		msgData, err := os.ReadFile(filepath.Join(root, request.MessagePath))
-		if err == nil {
-			if err := validator.ValidateBytes(
-				"agent-message.schema.json", msgData); err != nil {
-				return loopruntime.Snapshot{}, fmt.Errorf("message validation: %w", err)
-			}
+		messagePath := request.MessagePath
+		if !filepath.IsAbs(messagePath) {
+			messagePath = filepath.Join(root, messagePath)
+		}
+		msgData, err := os.ReadFile(messagePath)
+		if err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("read BUG message: %w", err)
+		}
+		if err := validator.ValidateBytes(
+			"agent-message.schema.json", msgData); err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("message validation: %w", err)
 		}
 	}
 

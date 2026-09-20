@@ -17,6 +17,16 @@ import (
 func s6Fixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}

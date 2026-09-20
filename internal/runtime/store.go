@@ -800,6 +800,7 @@ func DocumentMetadataVersion(data []byte) string {
 // FingerprintResult summarises a RefreshFingerprints pass. Updated lists the
 // document paths whose stored SHA256 changed; Unchanged lists paths that
 // already matched. Missing lists paths whose on-disk file does not exist.
+// Drifted lists attested paths whose recorded hash was preserved despite drift.
 // Triple is the RC-10 Step B convergence projection of the eight sha256
 // families onto (state_hash, evidence_hash, baseline_hash); it is derived
 // from the post-refresh state and never replaces per-family validation.
@@ -812,15 +813,14 @@ type FingerprintResult struct {
 	Updated   []string
 	Unchanged []string
 	Missing   []string
+	Drifted   []string
 	Triple    FingerprintTriple `json:"triple"`
 }
 
-// RefreshFingerprints recomputes the SHA256 of every document referenced by
-// the runtime state and writes the updated state back atomically. It is the
-// single source of truth for refreshing document fingerprints (BUG-004
-// repair). It does NOT bump the runtime revision and does NOT append a
-// journal entry — fingerprint refresh is a non-semantic housekeeping
-// operation that should not trigger transition events.
+// RefreshFingerprints updates only Harness definition and policy metadata.
+// Registered documents, the bound REQ, task subjects and evidence retain their
+// recorded hashes: changing a file is not a new review or evidence attestation.
+// Drift is reported for recovery through the existing change/review lifecycle.
 func (s *Store) RefreshFingerprints(root string) (FingerprintResult, error) {
 	return s.refreshFingerprints(root, nil, nil)
 }
@@ -872,7 +872,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 	}
 
 	var result FingerprintResult
-	refresh := func(entry map[string]any) {
+	refresh := func(entry map[string]any, mutable bool) {
 		path, _ := entry["path"].(string)
 		if path == "" {
 			return
@@ -896,6 +896,10 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 		current, _ := entry["sha256"].(string)
 		if current == sum {
 			result.Unchanged = append(result.Unchanged, path)
+			return
+		}
+		if !mutable {
+			result.Drifted = append(result.Drifted, path)
 			return
 		}
 		entry["sha256"] = sum
@@ -953,7 +957,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 			if gen, err := integerField(doc, "generation"); err == nil && gen < currentGeneration {
 				continue
 			}
-			refresh(doc)
+			refresh(doc, false)
 		}
 	}
 	if evidence, ok := state["evidence"].([]any); ok {
@@ -975,12 +979,12 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 						continue
 					}
 				}
-				refresh(entry)
+				refresh(entry, evidenceKinds != nil)
 			}
 		}
 	}
 	if boundReq, ok := state["bound_req"].(map[string]any); ok && evidenceKinds == nil {
-		refresh(boundReq)
+		refresh(boundReq, false)
 	}
 	// definition (loop-definition.json) and hook policy fingerprints must also
 	// track the on-disk artifact — REQ-003 TASK-003-C upgrades the definition
@@ -988,12 +992,12 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 	// against the new on-disk hash. Without this refresh, validate fails closed
 	// until a future REQ bind rewrites the whole runtime.
 	if definition, ok := state["definition"].(map[string]any); ok && evidenceKinds == nil {
-		refresh(definition)
+		refresh(definition, true)
 		refreshMetadataVersion(definition)
 	}
 	if hookControl, ok := state["hook_control"].(map[string]any); ok && evidenceKinds == nil {
 		if policyRef, ok := hookControl["policy_ref"].(map[string]any); ok {
-			refresh(policyRef)
+			refresh(policyRef, true)
 			refreshMetadataVersion(policyRef)
 		}
 	}
@@ -1001,7 +1005,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 		if tasks, ok := entities["tasks"].([]any); ok {
 			for _, raw := range tasks {
 				if task, ok := raw.(map[string]any); ok {
-					refresh(task)
+					refresh(task, false)
 				}
 			}
 		}

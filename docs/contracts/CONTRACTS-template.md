@@ -18,7 +18,7 @@
 | upstream | `docs/requirements/REQ-{id}.md` | locked REQ 条款 |
 | related | `docs/design/{path}.md` | 设计约束或 N/A |
 | related | `docs/design/prototypes/{module}/` | UI impact = changed 时必填；模块当前真相包 |
-| downstream | `docs/tasks/index.md` | 派生任务 |
+| downstream | `docs/tasks/index-REQ-{id}.md` | 派生任务 |
 | evidence | `docs/reports/review/REV-{id}.md` | 文档审核 |
 | runtime | `.claude/loop-state.json` | 当前状态通过 Runtime identity、状态和指纹引用；commit revision 仅作可选审计元数据 |
 

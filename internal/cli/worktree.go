@@ -250,6 +250,12 @@ func runWorktreePostTool(root string, input policy.Input, stdout, stderr io.Writ
 		return 0
 	}
 	message, delivered := reminderDelivery(root, input)
+	if dispatchContext := postToolDispatchContext(root, input); dispatchContext != "" {
+		if message != "" {
+			message += "\n\n"
+		}
+		message += dispatchContext
+	}
 	if message == "" {
 		return 0
 	}

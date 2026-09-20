@@ -16,7 +16,8 @@ ownership or a justified Resource order table (Before TASK, After TASK, Resource
 Reason). Invalid non-header resource rows are errors, not absent constraints.
 Resource order and artifact dependencies must form one acyclic order.
 The effective write scope includes both assignment write_paths and output_paths;
-both must stay within the reviewed TASK scope.
+both must stay within the reviewed TASK scope. Registration, activation and
+integration consume this same effective scope.
 
 S5's existing two reviewers explicitly review membership, parallel boundaries,
 missing dependencies, shared resources and unnecessary serial work. The plan is
@@ -25,14 +26,16 @@ bound development branch; disk-only edits cannot replace the reviewed Git tree.
 
 S6 reads plan → live checklist → next TASK → its ordered Document Manifest.
 Use `loop-harness s6 status --capacity <total available concurrent slots>`;
-`--json` gives the same projection. Capacity is the actual total, not remaining
+`--json` gives the same projection. Outside the building state, status reports
+the lifecycle state without readiness or a selected Builder batch. Capacity is the actual total, not remaining
 slots. Without a capacity declaration the command shows readiness but does not
 claim a dispatch batch. A completed predecessor releases its consumers without
 waiting for unrelated tasks in the prior wave. Queued work is retained.
 
 A reported result is not integration. The current result, checks and matching
 assignment checkpoint must be verified after merging back into the root's bound
-development branch. The checkpoint binds the result path and content SHA256;
+development branch. The TASK and assignment consume the same canonical Result, including
+resubmissions. The checkpoint binds the result path and content SHA256;
 changing content requires fresh integration checks even if created_at is unchanged.
 A checkpoint without this binding cannot release planned consumers.
 Never update frozen plan checkboxes or TASK lifecycle fields;

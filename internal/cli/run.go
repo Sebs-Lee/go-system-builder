@@ -1250,7 +1250,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 			occurredAt = parsedAt
 		}
-		next, outcome, err := assignment.AgentBegin(*root, *statePath, *journalPath, assignment.AgentBeginRequest{
+		next, outcome, err := assignment.AgentBegin(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), assignment.AgentBeginRequest{
 			ExpectedRevision: resolvedRevision,
 			AgentID:          *agentID,
 			PlanPath:         resolveRootPath(*root, *planPath),
@@ -1297,7 +1297,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 			occurredAt = parsedAt
 		}
-		next, err := assignment.AdvanceAgent(*root, *statePath, *journalPath, assignment.AgentEventRequest{
+		next, err := assignment.AdvanceAgent(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), assignment.AgentEventRequest{
 			ExpectedRevision: resolvedRevision,
 			AgentID:          *agentID,
 			Event:            *event,
@@ -1358,7 +1358,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 			occurredAt = parsedAt
 		}
-		next, err := assignment.CompleteTask(*root, *statePath, *journalPath, assignment.CompletionRequest{
+		next, err := assignment.CompleteTask(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), assignment.CompletionRequest{
 			ExpectedRevision: resolvedRevision,
 			AgentID:          *agentID,
 			MessagePath:      resolveRootPath(*root, *messagePath),
@@ -1679,11 +1679,17 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				return 2
 			}
 		}
-		next, err := assignment.AdvanceBug(*root, *statePath, *journalPath, assignment.BugEventRequest{
+		resolvedState := resolveRootPath(*root, *statePath)
+		resolvedJournal := resolveRootPath(*root, *journalPath)
+		resolvedMessage := ""
+		if *messagePath != "" {
+			resolvedMessage = resolveRootPath(*root, *messagePath)
+		}
+		next, err := assignment.AdvanceBug(*root, resolvedState, resolvedJournal, assignment.BugEventRequest{
 			ExpectedRevision: *expectedRevision,
 			BugID:            *bugID,
 			Event:            *event,
-			MessagePath:      resolveRootPath(*root, *messagePath),
+			MessagePath:      resolvedMessage,
 			Params:           params,
 		})
 		if err != nil {
@@ -1698,7 +1704,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			// revision keeps the bridge on the same Writer-owned path as the
 			// normal BUG event; the failed event did not commit, so the
 			// dispatcher can safely consume the current snapshot itself.
-			nextSnapshot, dispatchErr := adapter.DispatchRepairLimitExceeded(*root, *statePath, *journalPath, *expectedRevision, err)
+			nextSnapshot, dispatchErr := adapter.DispatchRepairLimitExceeded(*root, resolvedState, resolvedJournal, *expectedRevision, err)
 			if dispatchErr == nil {
 				if encodeErr := json.NewEncoder(stdout).Encode(nextSnapshot); encodeErr != nil {
 					fmt.Fprintf(stderr, "encode paused snapshot: %v\n", encodeErr)
@@ -1734,9 +1740,12 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "runtime fingerprint failed: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "updated=%d unchanged=%d missing=%d\n", len(result.Updated), len(result.Unchanged), len(result.Missing))
+		fmt.Fprintf(stdout, "updated=%d unchanged=%d missing=%d drifted=%d\n", len(result.Updated), len(result.Unchanged), len(result.Missing), len(result.Drifted))
 		for _, p := range result.Updated {
 			fmt.Fprintf(stdout, "updated  %s\n", p)
+		}
+		for _, p := range result.Drifted {
+			fmt.Fprintf(stdout, "drifted  %s (recorded baseline preserved; use the change/review or evidence registration workflow)\n", p)
 		}
 		for _, p := range result.Missing {
 			fmt.Fprintf(stdout, "missing  %s\n", p)
@@ -2456,7 +2465,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// never denies. It short-circuits here so no control-cycle machinery
 	// runs for it.
 	if request.Event == "PostToolUse" {
-		if request.ToolName == "Agent" || request.ToolName == "SubagentHandback" {
+		if request.ToolName == "Bash" {
+			if !dispatchGuidanceCheckpoint(request.Event, request) {
+				return 0
+			}
+			return runWorktreePostTool(root, request, stdout, stderr)
+		}
+		if request.ToolName == "Agent" || request.ToolName == "Task" || request.ToolName == "SubagentHandback" {
 			return runWorktreePostTool(root, request, stdout, stderr)
 		}
 		return runPostToolUseHook(root, request, stdout, stderr)

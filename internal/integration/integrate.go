@@ -116,16 +116,25 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	// exact Result bytes it verified. A changed report re-enters the check
 	// stage while retaining MergeCommit, so recovery never merges twice.
 	reverifyResult := found && reportChanged && checkpointHasVerifiedStage(current)
+	if found && checkpointHasVerifiedStage(current) {
+		if current.MergeCommit == "" {
+			return preserveInvalidMergeReceipt(store, checkpointPath, current,
+				fmt.Errorf("verified checkpoint has no merge receipt; re-inspect and reconcile"))
+		}
+		if current.TargetBranch == "" || current.TargetBranch != req.Inspection.TargetBranch {
+			return preserveInvalidMergeReceipt(store, checkpointPath, current,
+				fmt.Errorf("target branch changed from %s to %s after recorded merge", current.TargetBranch, req.Inspection.TargetBranch))
+		}
+		reachable, reachErr := mergeCommitReachable(ctx, gitRoot, current.MergeCommit, req.Inspection.TargetBranch)
+		if reachErr != nil || !reachable {
+			return preserveInvalidMergeReceipt(store, checkpointPath, current,
+				fmt.Errorf("recorded merge commit %s is not reachable from target %s; re-inspect and reconcile", current.MergeCommit, req.Inspection.TargetBranch))
+		}
+	}
 
 	if !found || current.State != StateComplete || reverifyResult {
 		if err := checkoutBranch(ctx, gitRoot, req.Inspection.TargetBranch); err != nil {
 			return Result{}, err
-		}
-	}
-	if reverifyResult && current.MergeCommit != "" {
-		reachable, reachErr := mergeCommitReachable(ctx, gitRoot, current.MergeCommit, req.Inspection.TargetBranch)
-		if reachErr != nil || !reachable {
-			return Result{Checkpoint: current}, fmt.Errorf("recorded merge commit %s is not reachable from target %s; re-inspect and reconcile", current.MergeCommit, req.Inspection.TargetBranch)
 		}
 	}
 
@@ -448,6 +457,26 @@ func preserveAfterCAS(ctx context.Context, store *CheckpointStore, path string, 
 		return Result{Checkpoint: preserved}, fmt.Errorf("persist preserved: %w", err)
 	}
 	return Result{Checkpoint: written}, sentinel
+}
+
+// preserveInvalidMergeReceipt handles a verified-or-later checkpoint whose
+// recorded merge is no longer reachable from the currently bound target. The
+// old receipt remains in the durable record for audit, but ResumeState is
+// explicitly reset to pending so a later reconciliation may create a new
+// merge. Keeping this as preserved prevents a stale receipt from certifying or
+// deleting a worker, while descendants of the recorded merge remain valid
+// because mergeCommitReachable uses ancestry rather than HEAD equality.
+func preserveInvalidMergeReceipt(store *CheckpointStore, path string, current Checkpoint, cause error) (Result, error) {
+	preserved := current
+	preserved.State = StatePreserved
+	preserved.ResumeState = StatePending
+	preserved.FailureReason = cause.Error()
+	preserved.LastErrorCode = stableErrorCode(ErrMergeConflict)
+	written, err := store.ForceWrite(path, preserved)
+	if err != nil {
+		return Result{Checkpoint: preserved}, fmt.Errorf("persist preserved: %w", err)
+	}
+	return Result{Checkpoint: written}, fmt.Errorf("%w: %v", ErrMergeConflict, cause)
 }
 
 // successfulResumeState returns the last durable stage boundary represented by

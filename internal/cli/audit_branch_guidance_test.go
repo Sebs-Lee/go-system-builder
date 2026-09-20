@@ -1,9 +1,5 @@
 package cli_test
 
-// These probes are deliberately opt-in: they document review reproducers for
-// guidance/source mismatches without making the normal suite fail while the
-// production behavior is being reviewed.
-
 import (
 	"bytes"
 	"encoding/json"
@@ -20,14 +16,7 @@ import (
 // S4→S5→S6 source-boundary check. TR-002 registers the completed plan and
 // TASK documents before S5; an S5 runtime must not make the S6 projection
 // claim that the plan is approved or select a Builder batch.
-//
-// Run with BRANCH_GUIDANCE_AUDIT_REPRO=1. It is expected to fail against the
-// current branch when `s6 status` accepts the registered plan in
-// document_verification.
 func TestAuditS6StatusDoesNotAdvertiseBeforeDocumentPass(t *testing.T) {
-	if os.Getenv("BRANCH_GUIDANCE_AUDIT_REPRO") != "1" {
-		t.Skip("set BRANCH_GUIDANCE_AUDIT_REPRO=1 to run the expected-failure probe")
-	}
 
 	root := auditCLIPlanFixture(t)
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
@@ -59,18 +48,24 @@ func TestAuditS6StatusDoesNotAdvertiseBeforeDocumentPass(t *testing.T) {
 	if strings.Contains(stdout.String(), "S6 dispatch plan:") || strings.Contains(stdout.String(), "Next batch:") {
 		t.Fatalf("S5 runtime was advertised as an approved S6 dispatch source:\n%s", stdout.String())
 	}
+	stdout.Reset()
+	stderr.Reset()
+	code = cli.Run([]string{"s6", "status", "--root", root, "--capacity", "1", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	var projection struct {
+		Available bool     `json:"dispatch_available"`
+		Next      []string `json:"next"`
+		State     string   `json:"lifecycle_state"`
+	}
+	if code != 0 || json.Unmarshal(stdout.Bytes(), &projection) != nil || projection.Available || len(projection.Next) != 0 || projection.State != "document_verification" {
+		t.Fatalf("S5 JSON advertised dispatch: %d %s %s", code, stdout.String(), stderr.String())
+	}
+
 }
 
 // TestAuditGuidanceUsesREQScopedPlanPath catches stale template links left
 // behind by the waves-v1 migration. The current S4 contract is
 // docs/tasks/index-REQ-<id>.md; there is no docs/tasks/index.md entry point.
-//
-// Run with BRANCH_GUIDANCE_AUDIT_REPRO=1. It is expected to fail until all
-// authoring templates use the same per-REQ plan path.
 func TestAuditGuidanceUsesREQScopedPlanPath(t *testing.T) {
-	if os.Getenv("BRANCH_GUIDANCE_AUDIT_REPRO") != "1" {
-		t.Skip("set BRANCH_GUIDANCE_AUDIT_REPRO=1 to run the expected-failure probe")
-	}
 
 	templatePaths := []string{
 		"docs/contracts/CONTRACTS-template.md",

@@ -109,6 +109,8 @@
 
 PostToolUse 的 Agent 完成结果和 SubagentHandback 报告属于不同工具路径；前者 async_launched 不代表交付，后者读取 tool_input.message。扩展这两个 matcher 复用既有 PostToolUse：责任明确为报告观察和主会话回收提示，失败时不阻断，接收状态仍由 Integrator 决定，不另立完成事实源。
 
+S6 派发提示复用同一 PostToolUse 事件，matcher 包含 Bash 和兼容 Task。Bash 仅在 Harness 注册工作组、完成上报、集成动作结束时产生只读摘要；普通命令立即返回。投递对象限定父会话，保持异步启动、非 building 阶段与子会话边界，不新增审批或迁移入口。验收覆盖 settings matcher 到真实 Hook 命令路由及 Runtime 不变断言。
+
 WorktreeCreate 是创建替代器，不是观察点。当前未具备完整创建/恢复实现时保留候选，不先挂空 Hook；WorktreeRemove 也不替代项目接收/清理事务。
 
 ## 3. 当前消费组合的选取理由（为何恰是这十类）

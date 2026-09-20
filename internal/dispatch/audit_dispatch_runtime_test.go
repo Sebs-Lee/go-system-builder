@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -511,11 +512,35 @@ func auditDispatchWriteCheckpoint(t *testing.T, root string, state map[string]an
 	if err != nil {
 		t.Fatal(err)
 	}
+	mergeCommit := auditDispatchCreateMergeReceipt(t, root, assignment)
 	auditDispatchWriteJSON(t, root, path, map[string]any{
 		"assignment_id": assignment, "task_id": taskID, "state": "verified",
 		"baseline_generation": 1, "verified_at": verifiedAt,
 		"completion_report_path": reportPath, "completion_report_sha256": fmt.Sprintf("%x", sha256.Sum256(reportBytes)),
+		"target_branch": "dev", "merge_commit": mergeCommit,
 	})
+}
+
+func auditDispatchCreateMergeReceipt(t *testing.T, root, assignment string) string {
+	t.Helper()
+	branch := "audit-receipt-" + strings.NewReplacer("/", "-", "\\", "-").Replace(assignment)
+	auditDispatchGit(t, root, "checkout", "-b", branch)
+	auditDispatchGit(t, root, "commit", "--allow-empty", "-m", "record delivery receipt for "+assignment)
+	auditDispatchGit(t, root, "checkout", "dev")
+	auditDispatchGit(t, root, "merge", "--no-ff", branch, "-m", "integrate delivery receipt for "+assignment)
+	mergeCommit := strings.TrimSpace(auditDispatchGit(t, root, "rev-parse", "HEAD"))
+	auditDispatchGit(t, root, "branch", "-D", branch)
+	return mergeCommit
+}
+
+func auditDispatchGit(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return string(output)
 }
 
 func auditDispatchSetAgentPrompt(state map[string]any, agentID, prompt string) {
