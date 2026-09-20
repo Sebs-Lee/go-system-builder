@@ -26,7 +26,7 @@ S6 不是“把代码写出来就算完成”，也不负责证明产品最终�
 
 S6 应收敛成一条短而硬的执行流水线：
 
-> S5 精确任务批次 → 自动生成调度板 → 派发 → 计划回执后连续执行 → 唯一完成结果 → 语义集成 → 精确批次 Gate → S7
+> S5 精确任务批次与派发计划 → 生成实时清单 → 派发 → 计划回执后连续执行 → 唯一完成结果 → 语义集成 → 精确批次 Gate → S7
 
 每个额外机制都必须缩短反馈时间、降低漏项或阻止一种具体失败。协议更完整、消息更多、状态更细，不自动等于控制更强。
 
@@ -97,7 +97,7 @@ S6 应收敛成一条短而硬的执行流水线：
 
 | 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
 |:--|:--|:--|:--|
-| T1 准备精确批次与调度板 | 这次必须完成哪些 TASK；谁 Ready；哪里冲突 | 从 TR-003 批次读取 TASK DAG；按 active assignments 实算冲突；计算 Ready/Waiting/Conflict；设置 WIP | S6 Board、批次指纹、调度顺序 |
+| T1 准备精确批次与调度板 | 这次必须完成哪些 TASK；谁 Ready；哪里冲突 | 从 TR-003 批次及已审签计划读取 TASK DAG；按 active/reported 未消费 assignments 实算冲突；计算 Ready/Waiting/Conflict；设置 WIP | S6 Board、批次指纹、调度顺序 |
 | T2 原子派发 | 谁拥有任务；允许改什么；使用哪个 worktree | 生成 Assignment Record；校验一 TASK 一 Owner、role/path、写重叠；创建 worktree；生成 PLAN_REPORT 请求 | assignment、worktree、effective scope |
 | T3 计划检查点 | Builder 是否理解当前任务；依赖和证据计划是否成立 | 运行中发送 PLAN_REPORT；机器校验 assignment identity/scope/checks；普通任务立即继续，高风险进入 L4 Plan approval | plan checkpoint / approval ref |
 | T4 实现与 owned checks | 如何快速兑现 Closing Contract 并尽早发现错误 | 在 scope 内实现；运行任务级测试/lint/build；按需加载 Skill；问题分类 | 实现、测试、原始检查结果 |
@@ -180,7 +180,7 @@ Ready TASK 的默认优先顺序：
 4. 在同一表面可以复用已有上下文；
 5. 其余任务按稳定 TASK ID 排序，保证可复现。
 
-WIP 应使用小而明确的上限，初值为 2，并根据 Main/Integrator 的结果消费积压、隔离面和冲突率调整；只有实战指标证明消费者不积压时才提高。不得使用“模块数 × 合约数 × 风险系数”一类不可稳定复算的 Agent 数量公式。
+WIP 由真实平台槽位、明确资源约束和可观察的集成积压确定，不默认固定为 2。边界兼容且输入就绪的任务积极并行；降低并行度应给具体限制原因，容量不足仅排队并持续补位。不得使用“模块数 × 合约数 × 风险系数”一类不可稳定复算的 Agent 数量公式。
 
 ### 5.3 一 TASK 一写 Owner
 
@@ -350,6 +350,14 @@ Builder 直接由 Closing Contract 驱动：
 - 修复后应重试的命令。
 
 跨 Stage Assignment 主状态沿用 L4：result_submitted → consumed 或 result_submitted → blocked。S6 的 `integrated` 是 consumer checkpoint 和 runtime TASK 聚合视图，不再成为第二条需要 Worker 推进的 Assignment 状态线。prepared、merged、verified、acknowledged、cleanup_pending 等是 Integrator 内部幂等状态。
+
+### 7.5 根目录接收与临时 worktree
+
+消费 [L4 Worktree](L4-worktree-governance.md)：创建来源与集成目标均取 REQ 显式 dev_branch，不默认 develop；release_upstream 只供最终发布。主会话确保 TASK、设计、代码依赖已在该分支提交，运行 evidence 另按声明交接。
+
+Builder 在子分支提交成果；主会话负责根目录 merge commit、联合校验、接收及及时清理，根目录是唯一权威。verified 后继续 ack/cleanup，不等待第二次 SubagentStop；Hook 只记录短事务和提示主会话，不在 10 秒事件预算中运行完整测试。
+
+根目录 dirty、目标分支偏离、冲突或子树新增未跟踪内容时保留现场，给出恢复动作；不自动 checkout/stash/reset 或强制删除。未回收和积压只提醒，不扩展 Stop/PreToolUse 硬门禁。阶段交付从声明的 Git tree 校验，必要成果未合回时不能据子分支结果宣布阶段通过。
 
 ## 8. 状态、证据与 Gate 的闭环
 
@@ -531,7 +539,7 @@ agent-protocol.md 应缩减为“宪法与路由表”，只保留：
 | 缺口 | 当前事实 | 风险 | 状态 |
 |:--|:--|:--|:--|
 | Builder manifest 校验不足 | team validator 仍只做形状校验（职责覆盖、数量、separation edges），不强制 BUILD-WORK-PACKAGE、一 TASK 一 Owner、role/path、write overlap | 错派和并发写冲突 | 未闭合（P2 dispatch 实算） |
-| S4 DAG 未进入 runtime | task entity/manifest 仍无法表达跨任务 DAG，runtime 零消费 | 调度靠 Main Agent 记忆 | 未闭合（P2 s6 prepare） |
+| S4 DAG 消费 | waves-v1 读取批准计划与 TASK 依赖，S6 投影和 workgroup 注册共用求值 | legacy 仅保留原恢复能力 | waves-v1 已接线；实际平台派发由 Main 执行 |
 | 双生命周期未闭合 | agent event 与 task event 仍分离；task-complete 提供了一条原子正常入口，但 12 事件手工面仍在 | 状态漂移和漏推进 | 部分闭合（P1） |
 | 回读消息过重 | readback_response 仍要求 32 个必填字段；哈希链字段已从"必填不校验"转为实校验（approved_readback_sha256/message_id fail-closed） | 手工成本高、形式化回读 | 部分闭合（哈希链已实真；字段瘦身待 P3 PLAN_REPORT 五问） |
 | Completion 双格式 | `runtime task-complete` 已提供 canonical Builder Result 单命令（支持修复后 -r2 重提交）；旧 agent-event + evidence add 双写路径仍可用，但 protocol/manual/README/skill 已统一教学 canonical 路径 | 重复写、字段漂移 | 部分闭合（P1 起步；旧路径待迁移期后降级） |
@@ -656,3 +664,31 @@ S6 机制优化不能以“文档写完”判定完成。只有以下条件全�
 最终原则是：
 
 > 每个事实只生产一次，每个约束必须有机器消费者，每次失败必须给出下一步，每个正常 TASK 最多经过四个显式阶段。
+
+
+### 2026-09-18 · v1.1.0
+
+构建集成消费 REQ 绑定开发分支，主会话接收与清理形成闭环。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+Builder 从 TASK 读取本端条款、协议、模型及必要设计解释。类型、边界校验或客户端必须实际消费同源定义；仅写 model_ref 不算完成。真实共享实现先集成，其余任务允许并行。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+<a id="dispatch-execution"></a>
+## 整体计划驱动的持续派发（2026-09-19）
+
+waves-v1 首版已扩展 `s6 status --capacity <实际总槽位> [--json]`，读取已审签 Git 输入并投影候选；workgroup 注册事务复核依赖、owner、写域与实际 TASK 内容。没有自动平台 spawn 或自适应容量预测。机制权威见 [L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan)。
+
+Main 阅读顺序为：批准计划 → 实时 todo 清单 → 下一批 TASK → TASK 精确阅读清单。Builder 从自己的 TASK 开始，按需读取所属波次和前置，不要求每个 Builder 阅读全局任务集。
+
+实时视图从 TR-003 精确集合、批准计划与现有运行事实重建，显示 waiting / ready / queued / running / reported / integrated / blocked 及原因；它们是投影词汇，不新增 TASK 状态机。冻结计划不回填；只有当前有效 verified 集成才能打勾，历史失效成功、完成上报和 Agent 停止都不能代替。
+
+每次结果消费、集成、阻塞变化、槽位释放及恢复后重新求值，挑选互相兼容的下一批。工作项 A→B 与独立慢任务 C 同处计划时，A 回收到根目录绑定开发分支并验证后立即释放 B，不等待 C。逻辑波次、当次派发批次和 workgroup 不强制一一对应，跨 workgroup 的前置仍由 TASK 级求值负责。
+
+派发前复核当前版本、owner 和资源条件；平台动作失败不伪造 running。未集成的 reported 结果仍纳入相关冲突与积压判断。依赖产物仅在 worker 分支或主会话未提交时不能供新 worktree 正式消费。回收是开发集成，使用已有 normal merge/checkpoint 流程，不是 release；清理提醒不成为下游额外门禁。
+
+无关任务在局部失败时继续；存在候选却空闲时提示 Main，依赖/冲突未满足则说明等待对象。提醒复用 Agent 可见通道，不新增 Stop/Tool 门。TR-006 仍以完整精确 TASK 集合求值，不以最后一个波次结束或手工全勾替代完成检查。
+
+修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。

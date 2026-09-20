@@ -98,7 +98,7 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 	}())
 
 	// --- registration via PTR-PLAN-02: bind, then fire the transition ---
-	if _, stderr, code := run("req", "bind", "--root", root, "--approved-by", "bob"); code != 0 {
+	if _, stderr, code := run("req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root), "--approved-by", "bob"); code != 0 {
 		t.Fatalf("bind failed: %s", stderr)
 	}
 	// design→contracts→tasks: PTR-PLAN-01 first (carries the wired
@@ -206,7 +206,7 @@ func TestPTRPLAN02BlocksOnBrokenBridge(t *testing.T) {
 		"| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:--|:--|:--|:--|:--|\n| FR-701 | wb7 | 提交 | A1 | Must |\n"+
 		"| 编号 | 验收标准 | 指向 |\n|:--|:--|:--|\n| AC-701 | 提交成功 | FR-701 |\n")
 	var stdout, stderr bytes.Buffer
-	if code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "bob"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+	if code := cli.Run([]string{"req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root), "--approved-by", "bob"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("bind failed: %s", stderr.String())
 	}
 	if code := cli.Run([]string{"runtime", "transition", "--root", root,

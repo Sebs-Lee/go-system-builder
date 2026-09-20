@@ -67,9 +67,9 @@ func ValidateTemplates(root string) error {
 		{
 			path: "docs/tasks/TASK-template.md",
 			required: []string{
-				"Team manifest:", "Assignment ID:", "Document Manifest",
+				"Dispatch policy: waves-v1", "Execution:", "Document Manifest",
 				"Delivered Clauses", "Module Impact",
-				"Selected Skills", "Lifecycle Evidence", "Closing Contract",
+				"Selected Skills", "Execution entry", "Closing Contract",
 			},
 			forbidden: []string{
 				"TaskUpdate", "SendMessage", "30 个文件", "Agent Team 分工",

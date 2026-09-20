@@ -3,6 +3,7 @@ package controller_test
 import (
 	"context"
 	"encoding/json"
+	req039fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/controller"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/hook"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
@@ -48,6 +50,10 @@ func writeLoopState(t *testing.T, state map[string]any) string {
 	claudeDir := filepath.Join(dir, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	req039fixtures.CommitFixture(t, dir)
+	if bound, ok := state["bound_req"].(map[string]any); ok {
+		bound["workspace"] = map[string]any{"project_root": dir, "dev_branch": "test-development", "release_upstream": "origin/release", "bound_commit": "fixture"}
 	}
 	raw, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -555,6 +561,7 @@ func TestRunControlCycleGateTimeoutReturnsUnknown(t *testing.T) {
 		ToolName:           "Edit",
 		ToolInput:          map[string]any{"file_path": "internal/cli/controller.go"},
 		QualityCycleBudget: 50 * time.Millisecond,
+		Files:              fileview.Disk{Root: dir},
 		GateEvaluator:      blockingSlowEvaluator{delay: 500 * time.Millisecond},
 	})
 	elapsed := time.Since(start)
@@ -669,6 +676,7 @@ func TestRunControlCycleConfiguredBudgetOverridesDefault(t *testing.T) {
 		Event:         "PreToolUse",
 		ToolName:      "Edit",
 		ToolInput:     map[string]any{"file_path": "internal/cli/controller.go"},
+		Files:         fileview.Disk{Root: dir},
 		GateEvaluator: blockingSlowEvaluator{delay: 200 * time.Millisecond},
 	})
 	elapsed := time.Since(start)

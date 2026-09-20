@@ -1,5 +1,7 @@
 # 需求：REQ-{id}
 
+> Dispatch policy: waves-v1
+
 > 名称：{需求名称}
 > 状态：draft / locked / changed / archived
 > （draft→locked 的翻转由 agent 依据人类在对话中的明确"锁定"拍板执行，见 skills: requirement-funnel）

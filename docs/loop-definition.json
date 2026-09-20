@@ -300,10 +300,16 @@
           "id": "PTR-BUG-09",
           "from": "repair_readback",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "repair_plan_compiled",
           "to": "planning",
-          "actors": ["orchestrator", "hook_controller"],
+          "actors": [
+            "orchestrator",
+            "hook_controller"
+          ],
           "guards": [],
           "actions": [],
           "required_evidence": [],
@@ -314,10 +320,16 @@
           "id": "PTR-BUG-10",
           "from": "planning",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "repair_plan_reported",
           "to": "reproducing",
-          "actors": ["orchestrator", "hook_controller"],
+          "actors": [
+            "orchestrator",
+            "hook_controller"
+          ],
           "guards": [],
           "actions": [],
           "required_evidence": [],
@@ -328,10 +340,16 @@
           "id": "PTR-BUG-11",
           "from": "reproducing",
           "selector": "SEL-BUG-OUTCOME",
-          "automation": {"eligible": true, "human_boundary": false},
+          "automation": {
+            "eligible": true,
+            "human_boundary": false
+          },
           "event": "repair_execution_started",
           "to": "fixing",
-          "actors": ["orchestrator", "hook_controller"],
+          "actors": [
+            "orchestrator",
+            "hook_controller"
+          ],
           "guards": [],
           "actions": [],
           "required_evidence": [],
@@ -2223,5 +2241,72 @@
       "statement": "Documentation fact: the compiled Go registry is the superset of the transition references declared here — 59 guards / 48 actions are registered (transition.GuardNames / transition.ActionNames) while this file's 81 transition declarations reference 58 unique guards / 33 unique actions. Registry >= definition is the invariant: every identifier referenced here MUST exist in the registry (LoadCatalog fail-closed check), but registry entries may exist without a declared consumer. Do not treat the count difference as documentation drift.",
       "enforcement": "schema"
     }
+  ],
+  "file_sources": [
+    {
+      "path": ".",
+      "source": "git_tree"
+    },
+    {
+      "path": ".claude/evidence",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/review",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/workgroups",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/plans",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/assignments",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/loop-state.json",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/loop-events.jsonl",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/decisions",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/messages",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/agents",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/integration",
+      "source": "disk"
+    }
+  ],
+  "mutable_evidence_kinds": [
+    "acceptance",
+    "bug",
+    "builder_report",
+    "completion_report",
+    "delivery_review",
+    "document_review",
+    "e2e_review",
+    "planning_contract",
+    "planning_design",
+    "planning_task",
+    "qa_review",
+    "release_audit",
+    "review_result",
+    "finding",
+    "finding_supplement"
   ]
 }

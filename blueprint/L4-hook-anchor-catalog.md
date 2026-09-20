@@ -2,7 +2,7 @@
 
 > 层：第四层｜性质：**平台侧事实库 + 选点审查纪律**。本文不定义我们的策略——它忠实收录 Claude Code 平台全部 Hook 锚点的触发时机、可阻断性与通信契约，并规定"何时允许为一个 stage 挂上新锚点"的审查流程。
 >
-> 权威来源：官方 Hooks Reference（https://code.claude.com/docs/en/hooks ，全文核对日 **2026-08-28**，文中标注的 v2.1.x 行为以官方页面为准）；owner 知识库 `/Users/lisonghao/SebsVault/LLM/Hook/Layer1-Hook.md` 提供了最初九段生命周期框架。两者冲突处以官方为准，已知差异登记在 §6。
+> 权威来源：官方 Hooks Reference（https://code.claude.com/docs/en/hooks ，目录核对日 **2026-08-28**，消息/worktree 契约复核日 **2026-09-18**，文中标注的 v2.1.x 行为以官方页面为准）；owner 知识库 `/Users/lisonghao/SebsVault/LLM/Hook/Layer1-Hook.md` 提供了最初九段生命周期框架。两者冲突处以官方为准，已知差异登记在 §6。
 >
 > 四家族分工下的位置：[Hook 与平台事件接线](L4-hook-platform-wiring.md)回答"**我们这边**怎么收发"（payload 输入、envelope 输出、失败态度）；本文回答"**平台上有哪些格子**、每个格子什么时候响、响的时候能干什么、以及凭什么决定占用哪个格子"。接线篇的十类锚点是从本目录选出的消费子集，不是平台的边界。
 
@@ -14,7 +14,7 @@
 - wiring 篇 §2 注册表的每次增删都能对照本目录给出依据；
 - 平台升级带来的新锚点/新语义有一个明确的核对入口（§6 复核条款）。
 
-## 1. 锚点总目录（31 个，按生命周期分组）
+## 1. 锚点目录（按生命周期分组；事件全集以最新官方页面为准）
 
 消费状态图例：●已接线｜◐候选（进入评审即可论证）｜○观察（暂无对应失控）｜△明确不采用（理由见备注）。
 
@@ -71,7 +71,7 @@
 | `DirectoryAdded` | 会话中期 `/add-dir` 或 SDK 注册新根（启动期 `--add-dir` 不算） | 否；后台异步跑 | source | ○ |
 | `FileChanged` | 被 watch 的文件**无论被谁**改写（工具/Bash/仓库外进程） | 否；价值在于覆盖工具途径之外的变更 | 双角色：watch 清单（`\|` 分隔的字面文件名）+ 生效过滤器 | ◐ |
 | `WorktreeCreate` | 创建隔离工作树（--worktree / isolation / 后台会话）；**配置即替换默认 git 行为**，须在 stdout 末行交回路径 | 是（失败=建树失败；官方做符号链接安全筛） | 无（输入 slug 名） | ◐ |
-| `WorktreeRemove` | 隔离树移除（清理审计） | 否，失败仅 debug 日志 | 无（输入 worktree_path） | ○ |
+| `WorktreeRemove` | 隔离树移除 | 输出消息字段丢弃；失败且目录仍存在时按平台移除失败处理，不用于向 Agent 提醒 | 无（输入 worktree_path） | ○ |
 | `Notification` | 平台通知发出（permission_prompt 约延迟 6 秒去抖） | 否；terminalSequence 仍有效 | notification_type | ○ |
 | `PreCompact` | 上下文压缩前 | 是（manual 压缩报给人；自动恢复型压缩被拦则底层错误浮出） | trigger（manual/auto） | ● |
 | `PostCompact` | 压缩完成后（携带 compact_summary） | 否 | trigger | ○ |
@@ -102,6 +102,14 @@
 **异步**：仅 command 型可 `"async": true`；后台跑、下一 turn 交付 additionalContext/systemMessage，期间不具备任何控制力（exception：`asyncRewake` 形态 exit 2 可唤醒空闲会话）；`-p` 会话结束时被杀。
 
 **权限与信任**：hooks 无沙箱、以宿主进程 OS 权限运行（知识库警示原文："像审查生产代码一样审查 hook 脚本"）；workspace trust 先于 settings 类 hook 装载（`-p` 视为信任，仓库自带 .claude/settings.json 会直接生效——审别人的仓库前用 `disableAllHooks` 或 `--bare`）；settings 合并而非覆盖、managed 层不可被下层关闭；企业可 `allowManagedHooksOnly` 收口；HTTP 白名单 `allowedHttpHookUrls` 适用于包括 managed 在内的全部来源。子代理继承 settings/plugins/skills 的 hooks（tool 事件同样触发，输入带 agent 身份）。skills/agents frontmatter 可携 hooks：subagent 的只在存活期有效（其 Stop 会被转换为 SubagentStop），skill 的注册后全会话有效（可 `once:true`）。
+
+### 2.1 消息消费者与最新机制
+
+同步 `systemMessage` 面向用户；Agent 上下文按事件放入 `hookSpecificOutput.additionalContext`，必须声明 hookEventName。PreCompact 丢弃消息字段；Stop/SubagentStop 的 additionalContext 会续跑，不能承载 worktree 纯提示。具体选点、输出协议与验收统一消费 [接线篇 §4](L4-hook-platform-wiring.md#4-输出与决策契约output-面)。
+
+PostToolUse 的 Agent 完成结果和 SubagentHandback 报告属于不同工具路径；前者 async_launched 不代表交付，后者读取 tool_input.message。扩展这两个 matcher 复用既有 PostToolUse：责任明确为报告观察和主会话回收提示，失败时不阻断，接收状态仍由 Integrator 决定，不另立完成事实源。
+
+WorktreeCreate 是创建替代器，不是观察点。当前未具备完整创建/恢复实现时保留候选，不先挂空 Hook；WorktreeRemove 也不替代项目接收/清理事务。
 
 ## 3. 当前消费组合的选取理由（为何恰是这十类）
 
@@ -155,3 +163,8 @@
 |:--|:--|:--|:--|
 | 2026-08-28 | v0.2.0 | 将 Stop、PostToolUseFailure、ConfigChange 从候选转为已接线，并同步十类消费组合；明确 PostToolUseFailure/ConfigChange 仅补审计信号，不创建第二套状态机 | HOOK-B03/B07/B09 实装与契约测试 |
 | 2026-08-28 | v0.1.0 | 初版：收录平台 31 个 Hook 锚点（九段生命周期分组 × 触发/阻断/matcher/消费状态）、全体共享机制（输入输出三层/退出码/并行优先级/matcher 语法陷阱/五类 handler 支持矩阵/超时与异步/权限信任）、现役七锚点选取理由、十个◐候选评估备忘、六问选点审查流程与注销登记制度 | owner 指示：文档不得把现用七锚点表述成边界；读 SebsVault/LLM/Hook 知识库并对照官方最新文档建立锚点全图供后续迭代对照审查 |
+
+
+### 2026-09-18 · v0.3.0
+
+复核最新官方消息/worktree 协议，完成 PostToolUse matcher 扩展选点设计。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +33,11 @@ func newUXTestRoot(t *testing.T, reqs map[string]string) string {
 	for name, body := range reqs {
 		if err := os.WriteFile(filepath.Join(root, "docs", "requirements", name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"init", "-qb", "feature/req"}, {"add", "docs"}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "stage output"}} {
+		if out, e := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); e != nil {
+			t.Fatalf("git: %s %v", out, e)
 		}
 	}
 	return root
@@ -67,7 +73,7 @@ func TestREQListClassifiesStatusesAndSkipsTemplate(t *testing.T) {
 func TestREQBindAutoInitsAndDiscoversSoleLockedREQ(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("req bind failed: code=%d stderr=%s", code, stderr.String())
 	}
@@ -96,7 +102,7 @@ func TestREQBindMultipleCandidatesRequireExplicitReq(t *testing.T) {
 		"REQ-099.md": "# REQ-099\n\n> 状态：locked\n> 版本：v1.2.0\n> UI impact：none\n",
 	})
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("multiple candidates must exit 2, got %d", code)
 	}
@@ -113,7 +119,7 @@ func TestREQBindNoBindableREQGuidesBackToS0(t *testing.T) {
 		"REQ-097.md": "# REQ-097\n\n> 状态：draft\n> 版本：v0.1.0\n> UI impact：unknown\n",
 	})
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("no bindable REQ must exit 1, got %d", code)
 	}
@@ -125,7 +131,7 @@ func TestREQBindNoBindableREQGuidesBackToS0(t *testing.T) {
 func TestREQBindApprovedByHint(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"req", "bind", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("missing --approved-by must exit 2, got %d", code)
 	}
@@ -137,7 +143,7 @@ func TestREQBindApprovedByHint(t *testing.T) {
 func TestREQBindJSONFlagReturnsState(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "ux-owner", "--json"}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--approved-by", "ux-owner", "--json"}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("json bind failed: code=%d stderr=%s", code, stderr.String())
 	}
@@ -194,13 +200,37 @@ func TestREQListExcludesTerminatedArchiveAndAutoDiscoverySkipsIt(t *testing.T) {
 func TestREQBindAlreadyBoundRoutesToAmendOrUnbind(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody, "REQ-099.md": lockedReqBody})
 	var stdout, stderr bytes.Buffer
-	if code := cli.Run([]string{"req", "bind", "--root", root, "--req", "docs/requirements/REQ-098.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+	if code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--req", "docs/requirements/REQ-098.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("first bind failed: %s", stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code := cli.Run([]string{"req", "bind", "--root", root, "--req", "docs/requirements/REQ-099.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
+	code := cli.Run([]string{"req", "bind", "--root", root, "--dev-branch", "feature/req", "--release-upstream", "origin/main", "--req", "docs/requirements/REQ-099.md", "--approved-by", "ux-owner"}, strings.NewReader(""), &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "already bound") || !strings.Contains(stderr.String(), "req amend") || !strings.Contains(stderr.String(), "req unbind") {
 		t.Fatalf("rebind must route to amend/unbind, got: %s", stderr.String())
+	}
+}
+
+func TestREQBindingUsesCommittedBytesAndExplicitDestinations(t *testing.T) {
+	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
+	if e := os.WriteFile(filepath.Join(root, "docs/requirements/REQ-098.md"), []byte(strings.Replace(lockedReqBody, "locked", "draft", 1)), 0644); e != nil {
+		t.Fatal(e)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "owner"}, strings.NewReader(""), &stdout, &stderr); code != 2 {
+		t.Fatalf("implicit branch accepted: %d", code)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"req", "bind", "--root", root, "--approved-by", "owner", "--dev-branch", "feature/req", "--release-upstream", "origin/release", "--json"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("bind: %d %s", code, stderr.String())
+	}
+	var state map[string]any
+	if e := json.Unmarshal(stdout.Bytes(), &state); e != nil {
+		t.Fatal(e)
+	}
+	binding := state["bound_req"].(map[string]any)["workspace"].(map[string]any)
+	if binding["dev_branch"] != "feature/req" || binding["release_upstream"] != "origin/release" || binding["bound_commit"] == "" {
+		t.Fatalf("lost binding: %v", binding)
 	}
 }

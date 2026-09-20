@@ -23,8 +23,8 @@ S4 要把条款宇宙转换成一批**单职责、边界明确、判据先行、
 |:--|:--|
 | 输入 | runtime 已登记的 locked contracts；CONTRACTS 条款宇宙；REQ/设计/模块真相；`planning.tasks` cursor |
 | 要搞清楚 | 如何按交付物拆单职责；每项工作的最小上下文和写边界；每条条款由谁兑现；完成证据和依赖顺序 |
-| 核心工作 | 推导原子工作包 → 定义上下文/范围 → 写 Closing Contract → 组成 DAG/看板 → 机检、complete、登记 |
-| 输出 | complete/cancelled TASK 批次；无环依赖图；条款双向覆盖；planning_task 证据；runtime 登记的 task documents |
+| 核心工作 | 推导原子工作包 → 定义上下文/范围 → 写 Closing Contract → 组成 DAG/整体派发计划 → 机检、complete、登记 |
+| 输出 | complete/cancelled TASK 批次；整体派发计划；无环依赖图；条款双向覆盖；planning_task 证据；runtime 登记的 task documents |
 | 完成 | 至少一项 complete；所有非取消任务结构成立；条款无漏项/幽灵项；DAG 无环；TR-002 提交进入 document_verification |
 | 下一阶段 | S5 用两个独立职责审查“规格链是否一致”和“这些 TASK 是否真的可执行”，通过后才锁执行批次 |
 
@@ -49,7 +49,7 @@ flowchart LR
     subgraph OUTPUT["Output"]
         O1["complete TASK batch"]
         O2["clause coverage closed"]
-        O3["acyclic DAG + board"]
+        O3["acyclic DAG + dispatch plan"]
         O4["planning_task evidence"]
         O5["registered task documents"]
     end
@@ -70,7 +70,7 @@ flowchart LR
 
 ### 1.4 S4 的边界与当前保证
 
-- **负责**：任务粒度、条款覆盖、读序、scope、预期输出、Closing Contract、TASK 级依赖和批次看板；
+- **负责**：任务粒度、条款覆盖、读序、scope、预期输出、Closing Contract、TASK 级依赖和整体派发计划；
 - **不负责**：任命实际 Builder、生成 team manifest、激活 agent 或填写执行后证据；这些发生在 S6；
 - **不锁执行**：S4 只声明 Status=complete 并在 TR-002 登记；S5 双 PASS 后的 TR-003 才建立 execution batch；
 - **机器能保证**：批次非空、状态 complete/cancelled、Primary contract 文件存在、Closing Contract 标题和至少一条 assert 在场、条款双向覆盖、依赖引用存在/未取消/无环；
@@ -84,7 +84,7 @@ flowchart LR
 | T1 推导单职责工作包 | 条款如何组合成一个 agent 可独立交付的结果 | 按用户/系统交付物聚类；每任务只设一个 Primary contract；用一句话测试拆分“以及/然后” | TASK ID、Objective、Delivered Clauses 草案 |
 | T2 定义最小读序与执行范围 | Builder 需要哪些精确上下文；能读/写/执行什么 | 写 Document Manifest、Module Impact、read/write/forbidden/output paths、command classes、skills | 自包含任务简报与 prospective scope |
 | T3 先写 Closing Contract | 什么事实证明该任务完成；证据能否由 S6/S7 产出 | 在实现前写合同条款断言、验证命令、changed-path subset 和 scope deviations | 可复验 Closing Contract 与输出/证据预期 |
-| T4 组成 DAG 与批次节奏 | 哪些地基必须先完成；哪些任务可并行；是否存在假依赖/环 | 写 TASK §8 依赖；类型/schema/迁移先于消费者；填 index 看板和关键路径 | 无环 TASK DAG、批次视图 |
+| T4 组成 DAG 与批次节奏 | 哪些地基必须先完成；哪些任务可并行；是否存在假依赖/环 | 写 TASK §8 依赖；仅真实共享实现先于消费者；编排并行波次与必要资源顺序 | 无环 TASK DAG、含并行波次和必要资源顺序的整体派发计划 |
 | T5 机检、complete、登记与推进 | 批次是否覆盖全部条款并可交 S5 | 运行 tasks check；修漏项/幽灵/环；状态改 complete/cancelled；登记 planning_task；TR-002 | registered TASK batch 与 S5 cursor |
 
 拆分不是按文件数量平均分配，而是按一个可判定交付物划边界。一个任务可以触碰多个文件，但不能同时拥有多个彼此独立的完成定义。
@@ -105,7 +105,7 @@ flowchart TD
     BACK --> PICK
     TESTABLE -->|是| MORE{"条款宇宙是否全部分配？"}
     MORE -->|否| PICK
-    MORE -->|是| DAG["T4 声明 TASK 依赖<br/>填看板与关键路径"]
+    MORE -->|是| DAG["T4 声明 TASK 依赖<br/>编排波次与资源顺序"]
     DAG --> CHECK["T5 tasks check"]
     CHECK --> PASS{"状态 / coverage / closing / DAG 通过？"}
     PASS -->|否| FIX["按 problem 修 TASK 或 CONTRACTS 索引"]
@@ -115,7 +115,7 @@ flowchart TD
     EVID --> GATE{"GATE-PLANNING-TASKS-COMPLETE"}
     GATE -->|not_ready| FIXG["补 complete TASK / evidence"]
     FIXG --> CHECK
-    GATE -->|satisfied| TR["TR-002<br/>planning_complete + tasks_checked<br/>登记 contracts + tasks"]
+    GATE -->|satisfied| TR["TR-002<br/>planning_complete + tasks_checked<br/>登记 contracts + tasks + dispatch plan"]
     TR --> S5["document_verification<br/>进入 S5"]
 ```
 
@@ -170,10 +170,10 @@ assert scope_deviations == []
 | 层次 | 权威 | 当前检查 |
 |:--|:--|:--|
 | TASK 间语义依赖 | TASK §8 的 TASK-* 引用 | 目标存在、目标未 cancelled、无环并报告 cycle path |
-| 批次总览 | `index-template.md` 的任务矩阵与关键路径 | 人向视图，无自动同步 |
+| 整体派发计划 | REQ 的 index：精确成员、波次与编排理由 | waves-v1 按 §9 对账成员、波次、依赖/资源顺序；legacy index 明确给诊断 |
 | S6 assignment 依赖 | 后续 team manifest | manifest 内引用和无环；不是 S4 TASK DAG 的替代 |
 
-只有 TASK-* 会进入当前 DAG。非 TASK 值会被明确报错而不是静默丢边。机器能发现环和悬空引用，却不能发现缺失边、假边或本应先做的 schema/迁移地基；这些由 S4 自审与 S5 半问判断。
+只有 TASK-* 会进入当前 DAG。非 TASK 值会被明确报错而不是静默丢边。机器能发现环和悬空引用，却不能发现缺失边、假边或本应先做的 schema/迁移地基；这些由 S4 自审与 S5 显式编排审查判断。
 
 ### 4.5 T5 — 机检、状态、证据与 TR-002
 
@@ -200,7 +200,7 @@ assert scope_deviations == []
 | 完成判据 | Task Planner | TASK §6/§7 | Builder report、S7 |
 | 依赖与调度 | Task Planner | TASK §8 + index | tasks check、S6 team planning |
 | 结构对账 | harness | semantic.TasksCheck | TR-002 |
-| 可执行性判断 | S5 verifier | 五问+半问 | TR-003 |
+| 可执行性判断 | S5 verifier | 五问与整体编排审查 | TR-003 |
 | 实际任命/激活 | S6 orchestrator/harness | workgroup manifest、agent-event | Builder/hook |
 | 文档指纹登记 | TR-002/store | documents[] + journal | S5/hook |
 
@@ -208,9 +208,9 @@ assert scope_deviations == []
 
 - TASK §3 和 CONTRACTS index 不双写同一事实：index 是 universe，TASK 是 coverage declaration；
 - TASK DAG 和 S6 assignment DAG 不等价：前者表达交付物依赖，后者表达一次派发内部的调度；
-- TASK 文档 Status 和 index 看板进度正交：complete 是“任务书完成”，pending/in-progress/done 是“执行进度”；
+- TASK/计划文档 Status 与 S6 实时投影正交：complete 是“文档完成”，执行进度不回填冻结 index；
 - **Closing Contract 强度缺口**：机器只查一条 assert 在场，不查四类断言及可执行性；
-- **scope 缺口**：当前 `tasks check` 不做任务间 write-path overlap 检测；旧文档关于“有 overlap problem”的说法不符合实现；
+- **scope 缺口**：waves-v1 `tasks check` 对任务间 write-path overlap 给诊断，legacy 无该检查；旧文档关于“有 overlap problem”的说法不符合实现；
 - **作用域缺口**：clause universe 聚合所有 `CONTRACTS-*.md`，Primary contract 只要文件存在即可，不验证属于当前 generation 或 status=locked；
 - **粒度缺口**：单职责、跨端混装、compact 风险、缺边/假边都是判断层；
 - **时序缺口**：Team manifest、Assignment、Builder、§9 Lifecycle Evidence 只有 S6 之后才存在，但 TASK 在 S5 后不可写；这些字段应改为期望/外部索引或移出静态 TASK；
@@ -250,7 +250,7 @@ assert scope_deviations == []
 
 - `docs/tasks/TASK-*.md`：至少一项 complete，取消项明确 cancelled；
 - 每项 complete TASK 的 Objective、Primary contract、Delivered Clauses、Module Impact、Scope、Skills、Outputs/Evidence、Closing Contract 和 Dependencies；
-- `docs/tasks/index-*.md` 或当前看板：任务矩阵、关键路径和人向进度视图；
+- `docs/tasks/index-REQ-<id>.md`（已有路径可保留登记）：整体派发计划，含 TASK 文件链接清单、并行波次、必要资源次序及理由；
 - valid planning_task 证据信封；
 - TR-002 后 runtime 中的 contract/task documents 与 `document_verification` cursor。
 
@@ -284,10 +284,10 @@ assert scope_deviations == []
 - 一个 Primary contract 是设计纪律，机器目前不会阻止 §3 覆盖多合同；
 - support TASK 可无条款，但不能拿它填补 universe 覆盖；
 - cancelled TASK 的条款退出聚合，依赖它的任务会报错；
-- `tasks check` 不判断写路径 overlap，也不证明 assert 可运行；
+- waves-v1 对写路径 overlap 提供保守诊断，但不证明语义安全或 assert 可运行；
 - read-size 是参考，目录路径可能记为 0，不能当容量证明；
 - S6 才出现的 manifest/agent/evidence 不能伪造后写进 S4 静态任务；
-- index 的进程状态可更新，locked TASK 的内容不能在 S6 直接回填。
+- 冻结 index 是正式派发计划，进度只在 S6 实时投影更新；计划与 locked TASK 均不得回填执行态。
 
 ### 8.2 阅读预算
 
@@ -300,3 +300,25 @@ assert scope_deviations == []
 | S5 reviewer | TASK 批次、reference load、contracts | 风险触发专项 | 机器已经完成的覆盖算术 |
 
 机器算术已承载的覆盖和环不要求 planner 复算；人的注意力集中在单职责、自包含、语义依赖和可测性。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+Document Manifest 使用带目的的相对 Markdown 文件链接及稳定锚点。必读清单有限有序；只对真实共享实现建立 TASK 依赖，双方独立生成类型可并行。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+## 9. 整体派发计划交付契约
+
+> 2026-09-19 规范修订。以下是 S4 正式要求；waves-v1 已接入 plans/tasks 对账和 TR-002 注册，§1.4、§4.5 的基础检查继续适用于 legacy。机制定义见 [L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan)。
+
+T4 必须交付每个 REQ 的整体派发计划，升级现有 index，不另建重复看板。正文为按 W1、W2…组织的 TASK Markdown 链接 todo 清单；同波默认可并行，每个非取消任务恰好出现一次。入口链接 REQ/CONTRACTS，简述并行边界、必要资源顺序及执行入口。任务目标、scope、依赖和 checks 只引用 TASK，不重复维护。
+
+先解析真实产物依赖，再处理不能通过缩小写域、唯一 owner 或隔离消除的资源冲突。独立任务应放同波；仅共享只读 Schema 的 FE/BE 不增加前置。资源顺序与 TASK 依赖联合查环；没有必要约束的延后必须接受 S5 对假串行的审查。
+
+T5 在当前 REQ 范围内对账 TASK 声明、计划成员与合同覆盖，包括 support TASK；取消项退出执行但不能掩盖覆盖缺口。归属不明的 legacy TASK 给具体诊断，不自动吞入或漏掉。计划和 TASK 提交后，TR-002 按上游 Git tree 视图登记，交 [S5](L3-S5-document-verification.md#dispatch-review) 审签。
+
+S4 不任命真实 Agent，不填写运行进度；空 checkbox 表示待执行计划项。依赖满足状态、owner、生命周期证据通过外部运行入口查阅，不能要求 S6 回填冻结文件。规范入口、格式和波次语义统一消费 L4 §17。
+
+正式出口增加：计划结构完整、成员闭合、波次不违反真实依赖和已声明资源顺序、已提交且登记。机器检查结构；并行安全、假依赖和任务粒度仍由 S5 判断。
+
+修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。

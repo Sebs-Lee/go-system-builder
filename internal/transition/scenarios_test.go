@@ -73,7 +73,7 @@ func inactiveState(rev int) map[string]any {
 
 func applyT(t *testing.T, root, id string, rev int, actor string, evidence map[string]string) error {
 	t.Helper()
-	_, err := transition.Apply(root,
+	_, err := applyFixture(root,
 		filepath.Join(root, ".claude", "loop-state.json"),
 		filepath.Join(root, ".claude", "loop-events.jsonl"),
 		transition.Request{TransitionID: id, ExpectedRevision: rev, Actor: actor, Evidence: evidence})
@@ -84,7 +84,7 @@ func applyT(t *testing.T, root, id string, rev int, actor string, evidence map[s
 // (TR-001 bind, TR-020 amend).
 func applyTWithREQ(t *testing.T, root, id string, rev int, actor string, evidence map[string]string, req *transition.LockedREQ) error {
 	t.Helper()
-	_, err := transition.Apply(root,
+	_, err := applyFixture(root,
 		filepath.Join(root, ".claude", "loop-state.json"),
 		filepath.Join(root, ".claude", "loop-events.jsonl"),
 		transition.Request{TransitionID: id, ExpectedRevision: rev, Actor: actor, Evidence: evidence, REQ: req})

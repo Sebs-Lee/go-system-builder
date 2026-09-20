@@ -4,7 +4,7 @@
 >
 > 阅读顺序：先读 §1～§3 理解一次绑定怎样成立；真正执行时按 §4 看每一步由谁和什么机制承载；§5 单独说明贯穿后续 stage 的授权控制面；§6～§8 供审计和遇错时查阅。S1 的主线是一笔一次性授权提交，不把暂停、修订、解绑等跨阶段动作混进正常绑定路径。
 
-> **Revision 口径**：Runtime `revision` 是 Writer 内部生成的提交序号，不是绑定授权、人类决策或 Agent 的正常输入。主会话只提交候选 REQ、授权人和业务意图；锁、原子写、journal、pending 及 revision 分配由 Runtime Writer 完成。详见 [L4 Runtime revision 使用与命令协调](L4-revision-usage.md)。
+> **Revision 口径**：Runtime `revision` 是 Writer 内部生成的提交序号，不是绑定授权、人类决策或 Agent 的正常输入。主会话提交候选 REQ、授权人、开发主分支、发布上游和业务意图；锁、原子写、journal、pending 及 revision 分配由 Runtime Writer 完成。详见 [L4 Runtime revision 使用与命令协调](L4-revision-usage.md)。
 
 ## 1. 第一层：S1 的立意与目标
 
@@ -13,7 +13,7 @@
 S0 产出的 locked REQ 只证明“这份需求语义已经被人锁定”。它还没有回答运行时必须知道的四个问题：
 
 1. **这次生命周期唯一获准处理哪一份 REQ**；
-2. **获准的是磁盘上的哪一个精确版本**，而不是同路径下后来被改写的内容；
+2. **获准的是开发主分支已提交树中的哪一个精确版本**，而不是同路径下后来被改写的内容；
 3. **谁明确授权启动这次生命周期**；
 4. **后续 hook、gate 和审计应从哪一份权威状态继续工作**。
 
@@ -25,11 +25,11 @@ S1 也不是一个可驻留的工作阶段。TR-001 成功后 runtime 从 inacti
 
 | 项目 | 定义 |
 |:--|:--|
-| 输入 | 一份 human-locked REQ；缺失或新鲜 inactive runtime；当前 loop definition / policy / schema；人的显式绑定授权 |
+| 输入 | 开发主分支中一份已提交的 human-locked REQ；显式开发主分支与最终发布上游；缺失或新鲜 inactive runtime；当前 loop definition / policy / schema；人的显式绑定授权 |
 | 要搞清楚 | 哪个候选可绑定、是否只有一个选择、授权是否明确、控制面是否无漂移、提交后能否形成唯一且完整的权威起点 |
 | 核心工作 | 发现并复核候选 → 获取最小人类授权 → 通过 TR-001 原子登记 → 核对回执并把控制权交给 S2 |
-| 输出 | `bound_req` 路径/版本/SHA/审批人；runtime authorization；generation=1；REQ 进入 `documents[]`；首条 journal；cursor=`planning.design` |
-| 完成 | 状态、回执和 journal 对同一次 TR-001 给出一致答案；磁盘 REQ 指纹与登记值一致；下一步唯一指向 S2 |
+| 输出 | `bound_req` 路径/版本/SHA/审批人及 project_root/dev_branch/release_upstream/bound_commit；runtime authorization；generation=1；REQ 进入 `documents[]`；首条 journal；cursor=`planning.design` |
+| 完成 | 状态、回执和 journal 对同一次 TR-001 给出一致答案；绑定 commit 内的 REQ 指纹与登记值一致；下一步唯一指向 S2 |
 | 下一阶段 | S2 从 runtime 投影读取唯一授权对象和当前 cursor，开始设计；不靠对话记忆或人工复制上下文 |
 
 ### 1.3 Overview：输入、主步骤与输出
@@ -72,11 +72,19 @@ flowchart LR
 ### 1.4 S1 的边界
 
 - **负责**：候选发现、可绑定性检查、显式授权、指纹登记、唯一性、原子提交、审计首条、下一阶段投影；
-- **不负责**：重新评审需求内容。REQ 的语义质量属于 S0；S1 只复核可机械判定的 locked 状态、版本、命名、UI impact 和磁盘 SHA；
+- **不负责**：重新评审需求内容。REQ 的语义质量属于 S0；S1 只复核可机械判定的 locked 状态、版本、命名、UI impact 和指定 commit 的 SHA；
 - **不负责**：设计、契约或任务拆分。绑定成功后直接把唯一基线交给 S2；
 - **不要求**：每次先运行 `doctor` 或 `validate --all`。bind 自带初始化、候选发现和控制面预检；两者只在报错、漂移或仓库健康诊断时按需使用；
 - **不允许**：人工编辑 loop-state 或 journal 来“补一次绑定”。失败必须由事务恢复、reconcile 或重新执行安全路径处理；
 - **不等同**：locked 表示需求语义冻结，bound 表示当前 runtime 已获授权；文件状态不能替代 runtime 生命周期状态。
+
+### 1.5 分支与读取来源契约
+
+绑定同时显式声明开发主分支与最终发布上游（远程目标包含 remote）；没有 develop 默认值，不由当前分支、origin 默认分支或 tracking upstream 隐式补全。REQ 候选发现与校验来自已解析的开发分支 commit；磁盘 draft/locked、仅暂存内容均不能绑定为已交付基线。
+
+project_root、dev_branch、release_upstream、bound_commit 随 TR-001 与 REQ 指纹、授权、journal 原子登记，回执披露同一组事实。开发目标与最终发布目标各司其职：集成不消耗发布授权，不自动推送。
+
+普通 Hook 不改变绑定，分支偏离或成果尚未回收只提示主会话。历史绑定缺少分支时显式补全，不猜默认。amend 保留已有 workspace 绑定；变更目标必须显式声明并留审计。详细身份与生命周期见 [L4 Worktree](L4-worktree-governance.md)，文件读取见 [L4 状态机核心 §5.4](L4-state-transition-core.md#54-上游输入契约与文件视图)。
 
 ## 2. 第二层：S1 的任务分解
 
@@ -85,7 +93,7 @@ S1 只有四项顺序任务。前三项决定“能不能授权”，第四项�
 | 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
 |:--|:--|:--|:--|
 | T1 发现候选并预检 | 哪份 locked REQ 可绑定；是否存在歧义；runtime 是否允许首次绑定 | 缺失时自动 init；扫描候选；检查元数据、当前 runtime、控制面漂移；多候选时停下交人选择 | 唯一可提交的 REQ 路径，或带下一步的明确拒绝 |
-| T2 确认最小人类授权 | 人是否明确同意以该 REQ 启动这次生命周期；审计记名是什么 | 人直接执行，或明确指令主会话代跑；提供 `--approved-by`；通过工具权限确认保留人在场边界 | 针对“绑定这个对象”的单次授权意图与记名 |
+| T2 确认最小人类授权 | 人是否明确同意以该 REQ 启动这次生命周期；审计记名是什么 | 人直接执行，或明确指令主会话代跑；提供 `--approved-by`、`--dev-branch` 与 `--release-upstream`；通过工具权限确认保留人在场边界 | 针对“绑定这个对象”的单次授权意图与记名 |
 | T3 TR-001 原子绑定 | 能否把候选、授权和状态起点作为一笔事务写入 | 重算 SHA；验证 guard/evidence；执行 bind 与 authorization action；由 Writer 在锁内完成 pending marker + journal 原子落盘并分配 revision | 唯一 `bound_req`、authorization、generation=1、首条 journal |
 | T4 核对回执与状态投影 | 人和后续系统能否得到同一个权威答案 | 读取命令回执；确认 event/cursor/generation/指纹；后续 hook 每次重读 runtime | 可见回执 + `planning.design` 权威投影，交给 S2 |
 
@@ -138,7 +146,7 @@ flowchart TD
 | 模板输入 | 不创建 S1 专属模板；只消费 S0 REQ 顶部的状态、版本、UI impact 与文件路径，正文语义不在本阶段重复填写 |
 | 方法载体 | 正常路径依赖 hook/status 投影和 bind 回执；需要初始化、恢复或进入 pause/resume 控制动作时，才按需加载 `loop-orchestration` |
 | 自动化承载 | runtime 缺失时自动 init；零候选列出原因；唯一候选自动选中；多候选拒绝猜测并要求显式 `--req` |
-| 文件检查 | 顶部状态必须为 locked，版本非空，文件名符合 REQ- 前缀，UI impact 为合法三值；提交前由引擎重读磁盘并重算 SHA |
+| 文件检查 | 顶部状态必须为 locked，版本非空，文件名符合 REQ- 前缀，UI impact 为合法三值；提交前由引擎从同一已解析 Git tree 重读并重算 SHA；分支移动则重试评估 |
 | runtime 检查 | 必须是新鲜 inactive、无其他活跃授权、TR-001 journal 为空；definition / policy 与 runtime 记录不能漂移 |
 | 诊断工具 | `doctor`、`validate --all`、`runtime reconcile` 只在对应报错或健康诊断时加载，不成为成功路径阅读税 |
 | 完成产出 | 唯一 REQ 路径和可提交快照；否则给出可行动的返回路径 |
@@ -166,7 +174,7 @@ flowchart TD
 | guard | `no_other_active_loop`；Store 在 Writer 锁内检查 fresh inactive 和空 journal，形成结构性唯一性；revision 不由 Agent 提供 |
 | 证据 | `req_lock_record` 绑定 path@SHA；`loop_authorization_record` 绑定 approved-by |
 | actions | `bind_loop_req` + `record_loop_authorization` |
-| 写入事实 | runtime_id、bound_req 的 id/path/version/SHA/status/approved_by/approved_at/UI impact；authorization；generation=1；REQ 登记进 `documents[]` |
+| 写入事实 | runtime_id、bound_req 的 id/path/version/SHA/status/approved_by/approved_at/UI impact 与 workspace 绑定；authorization；generation=1；REQ 登记进 `documents[]` |
 | 审计事实 | event=`req_bound`、last_transition 与 journal 首条同步记录 |
 | 写入安全 | Writer 锁、pending marker → 状态写入 → journal append → marker 清理；revision 作为内部提交记录；崩溃后由恢复或 reconcile 对账 |
 | 完成产出 | 一份不存在“双绑定”和“半绑定”的 runtime 起点 |
@@ -180,7 +188,7 @@ flowchart TD
 | 回执事实 | 应得到的答案 |
 |:--|:--|
 | 绑定对象 | REQ id/path/version 与预期候选一致 |
-| 指纹 | 回执 SHA 前缀对应 runtime 中完整 SHA，且与磁盘重算一致 |
+| 指纹 | 回执 SHA 前缀对应 runtime 中完整 SHA，且与绑定 commit 内的字节重算一致 |
 | 授权 | approved-by 已写入 bound_req / authorization |
 | 生命周期 | cursor=`planning.design`，generation=1，event=`req_bound` |
 | 下一步 | 唯一指向 S2，而不是要求人工再改状态或再做一次迁移 |
@@ -258,7 +266,7 @@ stateDiagram-v2
 - **自动发现与人类选择不重叠**：唯一候选没有选择成本，多候选才触发人闸；
 - **对话手势、权限确认和 journal 不重复**：分别证明意图、人在场和持久审计；
 - **runtime、命令回执和 hook 投影不形成多权威**：runtime 是事实源，后两者只是面向不同消费者的投影；
-- **CLI 快检与 engine 复核是必要覆盖**：前者尽早给人话错误，后者防止检查到提交之间的磁盘变化；
+- **CLI 快检与 engine 复核是必要覆盖**：前者尽早给人话错误，后者防止检查到登记之间的来源 commit 或授权对象变化；
 - **不增设绑定广播或 `/goal`**：hook 每次重读已足够；持续驱动器与一次性人在场授权语义不一致；
 - **诚实缺口一**：`--approved-by` 不能密码学证明真实身份，安全仍依赖权限边界与协议纪律；
 - **诚实缺口二**：同一终态 REQ 在 rollover 后可被显式重新绑定，当前没有 cooldown 或“禁止无变化重开”的机械门；先作为可观测风险保留，不凭想象加机制；
@@ -287,7 +295,7 @@ stateDiagram-v2
 
 S1 的交付物不是新文档，而是一组彼此一致的 runtime 事实：
 
-- `bound_req`：REQ id、path、version、完整 SHA-256、status、approved_by、approved_at、UI impact；
+- `bound_req`：REQ id、path、version、完整 SHA-256、status、approved_by、approved_at、UI impact，以及 project_root/dev_branch/release_upstream/bound_commit；
 - `authorization`：本周期的授权记录；
 - `baseline.generation=1`，且 REQ 进入 `documents[]`，成为后续指纹保护对象；
 - `last_transition` 与 journal 首条：TR-001 / `req_bound`；
@@ -299,7 +307,7 @@ S1 的交付物不是新文档，而是一组彼此一致的 runtime 事实：
 | 判定 | 必须满足 |
 |:--|:--|
 | 对象唯一 | runtime 只有一个 active bound_req，候选与人的授权对象一致 |
-| 基线精确 | 登记 path/version/SHA 与磁盘 locked REQ 一致，UI impact 合法 |
+| 基线精确 | 登记 path/version/SHA 与绑定 commit 的 locked REQ 一致，UI impact 合法 |
 | 授权成立 | approved-by 与 authorization 已落盘，TR-001 的人边界得到满足 |
 | 状态完整 | generation=1、REQ 已在 `documents[]`、cursor=`planning.design` |
 | 审计完整 | state、last_transition、journal 和命令回执指向同一 `req_bound` |
@@ -342,3 +350,8 @@ S1 的交付物不是新文档，而是一组彼此一致的 runtime 事实：
 | 审计者 | bound_req、authorization、generation、journal/transition 一致性 | unbind/abort/rollover manifest 与 human decision scope | 正常执行时的交互细节 |
 
 渐进披露原则保持简单：正常绑定只暴露一个候选、一条授权命令和一份回执；出现歧义才暴露 `--req`，出现风险才暴露 `--force`，出现异常才加载 doctor/reconcile；机制已经保证的唯一性、原子性和恢复流程不转写成每次必读的操作清单。
+
+
+### 2026-09-18 · v1.1.0
+
+绑定原子登记显式开发/发布分支，并从指定 Git tree 发现和绑定 REQ。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。

@@ -114,7 +114,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	}
 
 	// --- planning_complete points at PTR-PLAN-02 when nothing is registered ---
-	if _, stderr, code := run("req", "bind", "--root", root, "--approved-by", "bob"); code != 0 {
+	if _, stderr, code := run("req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root), "--approved-by", "bob"); code != 0 {
 		t.Fatalf("bind failed: %s", stderr)
 	}
 	if _, stderr, code := run("runtime", "transition", "--root", root,
@@ -143,6 +143,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 
 	// --- tasks_checked surfaces at guard level, not just CLI ---
 	write("docs/tasks/TASK-600-02.md", strings.Replace(readFile(t, root, "docs/tasks/TASK-600-02.md"), "| BE-600 | §2 |", "| BE-600 | §2, §7 |", 1))
+	commitStageFixture(t, root)
 	_, stderr, code = run("runtime", "transition", "--root", root,
 		"--id", "TR-002", "--expected-revision", "2", "--actor", "orchestrator")
 	if code == 0 || !strings.Contains(stderr, "tasks_checked") || !strings.Contains(stderr, "BE-600 §7") {
@@ -159,6 +160,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	}
 
 	// --- TR-002 passes with EMPTY evidence and registers the batch ---
+	commitStageFixture(t, root)
 	if _, stderr, code = run("runtime", "transition", "--root", root,
 		"--id", "TR-002", "--expected-revision", "2", "--actor", "orchestrator"); code != 0 {
 		t.Fatalf("TR-002 must pass with empty evidence (required_evidence is empty): %s", stderr)
@@ -199,6 +201,7 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	writeJSONMap(t, statePath, state)
 	rev := int(state["revision"].(float64))
 	write("docs/tasks/TASK-600-01.md", strings.Replace(readFile(t, root, "docs/tasks/TASK-600-01.md"), "v1.0.0", "v1.1.0", 1))
+	commitStageFixture(t, root)
 	for _, step := range []struct {
 		id  string
 		rev int
@@ -240,8 +243,8 @@ func TestS4TasksCheckEmptyRoot(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"tasks", "check", "--root", root, "--json"}, strings.NewReader(""), &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("empty repo check should exit 0 with problems in JSON envelope, got %d %s", code, stderr.String())
+	if code != 1 {
+		t.Fatalf("empty repo check should exit 1 with problems in JSON envelope, got %d %s", code, stderr.String())
 	}
 	var result struct {
 		Tasks    int      `json:"tasks"`

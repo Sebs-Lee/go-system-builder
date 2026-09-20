@@ -1,6 +1,6 @@
 # L3-S5 — 文档验证（Document Verification）
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 前置：S4 registered TASK batch ｜ 下游：S6 构建
+> 层：第三层 ｜ 上游：L2 §S5 ｜ 前置：S4 registered TASK batch + 整体派发计划 ｜ 下游：S6 构建
 >
 > 阅读顺序：§1～§3 先建立“为什么审、审什么、如何分流”的完整漏斗；§4 再映射 reviewer、REV 信封、quality gate 和 transition；§5～§8 审计职责、真实强制边界、出口和易错点。本文把“审查者应做的判断”与“当前代码已经强制的事实”分开表述。
 
@@ -21,10 +21,10 @@ S5 因而不是再写一层规格，而是在写第一行实现代码前，用�
 
 | 项目 | 定义 |
 |:--|:--|
-| 输入 | runtime `documents[]` 中当前登记的 REQ、design、contracts、TASK 指纹；S2 模块场景包等补充材料；S4 `tasks check` 结果；`document_verification` cursor |
-| 要搞清楚 | 规格链有没有断裂/矛盾；TASK 能否按声明范围完成；哪些风险专项被触发；两份结论签的是不是同一批当前文档 |
+| 输入 | runtime `documents[]` 中当前登记的 REQ、design、contracts、TASK 与整体派发计划指纹；S2 模块场景包等补充材料；S4 `tasks check` 结果；`document_verification` cursor |
+| 要搞清楚 | 规格链有没有断裂/矛盾；TASK 能否按声明范围完成且编排能有效并行；哪些风险专项被触发；两份结论签的是不是同一批当前文档 |
 | 核心工作 | 组建双职责 → 锚定被审对象 → 两路独立审查 → 写 REV 证据/必要 findings → gate 聚合并分流 |
-| 输出 | 两条 `document_review` 证据；有 finding 时的 REV 报告；PASS 时建立的 execution batch，或明确的修文档/改需求路由 |
+| 输出 | 两条 `document_review` 证据；有 finding 时的 REV 报告；PASS 时原子锁定的派发计划与 execution batch，或明确的修文档/改需求路由 |
 | 完成 | `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY` 均由不同 producer 给出当前轮 PASS；subject 精确匹配且已登记文档无漂移；TR-003 进入 building |
 | 下一阶段 | S6 只在已签收的执行基线上任命 Builder、激活 scope 并产出实现证据 |
 
@@ -86,7 +86,7 @@ flowchart LR
 | T1 组建双职责与独立关系 | 谁分别回答“一致吗”和“做得完吗”；如何避免同人双签 | 建 team manifest；任命两个 document-verifier；声明 independence separation edge；按文档特征标记触发专项 | 两个不同 agent 的职责分配 |
 | T2 锚定 subject 并激活审查者 | 每个人究竟签哪一版；是否读懂职责和交付 | readback；activation envelope；从 runtime 当前 `documents[]` 形成完整 `subject_refs`；先落 REV JSON 骨架 | 可追踪的审查上下文与证据骨架 |
 | T3 审规格一致性 | REQ→设计→合同→TASK 是否语义闭合 | 核验引用和版本；走查 AC/NFR/错误路径；对账 FE/BE/SYNC 边界；参考场景包 | `DV-SPEC-CONSISTENCY` 结论与 findings |
-| T4 审任务可执行性 | Builder 是否能在范围、依赖和证据约束下完成 | 消费 `tasks check`；逐 TASK 做五问+半问；执行迁移、集成、critical 风险等触发审查 | `DV-TASK-EXECUTABILITY` 结论与 findings |
+| T4 审任务可执行性 | Builder 是否能在范围、依赖和证据约束下完成 | 消费 `tasks check`；逐 TASK 做五问 + 整体编排审查；执行迁移、集成、critical 风险等触发审查 | `DV-TASK-EXECUTABILITY` 结论与 findings |
 | T5 登记证据、聚合与分流 | 两个结论能否共同授权构建；失败回哪里 | 完成并登记 REV envelope；运行 document gate；按 PASS/FIX/REQ-change 走 TR-003/004/005 | execution batch，或受控返工/人闸 |
 
 这五项任务形成一个漏斗：先确定谁审，再固定审查对象，然后各自回答正交问题，最后才聚合结论。不能先看结果再补 `subject_refs`，也不能让一个 reviewer 代另一个 reviewer 签字。
@@ -103,7 +103,7 @@ flowchart TD
     READ --> SUBJECT["复制当前 documents[]<br/>形成完整 subject_refs"]
     SUBJECT --> SKELETON["先写各自 REV JSON 骨架"]
     SKELETON --> A["T3 DV-SPEC-CONSISTENCY<br/>规格一致性 + 风险深挖"]
-    SKELETON --> B["T4 DV-TASK-EXECUTABILITY<br/>五问+半问 + 触发专项"]
+    SKELETON --> B["T4 DV-TASK-EXECUTABILITY<br/>五问 + 整体编排审查 + 触发专项"]
     A --> CA{"A conclusion"}
     B --> CB{"B conclusion"}
     CA -->|finding| RA["写 findings-only REV 报告"]
@@ -174,7 +174,7 @@ S5 的 review round 是 0，模板不要求显式填写 `review_round`。`subjec
 
 ### 4.4 T4 — 任务可执行性审查
 
-`DV-TASK-EXECUTABILITY` 先消费 S4 `tasks check` 的结构结果，不重复手算 coverage 和 DAG；注意当前 TasksCheck 只证明结构地板。每个 TASK 继续回答五问+半问：
+`DV-TASK-EXECUTABILITY` 先消费 S4 `tasks check` 的结构结果，不重复手算 coverage 和 DAG；注意当前 TasksCheck 只证明结构地板。每个 TASK 继续回答五问 + 整体编排审查：
 
 | 问题 | 判定焦点 | 当前机器帮助 |
 |:--|:--|:--|
@@ -183,7 +183,7 @@ S5 的 review round 是 0，模板不要求显式填写 `review_round`。`subjec
 | 3. 依赖语义 | 地基是否先于消费者；有没有缺失边、假边或单链瓶颈 | 只查引用/取消目标/环 |
 | 4. 自包含 | 路径、条款、scope 是否足够精确，不要求 Builder 重做全仓探索 | 无语义检查 |
 | 5. 可测性前向 | Closing Contract 的命令和证据能否在 S6 产出、S7 复验 | 只查出现 Closing Contract 和至少一条 `assert` |
-| 半问：批次节奏 | 可并行项是否被假依赖串行；关键路径是否不必要地过长 | DAG 结构可见，节奏靠判断 |
+| 整体编排（必审） | 同波边界是否兼容；是否缺前置、存在假串行或共享资源遗漏；下游能否及时释放 | waves-v1 对账成员、波次和联合环；资源/写域重叠给诊断，语义仍需审查 |
 
 按条件增加三类专项：数据模型变化时检查迁移/破坏性决策；存在 SYNC/外部依赖时检查 timeout、retry、degrade 与错误翻译；critical coverage 时检查 S7 风险维度是否已有落点。这些专项目前由信封指名和 reviewer 自查触发，没有 machine gate 证明“命中条件就一定审过”。
 
@@ -322,3 +322,27 @@ gate 中存在 reviewer-vs-author 检查逻辑，但当前有机登记普遍把 
 | gate 收口 | 两条 evidence、runtime documents、drift/conflict | 对应错误诊断 | 人工重做语义审查 |
 
 S5 的最小心智模型应始终是：**两个正交问题、同一批精确对象、两份独立签字、三种明确去向**。其余深挖只在文档特征触发时展开。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+审查 subjects 包含共同模型、传递 Schema 及样例；冻结前比对 S3 登记内容。新批次必须明确模型策略，legacy 诊断不是新设计已验证的证明。独立审查模型是否符合 REQ/S2。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+<a id="dispatch-review"></a>
+## 整体派发计划审签契约（2026-09-19）
+
+S5 必须显式审查 [S4 整体派发计划](L3-S4-task-split.md#9-整体派发计划交付契约)，不再将批次节奏视为可选半问。机制规则见 [L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan)；waves-v1 首版已完成计划注册与 exact-subject 接线；语义编排审查仍由既有两路 Reviewer 负责。
+
+| 既有职责 | 对整体计划的责任 |
+|:--|:--|
+| DV-SPEC-CONSISTENCY | 同一 REQ、合同与 TASK 集合闭合；未遗漏交付；共享设计输入未被错误转为实现依赖 |
+| DV-TASK-EXECUTABILITY | 同波能否真正并行；是否漏真实前置或可变资源；公共修改是否有 owner；是否假串行；是否可在前置集成后及时补位 |
+
+保留两路独立审查，不新增第三份 PASS。finding 精确链接波次、TASK 或资源例外；通过结论明确覆盖计划，不要求逐任务复制审查表。机器提供成员、链接、环与版本结果，Reviewer 负责语义。
+
+计划进入两路适用的精确 subjects，TR-003 原子锁定该计划指纹与同一精确 TASK 集合。计划身份独立于 TASK 和架构设计，不得改变 S6 任务分母或充当 S2 设计。审签后更改成员、波次、资源顺序、依赖或 scope 必须走已有规划返工和重新审签；不能通过 mutable evidence SHA 刷新追认。
+
+容量调整、运行进度及按真实依赖提前释放不改变静态计划，不重做 S5。审查后的入口为 [S6 持续派发](L3-S6-build.md#dispatch-execution)。
+
+修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。

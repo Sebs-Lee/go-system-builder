@@ -30,3 +30,8 @@ Builder command evidence belongs in `TASK-*`; delivery correctness belongs in `R
 | Frontend | `FE-contract-template.md` |
 | Backend | `BE-contract-template.md` |
 | Sync/API | `SYNC-contract-template.md` |
+
+
+## Shared model authority
+
+Follow [shared-model contracts](../rules/shared-model-contracts.md). Data shape has one native authoring source; SYNC owns shared behavior, FE/BE derive responsibilities. Structural negative examples fail schema validation; business negatives remain valid data and are rejected by the business rule.

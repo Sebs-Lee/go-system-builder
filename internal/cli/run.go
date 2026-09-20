@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 	"io"
 	"os"
 	"path/filepath"
@@ -212,8 +214,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func runREQ(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "workspace" {
+		return runWorkspaceBind(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || (args[0] != "bind" && args[0] != "list" && args[0] != "unbind" && args[0] != "amend") {
-		fmt.Fprintln(stderr, "req requires <bind|list|unbind|amend>")
+		fmt.Fprintln(stderr, "req requires <bind|list|unbind|amend|workspace>")
 		return 2
 	}
 	if args[0] == "list" {
@@ -231,6 +236,8 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	root := flags.String("root", ".", "repository root")
 	reqPath := flags.String("req", "", "locked REQ path (default: auto-discover the sole bindable REQ)")
 	approvedBy := flags.String("approved-by", "", "human approver identity")
+	devBranch := flags.String("dev-branch", "", "explicit REQ development branch")
+	releaseUpstream := flags.String("release-upstream", "", "explicit final release destination (include remote when remote)")
 	asJSON := flags.Bool("json", false, "machine-readable state output")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
@@ -243,6 +250,17 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		}
 		return 2
 	}
+	binding, bindErr := workspace.Bind(*root, *devBranch, *releaseUpstream)
+	if bindErr != nil {
+		fmt.Fprintln(stderr, bindErr)
+		return 2
+	}
+	view, viewErr := fileview.New(*root, "refs/heads/"+binding.DevBranch, []fileview.Rule{{Path: ".", Source: "git_tree"}})
+	if viewErr != nil {
+		fmt.Fprintln(stderr, viewErr)
+		return 1
+	}
+	binding.BoundCommit = view.Commit
 	// Info lines go to stderr in --json mode so stdout stays a single valid
 	// JSON document for scripts.
 	infoW := io.Writer(stdout)
@@ -262,7 +280,7 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if *reqPath == "" {
-		candidates := bindableOnly(*root)
+		candidates := committedBindable(*root, view)
 		switch len(candidates) {
 		case 1:
 			*reqPath = candidates[0].Path
@@ -282,7 +300,7 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(*root, *reqPath))
+	data, err := view.ReadFile(*reqPath)
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
 		return 1
@@ -332,12 +350,12 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	now := time.Now().UTC()
 	shaHex := fmt.Sprintf("%x", sha256.Sum256(data))
 	next, err := transition.Apply(*root, statePath, journalPath, transition.Request{
-		TransitionID: "TR-001", ExpectedRevision: -1, ExpectedRuntimeID: "loop-inactive", Actor: "user",
+		Files: view, TransitionID: "TR-001", ExpectedRevision: -1, ExpectedRuntimeID: "loop-inactive", Actor: "user",
 		Evidence: map[string]string{
 			"req_lock_record":           *reqPath + "@" + shaHex,
 			"loop_authorization_record": "approved-by:" + *approvedBy,
 		},
-		REQ: &transition.LockedREQ{ID: id, Path: *reqPath, Version: version, SHA256: shaHex, ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
+		REQ: &transition.LockedREQ{Workspace: &binding, ID: id, Path: *reqPath, Version: version, SHA256: shaHex, ApprovedBy: *approvedBy, ApprovedAt: now.Format(time.RFC3339Nano)}, OccurredAt: now,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
@@ -511,7 +529,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "document_verification":
 		return "S5", "document-verification", "complete independent document verification"
 	case "building":
-		return "S6", "agent-dispatch", "complete Builder assignments (register each result via `runtime task-complete`; SubagentStop integrates the worktree)"
+		return "S6", "agent-dispatch", "complete Builder assignments (register each result via `runtime task-complete`; Main runs `runtime task-integrate` to merge, verify, acknowledge and clean the worktree)"
 	case "verification":
 		switch phase {
 		case "planned":
@@ -979,7 +997,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-integrate|review-plan|review-result|finding-supplement|investigation|repair|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|worktree-create|task-integrate|review-plan|review-result|finding-supplement|investigation|repair|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -1090,6 +1108,22 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime transition", err))
 			return 1
+		}
+
+		catalog, catalogErr := transition.LoadCatalog(*root)
+		if catalogErr != nil {
+			fmt.Fprintln(stderr, catalogErr)
+			return 1
+		}
+		spec, exists := catalog.Transitions[*transitionID]
+		if !exists {
+			spec = catalog.PhaseTransitionSpec[*transitionID]
+		}
+		if spec.AutoTrigger != nil {
+			if _, err := fileview.DevelopmentRef(currentSnapshot.State); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
 		}
 		currentRuntimeID, _ := currentSnapshot.State["runtime_id"].(string)
 		evidenceMap, err := parseEvidence(evidence)
@@ -1283,7 +1317,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			if reviewerRole(next.State, *agentID) {
 				fmt.Fprintln(stderr, "activated. next: (1) advance `work_started` when you begin; (2) write the Canonical ReviewResult (claim_results must equal the assignment's Claim set exactly; every fail Claim needs one Finding with a real encounter — see review-result.example.json) and submit via `runtime review-result submit --assignment-id <id> --result <file>`")
 			} else {
-				fmt.Fprintln(stderr, "activated. next: (1) create the worktree if absent — `git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop` — and record worktree_path/branch/target_branch on the assignment's workgroup manifest row (or .claude/assignments/<assignment-id>.json); (2) advance `work_started` when the Builder begins writing; (3) register completion with `runtime task-complete`")
+				fmt.Fprintln(stderr, "activated. next: (1) create the worktree if absent — `loop-harness runtime worktree-create --assignment-id <assignment-id>` — and record worktree_path/branch/target_branch on the assignment's workgroup manifest row (or .claude/assignments/<assignment-id>.json); (2) advance `work_started` when the Builder begins writing; (3) register completion with `runtime task-complete`")
 			}
 		}
 		if err := json.NewEncoder(stdout).Encode(next); err != nil {
@@ -1339,6 +1373,8 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "worktree-create":
+		return runWorktreeCreate(args[1:], stdout, stderr)
 	case "task-integrate":
 		// Explicit S6 integration verb (L3-S6 §7.4 / N1 complexity pass):
 		// runs the same Inspect → non-squash merge → verified checkpoint
@@ -2420,6 +2456,9 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// never denies. It short-circuits here so no control-cycle machinery
 	// runs for it.
 	if request.Event == "PostToolUse" {
+		if request.ToolName == "Agent" || request.ToolName == "SubagentHandback" {
+			return runWorktreePostTool(root, request, stdout, stderr)
+		}
 		return runPostToolUseHook(root, request, stdout, stderr)
 	}
 	if request.Event == "PostToolUseFailure" || request.Event == "ConfigChange" {
@@ -2595,9 +2634,21 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	}
 	// PreToolUse uses the layered Controller-driven render path
 	// (PreToolUseWithQualityGate) so the wire envelope carries the
-	// `quality_gate` object alongside permissionDecision. Lifecycle events
-	// (SessionStart, SubagentStart, ...) continue to flow through the legacy
-	// hook-policy renderer. BUG-039-03 §4.1.
+	// quality-gate facts inside official additionalContext. Lifecycle events
+	// use the corresponding official event-specific output envelope.
+	deliveredReminder := func() {}
+	if request.Event == "PreToolUse" || request.Event == "SessionStart" {
+		if request.Event == "PreToolUse" && controlResult.QualityGate.Status == controller.StatusNotReady {
+			if dev, err := fileview.DevelopmentRef(controlResult.Snapshot.State); err == nil {
+				decision.AdditionalContext += "\nSTAGE DELIVERY: formal inputs are read from committed " + dev + ". Commit the required documents/code/tests there before retrying; staged drafts and unmerged worker commits do not qualify. Explicit disk evidence follows its source contract."
+			}
+		}
+		msg, delivered := reminderDelivery(root, request)
+		if msg != "" {
+			decision.AdditionalContext += "\n" + msg
+			deliveredReminder = delivered
+		}
+	}
 	var output []byte
 	var code int
 	var err error
@@ -2622,9 +2673,10 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			return 1
 		}
 	}
-	if isDenyingHookDecision(decision.Decision) {
+	if request.Event != "PreToolUse" && isDenyingHookDecision(decision.Decision) {
 		return 2
 	}
+	deliveredReminder()
 	return code
 }
 
@@ -2667,8 +2719,9 @@ func runtimeCheckpointMissing(root string) bool {
 // runPostToolUseHook handles the PostToolUse(SendMessage) observation path:
 // identify the sender, and when a PLAN_REPORT is observed for the first
 // time, CAS-write agent.plan_reported_ref so the first-write barrier has a
-// durable fact. Everything about this path is fail-open: identification
-// gaps produce a silent observation, never a block and never an error.
+// durable fact. The transport remains fail-open: identity or handoff gaps
+// return exit 0, surface their reason in the allow-shaped envelope, and never
+// block the tool that already ran.
 //
 // plan_checkpoint dispatch_mode triggers the L4 §3.3 auto-activation
 // chain: readback_submitted -> activation_sent -> work_started, with the
@@ -2702,14 +2755,39 @@ func runPostToolUseHook(root string, request policy.Input, stdout, stderr io.Wri
 	obs := hook.HandlePostToolUse(request, rows)
 	if obs.Recorded && obs.Message == "plan_report" {
 		planRef := planReportRef(request)
+		if !planReportUsesAuthorityRoot(root, request.CWD) {
+			importedRef, err := importWorkerPlanReport(root, snapshot, request, obs.AgentID, planRef)
+			if err != nil {
+				obs.Recorded = false
+				obs.SystemMsg = ""
+				obs.Reason = "plan_report rejected: " + err.Error()
+				fmt.Fprintf(stderr, "note: %s\n", obs.Reason)
+				fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
+				return 0
+			}
+			// Both the durable registration and the optional plan_checkpoint
+			// auto-chain must consume the imported authority-root artifact. Keep
+			// the worker's original ref out of all subsequent calls so a root file
+			// with the same relative name can never win by accident.
+			request.ToolInput = normalizedPlanReportInput(request.ToolInput, importedRef)
+			planRef = importedRef
+		}
 		if err := validatePlanReportCheckpoint(root, snapshot, obs.AgentID, planRef); err != nil {
 			obs.Recorded = false
+			obs.SystemMsg = ""
 			obs.Reason = "plan_report rejected: " + err.Error()
 			fmt.Fprintf(stderr, "note: %s\n", obs.Reason)
 			fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
 			return 0
 		}
-		recordPlanCheckpoint(root, statePath, journalPath, snapshot, obs.AgentID, request, stderr)
+		if err := recordPlanCheckpoint(root, statePath, journalPath, snapshot, obs.AgentID, request); err != nil {
+			obs.Recorded = false
+			obs.SystemMsg = ""
+			obs.Reason = "plan_report registration failed: " + err.Error()
+			fmt.Fprintf(stderr, "note: %s\n", obs.Reason)
+			fmt.Fprintln(stdout, hook.RenderPostToolUseEnvelope(obs))
+			return 0
+		}
 		// Auto-chain for plan_checkpoint agents. plan_ref is the plan file
 		// path the Worker wrote before SendMessage. Gating happens twice:
 		// once here (avoid the call entirely for plan_approval_required /
@@ -2951,23 +3029,26 @@ func containsStringValue(values []string, target string) bool {
 	return false
 }
 
-// recordPlanCheckpoint writes agent.plan_reported_ref once (idempotent).
-// The ref is symbolic (the SendMessage message id) because the platform
-// payload does not carry a verifiable file path; the authoritative,
-// schema-validated registration remains `runtime agent-event
-// --event readback_submitted` with the plan file.
-func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.Snapshot, agentID string, request policy.Input, stderr io.Writer) {
+// recordPlanCheckpoint writes the normalized, schema-validated
+// agent.plan_reported_ref once. Replaying the same imported content-addressed
+// ref is idempotent; a different report cannot silently replace the first
+// durable checkpoint.
+func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.Snapshot, agentID string, request policy.Input) error {
 	ref := planReportRef(request)
 	if ref == "" {
-		return
+		return fmt.Errorf("plan_ref is required")
 	}
 	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	_, err := store.Update(snapshot.Revision, runtime.Mutation{
-		EventID:        fmt.Sprintf("evt-plan-observed-%s-r%d", agentID, snapshot.Revision+1),
-		TransitionID:   "PLAN-OBSERVATION",
-		Event:          "plan_report_observed",
-		Actor:          "hook_controller",
-		IdempotencyKey: fmt.Sprintf("hook:plan-observed:%s", agentID),
+		EventID:      fmt.Sprintf("evt-plan-observed-%s-r%d", agentID, snapshot.Revision+1),
+		TransitionID: "PLAN-OBSERVATION",
+		Event:        "plan_report_observed",
+		Actor:        "hook_controller",
+		// Bind idempotency to the immutable report ref. A different report
+		// from the same Agent must reach Apply so the first-write barrier can
+		// reject replacement; a fixed Agent-only key could be treated as an
+		// already-applied mutation by a Writer before Apply runs.
+		IdempotencyKey: fmt.Sprintf("hook:plan-observed:%s:%s", agentID, ref),
 		RuntimeID:      runtimeIDString(snapshot.State),
 		OccurredAt:     time.Now().UTC(),
 		Apply: func(state map[string]any) error {
@@ -2978,7 +3059,10 @@ func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.
 					continue
 				}
 				if existing, _ := agent["plan_reported_ref"].(string); existing != "" {
-					return nil // already recorded — idempotent
+					if existing == ref {
+						return nil // replay of the same immutable report
+					}
+					return fmt.Errorf("agent %s already has plan_reported_ref %q; refusing replacement with %q", agentID, existing, ref)
 				}
 				agent["plan_reported_ref"] = ref
 				return nil
@@ -2986,10 +3070,7 @@ func recordPlanCheckpoint(root, statePath, journalPath string, snapshot runtime.
 			return fmt.Errorf("agent %s not found", agentID)
 		},
 	})
-	if err != nil {
-		// Observation must never fail the tool call.
-		fmt.Fprintf(stderr, "note: plan_report observation not persisted (%v)\n", err)
-	}
+	return err
 }
 
 func runtimeIDString(state map[string]any) string {
@@ -3012,7 +3093,8 @@ func runControlCycleForHook(root string, request policy.Input) controller.Contro
 		AgentID:     request.AgentID,
 		SessionID:   request.SessionID,
 		Runtime:     request.Runtime,
-		HookPayload: map[string]any{},
+		CWD:         request.CWD,
+		HookPayload: map[string]any{"cwd": request.CWD, "tool_response": request.ToolResponse},
 	}
 	result, err := controller.RunControlCycle(contextForHook(request), controlReq)
 	if err != nil {

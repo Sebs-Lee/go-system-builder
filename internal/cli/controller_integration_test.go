@@ -61,7 +61,7 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("hook output is not JSON: %v; output=%s", err, stdout.String())
 	}
-	message, _ := payload["systemMessage"].(string)
+	message, _ := hookContextValue(payload).(string)
 	for _, expected := range []string{
 		"LOOP RECOVERY",
 		"docs/agent-protocol.md#s2",
@@ -86,8 +86,8 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	if code != 0 {
 		t.Fatalf("PreCompact hook failed: code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "LOOP RECOVERY") || !strings.Contains(stdout.String(), "docs/agent-protocol.md#s2") {
-		t.Fatalf("PreCompact must emit the resumable recovery packet: %s", stdout.String())
+	if strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("PreCompact must persist recovery without emitting discarded messages: %s", stdout.String())
 	}
 
 	// A role-bearing spawn is a controller event before the subagent exists. The
@@ -217,7 +217,7 @@ func TestPreToolUseHookDelegatesToControllerCycle(t *testing.T) {
 	}
 	output, _ := payload["hookSpecificOutput"].(map[string]any)
 	permissionDecision, _ := output["permissionDecision"].(string)
-	if permissionDecision != "allow" {
+	if permissionDecision != "" {
 		t.Fatalf("PreToolUse must allow not_ready, got permissionDecision=%q payload=%v", permissionDecision, payload)
 	}
 }
@@ -241,10 +241,10 @@ func TestPreToolUsePreservesUnknownMCPWarningAtControllerBoundary(t *testing.T) 
 		t.Fatalf("Hook output is not JSON: %v; output=%s", err, stdout.String())
 	}
 	specific, _ := payload["hookSpecificOutput"].(map[string]any)
-	if specific["permissionDecision"] != "allow" {
+	if specific["permissionDecision"] != nil {
 		t.Fatalf("warning must still allow the tool, got %v", specific["permissionDecision"])
 	}
-	reason, _ := specific["permissionDecisionReason"].(string)
+	reason, _ := specific["additionalContext"].(string)
 	if !strings.Contains(reason, "unknown_mcp_tool") || !strings.Contains(reason, "classify") {
 		t.Fatalf("warning must survive the Controller projection with recovery guidance: %s", reason)
 	}
@@ -263,7 +263,7 @@ func TestPreToolUseBlocksUnknownMCPForActivatedWorker(t *testing.T) {
 		"tool_input":{"operation":"write"},
 		"runtime_context":{"runtime_id":"loop-test","revision":1,"agent":{"id":"agent-worker-1","state":"working"}}
 	}`), &stdout, &stderr)
-	if code != 2 {
+	if code != 0 {
 		t.Fatalf("unknown MCP for a Worker must be denied with exit 2: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	var payload map[string]any

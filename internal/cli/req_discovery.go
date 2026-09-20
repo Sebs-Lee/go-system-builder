@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"io"
 	"os"
 	"os/exec"
@@ -197,4 +198,28 @@ func printBindConfirmation(w io.Writer, state map[string]any) {
 	fmt.Fprintf(w, "  cursor %s.%s  revision %d  generation %d  event %s\n",
 		lifecycle["state"], lifecycle["phase"], tolerantInt(state["revision"]), tolerantInt(baseline["generation"]), event)
 	fmt.Fprintln(w, "next: S2 design — hooks project status automatically; no further CLI needed.")
+}
+
+func committedBindable(root string, files fileview.Reader) []reqSummary {
+	entries, _ := files.ReadDir("docs/requirements")
+	archived := archivedBoundIDs(root)
+	bound := currentBoundID(root)
+	var out []reqSummary
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "REQ-") || !strings.HasSuffix(name, ".md") || strings.Contains(strings.ToLower(name), "template") {
+			continue
+		}
+		path := "docs/requirements/" + name
+		data, e := files.ReadFile(path)
+		if e != nil {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".md")
+		status := markdownField(string(data), "状态", "Status")
+		if status == "locked" && !archived[id] && id != bound {
+			out = append(out, reqSummary{ID: id, Path: path, Status: status, Version: markdownField(string(data), "版本", "Version"), Bindable: true})
+		}
+	}
+	return out
 }

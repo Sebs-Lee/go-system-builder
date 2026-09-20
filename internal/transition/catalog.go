@@ -20,6 +20,7 @@ package transition
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,19 +124,21 @@ type EntityTransition struct {
 // keys TASK-013 needs are decoded; unknown keys are tolerated because the
 // upstream schema validates full structure.
 type LoopDefinition struct {
-	SchemaVersion       string                         `json:"schema_version"`
-	DefinitionID        string                         `json:"definition_id"`
-	Status              string                         `json:"status"`
-	InitialState        string                         `json:"initial_state"`
-	TerminalStates      []string                       `json:"terminal_states"`
-	States              map[string]StateSpec           `json:"states"`
-	PhaseMachines       map[string]PhaseMachineSpec    `json:"phase_machines"`
-	EntityLifecycles    map[string]EntityLifecycleSpec `json:"entity_lifecycles"`
-	Transitions         []TransitionSpec               `json:"transitions"`
-	GlobalTransitions   []GlobalTransitionSpec         `json:"global_transitions"`
-	ForbiddenEvents     []ForbiddenEventSpec           `json:"forbidden_events"`
-	Invariants          []InvariantSpec                `json:"invariants"`
-	QualityCycleTimeout string                         `json:"quality_cycle_timeout,omitempty"`
+	MutableEvidenceKinds []string                       `json:"mutable_evidence_kinds"`
+	FileSources          []fileview.Rule                `json:"file_sources"`
+	SchemaVersion        string                         `json:"schema_version"`
+	DefinitionID         string                         `json:"definition_id"`
+	Status               string                         `json:"status"`
+	InitialState         string                         `json:"initial_state"`
+	TerminalStates       []string                       `json:"terminal_states"`
+	States               map[string]StateSpec           `json:"states"`
+	PhaseMachines        map[string]PhaseMachineSpec    `json:"phase_machines"`
+	EntityLifecycles     map[string]EntityLifecycleSpec `json:"entity_lifecycles"`
+	Transitions          []TransitionSpec               `json:"transitions"`
+	GlobalTransitions    []GlobalTransitionSpec         `json:"global_transitions"`
+	ForbiddenEvents      []ForbiddenEventSpec           `json:"forbidden_events"`
+	Invariants           []InvariantSpec                `json:"invariants"`
+	QualityCycleTimeout  string                         `json:"quality_cycle_timeout,omitempty"`
 }
 
 // PhaseMachineSpec is one entry in phase_machines.

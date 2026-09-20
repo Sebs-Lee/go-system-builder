@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"os"
 	"path/filepath"
 	"strings"
@@ -513,7 +514,7 @@ func currentReadbackTemplateRefs(root string) ([]string, error) {
 		return nil, nil
 	}
 	var refs []string
-	walkErr := filepath.Walk(baseDir, func(path string, fi os.FileInfo, err error) error {
+	walkErr := pathscope.Walk(root, baseDir, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

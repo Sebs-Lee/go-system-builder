@@ -13,11 +13,11 @@ package transition
 import (
 	"crypto/sha256"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/semantic"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -392,7 +392,7 @@ func requireCurrentEvidenceKind(state map[string]any, kind string) error {
 	if root == "" {
 		root = "."
 	}
-	data, err := os.ReadFile(filepath.Join(root, clean))
+	data, err := guardFiles(state, root).ReadFile(clean)
 	if err != nil {
 		return fmt.Errorf("%s evidence %v unreadable at %s: %w", kind, found["id"], rel, err)
 	}
@@ -513,7 +513,7 @@ func guardReqBaselineUnchangedFn(state map[string]any, _ map[string]string) erro
 	if root == "" {
 		root = "."
 	}
-	data, err := os.ReadFile(filepath.Join(root, reqPath))
+	data, err := guardFiles(state, root).ReadFile(reqPath)
 	if err != nil {
 		return fmt.Errorf("req_baseline_unchanged: bound REQ %s unreadable: %w", reqPath, err)
 	}
@@ -583,7 +583,9 @@ func guardContractsCheckedFn(state map[string]any, _ map[string]string) error {
 	if root == "" {
 		root = "."
 	}
-	result, err := semantic.ContractsCheck(root)
+	bound, _ := state["bound_req"].(map[string]any)
+	reqID, _ := bound["id"].(string)
+	result, err := semantic.ContractsCheckWithFiles(root, guardFiles(state, root), reqID)
 	if err != nil {
 		return fmt.Errorf("contracts_checked: %w", err)
 	}
@@ -604,7 +606,7 @@ func guardScenarioBridgeCheckedFn(state map[string]any, _ map[string]string) err
 	if root == "" {
 		root = "."
 	}
-	if err := scenario.GuardBridgeChecked(root); err != nil {
+	if err := scenario.GuardBridgeCheckedWithFiles(root, guardFiles(state, root)); err != nil {
 		return fmt.Errorf("scenario_bridge_checked: %w", err)
 	}
 	return nil
@@ -619,7 +621,7 @@ func guardTasksCheckedFn(state map[string]any, _ map[string]string) error {
 	if root == "" {
 		root = "."
 	}
-	result, err := semantic.TasksCheck(root)
+	result, err := semantic.TasksCheckWithFiles(root, guardFiles(state, root), planningREQ(state))
 	if err != nil {
 		return fmt.Errorf("tasks_checked: %w", err)
 	}
@@ -661,7 +663,7 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		if !strings.EqualFold(status, "locked") {
 			continue
 		}
-		if err := verifyDocumentStatusOnDisk(root, path, "locked"); err != nil {
+		if err := verifyDocumentStatusWithFiles(guardFiles(state, root), path, "locked"); err != nil {
 			return fmt.Errorf("planning not complete: contract %s: %w", path, err)
 		}
 		hasLockedContract = true
@@ -678,7 +680,7 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		}
 		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 (contracts→tasks) fires on the next PreToolUse and registers contracts whose markdown Status is `locked` (see docs/agent-protocol.md#s3); TR-002 does not scan filenames", generation)
 	}
-	_, _, problems, err := semantic.TaskBatchComplete(root)
+	_, _, problems, err := semantic.TaskBatchCompleteWithFiles(root, semantic.ScopedPlanningFiles(root, guardFiles(state, root), planningREQ(state)))
 	if err != nil {
 		return fmt.Errorf("planning not complete: %w", err)
 	}
@@ -689,10 +691,13 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 }
 
 func verifyDocumentStatusOnDisk(root, relPath, required string) error {
+	return verifyDocumentStatusWithFiles(fileview.Disk{Root: root}, relPath, required)
+}
+func verifyDocumentStatusWithFiles(files fileview.Reader, relPath, required string) error {
 	if relPath == "" {
 		return fmt.Errorf("document path is empty")
 	}
-	data, err := os.ReadFile(filepath.Join(root, relPath))
+	data, err := files.ReadFile(relPath)
 	if err != nil {
 		return fmt.Errorf("not readable: %w", err)
 	}
@@ -748,4 +753,11 @@ func mustInitGuardRegistry() {
 
 func init() {
 	mustInitGuardRegistry()
+}
+
+func guardFiles(state map[string]any, root string) fileview.Reader {
+	if files, ok := state["_file_view"].(fileview.Reader); ok && files != nil {
+		return files
+	}
+	return fileview.Disk{Root: root}
 }

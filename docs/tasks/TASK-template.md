@@ -1,6 +1,8 @@
 # Task: TASK-{id}
 
 > Status: draft
+> Reading policy: linked-v1
+> Dispatch policy: waves-v1
 > （draft=still writing；complete=the document is finished——required across the whole batch at TR-002, says nothing about implementation（那是 S6 的事）；cancelled=out of the batch, its §3 clause declarations drop out of coverage so any gap resurfaces）
 > Version: v1.0.0
 > Source REQ refs: REQ-{id} / none
@@ -8,9 +10,7 @@
 > Primary contract: {FE/BE/SYNC-id}
 > Closing Contract: TASK-{id}#closing-contract
 > Runtime ref: `{runtime-id}`
-> Team manifest: `{team-manifest-path}`
-> Assignment ID: `{assignment-id}`
-> Builder Agent: `{agent-id}`
+> Execution: runtime owns assignment, owner, completion and integration; do not fill them into this frozen TASK.
 
 ## 1. Objective
 
@@ -25,12 +25,17 @@ Read order for the builder. Fingerprints, versions, and lock state live in
 runtime documents[] (.claude/loop-state.json) — this table never hand-copies
 them.
 
-| Order | Kind | ID | Path | Clauses |
-|:---|:---|:---|:---|:---|
-| 1 | contract | {contract-id} | `docs/contracts/{contract-id}.md` | §{n} |
-| 2 | req | REQ-{id} | `docs/requirements/REQ-{id}.md` | FR/NFR/acceptance |
-| 3 | module scenario/design | {module/N/A} | `docs/design/prototypes/{module}/` | scenario/story/flow |
-| 4 | rule | {rule-id} | `docs/rules/{rule}.md` | all |
+| Order | Kind | ID | Path | Clauses | Purpose | Mode |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | contract | {contract-id} | [Local responsibility](../contracts/{contract-id}.md#{stable-anchor}) | §{n} | Understand this delivery | required |
+| 2 | sync | SYNC-{id} | [Operation and recovery](../contracts/SYNC-{id}.md#{stable-anchor}) | §{n} | Understand shared behavior | required |
+| 3 | model | {native-definition} | [Shared model entry](../design/data-model/MODEL.md) | {definition} | Locate the exact data source | required |
+
+Remove inapplicable rows; keep the smallest complete ordered reading set. Use
+`conditional` only with an explicit condition in Purpose, and `optional` for
+background. Follow [shared-model reading rules](../rules/shared-model-contracts.md).
+Do not add a foundation dependency unless another task actually produces an
+input this implementation needs. Returning to this TASK closes the reading path.
 
 Repair assignments prepend the canonical BUG as order 1 and shift the remaining
 documents. The request remains the authority for exact order.
@@ -96,33 +101,33 @@ assert scope_deviations == []
 
 ## 8. Dependencies
 
-| Dependency | Required evidence | Status |
-|:---|:---|:---|
-| TASK-{id} | `{evidence-ref}` | pending / satisfied |
+| Dependency | Required artifact / verification |
+|:---|:---|
+| TASK-{id} | {committed artifact integrated and verified on the bound development branch} |
 
 依赖列只认 `TASK-*` 引用——只有 TASK 引用进入 DAG（`tasks check` 的环检测与拓扑）。assignment 级依赖不被机检追踪，需要跨任务顺序时写成 TASK 依赖或在收尾契约中声明。
 
-## 9. Lifecycle Evidence
+## 9. Execution entry
 
-| Evidence | Reference |
+Read the REQ's [overall plan](index-REQ-{id}.md) and
+[dispatch rules](../rules/dispatch-plan.md). Runtime owns lifecycle evidence.
+
+### Resources
+
+Declare only mutable external resources requiring exclusive use (not read-only
+contracts/models). Use the same stable name across tasks; leave empty if none.
+
+| Resource | Purpose |
 |:---|:---|
-| document verification | `{review-evidence-ref}` |
-| phase-one request | `{message-ref}` |
-| approved read-back | `{message-ref}` |
-| activation | `{activation-ref}` |
-| completion report | `{message-ref}` |
 
 ## 10. Findings And Repairs
 
-| Finding | Canonical BUG | Impact record | Repair assignment | Targeted re-verification | Status |
-|:---|:---|:---|:---|:---|:---|
-| {finding-id} | BUG-{id} | `{impact-ref}` | `{assignment-id}` | `{evidence-ref}` | open / verified / closed |
+Findings, canonical BUGs, repair assignments and re-verification are runtime
+records. Follow the BUG procedure and the execution entry; do not append
+execution history to this frozen task document.
 
-BUG procedure is defined by `.claude/skills/bug-resolution/SKILL.md`; review
-completion is defined by `.claude/skills/clean-round-evaluation/SKILL.md`.
+## 11. Document History
 
-## 11. History
-
-| Date | Event | Actor | Runtime identity / state | Evidence |
-|:---|:---|:---|:---|:---|
-| | | | | |
+| Date | Version | Design change |
+|:---|:---|:---|
+| | | |

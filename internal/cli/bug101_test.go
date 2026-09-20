@@ -35,6 +35,8 @@ func TestRuntimeTransitionMissingEvidenceExplainsRecoveryBinding(t *testing.T) {
 	if err := json.Unmarshal(stateData, &state); err != nil {
 		t.Fatal(err)
 	}
+	commitStageFixture(t, root)
+	state["bound_req"].(map[string]any)["workspace"] = map[string]any{"project_root": root, "dev_branch": "test-development", "release_upstream": "origin/release", "bound_commit": "fixture"}
 	state["revision"] = float64(1)
 	state["lifecycle"].(map[string]any)["state"] = "building"
 	state["lifecycle"].(map[string]any)["phase"] = nil
@@ -42,8 +44,11 @@ func TestRuntimeTransitionMissingEvidenceExplainsRecoveryBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	statePath := filepath.Join(root, "loop-state.json")
-	journalPath := filepath.Join(root, "loop-events.jsonl")
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(statePath, stateData, 0o644); err != nil {
 		t.Fatal(err)
 	}

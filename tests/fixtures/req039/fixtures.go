@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +118,10 @@ func definitionRefs(t *testing.T, root string) (defSHA, policySHA string) {
 
 // WriteState persists loop-state.json under root/.claude/.
 func WriteState(t *testing.T, root string, state map[string]any) {
+	CommitFixture(t, root)
+	if bound, ok := state["bound_req"].(map[string]any); ok {
+		bound["workspace"] = map[string]any{"project_root": root, "dev_branch": "test-development", "release_upstream": "origin/release", "bound_commit": "fixture"}
+	}
 	t.Helper()
 	path := filepath.Join(root, ".claude", "loop-state.json")
 	raw, err := json.MarshalIndent(state, "", "  ")
@@ -391,7 +396,11 @@ func ParseQualityGate(t *testing.T, raw string) (map[string]any, map[string]any)
 	qg, _ := env["quality_gate"].(map[string]any)
 	if qg == nil {
 		if hsp, ok := env["hookSpecificOutput"].(map[string]any); ok {
-			qg, _ = hsp["quality_gate"].(map[string]any)
+			text, _ := hsp["additionalContext"].(string)
+			line := strings.SplitN(text, "\n", 2)[0]
+			decoder := json.NewDecoder(strings.NewReader(strings.TrimPrefix(line, "QUALITY_GATE ")))
+			decoder.UseNumber()
+			_ = decoder.Decode(&qg)
 		}
 	}
 	return env, qg

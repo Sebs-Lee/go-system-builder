@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -91,6 +93,12 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		gitRoot = cfg.Root
 	}
 
+	releaseIntegration, lockErr := acquireFileLock(filepath.Join(gitRoot, ".claude", "integration", "authority.lock"))
+	if lockErr != nil {
+		return Result{}, lockErr
+	}
+	defer releaseIntegration()
+
 	checkpointPath := cfg.CheckpointDir
 	if checkpointPath == "" {
 		checkpointPath = store.Path(cfg.Root, runtimeID, req.Inspection.BaselineGeneration, idempAssignment(req))
@@ -100,16 +108,40 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	if err != nil {
 		return Result{}, fmt.Errorf("load checkpoint: %w", err)
 	}
+	completionBinding, reportChanged, bindingErr := resolveCompletionReportBinding(cfg.Root, req.Inspection, current, found)
+	if bindingErr != nil {
+		return Result{Checkpoint: current}, bindingErr
+	}
+	// A verified/acknowledged/complete checkpoint is reusable only for the
+	// exact Result bytes it verified. A changed report re-enters the check
+	// stage while retaining MergeCommit, so recovery never merges twice.
+	reverifyResult := found && reportChanged && checkpointHasVerifiedStage(current)
+
+	if !found || current.State != StateComplete || reverifyResult {
+		if err := checkoutBranch(ctx, gitRoot, req.Inspection.TargetBranch); err != nil {
+			return Result{}, err
+		}
+	}
+	if reverifyResult && current.MergeCommit != "" {
+		reachable, reachErr := mergeCommitReachable(ctx, gitRoot, current.MergeCommit, req.Inspection.TargetBranch)
+		if reachErr != nil || !reachable {
+			return Result{Checkpoint: current}, fmt.Errorf("recorded merge commit %s is not reachable from target %s; re-inspect and reconcile", current.MergeCommit, req.Inspection.TargetBranch)
+		}
+	}
 
 	if !req.Inspection.Ready {
 		// Post-merge ack/cleanup resume may arrive with Inspect Ready=false
 		// (ErrMissingCommits after merge). Do not overwrite a verified+
 		// durable checkpoint with preserved (BUG-039-38).
+		resumeState := checkpointResumeState(current)
+		preservedAfterMerge := found && current.State == StatePreserved &&
+			current.MergeCommit != "" && !lessThan(resumeState, StateMerged)
 		if found && (req.Acknowledge || req.Cleanup) &&
 			(current.State == StateVerified ||
 				current.State == StateAcknowledged ||
 				current.State == StateCleanupPending ||
-				current.State == StateComplete) {
+				current.State == StateComplete ||
+				preservedAfterMerge) {
 			// Fall through and resume from the durable record.
 		} else {
 			return preserveFromInspection(cfg, req, "inspect rejected integration")
@@ -126,22 +158,41 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	// CT-039-17: a previous call may have committed the merge but been
 	// interrupted before ack. We detect that by looking at the durable
 	// state and skip the merge when it has already happened.
+	if found && current.MergeCommit != "" && current.SourceHead != req.Inspection.SourceHead && req.Inspection.SourceHead != "" {
+		return Result{}, fmt.Errorf("source changed after recorded merge; preserve worktree and reconcile new commits")
+	}
 	if found {
 		switch current.State {
 		case StateComplete:
+			if reverifyResult {
+				break
+			}
 			return Result{Checkpoint: current, Reused: true}, nil
 		case StateBlocked, StatePreserved:
-			// A previous failure stops the chain. Re-surfacing the
-			// blocker is the right behaviour — we don't try to
-			// resurrect a failed integration without an explicit
-			// human/builder repair.
-			return Result{Checkpoint: current, Reused: true}, nil
+			// A fresh successful inspection is the recovery signal. Resume from
+			// the last successful stage recorded before preservation. In
+			// particular, cleanup failures resume at cleanup_pending and do not
+			// re-run verification checks.
+			resumed := current
+			resumed.State = checkpointResumeState(current)
+			resumed.ResumeState = ""
+			resumed.FailureReason = ""
+			resumed.LastErrorCode = ""
+			written, writeErr := store.CompareAndSwap(checkpointPath, current, resumed)
+			if writeErr != nil {
+				return Result{}, writeErr
+			}
+			current = written
 		}
 	}
 
 	// Build the next-state checkpoint from the inspection + existing
 	// durable record. CAS gates the transition.
 	next := current
+	if reverifyResult {
+		next.State = StateMerged
+		next.VerifiedAt = ""
+	}
 	if next.State == "" {
 		next.State = StatePending
 	}
@@ -188,6 +239,27 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		if err := checkoutBranch(ctx, gitRoot, req.Inspection.TargetBranch); err != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrMergeConflict)
 		}
+
+		sourceHead, sourceErr := revParse(ctx, gitRoot, req.Inspection.SourceBranch)
+		if sourceErr != nil || sourceHead != req.Inspection.SourceHead {
+			return preserveAfterCAS(ctx, store, checkpointPath, current, next, fmt.Errorf("source changed since inspection; re-inspect"), ErrMergeConflict)
+		}
+		// Recheck the frozen paths under the integration lock immediately before
+		// merging. Rename detection is disabled so removals cannot hide a lock.
+		if len(req.Inspection.LockedPaths) > 0 {
+			base, err := mergeBase(ctx, gitRoot, req.Inspection.TargetBranch, sourceHead)
+			if err != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrLockedArtifact)
+			}
+			changed, err := listChangedFiles(ctx, gitRoot, base, sourceHead)
+			if err != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrLockedArtifact)
+			}
+			if hits := intersectLocked(changed, req.Inspection.LockedPaths); len(hits) > 0 {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next,
+					fmt.Errorf("%w: %s", ErrLockedArtifact, strings.Join(hits, ", ")), ErrLockedArtifact)
+			}
+		}
 		mergeCommit, err := performMerge(ctx, gitRoot, req.Inspection.SourceBranch)
 		if err != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrMergeConflict)
@@ -203,6 +275,19 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 
 	// Step 3: integration checks → verified.
 	if lessThan(next.State, StateVerified) {
+		// The report may be edited while the merge is in progress. Re-read it
+		// immediately before the verification checks so those checks are tied to
+		// the same bytes that Inspect observed.
+		if completionBinding.Bound {
+			latest, readErr := readCompletionReportBinding(cfg.Root, completionBinding.Path)
+			if readErr != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, readErr, ErrMissingCompletion)
+			}
+			if !reportBindingMatches(completionBinding, latest) {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next,
+					fmt.Errorf("%w: before verification", ErrCompletionReportChanged), ErrCompletionReportChanged)
+			}
+		}
 		// Refuse to advance to verified if the target tree is now
 		// dirty (e.g. an external process wrote into the integration
 		// branch). The worktree-preserved recovery applies.
@@ -228,7 +313,33 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 				}
 			}
 		}
+		// A check command can itself rewrite the completion report. Re-read
+		// after checks and refuse to certify a different Result.
+		if completionBinding.Bound {
+			latest, readErr := readCompletionReportBinding(cfg.Root, completionBinding.Path)
+			if readErr != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, readErr, ErrMissingCompletion)
+			}
+			if !reportBindingMatches(completionBinding, latest) {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next,
+					fmt.Errorf("%w: after verification checks", ErrCompletionReportChanged), ErrCompletionReportChanged)
+			}
+			completionBinding = latest
+		}
+		clean, err = worktreeClean(ctx, gitRoot)
+		if err != nil || !clean {
+			return preserveAfterCAS(ctx, store, checkpointPath, current, next, ErrDirtyWorktree, ErrDirtyWorktree)
+		}
 		next.State = StateVerified
+		if completionBinding.Bound {
+			next.CompletionReportPath = completionBinding.Path
+			next.CompletionReportSHA256 = completionBinding.SHA256
+		}
+		verifiedAt := time.Now().UTC()
+		if store.Clock != nil {
+			verifiedAt = store.Clock()
+		}
+		next.VerifiedAt = verifiedAt.UTC().Format(time.RFC3339Nano)
 		written, err := store.CompareAndSwap(checkpointPath, current, next)
 		if err != nil {
 			return Result{}, fmt.Errorf("persist verified: %w", err)
@@ -273,14 +384,20 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		if !req.Cleanup {
 			return Result{Checkpoint: current, Reused: found}, nil
 		}
-		// Belt-and-braces: refuse to delete a dirty worktree.
-		clean, err := worktreeClean(ctx, req.Inspection.WorktreePath)
-		if err != nil {
-			return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrDirtyWorktree)
+		if _, statErr := os.Stat(req.Inspection.WorktreePath); !os.IsNotExist(statErr) {
+			clean, err := worktreeClean(ctx, req.Inspection.WorktreePath)
+			if err != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrDirtyWorktree)
+			}
+			if !clean {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, ErrDirtyWorktree, ErrDirtyWorktree)
+			}
+			head, err := revParse(ctx, req.Inspection.WorktreePath, "HEAD")
+			if err != nil || head != next.SourceHead {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, fmt.Errorf("worktree HEAD changed since reception; preserve it"), ErrDirtyWorktree)
+			}
 		}
-		if !clean {
-			return preserveAfterCAS(ctx, store, checkpointPath, current, next, ErrDirtyWorktree, ErrDirtyWorktree)
-		}
+
 		// Best-effort removal. If git worktree remove fails because
 		// the worktree is already gone (e.g. an earlier cleanup
 		// succeeded but the ack step was lost), we treat that as
@@ -316,6 +433,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 // "failure_before_cleanup_preserves_worktree_and_branch" rule.
 func preserveAfterCAS(ctx context.Context, store *CheckpointStore, path string, current Checkpoint, next Checkpoint, cause error, sentinel error) (Result, error) {
 	preserved := next
+	preserved.ResumeState = successfulResumeState(next.State)
 	preserved.State = StatePreserved
 	if cause != nil {
 		if preserved.FailureReason == "" {
@@ -330,6 +448,32 @@ func preserveAfterCAS(ctx context.Context, store *CheckpointStore, path string, 
 		return Result{Checkpoint: preserved}, fmt.Errorf("persist preserved: %w", err)
 	}
 	return Result{Checkpoint: written}, sentinel
+}
+
+// successfulResumeState returns the last durable stage boundary represented by
+// next before it is changed to StatePreserved. The state machine only calls
+// preserveAfterCAS after the stage in next has either been persisted or is the
+// stage currently being attempted, so this is the exact retry boundary.
+func successfulResumeState(state string) string {
+	switch state {
+	case StatePending, StateReady, StateMerged, StateVerified, StateAcknowledged, StateCleanupPending, StateComplete:
+		return state
+	default:
+		return ""
+	}
+}
+
+// checkpointResumeState supports checkpoints written before ResumeState was
+// introduced. A recorded merge is the safest legacy boundary; otherwise a
+// retry starts from pending and rebuilds the ready/merge stages.
+func checkpointResumeState(cp Checkpoint) string {
+	if state := successfulResumeState(cp.ResumeState); state != "" {
+		return state
+	}
+	if cp.MergeCommit != "" {
+		return StateMerged
+	}
+	return StatePending
 }
 
 // preserveFromInspection persists a preserved checkpoint when the

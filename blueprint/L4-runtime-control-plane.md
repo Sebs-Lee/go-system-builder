@@ -8,7 +8,7 @@
 >
 > 层内权威声明（本文件成立的前提）：**凡列入本目录的机制域，其目标态定义以本文为唯一权威**。L2 中同名全局规则只保留"存在与用途"的声明；各 L3 只写"本阶段消费哪种实例化"。L3 正文与本文件冲突时，先核对代码现状，再按 L1 第五部分演化协议回改落后的一方。唯一的显式外移：「注意力分配/渐进披露」是文档写作纪律而非运行时机制，权威仍在 [L3-README](L3-README.md#注意力分配原则各-l3-sn-的共用判定尺本节是唯一权威各-stage-只引用不复述)。
 >
-> 状态：v0.3.0。每节区分【目标态设计】与【当前实现】；差距在 §15 显式列出，不把意图写成既成事实。v0.3 起存储与引擎类细节移交姊妹篇，本文收敛为内容合规规则层。
+> 状态：v0.4.0。每节区分【目标态设计】与【当前实现】；差距在 §15 显式列出，不把意图写成既成事实。v0.3 起存储与引擎类细节移交姊妹篇，本文收敛为内容合规规则层。
 
 ## 0. 本文件的准入逻辑
 
@@ -35,6 +35,8 @@
 - **所有权威写入都经 Runtime Store/Writer 完成，由单写者内部串行化并自动分配 revision**。Hook 是触发器不是存储：PostToolUse(SendMessage) 捕获 PLAN_REPORT 后落库走的也是同一条 Runtime 写路径，不自带第二套存储；revision 的 Agent-facing 边界见 [revision 篇](L4-revision-usage.md)。
 - 板（board）、CLI 回执、hook 投影都是**只读视图**；视图不参与判定真值，与权威不一致时触发 reconcile 而非互相说服。
 - 调度控制面（Assignment/plan/Result/checkpoint）必须解析到项目级共享存储，不跟随 Worker worktree cwd 各写一份，也不靠 git merge 汇总运行态（详接调度篇 §2.2 的硬边界）。
+
+已绑定 Runtime 的 Writer 在读取当前状态、验证候选状态及重放 pending 操作之前，统一核对 `bound_req.workspace.project_root` 与实际 root/state/journal 坐标。普通 Writer 只接受该根目录下的 `.claude/loop-state.json` 和 `.claude/loop-events.jsonl`；复制到 worker 的状态、自定义文件坐标和产生另一把锁的文件别名不能成为第二个写者。项目目录别名可解析到同一真实目录。恢复计划的离线候选构建必须使用显式恢复能力，不能通过普通 CLI 路径参数或仅凭目录名称取得豁免。
 
 ### 1.2 请求体 vs 持久记录双形态约定
 
@@ -70,7 +72,7 @@ revision 的统一语义、对象版本分层、Agent-facing 命令默认值、�
 | 指纹 | 定义 | 生产者 | 主要消费者 |
 |:--|:--|:--|:--|
 | documents[] 登记指纹 | 文档 path/version/sha256 入册 | PTR-PLAN-01/02、TR-002 等 transition 的 register action | registered-document drift 复核、exact-subject 门（S5） |
-| REQ 基线指纹 | bound_req 登记的 sha256，每次规格类迁移前与磁盘重算比对 | req bind | TR-004/007/023 的 `req_baseline_unchanged` guard |
+| REQ 基线指纹 | bound_req 登记的 sha256，每次规格类迁移前按上游声明的 Git tree 重算比对 | req bind | TR-004/007/023 的 `req_baseline_unchanged` guard |
 | frozen_subjects / subject_digest | 轮内冻结主体集（path+sha 排序列表的聚合 sha256） | ReviewPlan 注册 | ReviewResult 强校验字段、`s7 status` 看板披露、TR-008/TR-009 边界 |
 | baseline digest | ObservationBatch / handoff / clean snapshot 携带的基线快照哈希 | seal / handoff / snapshot 事务 | S8 intake 四硬门、S9 session open、S10 复算 |
 | workspace digest | E2E 验证工件目录 sha256（sorted 相对路径:文件哈希行） | `s7 workspace-digest` | cold_start 轮 result 提交与 seal 收口的闭环校验 |
@@ -120,6 +122,18 @@ L2 总览规定「必需维度集合的权威定义归第四层门禁语义设�
 主干推进使未满足项单调不增（D7）；机器分母之外的事实（P1～P3 风险、AC 来源真实性）由 S10 人工层补充，不属于该能量函数。
 
 ---
+
+### 4.4 Evidence 合并后的指纹同步
+
+Evidence 文件可能在多个 worktree 交付汇总后改变。对于契约允许汇总/更新的 evidence，sha256 是当前内容的绑定缓存：Hook 发现变化时自动刷新对应绑定，不因这种变化单独产生 hash-mismatch 拒绝、暂停、额外批准或“证明来自合并”的门禁。
+
+来源由上游契约指定（见状态机核心 §5.4）。刷新只作用于当前 Runtime 中仍适用的 evidence 记录及明确引用它的派生绑定；同路径存在多个引用时统一刷新引用闭包，派生 manifest 若被改写则再同步其绑定。锁内重读、原子提交、失败恢复和幂等沿用单一 Writer，不允许文件和状态各更新一半后继续推进。
+
+哈希刷新不改变结论、责任、generation、review round、valid/invalid、审批事实或接收状态；新字节仍经过正常 schema 与语义检查。旧轮、已失效和归档证据不借刷新恢复有效。
+
+产品源文件、locked REQ/contract、冻结测试主体与被测 commit 不属于可变 evidence 缓存；它们沿用原有变更/失效规则。不能因为一个 manifest 位于 evidence 目录，就同时刷新它绑定的产品基线。不要以全量 fingerprint 命令替代定向 evidence 同步。
+
+验收必须分别覆盖：多树汇总的合法 evidence 自动同步并正常消费；结论或代际不合法仍被原规则识别；产品基线漂移不能被刷新抹除。
 
 ## 5. 追溯分母链（单一验证分母）
 
@@ -387,3 +401,31 @@ L2 全局规则「债务登记」（类型/影响/成本/负责人，债可累�
 | 2026-08-28 | v0.3.0 | 四家族定位定稿：迁移 ID 形态学、guard/action 引擎、auto_trigger 仲裁、崩溃写序与对账命令的本体移交新立的《权威状态机与迁移事务核心》，事件注册/payload/输出/失败态度移交新立的《Hook 与平台事件接线》；本文件收敛为内容合规规则与词汇词典层。事实更正：protected_commands 已于早前批次退出 Hook 主拦截路径（先前版本误标为"接线待办"） | owner 批准的基石抽取批次；两份子代理代码事实核查 |
 | 2026-08-28 | v0.2.0 | 按《调度篇》的 L4 准入逻辑复审全文：明确本文件为其覆盖域的唯一权威定义处（去除指向 L2/L3 的权威倒挂）；新增五个机制域——追溯分母链（单一验证分母规则的本体化）、精确集求值纪律（含差集报告标准形）、观测采集与脱敏治理、歧义裁决原则（selector fail-closed/显式层级）、债务与兼容性决策登记；人闸契约补交接物最小字段；词汇边界增 focus_key 条目；附四项拒收候选及理由 | owner 复核：L4 逻辑应与调度篇同构——定义机制而非综述；追问是否还有漏网机制 |
 | 2026-08-28 | v0.1.0 | 初版：对 S0～S11 全量文档审查后，把 Agent 调度之外贯穿多个 stage 的九个机制域统一沉淀；承接 L2 能量函数权威定义授权；记录已修正的两处 L3 残留与若干诚实缺口 | owner 指示：全面回顾 L3 设计理念，检查与 L1/L2 一致性，将跨 Stage 贯穿机制沉淀为单独的 L4 设计汇总 |
+
+
+### 2026-09-18 · v0.4.0
+
+定义允许汇总 evidence 的自动指纹同步与产品基线边界。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+### 可变证据类别的配置投影
+
+`docs/loop-definition.json.mutable_evidence_kinds` 是自动刷新证据索引哈希的类别白名单。Hook 在 Gate 评估前，通过 Writer 同步当前 generation/round、仍有效的这些证据的实际内容指纹；来源读取仍服从 `file_sources`。自动刷新不改变结论、状态、失效原因、历史记录、REQ/正式产出基线或冻结的 clean-round/人工授权绑定。工作树汇总导致的字节变化不要求额外合并证明。缺失文件保留缺失事实，不能用空内容重新绑定。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+共同模型及其本地输入闭包复用 documents[] 的 design 身份、基线与审查 subjects，不新增 registry 或独立状态机。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+## 整体派发计划的控制面契约（2026-09-19）
+
+[L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan) 拥有编排机制。控制面仅登记批准计划的文档身份/指纹与所属 REQ、generation，复用 TASK、assignment、Result 和集成事实；不新增 Wave registry、独立执行数据库或持久化 Ready/conflict 图。
+
+计划使用独立的 `dispatch_plan` 文档身份（已接入 schema 的独立类型），不得借 `task` 或 `design` 混入任务分母或 S2 架构判定。S5 subjects 纳入该身份；S6 分母只取批准 TASK 集合，并与计划成员精确一致。正式计划的 SHA 不属于 mutable evidence 自动同步范围。
+
+TASK 是真实产物依赖权威；计划只补成员、波次与必要资源顺序。运行投影从当前有效尝试、结果与 checkpoint 重建，历史失效记录不能满足依赖；看板、候选求值和质量门共用事实解码。平台容量是运行配置，调整容量不改计划版本。
+
+waves-v1 在新入口按绑定 REQ 收敛发现范围，legacy 保留兼容诊断。验收须证明当前 REQ 范围闭合、两路 subjects 精确、计划不污染其他文档语义、恢复后候选一致且无重复 owner。
+
+修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。

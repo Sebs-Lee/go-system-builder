@@ -10,14 +10,38 @@
 | L3-S1-bind.md | S1 绑定与授权生命周期 | 显式授权、权威状态起点，与七动词生命周期控制面（进入/暂停/恢复/修订/退出/结束/重绑） |
 | L3-S2-design.md | S2 设计 | 架构决策 + 模块全量场景真相包 |
 | L3-S3-contracts.md | S3 契约 | 分端执行契约与双向追溯 |
-| L3-S4-task-split.md | S4 任务拆分 | 单职责任务 + 可判定收尾契约 |
-| L3-S5-document-verification.md | S5 文档验证 | 独立双路审查 + 原子锁定 |
-| L3-S6-build.md | S6 构建 | 计划回执后的连续实现、隔离集成与如实报告 |
+| L3-S4-task-split.md | S4 任务拆分 | 单职责任务 + 可判定收尾契约 + 整体派发计划 |
+| L3-S5-document-verification.md | S5 文档验证 | 独立双路审查规格与编排 + 原子锁定 |
+| L3-S6-build.md | S6 构建 | 按批准计划持续并行派发、连续实现与根目录集成 |
 | L3-S7-verification-round.md | S7 完整验证轮 | 单一 required Claim set + DV/QA/E2E 1..N 派发 + CleanRound/ObservationBatch |
 | L3-S8-finding-investigation.md | S8 发现调查 | Finding encounter → InvestigationCase → CausalModel → RepairContract |
 | L3-S9-repair.md | S9 修复 | 边界约束修复 + 证据失效 + 定向重验 |
 | L3-S10-acceptance-audit.md | S10 验收与审计 | 验收汇编 + 系统不变量审计 + 债务登记 |
 | L3-S11-release-gate.md | S11 人工发布闸 | 不可默认的人闸与回滚路 |
+
+## 阶段输入来源与交付契约
+
+以下是各 L3 共同消费的上游声明；具体 artifact 在各阶段细化，不能由 FileView 按文件名猜测。`git_tree` 固定到 REQ 开发主分支的已提交 commit；`disk` 限定明确不入库的运行证据；控制状态统一读取 `runtime`。读取、目录发现、哈希与迁移共用 [L4 状态机核心 §5.4](L4-state-transition-core.md#54-上游输入契约与文件视图)；证据汇总同步按 [L4 控制面 §4.4](L4-runtime-control-plane.md#44-evidence-合并后的指纹同步)。
+
+| 阶段 | 正式输入/交付（`git_tree`） | 运行输入（显式 `disk` / `runtime`） |
+| --- | --- | --- |
+| S0 → S1 | 已锁定并提交的 REQ；S0 草稿编辑可读磁盘，但不构成 S1 资格 | 绑定前授权与初始化状态 |
+| S2 | REQ、正式设计、场景包与入库原型 | planning evidence、控制状态 |
+| S3 | 设计和已提交契约 | planning evidence、控制状态 |
+| S4 | 契约、已提交 TASK 与整体派发计划 | planning evidence、控制状态 |
+| S5 | 被审文档及锁定后的正式版本 | 文档审查信封与责任/轮次状态 |
+| S6 | 批准计划、TASK、代码、测试和合并后的正式交付 | Builder Result、执行日志、集成 checkpoint |
+| S7 | 被测代码/测试/文档、正式 REV/QA/E2E 报告 | 执行 evidence、Claim/Assignment/Result、轮次状态 |
+| S8 | 正式 BUG 文档及需要向 Builder 交付的入库调查产出 | ObservationBatch、Case/Contract 等声明不入 Git 的结构化证据、调查状态 |
+| S9 | BUG、修复代码/测试和正式文档；进入 Builder 前核对依赖 commit | 只读交接的调查 evidence、RepairPlan/Session、定向验证结果 |
+| S10 | 已提交正式验收/审计报告与产品交付 | acceptance/audit evidence、接收状态 |
+| S11 | 被批准的正式交付及发布目标引用 | human decision、授权与发布证据 |
+
+表中运行对象的名称不自动赋予磁盘例外：注册的 artifact 契约须明确声明来源；同类对象若作为正式入库交付则声明 `git_tree`。运行证据对产品、文档、测试的引用仍校验声明的已提交内容，不能借磁盘 evidence 夹带未提交产出。
+
+各阶段先生成/修改正式产出，再及时提交，之后才登记通过阶段的资格。主会话不能自动提交用户无关变更，也不要求每次编辑立即提交。新建 worktree 不含主会话 dirty/index-only 内容，阶段依赖必须通过上述交付路径进入其基线。
+
+worktree 生命周期、显式开发/发布分支与主会话回收职责统一消费 [L4 Worktree](L4-worktree-governance.md)。阶段资格不满足只使阶段不推进，不把“待 commit”或“待回收”增设为普通工具硬门禁。
 
 ## 共用机制清单（真实载体——L3 只允许引用本清单的真实机制名，禁用抽象代号）
 
@@ -31,12 +55,12 @@
 | `PreToolUse` | **状态切换主力**：控制循环→质量门评估→满足则自动迁移（CAS）→安全决策（越界写拦截/锁定产物阻断） |
 | `PreToolUse`（子代理派发匹配） | **派发前预检提醒**：单人 vs 团队？角色模板选对没？worktree 隔离？team_name 带了吗？ |
 | `SubagentStart` | 派发瞬间提醒（预检答案落地、任务简报要求） |
-| `PostToolUse`（`SendMessage`） | 捕获 PLAN_REPORT/BLOCKER/COMPLETION，写入 Assignment checkpoint；计划不是 final response |
+| `PostToolUse`（`SendMessage` / `Agent` / `SubagentHandback`） | 收集消息与报告、记录待接收事实，并在父会话可注入事件提示回收；async_launched 不是完成 |
 | `SubagentStop` | 按 L4 判定是否已有 canonical Result、结果是否待消费，以及应允许停止、阻止停止还是进入恢复路由 |
 | `TeammateIdle` | 按 L4 区分正常交卷、计划缺失、异常 idle 与阻塞；只在责任仍可继续时唤醒同一 Worker，不自动派发下一任务 |
 | `PreCompact` | 持久化可恢复检查点（给下一个 SessionStart） |
 
-> 平台共有 31 个 Hook 锚点，全集与选点审查见 [L4 Claude Code Hook 锚点全图](L4-hook-anchor-catalog.md)；事件注册、payload 契约、输出/退出码与失败态度（fail-open/closed）的唯一权威是 [L4 Hook 与平台事件接线](L4-hook-platform-wiring.md)。上表只列各事件承载的职责，不复制定义。
+> 平台事件随版本更新，目录与选点审查见 [L4 Claude Code Hook 锚点全图](L4-hook-anchor-catalog.md)；事件注册、payload 契约、输出/退出码与失败态度（fail-open/closed）的唯一权威是 [L4 Hook 与平台事件接线](L4-hook-platform-wiring.md)。上表只列各事件承载的职责，不复制定义。
 
 ### B. Harness（`loop-harness` 二进制——确定性引擎）
 
@@ -123,3 +147,18 @@ L3 文档自身也必须遵循漏斗思考。读者应先理解这个 stage 为�
 | 2026-08-20 | L4 建立后收敛层级边界：Agent 调度细节上移至跨 Stage 机制层，L3 只保留各 Stage 的消费模式和完成条件；两阶段授权标为迁移入口 | owner 指示：统一治理 Sub-agent / Agent Team，不在每个 L3 重复协议 |
 | 2026-08-28 | 新增第二份 L4《运行时控制面与横切治理》并在共用机制清单挂链接：Agent 调度之外的十三个跨 Stage 机制域上移（v0.2.0 定稿，含追溯分母链与精确集求值两域的本体化）；同步修正 L3-S5 的 two-phase-activation 现役残留与 L3-S10 干净轮分母旧口径（angle） | owner 指示：跨 Stage 贯穿机制沉淀为单独的 L4 设计汇总 |
 | 2026-08-28 | 基石抽取批次：新立《Hook 与平台事件接线》《权威状态机与迁移事务核心》两份 L4，A/Hook 节与本节均改挂权威指针——各 stage 的 hook 表与 TR 表自此只描述消费 | owner 批准：按五问判据筛出并立篇（顺序 Hook→状态机） |
+
+
+### 2026-09-18 · v1.1.0
+
+声明 S0–S11 正式交付与运行证据来源，并更新 Hook 职责。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+合同推导由共同模型和协议进入分端责任；Builder 阅读从 TASK 进入，按相关条款渐进展开。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+## S4—S6 阅读闭环
+
+[S4 计划交付](L3-S4-task-split.md#9-整体派发计划交付契约) → [S5 编排审签](L3-S5-document-verification.md#dispatch-review) → [S6 实时清单与持续派发](L3-S6-build.md#dispatch-execution)。对象和波次语义由 [L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan) 唯一定义。静态计划是正式 Git tree 输入，实时进度读取控制事实；目标规范与当前实现能力分别说明。

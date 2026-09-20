@@ -432,3 +432,14 @@ Re-running DRIVE must not:
 
 The Runtime `revision` and `entities` arrays are the deduplication source.
 Before creating any entity, check the Runtime for an existing match.
+
+
+## Temporary worktrees and committed stage delivery
+
+Bind both destinations explicitly with `req bind --dev-branch <branch> --release-upstream <upstream>`; neither defaults to develop or the remote default. The project's authority root and this development branch own retained changes.
+
+Before dispatch, commit the required stage documents, code and tests to that branch. Create/reuse registered temporary worktrees with `runtime worktree-create --root <authority-root> --assignment-id <id>`. Git worktrees share Git objects, but have separate indexes and working files: staged and dirty parent changes are absent. Native Claude Code base-ref defaults must be checked against the binding.
+
+Workers commit scoped results and report. Main reviews them and runs `runtime task-integrate --root <authority-root> --assignment-id <id>`: normal merge commit, verification, acknowledgement, cleanup. This is development integration, not release. Failed integration preserves the checkout; retry the same assignment. Do not discard unreceived work or create replacement worktrees indefinitely.
+
+Stage gates consume each input from the source declared in the upstream file contract. Formal deliverables use one pinned Git tree; only explicitly allowed evidence/runtime inputs use disk. Dirty files cannot satisfy formal stage delivery. Worktree backlog reminders are advisory, delivered to Main through Agent-visible context, and never authorize deleting unknown worktrees.

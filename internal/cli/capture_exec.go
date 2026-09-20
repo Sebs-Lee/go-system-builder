@@ -19,6 +19,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"hash"
 	"io"
 	"io/fs"
@@ -560,8 +561,15 @@ type artifactDigest struct {
 func snapshotArtifacts(root string, maxDepth int) map[string]artifactDigest {
 	out := map[string]artifactDigest{}
 	entries := 0
+	scope := pathscope.New(root)
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			return nil
+		}
+		if scope.Excludes(path) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)

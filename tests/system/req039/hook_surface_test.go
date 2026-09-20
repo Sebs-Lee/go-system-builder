@@ -26,8 +26,8 @@ func TestHOOK_PreCompact_PersistsMilestoneViaHookCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("PreCompact Hook failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, "LOOP RECOVERY") && !strings.Contains(stdout, "objective") && !strings.Contains(stdout, "design") {
-		t.Fatalf("PreCompact must emit resumable recovery packet, got %s", stdout)
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("PreCompact must persist without discarded output, got %s", stdout)
 	}
 
 	after := req039fixtures.ReadState(t, root)

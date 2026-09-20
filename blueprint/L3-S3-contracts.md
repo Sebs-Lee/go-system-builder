@@ -25,7 +25,7 @@ S3 的本质是把设计事实翻译成**分端可执行、跨端可对照、上
 |:--|:--|
 | 输入 | bound REQ；locked ARCHITECTURE/ADR；当前模块 scenario/story/flow/prototype；`planning.contracts` cursor |
 | 要搞清楚 | FE、BE、SYNC 各自的边界；两端 wire/error/state/side-effect 是否一致；每个 CASE 与 AC 是否有条款落点 |
-| 核心工作 | 建立条款宇宙 → FE 翻译 → BE 翻译 → SYNC 对齐 → 索引收口、机检、锁定和登记 |
+| 核心工作 | 建立条款宇宙 → 模型与 SYNC 共同收敛 → FE/BE 派生 → 索引收口、机检、锁定和登记 |
 | 输出 | locked CONTRACTS 索引与适用的 FE/BE/SYNC 契约；planning_contract 证据；runtime 登记的 contract documents |
 | 完成 | contracts check 与 scenario bridge 均通过；至少一份 locked contract 存在；证据精确覆盖当前设计与 locked contract 集；PTR-PLAN-02 提交 |
 | 下一阶段 | cursor 进入 `planning.tasks`，S4 以 CONTRACTS 索引中的条款宇宙拆任务 |
@@ -42,10 +42,11 @@ flowchart LR
     end
 
     subgraph S3["S3 Contracts"]
-        T1["T1 建立合同边界与条款宇宙"] --> T2["T2 翻译 FE 契约"]
-        T2 --> T3["T3 翻译 BE 契约"]
-        T3 --> T4["T4 以 SYNC 对齐两端"]
-        T4 --> T5["T5 索引收口、机检、锁定与登记"]
+        T1["T1 建立合同边界与条款宇宙"] --> T4["T4 共同模型与 SYNC 协议收敛"]
+        T4 --> T2["T2 派生 FE 责任"]
+        T4 --> T3["T3 派生 BE 责任"]
+        T2 --> T5["T5 索引收口、机检、锁定与登记"]
+        T3 --> T5
     end
 
     subgraph OUTPUT["Output"]
@@ -68,7 +69,7 @@ flowchart LR
     O5 --> NEXT["S4 Task Split"]
 ```
 
-顺序 FE→BE→SYNC 是当前 `specification-planning` 的工作口径：先把用户侧可见行为写清，再让后端承诺支撑它，最后用 SYNC 对照消除两端差异。若某次变更没有其中一端，仍需在索引和范围中明确 N/A，而不能省略边界说明。
+推导以共享模型与 SYNC 协议共同收敛为先，FE/BE 从相同数据与交互基线派生职责；不再先分别写两端定义再对账。若某次变更没有其中一端，仍需在索引和范围中明确 N/A，而不能省略边界说明。
 
 ### 1.4 S3 的边界与当前保证
 
@@ -84,12 +85,12 @@ flowchart LR
 | 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
 |:--|:--|:--|:--|
 | T1 建立合同边界与条款宇宙 | 哪些分端合同需要存在；每个需求/CASE 应由什么条款承担 | 从 REQ、设计与 CASE 清点合同集；在 CONTRACTS 索引建立合同清单、联调点和需求覆盖矩阵 | 合同结构、稳定 ID、条款宇宙草案 |
-| T2 翻译 FE 契约 | 用户可见状态、组件行为、输入依赖和错误恢复如何成为前端承诺 | 将 Story/PATH/oracle 映射到 FE 条款、联调点与验收 | FE 范围、条款、场景与测试映射 |
-| T3 翻译 BE 契约 | 数据、状态机、权限、副作用和技术约束如何成为后端承诺 | 将 architecture/rule/oracle 翻译为 BE 条款、数据模型和验收 | BE 范围、条款、数据/状态/副作用承诺 |
-| T4 以 SYNC 对齐两端 | wire shape、错误码、幂等、限流、权限、状态转换是否逐项一致 | 在同一行并排写 FE/BE 行为；补 HTTP/JSON 样例和 CT 用例 | 可联调的 SYNC 契约及差异裁决 |
+| T4 共同模型与 SYNC 协议收敛 | wire shape、错误码、幂等、限流、权限、状态转换是否形成唯一共同基线 | 先确定共享数据模型、HTTP/JSON 样例、错误/状态/幂等和 CT 断言，再在 SYNC 中记录两端对照与差异裁决 | 共享模型闭包、可联调的 SYNC 契约及差异裁决 |
+| T2 派生 FE 契约 | 共享模型与 SYNC 基线如何成为用户可见状态、组件行为、输入依赖和错误恢复承诺 | 以 T4 的共同模型和 SYNC 为输入，将 Story/PATH/oracle 映射到 FE 条款、联调点与验收 | FE 范围、条款、场景与测试映射 |
+| T3 派生 BE 契约 | 共享模型与 SYNC 基线如何成为数据、状态机、权限、副作用和技术约束承诺 | 以 T4 的共同模型和 SYNC 为输入，将 architecture/rule/oracle 翻译为 BE 条款、数据模型和验收 | BE 范围、条款、数据/状态/副作用承诺 |
 | T5 索引收口、机检、锁定与登记 | 追溯是否闭合；哪些事实能进入 runtime | 完成索引；运行 contracts check；修 scenario bridge；翻 locked；登记 planning_contract；PTR-PLAN-02 | registered contract set 与 S4 cursor |
 
-T1 的条款宇宙先建立框架，T2～T4 才能用稳定编号填充；T5 再从两端反查。若先分别写三个合同、最后才想编号，索引和正文会形成三套局部真相。
+T1 的条款宇宙先建立框架；T4 先收敛共同模型与 SYNC，T2/T3 再从同一基线并行派生并使用稳定编号；T5 再从两端反查。若先分别写三个合同、最后才想编号，索引和正文会形成三套局部真相。
 
 ## 3. 从设计事实到锁定合同集的完整工作流
 
@@ -98,11 +99,12 @@ flowchart TD
     IN["planning.contracts<br/>S2 设计出口"] --> PRE{"设计与场景输入足够？"}
     PRE -->|否| BACK2["返回 S2 修设计/真相包"]
     PRE -->|是| T1["T1 建合同清单、联调点<br/>与条款宇宙"]
-    T1 --> FE["T2 FE：可见行为 / PATH / oracle"]
-    FE --> BE["T3 BE：数据 / 状态 / 权限 / 副作用"]
-    BE --> SYNC["T4 SYNC：wire / error / idempotency<br/>两端行为逐行对齐"]
-    SYNC --> SEM{"两端语义能对上？"}
-    SEM -->|否且设计未变| FE
+    T1 --> SYNC["T4 共同模型与 SYNC：wire / error / idempotency"]
+    SYNC --> FE["T2 FE：可见行为 / PATH / oracle"]
+    SYNC --> BE["T3 BE：状态 / 权限 / 副作用"]
+    FE --> SEM
+    BE --> SEM{"两端语义能对上？"}
+    SEM -->|否且设计未变| SYNC
     SEM -->|否且设计有误| BACK2
     SEM -->|需要改变 REQ| PAUSE["暂停并走 amendment"]
     SEM -->|是| INDEX["T5 完成 CONTRACTS 覆盖矩阵"]
@@ -136,29 +138,29 @@ flowchart TD
 
 索引中的条款 cell 不是实现章节号，而是后续 TASK 覆盖的稳定语义单位。编号不能只有名字没有可判定承诺，也不能把整个合同压成一个巨型条款。
 
-### 4.2 T2 — FE 契约：翻译用户可见行为
+### 4.2 T2 — FE 契约：从共同基线派生用户可见行为
 
 | 维度 | 设计 |
 |:--|:--|
 | 模板 | `FE-contract-template.md` 的范围/排除、输入依赖、需求条款映射、UI 包映射、场景与测试映射、技术约束、联调点和验收 |
-| 方法 | `api-contracts` 只在 API/shared schema 变化时加载；UI 语义以 S2 当前模块包为准 |
+| 方法 | 以 T4 已收敛的共享模型与 SYNC 为接口基线；`api-contracts` 只在 API/shared schema 变化时加载；UI 语义以 S2 当前模块包为准 |
 | 核心翻译 | CASE/PATH 的 visible、terminal_state、rejection、recovery → 页面/组件/状态管理/错误呈现承诺 |
 | 停止条件 | PATH、错误状态或字段含义在 S2 中不存在；不能由 FE 自行发明 |
 | 完成产出 | 每个前端可见结果和联调点都有稳定 FE 条款 |
 
-### 4.3 T3 — BE 契约：翻译系统状态与副作用
+### 4.3 T3 — BE 契约：从共同基线派生系统状态与副作用
 
 | 维度 | 设计 |
 |:--|:--|
 | 模板 | `BE-contract-template.md` 的范围/排除、输出契约、需求映射、UI 反推、Rule→CASE 链、技术约束、数据模型、规则与验收 |
-| 核心翻译 | architecture/rule/oracle → 请求校验、状态转换、持久化副作用、禁止副作用、权限与错误 |
+| 核心翻译 | 以 T4 已收敛的共享模型与 SYNC 为基线，将 architecture/rule/oracle → 请求校验、状态转换、持久化副作用、禁止副作用、权限与错误 |
 | 规则载体 | `api-design.md`、`naming.md`；涉及安全、状态机、数据库时按风险加载对应 skill/rule |
 | 兼容性 | 可选新增与 breaking 变更必须明确；必填新增/删除需 ADR、版本和 change-control，不静默扩展 locked contract |
 | 完成产出 | 后端可实现、可测试并能支撑 FE 承诺的条款 |
 
-### 4.4 T4 — SYNC 契约：把两个实现世界并排
+### 4.4 T4 — 共同模型与 SYNC：先确定共同交互承诺
 
-SYNC 是 S3 最深的语义工作，不是第三份摘要：
+SYNC 与共享模型共同形成 S3 的先行基线，不是两端实现完成后的第三份摘要：
 
 | 对齐对象 | SYNC 模板载体 | 必须回答 |
 |:--|:--|:--|
@@ -170,7 +172,7 @@ SYNC 是 S3 最深的语义工作，不是第三份摘要：
 | 运行约束 | 幂等、限流、权限 | 重试与并发下是否仍满足承诺 |
 | 验证 | 契约测试表 | 哪个 CT 证明哪条 wire/error/state 断言 |
 
-机器目前只检查结构引用，四列的语义一致性由 S3 自审与 S5 独立审查承担。
+机器检查结构引用，并对采用 json-schema-v1 的批次检查共同模型引用、Schema 与样例；跨端语义一致性仍由 S3 自审与 S5 独立审查承担。
 
 ### 4.5 T5 — 机检、锁定、登记与推进
 
@@ -208,7 +210,7 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 - **REQ 作用域缺口**：FR token 检查当前接受“任意 REQ 中存在的 FR”，不严格限定当前 bound REQ；
 - **条款检查宽松**：目标合同只要任意位置出现同号 `§n` 就算声明，不严格限定「本合同条款」列；它是防明显漂移的地板，不是条款结构证明；
 - **语义缺口**：SYNC 四列、错误恢复、兼容性和 oracle 翻译没有机器 matcher；
-- **模板死字段**：FE/BE/SYNC 均带“派生任务”章节，但合同在 S3 先 locked，S4 才产生 TASK；实际 task 覆盖权威不在这些章节。当前它们没有安全回填时序，应视为待删除/改为只读指路，而非要求 S3 猜未来任务；
+- **消费出口**：FE/BE/SYNC 的任务章节只链接任务索引，S4 的 TASK 声明实际条款覆盖，结果由后续 evidence 回链；不回填 locked 合同；
 - **锁定边界**：runtime 登记在 S3，物理写拦截从 S6 开始；S5 前的合法返工仍可能改变并重登记指纹。
 
 ### 5.3 关键取舍
@@ -295,3 +297,8 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 | S5 reviewer | SYNC 四列与 oracle 翻译 | 风险触发专项 | 机械引用重算 |
 
 正常路径只要求作者理解当前合同语义；引用存在、CASE 反向闭合、条款号和指纹由 harness 报错驱动，不写成常读检查清单。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+共同模型与 SYNC 先于分端合同定稿。新索引声明共享模型策略及源引用；请求响应字段从唯一源引用，SYNC 拥有时序与恢复行为。阶段登记包含模型的实际本地引用闭包。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。

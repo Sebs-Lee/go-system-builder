@@ -91,13 +91,15 @@ func TestTaskIntegrateMergesWorktreeToVerified(t *testing.T) {
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.State != "verified" {
-		t.Fatalf("checkpoint state = %q, want verified (checkpoint=%s)", checkpoint.State, data)
+	if checkpoint.State != "complete" {
+		t.Fatalf("checkpoint state = %q, want complete (checkpoint=%s)", checkpoint.State, data)
 	}
 	if checkpoint.TaskID != "TASK-039-01" {
 		t.Fatalf("checkpoint task_id = %q, want TASK-039-01 (gate binding)", checkpoint.TaskID)
 	}
-	_ = wtPath
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("received worktree must be removed: %v", err)
+	}
 }
 
 func TestTaskIntegrateUnknownAssignmentListsKnown(t *testing.T) {

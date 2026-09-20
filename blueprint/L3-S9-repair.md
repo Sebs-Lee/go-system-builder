@@ -8,6 +8,14 @@
 
 > **Revision 口径**：S9 消费 approved Contract 的 ID/hash、RepairAssignment、实际 diff 和 targeted assertion；Contract/Assignment 对象版本由工具生成，Runtime `revision` 由 Writer 内部记录。Builder/Repair Lead 不手工计算或复制这些 revision。当前代码中的 CAS/显式 revision 是迁移中的内部实现约束，不是正常 Agent 操作步骤。统一边界见 [L4 Runtime revision 使用与命令协调](L4-revision-usage.md)。
 
+## 输入与交付来源
+
+本阶段消费 [L3 共用来源契约](L3-README.md#阶段输入来源与交付契约)与 [L4 Worktree](L4-worktree-governance.md)。派发 Builder 前，S7–S8 的正式报告、BUG、代码与测试依赖必须已提交到 REQ 开发主分支；新 worktree 从该分支最新明确 commit 创建，不会继承主会话未提交文件。
+
+声明不入 Git 的 InvestigationCase、RepairContract 等运行证据从权威根目录读取或按依赖清单提供只读副本；控制根与执行根分开记录。不能仅因上游有 evidence 就让未提交正式文档获得阶段资格。
+
+子分支提交后由主会话合并回根目录开发主分支，完成联合校验、证据绑定同步、接收与清理。ChangeImpact 的最终集合以声明的合并后树为准。运行 evidence 汇总后的 sha 变化按控制面 §4.4 自动同步；被测代码基线变更仍适用原有失效/复验规则。
+
 ## 0. 一句话结论与阶段关系
 
 > **S9 不接收“发现了什么问题”的自由文本，也不重新猜根因；它只消费 S8 已批准且带对象版本/hash 的 RepairContract，把其中的架构修复意图转成可执行 Assignment，完成 Minimum Complete Root-Cause Repair，按真实 diff 重算影响、独立复验全部断言，然后回到 S7 开启一轮全新的完整审查。**
@@ -1097,3 +1105,13 @@ status/next_action 中披露边界。
 |:--|:--|:--|:--|
 | 2026-08-20 | v0.2.0 | 将 S9 重构为 Macro-stage 的 Remediation 步骤；改为只消费 approved RepairContract；新增 RepairPlan/Result、Minimum Complete Root-Cause Repair、session-wide ChangeImpact、独立 TargetedReverification、RepairHandoff 和 S7 原子回环；统一采用 L4 PLAN_REPORT 后连续执行 | 让 S7 表象经 S8 根因推导后被完整修复，禁止局部 symptom patch，并恢复修复后整体开发结果的可信度 |
 | 2026-08-19 | v0.1.0 | 初版：记录 accepted BUG、repair read-back、impact invalidation、targeted re-verification 与 TR-012 当前机制和缺口 | 建立 S9 基线 |
+
+
+### 2026-09-18 · v1.1.0
+
+修复派发以前置已提交依赖为基线，独立交接运行 evidence。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+发现模型或协议缺口时回到事实所属层修订，重审受影响闭包；模型属于冻结设计，不能套用 mutable evidence 哈希自动刷新。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。

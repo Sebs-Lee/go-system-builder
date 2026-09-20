@@ -168,6 +168,7 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 }
 
 type documentFact struct {
+	ID            string
 	Kind          string
 	Path          string
 	Version       string
@@ -1084,6 +1085,18 @@ func applyBuilderBatchCompleteness(input Input, result *Evaluation) {
 		result.Status = StatusNotReady
 		return
 	}
+	if HasDispatchPlan(input.Snapshot.State) {
+		progress := PlannedBuilderProgress(input)
+		for _, taskID := range batch {
+			if progress[taskID].State != "integrated" {
+				result.Missing = append(result.Missing, "integration_checkpoint:"+taskID+":"+progress[taskID].Reason)
+			}
+		}
+		if len(result.Missing) > 0 {
+			result.Status = StatusNotReady
+		}
+		return
+	}
 	completions := make(map[string]evidenceEnvelope)
 	for _, envelope := range evidenceEnvelopesByID(input, result.EvidenceRefs) {
 		if evidenceKindsEqual("completion_report", envelope.Kind) && envelope.TaskID != "" {
@@ -1226,6 +1239,7 @@ func currentDocuments(state map[string]any, generation int) []documentFact {
 			continue
 		}
 		document := documentFact{
+			ID:            stringValue(value["id"]),
 			Kind:          stringValue(value["kind"]),
 			Path:          stringValue(value["path"]),
 			Version:       stringValue(value["version"]),
@@ -1243,6 +1257,11 @@ func currentDocuments(state map[string]any, generation int) []documentFact {
 
 func findCurrentDocument(documents []documentFact, kind string, files FileView) (documentFact, bool) {
 	for _, document := range documents {
+		// Shared schema/sample subjects must participate in S5, but cannot
+		// substitute for the S2 architecture deliverable.
+		if kind == "design" && strings.HasPrefix(document.ID, "shared-model:") {
+			continue
+		}
 		if document.Kind != kind || document.Status != "locked" || document.Path == "" || document.SHA256 == "" || files == nil {
 			continue
 		}

@@ -80,7 +80,7 @@ func TestTASK03901TR002RejectsBeforeTasksPhase(t *testing.T) {
 	startLockedREQ(t, root, statePath, journalPath)
 	seedPlanningArtifacts(t, statePath)
 
-	_, err := transition.Apply(root, statePath, journalPath, transition.Request{
+	_, err := applyFixture(root, statePath, journalPath, transition.Request{
 		TransitionID:     "TR-002",
 		ExpectedRevision: 0,
 		Actor:            "orchestrator",

@@ -926,7 +926,7 @@ func lockedFromStageFor(kind string) string {
 	switch kind {
 	case "req":
 		return "S2"
-	case "design", "ui_baseline", "ui_prototype", "contract", "task", "team_manifest":
+	case "design", "ui_baseline", "ui_prototype", "contract", "task", "dispatch_plan", "team_manifest":
 		return "S6"
 	case "review", "qa", "e2e", "acceptance", "release_audit", "bug":
 		return "S7"

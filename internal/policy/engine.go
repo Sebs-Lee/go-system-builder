@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -187,19 +188,22 @@ type RuntimeContext struct {
 }
 
 type Input struct {
-	SessionID string          `json:"session_id"`
-	Event     string          `json:"hook_event_name"`
-	AgentID   string          `json:"agent_id"`
-	AgentType string          `json:"agent_type,omitempty"`
-	ToolName  string          `json:"tool_name"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	FilePath  string          `json:"file_path,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	ToolInput map[string]any  `json:"tool_input"`
-	TargetID  string          `json:"target_id"`
-	Facts     map[string]bool `json:"facts"`
-	Runtime   RuntimeContext  `json:"runtime_context"`
-	Source    string          `json:"source,omitempty"`
+	CWD          string         `json:"cwd,omitempty"`
+	ToolResponse map[string]any `json:"tool_response,omitempty"`
+	scope        *pathscope.Worktrees
+	SessionID    string          `json:"session_id"`
+	Event        string          `json:"hook_event_name"`
+	AgentID      string          `json:"agent_id"`
+	AgentType    string          `json:"agent_type,omitempty"`
+	ToolName     string          `json:"tool_name"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	FilePath     string          `json:"file_path,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	ToolInput    map[string]any  `json:"tool_input"`
+	TargetID     string          `json:"target_id"`
+	Facts        map[string]bool `json:"facts"`
+	Runtime      RuntimeContext  `json:"runtime_context"`
+	Source       string          `json:"source,omitempty"`
 	// Official Claude Code 2.1.218 TeammateIdle/SubagentStop payload fields
 	// (L4 §15.2 P0-1). TeammateIdle carries teammate_name/team_name and no
 	// agent_id; SubagentStop carries agent_id/agent_transcript_path/
@@ -361,6 +365,7 @@ func (e *Engine) HasRule(id string) bool {
 }
 
 func (e *Engine) Evaluate(input Input) (Decision, error) {
+	input = withPathScope(input)
 	if decision, blocked := unknownMCPToolDecision(input); blocked {
 		return decision, nil
 	}
@@ -407,6 +412,7 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 // for any dispatched Worker that writes into the product surface before
 // its PLAN_REPORT is recorded (L4 §15.2 P1-3 close-out).
 func EvaluateAgentScoped(input Input) (Decision, bool) {
+	input = withPathScope(input)
 	if decision, blocked := repairAssignmentScopeDecision(input); blocked {
 		return decision, true
 	}
@@ -568,6 +574,9 @@ func repairMutationPaths(input Input) ([]string, bool) {
 }
 
 func repairControlPathAllowed(input Input, rawPath string) bool {
+	if temporaryWorktreePath(input, rawPath) {
+		return true
+	}
 	rel := reviewerRelativePath(input, rawPath)
 	for _, prefix := range []string{".claude/review/repair", ".claude/evidence", "docs/reports"} {
 		if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
@@ -698,6 +707,9 @@ func firstWriteSurfaceAllowed(input Input) bool {
 // state writes there. Keeping these surfaces separate prevents the barrier
 // from blocking the control-plane handshake it exists to support.
 func firstWritePathAllowed(input Input, rawPath string) bool {
+	if temporaryWorktreePath(input, rawPath) {
+		return true
+	}
 	rel := reviewerRelativePath(input, rawPath)
 	if rel == ".claude" || strings.HasPrefix(rel, ".claude/") {
 		return true
@@ -850,6 +862,9 @@ func phaseProductWriteFrozen(input Input) bool {
 // docs/release_audits/ for release-audit reports — docs/rules/change-control
 // §2) so audit work stays inside the control/report surfaces.
 func phaseWritePathAllowed(input Input, rawPath string) bool {
+	if temporaryWorktreePath(input, rawPath) {
+		return true
+	}
 	rel := reviewerRelativePath(input, rawPath)
 	for _, prefix := range []string{".claude/evidence/", "docs/reports/", "docs/release_audits/"} {
 		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
@@ -885,6 +900,9 @@ func phaseProductWriteBlock(input Input, rawPath string) Decision {
 }
 
 func reviewerRelativePath(input Input, rawPath string) string {
+	if !filepath.IsAbs(rawPath) && input.CWD != "" {
+		rawPath = filepath.Join(pathResolutionBase(input), rawPath)
+	}
 	rel := strings.TrimPrefix(filepath.ToSlash(strings.Trim(rawPath, "\"'")), "./")
 	if abs, err := filepath.Abs(rawPath); err == nil && input.Runtime.ProjectRoot != "" {
 		if rootAbs, err := filepath.Abs(input.Runtime.ProjectRoot); err == nil {
@@ -897,6 +915,9 @@ func reviewerRelativePath(input Input, rawPath string) string {
 }
 
 func reviewerWritePathAllowed(input Input, rawPath string) bool {
+	if temporaryWorktreePath(input, rawPath) {
+		return true
+	}
 	rel := reviewerRelativePath(input, rawPath)
 	allowed := []string{".claude/evidence/", "docs/reports/"}
 	if workspace := strings.TrimSuffix(filepath.ToSlash(input.Runtime.VerificationWorkspace), "/"); workspace != "" {
@@ -1241,6 +1262,10 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 			continue
 		}
 		for _, path := range affectedPaths {
+			if temporaryWorktreePath(input, path) {
+				continue
+			}
+			path = reviewerRelativePath(input, path)
 			if artifact.complete() &&
 				samePath(path, artifact.Path) {
 				recovery := []string{"create a new version through the formal rework path"}
@@ -1575,4 +1600,32 @@ func stageNumber(stage string) (int, bool) {
 		n = n*10 + int(r-'0')
 	}
 	return n, true
+}
+
+func withPathScope(input Input) Input {
+	if input.Runtime.ProjectRoot != "" {
+		scope := pathscope.New(input.Runtime.ProjectRoot)
+		input.scope = &scope
+	}
+	return input
+}
+func temporaryWorktreePath(input Input, path string) bool {
+	if input.scope == nil {
+		return false
+	}
+	path = strings.Trim(path, "\"'")
+	if !filepath.IsAbs(path) && input.CWD != "" {
+		path = filepath.Join(pathResolutionBase(input), path)
+	}
+	return input.scope.Excludes(path)
+}
+
+func pathResolutionBase(input Input) string {
+	if input.ToolName == "Bash" {
+		command, _ := input.ToolInput["command"].(string)
+		if regexp.MustCompile(`(^|[;&|\n])\s*(cd|pushd|popd)\s`).MatchString(command) {
+			return input.Runtime.ProjectRoot
+		}
+	}
+	return input.CWD
 }

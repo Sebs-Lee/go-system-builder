@@ -9,6 +9,12 @@
 
 > 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
 
+## Shared model inputs
+
+- [本操作的权威数据定义](../design/data-model/{schema}.json)：类型、空值、单位和约束从此处读取，不在本合同重新定义。
+- [合同索引](CONTRACTS-{id}.md#shared-model-baseline)：确认本操作、数据位置及消费者。
+- [共享模型规则](../rules/shared-model-contracts.md)：遇到模型缺口时返回所属设计层。
+
 ## 1. 文档链接
 
 | 关系 | 文档 | 条款/用途 |
@@ -42,45 +48,21 @@
 |:---|:---|:---|:---|:---|:---|
 | REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | {wire shape, error, idempotency and state assertion} | REV/QA/E2E round {n} |
 
-### 请求
+### 操作与数据投影
 
-```http
-{METHOD} {PATH}
-Content-Type: application/json
-Authorization: Bearer {token}
-X-Request-ID: {request_id}
-```
-
-```json
-{
-  "field": "value"
-}
-```
-
-### 成功响应
-
-```http
-200 OK
-Content-Type: application/json
-```
-
-```json
-{
-  "data": {}
-}
-```
-
-## 3. 字段说明
-
-| 字段 | 类型 | 必填 | 约束 | 说明 |
+| 操作 | 方法/路径或事件 | 请求模型引用 | 响应模型引用 | 前置条件与结果 |
 |:---|:---|:---|:---|:---|
-| field | string | 是 | {约束} | {说明} |
+| {operationId} | {METHOD PATH} | {Shared model inputs 中的链接} | {Shared model inputs 中的链接} | {行为承诺} |
 
-## 4. 错误码
+## 3. 数据语义
 
-| 错误码 | HTTP 状态 | 场景 | 前端行为 |
-|:---|:---|:---|:---|
-| E1001 | 400 | 参数错误 | 展示字段错误 |
+字段、必填/可空、单位、默认值及枚举以权威 Schema 为准；示例引用经过校验的文件，不手写第二份结构。无法由 Schema 表达的跨端语义在此说明并关联 CASE。
+
+## 4. 错误与恢复
+
+| 权威错误定义链接 | 触发条件 | 提供方承诺 | 消费方反馈/恢复 | 禁止副作用 |
+|:---|:---|:---|:---|:---|
+| {模型中的错误} | {状态/权限/并发} | {协议结果} | {用户行为} | {不得发生的效果} |
 
 ## 5. 状态机关联
 
@@ -102,11 +84,9 @@ Content-Type: application/json
 |:---|:---|:---|
 | CT-001 | {输入} | {预期} |
 
-## 8. 派生任务
+## 8. 消费与完成出口
 
-| TASK | 路径 | 覆盖接口/事件 | 状态 |
-|:---|:---|:---|:---|
-| TASK-{id} | `docs/tasks/TASK-{id}.md` | `{METHOD} {PATH}` | pending |
+任务产生后从 [任务索引](../tasks/index.md) 查看消费者；实际证据由 TASK/报告回链本合同条款，不回填未来任务或结果。
 
 ## 9. 变更申请记录
 

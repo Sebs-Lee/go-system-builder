@@ -172,7 +172,7 @@ func TestBindREQAcceptsUnknownUIIImpact(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(reqPath) })
 	relPath := "internal/transition/testdata/ui-unknown-req.md"
 	hash := fileHash(t, reqPath)
-	next, err := transition.Apply(root, statePath, journalPath, transition.Request{
+	next, err := applyFixture(root, statePath, journalPath, transition.Request{
 		TransitionID:     "TR-001",
 		ExpectedRevision: 0,
 		Actor:            "user",

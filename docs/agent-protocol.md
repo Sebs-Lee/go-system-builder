@@ -245,12 +245,12 @@ These hold across every stage:
 - **inputs_from**: [S0 (locked REQ), S2 (architecture + module prototype set)]
 - **actions**:
   1. draft `docs/contracts/CONTRACTS-<id>.md` (index)
-  2. draft the contracts in order `FE-<id>.md` → `BE-<id>.md` → `SYNC-<id>.md` (FE first: its API expectations feed BE and SYNC)
+  2. converge the shared model and `SYNC-<id>.md` for the affected slice, then derive `FE-<id>.md` and `BE-<id>.md`; follow [shared-model contracts](rules/shared-model-contracts.md)
   3. ensure contracts jointly cover every REQ acceptance criterion
   4. add bottom-up references and a coverage matrix
-  5. on finalization follow `skills: specification-planning` step 10 exactly: flip each contract's top status line (the template's `status` line) to `locked`, then run `go run ./cmd/loop-harness contracts check --root .` (the single detailed home for the machine-checked close; PTR-PLAN-02 registers only locked contracts), and register the JSON planning envelope (kind=`planning_contract`, responsibility=`Contract Planner`—see the SKILL's "Planning Evidence Envelopes" section; the gate also requires this evidence, missing `evidence:planning_contract_record`)
+  5. on finalization follow `skills: specification-planning` step 10 exactly: include shared model inputs in the review baseline, flip each contract's top status line (the template's `status` line) to `locked`, then run `go run ./cmd/loop-harness contracts check --root .` (the single detailed home for the machine-checked close; PTR-PLAN-02 registers only locked contracts), and register the JSON planning envelope (kind=`planning_contract`, responsibility=`Contract Planner`—see the SKILL's "Planning Evidence Envelopes" section; the gate also requires this evidence, missing `evidence:planning_contract_record`)
 - **done_when**:
-  - the contract set covers the entire REQ
+  - the contract set covers the entire REQ and declares the applicable shared-model policy; consumers reference the same native definitions
   - every contract has stability metadata (status, version, owner)
   - UI-impacting contracts reference the module prototype set by directory path + fingerprint of the current contents
 - **next**: S4. Produce any missing contract deliverable or qualified contract evidence; the next `PreToolUse` lets the Controller evaluate the gate and auto-commit `PTR-PLAN-02` when satisfied.
@@ -313,7 +313,7 @@ These hold across every stage:
 - **done_when** (what GATE-BUILDER-BATCH-READY actually computes, per TASK in the TR-003 registered batch):
   - one Builder Result registered via `runtime task-complete` (the single completion path — it atomically validates the completion message, derives the evidence envelope, advances Agent and TASK, and registers evidence in one Writer transaction; the committed revision is internal metadata);
   - the envelope's recorded checks are all `pass` and it declares no scope deviations;
-  - a durable worktree integration checkpoint has reached `verified` (SubagentStop-driven inspect → non-squash merge → checks run);
+  - a durable worktree integration checkpoint has reached `verified` (Main runs explicit task-integrate: inspect → non-squash merge → checks → acknowledgement → cleanup);
   - **no team manifest is required at this gate** — S7 planning starts from the real integrated diff at its own entry.
 - **next**: S7. Close every missing-token gap above (completion, checks, deviations, integration checkpoints); the next `PreToolUse` lets the Controller evaluate the build gate and auto-commit `TR-006` when satisfied.
 
@@ -334,29 +334,29 @@ These hold across every stage:
 6. Dispatch the Builder (subagent or teammate).
 7. Advance the 12-event lifecycle (table below).
 8. On completion: `runtime task-complete` (canonical path; the legacy `agent-event completion_reported` + `runtime evidence add` dual write still works but produces a thinner envelope the gate cannot consume).
-9. The Builder stop triggers `SubagentStop`: Inspect (scope audit, locked diff, merge-tree, required checks) → non-squash merge → `verified` checkpoint — or run `runtime task-integrate --assignment-id <id>` explicitly (see the integration contract). When every batch TASK is verified, the next `PreToolUse` auto-commits TR-006.
+9. The Builder commits its scoped results and registers completion. Main reviews and runs `runtime task-integrate --assignment-id <id>` in the authority root. When every batch TASK has verified integration, the next `PreToolUse` may advance TR-006.
 
 ### Worktree discipline
 
-Nobody creates the worktree for you. Before the Builder starts writing:
+Before dispatch, commit required stage inputs to the REQ-bound development branch. Create the temporary checkout from that committed branch:
 
 ```bash
-git worktree add .worktrees/<assignment-id> -b wt/<assignment-id> develop
+.claude/bin/loop-harness runtime worktree-create --root <authority-root> --assignment-id <id>
 ```
 
-Record the coordinates in the workgroup manifest row (`worktree_path`, `branch`, `target_branch`) or the sidecar `.claude/assignments/<assignment-id>.json`. Unregistered coordinates mean SubagentStop fails with `worktree_metadata` missing and no integration happens.
+The command records coordinates and the base commit. Uncommitted/staged inputs are absent from a new Git worktree. Native Claude Code isolation uses Git worktrees too; do not assume its default base ref matches this REQ. Preserve and reuse the assigned checkout on retry. Worktrees are temporary; only results received by the authority branch count as delivered.
 
 ### Integration contract
 
-`SubagentStop` fires automatically when the platform stops the subagent (`.claude/settings.json` wires it to the harness). The hook locates the assignment from the payload's `agent_id` (or `target_id`) — that is the identification contract, and a natural payload that carries neither simply falls through to generic guidance without integrating.
+`SubagentStop` does not merge, acknowledge or remove a checkout. Main receives advisory worktree reminders through supported Agent context events. An asynchronous Agent launch is not completion.
 
-Whenever the automatic path does not fire or cannot identify the assignment (and for the acknowledge/cleanup follow-up after `verified`), run the integration explicitly:
+After the worker commits and registers its Builder Result via `runtime task-complete`, Main runs:
 
 ```bash
-.claude/bin/loop-harness runtime task-integrate --assignment-id <id>
+.claude/bin/loop-harness runtime task-integrate --root <authority-root> --assignment-id <id>
 ```
 
-It drives the identical chain (Inspect → non-squash merge → required checks → verified checkpoint; preserve on failure) and is an allowed manual invocation. Preconditions: the assignment's worktree coordinates are registered and the Builder Result is registered via `runtime task-complete`. An unknown assignment id fails with the list of currently known ids.
+This performs inspection, a normal merge commit into the declared development branch, required checks, acknowledgement and cleanup. Failed checks, conflicts or dirty trees preserve the results for explicit retry. It never switches the root branch or performs release. Unknown ownership and outstanding checkouts produce advisory reminders; they do not add a tool denial or Stop continuation barrier.
 
 ### Agent lifecycle event table
 
@@ -403,7 +403,7 @@ The Milestone recovery packet uses two projection-level tokens with the same sem
 
 The runtime reads the file at the registered `readback_ref` path, computes its byte hash with `shasum -a 256 <readback-file>` (macOS) or `sha256sum <file>` (Linux), and verifies `approved_readback_sha256` equals that value at `activation_sent` (plan_approval_required only — plan_checkpoint skips the readback/approval round entirely, see skills/agent-dispatch/SKILL.md). Compute the hash after the readback file is written and registered; do not copy a hash from an earlier draft.
 
-`agent_id` in the SubagentStop payload is the identification contract: the hook locates the assignment by `agent_id` (or `target_id`). A Builder should stop with the same `agent_id` it was dispatched under — otherwise the integration never fires and the `task-integrate` fallback is the recovery.
+Use the dispatched `agent_id` for report identity. SubagentStop observes the child; Main explicitly receives committed results using `task-integrate`. On current Claude Code, structured reports may arrive through SubagentHandback.tool_input.message; closing text alone is not a report.
 
 - **failure_route**: if a Builder reveals a spec gap, return to S5 (and from there to S2/S3/S4) via TR-007; if a Builder cannot complete its locked TASK because of an implementation blocker, record the blocker inside S6 until the TASK can be completed or a spec gap is proven. A needed scope expansion requires a revised assignment (new manifest row); do not widen `write_paths` silently. Defects discovered after Builder report enter S8 finding investigation before any S9 repair.
 - **human_gateway**: only `missing_external_permission` after all other work is done.
@@ -706,3 +706,18 @@ are rejected.
   items. Only a locked-artifact write or squash-merge attempt is hard-blocked.
 - CAS rejection or an unknown gate never guesses success; the Controller emits
   recovery/reconcile guidance and waits for a later natural event.
+
+
+## Worktree reception and committed stage inputs
+
+Bind each REQ with explicit `--dev-branch` and `--release-upstream`; include the remote for a remote release destination. Legacy bindings use `req workspace` to declare these values. The project root remains the sole authority.
+
+Commit formal stage documents, code and tests before dispatching dependent work. A new Git worktree does not inherit dirty, staged-only or untracked files. Main creates registered assignments with `runtime worktree-create --assignment-id <id> --root <authority-root>` and hands over explicitly non-versioned evidence separately.
+
+Workers commit their results and report back. Main runs `runtime task-integrate --assignment-id <id>` at the authority root to merge with a merge commit, verify, acknowledge and clean up. Reception is not release. Unreceived work, checkout deviation and accumulated worktrees receive advisory reminders, without extra Stop or ordinary tool gates.
+
+Gate inputs follow the upstream `file_sources` contract: committed Git trees for formal deliverables, disk for declared runtime evidence. Uncommitted files cannot qualify a stage. Mutable evidence hashes are refreshed according to `mutable_evidence_kinds`, without changing conclusions, generation or frozen product baselines.
+
+## Overall dispatch plan
+
+S4 → S5 → S6 follow [dispatch plan rules](rules/dispatch-plan.md). Read the approved wave checklist and live S6 board; schedule compatible ready tasks and integrate results promptly.

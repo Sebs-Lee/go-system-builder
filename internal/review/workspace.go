@@ -3,6 +3,7 @@ package review
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +184,7 @@ func verifyFrozenSubjects(root string, plan *Plan) error {
 // Non-git repositories (e.g., TempDir fixtures) degrade gracefully: no extra
 // drift is reported when git is unavailable.
 func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
+	scope := pathscope.New(root)
 	frozen := make(map[string]bool, len(plan.FrozenSubjects))
 	for _, subject := range plan.FrozenSubjects {
 		frozen[normalizeSurface(subject.Path)] = true
@@ -210,7 +212,7 @@ func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
 		if rel == "" || frozen[rel] {
 			continue
 		}
-		if isAllowedDriftSurface(rel) {
+		if scope.Excludes(rel) || isAllowedDriftSurface(rel) {
 			continue
 		}
 		drift = append(drift, rel)

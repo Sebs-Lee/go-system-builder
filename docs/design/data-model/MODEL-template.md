@@ -1,51 +1,17 @@
-# 数据模型：{项目名称}
+# 项目共享模型入口
 
-> 状态：draft / locked  
-> 版本：v0.1.0  
-> Owner：{Architect / DBA}  
-> 日期：YYYY-MM-DD
+先阅读 [共享模型与合同规则](../../rules/shared-model-contracts.md)。本文件定位项目当前权威源，不按 REQ 建副本，不手抄 Schema 字段表。
 
-## 1. ER 图
+## 权威定位与领域边界
 
-```mermaid
-erDiagram
-    USER ||--o{ ORDER : places
-    USER {
-        uuid id PK
-        string name
-        datetime created_at
-    }
-    ORDER {
-        uuid id PK
-        uuid user_id FK
-        string status
-        datetime created_at
-    }
-```
-
-## 2. 实体说明
-
-| 实体 | 说明 | 状态机 | Owner |
+| 领域/概念 | 原生模型链接 | 上游业务设计 | 语义与消费者 |
 |:---|:---|:---|:---|
-| {实体} | {说明} | `docs/design/state/{entity}.md` | {Owner} |
+| {领域} | [权威 Schema]({schema}.json) | [架构](../architecture/ARCHITECTURE.md) | {含义及 FE/BE/SYNC 消费入口} |
 
-## 3. 字段定义
+## 转换与演进
 
-### {table_name}
+仅记录实际存在的持久化/展示转换、迁移和兼容决策；同构使用同一定义。状态引用既有状态机。未知业务含义返回 S2，需求变化按 [变更控制](../../rules/change-control.md) 处理。
 
-| 字段 | 类型 | 必填 | 默认值 | 约束 | 说明 |
-|:---|:---|:---|:---|:---|:---|
-| id | uuid | 是 | generated | PK | 主键 |
+## 下一步
 
-## 4. 索引
-
-| 表 | 索引 | 字段 | 类型 | 目的 |
-|:---|:---|:---|:---|:---|
-| {table} | {index} | {fields} | unique/btree/hash | {目的} |
-
-## 5. 迁移策略
-
-| 变更 | 是否兼容 | 迁移步骤 | 回滚策略 |
-|:---|:---|:---|:---|
-| {变更} | 是/否 | {步骤} | {策略} |
-
+在 [合同总览](../../contracts/CONTRACTS-{id}.md#shared-model-baseline) 声明操作与源关系，与 SYNC 一起收敛数据和交互，再派生分端责任。历史由 Git 保存，精确指纹与冻结状态由 runtime 管理。

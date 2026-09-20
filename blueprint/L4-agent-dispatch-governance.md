@@ -6,7 +6,7 @@
 >
 > 下游：L5 中的 Skill、Agent Definition、Schema、Harness、Hook、Assignment Record、测试和迁移任务
 >
-> 状态：v0.2.0 目标设计。本文定义机制应达到的统一行为；§13 单独列出现有实现与目标的差距，不把设计意图写成既成事实。
+> 状态：v0.5.0 目标设计。本文定义机制应达到的统一行为；§15 及各 L3 的当前事实节列出现有实现与目标的差距，不把设计意图写成既成事实。
 
 ## 0. L4 的位置：为什么这不是另一份 L3
 
@@ -392,7 +392,7 @@ Stage/ReviewPlan 必须从两个策略中选择一个：
 
 | policy | 适用 | 调度语义 |
 |:--|:--|:--|
-| `bounded_flow` | 普通 Builder、修复或协调成本可能高于并行收益的工作 | active slot 上限由 Main 可消费结果数、隔离面和风险决定，模板初值可为 2；超出者保持 Ready/queued |
+| `bounded_flow` | 普通 Builder、修复或协调成本可能高于并行收益的工作 | active slot 上限由真实平台槽位、明确资源约束和可观察的集成积压决定，不默认固定为 2；超出者保持 Ready/queued |
 | `coverage_complete` | S7 等“漏掉一个独立验证面会制造后续返工”的质量发现工作 | required Assignment 的逻辑数量、Ready/queued 集合和 token 支出不设上限；所有独立 scope 必须保留，平台槽位释放后持续补位 |
 
 两种策略都遵守：
@@ -642,7 +642,7 @@ Hook 必须使用官方 teammate_name、team_name、transcript_path 定位对象
 
 exit 2 的 stderr 必须是给 teammate 的一条具体下一步，不能只输出 LOOP RECOVERY 长文。
 
-`exit 2` 和 `decision=block` 是目标平台控制，不得通过自造字段模拟。落地前必须用 Claude Code 2.1.218 的官方 payload 做 doctor/system test，确认反馈会回到同一活会话。若平台能力缺失或 payload 无法定位原 Agent，Hook 不得假装完成唤醒：持久化 Assignment checkpoint，报告一个可恢复 blocker，并由 scheduler 依据原 Assignment 重派。禁止因为一个未验证的平台假设再增加一套“虚拟 active”状态。
+`exit 2` 和 `decision=block` 是目标平台控制，不得通过自造字段模拟。落地前必须用最新 Claude Code 的官方 payload 做 doctor/system test，确认反馈会回到同一活会话。若平台能力缺失或 payload 无法定位原 Agent，Hook 不得假装完成唤醒：持久化 Assignment checkpoint，报告一个可恢复 blocker，并由 scheduler 依据原 Assignment 重派。禁止因为一个未验证的平台假设再增加一套“虚拟 active”状态。
 
 ### 10.3 SubagentStop 决策矩阵
 
@@ -659,12 +659,18 @@ exit 2 的 stderr 必须是给 teammate 的一条具体下一步，不能只输�
 ### 10.4 Hook 输出纪律
 
 - 要让 teammate 继续，必须使用 Claude Code 支持的 exit 2 或 decision=block；
-- systemMessage 只提供上下文，不等于阻止 idle/stop；
+- systemMessage 是用户提示；Agent 指引使用接线篇规定的 `hookSpecificOutput.additionalContext`；Stop/SubagentStop 上该字段会续跑，不用于回收软提醒；
 - exit 2/decision=block 只有在官方 payload doctor 通过后才作为强制控制；未通过时走 checkpoint + replacement，不制造假唤醒；
 - Runtime 状态变化不等于平台会话已唤醒；
 - Hook 只判机械事实和控制下一步，不判断计划的业务质量；
 - 所有官方输入字段必须无损进入 adapter；
 - 测试必须使用官方 payload，禁止靠额外 agent_id 让测试通过。
+
+### 10.4.1 临时 worktree 的调度责任
+
+派发与交付消费 [L4 Worktree](L4-worktree-governance.md) 的唯一生命周期。主会话从 REQ 开发绑定解析创建基线，确保上游正式产出已提交；运行 evidence 按声明交接，不复制整个控制面。Assignment 记录 source commit 与接收目标。
+
+子会话提交成果并报告，主会话在项目根目录合并、联合验证、接收和清理。SubagentStop 不运行完整测试/长合并，不要求已停止的子会话再次 stop 才完成清理；隔离中的子会话不承担根目录 merge。未回收与积压只产生给主会话的软提醒，不增加调度 stop/idle 矩阵的 block 条目。
 
 ### 10.5 指引应埋在哪里
 
@@ -787,9 +793,9 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 | S1 绑定 | 通常不委派 | Main | 生命周期授权不能由 Sub-agent 执行 |
 | S2 设计 | 模块设计、原型研究、技术调查 | plan_checkpoint Sub-agent/teammate；独立研究可 one_shot | 设计包/ADR 被 S2 收口 |
 | S3 契约 | FE/BE/SYNC 分面起草与对账 | Agent Team + plan_checkpoint | 契约锁定前由 Main/Stage gate 聚合 |
-| S4 TASK 拆分 | 模块拆分、DAG/Closing Contract 检查 | one_shot 或 plan_checkpoint | TASK batch 和 DAG 被 S4 消费 |
-| S5 文档验证 | 两个独立 reviewer responsibility | Agent Team；read-only plan_checkpoint | 两份独立结论和 exact subject |
-| S6 构建 | frontend/backend/test Builder | 隔离写入优先 Sub-agent + worktree；路径可分时可用 teammate；默认 plan_checkpoint，高风险 approval | Builder Result + integration |
+| S4 TASK 拆分 | 模块拆分、DAG/Closing Contract 检查 | one_shot 或 plan_checkpoint | TASK batch、DAG 与整体派发计划交付 S5 |
+| S5 文档验证 | 两个独立 reviewer responsibility | Agent Team；read-only plan_checkpoint | 两份独立结论和包含派发计划的 exact subjects |
+| S6 构建 | frontend/backend/test Builder | 隔离写入优先 Sub-agent + worktree；路径可分时可用 teammate；默认 plan_checkpoint，高风险 approval | 批准计划的实时投影 + Builder Result + integration |
 | S7 完整验证 | DV/QA/E2E Claims 与独立验证面 | ReviewPlan DAG + 1..N Assignments + plan_checkpoint | 当前 round 的 ReviewResult、Finding 和 CleanRound/ObservationBatch |
 | S8 调查 | 多假设调查、Original Finder 责任 | 多 teammate plan_checkpoint；Investigator lifecycle bridge 已接入 Runtime，通用 PLAN_REPORT 按 fingerprinted manifest 绑定 | InvestigationCase/HypothesisResult/RepairContract；canonical BUG 仅为批准后的兼容投影；实际平台进程启动仍由 Claude/Agent Team 负责 |
 | S9 修复 | repair Builder、定向复验 | 隔离写入优先 Sub-agent；默认 plan_checkpoint，高风险 teammate approval | fix Result、影响失效、targeted reverify |
@@ -981,3 +987,94 @@ Main Agent 纠偏后不需要重新讲完整任务，只发送差异和原因。
 | 2026-08-20 | v0.3.0 | 增加机制准入规则；明确 Claims/Assignment/Result 为事实，coverage/ledger/board 为视图；限制 `coverage_complete` 不得递归扩张；补充 exit 2/decision=block 必须通过官方 payload doctor，失败时走 checkpoint + replacement | 终审发现调度设计仍可能引入重复控制面，并且不能把未验证的平台唤醒能力写成既成事实 |
 | 2026-08-20 | v0.2.0 | 新增 `bounded_flow / coverage_complete` Stage capacity policy；将 Ready 与 Dispatchable/physical slots 分离；S7 coverage-critical required Assignments 不受固定 WIP、Reviewer 数量或 token budget 裁剪，容量不足只进入 queued | S7 的 DV/QA/E2E 完整发现属于必要质量投入；通用 L4 若仍强制 WIP=2，会让 L3 设计无法落到真实 Agent/Task 派发必经路径 |
 | 2026-08-20 | v0.1.0 | 建立第一份 L4：统一 Sub-agent/Agent Team 派发模式、双回执连续执行、风险 Plan approval、Hook 控制、恢复与跨 L3 消费地图 | owner 指示：L4 为横跨多个 L3 的抽象工具层；两轮对话应改为计划回执后连续执行 |
+
+
+### 2026-09-18 · v0.4.0
+
+调度消费临时 worktree 机制，由主会话完成接收与清理，回收仅软提醒。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+TASK 是角色阅读入口，先交代范围和完成标准，再用精确链接展开合同、SYNC、模型。共同设计内容一致不要求整个 checkout SHA 相同；依赖真实共享产物的任务待回收后派发。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+<a id="dispatch-plan"></a>
+## 17. 整体派发计划与持续并行执行
+
+> 规范修订：v0.5.0，2026-09-19。适用于新规划批次；本节定义正式机制；waves-v1 首版已接入计划解析、注册/冻结、S6 候选投影和 workgroup 注册校验。实际平台派发仍由 Main 执行，不把候选建议当作 Agent 已启动。设计依据见根目录 [S4 优化报告](../S4-dispatch-plan-optimization.md)。
+
+### 17.1 对象与唯一权威
+
+S4 必须交付每个 REQ 的整体派发计划，规范入口为 `docs/tasks/index-REQ-<id>.md`；已有 index 可保留原路径并登记。计划沿用现有 index，不同时维护另一份 DISPATCH 和人工进度看板。
+
+| 对象 | 拥有的事实 | 消费方式 |
+|:--|:--|:--|
+| TASK | 目标、读写范围、真实产物依赖、交付物、Closing Contract | 计划链接引用；依赖和 scope 从 TASK 解析，不双写 |
+| 整体派发计划 | 当前 REQ 任务集合、推荐波次、并行依据、必要资源顺序、编排理由 | S4 交付，S5 审签，S6 消费 |
+| TR-003 execution batch | 当前 generation 批准计划指纹与精确 TASK 集合 | 执行分母；计划文档不能计作 TASK |
+| Assignment / Result / checkpoint | 实际 owner、尝试、结果及有效集成事实 | 复用控制面，不新增 Wave 生命周期 |
+| S6 实时清单 | 就绪、排队、执行、待集成、阻塞和完成的派生视图 | 可重建，不反向写权威状态 |
+
+开发主分支和发布上游只从 REQ 绑定读取。设计输入按上游约定读取已提交 Git tree；运行证据和控制事实遵循各自明确的来源契约。
+
+### 17.2 最小交付格式
+
+计划声明所属 REQ、格式版本 `waves-v1`、计划修订号、文档状态；链接需求、合同与执行入口。正文按稳定局部编号 W1、W2…列出 TASK Markdown 文件链接，每个非取消 TASK 恰好出现一次，以 `- [ ]` 构成简洁工作清单。
+
+每波说明并行边界和放行依据；特殊资源顺序只在必要时记录具体对象、先后与原因。复用 TASK/manifest 的 required checks，不再复制验证命令。状态 complete 表示计划文档完整，不表示代码完成。
+
+S5 冻结后，计划中的空框保持不变；实时勾选只在 S6 投影中由当前有效 verified 集成事实生成。Agent、完成时间、证据、依赖满足状态不得回填冻结计划或 TASK。导出的实时清单标明生成时刻和 runtime revision，只是快照。
+
+### 17.3 依赖、资源与波次
+
+1. 真实产物依赖只在 TASK 声明：消费者等待生产者的产物回到根目录开发分支并验证。只读相同模型、合同或需求不产生实现依赖。
+2. 资源冲突优先通过收窄写域、唯一 owner、拆公共修改或隔离资源解决；无法消除才明确串行次序。不能为了资源排队伪造 TASK 产物依赖。
+3. 波次从真实依赖的拓扑层推导，再考虑必要资源顺序。同波必须不存在内部依赖和未解决互斥；所有显式资源顺序与 TASK DAG 联合查环。
+4. 波次是推荐布局，不是整波屏障。某 TASK 的实际前置全部满足即可进入候选，无须等上一波无关慢任务。因资源次序延后的任务仍须遵守该明确次序。
+5. 同父目录不自动判冲突，不同文件不自动判安全；检查公共导出、lockfile、迁移编号、生成输出和可变测试资源。worktree 隔离不能证明合并或语义兼容。
+6. 宽路径重叠给具体诊断；首版不自动认定同文件不同区块可并行。需通过可执行的隔离/汇总办法或调整归属解决，不能用一句“安全”绕过已有 scope 控制。
+
+容量只决定当次派发数量，不改变逻辑波次、依赖或必需集合。主会话/配置声明真实可用容量；工具展示 active、queued、待集成数和限制原因。无充分理由不固定 WIP=2，也不超过平台能力；不实现预测排程器或全局最优搜索。
+
+### 17.4 候选求值与实际派发
+
+S4 对账、S6 投影和派发入口共用计划/依赖语义。S6 从批准计划与精确执行集合开始，对当前有效依赖消费、owner、Result、checkpoint、阻塞、即时冲突和容量重新求值；冲突应包含 reported 但尚未消费的写入责任。
+
+在互相兼容的候选中，优先解锁下游多、位于关键依赖链或有早反馈价值的任务，最后按稳定 TASK ID 排序。没有工期数据时不宣称获得准确工期关键路径。
+
+启动、恢复、结果到达、集成完成、阻塞变化和槽位释放均触发重算。派发入口在实际操作前复核版本、owner 与资源条件；建议清单不等于授权，更不证明平台 Agent 已启动。复用既有事务、消息与平台动作，不新建后台调度服务。
+
+主会话按“计划 → 实时清单 → 下一批 TASK → 精确阅读清单”阅读；Builder 从自身 TASK 开始，按需查波次及前置。第一版优先扩展现有 `s6 status` 显示下一批，是否增加其他命令取决于真实动作，不在规范中假定尚不存在的命令可用。
+
+### 17.5 完成、恢复与提示边界
+
+Worker 提交子分支，Main 按 [worktree 治理](L4-worktree-governance.md) 合并到根目录绑定开发分支、运行检查并登记有效 checkpoint，随后及时清理。结果上报、Agent 停止或仅存在 merge commit 都不能单独勾选完成或释放消费者；清理仍为软提醒。
+
+失败只阻塞相关后代，无关兼容任务继续。恢复从批准计划和现有控制面重建；历史已失效或被当前尝试替代的成功不能继续满足依赖。视图与阶段门共用当前有效事实判定，防止看板与门结论不一致。
+
+缺派、闲置容量、待集成结果和待清理 worktree 在已有 Agent 可见通道给短提示，不新增 Stop/Tool 门禁。结构错误与冻结漂移进入已有阶段检查；真正缺前置或互斥使候选等待并显示原因。平台接线以实施时最新官方机制核验，不以终端显示代替 Agent 收到消息。
+
+### 17.6 版本与验收契约
+
+S5 后修改成员、依赖、写域、波次或资源顺序走已有规划返工和重新审签；容量变化、实际进度和按真实前置提前启动不修改计划，不重做 S5。证据 SHA 自动刷新不适用于正式计划。
+
+历史执行 generation 缺少计划时明确标记 legacy，仍可恢复已有工作，不补造审签；新规划批次必须满足新契约。计划遗漏不能自证完整，需与当前 REQ TASK 声明和合同覆盖共同对账，包括不覆盖条款的 support TASK。
+
+机制验收必须覆盖：独立三任务同时候选；A→B 且慢 C 独立时 B 提前释放；只读模型两端并行；公共写入/外部资源冲突；资源顺序与 TASK 依赖联合环；跨 REQ/遗漏/重复/取消成员；未提交或审签后漂移；未集成不得完成；容量不足持续补位；恢复无重复 owner；失效历史 checkpoint 不复用；计划不污染 TASK 分母或 S2 设计主体。只完成模板或看板展示不足以证明本节已落地。
+
+修订依据与取舍记录保留在根目录报告；本文拥有机制规则，L3 只拥有各阶段交付与审查责任。
+
+### 17.7 首版适配边界
+
+waves-v1 使用具体仓库相对文件/目录写域，不接受 glob 作为新计划授权范围；共享可变资源在 TASK Resources 中以 `resource:<name>` 声明。重叠是 S4/S5 诊断，实际派发保守保留互斥，不靠模糊文本例外绕过。没有范围冲突的就绪项可在实际槽位内并行。
+
+当前注册入口一 TASK 对应一个 Builder writer；正式输入和最终可写范围（write_paths 与 output_paths 的并集）必须与审核 TASK 一致。S6 新计划的完成判定共用当前 report、owner 和对应 checkpoint；检查点同时绑定 `completion_report_path` 与 `completion_report_sha256`，`verified_at` 只在集成检查成功时记录。报告内容改变或旧检查点缺少内容绑定时，必须重新运行集成检查；单纯 ack/cleanup 不得更新摘要或时间以追认报告。历史无这些字段的 legacy 检查点继续走原恢复路径，不当作新计划已验证事实。
+
+容量由调用方显式给定；不声明容量时只展示状态而不选择实际批次。计划求值是确定性的启发式排序，非最优排程或自动唤醒器。
+
+### 17.8 主会话实时派发摘要
+
+派发摘要在父会话 SessionStart 及 PostToolUse 的 Agent 返回、Harness register-workgroup/task-complete/task-integrate 检查点生成，进入已有 additionalContext 指引。摘要列出就绪候选、待回收结果和等待原因；每类最多四项，完整清单通过 s6 status 阅读。未声明容量时只说明逻辑候选，不推断实际槽位或声称已派发。
+
+SubagentStop/TeammateIdle 不用普通 systemMessage 冒充父会话投递；异步 Agent 启动不是完成。Worker 不接收全局派发摘要，普通工具调用不重复扫描计划。投影失败只提醒检查，不改变既有 allow/block 判定。

@@ -4,9 +4,9 @@
 >
 > 上游：L1 D2（自然路径执法）与公理五；Claude Code Hooks 平台能力基线；全部依赖事件总线的 L3 Stage
 >
-> 四家族分工：[L4 Agent 调度与治理](L4-agent-dispatch-governance.md)定义「谁在责任上行动」（含 TeammateIdle/SubagentStop 的**决策矩阵本体**）；[L4 权威状态机与迁移事务核心](L4-state-transition-core.md)定义「事实如何合法变更」（含 gate/auto_trigger 引擎机制）；[L4 运行时控制面](L4-runtime-control-plane.md)定义「写什么内容合规」（屏障规则表、脱敏闸等）；**本文档定义这些决策如何坐上同一条平台总线**——payload 怎么进来、结果怎么回去、出错时朝哪个方向失败。另外：平台共有 31 个 Hook 锚点，其全集、触发语义与选点审查流程的唯一权威是 [L4 Claude Code Hook 锚点全图](L4-hook-anchor-catalog.md)——本文 §2 的十类注册项是从该目录选出的**消费快照，不是平台边界**。
+> 四家族分工：[L4 Agent 调度与治理](L4-agent-dispatch-governance.md)定义「谁在责任上行动」（含 TeammateIdle/SubagentStop 的**决策矩阵本体**）；[L4 权威状态机与迁移事务核心](L4-state-transition-core.md)定义「事实如何合法变更」（含 gate/auto_trigger 引擎机制）；[L4 运行时控制面](L4-runtime-control-plane.md)定义「写什么内容合规」（屏障规则表、脱敏闸等）；**本文档定义这些决策如何坐上同一条平台总线**——payload 怎么进来、结果怎么回去、出错时朝哪个方向失败。另外：平台 Hook 锚点随版本扩展，其目录、触发语义与选点审查流程的唯一权威是 [L4 Claude Code Hook 锚点全图](L4-hook-anchor-catalog.md)——本文 §2 的十类注册项是从该目录选出的**消费快照，不是平台边界**。
 >
-> 状态：v0.2.0。【当前实现】小节均为代码核对结论（核对日 2026-08-28），附证据位置；未经验证的平台假设在 §10 显式披露。
+> 状态：v0.3.0。【当前实现】小节均为代码核对结论（核对日 2026-08-28），附证据位置；未经验证的平台假设在 §10 显式披露。
 
 ## 0. 准入逻辑：为什么这配一份独立 L4
 
@@ -34,16 +34,17 @@ Hook 是 D2 的物理载体：所有把控必须挂在结构上必经的路径�
 
 ## 2. 事件注册面
 
-### 2.1 设计（当前实现）
+### 2.1 事件消费契约
 
-settings 注册十类事件，统一 timeout=10s，matcher 如下：
+注册集以本表为设计契约；超时是 Hook 短事务预算，不容纳完整测试或长合并。安装配置、迁移模板、policy 与 schema 同步消费：
 
 | 事件 | matcher | 行为类别 |
 |:--|:--|:--|
 | `PreToolUse` | `Write\|Edit\|MultiEdit\|Bash\|NotebookEdit\|Task\|TaskUpdate\|Agent\|mcp__.*` | enforce（§4；PowerShell 仍按 B11 暂缓）|
-| `PostToolUse` | `SendMessage` | observe（纯观察员）|
+| `PostToolUse` | `SendMessage\|Agent\|SubagentHandback` | observe + 主会话交付提醒；不能撤销已完成动作 |
 | `PostToolUseFailure` | `*` | observe（原生失败审计；不阻断）|
-| `SessionStart` / `PreCompact` / `SubagentStart` | （全匹配） | guidance |
+| `SessionStart` / `SubagentStart` | （全匹配） | guidance（Agent 上下文）|
+| `PreCompact` | （全匹配） | persist（保存恢复检查点；不靠输出注入上下文）|
 | `SubagentStop` / `TeammateIdle` | （全匹配） | enforce（stop/idle 决策，矩阵本体在调度篇）|
 | `Stop` | （全匹配） | enforce（Main 收工门）|
 | `ConfigChange` | `*` | observe（治理配置变更审计；不阻断）|
@@ -69,6 +70,8 @@ settings 注册十类事件，统一 timeout=10s，matcher 如下：
 | teammate_name / team_name | TeammateIdle 官方 2.1.218 payload | 官方；识别链一级来源 |
 | transcript_path / agent_transcript_path / last_assistant_message / stop_hook_active | SubagentStop 官方 payload | 官方；`stop_hook_active` 用于防 hook 自激循环 |
 
+输入同时保留 `cwd`、`tool_response` 与事件声明的 worktree 字段，缺失时不捏造。`CLAUDE_PROJECT_DIR` 用于项目权威根，`cwd` 用于路径/执行环境分类，二者不能混用。
+
 三条铁律：
 
 1. **无损透传**：以上字段逐一进入 Input，可缺失、不可改写、不可丢弃（omitempty 只是序列化整洁，不是许可丢字段）。
@@ -81,18 +84,18 @@ settings 注册十类事件，统一 timeout=10s，matcher 如下：
 
 | Decision | stdout | exit | stderr | 说明 |
 |:--|:--|:--|:--|:--|
-| allow | PreToolUse 带 hookSpecificOutput；其余 `{"systemMessage"}` 或空 | 0 | − | 默认兜底值 |
-| info | 同 allow，body 为阶段横幅 | 0 | − | 状态投影 |
-| warn | systemMessage 含 banner+missing+recovery+retry | 0 | − | **永远不许升格为 block**（adapter 戒律二）|
+| allow | 无附加信息时空；有 Agent 指引时使用受支持事件的 `hookSpecificOutput.additionalContext` | 0 | − | 不因附带指引改变工具权限 |
+| info | 同 allow，附加阶段与下一步 | 0 | − | 状态投影进入 Agent 上下文 |
+| warn | 受支持事件的 `hookSpecificOutput.additionalContext` 含事实与恢复动作 | 0 | − | **永远不许升格为 block**；Stop/idle 上持久化后由主会话下一可注入事件投递 |
 | audit | 空 | 0 | − | 只落 `.claude/hook-decisions.jsonl`，用户不可见（戒律三）；记录 `elapsed_ms` |
-| deny / block @PreToolUse | permissionDecision="deny" + systemMessage=恢复包 | **2** | − | 唯一在 stdout 表达 deny 的事件类 |
+| deny / block @PreToolUse | `hookSpecificOutput` 中 permissionDecision="deny" + permissionDecisionReason=恢复包 | **0** | − | 合法 JSON 决策；不混用 exit 2 的 stderr 通道 |
 | block @TeammateIdle/SubagentStop | **stdout 静默** | **2** | 单行具体下一步 | 反馈必须经 stderr 回到同一活会话 |
 
 adapter 三戒律（本域宪法，源码注释已固化）：① adapter 不拥有生命周期合法性，只渲染 Controller 结论与正向指导；② 永不把 warn 提升为 block；③ audit 判定零协议输出。
 
 ### 4.2 PreToolUse 的 quality_gate 投影
 
-deny 之外的一切 PreToolUse 输出必须携带顶层 `quality_gate` 子对象（status/gate_id/candidate_transition/observed_revision/fingerprint/missing/evidence_refs/error_code/conflicts/transition_committed/next_cursor）：机器推进的事实（含刚提交的迁移与下一 cursor）从同一条消息里回到 Main 会话。outbox 与 wire payload 双写同一投影，防两类消费者各看一套真相。`error_code`/`conflicts` 是 UNKNOWN 等诊断的机器字段，必须同时出现在 Hook envelope schema 与 agent 可读 recovery packet 中。
+内部 envelope / outbox 保留 `quality_gate` 结构（status/gate_id/candidate_transition/observed_revision/fingerprint/missing/evidence_refs/error_code/conflicts/transition_committed/next_cursor）。Claude Code wire 只使用官方字段：将同一投影中的关键事实和恢复动作序列化为 `hookSpecificOutput.additionalContext`，不依赖平台识别自造的 `quality_gate` 对象。`error_code`/`conflicts` 同时保留在内部机器投影与 Agent 可读恢复包中。
 
 内部 rule anchor 可以继续使用代码常量的稳定内部命名；跨进程的
 `DecisionEnvelope.rule_id` 和 `matched_rule_ids` 在序列化边界统一为
@@ -100,6 +103,18 @@ deny 之外的一切 PreToolUse 输出必须携带顶层 `quality_gate` 子对�
 两套不可验证的规则身份。原生 `ConfigChange`/`PostToolUseFailure` 的审计 envelope
 以稳定 payload fingerprint 参与 decision identity：同一 payload 重试幂等，不同
 文件路径、错误或来源各自保留审计行；audit-only 写失败只报告而不改变原工具结果。
+
+### 4.3 Agent 可见性与投递对象
+
+设计始终跟随[最新官方 Hooks Reference](https://code.claude.com/docs/en/hooks)，不能因本机版本旧而保留错误 wire。`systemMessage` 在同步 Hook 中用于用户提示，PreToolUse allow/ask 的 permissionDecisionReason 也不能代替 Agent 上下文。SessionStart/SubagentStart 的 additionalContext 放在 hookSpecificOutput 内，不能写在顶层。
+
+Stop/SubagentStop 的 additionalContext 会让会话继续，不能用于 worktree 回收软提醒。SubagentStop 的执行反馈属于子会话；需要主会话处理的回收提醒先写 checkpoint，在父会话 PostToolUse(Agent)、PreToolUse 或 SessionStart 投递。去重按事实版本与接收会话；仅成功输出后的投递记录不能冒充 Agent 已处理。
+
+Agent 工具 `tool_response.status=async_launched` 是启动而非完成。使用 SubagentHandback 的子会话从该工具 `tool_input.message` 收集报告，不能将最终 closing text 当正文。报告抵达仍不等于已提交、已合并或已接收。
+
+PreCompact、WorktreeCreate/Remove 等丢弃消息字段的事件不承担 Agent 提醒。上下文限制长度，完整信息以权威记录路径引用。必须在最新 Claude Code 的隔离测试项目验证实际 Agent 接收和接收对象；仅 JSON 合法、stdout 有字或本地 CLI 可执行均不能宣称平台验收完成。
+
+WorktreeCreate 如需接线，先完成 [Worktree 机制](L4-worktree-governance.md)的创建实现；该事件替代平台默认创建，不能当只读观察器注册。
 
 ## 5. 失败态度矩阵（本域核心设计）
 
@@ -127,7 +142,8 @@ payload agent_id → teammate_name（顶层）→ tool_input.teammate_name → �
 |:--|:--|:--|:--|
 | observe | PostToolUse(SendMessage) | 不产 permissionDecision、不动 lifecycle、无 exit 信号 | CLI 落 plan checkpoint（控制面的屏障有了触发事实）|
 | observe | PostToolUseFailure / ConfigChange | 原生信号只落 audit，不改变原操作 | S7/S8 证据消费者、治理审计 |
-| guidance | SessionStart / SubagentStart / PreCompact | systemMessage +（SessionStart/SubagentStart）原生 `additionalContext`；短包只放当前位置/读序/唯一下一步 | Main/Worker 重入座 |
+| guidance | SessionStart / SubagentStart / PreToolUse / PostToolUse | `hookSpecificOutput={hookEventName, additionalContext}`；短包只放当前位置/读序/下一步 | Main/Worker 重入座与交付提醒 |
+| checkpoint | PreCompact | 持久化；由后续可注入事件重新投递 | 压缩恢复 |
 | enforce | PreToolUse；Stop；SubagentStop；TeammateIdle | deny/exit2/decision block | 工具调用方、Main、Worker |
 
 判别尺（借用 L3-README 注意力分配三问）：观察信息喂给 Runtime 记录；指导喂给人与 Main 的注意力；只有确定非法/不可逆才用平台强制。guidance 文案的最小可执行性有专门测试锁定（deny 恢复包必须含九要素：LOOP RECOVERY/Next/ProtocolRef/ManualRef/Read in order/Agent Team 等）。
@@ -175,3 +191,14 @@ payload agent_id → teammate_name（顶层）→ tool_input.teammate_name → �
 | 2026-08-28 | v0.2.1 | 对齐质量门诊断字段与 Hook schema；明确内部 rule id 到 `HOOK_*` wire id 的边界转换、原生观察事件按 payload 去重、audit-only 写失败 fail-open，以及 Assignment 歧义不猜绑 | S10-WALK-A 与 HOOK-B07/B09/B06 回归审查 |
 | 2026-08-28 | v0.2.0 | 接入 MCP PreToolUse 通配与未知工具兜底、Main Stop 收工门、elapsed_ms 时延审计、SessionStart/SubagentStart additionalContext，以及 PostToolUseFailure/ConfigChange 原生审计观察器；明确 B08/B10/B11 仍为按数据触发的后续项 | HOOK-B01/B03/B04/B05/B06/B07/B09 实装与契约测试 |
 | 2026-08-28 | v0.1.0 | 初版：把散落在 settings/migration/internal.hook/hook-policy 各处的事件注册、payload、输出契约、失败态度、识别链、guidance 分界统一为本域唯一权威定义；核实并纠正 protected_commands 已退出 hook 主链路的事实；承接调度篇遗留的真实平台 doctor 缺口的验收归属 | owner 批准的基石抽取批次（其一）；五问自测见 §0 |
+
+
+### 2026-09-18 · v0.3.0
+
+明确 Agent 消息通道、主子会话投递边界和报告/启动区别。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+### 2026-09-19 · PLAN_REPORT 的 worker 交接
+
+PostToolUse(SendMessage) 的 control root 始终是 REQ 权威根目录；非根 `cwd` 提交的 `plan_ref` 必须通过当前 Agent 的已登记 Assignment 核对 worktree 归属和同仓库身份，再从该执行目录读取。拒绝未登记 worker、越界路径、符号链接和不匹配的报告身份，不能用根目录同名旧文件替代 worker 报告。
+
+合法 worker 报告按内容哈希导入根目录 `.claude/evidence/plan-handoffs/`，登记与自动推进使用同一个归一化引用；根目录原有报告流程保留。导入文件不能覆盖已有不同内容，报告拒绝或 Runtime 登记失败后的 additionalContext 必须呈现最终失败原因，不能残留 `plan_report observed`。PostToolUse 仍以 exit 0 反馈观察结果，不升级为平台阻断。

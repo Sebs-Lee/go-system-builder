@@ -1590,3 +1590,8 @@ S7 目标机制只有在以下条件全部成立时才算落地：
   - 来源：批次 1 Reviewer tester。
 - **s7 status / next 视图合并**：当前 `status` / `next` / `s7 status` 三视图职责边界清晰但职责重合（白盒评审建议合并），评估时机待定。
 - **`runtime review-result` 与 `runtime review-result submit` 双形态并存**：保留是为了向后兼容；建议在某 major 版本统一为单动词。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+结构负例应在 Schema 层拒绝，业务负例结构合法而在业务层拒绝。CT 检查双方实际协议消费，真实联调继续检查权限、时序、状态与副作用，不能以生成测试自证全部正确。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。

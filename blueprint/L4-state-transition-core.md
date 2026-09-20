@@ -6,7 +6,7 @@
 >
 > 五家族分工：[调度](L4-agent-dispatch-governance.md)定义谁行动，[Hook 接线](L4-hook-platform-wiring.md)定义决策如何上总线，[运行时控制面](L4-runtime-control-plane.md)定义内容合规规则与词汇词典，[revision 使用篇](L4-revision-usage.md)定义内部提交序号与命令协调——**本文档是"事实住哪、怎样变更才算合法、崩了怎么自证"的唯一权威**。迁移 ID 五类形态学、guard/action 引擎、auto_trigger 仲裁的本体在此；L2 只保留生命周期概念与全局规则的"存在声明"，各 L3 只写消费。
 >
-> 状态：v0.1.0。【当前实现】均为代码核对结论（核对日 2026-08-28）；意图与现状的差距在 §11 披露。
+> 状态：v0.2.0。【当前实现】均为代码核对结论（核对日 2026-08-28）；意图与现状的差距在 §11 披露。
 
 ## 0. 准入逻辑
 
@@ -80,7 +80,27 @@ definition 现在只允许 `reject | pause` 两值（RC-06/C-12：`warn_and_retr
 
 ### 5.3 迁移内校验
 
-Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名单）、required_evidence 逐一过 `validateCurrentEvidence`（存在于 runtime 且 valid、kind 兼容、baseline_generation 同代、review_round 同轮、path 安全、sha 一致）、human_decision 类证据的 semantic identity 与一次性消费规则。revision 的内部提交检查和 Agent-facing 默认语义见 [revision 使用篇](L4-revision-usage.md)，不在此重复定义。
+Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名单）、required_evidence 逐一过 `validateCurrentEvidence`（存在于 runtime 且 valid、kind 兼容、baseline_generation 同代、review_round 同轮、path 安全、按 §5.4 来源读取并按控制面 §4.4 同步可变 evidence 绑定后核对 sha）、human_decision 类证据的 semantic identity 与一次性消费规则。revision 的内部提交检查和 Agent-facing 默认语义见 [revision 使用篇](L4-revision-usage.md)，不在此重复定义。
+
+### 5.4 上游输入契约与文件视图
+
+Stage / Gate / artifact 的权威契约逐项声明输入来源；Controller 解析该契约并构造 FileView，FileView 只执行读取，不根据扩展名、目录名、是否被 gitignore 或磁盘是否存在自行决定来源。
+
+| 输入语义 | 声明来源 | 资格规则 |
+| --- | --- | --- |
+| REQ、设计、契约、TASK、BUG 等正式文档，代码、测试及入库配置 | `git_tree` | 必須存在于契约指定的已提交树；dirty、index-only、untracked 均不能补足缺失内容 |
+| 明确不入库的 evidence / 运行产物 | `disk` | 从权威根目录或声明的执行目录读取，并按 evidence 契约校验 |
+| Runtime / journal / assignment 接收状态 | `runtime` | 消费 Writer 的一致快照，不从子 worktree 或 Git 副本重建 |
+
+同一 Gate 可以混合来源。生产上游必须显式给出声明；缺失、冲突、未知来源属于契约错误，不能静默退回磁盘。探索、草稿生成和文件编辑可读磁盘，但不因此获得阶段通过资格。
+
+一次评估先将分支解析成不可变 commit OID，再以该 OID 完成目录发现、读文件、元数据解析、哈希和引用闭包校验。FileView 不能列磁盘目录后读 Git 文件，也不能中途重新解析 HEAD。根目录阶段资格消费 REQ 绑定开发分支；评估时当前分支偏离须给出提醒。提交迁移前复核绑定、来源 commit 和 Runtime 身份，已变化则重新求值，不提交旧结论。
+
+Gate → guard → action 必须共享同一来源契约和已解析快照；迁移层不得重新读取磁盘来替换刚验证的正式文档。文件缺失、删除、重命名、符号链接、子模块、路径越界均返回带来源的明确结果，不以工作区同名文件代偿。
+
+生成器先生成正式产出，主会话提交，再评估并登记；不能要求迁移 action 首次生成其自身的 Git 前置输入。运行时投影和明确磁盘 evidence 可在事务中生成，不产生此循环。
+
+验证结果绑定实际 execution root、被测 commit 与内容身份；dirty 工作区测试通过不能声称已验证干净 commit。缓存键、Gate fingerprint 与诊断必须携带来源和 commit，防止磁盘结果复用到 Git tree。worktree 来源与回收见 [L4 Worktree](L4-worktree-governance.md)。
 
 ## 6. 自动推进与候选仲裁
 
@@ -161,3 +181,37 @@ Apply 前置三查：cursor 匹配（含 human_boundary 动词的 actor 白名�
 |:--|:--|:--|:--|
 | 2026-08-28 | v0.1.0 | 初版：把散落在 runtime store/transition engine/catalog/controller 各处的存储模型、CAS 本体、崩溃协议、实体生命周期索引、迁移引擎、自动推进仲裁、失效与预算事务、归档边界、对账命令族收拢为单一权威；从控制面草案中接管迁移形态学与引擎细节；登记六项诚实缺口（含 warn_and_retry 名实不符） | owner 批准的基石抽取批次（其二）；五问自测见 §0 |
 | 2026-08-29 | v0.1.1 | §4 追加 RC-10d 巨事务决策：submit 单 CAS 不拆段，以 RecordS7SubmitPhase 六相观测替代，p95>100ms 才重开 | RC-17 复杂度债收尾 |
+
+
+### 2026-09-18 · v0.2.0
+
+定义上游逐输入来源契约、固定 commit 的文件视图与迁移一致性。 依据：[Worktree / Hook 缺陷报告](../L4-worktree-hook-remediation.md)。
+
+
+### 文件来源契约的配置投影
+
+`docs/loop-definition.json.file_sources[]` 用 `path` 与 `source` 声明输入来源；`source` 只接受 `git_tree` 或 `disk`，采用最长目录前缀匹配。根规则约束正式产出为 Git tree，运行证据和控制面路径逐项声明磁盘例外。新类别必须先改此上游契约，再接入消费端；FileView 不因后缀、忽略规则或文件存在而猜测来源。Git 发现、语义检查、哈希登记和状态迁移复用同一提交快照，并在事务落盘前再次核对分支引用。独立草稿检查命令可以明确采用磁盘视图，但不构成阶段交付资格。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+PTR-PLAN-02 登记已校验的共享设计输入；TR-003 比对已登记模型内容，不能以重新登记掩盖审查期间漂移。读取与哈希沿同一 Files 视图。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。
+
+
+## 整体派发计划的注册与冻结契约（2026-09-19）
+
+waves-v1 已增加 `dispatch_plan` documentReference，并接入下列注册/冻结边界；legacy 恢复不补造审签。对象语义见 [L4 整体派发计划](L4-agent-dispatch-governance.md#dispatch-plan)。
+
+| 边界 | 事务要求 |
+|:--|:--|
+| TR-002 | 从上游指定 Git tree 登记当前 REQ 的完整 TASK 集合和 `dispatch_plan`；检查成员、依赖与资源顺序，不能遗漏 support TASK 或夹入其他 REQ |
+| S5 审签 | 计划进入精确 subjects，签署同一内容指纹，沿用两路独立职责 |
+| TR-003 | 原子冻结已审签计划与相同 TASK 集合；防止在注册时重算新指纹洗掉审签后漂移 |
+| 已有规划返工 | 计划语义或任务输入改变，失效受影响旧审签并重新登记；不新建仅改计划快捷批准状态机 |
+| S6 恢复/派发 | 根据批准输入和当前事实重建候选，实际派发复核 revision、owner 和资源条件；平台成功仍须真实回执 |
+
+计划正式输入不可由未提交磁盘内容替代。容量变化、执行进度和按前置提前释放不变更冻结计划；mutable evidence 自动指纹维护不能作用于计划。schema、注册动作、subjects 选择和 TASK 分母筛选必须同时迁移，避免部分支持。
+
+legacy 已执行 generation 保持恢复能力并显示缺少受审签计划，不补造历史；新规划批次必须满足新交付契约。
+
+修订记录：2026-09-19 · dispatch-plan-v1，依据 [S4 优化报告](../S4-dispatch-plan-optimization.md) 将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)，实际验证记录见根目录落地清单。

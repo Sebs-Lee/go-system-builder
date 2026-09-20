@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,10 @@ func freshRoot(t *testing.T) string {
 func writeSystemState(t *testing.T, root string, state map[string]any) {
 	t.Helper()
 	req039fixtures.EnsureStateRoot(state, root)
+	req039fixtures.CommitCurrentFixture(t, root)
+	if bound, ok := state["bound_req"].(map[string]any); ok {
+		bound["workspace"] = map[string]any{"project_root": root, "dev_branch": strings.TrimSpace(runGitIn(t, root, "branch", "--show-current")), "release_upstream": "origin/release", "bound_commit": strings.TrimSpace(runGitIn(t, root, "rev-parse", "HEAD"))}
+	}
 	path := filepath.Join(root, ".claude", "loop-state.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

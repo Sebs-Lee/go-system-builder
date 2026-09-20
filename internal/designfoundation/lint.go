@@ -3,6 +3,7 @@ package designfoundation
 import (
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"math"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func LintUnregisteredHex(root string) ([]Finding, error) {
 		return nil, err
 	}
 	var findings []Finding
-	err = filepath.Walk(designRoot, func(path string, info os.FileInfo, err error) error {
+	err = pathscope.Walk(root, designRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}

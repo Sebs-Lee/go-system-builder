@@ -1,6 +1,7 @@
 # 开发合同总览
 
 > 需求：REQ-{id}
+> Shared model policy: json-schema-v1
 > 状态：draft / reviewed / locked
 > （机器登记只认 locked——reviewed 仅人审中间态，PTR-PLAN-02 前须翻 locked；时机见 protocol #s3）
 > 版本：v0.1.0
@@ -23,7 +24,7 @@
 
 ## 合同锁定声明
 
-合同 locked 后是 Builder 唯一执行依据。范围、接口、字段、错误码、状态机、副作用、验收标准变更必须走 change-control。
+合同 locked 后与其引用的共同设计基线构成 Builder 的执行依据。范围、接口、字段、错误码、状态机、副作用、验收标准变更必须走 change-control。
 
 ## 合同清单
 
@@ -57,3 +58,14 @@
 | 日期 | 版本 | 变更内容 | 申请人 | 审批人 | 影响合同 |
 |:---|:---|:---|:---|:---|:---|
 | | | | | | |
+
+
+## Shared model baseline
+
+先阅读 [共享模型规则](../rules/shared-model-contracts.md)，从 [模型入口](../design/data-model/MODEL.md) 定位现有权威定义。先共同收敛数据与 SYNC，再派生 FE/BE；不得按 REQ 复制模型。
+
+| Operation | Slot | Schema | Consumers | Valid example | Structural negative |
+|:---|:---|:---|:---|:---|:---|
+| {operationId} | {request/response-200} | [权威定义](../design/data-model/{schema}.json) | [前端](FE-{id}.md) [后端](BE-{id}.md) [协议](SYNC-{id}.md) | [合法数据](../design/data-model/{valid}.json) | N/A |
+
+不涉及共享数据时改为 `Shared model policy: none` 并添加具体 `Shared model reason`，删除占位行。既有其他协议不得假装已被 JSON Schema 适配器验证。

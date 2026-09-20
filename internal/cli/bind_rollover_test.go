@@ -34,7 +34,7 @@ func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(
 
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
-		"req", "bind", "--root", root,
+		"req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root),
 		"--req", "docs/requirements/REQ-099.md",
 		"--approved-by", "release-owner",
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -94,7 +94,7 @@ func TestREQBindRejectsMissingFreshJournal(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
-		"req", "bind", "--root", root,
+		"req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root),
 		"--req", "docs/requirements/REQ-099.md",
 		"--approved-by", "release-owner",
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -132,7 +132,7 @@ func TestREQBindRejectsDirtyInactiveRuntime(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
-		"req", "bind", "--root", root,
+		"req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root),
 		"--req", "docs/requirements/REQ-099.md",
 		"--approved-by", "release-owner",
 	}, strings.NewReader(""), &stdout, &stderr)
@@ -458,7 +458,7 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{
-		"req", "bind", "--root", root,
+		"req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root),
 		"--req", "docs/requirements/REQ-099.md",
 		"--approved-by", "release-owner",
 	}, strings.NewReader(""), &stdout, &stderr)

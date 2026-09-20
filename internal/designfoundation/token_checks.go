@@ -1,6 +1,7 @@
 package designfoundation
 
 import (
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,7 +155,7 @@ func checkPrimitiveConsumption(root string, idx *ContractIndex) []Finding {
 	if _, err := os.Stat(designRoot); err != nil {
 		return findings
 	}
-	_ = filepath.Walk(designRoot, func(path string, info os.FileInfo, err error) error {
+	_ = pathscope.Walk(root, designRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -209,7 +210,7 @@ func checkGeneratedAssetUnverifiable(root string, idx *ContractIndex) []Finding 
 	if _, err := os.Stat(designRoot); err != nil {
 		return findings
 	}
-	_ = filepath.Walk(designRoot, func(path string, info os.FileInfo, err error) error {
+	_ = pathscope.Walk(root, designRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}

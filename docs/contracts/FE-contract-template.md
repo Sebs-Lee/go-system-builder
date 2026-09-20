@@ -11,6 +11,12 @@
 
 > 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
 
+## Shared model inputs
+
+- [本操作的权威数据定义](../design/data-model/{schema}.json)：类型、空值、单位和约束从此处读取，不在本合同重新定义。
+- [合同索引](CONTRACTS-{id}.md#shared-model-baseline)：确认本操作、数据位置及消费者。
+- [共享模型规则](../rules/shared-model-contracts.md)：遇到模型缺口时返回所属设计层。
+
 ## 1. 文档链接
 
 | 关系 | 文档 | 条款/用途 |
@@ -93,11 +99,9 @@
 - [ ] 单元/组件测试覆盖新增逻辑。
 - [ ] 无 P0/P1 缺陷。
 
-## 8. 派生任务
+## 8. 消费与完成出口
 
-| TASK | 路径 | 覆盖条款 | 状态 |
-|:---|:---|:---|:---|
-| TASK-{id} | `docs/tasks/TASK-{id}.md` | §{n} | pending |
+任务产生后从 [任务索引](../tasks/index.md) 查看消费者；实际证据由 TASK/报告回链本合同条款，不回填未来任务或结果。
 
 ## 9. 变更申请记录
 

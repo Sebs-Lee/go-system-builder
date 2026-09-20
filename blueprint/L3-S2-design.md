@@ -307,3 +307,8 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 | 收口 | 三角色自审、generate/validate 输出、planning evidence 格式 | 报错对应实现说明 | 比例、哈希、字节比对算法 |
 
 正常路径只暴露当前任务所需模板与一条下一步；机器已检查的引用、比例和生成一致性不再要求 agent 逐条人工复算。
+
+
+## 共享模型与合同依赖（2026-09-19）
+
+S2 拥有领域含义、规则、状态和用户行为；S3 将其细化为字段及协议。数据模型不复制场景分母，未知业务含义返回本阶段澄清。 机制权威见 [L4 共享模型与合同治理](L4-shared-model-contract-governance.md)。

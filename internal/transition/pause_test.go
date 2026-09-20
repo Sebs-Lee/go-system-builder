@@ -264,7 +264,7 @@ func TestTR020IncrementsBaselineAndInvalidatesEvidence(t *testing.T) {
 	})
 	scopeFixtureEvidence(t, state, "docs/reports/human/decision.md", "runtime_amend:loop-test@6")
 	writeState(t, root, state)
-	next, err := transition.Apply(root,
+	next, err := applyFixture(root,
 		filepath.Join(root, ".claude", "loop-state.json"),
 		filepath.Join(root, ".claude", "loop-events.jsonl"),
 		transition.Request{
@@ -345,7 +345,7 @@ func applyTransition(t *testing.T, root, transitionID string, expectedRevision i
 		Actor:            "orchestrator",
 		Evidence:         evidence,
 	}
-	_, err := transition.Apply(root,
+	_, err := applyFixture(root,
 		filepath.Join(root, ".claude", "loop-state.json"),
 		filepath.Join(root, ".claude", "loop-events.jsonl"),
 		req)

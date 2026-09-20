@@ -68,3 +68,8 @@ Use this rule for APIs, events, webhooks, FE/BE sync, response fields, auth, rat
 - error-code tests
 - linked state doc when API changes state
 
+
+
+## Shared model authority
+
+Follow [shared-model contracts](shared-model-contracts.md). Data shape has one native authoring source; SYNC owns shared behavior, FE/BE derive responsibilities. Structural negative examples fail schema validation; business negatives remain valid data and are rejected by the business rule.

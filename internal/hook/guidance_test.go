@@ -41,7 +41,7 @@ func TestRenderGuidanceKeepsGateRecoveryActionable(t *testing.T) {
 	if err := json.Unmarshal(output, &payload); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := payload["systemMessage"].(string)
+	body, _ := contextValue(payload).(string)
 	for _, fragment := range []string{
 		"HOOK_AGENT_NOT_ACTIVATED",
 		"LOOP RECOVERY",
@@ -83,7 +83,7 @@ func TestRenderGuidanceForAllowedLifecycleEvent(t *testing.T) {
 	if err := json.Unmarshal(output, &payload); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := payload["systemMessage"].(string)
+	body, _ := contextValue(payload).(string)
 	if !strings.Contains(body, "integrate the subagent worktree") || !strings.Contains(body, "develop") {
 		t.Fatalf("allowed lifecycle event must still emit positive guidance: %s", body)
 	}

@@ -582,6 +582,10 @@ func writeTrustedPlanningEvidence(t *testing.T, root, id, kind, responsibility, 
 
 func runRecovery(t *testing.T, root string, args ...string) (int, string, string) {
 	t.Helper()
+	if len(args) >= 3 && args[0] == "runtime" && args[1] == "recover" && args[2] == "plan" {
+		req039fixtures.CommitFixture(t, root)
+		args = append(args, "--dev-branch", "test-development", "--release-upstream", "origin/release")
+	}
 	var stdout, stderr bytes.Buffer
 	code := cli.Run(args, bytes.NewReader(nil), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()

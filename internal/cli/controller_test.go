@@ -1380,6 +1380,7 @@ func TestHandleSubagentStopFallsBackWhenAssignmentMissing(t *testing.T) {
 // SubagentStop with !Ready inspection preserves the worktree.
 func TestHandleSubagentStopPreservesWorktreeOnNotReadyInspection(t *testing.T) {
 	fix := newRuntimeFixture(t)
+	fix.state["bound_req"].(map[string]any)["workspace"] = map[string]any{"project_root": fix.root, "dev_branch": "develop", "release_upstream": "origin/release", "bound_commit": "fixture"}
 	fix.persist(t)
 	snapshot := fix.snapshot(t)
 	loaded := &hookctx.LoadedContext{
@@ -1437,6 +1438,9 @@ func TestHandleSubagentStopAdvancesIntegrationOnReadyInspection(t *testing.T) {
 			t.Fatalf("git %v: %v", strings.Join(args, " "), err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(repo, ".git/info/exclude"), []byte(".claude/\nwt/\ndocs/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	// Create a worktree with a branch that has commits.
 	wtPath := filepath.Join(repo, "wt")
 	if _, err := runGit(t, repo, "worktree", "add", "-b", "codex/req-039-bogus", wtPath, "develop"); err != nil {
@@ -1455,6 +1459,7 @@ func TestHandleSubagentStopAdvancesIntegrationOnReadyInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	fix.state["bound_req"].(map[string]any)["workspace"] = map[string]any{"project_root": fix.root, "dev_branch": "develop", "release_upstream": "origin/release", "bound_commit": "fixture"}
 	fix.persist(t)
 	snapshot := fix.snapshot(t)
 	loaded := &hookctx.LoadedContext{
@@ -1575,12 +1580,12 @@ func TestReconcileGuidanceWiresSubagentStopHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(developAfter) == string(developBefore) {
-		t.Fatalf("BUG-039-37 wiring must advance develop via Integrate, guidance=%#v", guidance.Integration)
+	if string(developAfter) != string(developBefore) {
+		t.Fatalf("SubagentStop must leave integration to Main, guidance=%#v", guidance.Integration)
 	}
 	joined := strings.ToLower(strings.Join(guidance.Integration, " "))
-	if !strings.Contains(joined, "worktree integrated") {
-		t.Fatalf("wired SubagentStop must surface integration progress, got %#v", guidance.Integration)
+	if !strings.Contains(joined, "runtime task-integrate") {
+		t.Fatalf("SubagentStop must identify the Main follow-up, got %#v", guidance.Integration)
 	}
 }
 

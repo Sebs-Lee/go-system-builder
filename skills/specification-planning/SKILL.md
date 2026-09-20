@@ -141,7 +141,7 @@ win.
    consumes both).
 
 **S3/S4 steps:**
-10. Draft contracts in order: FE-contract → BE-contract → SYNC-contract,
+10. Converge the shared data model and SYNC protocol first, then derive FE/BE responsibilities,
     from the four templates under `docs/contracts/` (CONTRACTS / BE / FE /
     SYNC). Each must link to the REQ source ref and the module
     current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
@@ -158,7 +158,7 @@ win.
     Contract (§7 four assert lines), and obeys single-responsibility.
     Never hand-copy fingerprints or versions — runtime documents[] owns
     them; §2 keeps read order only.
-    **拆分纪律（builder 视角）**：一句话说不成交付物、或出现"以及/然后"→ 拆；FE+BE+SYNC 不混进同一任务；类型/schema/迁移是地基，下游任务必须声明对它的依赖。**compact 警示：尽量避免 subagent 中途 compact——builder 丢任务信息是灾难性表现**。宁可多拆一个任务，也不要让 builder 读着读着上下文被压缩；每个任务的 §2 清单只引用它真正需要的条款切片，不是整份文档。规模直觉锚：必读合计 ~30KB / 触碰 ~8 文件 / 改动 ~400 行——超了先想想能不能拆。
+    **拆分纪律（builder 视角）**：一句话说不成交付物、或出现"以及/然后"→ 拆；FE+BE+SYNC 不混进同一任务；只有实际依赖共享实现产物的下游任务，才声明对应 foundation TASK 依赖；单独生成或复用既有模型的任务可以并行，不把每个 REQ 的 schema 引用都强制串成地基任务。**compact 警示：尽量避免 subagent 中途 compact——builder 丢任务信息是灾难性表现**。宁可多拆一个任务，也不要让 builder 读着读着上下文被压缩；每个任务的 §2 清单只引用它真正需要的条款切片，不是整份文档。规模直觉锚：必读合计 ~30KB / 触碰 ~8 文件 / 改动 ~400 行——超了先想想能不能拆。
 12. Run `loop-harness tasks check` before requesting `TR-002`: batch
     completeness, clause coverage against the index, DAG acyclicity, and
     closing contracts are machine-checked there — and it prints per-task
@@ -249,3 +249,17 @@ must trace back to the locked REQ. Invalid or guard-failing events do not
 change state, execute no side effect, and record a rejected event.
 Idempotency uses CAS revision checks; one committed transition per runtime
 revision.
+
+
+For new batches apply [shared-model contracts in the factory](../../docs/rules/shared-model-contracts.md) (after installation: [project rule](../../../docs/rules/shared-model-contracts.md)): explicit policy, native source references, validated examples, committed design closure and role-specific TASK links. Do not create a registry or copy schemas per REQ. Independent generation may run in parallel; only actual shared implementation artifacts require foundation TASK dependencies.
+
+## Overall dispatch plan (waves-v1)
+
+Follow [factory dispatch rules](../../docs/rules/dispatch-plan.md), or after installation
+[project dispatch rules](../../../docs/rules/dispatch-plan.md). S4 delivers the REQ's
+index as an ordered wave checklist; S5 reviews and freezes it with TASKs. S6 reads
+that plan and `s6 status --capacity <actual total slots>` before dispatch, then
+recomputes after integration or capacity release. Start every compatible ready
+TASK within actual capacity; do not wait for unrelated tasks in an earlier wave.
+Only verified integration into the root development branch releases consumers.
+Never write runtime progress back into frozen plans or TASKs.

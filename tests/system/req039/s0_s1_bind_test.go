@@ -47,7 +47,7 @@ func TestS0S1_InitBindEntersPlanningDesign(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	if code := runCLI(t, []string{
-		"req", "bind", "--root", root,
+		"req", "bind", "--root", req039fixtures.CommitFixture(t, root), "--dev-branch", "test-development", "--release-upstream", "origin/release",
 		"--req", reqRel, "--approved-by", "user",
 	}, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
 		t.Fatalf("req bind failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())

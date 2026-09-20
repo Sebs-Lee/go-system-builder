@@ -93,7 +93,7 @@ func PreStageActivationEnvelope(root, workgroupID, taskID, agentID, dispatchMode
 // buildActivationEnvelope fills the four hookctx-loader fields deterministically.
 func buildActivationEnvelope(agentID string, source ActivationSourceEntry) ActivationEnvelope {
 	tools := defaultActivationTools()
-	writePaths := mergeUniqueStringSlices(source.WritePaths, source.OutputPaths)
+	writePaths := effectiveActivationWritePaths(source.WritePaths, source.OutputPaths)
 	commandClasses := commandClassesForSkills(source.SkillRefs)
 	return ActivationEnvelope{
 		AgentID:               agentID,
@@ -101,6 +101,15 @@ func buildActivationEnvelope(agentID string, source ActivationSourceEntry) Activ
 		AllowedWritePaths:     writePaths,
 		AllowedCommandClasses: commandClasses,
 	}
+}
+
+// effectiveActivationWritePaths is the single binding for a manifest's
+// write_paths and output_paths. Activation projects the union; the planned
+// S6 registration path validates the same union against the reviewed TASK.
+// Legacy registrations without a reviewed dispatch plan retain their
+// historical output compatibility.
+func effectiveActivationWritePaths(writePaths, outputPaths []string) []string {
+	return mergeUniqueStringSlices(writePaths, outputPaths)
 }
 
 // defaultActivationTools is the dispatch surface every Worker needs. It mirrors

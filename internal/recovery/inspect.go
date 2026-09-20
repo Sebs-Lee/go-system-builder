@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"os"
 	"path/filepath"
 	"sort"
@@ -88,7 +89,7 @@ func Inspect(root, reqPath string) (Inventory, error) {
 		} else if err != nil {
 			return Inventory{}, fmt.Errorf("inspect recovery directory %q: %w", relativeDirectory, err)
 		}
-		if err := filepath.WalkDir(fullDirectory, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := pathscope.WalkDir(resolvedRoot, fullDirectory, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return fmt.Errorf("walk recovery directory %q: %w", relativeDirectory, walkErr)
 			}
