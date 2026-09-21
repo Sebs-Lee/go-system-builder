@@ -49,7 +49,7 @@ func TestCT03905_UnlockedSiblingWriteAllowsSystem(t *testing.T) {
 	writeSystemState(t, root, state)
 
 	body := req039fixtures.PreToolUseBody("session-ct-039-05-sys", "Edit", map[string]any{
-		"file_path": "docs/contracts/BE-039-loop-controller-notes.md",
+		"file_path": "docs/dev/contracts/BE-039-loop-controller-notes.md",
 	})
 	code, stdout, stderr := runHook(t, root, "PreToolUse", body)
 	if code != 0 {

@@ -4,7 +4,7 @@
 > in the target project. It is the default Prompt that Claude Code's built-in
 > `/loop` scheduler delivers on each wake-up.
 >
-> Source: `docs/agent-protocol.md`, `docs/loop-definition.json`, and
+> Source: `docs/control/agent-protocol.md`, `docs/control/loop-definition.json`, and
 > `AGENTS-template.md`.
 
 ## What this file is — and is not
@@ -48,7 +48,7 @@ do not wait for the next wake-up before acting.
 
 2. Read the map, not the entire library. After compact/new-session recovery,
    follow the Hook packet's order: AGENTS.md, .claude/loop-state.json, the
-   current stage section of docs/agent-protocol.md, the bound locked REQ path,
+   current stage section of docs/control/agent-protocol.md, the bound locked REQ path,
    and the one primary Skill.
 
 3. Confirm the bound locked REQ. Verify it is locked and its SHA-256 matches
@@ -107,8 +107,8 @@ Prompt.
 
 ## Reference
 
-- Main Spine: `docs/agent-protocol.md`
-- Loop Definition: `docs/loop-definition.json`
+- Main Spine: `docs/control/agent-protocol.md`
+- Loop Definition: `docs/control/loop-definition.json`
 - Project Entry: `AGENTS-template.md`
 
 

@@ -33,10 +33,10 @@ func newAuditSharedRepo(t *testing.T, withDependency bool) *auditSharedRepo {
 	if withDependency {
 		writeAuditSharedDependency(t, r.root)
 	}
-	if err := os.MkdirAll(filepath.Join(r.root, "docs", "tasks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(r.root, "docs", "dev", "tasks"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(r.root, "docs", "tasks", "TASK-AUDIT.md"), []byte("# TASK-AUDIT\n\n> Status: complete\n> Version: v1.0.0\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(r.root, "docs", "dev", "tasks", "TASK-AUDIT.md"), []byte("# TASK-AUDIT\n\n> Status: complete\n> Version: v1.0.0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	auditSharedGit(t, r.root, "add", ".")
@@ -76,7 +76,7 @@ func copyAuditSharedExample(t *testing.T, root string) {
 func writeAuditSharedDependency(t *testing.T, root string) {
 	t.Helper()
 	dependency := `{"type":"object","required":["order_id"],"additionalProperties":false,"properties":{"order_id":{"type":"string","minLength":1}}}`
-	if err := os.WriteFile(filepath.Join(root, "docs", "design", "data-model", "request-fragment.json"), []byte(dependency), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "architecture", "data-model", "request-fragment.json"), []byte(dependency), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rootSchema := `{
@@ -87,7 +87,7 @@ func writeAuditSharedDependency(t *testing.T, root string) {
   }
 }
 `
-	if err := os.WriteFile(filepath.Join(root, "docs", "design", "data-model", "orders.schema.json"), []byte(rootSchema), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "architecture", "data-model", "orders.schema.json"), []byte(rootSchema), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -191,7 +191,7 @@ func TestAuditSharedModelsS3ToS5UsesCommittedGitTree(t *testing.T) {
 	t.Run("worker-only schema cannot satisfy formal source", func(t *testing.T) {
 		repo := newAuditSharedRepo(t, false)
 		for _, name := range []string{"CONTRACTS-001.md", "FE-001.md", "BE-001.md", "SYNC-001.md"} {
-			path := filepath.Join(repo.root, "docs", "contracts", name)
+			path := filepath.Join(repo.root, "docs", "dev", "contracts", name)
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -202,11 +202,11 @@ func TestAuditSharedModelsS3ToS5UsesCommittedGitTree(t *testing.T) {
 			}
 		}
 		workerSchema := `{"$defs":{"request":{"type":"object","required":["order_id"],"properties":{"order_id":{"type":"string"}}},"response":{"type":"object"}}}`
-		workerPath := filepath.Join(repo.root, "docs", "design", "data-model", "worker-only.json")
+		workerPath := filepath.Join(repo.root, "docs", "architecture", "data-model", "worker-only.json")
 		if err := os.WriteFile(workerPath, []byte(workerSchema), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		auditSharedGit(t, repo.root, "add", "docs/contracts")
+		auditSharedGit(t, repo.root, "add", "docs/dev/contracts")
 		auditSharedGit(t, repo.root, "commit", "-qm", "reference worker-only model without delivering it")
 		if status := auditSharedGit(t, repo.root, "status", "--porcelain", "--untracked-files=all"); !strings.Contains(status, "worker-only.json") {
 			t.Fatalf("worker-only schema unexpectedly tracked or absent from worktree: status=%q", status)
@@ -241,7 +241,7 @@ func TestAuditSharedModelsFreezeRejectsTransitiveClosureChanges(t *testing.T) {
 			name:         "transitive dependency content drift",
 			baselineDeps: true,
 			mutate: func(t *testing.T, root string) {
-				path := filepath.Join(root, "docs", "design", "data-model", "request-fragment.json")
+				path := filepath.Join(root, "docs", "architecture", "data-model", "request-fragment.json")
 				if err := os.WriteFile(path, []byte(`{"type":"object","required":["order_id"],"additionalProperties":false,"properties":{"order_id":{"type":"string","minLength":2}}}`), 0o644); err != nil {
 					t.Fatal(err)
 				}
@@ -260,10 +260,10 @@ func TestAuditSharedModelsFreezeRejectsTransitiveClosureChanges(t *testing.T) {
   }
 }
 `
-				if err := os.WriteFile(filepath.Join(root, "docs", "design", "data-model", "orders.schema.json"), []byte(inline), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(root, "docs", "architecture", "data-model", "orders.schema.json"), []byte(inline), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Remove(filepath.Join(root, "docs", "design", "data-model", "request-fragment.json")); err != nil {
+				if err := os.Remove(filepath.Join(root, "docs", "architecture", "data-model", "request-fragment.json")); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -287,7 +287,7 @@ func TestAuditSharedModelsFreezeRejectsTransitiveClosureChanges(t *testing.T) {
 				t.Fatalf("unexpected initial model closure size: %d", got)
 			}
 			tc.mutate(t, repo.root)
-			auditSharedGit(t, repo.root, "add", "docs/design/data-model")
+			auditSharedGit(t, repo.root, "add", "docs/architecture/data-model")
 			auditSharedGit(t, repo.root, "commit", "-qm", "change shared model closure")
 			changedView := repo.view(t)
 			fn, ok := LookupAction("register_execution_batch")

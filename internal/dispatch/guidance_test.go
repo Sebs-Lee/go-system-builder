@@ -7,7 +7,7 @@ import (
 )
 
 func TestAdvisoryNamesEligibleAndUnintegratedWork(t *testing.T) {
-	b := Board{Plan: &semantic.DispatchPlan{Path: "docs/tasks/index-REQ-042.md"}, Rows: []semantic.DispatchRow{
+	b := Board{Plan: &semantic.DispatchPlan{Path: "docs/dev/tasks/index-REQ-042.md"}, Rows: []semantic.DispatchRow{
 		{Task: semantic.DispatchTask{ID: "TASK-042-01"}, State: "queued"},
 		{Task: semantic.DispatchTask{ID: "TASK-042-02"}, State: "reported"},
 		{Task: semantic.DispatchTask{ID: "TASK-042-03"}, State: "waiting", Reason: "await verified integration: TASK-042-02"},

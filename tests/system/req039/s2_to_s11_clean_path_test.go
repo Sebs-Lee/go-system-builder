@@ -43,7 +43,7 @@ func TestS2_ToS11_CleanPath_Conformance(t *testing.T) {
 		"hook_event_name":"PreToolUse",
 		"agent_id":"agent-1",
 		"tool_name":"Edit",
-		"tool_input":{"file_path":"docs/design/architecture/ARCHITECTURE-039.md"}
+		"tool_input":{"file_path":"docs/architecture/ARCHITECTURE-039.md"}
 	}`
 	code, stdout, stderr := runHook(t, root, "PreToolUse", input)
 	if code != 0 {

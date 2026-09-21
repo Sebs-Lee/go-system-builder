@@ -24,7 +24,7 @@ func LintUnregisteredHex(root string) ([]Finding, error) {
 				Code:     "tokens_missing",
 				Severity: SeverityWarning,
 				Path:     TokensJSONRel,
-				Detail:   "packages/design-tokens/tokens.json is missing; prototypes must not invent hex values",
+				Detail:   "docs/design/tokens/tokens.json is missing; prototypes must not invent hex values",
 			}}, nil
 		}
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -151,5 +152,39 @@ func bindAuthorityWorkspaceTest(t *testing.T, state map[string]any, root string)
 		"dev_branch":       "test-development",
 		"release_upstream": "origin/release",
 		"bound_commit":     "fixture",
+	}
+}
+
+func TestPendingCandidateRejectsRetiredRequirementPath(t *testing.T) {
+	root := t.TempDir()
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeState(t, statePath, 1)
+	candidate := readJSONMapRuntimeTest(t, statePath)
+	candidate["bound_req"] = map[string]any{"path": "docs/product/requirements/REQ-001.md"}
+	stateBytes := mustJSON(t, candidate)
+	markerPath := statePath + ".fingerprint-pending.json"
+	writeJSONMapRuntimeTest(t, markerPath, map[string]any{
+		"schema_version": "1.0.0", "previous_state_sha256": "", "previous_revision": 0,
+		"state_sha256": sha256HexForTest(stateBytes), "state": candidate,
+	})
+	before := mustRead(t, markerPath)
+	if err := os.Remove(statePath); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runtime.NewWriter(statePath, journalPath, root, integrityTestValidator{}).Snapshot()
+	if err == nil || !strings.Contains(err.Error(), "layout migration required") {
+		t.Fatalf("old pending candidate accepted: %v", err)
+	}
+	if string(mustRead(t, markerPath)) != string(before) {
+		t.Fatal("rejected marker changed")
+	}
+	for _, p := range []string{statePath, journalPath} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("rejected candidate published %s: %v", p, err)
+		}
 	}
 }

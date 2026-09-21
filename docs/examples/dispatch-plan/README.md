@@ -1,6 +1,6 @@
 # Dispatch plan example
 
-Read [the plan](project/docs/tasks/index-REQ-042.md), then each linked TASK.
+Read [the plan](project/docs/dev/tasks/index-REQ-042.md), then each linked TASK.
 Validate with `loop-harness tasks check --root docs/examples/dispatch-plan/project --req REQ-042`.
 
 This fixture demonstrates ordering, not implemented product code. Initially

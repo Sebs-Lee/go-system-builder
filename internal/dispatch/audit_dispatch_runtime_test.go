@@ -308,13 +308,13 @@ func auditDispatchRuntimeRefreshFixture(t *testing.T) auditDispatchRuntimeRefres
 	}
 	reportBytes := auditDispatchWriteJSON(t, root, reportPath, report)
 	state["entities"].(map[string]any)["tasks"] = []any{map[string]any{
-		"id": "TASK-001", "state": "review", "path": "docs/tasks/TASK-001.md",
+		"id": "TASK-001", "state": "review", "path": "docs/dev/tasks/TASK-001.md",
 		"sha256": strings.Repeat("0", 64), "owner_agent_ids": []any{"builder"},
 		"completion_report_ref": reportPath,
 	}}
 	state["entities"].(map[string]any)["agents"] = []any{map[string]any{
 		"id": "builder", "role": "builder", "state": "reported", "task_ids": []any{"TASK-001"},
-		"team_id": nil, "definition_ref": "docs/loop-definition.json", "prompt_ref": "manifest#assignment-001",
+		"team_id": nil, "definition_ref": "docs/control/loop-definition.json", "prompt_ref": "manifest#assignment-001",
 		"readback_ref": nil, "activation_ref": nil, "activation_revision": nil,
 		"updated_at": "2026-09-19T10:00:00Z",
 	}}

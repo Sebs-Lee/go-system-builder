@@ -8,7 +8,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/doclinks"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"io"
 	"os"
@@ -118,6 +120,8 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  validate    Validate runtime + journal against schema")
 	fmt.Fprintln(stdout, "  dry-run     Render an applied transition without writing")
 	fmt.Fprintln(stdout, "  hook        Hook adapter entrypoints (PreToolUse, Stop, etc.)")
+	fmt.Fprintln(stdout, "  install     Install a release into a fresh empty project (--source, --root)")
+	fmt.Fprintln(stdout, "  docs check  Validate local document links and anchors")
 	fmt.Fprintln(stdout, "  doctor      Structural schema / manual / policy_ref checks (not runtime health)")
 	fmt.Fprintln(stdout, "  health      Runtime history signals and Hook timing (use --fail-on-degraded in CI)")
 	fmt.Fprintln(stdout, "  actions     Canonical Agent action catalog and compatibility notes")
@@ -152,7 +156,30 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		printTopLevelUsage(stdout)
 		return 0
 	}
+	// Reject incompatible layouts before init, recovery, Hook or any other
+	// command can overwrite the old release's configuration or Runtime.
+	layoutRoot := "."
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		if strings.HasPrefix(args[i], "--root=") || strings.HasPrefix(args[i], "-root=") {
+			layoutRoot = strings.SplitN(args[i], "=", 2)[1]
+		}
+		if (args[i] == "--root" || args[i] == "-root") && i+1 < len(args) {
+			layoutRoot = args[i+1]
+			i++
+		}
+	}
+	if err := projectlayout.Check(layoutRoot); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	switch args[0] {
+	case "docs":
+		return runDocsCheck(args[1:], stdout, stderr)
+	case "install":
+		return runInstall(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "req":
@@ -411,8 +438,8 @@ func controlPlaneDrift(root string, state map[string]any) string {
 	checks := []struct {
 		stateKey, rel string
 	}{
-		{"definition", "docs/loop-definition.json"},
-		{"hook_control", "docs/hook-policy.json"},
+		{"definition", projectlayout.Definition},
+		{"hook_control", projectlayout.Policy},
 	}
 	for _, check := range checks {
 		block, _ := state[check.stateKey].(map[string]any)
@@ -621,7 +648,7 @@ func regenerateManualBestEffort(root string) error {
 	if err != nil {
 		return fmt.Errorf("load catalog: %w", err)
 	}
-	defData, err := os.ReadFile(filepath.Join(root, "docs", "loop-definition.json"))
+	defData, err := os.ReadFile(filepath.Join(root, projectlayout.Definition))
 	if err != nil {
 		return fmt.Errorf("read loop-definition.json: %w", err)
 	}
@@ -645,6 +672,9 @@ func regenerateManualBestEffort(root string) error {
 // Definition and Hook policy fingerprints match the local files. It is the
 // standard way to seed a freshly bootstrapped project.
 func writeInactiveRuntime(root string) error {
+	if err := projectlayout.Check(root); err != nil {
+		return err
+	}
 	markerPath := filepath.Join(root, ".claude/loop-init-pending.json")
 	if _, err := os.Lstat(markerPath); err == nil {
 		return completePendingInitialization(root, markerPath)
@@ -705,6 +735,9 @@ func completePendingInitialization(root, markerPath string) error {
 	stateData, err := json.MarshalIndent(pending.FreshState, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode pending runtime state: %w", err)
+	}
+	if err := projectlayout.CheckRuntime(stateData); err != nil {
+		return err
 	}
 	files := []struct {
 		path string
@@ -783,8 +816,8 @@ func syncDirectory(path string) error {
 }
 
 func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, error) {
-	defPath := filepath.Join(root, "docs/loop-definition.json")
-	policyPath := filepath.Join(root, "docs/hook-policy.json")
+	defPath := filepath.Join(root, projectlayout.Definition)
+	policyPath := filepath.Join(root, projectlayout.Policy)
 	defData, err := os.ReadFile(defPath)
 	if err != nil {
 		return nil, fmt.Errorf("read Loop Definition: %w", err)
@@ -819,7 +852,7 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 		SchemaVersion: "1.1.0",
 		RuntimeID:     "loop-inactive",
 		Definition: map[string]any{
-			"path":    "docs/loop-definition.json",
+			"path":    projectlayout.Definition,
 			"version": defVersion,
 			"sha256":  fmt.Sprintf("%x", sha256.Sum256(defData)),
 		},
@@ -831,7 +864,7 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 		},
 		HookControl: map[string]any{
 			"policy_ref": map[string]any{
-				"path":    "docs/hook-policy.json",
+				"path":    projectlayout.Policy,
 				"version": policyMetadata.Version,
 				"sha256":  fmt.Sprintf("%x", sha256.Sum256(policyData)),
 			},
@@ -853,7 +886,7 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 			"lifecycle_phase": nil,
 			"objective":       "produce one human-locked requirement (binding is the S1 action)",
 			"action":          "produce one human-locked REQ (docs/requirements/REQ-template.md + skills: requirement-funnel), then bind it",
-			"protocol_ref":    "docs/agent-protocol.md#s0",
+			"protocol_ref":    "docs/control/agent-protocol.md#s0",
 			"manual_ref":      loopManualRef,
 			"primary_skill":   "requirement-funnel",
 			"read":            []any{"docs/requirements/"},
@@ -864,7 +897,7 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 			"blocker":         nil,
 			"event":           "init",
 			"instruction":     "LOOP RECOVERY: bind one human-locked REQ.",
-			"recovery":        []any{"read docs/agent-protocol.md#s0", "if blocked read .claude/bin/loop-harness.md"},
+			"recovery":        []any{"read docs/control/agent-protocol.md#s0", "if blocked read .claude/bin/loop-harness.md"},
 			"source_revision": 0,
 			"updated_at":      occurredAt.UTC().Format(time.RFC3339Nano),
 		},
@@ -2197,7 +2230,7 @@ func runRuntimeChange(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime change create: invalid input JSON: %v\n", err)
 		return 2
 	}
-	stateData, err := os.ReadFile(resolveRootPath(*root, *statePath))
+	stateData, err := readRuntimeBytes(*root, *statePath)
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime change create", err))
 		return 1
@@ -2230,6 +2263,19 @@ func runRuntimeChange(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return encodeJSON(stdout, next)
+}
+
+// readRuntimeBytes applies layout compatibility to the exact state selected by
+// read-only commands as well as commands that later use the Runtime Store.
+func readRuntimeBytes(root, statePath string) ([]byte, error) {
+	data, err := os.ReadFile(resolveRootPath(root, statePath))
+	if err != nil {
+		return nil, err
+	}
+	if err := projectlayout.CheckRuntime(data); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func resolveRootPath(root, path string) string {
@@ -2394,7 +2440,7 @@ func runHealth(args []string, stdout, stderr io.Writer) int {
 // (BUG-039-12; REQ-039 §11, SYNC-039 §6-7).
 //
 // `policy_ref` is a bind-time snapshot of the enforced safety boundary. When
-// `docs/hook-policy.json` is rewritten in place the snapshot goes stale, and
+// `docs/control/hook-policy.json` is rewritten in place the snapshot goes stale, and
 // the runtime keeps attributing Hook decisions to a policy version/digest that
 // is no longer what the Hook actually loads — an audit inconsistency rather
 // than a runtime failure. doctor is the detector; the fix path it names is
@@ -2496,7 +2542,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// silently falling through. The controller cycle (run below) does
 	// NOT depend on the policy document; it only needs the catalog and
 	// the runtime store.
-	if _, err := policy.Load(filepath.Join(root, "docs", "hook-policy.json")); err != nil {
+	if _, err := policy.Load(filepath.Join(root, projectlayout.Policy)); err != nil {
 		fmt.Fprintf(stderr, "load policy: %v\n", err)
 		return 1
 	}
@@ -2709,7 +2755,7 @@ func hookInputMayMutate(request policy.Input) bool {
 // originating operation; their value is a durable, deduplicated audit signal
 // that can be correlated with the existing wrapper and runtime evidence.
 func runNativeObserverHook(root string, request policy.Input, stdout, stderr io.Writer, started time.Time) int {
-	engine, err := policy.Load(filepath.Join(root, "docs", "hook-policy.json"))
+	engine, err := policy.Load(filepath.Join(root, projectlayout.Policy))
 	if err != nil {
 		fmt.Fprintf(stderr, "load policy for %s observer: %v\n", hook.NativeObserverSummary(request), err)
 		return 0
@@ -3278,7 +3324,7 @@ func persistGateForPreToolUse(root string, request *policy.Input, decision *poli
 // (BUG-039-03 §4.1). The Controller-produced quality_gate is the single
 // source of truth; this helper never fabricates status="advanced".
 func buildEnvelopeFromController(root string, request policy.Input, decision policy.Decision, controlResult controller.ControlResult, evaluatedAt time.Time) policy.DecisionEnvelope {
-	engine, err := policy.Load(filepath.Join(root, "docs", "hook-policy.json"))
+	engine, err := policy.Load(filepath.Join(root, projectlayout.Policy))
 	if err != nil {
 		// The minimal safety policy load failure is not fatal: the
 		// controller's verdict is authoritative. Synthesize an envelope
@@ -3378,7 +3424,7 @@ func isDenyingHookDecision(decision string) bool {
 //
 // Usage:
 //
-//	loop-harness impact analyze --root . --changed docs/contracts/CONTRACTS-002.md
+//	loop-harness impact analyze --root . --changed docs/dev/contracts/CONTRACTS-002.md
 func runImpact(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "usage: loop-harness impact analyze --root . --changed <path>...")
@@ -3402,7 +3448,7 @@ func runImpact(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "impact analyze: at least one --changed path is required")
 		return 2
 	}
-	data, err := os.ReadFile(filepath.Join(*root, *statePath))
+	data, err := readRuntimeBytes(*root, *statePath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read state: %v\n", err)
 		return 1
@@ -3476,7 +3522,7 @@ func runVerification(args []string, stdout, stderr io.Writer) int {
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	data, err := os.ReadFile(filepath.Join(*root, *statePath))
+	data, err := readRuntimeBytes(*root, *statePath)
 	if err != nil {
 		fmt.Fprintf(stderr, "read state: %v\n", err)
 		return 1
@@ -3574,11 +3620,16 @@ func runReleaseGraph(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("release-graph validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	bindUsage(flags, "release-graph validate")
-	root := flags.String("root", ".", "staged release tree root")
+	root := flags.String("root", ".", "release or installed project root")
+	installed := flags.Bool("installed", false, "validate the installed .claude asset layout")
 	if err := flags.Parse(args[1:]); err != nil {
 		return 2
 	}
-	if err := releasegraph.ValidateStagedRelease(*root); err != nil {
+	validate := releasegraph.ValidateStagedRelease
+	if *installed {
+		validate = releasegraph.ValidateInstalledProject
+	}
+	if err := validate(*root); err != nil {
 		fmt.Fprintf(stderr, "release-graph validation failed: %v\n", err)
 		return 1
 	}
@@ -3587,7 +3638,7 @@ func runReleaseGraph(args []string, stdout, stderr io.Writer) int {
 }
 
 // runManual renders the agent-facing gate specification markdown from
-// docs/loop-definition.json plus the guard/action spec registries. Output goes
+// docs/control/loop-definition.json plus the guard/action spec registries. Output goes
 // to --target (default .claude/bin/loop-harness.md, sitting beside the binary)
 // or to stdout when --stdout is set.
 //
@@ -3609,7 +3660,7 @@ func runManual(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "manual: load catalog: %v\n", err)
 		return 1
 	}
-	defData, err := os.ReadFile(filepath.Join(*root, "docs", "loop-definition.json"))
+	defData, err := os.ReadFile(filepath.Join(*root, projectlayout.Definition))
 	if err != nil {
 		fmt.Fprintf(stderr, "manual: read loop-definition.json: %v\n", err)
 		return 1
@@ -3668,7 +3719,7 @@ func runExplain(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "explain: transition %q not found in top-level, phase, or global scope\n", id)
 		return 1
 	}
-	stateData, err := os.ReadFile(resolveRootPath(*root, *statePath))
+	stateData, err := readRuntimeBytes(*root, *statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			fmt.Fprint(stdout, body)
@@ -3712,4 +3763,23 @@ func reviewerRole(state map[string]any, agentID string) bool {
 		return false
 	}
 	return false
+}
+
+func runDocsCheck(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "check" {
+		fmt.Fprintln(stderr, "usage: loop-harness docs check --root <path>")
+		return 2
+	}
+	flags := flag.NewFlagSet("docs check", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	root := flags.String("root", ".", "document tree root")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if err := doclinks.Validate(*root); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "local document links and anchors passed (network URLs and placeholders excluded)")
+	return 0
 }

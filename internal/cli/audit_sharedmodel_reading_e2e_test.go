@@ -83,7 +83,7 @@ func auditCompileSchema(t *testing.T, root, fragment string) *jsonschema.Schema 
 	compiler := jsonschema.NewCompiler()
 	compiler.UseLoader(auditSchemaLoader{root: root})
 	compiler.DefaultDraft(jsonschema.Draft2020)
-	schemaPath := filepath.Join(root, "docs", "design", "data-model", "orders.schema.json")
+	schemaPath := filepath.Join(root, "docs", "architecture", "data-model", "orders.schema.json")
 	schema, err := compiler.Compile((&url.URL{Scheme: "file", Path: schemaPath, Fragment: fragment}).String())
 	if err != nil {
 		t.Fatal(err)
@@ -201,14 +201,14 @@ func TestAuditSharedModelReadingLinkedV1Edges(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("docs/tasks/TASK-READ.md", `<a id="entry"></a>
+	write("docs/dev/tasks/TASK-READ.md", `<a id="entry"></a>
 # task
 `)
-	write("docs/contracts/FE-READ.md", `<a id="first"></a>
+	write("docs/dev/contracts/FE-READ.md", `<a id="first"></a>
 <a id="second"></a>
 Read [back](../tasks/TASK-READ.md#entry).
 `)
-	write("docs/contracts/SYNC-READ.md", `<a id="sync"></a>
+	write("docs/dev/contracts/SYNC-READ.md", `<a id="sync"></a>
 Read [back](../tasks/TASK-READ.md#entry).
 `)
 	base := `> Reading policy: linked-v1
@@ -221,23 +221,23 @@ Read [back](../tasks/TASK-READ.md#entry).
 | 2 | sync | SYNC-READ | [sync](../contracts/SYNC-READ.md#sync) | §1 | read the protocol | required |
 | 3 | background | OLD | [historical](missing.md#old) | — | optional history | optional |
 `
-	if problems := sharedmodel.Reading(root, "docs/tasks/TASK-READ.md", base, fileview.Disk{Root: root}); len(problems) != 0 {
+	if problems := sharedmodel.Reading(root, "docs/dev/tasks/TASK-READ.md", base, fileview.Disk{Root: root}); len(problems) != 0 {
 		t.Fatalf("valid linked-v1 rows or navigation back-link rejected: %v", problems)
 	}
 	duplicate := strings.Replace(base, "| 2 | sync", "| 2 | contract | FE-READ | [second](../contracts/FE-READ.md#second) | §1 | another required slice | required |\n| 3 | sync", 1)
-	if problems := sharedmodel.Reading(root, "docs/tasks/TASK-READ.md", duplicate, fileview.Disk{Root: root}); len(problems) != 0 {
+	if problems := sharedmodel.Reading(root, "docs/dev/tasks/TASK-READ.md", duplicate, fileview.Disk{Root: root}); len(problems) != 0 {
 		t.Fatalf("different fragments of one Markdown source should be legal: %v", problems)
 	}
 	exactDuplicate := strings.Replace(duplicate, "[second](../contracts/FE-READ.md#second)", "[first-again](../contracts/FE-READ.md#first)", 1)
-	if problems := sharedmodel.Reading(root, "docs/tasks/TASK-READ.md", exactDuplicate, fileview.Disk{Root: root}); len(problems) != 1 || !strings.Contains(problems[0], "duplicate required reading") {
+	if problems := sharedmodel.Reading(root, "docs/dev/tasks/TASK-READ.md", exactDuplicate, fileview.Disk{Root: root}); len(problems) != 1 || !strings.Contains(problems[0], "duplicate required reading") {
 		t.Fatalf("exact path+fragment duplicate was not rejected: %v", problems)
 	}
 	badMode := strings.Replace(base, "| 3 | background", "| 3 | background | OLD | [historical](missing.md#old) | — | optional history | maybe |\n| 4 | background", 1)
-	if problems := sharedmodel.Reading(root, "docs/tasks/TASK-READ.md", badMode, fileview.Disk{Root: root}); len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "unknown reading Mode") {
+	if problems := sharedmodel.Reading(root, "docs/dev/tasks/TASK-READ.md", badMode, fileview.Disk{Root: root}); len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "unknown reading Mode") {
 		t.Fatalf("illegal linked-v1 mode was accepted: %v", problems)
 	}
 	missingAnchor := strings.Replace(base, "#first", "#missing", 1)
-	if problems := sharedmodel.Reading(root, "docs/tasks/TASK-READ.md", missingAnchor, fileview.Disk{Root: root}); len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "missing Markdown anchor") {
+	if problems := sharedmodel.Reading(root, "docs/dev/tasks/TASK-READ.md", missingAnchor, fileview.Disk{Root: root}); len(problems) == 0 || !strings.Contains(strings.Join(problems, "\n"), "missing Markdown anchor") {
 		t.Fatalf("missing required anchor was accepted: %v", problems)
 	}
 }
@@ -257,13 +257,13 @@ func TestAuditSharedModelReadingNaturalS4Check(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("docs/contracts/CONTRACTS-READ.md", `# index
+	write("docs/dev/contracts/CONTRACTS-READ.md", `# index
 | Contract | Clause |
 |:---|:---|
 | BE-READ §1 | cancel |
 `)
-	write("docs/contracts/BE-READ.md", "> Status: locked\n# contract\n")
-	write("docs/tasks/TASK-READ.md", `# task
+	write("docs/dev/contracts/BE-READ.md", "> Status: locked\n# contract\n")
+	write("docs/dev/tasks/TASK-READ.md", `# task
 > Status: complete
 > Reading policy: linked-v1
 > Primary contract: BE-READ
@@ -332,22 +332,22 @@ func TestAuditSharedModelReadingDuplicateAuthorityAcrossIndexes(t *testing.T) {
   "properties": {"order_id": {"type": "integer", "minimum": 1}}
 }`,
 		}
-		write(root, "docs/design/data-model/"+schema, schemas[schema])
+		write(root, "docs/architecture/data-model/"+schema, schemas[schema])
 		stem := strings.TrimSuffix(schema, ".schema.json")
-		write(root, "docs/design/data-model/"+stem+"-valid.json", valid)
-		write(root, "docs/design/data-model/"+stem+"-invalid.json", negative)
+		write(root, "docs/architecture/data-model/"+stem+"-valid.json", valid)
+		write(root, "docs/architecture/data-model/"+stem+"-invalid.json", negative)
 		var consumers []string
 		for _, kind := range []string{"FE", "BE", "SYNC"} {
 			name := kind + "-" + consumerSuffix
 			consumers = append(consumers, "["+name+"]("+name+".md)")
-			write(root, "docs/contracts/"+name+".md", fmt.Sprintf(`# %s
+			write(root, "docs/dev/contracts/"+name+".md", fmt.Sprintf(`# %s
 
 ## Shared model inputs
 
-- [authoritative schema](../design/data-model/%s)
+- [authoritative schema](../../architecture/data-model/%s)
 `, name, schema))
 		}
-		write(root, "docs/contracts/"+index+".md", fmt.Sprintf(`# %s
+		write(root, "docs/dev/contracts/"+index+".md", fmt.Sprintf(`# %s
 
 > REQ: REQ-001
 > Shared model policy: json-schema-v1
@@ -356,7 +356,7 @@ func TestAuditSharedModelReadingDuplicateAuthorityAcrossIndexes(t *testing.T) {
 
 | Operation | Slot | Schema | Consumers | Valid example | Structural negative |
 |:---|:---|:---|:---|:---|:---|
-| cancelOrder | request | [request](../design/data-model/%s) | %s | [valid](../design/data-model/%s-valid.json) | [invalid](../design/data-model/%s-invalid.json) |
+| cancelOrder | request | [request](../../architecture/data-model/%s) | %s | [valid](../../architecture/data-model/%s-valid.json) | [invalid](../../architecture/data-model/%s-invalid.json) |
 `, index, schema, strings.Join(consumers, " "), stem, stem))
 	}
 

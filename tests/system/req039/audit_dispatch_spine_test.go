@@ -28,7 +28,7 @@ type dispatchSpineFixture struct {
 func seedDispatchSpineFixture(t *testing.T, root string, state map[string]any) dispatchSpineFixture {
 	t.Helper()
 	req039fixtures.WritePlanningContractPass(t, root, state)
-	source := filepath.Join(repoRoot(t), "docs", "examples", "dispatch-plan", "project", "docs", "tasks")
+	source := filepath.Join(repoRoot(t), "docs", "examples", "dispatch-plan", "project", "docs", "dev", "tasks")
 	fixture := dispatchSpineFixture{taskBytes: map[string][]byte{}}
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -44,7 +44,7 @@ func seedDispatchSpineFixture(t *testing.T, root string, state map[string]any) d
 		name := entry.Name()
 		name = strings.ReplaceAll(name, "REQ-042", "REQ-039")
 		name = strings.ReplaceAll(name, "TASK-042", "TASK-039")
-		rel := filepath.ToSlash(filepath.Join("docs/tasks", name))
+		rel := filepath.ToSlash(filepath.Join("docs/dev/tasks", name))
 		text := string(data)
 		for _, replacement := range []struct{ old, new string }{
 			{"REQ-042", "REQ-039"},
@@ -224,7 +224,7 @@ func TestAuditDispatchPlanHookSpineCommittedSubjectsAndFreeze(t *testing.T) {
 	baselineHead := strings.TrimSpace(runGitIn(t, root, "rev-parse", "HEAD"))
 
 	state = requireDispatchHookTransition(t, runner, root, "dispatch-spine-s3", "Edit",
-		map[string]any{"file_path": "docs/contracts/BE-039.md"}, "PTR-PLAN-02", "planning", "tasks")
+		map[string]any{"file_path": "docs/dev/contracts/BE-039.md"}, "PTR-PLAN-02", "planning", "tasks")
 	for _, raw := range state["documents"].([]any) {
 		doc, _ := raw.(map[string]any)
 		if doc != nil && doc["kind"] == "dispatch_plan" {
@@ -259,7 +259,7 @@ func TestAuditDispatchPlanHookSpineCommittedSubjectsAndFreeze(t *testing.T) {
 	headBeforeS5 := strings.TrimSpace(runGitIn(t, root, "rev-parse", "HEAD"))
 
 	state = requireDispatchHookTransition(t, runner, root, "dispatch-spine-s5", "Edit",
-		map[string]any{"file_path": "docs/contracts/BE-039.md"}, "TR-003", "building", "")
+		map[string]any{"file_path": "docs/dev/contracts/BE-039.md"}, "TR-003", "building", "")
 	assertDispatchDocuments(t, state, fixture, "locked")
 	if got := strings.TrimSpace(runGitIn(t, root, "rev-parse", "HEAD")); got != headBeforeS5 {
 		t.Fatalf("TR-003 Hook changed HEAD while consuming dirty plan: before=%s after=%s", headBeforeS5, got)

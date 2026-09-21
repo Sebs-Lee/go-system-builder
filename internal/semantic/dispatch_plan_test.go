@@ -57,7 +57,7 @@ func TestDispatchPlanBoundaries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := dispatchFixture(t)
-			mutatePlanFile(t, root, "docs/tasks/"+tc.path, tc.old, tc.new)
+			mutatePlanFile(t, root, "docs/dev/tasks/"+tc.path, tc.old, tc.new)
 			p, e := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 			if e != nil || !strings.Contains(strings.Join(append(p.Problems, p.Warnings...), ";"), tc.want) {
 				t.Fatalf("%+v %v", p, e)
@@ -92,7 +92,7 @@ func TestDispatchNoWaveBarrierAndCapacity(t *testing.T) {
 }
 func TestNewPlanCannotBecomeLegacyByDeletingIndex(t *testing.T) {
 	root := dispatchFixture(t)
-	os.Remove(filepath.Join(root, "docs/tasks/index-REQ-042.md"))
+	os.Remove(filepath.Join(root, "docs/dev/tasks/index-REQ-042.md"))
 	p, e := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 	if e != nil || len(p.Problems) == 0 {
 		t.Fatalf("%+v %v", p, e)
@@ -100,7 +100,7 @@ func TestNewPlanCannotBecomeLegacyByDeletingIndex(t *testing.T) {
 }
 func TestDispatchScopedChecks(t *testing.T) {
 	root := dispatchFixture(t)
-	os.WriteFile(filepath.Join(root, "docs/tasks/TASK-099-01.md"), []byte("> Source REQ refs: REQ-099\n> Status: draft\n"), 0644)
+	os.WriteFile(filepath.Join(root, "docs/dev/tasks/TASK-099-01.md"), []byte("> Source REQ refs: REQ-099\n> Status: draft\n"), 0644)
 	r, e := TasksCheckWithFiles(root, fileview.Disk{Root: root}, "REQ-042")
 	if e != nil || len(r.Problems) > 0 {
 		t.Fatalf("%+v %v", r, e)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"os"
@@ -1203,11 +1204,11 @@ func freshStartGuidance(root, event string) *policy.Guidance {
 		LifecycleState: "inactive",
 		Objective:      "produce one human-locked requirement",
 		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), have the human lock it, then bind with `loop-harness req bind --approved-by <the human who locked it>` (bind auto-initializes the runtime)",
-		ProtocolRef:    "docs/agent-protocol.md#s0",
+		ProtocolRef:    "docs/control/agent-protocol.md#s0",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "requirement-funnel",
-		Read:           []string{"docs/agent-protocol.md#s0", "docs/requirements/REQ-template.md"},
-		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "docs/agent-protocol.md#s0", "skills/requirement-funnel/SKILL.md", "docs/requirements/REQ-template.md"},
+		Read:           []string{"docs/control/agent-protocol.md#s0", "docs/requirements/REQ-template.md"},
+		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "docs/control/agent-protocol.md#s0", "skills/requirement-funnel/SKILL.md", "docs/requirements/REQ-template.md"},
 		Missing:        []string{"human_locked_req"},
 		DoneWhen:       []string{"a locked REQ exists and `req bind` succeeds (the runtime is initialized by bind)"},
 		Blocked:        false,
@@ -1228,17 +1229,17 @@ func fallbackGuidance(event string) *policy.Guidance {
 		LifecycleState: "unknown",
 		Objective:      "recover a valid runtime cursor",
 		Action:         "run loop-harness runtime reconcile --root .",
-		ProtocolRef:    "docs/agent-protocol.md#cursor-mapping",
+		ProtocolRef:    "docs/control/agent-protocol.md#cursor-mapping",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "loop-orchestration",
-		Read:           []string{".claude/loop-state.json", "docs/loop-definition.json"},
-		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "AGENTS.md", ".claude/loop-state.json", "docs/agent-protocol.md#cursor-mapping", loopManualRef},
+		Read:           []string{".claude/loop-state.json", projectlayout.Definition},
+		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "AGENTS.md", ".claude/loop-state.json", "docs/control/agent-protocol.md#cursor-mapping", loopManualRef},
 		Missing:        []string{"valid_runtime_cursor"},
 		DoneWhen:       []string{"runtime and journal reconcile successfully"},
 		Blocked:        true,
 		Blocker:        "the Runtime snapshot could not be safely reconciled",
 		Instruction:    "",
-		Recovery:       []string{"read docs/agent-protocol.md#cursor-mapping", "read " + loopManualRef + " (fallback: " + loopManualFallbackRef + ")", "run loop-harness runtime reconcile --root ."},
+		Recovery:       []string{"read docs/control/agent-protocol.md#cursor-mapping", "read " + loopManualRef + " (fallback: " + loopManualFallbackRef + ")", "run loop-harness runtime reconcile --root ."},
 		Automation:     []string{"normal continuation is suspended until the Runtime cursor is reconciled"},
 	}
 	guidance.Instruction = formatGuidanceInstruction(*guidance)

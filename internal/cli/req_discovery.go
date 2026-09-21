@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"io"
 	"os"
 	"os/exec"
@@ -28,7 +29,7 @@ type reqSummary struct {
 // top-of-file 状态/Version fields. An empty result is a valid answer: S0 has
 // not produced a REQ yet.
 func scanRequirements(root string) []reqSummary {
-	matches, _ := filepath.Glob(filepath.Join(root, "docs", "requirements", "REQ-*.md"))
+	matches, _ := filepath.Glob(filepath.Join(root, projectlayout.Requirements, "REQ-*.md"))
 	summaries := make([]reqSummary, 0, len(matches))
 	for _, abs := range matches {
 		base := filepath.Base(abs)
@@ -41,7 +42,7 @@ func scanRequirements(root string) []reqSummary {
 		}
 		summaries = append(summaries, reqSummary{
 			ID:      strings.TrimSuffix(base, filepath.Ext(base)),
-			Path:    filepath.ToSlash(filepath.Join("docs", "requirements", base)),
+			Path:    filepath.ToSlash(filepath.Join(projectlayout.Requirements, base)),
 			Status:  markdownField(string(data), "状态", "Status"),
 			Version: markdownField(string(data), "版本", "Version"),
 		})
@@ -201,7 +202,7 @@ func printBindConfirmation(w io.Writer, state map[string]any) {
 }
 
 func committedBindable(root string, files fileview.Reader) []reqSummary {
-	entries, _ := files.ReadDir("docs/requirements")
+	entries, _ := files.ReadDir(projectlayout.Requirements)
 	archived := archivedBoundIDs(root)
 	bound := currentBoundID(root)
 	var out []reqSummary
@@ -210,7 +211,7 @@ func committedBindable(root string, files fileview.Reader) []reqSummary {
 		if entry.IsDir() || !strings.HasPrefix(name, "REQ-") || !strings.HasSuffix(name, ".md") || strings.Contains(strings.ToLower(name), "template") {
 			continue
 		}
-		path := "docs/requirements/" + name
+		path := filepath.ToSlash(filepath.Join(projectlayout.Requirements, name))
 		data, e := files.ReadFile(path)
 		if e != nil {
 			continue

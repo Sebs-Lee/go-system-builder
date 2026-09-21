@@ -26,7 +26,7 @@ func TestS2DualTrackConvergenceE2E(t *testing.T) {
 	// module package are (re)written on top afterwards.
 	for _, pair := range []struct{ src, dest string }{
 		{"../../skills", "skills"}, {"../../agents", "agents"}, {"../../docs", "docs"},
-		{"../../prelude.md", "prelude.md"}, {"../../AGENTS-template.md", "AGENTS-template.md"},
+		{"../../docs/guides/getting-started.md", "docs/guides/getting-started.md"}, {"../../AGENTS-template.md", "AGENTS-template.md"},
 		{"../../settings.json", "settings.json"}, {"../../loop-template.md", "loop-template.md"},
 	} {
 		if err := copyTree(t, root, pair.src, pair.dest); err != nil {

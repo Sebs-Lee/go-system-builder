@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,8 +126,8 @@ func ValidateRepository(root string) error {
 	}
 	// Runtime authorities on disk (validated against embedded schemas).
 	for _, pair := range [][2]string{
-		{"loop-definition.schema.json", "docs/loop-definition.json"},
-		{"hook-policy.schema.json", "docs/hook-policy.json"},
+		{"loop-definition.schema.json", projectlayout.Definition},
+		{"hook-policy.schema.json", projectlayout.Policy},
 	} {
 		if err := validator.ValidateFile(pair[0], pair[1]); err != nil {
 			return fmt.Errorf("%s: %w", pair[1], err)
@@ -181,7 +182,7 @@ func ValidateRepository(root string) error {
 // registered persisted kind or an explicit generator. Quality Gate closure is
 // checked by qualitygate.ValidateEvidenceCatalog at the doctor boundary.
 func ValidateEvidenceCatalog(root string) error {
-	definitionData, err := os.ReadFile(filepath.Join(root, "docs", "loop-definition.json"))
+	definitionData, err := os.ReadFile(filepath.Join(root, projectlayout.Definition))
 	if err != nil {
 		return fmt.Errorf("evidence catalog: read Loop Definition: %w", err)
 	}
@@ -407,7 +408,7 @@ func ValidateRuntimeBytes(root string, data []byte) error {
 		return err
 	}
 
-	definitionData, err := os.ReadFile(filepath.Join(root, "docs/loop-definition.json"))
+	definitionData, err := os.ReadFile(filepath.Join(root, projectlayout.Definition))
 	if err != nil {
 		return fmt.Errorf("read definition: %w", err)
 	}

@@ -47,7 +47,7 @@ func copySharedModelSpineFixture(t *testing.T, root string, workerOnlyRef bool) 
 	// The bound REQ is REQ-039, so the formal S3 selector must use an
 	// explicitly bound index rather than filename fallback or an unrelated
 	// CONTRACTS-001 batch.
-	if err := os.Remove(filepath.Join(root, "docs", "contracts", "CONTRACTS-001.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, "docs", "dev", "contracts", "CONTRACTS-001.md")); err != nil {
 		t.Fatal(err)
 	}
 	modelRef := "orders.schema.json"
@@ -55,7 +55,7 @@ func copySharedModelSpineFixture(t *testing.T, root string, workerOnlyRef bool) 
 		modelRef = "worker-only.json"
 	}
 	for _, name := range []string{"FE-001.md", "BE-001.md", "SYNC-001.md"} {
-		path := filepath.Join(root, "docs", "contracts", name)
+		path := filepath.Join(root, "docs", "dev", "contracts", name)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -85,7 +85,7 @@ func writeWorkerOnlySchema(t *testing.T, root string) {
   }
 }
 `)
-	if err := os.WriteFile(filepath.Join(root, "docs", "design", "data-model", "worker-only.json"), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "architecture", "data-model", "worker-only.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -106,8 +106,8 @@ func installSharedContractIndex(t *testing.T, root string, state map[string]any)
 
 | Operation | Slot | Schema | Consumers | Valid example | Structural negative |
 |:---|:---|:---|:---|:---|:---|
-| cancelOrder | request | [request](../design/data-model/worker-only.json#/$defs/request) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../design/data-model/request.json) | [structural negative](../design/data-model/invalid-request.json) |
-| cancelOrder | response-200 | [response](../design/data-model/worker-only.json#/$defs/response) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../design/data-model/response.json) | N/A |
+| cancelOrder | request | [request](../../architecture/data-model/worker-only.json#/$defs/request) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../../architecture/data-model/request.json) | [structural negative](../../architecture/data-model/invalid-request.json) |
+| cancelOrder | response-200 | [response](../../architecture/data-model/worker-only.json#/$defs/response) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../../architecture/data-model/response.json) | N/A |
 
 ## Coverage
 
@@ -118,7 +118,7 @@ func installSharedContractIndex(t *testing.T, root string, state map[string]any)
 | REQ-039/FR-001 | API returns the cancellation result | SYNC-001 §1 | TASK-039-01 §3 |
 | REQ-039/FR-001 | cancellation state is persisted | BE-039 §1 | TASK-039-01 §3 |
 `
-	if err := os.WriteFile(filepath.Join(root, "docs", "contracts", "CONTRACTS-039.md"), []byte(index), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "dev", "contracts", "CONTRACTS-039.md"), []byte(index), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -126,7 +126,7 @@ func installSharedContractIndex(t *testing.T, root string, state map[string]any)
 func writeSharedPlanningTaskPass(t *testing.T, root string, state map[string]any) {
 	t.Helper()
 	req039fixtures.EnsureStateRoot(state, root)
-	taskPath := "docs/tasks/TASK-039-01-loop-definition.md"
+	taskPath := "docs/dev/tasks/TASK-039-01-loop-definition.md"
 	data := []byte("# TASK-039-01\n\n> Status: complete\n> Version: v1.0.2\n> Primary contract: BE-039\n\n" +
 		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n" +
 		"| FE-001 | §1 |\n| BE-001 | §1 |\n| SYNC-001 | §1 |\n| BE-039 | §1 |\n\n" +
@@ -225,7 +225,7 @@ func TestAuditSharedModelHookSpineCommittedSource(t *testing.T) {
 
 	code, stdout, stderr := runHookWithRunner(t, runner, root, "PreToolUse",
 		req039fixtures.PreToolUseBody("shared-model-uncommitted", "Edit", map[string]any{
-			"file_path": "docs/contracts/CONTRACTS-039.md",
+			"file_path": "docs/dev/contracts/CONTRACTS-039.md",
 		}))
 	if code != 0 && code != 2 {
 		t.Fatalf("uncommitted model Hook exited unexpectedly: code=%d stdout=%s stderr=%s", code, stdout, stderr)
@@ -242,16 +242,16 @@ func TestAuditSharedModelHookSpineCommittedSource(t *testing.T) {
 		t.Fatalf("uncommitted worker schema committed a transition: qg=%v", qg)
 	}
 
-	runGitIn(t, root, "add", "docs/design/data-model/worker-only.json")
+	runGitIn(t, root, "add", "docs/architecture/data-model/worker-only.json")
 	runGitIn(t, root, "commit", "-qm", "commit shared schema before formal planning")
 	state = req039fixtures.RequireLifecycleTransition(t, runner, root, "shared-model-s3", "Edit",
-		map[string]any{"file_path": "docs/contracts/CONTRACTS-039.md"},
+		map[string]any{"file_path": "docs/dev/contracts/CONTRACTS-039.md"},
 		"PTR-PLAN-02", "planning", "tasks", "AUDIT-SHARED-S3")
 	assertSharedModelDocuments(t, state,
-		"docs/design/data-model/worker-only.json",
-		"docs/design/data-model/request.json",
-		"docs/design/data-model/invalid-request.json",
-		"docs/design/data-model/response.json",
+		"docs/architecture/data-model/worker-only.json",
+		"docs/architecture/data-model/request.json",
+		"docs/architecture/data-model/invalid-request.json",
+		"docs/architecture/data-model/response.json",
 	)
 
 	state = req039fixtures.ReadState(t, root)
@@ -260,7 +260,7 @@ func TestAuditSharedModelHookSpineCommittedSource(t *testing.T) {
 	var hookOutput string
 	code, hookOutput, stderr = runHookWithRunner(t, runner, root, "PreToolUse",
 		req039fixtures.PreToolUseBody("shared-model-s4", "Edit",
-			map[string]any{"file_path": "docs/tasks/TASK-039-01-loop-definition.md"}))
+			map[string]any{"file_path": "docs/dev/tasks/TASK-039-01-loop-definition.md"}))
 	if code != 0 && code != 2 {
 		t.Fatalf("S4 Hook failed: code=%d stderr=%s", code, stderr)
 	}
@@ -269,27 +269,27 @@ func TestAuditSharedModelHookSpineCommittedSource(t *testing.T) {
 	if lc, phase := req039fixtures.Lifecycle(state); lc != "document_verification" || phase != "" || req039fixtures.LastTransitionID(state) != "TR-002" {
 		t.Fatalf("S4 Hook did not commit TR-002: lifecycle=%s.%s last=%s qg=%v output=%s stderr=%s", lc, phase, req039fixtures.LastTransitionID(state), qg, hookOutput, stderr)
 	}
-	assertSharedModelDocuments(t, state, "docs/design/data-model/worker-only.json")
+	assertSharedModelDocuments(t, state, "docs/architecture/data-model/worker-only.json")
 
 	state = req039fixtures.ReadState(t, root)
 	req039fixtures.WriteDocumentVerificationPassEvidence(t, root, state, "shared-dv-spec", "shared-dv-task")
 	writeSystemState(t, root, state)
 	for _, modelPath := range []string{
-		"docs/design/data-model/worker-only.json",
-		"docs/design/data-model/request.json",
-		"docs/design/data-model/invalid-request.json",
-		"docs/design/data-model/response.json",
+		"docs/architecture/data-model/worker-only.json",
+		"docs/architecture/data-model/request.json",
+		"docs/architecture/data-model/invalid-request.json",
+		"docs/architecture/data-model/response.json",
 	} {
 		assertReviewSubjectsContain(t, root, modelPath)
 	}
 	state = req039fixtures.RequireLifecycleTransition(t, runner, root, "shared-model-s5", "Edit",
-		map[string]any{"file_path": "docs/contracts/CONTRACTS-039.md"},
+		map[string]any{"file_path": "docs/dev/contracts/CONTRACTS-039.md"},
 		"TR-003", "building", "", "AUDIT-SHARED-S5")
 	assertSharedModelDocuments(t, state,
-		"docs/design/data-model/worker-only.json",
-		"docs/design/data-model/request.json",
-		"docs/design/data-model/invalid-request.json",
-		"docs/design/data-model/response.json",
+		"docs/architecture/data-model/worker-only.json",
+		"docs/architecture/data-model/request.json",
+		"docs/architecture/data-model/invalid-request.json",
+		"docs/architecture/data-model/response.json",
 	)
 
 	if runner.ManualTransitionCalls != 0 {

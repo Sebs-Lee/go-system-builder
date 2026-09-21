@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/sharedmodel"
 	"os"
 	"path/filepath"
@@ -46,13 +47,13 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 	result.Problems = append(result.Problems, models.Problems...)
 	result.Warnings = models.Warnings
 	result.ModelRows = models.Rows
-	dir := filepath.Join(root, "docs", "contracts")
+	dir := filepath.Join(root, projectlayout.Contracts)
 	entries, err := files.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return result, nil // no contracts directory — nothing to reconcile
 		}
-		return result, fmt.Errorf("read docs/contracts: %w", err)
+		return result, fmt.Errorf("read docs/dev/contracts: %w", err)
 	}
 
 	universe := map[string]bool{}
@@ -114,11 +115,11 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 	}
 
 	reqFRs := map[string]bool{}
-	reqEntries, _ := files.ReadDir(filepath.Join(root, "docs", "requirements"))
+	reqEntries, _ := files.ReadDir(filepath.Join(root, projectlayout.Requirements))
 	var reqFiles []string
 	for _, entry := range reqEntries {
 		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "REQ-") && strings.HasSuffix(entry.Name(), ".md") {
-			reqFiles = append(reqFiles, filepath.Join(root, "docs", "requirements", entry.Name()))
+			reqFiles = append(reqFiles, filepath.Join(root, projectlayout.Requirements, entry.Name()))
 		}
 	}
 	for _, reqFile := range reqFiles {

@@ -145,7 +145,7 @@ func seedRecheckS9Dispatch(t *testing.T) (string, repair.ArtifactRef, repair.Art
 	t.Helper()
 	root := freshRoot(t)
 	setupGitWorktreeFixture(t, root)
-	writeAuditDispatchFile(t, root, "docs/agent-protocol.md", "# agent protocol\n")
+	writeAuditDispatchFile(t, root, "docs/control/agent-protocol.md", "# agent protocol\n")
 	writeAuditDispatchFile(t, root, "agents/backend-builder.md", "# backend builder\n")
 
 	contractRel := ".claude/review/investigation/contracts/repair-contract-recheck-s9.json"

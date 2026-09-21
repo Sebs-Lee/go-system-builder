@@ -54,11 +54,11 @@ func put(t *testing.T, root, p, s string) {
 }
 func TestSharedModelFailures(t *testing.T) {
 	for _, tc := range []struct{ name, path, text, want string }{
-		{"consumer drift", "docs/contracts/FE-001.md", "## Shared model inputs\n[wrong](../design/data-model/other.json)", "must reference"},
-		{"bad valid", "docs/design/data-model/request.json", `{"order_id":42}`, "valid example"},
-		{"business negative", "docs/design/data-model/invalid-request.json", `{"order_id":"completed"}`, "unexpectedly passes"},
-		{"network dependency", "docs/design/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"https://example.invalid/model.json"}}}`, "not pinned locally"},
-		{"escape", "docs/design/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"../../../../../../secret.json"}}}`, "escapes repository"},
+		{"consumer drift", "docs/dev/contracts/FE-001.md", "## Shared model inputs\n[wrong](../../architecture/data-model/other.json)", "must reference"},
+		{"bad valid", "docs/architecture/data-model/request.json", `{"order_id":42}`, "valid example"},
+		{"business negative", "docs/architecture/data-model/invalid-request.json", `{"order_id":"completed"}`, "unexpectedly passes"},
+		{"network dependency", "docs/architecture/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"https://example.invalid/model.json"}}}`, "not pinned locally"},
+		{"escape", "docs/architecture/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"../../../../../../secret.json"}}}`, "escapes repository"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := pilot(t)
@@ -72,24 +72,24 @@ func TestSharedModelFailures(t *testing.T) {
 }
 func TestSharedModelClosureAndRecursion(t *testing.T) {
 	root := pilot(t)
-	put(t, root, "docs/design/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"request.schema.json"},"response":{"type":"object"}}}`)
-	put(t, root, "docs/design/data-model/request.schema.json", `{"type":"object","required":["order_id"],"properties":{"order_id":{"type":"string"},"next":{"$ref":"#"}}}`)
+	put(t, root, "docs/architecture/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"request.schema.json"},"response":{"type":"object"}}}`)
+	put(t, root, "docs/architecture/data-model/request.schema.json", `{"type":"object","required":["order_id"],"properties":{"order_id":{"type":"string"},"next":{"$ref":"#"}}}`)
 	r := Check(root, fileview.Disk{Root: root})
 	if len(r.Problems) > 0 {
 		t.Fatal(r.Problems)
 	}
-	if _, ok := r.Files["docs/design/data-model/request.schema.json"]; !ok {
+	if _, ok := r.Files["docs/architecture/data-model/request.schema.json"]; !ok {
 		t.Fatal("missing transitive subject")
 	}
 }
 func TestRequiredReading(t *testing.T) {
 	root := t.TempDir()
-	put(t, root, "docs/contracts/FE-1.md", "<a id=\"operation\"></a>\n## Operation")
+	put(t, root, "docs/dev/contracts/FE-1.md", "<a id=\"operation\"></a>\n## Operation")
 	table := "## 2. Document Manifest\n| 1 | contract | FE-1 | [read](../contracts/FE-1.md#operation) | §1 | goal | required |\n| 2 | background | x | [optional](missing.md) | all | background | optional |"
-	if p := Reading(root, "docs/tasks/TASK-1.md", table, fileview.Disk{Root: root}); len(p) > 0 {
+	if p := Reading(root, "docs/dev/tasks/TASK-1.md", table, fileview.Disk{Root: root}); len(p) > 0 {
 		t.Fatal(p)
 	}
-	if p := Reading(root, "docs/tasks/TASK-1.md", strings.ReplaceAll(table, "#operation", "#absent"), fileview.Disk{Root: root}); len(p) != 1 {
+	if p := Reading(root, "docs/dev/tasks/TASK-1.md", strings.ReplaceAll(table, "#operation", "#absent"), fileview.Disk{Root: root}); len(p) != 1 {
 		t.Fatal(p)
 	}
 }
@@ -104,7 +104,7 @@ func TestConsumerProviderPilot(t *testing.T) {
 	c.UseLoader(&viewLoader{root: root, files: files, loaded: map[string][]byte{}})
 	compile := func(fragment string) *jsonschema.Schema {
 		t.Helper()
-		s, e := c.Compile((&url.URL{Scheme: "file", Path: filepath.Join(root, "docs/design/data-model/orders.schema.json"), Fragment: fragment}).String())
+		s, e := c.Compile((&url.URL{Scheme: "file", Path: filepath.Join(root, "docs/architecture/data-model/orders.schema.json"), Fragment: fragment}).String())
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -193,7 +193,7 @@ func TestSharedInputsUsePinnedGitView(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	put(t, root, "docs/design/data-model/request.json", `{"order_id":42}`)
+	put(t, root, "docs/architecture/data-model/request.json", `{"order_id":42}`)
 	if r := Check(root, view); len(r.Problems) != 0 {
 		t.Fatal(r.Problems)
 	}
@@ -214,7 +214,7 @@ func TestStrictReadingPolicy(t *testing.T) {
 		"> Reading policy: linked-v1\n## Document Manifest\n| 1 | contract | FE-1 | plain-path | all | purpose | required |",
 		"> Reading policy: linked-v1\n## Document Manifest\n| 1 | contract | FE-1 | [read](missing.md) | all | purpose | requried |",
 	} {
-		if p := Reading(root, "docs/tasks/TASK-1.md", s, fileview.Disk{Root: root}); len(p) == 0 {
+		if p := Reading(root, "docs/dev/tasks/TASK-1.md", s, fileview.Disk{Root: root}); len(p) == 0 {
 			t.Fatal("malformed reading accepted")
 		}
 	}
@@ -222,7 +222,7 @@ func TestStrictReadingPolicy(t *testing.T) {
 
 func TestScopedBatchIgnoresUnrelatedModel(t *testing.T) {
 	root := pilot(t)
-	put(t, root, "docs/contracts/CONTRACTS-999.md", "> Shared model policy: json-schema-v1\n")
+	put(t, root, "docs/dev/contracts/CONTRACTS-999.md", "> Shared model policy: json-schema-v1\n")
 	if r := Check(root, fileview.Disk{Root: root}, "REQ-001"); len(r.Problems) > 0 {
 		t.Fatal(r.Problems)
 	}
@@ -234,14 +234,14 @@ func TestScopedBatchIgnoresUnrelatedModel(t *testing.T) {
 func TestDiskRejectsEscapingSchemaSymlink(t *testing.T) {
 	root := pilot(t)
 	outside := filepath.Join(t.TempDir(), "schema.json")
-	b, e := os.ReadFile(filepath.Join(root, "docs/design/data-model/orders.schema.json"))
+	b, e := os.ReadFile(filepath.Join(root, "docs/architecture/data-model/orders.schema.json"))
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = os.WriteFile(outside, b, 0644); e != nil {
 		t.Fatal(e)
 	}
-	p := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	p := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	if e = os.Remove(p); e != nil {
 		t.Fatal(e)
 	}

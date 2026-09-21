@@ -253,8 +253,8 @@ func TestApplyRejectsEvidenceWithIncompatibleKind(t *testing.T) {
 	// offending file (not "incompatible kind") when at least one of
 	// CONTRACTS / TASKS is missing or has the wrong status.
 	tempRoot := filepath.Dir(statePath)
-	contractsDir := filepath.Join(tempRoot, "docs", "contracts")
-	tasksDir := filepath.Join(tempRoot, "docs", "tasks")
+	contractsDir := filepath.Join(tempRoot, "docs", "dev", "contracts")
+	tasksDir := filepath.Join(tempRoot, "docs", "dev", "tasks")
 	if err := os.MkdirAll(contractsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 	tempRoot := filepath.Dir(statePath)
 	// PTR-PLAN-01's register_design_documents demands a locked architecture
 	// document on disk.
-	archDir := filepath.Join(tempRoot, "docs", "design", "architecture")
+	archDir := filepath.Join(tempRoot, "docs", "architecture")
 	if err := os.MkdirAll(archDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func advancePlanningToTasks(t *testing.T, root, statePath, journalPath string) {
 	}
 	// PTR-PLAN-02's contracts_checked guard demands at least one real
 	// contract on disk (the contractless-stage floor).
-	contractsDir := filepath.Join(tempRoot, "docs", "contracts")
+	contractsDir := filepath.Join(tempRoot, "docs", "dev", "contracts")
 	if err := os.MkdirAll(contractsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -410,9 +410,9 @@ func seedPlanningArtifacts(t *testing.T, statePath string) {
 func seedPlanningArtifactsLang(t *testing.T, statePath string, english bool) {
 	t.Helper()
 	root := filepath.Dir(statePath)
-	contractsDir := filepath.Join(root, "docs", "contracts")
-	tasksDir := filepath.Join(root, "docs", "tasks")
-	archDir := filepath.Join(root, "docs", "design", "architecture")
+	contractsDir := filepath.Join(root, "docs", "dev", "contracts")
+	tasksDir := filepath.Join(root, "docs", "dev", "tasks")
+	archDir := filepath.Join(root, "docs", "architecture")
 	if err := os.MkdirAll(archDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

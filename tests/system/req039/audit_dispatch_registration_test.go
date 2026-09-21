@@ -20,10 +20,10 @@ func s4AuditRegistrationRoot(t *testing.T) string {
 	t.Helper()
 	root := freshRoot(t)
 	state := systemPlanningState(t, root, "tasks", 1)
-	if err := os.RemoveAll(filepath.Join(root, "docs/tasks")); err != nil {
+	if err := os.RemoveAll(filepath.Join(root, "docs/dev/tasks")); err != nil {
 		t.Fatal(err)
 	}
-	source := filepath.Join(repoRoot(t), "docs/examples/dispatch-plan/project/docs/tasks")
+	source := filepath.Join(repoRoot(t), "docs/examples/dispatch-plan/project/docs/dev/tasks")
 	if err := filepath.WalkDir(source, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -32,7 +32,7 @@ func s4AuditRegistrationRoot(t *testing.T) string {
 		if err != nil {
 			return err
 		}
-		dest := filepath.Join(root, "docs/tasks", rel)
+		dest := filepath.Join(root, "docs/dev/tasks", rel)
 		if d.IsDir() {
 			return os.MkdirAll(dest, 0755)
 		}
@@ -70,7 +70,7 @@ func s4AuditRegistrationRoot(t *testing.T) string {
 
 func s4AuditManifest(t *testing.T, root, suffix, taskID, write, output string) string {
 	t.Helper()
-	taskPath := "docs/tasks/" + taskID + ".md"
+	taskPath := "docs/dev/tasks/" + taskID + ".md"
 	b, err := os.ReadFile(filepath.Join(root, taskPath))
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func s4AuditManifest(t *testing.T, root, suffix, taskID, write, output string) s
 func s4AuditRegister(t *testing.T, root, manifest, task string) (int, string, string) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	code := runCLI(t, []string{"runtime", "register-workgroup", "--root", root, "--manifest", manifest, "--task-id", task, "--task", filepath.Join(root, "docs/tasks", task+".md")}, strings.NewReader(""), &out, &errOut)
+	code := runCLI(t, []string{"runtime", "register-workgroup", "--root", root, "--manifest", manifest, "--task-id", task, "--task", filepath.Join(root, "docs/dev/tasks", task+".md")}, strings.NewReader(""), &out, &errOut)
 	return code, out.String(), errOut.String()
 }
 
@@ -117,7 +117,7 @@ func TestS4AuditRegistrationChecksActualInputs(t *testing.T) {
 			}
 			manifest := s4AuditManifest(t, root, "first", task, write, output)
 			if kind == "dirty-task" {
-				p := filepath.Join(root, "docs/tasks", task+".md")
+				p := filepath.Join(root, "docs/dev/tasks", task+".md")
 				b, _ := os.ReadFile(p)
 				if err := os.WriteFile(p, append(b, []byte("\nDIRTY\n")...), 0644); err != nil {
 					t.Fatal(err)

@@ -139,7 +139,7 @@ func InitGuardRegistry() {
 		// TR-003 set, per-task completion + verified integration).
 		// RC-06 (S7-4): the six clean-round-shaped stub names below were
 		// registered but never declared by any transition in
-		// docs/loop-definition.json — guard-theater inventory. Their real
+		// docs/control/loop-definition.json — guard-theater inventory. Their real
 		// semantics live in `verification.EvaluateCleanRound`, which the
 		// DECLARED clean-round guards (clean_round_valid on TR-009,
 		// clean_round_still_valid on TR-015/TR-017) already delegate to:
@@ -590,7 +590,7 @@ func guardContractsCheckedFn(state map[string]any, _ map[string]string) error {
 		return fmt.Errorf("contracts_checked: %w", err)
 	}
 	if result.Contracts == 0 {
-		return fmt.Errorf("contracts_checked: no contracts found under docs/contracts — the contracts stage produced nothing; write the contracts before advancing planning")
+		return fmt.Errorf("contracts_checked: no contracts found under docs/dev/contracts — the contracts stage produced nothing; write the contracts before advancing planning")
 	}
 	if len(result.Problems) > 0 {
 		return fmt.Errorf("contracts_checked: %d problem(s): %s", len(result.Problems), strings.Join(result.Problems, "; "))
@@ -675,10 +675,10 @@ func guardPlanningCompleteFn(state map[string]any, _ map[string]string) error {
 		// the actionable gap there is the contract file's own Status field.
 		if lifecycle, _ := state["lifecycle"].(map[string]any); lifecycle != nil {
 			if phase, _ := lifecycle["phase"].(string); phase == "tasks" {
-				return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 already advanced past contracts; flip the contract markdown Status to `locked` (a finalized contract declares locked at authoring time, see docs/agent-protocol.md#s3) and TR-002 itself re-registers locked contracts when it commits", generation)
+				return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 already advanced past contracts; flip the contract markdown Status to `locked` (a finalized contract declares locked at authoring time, see docs/control/agent-protocol.md#s3) and TR-002 itself re-registers locked contracts when it commits", generation)
 			}
 		}
-		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 (contracts→tasks) fires on the next PreToolUse and registers contracts whose markdown Status is `locked` (see docs/agent-protocol.md#s3); TR-002 does not scan filenames", generation)
+		return fmt.Errorf("planning not complete: no locked contract registered at generation %d — PTR-PLAN-02 (contracts→tasks) fires on the next PreToolUse and registers contracts whose markdown Status is `locked` (see docs/control/agent-protocol.md#s3); TR-002 does not scan filenames", generation)
 	}
 	_, _, problems, err := semantic.TaskBatchCompleteWithFiles(root, semantic.ScopedPlanningFiles(root, guardFiles(state, root), planningREQ(state)))
 	if err != nil {

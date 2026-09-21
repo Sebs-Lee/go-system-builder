@@ -46,7 +46,7 @@ func TestSharedDesignRegistrationAndFreeze(t *testing.T) {
 	if _, err = sharedModelDocuments(state, ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "docs/design/data-model/request.json")
+	path := filepath.Join(root, "docs/architecture/data-model/request.json")
 	if err = os.WriteFile(path, []byte(`{"order_id":"changed-but-still-valid"}`), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestSharedBaselineCannotDisappearAtFreeze(t *testing.T) {
 	if _, err := sharedModelDocuments(state, ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(root, "docs/contracts/CONTRACTS-001.md")
+	p := filepath.Join(root, "docs/dev/contracts/CONTRACTS-001.md")
 	if err := os.WriteFile(p, []byte("> Shared model policy: none\n> Shared model reason: UI-only\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +82,8 @@ func TestS3NaturalGuardRejectsSharedModelDrift(t *testing.T) {
 	if err := guardContractsCheckedFn(state, nil); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(root, "docs/contracts/FE-001.md")
-	if err := os.WriteFile(p, []byte("# FE\n## Shared model inputs\n[wrong](../design/data-model/different.json)\n§1\n"), 0644); err != nil {
+	p := filepath.Join(root, "docs/dev/contracts/FE-001.md")
+	if err := os.WriteFile(p, []byte("# FE\n## Shared model inputs\n[wrong](../../architecture/data-model/different.json)\n§1\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := guardContractsCheckedFn(state, nil); err == nil || !strings.Contains(err.Error(), "must reference") {

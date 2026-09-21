@@ -14,8 +14,8 @@ func TestAuditDispatchPlanResourcesHeadingLevels(t *testing.T) {
 		name string
 		path string
 	}{
-		{name: "TASK template third-level heading", path: "../../docs/tasks/TASK-template.md"},
-		{name: "checked-in task second-level heading", path: "../../docs/examples/dispatch-plan/project/docs/tasks/TASK-042-01.md"},
+		{name: "TASK template third-level heading", path: "../../docs/dev/tasks/TASK-template.md"},
+		{name: "checked-in task second-level heading", path: "../../docs/examples/dispatch-plan/project/docs/dev/tasks/TASK-042-01.md"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,7 +43,7 @@ func TestAuditDispatchPlanWavesV1Fixture(t *testing.T) {
 	if len(plan.Problems) != 0 {
 		t.Fatalf("checked-in waves-v1 fixture rejected: %#v", plan.Problems)
 	}
-	if plan.Path != "docs/tasks/index-REQ-042.md" || plan.REQ != "REQ-042" || len(plan.Tasks) != 6 {
+	if plan.Path != "docs/dev/tasks/index-REQ-042.md" || plan.REQ != "REQ-042" || len(plan.Tasks) != 6 {
 		t.Fatalf("unexpected parsed plan: path=%q req=%q tasks=%d", plan.Path, plan.REQ, len(plan.Tasks))
 	}
 	if plan.Tasks[0].Wave != 1 || plan.Tasks[3].Wave != 2 || plan.Tasks[5].Wave != 3 {
@@ -67,12 +67,12 @@ func TestAuditDispatchPlanWavesV1Fixture(t *testing.T) {
 func TestAuditDispatchPlanMembershipAndREQClosure(t *testing.T) {
 	t.Run("support task omission", func(t *testing.T) {
 		root := dispatchFixture(t)
-		data, err := os.ReadFile(filepath.Join(root, "docs/tasks/TASK-042-01.md"))
+		data, err := os.ReadFile(filepath.Join(root, "docs/dev/tasks/TASK-042-01.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		data = []byte(strings.ReplaceAll(string(data), "TASK-042-01", "TASK-042-07"))
-		if err := os.WriteFile(filepath.Join(root, "docs/tasks/TASK-042-07.md"), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "docs/dev/tasks/TASK-042-07.md"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
@@ -86,15 +86,15 @@ func TestAuditDispatchPlanMembershipAndREQClosure(t *testing.T) {
 
 	t.Run("cross REQ link", func(t *testing.T) {
 		root := dispatchFixture(t)
-		data, err := os.ReadFile(filepath.Join(root, "docs/tasks/TASK-042-02.md"))
+		data, err := os.ReadFile(filepath.Join(root, "docs/dev/tasks/TASK-042-02.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		data = []byte(strings.ReplaceAll(string(data), "REQ-042", "REQ-099"))
-		if err := os.WriteFile(filepath.Join(root, "docs/tasks/TASK-099-02.md"), data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "docs/dev/tasks/TASK-099-02.md"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		mutatePlanFile(t, root, "docs/tasks/index-REQ-042.md", "TASK-042-02.md", "TASK-099-02.md")
+		mutatePlanFile(t, root, "docs/dev/tasks/index-REQ-042.md", "TASK-042-02.md", "TASK-099-02.md")
 		plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 		if err != nil {
 			t.Fatal(err)
@@ -108,7 +108,7 @@ func TestAuditDispatchPlanMembershipAndREQClosure(t *testing.T) {
 func TestAuditDispatchPlanDAGAndResourceChecks(t *testing.T) {
 	t.Run("resource order joins task cycle", func(t *testing.T) {
 		root := dispatchFixture(t)
-		mutatePlanFile(t, root, "docs/tasks/index-REQ-042.md", "| --- | --- | --- | --- |", "| --- | --- | --- | --- |\n| TASK-042-04 | TASK-042-01 | shared port | reverse |")
+		mutatePlanFile(t, root, "docs/dev/tasks/index-REQ-042.md", "| --- | --- | --- | --- |", "| --- | --- | --- | --- |\n| TASK-042-04 | TASK-042-01 | shared port | reverse |")
 		plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 		if err != nil {
 			t.Fatal(err)
@@ -149,12 +149,12 @@ func TestAuditDispatchPlanScopeAndMetadata(t *testing.T) {
 		new  string
 		want string
 	}{
-		{name: "absolute write path", path: "docs/tasks/TASK-042-01.md", old: "packages/validation", new: "/tmp/escape", want: "concrete repository-relative write paths"},
-		{name: "parent write path", path: "docs/tasks/TASK-042-01.md", old: "packages/validation", new: "../escape", want: "concrete repository-relative write paths"},
-		{name: "glob write path", path: "docs/tasks/TASK-042-01.md", old: "packages/validation", new: "packages/*", want: "concrete repository-relative write paths"},
-		{name: "draft plan", path: "docs/tasks/index-REQ-042.md", old: "> Status: complete", new: "> Status: draft", want: "Status must be complete"},
-		{name: "zero revision", path: "docs/tasks/index-REQ-042.md", old: "> Revision: 1", new: "> Revision: 0", want: "Revision must be a positive integer"},
-		{name: "checked plan item", path: "docs/tasks/index-REQ-042.md", old: "- [ ] [共享库]", new: "- [x] [共享库]", want: "unchecked"},
+		{name: "absolute write path", path: "docs/dev/tasks/TASK-042-01.md", old: "packages/validation", new: "/tmp/escape", want: "concrete repository-relative write paths"},
+		{name: "parent write path", path: "docs/dev/tasks/TASK-042-01.md", old: "packages/validation", new: "../escape", want: "concrete repository-relative write paths"},
+		{name: "glob write path", path: "docs/dev/tasks/TASK-042-01.md", old: "packages/validation", new: "packages/*", want: "concrete repository-relative write paths"},
+		{name: "draft plan", path: "docs/dev/tasks/index-REQ-042.md", old: "> Status: complete", new: "> Status: draft", want: "Status must be complete"},
+		{name: "zero revision", path: "docs/dev/tasks/index-REQ-042.md", old: "> Revision: 1", new: "> Revision: 0", want: "Revision must be a positive integer"},
+		{name: "checked plan item", path: "docs/dev/tasks/index-REQ-042.md", old: "- [ ] [共享库]", new: "- [x] [共享库]", want: "unchecked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := dispatchFixture(t)
@@ -171,7 +171,7 @@ func TestAuditDispatchPlanScopeAndMetadata(t *testing.T) {
 
 	t.Run("same-wave overlap is a warning", func(t *testing.T) {
 		root := dispatchFixture(t)
-		mutatePlanFile(t, root, "docs/tasks/TASK-042-02.md", "web/pages", "packages/validation")
+		mutatePlanFile(t, root, "docs/dev/tasks/TASK-042-02.md", "web/pages", "packages/validation")
 		plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 		if err != nil {
 			t.Fatal(err)
@@ -185,8 +185,8 @@ func TestAuditDispatchPlanScopeAndMetadata(t *testing.T) {
 		root := dispatchFixture(t)
 		row := "| Resource | Purpose |\n| --- | --- |"
 		withResource := row + "\n| resource:test-db | shared test database |"
-		mutatePlanFile(t, root, "docs/tasks/TASK-042-01.md", row, withResource)
-		mutatePlanFile(t, root, "docs/tasks/TASK-042-02.md", row, withResource)
+		mutatePlanFile(t, root, "docs/dev/tasks/TASK-042-01.md", row, withResource)
+		mutatePlanFile(t, root, "docs/dev/tasks/TASK-042-02.md", row, withResource)
 		plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 		if err != nil {
 			t.Fatal(err)
@@ -232,7 +232,7 @@ func containsDispatchWarning(plan *DispatchPlan, needle string) bool {
 
 func mutateTaskDependencies(t *testing.T, root, task, dependency string) {
 	t.Helper()
-	path := filepath.Join(root, "docs/tasks", task)
+	path := filepath.Join(root, "docs/dev/tasks", task)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestAuditDispatchPlanMalformedResourceOrderProbe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := dispatchFixture(t)
-			mutatePlanFile(t, root, "docs/tasks/index-REQ-042.md", "| --- | --- | --- | --- |", "| --- | --- | --- | --- |\n"+tc.row)
+			mutatePlanFile(t, root, "docs/dev/tasks/index-REQ-042.md", "| --- | --- | --- | --- |", "| --- | --- | --- | --- |\n"+tc.row)
 			plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 			if err != nil {
 				t.Fatal(err)
@@ -281,8 +281,8 @@ func TestAuditDispatchPlanMalformedTaskResourceProbe(t *testing.T) {
 	root := dispatchFixture(t)
 	row := "| Resource | Purpose |\n| --- | --- |"
 	bad := row + "\n| shared-test-db | mutable database |"
-	mutatePlanFile(t, root, "docs/tasks/TASK-042-01.md", row, bad)
-	mutatePlanFile(t, root, "docs/tasks/TASK-042-02.md", row, bad)
+	mutatePlanFile(t, root, "docs/dev/tasks/TASK-042-01.md", row, bad)
+	mutatePlanFile(t, root, "docs/dev/tasks/TASK-042-02.md", row, bad)
 	plan, err := LoadDispatchPlan(root, fileview.Disk{Root: root}, "REQ-042")
 	if err != nil {
 		t.Fatal(err)

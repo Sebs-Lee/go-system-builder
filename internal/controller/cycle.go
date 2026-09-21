@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -183,7 +184,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		result.QualityGate.TransitionCommitted = false
 		result.Decision = allowDecision()
 		result.Snapshot = snapshot
-		return result, nil
+		return applyFinalSafety(result, req, snapshot, affected), nil
 	}
 	files := req.Files
 	if files == nil {
@@ -369,7 +370,7 @@ func applyFinalSafety(
 	affected []string,
 ) ControlResult {
 	safetyInput := buildSafetyInput(req, snapshot, affected)
-	engine, err := policy.Load(filepath.Join(req.Root, "docs", "hook-policy.json"))
+	engine, err := policy.Load(filepath.Join(req.Root, projectlayout.Policy))
 	if err != nil {
 		// A missing policy document must not block the tool — fall back to
 		// allow. The Hook adapter will surface a separate warning.

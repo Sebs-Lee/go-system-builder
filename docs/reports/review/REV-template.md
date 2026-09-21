@@ -37,9 +37,9 @@
 | Kind | ID | Path | Version | SHA-256 |
 |:---|:---|:---|:---|:---|
 | REQ | REQ-{id} | `docs/requirements/REQ-{id}.md` | {version} | `{sha256}` |
-| architecture | ARCHITECTURE-{id} | `docs/design/architecture/ARCHITECTURE-{id}.md` | {version} | `{sha256}` |
-| contract | {id} | `docs/contracts/{id}.md` | {version} | `{sha256}` |
-| TASK | TASK-{id} | `docs/tasks/TASK-{id}.md` | {version} | `{sha256}` |
+| architecture | ARCHITECTURE-{id} | `docs/architecture/ARCHITECTURE-{id}.md` | {version} | `{sha256}` |
+| contract | {id} | `docs/dev/contracts/{id}.md` | {version} | `{sha256}` |
+| TASK | TASK-{id} | `docs/dev/tasks/TASK-{id}.md` | {version} | `{sha256}` |
 | module current truth | {module} | `docs/design/prototypes/{module}/` (scenario four-pack + stories/flows/index/*.html) | current | `{sha256}` |
 
 ## 2. Assigned Conclusion
@@ -56,7 +56,7 @@ N/A requires a recorded rationale and evidence.
 |:--|:--|:--|:--|:--|:--|:--|
 | REV-F001 | P0/P1/P2/P3 | `{path:line}` | {contract/REQ} | {fact} | {evidence} | BUG-{id} / pending / n/a |
 
-缺失型 finding（如 NFR 未落地）的 Location 填"应出现处"（如 `docs/contracts/CONTRACTS-<id>.md §索引`），Observed 记 `absent`。Findings 随信封 conclusion=fix_required 走 TR-004 回 planning 修复——本 assignment 不修、也不进 BUG 生命周期（那是 S7 起的事）。
+缺失型 finding（如 NFR 未落地）的 Location 填"应出现处"（如 `docs/dev/contracts/CONTRACTS-<id>.md §索引`），Observed 记 `absent`。Findings 随信封 conclusion=fix_required 走 TR-004 回 planning 修复——本 assignment 不修、也不进 BUG 生命周期（那是 S7 起的事）。
 
 ## 4. Checks
 

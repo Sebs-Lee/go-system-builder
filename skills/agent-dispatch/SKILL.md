@@ -7,7 +7,7 @@ version: 1.0.0
 # Agent Dispatch
 
 ## Authority
-Dispatch modes and the agent lifecycle are defined in `docs/loop-definition.json` (`entity_lifecycles.agent`) and this Skill; the runtime events are executed by `loop-harness runtime agent-event` / `runtime task-complete`.
+Dispatch modes and the agent lifecycle are defined in `docs/control/loop-definition.json` (`entity_lifecycles.agent`) and this Skill; the runtime events are executed by `loop-harness runtime agent-event` / `runtime task-complete`.
 
 ## Entry Conditions
 - An Agent Definition exists under `agents/<role>.md`.
@@ -123,7 +123,7 @@ Stage gates consume each input from the source declared in the upstream file con
 
 A Builder enters through its TASK: goal, allowed changes, dependencies, closing
 assertions, then ordered links to local responsibility, SYNC operation and shared
-model. Follow [shared-model reading rules in the factory](../../docs/rules/shared-model-contracts.md) (after installation: [project rule](../../../docs/rules/shared-model-contracts.md)).
+model. Follow [shared-model reading rules in the factory](../../docs/rules/shared-model-contracts.md) (after installation: [project rule](../../docs/rules/shared-model-contracts.md)).
 Do not recursively expand all background links. A shared implementation task
 must be integrated before dependent worktrees start; independent generation from
 the same committed schema can run in parallel. Compare shared design inputs,
@@ -133,7 +133,7 @@ model reference in the completion report.
 ## Overall dispatch plan (waves-v1)
 
 Follow [factory dispatch rules](../../docs/rules/dispatch-plan.md), or after installation
-[project dispatch rules](../../../docs/rules/dispatch-plan.md). S4 delivers the REQ's
+[project dispatch rules](../../docs/rules/dispatch-plan.md). S4 delivers the REQ's
 index as an ordered wave checklist; S5 reviews and freezes it with TASKs. S6 reads
 that plan and `s6 status --capacity <actual total slots>` before dispatch, then
 recomputes after integration or capacity release. Start every compatible ready

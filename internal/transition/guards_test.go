@@ -147,7 +147,7 @@ func TestForbiddenEventsBlocksReleaseAuditWithoutACC(t *testing.T) {
 	writeFullState(t, root, state)
 
 	err := applyT(t, root, "TR-017", 9, "release_auditor", map[string]string{
-		"release_audit_record": "docs/release_audits/audit.md",
+		"release_audit_record": "docs/reports/release-audits/audit.md",
 		"acceptance_record":    "ev-acc",
 		"clean_round_record":   "docs/reports/review/clean-round.md",
 	})

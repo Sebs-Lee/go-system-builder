@@ -141,14 +141,14 @@ func TestFinalAuditBugEventValidatesRootAnchoredMessage(t *testing.T) {
 func writeFinalAuditBugRuntime(t *testing.T, bugState string, revision, sameContractFailures, maxSameContractFailures int) string {
 	t.Helper()
 	root := t.TempDir()
-	definition, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "loop-definition.json"))
+	definition, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "control", "loop-definition.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

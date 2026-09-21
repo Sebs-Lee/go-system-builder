@@ -116,14 +116,14 @@ func auditCLIPlanFixture(t *testing.T) string {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "control", "loop-definition.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	auditCLIGit(t, root, "init", "-b", "dev")

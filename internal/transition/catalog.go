@@ -2,7 +2,7 @@
 //
 // The transition catalog (this file) is the single source of truth for which
 // guards, actions, transitions, phase transitions and global transitions are
-// legal. It is loaded once at startup from docs/loop-definition.json and is
+// legal. It is loaded once at startup from docs/control/loop-definition.json and is
 // fail-closed: any declared identifier (guard, action, transition, phase,
 // global, entity lifecycle transition, forbidden event) that does not have a
 // registered implementation causes LoadCatalog to return an error.
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"sort"
@@ -236,7 +237,7 @@ func (e *TriggerConflictError) Code() string { return TriggerConflictCode }
 // against the registered guard and action registries. Returns an error if any
 // declared guard, action, transition, or forbidden event is missing.
 func LoadCatalog(root string) (*Catalog, error) {
-	defPath := filepath.Join(root, "docs", "loop-definition.json")
+	defPath := filepath.Join(root, projectlayout.Definition)
 	data, err := os.ReadFile(defPath)
 	if err != nil {
 		return nil, fmt.Errorf("read Loop Definition: %w", err)

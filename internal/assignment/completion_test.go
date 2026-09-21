@@ -29,14 +29,14 @@ func anyStrings(values []any) []string {
 func completionRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "control", "loop-definition.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -80,7 +80,7 @@ func TestCompleteTaskRegistersBuilderResultAtomically(t *testing.T) {
 	state["baseline"] = map[string]any{"generation": 1, "captured_at": "2026-08-20T00:00:00Z"}
 	taskBytes := []byte("# TASK-001\n")
 	state["documents"] = []any{map[string]any{
-		"id": "TASK-001", "kind": "task", "path": "docs/tasks/TASK-001.md",
+		"id": "TASK-001", "kind": "task", "path": "docs/dev/tasks/TASK-001.md",
 		"version": "v1", "sha256": semanticSha(t, taskBytes), "status": "complete", "generation": 1,
 	}}
 	state["entities"] = map[string]any{
@@ -93,7 +93,7 @@ func TestCompleteTaskRegistersBuilderResultAtomically(t *testing.T) {
 			"updated_at": "2026-08-20T00:00:00Z",
 		}},
 		"tasks": []any{map[string]any{
-			"id": "TASK-001", "state": "in_progress", "path": "docs/tasks/TASK-001.md",
+			"id": "TASK-001", "state": "in_progress", "path": "docs/dev/tasks/TASK-001.md",
 			"sha256": semanticSha(t, taskBytes), "owner_agent_ids": []any{"builder-1"},
 		}},
 		"bugs": []any{}, "teams": []any{},
@@ -187,7 +187,7 @@ func TestCompleteTaskProjectsChangedPathsIntoEvidenceScopeRefs(t *testing.T) {
 			"updated_at": "2026-08-20T00:00:00Z",
 		}},
 		"tasks": []any{map[string]any{
-			"id": "TASK-001", "state": "in_progress", "path": "docs/tasks/TASK-001.md",
+			"id": "TASK-001", "state": "in_progress", "path": "docs/dev/tasks/TASK-001.md",
 			"sha256": semanticSha(t, []byte("# TASK-001\n")), "owner_agent_ids": []any{"builder-1"},
 		}},
 		"bugs": []any{}, "teams": []any{},
@@ -238,7 +238,7 @@ func TestCompleteTaskResubmissionEscalatesEvidenceID(t *testing.T) {
 		}},
 		"tasks": []any{map[string]any{
 			"id": "TASK-001", "state": "in_progress",
-			"path": "docs/tasks/TASK-001.md", "sha256": semanticSha(t, []byte("# TASK-001\n")),
+			"path": "docs/dev/tasks/TASK-001.md", "sha256": semanticSha(t, []byte("# TASK-001\n")),
 			"owner_agent_ids": []any{"builder-1"},
 		}},
 		"bugs": []any{}, "teams": []any{},

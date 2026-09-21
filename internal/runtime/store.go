@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"math"
 	"os"
 	"path/filepath"
@@ -419,6 +420,14 @@ func (s *Store) validateCandidate(state map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("encode candidate runtime: %w", err)
 	}
+	if err := projectlayout.CheckRuntime(encoded); err != nil {
+		return err
+	}
+	if s.root != "" {
+		if err := projectlayout.Check(s.root); err != nil {
+			return err
+		}
+	}
 	validator := schema.NewEmbeddedValidator()
 	if err := validator.ValidateBytes("loop-state.schema.json", encoded); err != nil {
 		return fmt.Errorf("candidate runtime schema: %w", err)
@@ -443,7 +452,7 @@ func (s *Store) validateCandidate(state map[string]any) error {
 }
 
 func validateRuntimeSemanticCore(root string, state map[string]any) error {
-	definitionPath := filepath.Join(root, "docs", "loop-definition.json")
+	definitionPath := filepath.Join(root, projectlayout.Definition)
 	definitionData, err := os.ReadFile(definitionPath)
 	if err != nil {
 		// The runtime package has small unit fixtures that intentionally inject
@@ -770,7 +779,7 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 //
 // The document's own `version` field wins over `schema_version` (BUG-039-12
 // repair). `version` is the artifact's semantic version — the thing an audit
-// trail cares about, e.g. `docs/hook-policy.json` carries
+// trail cares about, e.g. `docs/control/hook-policy.json` carries
 // `version: "v2.0.0"` alongside `schema_version: "1.2.0"` (the wire-format
 // version of the policy schema). The previous heuristic preferred
 // `schema_version`, which wrote the schema format version into the policy
@@ -778,7 +787,7 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 // version the policy file never declared.
 //
 // `schema_version` remains the fallback for documents that declare no
-// `version` at all — `docs/loop-definition.json` is exactly this shape, so
+// `version` at all — `docs/control/loop-definition.json` is exactly this shape, so
 // `definition.version` continues to track its `schema_version`.
 //
 // An empty return means the document declares neither field (or is not JSON);
@@ -1088,7 +1097,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 // (REQ-039 §11, SYNC-039 §6-7): the recorded reference is what the audit
 // trail claims the enforced safety boundary was. When the policy document is
 // rewritten in place — e.g. the REQ-039 reduction to the minimal boundary
-// bumped `docs/hook-policy.json` to `v2.0.0` — the snapshot silently goes
+// bumped `docs/control/hook-policy.json` to `v2.0.0` — the snapshot silently goes
 // stale and the runtime attributes decisions to a policy version that is no
 // longer on disk. Detecting that divergence is the point of this type; the
 // fix path is RefreshFingerprints, which rewrites both fields in place
@@ -1912,6 +1921,14 @@ func (s *Store) read() (map[string]any, error) {
 	data, err := os.ReadFile(s.statePath)
 	if err != nil {
 		return nil, fmt.Errorf("read runtime: %w", err)
+	}
+	if err := projectlayout.CheckRuntime(data); err != nil {
+		return nil, err
+	}
+	if s.mutationCapable && s.root != "" {
+		if err := projectlayout.Check(s.root); err != nil {
+			return nil, err
+		}
 	}
 	var state map[string]any
 	if err := json.Unmarshal(data, &state); err != nil {

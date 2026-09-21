@@ -10,8 +10,8 @@ go run ./cmd/loop-harness contracts check --root docs/examples/shared-model/proj
 go test ./internal/sharedmodel -run TestConsumerProviderPilot -v
 ```
 
-Start with [the contract index](project/docs/contracts/CONTRACTS-001.md), then
-read [the shared operation](project/docs/contracts/SYNC-001.md#cancel-order).
+Start with [the contract index](project/docs/dev/contracts/CONTRACTS-001.md), then
+read [the shared operation](project/docs/dev/contracts/SYNC-001.md#cancel-order).
 Both consumer contracts reference the same request and response schema.
 The Go HTTP pilot uses that source to validate client requests, provider input,
 responses and a mock. It exercises a successful cancellation, a structurally

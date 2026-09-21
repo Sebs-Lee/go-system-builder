@@ -29,7 +29,7 @@ func TestFinalAuditReviewTemplatePathRequiresCommittedGitSource(t *testing.T) {
 	state := systemPlanningState(t, root, "design", 1)
 	writeSystemState(t, root, state)
 
-	architecturePath := "docs/design/architecture/ARCHITECTURE-039-review-source.md"
+	architecturePath := "docs/architecture/ARCHITECTURE-039-review-source.md"
 	architecture := []byte("# ARCHITECTURE-039-review-source\n\n> Status: locked\n> Version: v1.0.0\n")
 	writeAuditFile(t, root, architecturePath, string(architecture))
 	runGitIn(t, root, "add", architecturePath)

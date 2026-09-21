@@ -348,11 +348,11 @@ func writeState(t *testing.T, path string, revision int) {
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "loop-definition.json"))
+	definition, err := os.ReadFile(filepath.Join("..", "..", "docs", "control", "loop-definition.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	definitionDir := filepath.Join(filepath.Dir(path), "docs")
+	definitionDir := filepath.Join(filepath.Dir(path), "docs", "control")
 	if err := os.MkdirAll(definitionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

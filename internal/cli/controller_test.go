@@ -60,7 +60,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.LifecycleState != "verification" || guidance.LifecyclePhase != "running" {
 		t.Fatalf("unexpected lifecycle cursor: %#v", guidance)
 	}
-	if guidance.ProtocolRef != "docs/agent-protocol.md#s7" {
+	if guidance.ProtocolRef != "docs/control/agent-protocol.md#s7" {
 		t.Fatalf("unexpected protocol ref: %q", guidance.ProtocolRef)
 	}
 	if guidance.ManualRef != loopManualRef {
@@ -72,7 +72,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if !strings.Contains(guidance.Action, "review-result submit") {
 		t.Fatalf("unexpected next action: %q", guidance.Action)
 	}
-	if !strings.Contains(guidance.Instruction, "docs/agent-protocol.md#s7") {
+	if !strings.Contains(guidance.Instruction, "docs/control/agent-protocol.md#s7") {
 		t.Fatalf("instruction must contain protocol ref: %q", guidance.Instruction)
 	}
 	if !strings.Contains(guidance.Instruction, loopManualRef) {
@@ -129,7 +129,7 @@ func TestBuildGuidanceDefinesRecoveryReadOrderAndNoCliNormalPath(t *testing.T) {
 	if guidance.ReadOrder[1] != "AGENTS-template.md" {
 		t.Fatalf("source template should be the fallback entry document, got %#v", guidance.ReadOrder)
 	}
-	if !strings.Contains(strings.Join(guidance.ReadOrder, " -> "), "docs/agent-protocol.md#s7") {
+	if !strings.Contains(strings.Join(guidance.ReadOrder, " -> "), "docs/control/agent-protocol.md#s7") {
 		t.Fatalf("read order must point to current protocol anchor, got %#v", guidance.ReadOrder)
 	}
 	if !containsString(guidance.Automation, "do not call loop-harness for normal continuation") {
@@ -149,7 +149,7 @@ func TestBuildGuidanceSchedulesDelegationAndWorktreeIntegration(t *testing.T) {
 		"lifecycle_phase": "implementation",
 		"objective":       "complete the implementation batch",
 		"action":          "implement remaining TASKs",
-		"protocol_ref":    "docs/agent-protocol.md#s6",
+		"protocol_ref":    "docs/control/agent-protocol.md#s6",
 		"manual_ref":      ".claude/bin/loop-harness.md",
 		"primary_skill":   "loop-orchestration",
 		"read":            []string{".claude/loop-state.json"},
@@ -524,7 +524,7 @@ func TestGuidanceMapWithGateProjectsQualityGateBlock(t *testing.T) {
 		LifecyclePhase: "contracts",
 		Objective:      "complete the development contract set",
 		Action:         "complete contract traceability",
-		ProtocolRef:    "docs/agent-protocol.md#s3",
+		ProtocolRef:    "docs/control/agent-protocol.md#s3",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "specification-planning",
 		Missing:        []string{"contract traceability"},
@@ -601,7 +601,7 @@ func TestMilestoneMatchesDetectsQualityGateFingerprintChange(t *testing.T) {
 		LifecyclePhase: "contracts",
 		Objective:      "complete the development contract set",
 		Action:         "complete contract traceability",
-		ProtocolRef:    "docs/agent-protocol.md#s3",
+		ProtocolRef:    "docs/control/agent-protocol.md#s3",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "specification-planning",
 		Missing:        []string{"contract traceability"},
@@ -826,11 +826,11 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The semantic validator reads docs/loop-definition.json from the root.
+	// The semantic validator reads docs/control/loop-definition.json from the root.
 	// Provide a minimal stub that exposes the `building` state with no phase
 	// machine and a `planning` state with a phase machine, so the cursor
 	// (state=building, phase=implementation) validates.
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	minimalDef := `{
@@ -867,7 +867,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
     "bug": {"states": ["draft", "investigating", "pending_approval", "accepted", "assigned", "fixed", "retesting", "closed", "rejected", "duplicate"]}
   }
 }`
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), []byte(minimalDef), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), []byte(minimalDef), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Start from the schema-valid example and override the cursors we
@@ -914,7 +914,7 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 		"lifecycle_phase": "implementation",
 		"objective":       "complete the implementation batch",
 		"action":          "implement remaining TASKs",
-		"protocol_ref":    "docs/agent-protocol.md#s6",
+		"protocol_ref":    "docs/control/agent-protocol.md#s6",
 		"manual_ref":      ".claude/bin/loop-harness.md",
 		"primary_skill":   "loop-orchestration",
 		"read":            []string{".claude/loop-state.json"},
@@ -980,7 +980,7 @@ func (f *runtimeFixture) addTask(id, state string, ownerIDs []string) {
 		"id":              id,
 		"state":           state,
 		"owner_agent_ids": ownerAnys,
-		"path":            "docs/tasks/" + id + ".md",
+		"path":            "docs/dev/tasks/" + id + ".md",
 		"sha256":          "0000000000000000000000000000000000000000000000000000000000000000",
 	})
 	entities["tasks"] = tasks
@@ -1552,7 +1552,7 @@ func TestReconcileGuidanceWiresSubagentStopHandler(t *testing.T) {
 		"tasks": []any{map[string]any{
 			"id": "TASK-039-01", "state": "review",
 			"owner_agent_ids": []any{"agent-wire"},
-			"path":            "docs/tasks/TASK-039-01.md",
+			"path":            "docs/dev/tasks/TASK-039-01.md",
 			"sha256":          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}},
 		"bugs": []any{}, "teams": []any{},

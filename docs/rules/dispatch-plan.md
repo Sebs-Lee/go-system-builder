@@ -1,7 +1,7 @@
 # Overall dispatch plan
 
-S4 delivers one `docs/tasks/index-REQ-<id>.md` plan for the current REQ, using
-[index template](../tasks/index-template.md). Every non-cancelled TASK appears
+S4 delivers one `docs/dev/tasks/index-REQ-<id>.md` plan for the current REQ, using
+[index template](../dev/tasks/index-template.md). Every non-cancelled TASK appears
 exactly once as an unchecked Markdown file link under `## W1`, `## W2`, etc.
 The header declares `REQ`, `Dispatch policy: waves-v1`, a positive `Revision`,
 and `Status: complete` before review. TASKs explicitly declare Source REQ refs.

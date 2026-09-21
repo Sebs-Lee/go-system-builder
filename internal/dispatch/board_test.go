@@ -35,14 +35,14 @@ func boardFixture(t *testing.T) (string, map[string]any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	definition, err := os.ReadFile("../../docs/loop-definition.json")
+	definition, err := os.ReadFile("../../docs/control/loop-definition.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	git := func(args ...string) {
@@ -85,7 +85,7 @@ func TestCommittedBoardAndRegistration(t *testing.T) {
 	if e := CheckRegistration(root, state, "TASK-042-02"); e != nil {
 		t.Fatal(e)
 	}
-	taskPath := filepath.Join(root, "docs/tasks/TASK-042-02.md")
+	taskPath := filepath.Join(root, "docs/dev/tasks/TASK-042-02.md")
 	b, _ := os.ReadFile(taskPath)
 	if e := ValidateWorkPackage(root, state, "TASK-042-02", taskPath, b, []string{"web/pages/order.ts"}, 1); e != nil {
 		t.Fatal(e)
@@ -115,7 +115,7 @@ func TestCommittedBoardAndRegistration(t *testing.T) {
 }
 func TestPlanCannotDriftOrBecomeLegacy(t *testing.T) {
 	root, state := boardFixture(t)
-	p := filepath.Join(root, "docs/tasks/index-REQ-042.md")
+	p := filepath.Join(root, "docs/dev/tasks/index-REQ-042.md")
 	b, _ := os.ReadFile(p)
 	os.WriteFile(p, append(b, []byte("\nnew reason\n")...), 0644)
 	if _, e := LoadWithFiles(root, state, fileview.Disk{Root: root}, 2); e == nil || !strings.Contains(e.Error(), "drift") {

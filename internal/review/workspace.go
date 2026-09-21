@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,10 +226,10 @@ func isAllowedDriftSurface(rel string) bool {
 	if rel == ".claude" || isControlPlaneDriftPath(rel) {
 		return true
 	}
-	if rel == "docs/reports" || strings.HasPrefix(rel, "docs/reports/") {
+	if rel == projectlayout.Reports || strings.HasPrefix(rel, "docs/reports/") {
 		return true
 	}
-	if rel == "docs/release_audits" || strings.HasPrefix(rel, "docs/release_audits/") {
+	if rel == projectlayout.ReleaseAudits || strings.HasPrefix(rel, "docs/reports/release-audits/") {
 		return true
 	}
 	// Audit, blueprint and other non-product projections are not frozen product

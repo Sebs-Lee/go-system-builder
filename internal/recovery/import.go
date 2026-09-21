@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"sort"
@@ -223,8 +224,8 @@ type importCollector struct {
 
 func (c *importCollector) scanDocuments() error {
 	for _, directory := range []string{
-		"docs/requirements", "docs/design", "docs/contracts", "docs/tasks",
-		"docs/reports", "docs/release_audits",
+		projectlayout.Requirements, "docs/design", projectlayout.Architecture, projectlayout.Contracts, projectlayout.Tasks,
+		projectlayout.Reports,
 	} {
 		fullDirectory := filepath.Join(c.root, filepath.FromSlash(directory))
 		if _, err := os.Stat(fullDirectory); os.IsNotExist(err) {
@@ -818,9 +819,9 @@ func importDocumentKind(relative string) string {
 		return "e2e"
 	case strings.Contains(base, "CONTRACT"):
 		return "contract"
-	case strings.Contains(base, "RELEASE") || strings.Contains(filepath.ToSlash(relative), "/release_audits/"):
+	case strings.Contains(base, "RELEASE") || strings.Contains(filepath.ToSlash(relative), "/reports/release-audits/"):
 		return "release_audit"
-	case strings.Contains(filepath.ToSlash(relative), "/design/"):
+	case strings.Contains(filepath.ToSlash(relative), "/design/"), strings.Contains(filepath.ToSlash(relative), "/architecture/"):
 		return "design"
 	default:
 		return ""

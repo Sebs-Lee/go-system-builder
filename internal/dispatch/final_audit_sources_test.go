@@ -24,7 +24,7 @@ func TestFinalAuditDispatchViewUsesCatalogSources(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "final-audit@example.invalid")
 
 	root := t.TempDir()
-	definition, err := os.ReadFile("../../docs/loop-definition.json")
+	definition, err := os.ReadFile("../../docs/control/loop-definition.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,10 +41,10 @@ func TestFinalAuditDispatchViewUsesCatalogSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), definition, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), definition, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitFinalAudit(t, root, "init", "-b", "development")
@@ -62,7 +62,7 @@ func TestFinalAuditDispatchViewUsesCatalogSources(t *testing.T) {
 	if err := os.WriteFile(defaultPath, []byte("default-committed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gitFinalAudit(t, root, "add", "docs/loop-definition.json", "custom/runtime-input.json", "docs/default-input.txt")
+	gitFinalAudit(t, root, "add", "docs/control/loop-definition.json", "custom/runtime-input.json", "docs/default-input.txt")
 	gitFinalAudit(t, root, "commit", "-qm", "committed custom input")
 	if err := os.WriteFile(path, []byte("disk\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -136,10 +136,10 @@ func TestFinalAuditDispatchViewRejectsMissingOrMalformedCatalog(t *testing.T) {
 	})
 	t.Run("malformed", func(t *testing.T) {
 		root := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, "docs", "control"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(root, "docs", "loop-definition.json"), []byte("{\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(root, "docs", "control", "loop-definition.json"), []byte("{\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := View(root, state); err == nil || !strings.Contains(err.Error(), "decode Loop Definition") {

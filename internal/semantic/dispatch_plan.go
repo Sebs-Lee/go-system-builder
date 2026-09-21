@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -80,7 +81,7 @@ func (f planningFiles) ReadDir(p string) ([]os.DirEntry, error) {
 		rel, _ = filepath.Rel(f.root, p)
 	}
 	rel = filepath.ToSlash(rel)
-	if rel != "docs/tasks" && rel != "docs/contracts" {
+	if rel != projectlayout.Tasks && rel != projectlayout.Contracts {
 		return entries, nil
 	}
 	out := []os.DirEntry{}
@@ -116,7 +117,7 @@ func LoadDispatchPlan(root string, files fileview.Reader, req string) (*Dispatch
 		return nil, err
 	}
 	p := &DispatchPlan{REQ: req}
-	entries, err := files.ReadDir(filepath.Join(root, "docs/tasks"))
+	entries, err := files.ReadDir(filepath.Join(root, projectlayout.Tasks))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return p, nil
@@ -128,7 +129,7 @@ func LoadDispatchPlan(root string, files fileview.Reader, req string) (*Dispatch
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "index-") || !strings.HasSuffix(e.Name(), ".md") || strings.Contains(e.Name(), "template") {
 			continue
 		}
-		path := filepath.Join("docs/tasks", e.Name())
+		path := filepath.Join(projectlayout.Tasks, e.Name())
 		b, er := files.ReadFile(filepath.Join(root, path))
 		if er != nil {
 			return nil, er
@@ -198,7 +199,7 @@ func LoadDispatchPlan(root string, files fileview.Reader, req string) (*Dispatch
 		byID[t.id] = t
 	}
 	if req != "" {
-		b, e := files.ReadFile(filepath.Join(root, "docs/requirements", req+".md"))
+		b, e := files.ReadFile(filepath.Join(root, projectlayout.Requirements, req+".md"))
 		if e == nil && MarkdownField(string(b), "Dispatch policy") != "" {
 			required = true
 		}

@@ -3,6 +3,7 @@ package semantic
 import (
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/sharedmodel"
 	"os"
 	"path/filepath"
@@ -83,7 +84,7 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 	}
 	result.Tasks = len(tasks)
 	if len(tasks) == 0 {
-		result.Problems = append(result.Problems, "no TASK documents under docs/tasks — write the batch before checking")
+		result.Problems = append(result.Problems, "no TASK documents under docs/dev/tasks — write the batch before checking")
 		// Fall through: the clause-universe floor must still be named so an
 		// empty repo cannot look half-green.
 	}
@@ -91,10 +92,10 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 	// Clause universe: the CONTRACTS index matrix is the single home (L3-S4 v4).
 	universe := map[string]bool{}
 	var indexFiles []string
-	contractEntries, _ := files.ReadDir(filepath.Join(root, "docs", "contracts"))
+	contractEntries, _ := files.ReadDir(filepath.Join(root, projectlayout.Contracts))
 	for _, entry := range contractEntries {
 		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "CONTRACTS-") && strings.HasSuffix(entry.Name(), ".md") {
-			indexFiles = append(indexFiles, filepath.Join(root, "docs", "contracts", entry.Name()))
+			indexFiles = append(indexFiles, filepath.Join(root, projectlayout.Contracts, entry.Name()))
 		}
 	}
 	for _, indexFile := range indexFiles {
@@ -115,7 +116,7 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 
 	// Contract inventory for primary-contract existence and index coverage.
 	contractIDs := map[string]bool{}
-	entries, _ := files.ReadDir(filepath.Join(root, "docs", "contracts"))
+	entries, _ := files.ReadDir(filepath.Join(root, projectlayout.Contracts))
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".md") || strings.Contains(strings.ToLower(name), "template") {
@@ -148,7 +149,7 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 		if task.contract == "" {
 			result.Problems = append(result.Problems, fmt.Sprintf("%s: missing \"> Primary contract:\" header", task.rel))
 		} else if !contractIDs[task.contract] {
-			result.Problems = append(result.Problems, fmt.Sprintf("%s: primary contract %s has no file under docs/contracts", task.rel, task.contract))
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: primary contract %s has no file under docs/dev/contracts", task.rel, task.contract))
 		}
 		if !task.hasClose {
 			result.Problems = append(result.Problems, fmt.Sprintf("%s: no Closing Contract block with assert lines", task.rel))
@@ -202,7 +203,7 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 		for _, dep := range task.deps {
 			target, ok := byID[dep]
 			if !ok {
-				result.Problems = append(result.Problems, fmt.Sprintf("%s depends on %s which does not exist under docs/tasks", task.id, dep))
+				result.Problems = append(result.Problems, fmt.Sprintf("%s depends on %s which does not exist under docs/dev/tasks", task.id, dep))
 				continue
 			}
 			if target.status == "cancelled" {
@@ -269,7 +270,7 @@ func TaskBatchCompleteWithFiles(root string, files fileview.Reader) (complete, c
 		}
 	}
 	if complete == 0 {
-		problems = append(problems, "no complete TASK document under docs/tasks")
+		problems = append(problems, "no complete TASK document under docs/dev/tasks")
 	}
 	return complete, cancelled, problems, nil
 }
@@ -279,13 +280,13 @@ func loadTaskDocuments(root string) ([]*taskDocument, error) {
 }
 func loadTaskDocumentsWithFiles(root string, files fileview.Reader) ([]*taskDocument, error) {
 	root, _ = filepath.Abs(root)
-	dir := filepath.Join(root, "docs", "tasks")
+	dir := filepath.Join(root, projectlayout.Tasks)
 	entries, err := files.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("read docs/tasks: %w", err)
+		return nil, fmt.Errorf("read docs/dev/tasks: %w", err)
 	}
 	var tasks []*taskDocument
 	for _, entry := range entries {
@@ -299,12 +300,12 @@ func loadTaskDocumentsWithFiles(root string, files fileview.Reader) ([]*taskDocu
 		}
 		data, err := files.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, fmt.Errorf("read docs/tasks/%s: %w", name, err)
+			return nil, fmt.Errorf("read docs/dev/tasks/%s: %w", name, err)
 		}
 		content := string(data)
 		task := &taskDocument{
 			id:       id,
-			rel:      "docs/tasks/" + name,
+			rel:      "docs/dev/tasks/" + name,
 			hasClose: strings.Contains(content, "Closing Contract") && strings.Contains(content, "assert "),
 		}
 		if m := taskStatusField.FindStringSubmatch(content); m != nil {

@@ -46,7 +46,7 @@ func TestDispatchRegistrationAndFreezeDrift(t *testing.T) {
 	if err := dispatchPlanDocuments(state, ctx, false); err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(root, "docs/tasks/index-REQ-042.md")
+	p := filepath.Join(root, "docs/dev/tasks/index-REQ-042.md")
 	b, _ := os.ReadFile(p)
 	os.WriteFile(p, append(b, []byte("\nchanged after review\n")...), 0644)
 	if err := dispatchPlanDocuments(state, ctx, false); err == nil {
@@ -71,7 +71,7 @@ func TestDispatchFreezeDoesNotRefreshTaskHash(t *testing.T) {
 	if _, e := actionRegisterPlanningTasks(state, ctx); e != nil {
 		t.Fatal(e)
 	}
-	path := filepath.Join(root, "docs/tasks/TASK-042-01.md")
+	path := filepath.Join(root, "docs/dev/tasks/TASK-042-01.md")
 	b, _ := os.ReadFile(path)
 	os.WriteFile(path, []byte(strings.ReplaceAll(string(b), "共享库", "new goal")), 0644)
 	if e := dispatchPlanDocuments(state, ctx, false); e == nil {

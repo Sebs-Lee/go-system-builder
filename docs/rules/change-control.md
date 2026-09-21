@@ -21,10 +21,10 @@ Chat never changes a baseline.
 | Requirements | `docs/requirements/` | user + PM / Architect |
 | Design | `docs/design/` | PM / Architect |
 | UI Prototypes | `docs/design/prototypes/` | PM / Architect |
-| Contracts | `docs/contracts/` | PM / Architect, affected Builders informed |
-| Tasks | `docs/tasks/` | PM / Architect |
+| Contracts | `docs/dev/contracts/` | PM / Architect, affected Builders informed |
+| Tasks | `docs/dev/tasks/` | PM / Architect |
 | Quality | `docs/reports/` | assigned Verifier/QA evidence + PM / Architect |
-| Acceptance / Release | `docs/reports/acceptance/`, `docs/release_audits/` | Release Owner + PM / Architect |
+| Acceptance / Release | `docs/reports/acceptance/`, `docs/reports/release-audits/` | Release Owner + PM / Architect |
 
 ## 3. Runtime Effects
 

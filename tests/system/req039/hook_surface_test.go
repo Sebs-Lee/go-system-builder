@@ -199,13 +199,13 @@ func TestHOOK_TeammateIdle_IdleAfterCompletionViaHookCLI(t *testing.T) {
 			map[string]any{
 				"id": "TASK-039-04", "state": "done",
 				"owner_agent_ids": []any{"builder-idle-alloc"},
-				"path":            "docs/tasks/TASK-039-04.md",
+				"path":            "docs/dev/tasks/TASK-039-04.md",
 				"sha256":          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			},
 			map[string]any{
 				"id": "TASK-039-05", "state": "candidate",
 				"owner_agent_ids": []any{},
-				"path":            "docs/tasks/TASK-039-05.md",
+				"path":            "docs/dev/tasks/TASK-039-05.md",
 				"sha256":          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			},
 		},

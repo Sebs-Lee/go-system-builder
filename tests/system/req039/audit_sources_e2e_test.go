@@ -39,7 +39,7 @@ func TestAuditCommittedStageSourcesE2E(t *testing.T) {
 	// document. .claude remains an ignored control-plane directory.
 	writeSystemState(t, root, state)
 
-	architecturePath := "docs/design/architecture/ARCHITECTURE-039-audit.md"
+	architecturePath := "docs/architecture/ARCHITECTURE-039-audit.md"
 	architecture := []byte("# ARCHITECTURE-039-audit\n\n> Status: locked\n> Version: v1.0.0\n")
 	architectureSHA := sha256HexAudit(architecture)
 	writeAuditEvidence(t, root, state, architecturePath, architectureSHA)
@@ -202,7 +202,7 @@ func auditHook(t *testing.T, root, executionRoot, session string) (string, map[s
 		"cwd":             executionRoot,
 		"tool_name":       "Edit",
 		"tool_input": map[string]any{
-			"file_path": filepath.Join(executionRoot, "docs/design/architecture/ARCHITECTURE-039-audit.md"),
+			"file_path": filepath.Join(executionRoot, "docs/architecture/ARCHITECTURE-039-audit.md"),
 		},
 	}
 	body, err := json.Marshal(payload)

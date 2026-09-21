@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path"
 	"sort"
@@ -1443,13 +1444,13 @@ func parseTopField(content string, keys ...string) string {
 func diskArtifactHome(kind string) (dir string, prefix string) {
 	switch kind {
 	case "task":
-		return "docs/tasks", "TASK-"
+		return projectlayout.Tasks, "TASK-"
 	case "design":
-		return "docs/design/architecture", "ARCHITECTURE-"
+		return projectlayout.Architecture, "ARCHITECTURE-"
 	case "req":
-		return "docs/requirements", "REQ-"
+		return projectlayout.Requirements, "REQ-"
 	default:
-		return "docs/contracts", ""
+		return projectlayout.Contracts, ""
 	}
 }
 

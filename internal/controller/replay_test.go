@@ -73,7 +73,7 @@ func TestRecoveryReplayStopsAtFirstNotReady(t *testing.T) {
 	// an empty documents[] no longer produces not_ready — remove the disk
 	// architecture document as well to keep this test's intent (a genuine
 	// first-step gap).
-	if err := os.Remove(filepath.Join(root, "docs", "design", "architecture", "ARCHITECTURE-039-loop-control-plane.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, "docs", "architecture", "ARCHITECTURE-039-loop-control-plane.md")); err != nil {
 		t.Fatal(err)
 	}
 	state["documents"] = []any{}

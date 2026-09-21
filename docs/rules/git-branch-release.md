@@ -41,8 +41,8 @@ REQ binding explicitly declares both destinations, including the remote for a re
 |:---|:---|:---|
 | S0/S1 requirement design and initialization | `AGENTS.md`, `project.yaml`, `project-map.md`, `REQ-*.md` | `docs/req-<id>-<topic>` or `docs/bootstrap-project` |
 | S2 design | architecture, state, model, ADR, UI design packages | `docs/design-<req-id>-<topic>` |
-| S3 contracts | FE/BE/SYNC contracts | `docs/contracts-<req-id>-<topic>` |
-| S4 tasks | task board and task files | `docs/tasks-<req-id>-<topic>` |
+| S3 contracts | FE/BE/SYNC contracts | `docs/dev/contracts-<req-id>-<topic>` |
+| S4 tasks | task board and task files | `docs/dev/tasks-<req-id>-<topic>` |
 | S5 document verification | REV/document-verification evidence | `docs/document-verification-<req-id>` |
 | S6 build | code and tests | `feature/<task-id>-<topic>` |
 | S7 full verification round | REV/QA/E2E evidence | `docs/review-<req-id>-round-<n>` |
@@ -71,7 +71,7 @@ Loop Definition, runtime, activation, and Hooks enforce timing.
 
 Before merge to `<release_upstream>`:
 
-- release audit exists in `docs/release_audits/`
+- release audit exists in `docs/reports/release-audits/`
 - audit result is not `BLOCKED`
 - TASK, REV, and QA evidence exists
 - locked contract quality gate evidence exists

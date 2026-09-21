@@ -40,14 +40,14 @@ func TestAuditSharedModelCLIAndPinnedGitTree(t *testing.T) {
 
 	// The authoring checkout now contains a malformed valid example, but the
 	// formal view remains pinned to the committed valid bytes.
-	auditPut(t, root, "docs/design/data-model/request.json", `{"order_id":42}`)
+	auditPut(t, root, "docs/architecture/data-model/request.json", `{"order_id":42}`)
 	if result, err := semantic.ContractsCheckWithFiles(root, view, "REQ-001"); err != nil || len(result.Problems) != 0 {
 		t.Fatalf("pinned Git view consumed dirty bytes: err=%v result=%+v", err, result)
 	}
 	if code, out, errOut := auditCLI(t, root); code != 1 || !strings.Contains(out+errOut, "valid example") {
 		t.Fatalf("disk authoring check must report dirty invalid example: code=%d stdout=%s stderr=%s", code, out, errOut)
 	}
-	auditGit(t, root, "add", "docs/design/data-model/request.json")
+	auditGit(t, root, "add", "docs/architecture/data-model/request.json")
 	auditGit(t, root, "commit", "-qm", "dirty example")
 	if err := view.Verify(); err == nil {
 		t.Fatal("formal Git view accepted a moved development ref")
@@ -59,7 +59,7 @@ func TestAuditSharedModelCLIAndPinnedGitTree(t *testing.T) {
 // still diagnoses every explicitly adopted index.
 func TestAuditSharedModelREQScopeKeepsOtherIndexOutOfBatch(t *testing.T) {
 	root := auditPilot(t)
-	auditPut(t, root, "docs/contracts/CONTRACTS-002.md", "> Status: locked\n> REQ: REQ-002\n> Shared model policy: json-schema-v1\n\n## Shared model baseline\n\n| Operation | Slot | Schema | Consumers | Valid example | Structural negative |\n|:---|:---|:---|:---|:---|:---|\n| broken | request | [missing](../design/data-model/missing.json) | [FE](FE-001.md) | [valid](../design/data-model/missing.json) | N/A |\n")
+	auditPut(t, root, "docs/dev/contracts/CONTRACTS-002.md", "> Status: locked\n> REQ: REQ-002\n> Shared model policy: json-schema-v1\n\n## Shared model baseline\n\n| Operation | Slot | Schema | Consumers | Valid example | Structural negative |\n|:---|:---|:---|:---|:---|:---|\n| broken | request | [missing](../../architecture/data-model/missing.json) | [FE](FE-001.md) | [valid](../../architecture/data-model/missing.json) | N/A |\n")
 	if result := sharedmodel.Check(root, fileview.Disk{Root: root}, "REQ-001"); len(result.Problems) != 0 {
 		t.Fatalf("REQ-001 check leaked malformed REQ-002 index: %#v", result.Problems)
 	}
@@ -73,7 +73,7 @@ func TestAuditSharedModelREQScopeKeepsOtherIndexOutOfBatch(t *testing.T) {
 // must remain legal without a custom registry or graph checker.
 func TestAuditSharedModelNativeAnchorAndRecursion(t *testing.T) {
 	root := auditPilot(t)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	schema := auditJSONMap(t, schemaPath)
 	schema["$id"] = "https://example.invalid/shared/orders-v1"
 	defs := schema["$defs"].(map[string]any)
@@ -82,20 +82,20 @@ func TestAuditSharedModelNativeAnchorAndRecursion(t *testing.T) {
 	request["properties"].(map[string]any)["next"] = map[string]any{"$ref": "#request"}
 	auditJSONPut(t, schemaPath, schema)
 	for _, name := range []string{"FE-001.md", "BE-001.md", "SYNC-001.md"} {
-		path := filepath.Join(root, "docs/contracts", name)
+		path := filepath.Join(root, "docs/dev/contracts", name)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		updated := strings.ReplaceAll(string(data), "orders.schema.json#/$defs/request", "orders.schema.json#request")
-		auditPut(t, root, filepath.ToSlash(filepath.Join("docs/contracts", name)), updated)
+		auditPut(t, root, filepath.ToSlash(filepath.Join("docs/dev/contracts", name)), updated)
 	}
-	index := filepath.Join(root, "docs/contracts/CONTRACTS-001.md")
+	index := filepath.Join(root, "docs/dev/contracts/CONTRACTS-001.md")
 	data, err := os.ReadFile(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auditPut(t, root, "docs/contracts/CONTRACTS-001.md", strings.ReplaceAll(string(data), "orders.schema.json#/$defs/request", "orders.schema.json#request"))
+	auditPut(t, root, "docs/dev/contracts/CONTRACTS-001.md", strings.ReplaceAll(string(data), "orders.schema.json#/$defs/request", "orders.schema.json#request"))
 	if result := sharedmodel.Check(root, fileview.Disk{Root: root}); len(result.Problems) != 0 {
 		t.Fatalf("native anchor/recursive schema rejected: %#v", result.Problems)
 	}
@@ -106,7 +106,7 @@ func TestAuditSharedModelNativeAnchorAndRecursion(t *testing.T) {
 // compiler to fetch a remote dependency.
 func TestAuditSharedModelRejectsNetworkSchemaReference(t *testing.T) {
 	root := auditPilot(t)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	schema := auditJSONMap(t, schemaPath)
 	request := schema["$defs"].(map[string]any)["request"].(map[string]any)
 	request["properties"].(map[string]any)["order_id"] = map[string]any{"$ref": "https://example.invalid/remote.json"}
@@ -129,11 +129,11 @@ func TestAuditSharedModelFormalGitRejectsModelSymlink(t *testing.T) {
 	auditGit(t, root, "commit", "-qm", "shared model baseline")
 	worker := filepath.Join(root, ".custom-worker")
 	auditGit(t, root, "worktree", "add", "-b", "worker", worker)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	if err := os.Remove(schemaPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(worker, "docs/design/data-model/orders.schema.json"), schemaPath); err != nil {
+	if err := os.Symlink(filepath.Join(worker, "docs/architecture/data-model/orders.schema.json"), schemaPath); err != nil {
 		t.Fatal(err)
 	}
 	view, err := fileview.New(root, "refs/heads/development", []fileview.Rule{{Path: ".", Source: "git_tree"}})
@@ -161,11 +161,11 @@ func TestAuditSharedModelDiskRejectsInternalWorktreeSymlink(t *testing.T) {
 	auditGit(t, root, "commit", "-qm", "shared model baseline")
 	worker := filepath.Join(root, ".custom-worker")
 	auditGit(t, root, "worktree", "add", "-b", "worker", worker)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	if err := os.Remove(schemaPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(worker, "docs/design/data-model/orders.schema.json"), schemaPath); err != nil {
+	if err := os.Symlink(filepath.Join(worker, "docs/architecture/data-model/orders.schema.json"), schemaPath); err != nil {
 		t.Fatal(err)
 	}
 	result := sharedmodel.Check(root, fileview.Disk{Root: root})
@@ -178,30 +178,30 @@ func TestAuditSharedModelDiskRejectsInternalWorktreeSymlink(t *testing.T) {
 // acceptance case. Different schema files may not claim the same stable ID.
 func TestAuditSharedModelDuplicateStableIDProbe(t *testing.T) {
 	root := auditPilot(t)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	schema := auditJSONMap(t, schemaPath)
 	// Put the duplicate stable identifier on the exact authoritative subschema
 	// selected by the first row, not only on its containing document.
 	request := schema["$defs"].(map[string]any)["request"].(map[string]any)
 	request["$id"] = "https://example.invalid/shared/stable-id"
 	auditJSONPut(t, schemaPath, schema)
-	auditPut(t, root, "docs/design/data-model/other.schema.json", `{"$id":"https://example.invalid/shared/stable-id","type":"object","required":["state"],"properties":{"state":{"type":"string"}},"additionalProperties":false}`)
-	auditPut(t, root, "docs/design/data-model/other.json", `{"state":"cancelled"}`)
-	indexPath := filepath.Join(root, "docs/contracts/CONTRACTS-001.md")
+	auditPut(t, root, "docs/architecture/data-model/other.schema.json", `{"$id":"https://example.invalid/shared/stable-id","type":"object","required":["state"],"properties":{"state":{"type":"string"}},"additionalProperties":false}`)
+	auditPut(t, root, "docs/architecture/data-model/other.json", `{"state":"cancelled"}`)
+	indexPath := filepath.Join(root, "docs/dev/contracts/CONTRACTS-001.md")
 	index, err := os.ReadFile(indexPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := "| cancelOrder | response-409 | [other](../design/data-model/other.schema.json) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../design/data-model/other.json) | N/A |"
-	auditPut(t, root, "docs/contracts/CONTRACTS-001.md", strings.Replace(string(index), "\n## Coverage", "\n"+row+"\n\n## Coverage", 1))
+	row := "| cancelOrder | response-409 | [other](../../architecture/data-model/other.schema.json) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../../architecture/data-model/other.json) | N/A |"
+	auditPut(t, root, "docs/dev/contracts/CONTRACTS-001.md", strings.Replace(string(index), "\n## Coverage", "\n"+row+"\n\n## Coverage", 1))
 	for _, name := range []string{"FE-001.md", "BE-001.md", "SYNC-001.md"} {
-		path := filepath.Join(root, "docs/contracts", name)
+		path := filepath.Join(root, "docs/dev/contracts", name)
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		updated := strings.Replace(string(data), "\n<a id=", "\n- [Other](../design/data-model/other.schema.json)\n\n<a id=", 1)
-		auditPut(t, root, filepath.ToSlash(filepath.Join("docs/contracts", name)), updated)
+		updated := strings.Replace(string(data), "\n<a id=", "\n- [Other](../../architecture/data-model/other.schema.json)\n\n<a id=", 1)
+		auditPut(t, root, filepath.ToSlash(filepath.Join("docs/dev/contracts", name)), updated)
 	}
 	result := sharedmodel.Check(root, fileview.Disk{Root: root})
 	if !strings.Contains(strings.Join(result.Problems, "\n"), "duplicate") {
@@ -214,7 +214,7 @@ func TestAuditSharedModelDuplicateStableIDProbe(t *testing.T) {
 // pilot's CONTRACTS-001.md index.
 func TestAuditSharedModelSameSourceReuseAcrossIndexes(t *testing.T) {
 	root := auditPilot(t)
-	auditPut(t, root, "docs/contracts/CONTRACTS-001-extra.md", `# Supplemental cancellation contracts
+	auditPut(t, root, "docs/dev/contracts/CONTRACTS-001-extra.md", `# Supplemental cancellation contracts
 
 > REQ: REQ-001
 > Shared model policy: json-schema-v1
@@ -223,7 +223,7 @@ func TestAuditSharedModelSameSourceReuseAcrossIndexes(t *testing.T) {
 
 | Operation | Slot | Schema | Consumers | Valid example | Structural negative |
 |:---|:---|:---|:---|:---|:---|
-| cancelOrder | request | [request](../design/data-model/orders.schema.json#/$defs/request) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../design/data-model/request.json) | [structural negative](../design/data-model/invalid-request.json) |
+| cancelOrder | request | [request](../../architecture/data-model/orders.schema.json#/$defs/request) | [FE](FE-001.md) [BE](BE-001.md) [SYNC](SYNC-001.md) | [valid](../../architecture/data-model/request.json) | [structural negative](../../architecture/data-model/invalid-request.json) |
 `)
 	if result := sharedmodel.Check(root, fileview.Disk{Root: root}, "REQ-001"); len(result.Problems) != 0 {
 		t.Fatalf("same schema source was rejected across same-REQ indexes: %#v", result.Problems)
@@ -235,21 +235,21 @@ func TestAuditSharedModelSameSourceReuseAcrossIndexes(t *testing.T) {
 // authoring check when the declarations are scoped correctly.
 func TestAuditSharedModelDifferentREQIsolation(t *testing.T) {
 	root := auditPilot(t)
-	ordersPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	ordersPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	orders := auditJSONMap(t, ordersPath)
 	orders["$defs"].(map[string]any)["request"].(map[string]any)["$id"] = "https://example.invalid/shared/same-id"
 	auditJSONPut(t, ordersPath, orders)
-	auditPut(t, root, "docs/design/data-model/other.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://example.invalid/shared/same-id","type":"object","required":["order_id"],"properties":{"order_id":{"type":"integer","minimum":1}},"additionalProperties":false}`)
-	auditPut(t, root, "docs/design/data-model/other.json", `{"order_id":1}`)
+	auditPut(t, root, "docs/architecture/data-model/other.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://example.invalid/shared/same-id","type":"object","required":["order_id"],"properties":{"order_id":{"type":"integer","minimum":1}},"additionalProperties":false}`)
+	auditPut(t, root, "docs/architecture/data-model/other.json", `{"order_id":1}`)
 	for _, name := range []string{"FE-002.md", "BE-002.md", "SYNC-002.md"} {
-		auditPut(t, root, "docs/contracts/"+name, `# REQ-002 consumer
+		auditPut(t, root, "docs/dev/contracts/"+name, `# REQ-002 consumer
 
 ## Shared model inputs
 
-- [request](../design/data-model/other.schema.json)
+- [request](../../architecture/data-model/other.schema.json)
 `)
 	}
-	auditPut(t, root, "docs/contracts/CONTRACTS-002.md", `# Separate requirement
+	auditPut(t, root, "docs/dev/contracts/CONTRACTS-002.md", `# Separate requirement
 
 > REQ: REQ-002
 > Shared model policy: json-schema-v1
@@ -258,7 +258,7 @@ func TestAuditSharedModelDifferentREQIsolation(t *testing.T) {
 
 | Operation | Slot | Schema | Consumers | Valid example | Structural negative |
 |:---|:---|:---|:---|:---|:---|
-| cancelOrder | request | [request](../design/data-model/other.schema.json) | [FE](FE-002.md) [BE](BE-002.md) [SYNC](SYNC-002.md) | [valid](../design/data-model/other.json) | N/A |
+| cancelOrder | request | [request](../../architecture/data-model/other.schema.json) | [FE](FE-002.md) [BE](BE-002.md) [SYNC](SYNC-002.md) | [valid](../../architecture/data-model/other.json) | N/A |
 `)
 	for _, req := range []string{"REQ-001", ""} {
 		if result := sharedmodel.Check(root, fileview.Disk{Root: root}, req); len(result.Problems) != 0 {
@@ -272,7 +272,7 @@ func TestAuditSharedModelDifferentREQIsolation(t *testing.T) {
 // carries an ordinary "$id" property that must remain data.
 func TestAuditSharedModelSchemaIDClosureSkipsInstanceIDs(t *testing.T) {
 	root := auditPilot(t)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	schema := auditJSONMap(t, schemaPath)
 	request := schema["$defs"].(map[string]any)["request"].(map[string]any)
 	request["$id"] = "request-resource.json"
@@ -280,8 +280,8 @@ func TestAuditSharedModelSchemaIDClosureSkipsInstanceIDs(t *testing.T) {
 	properties["metadata"] = map[string]any{"type": "object"}
 	properties["next"] = map[string]any{"$ref": "next.schema.json"}
 	auditJSONPut(t, schemaPath, schema)
-	auditPut(t, root, "docs/design/data-model/next.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://example.invalid/shared/next-v1","type":"object","$defs":{"nested":{"$id":"https://example.invalid/shared/nested-v1","type":"object"}}}`)
-	auditPut(t, root, "docs/design/data-model/request.json", `{"order_id":"order-1","metadata":{"$id":"https://example.invalid/shared/nested-v1"}}`)
+	auditPut(t, root, "docs/architecture/data-model/next.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://example.invalid/shared/next-v1","type":"object","$defs":{"nested":{"$id":"https://example.invalid/shared/nested-v1","type":"object"}}}`)
+	auditPut(t, root, "docs/architecture/data-model/request.json", `{"order_id":"order-1","metadata":{"$id":"https://example.invalid/shared/nested-v1"}}`)
 	if result := sharedmodel.Check(root, fileview.Disk{Root: root}); len(result.Problems) != 0 {
 		t.Fatalf("schema closure or instance $id handling rejected valid model: %#v", result.Problems)
 	}
@@ -289,13 +289,13 @@ func TestAuditSharedModelSchemaIDClosureSkipsInstanceIDs(t *testing.T) {
 
 func TestAuditSharedModelTransitiveNestedStableIDConflict(t *testing.T) {
 	root := auditPilot(t)
-	schemaPath := filepath.Join(root, "docs/design/data-model/orders.schema.json")
+	schemaPath := filepath.Join(root, "docs/architecture/data-model/orders.schema.json")
 	schema := auditJSONMap(t, schemaPath)
 	request := schema["$defs"].(map[string]any)["request"].(map[string]any)
 	request["$id"] = "request-resource.json"
 	request["properties"].(map[string]any)["next"] = map[string]any{"$ref": "next.schema.json"}
 	auditJSONPut(t, schemaPath, schema)
-	auditPut(t, root, "docs/design/data-model/next.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","$defs":{"nested":{"$id":"request-resource.json","type":"object"}}}`)
+	auditPut(t, root, "docs/architecture/data-model/next.schema.json", `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","$defs":{"nested":{"$id":"request-resource.json","type":"object"}}}`)
 	result := sharedmodel.Check(root, fileview.Disk{Root: root})
 	if !strings.Contains(strings.Join(result.Problems, "\n"), "duplicate schema $id") {
 		t.Fatalf("nested transitive schema $id conflict was accepted: %#v", result.Problems)

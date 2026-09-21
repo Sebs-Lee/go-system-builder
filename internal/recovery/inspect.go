@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,19 +19,18 @@ var recoveryInputFiles = []string{
 	".claude/loop-state.json.fingerprint-pending.json",
 	".claude/loop-state.json.rollover-pending.json",
 	".claude/loop-state.json.recovery-pending.json",
-	"docs/loop-definition.json",
-	"docs/hook-policy.json",
+	projectlayout.Definition,
+	projectlayout.Policy,
 }
 
 var recoveryInputDirectories = []string{
 	".claude/evidence",
 	".claude/workgroups",
-	"docs/requirements",
-	"docs/design",
-	"docs/contracts",
-	"docs/tasks",
-	"docs/reports",
-	"docs/release_audits",
+	projectlayout.Requirements,
+	"docs/design", projectlayout.Architecture,
+	projectlayout.Contracts,
+	projectlayout.Tasks,
+	projectlayout.Reports,
 }
 
 // Inspect validates the explicit REQ and inventories durable recovery inputs
@@ -319,7 +319,7 @@ func inputKind(relativePath string) string {
 	case ".claude/loop-state.json.commit-pending.json", ".claude/loop-state.json.fingerprint-pending.json", ".claude/loop-state.json.rollover-pending.json", ".claude/loop-state.json.recovery-pending.json":
 		return InputKindRuntimePending
 	default:
-		if strings.HasPrefix(relativePath, "docs/requirements/") && strings.HasPrefix(filepath.Base(filepath.FromSlash(relativePath)), "REQ-") {
+		if strings.HasPrefix(relativePath, projectlayout.Requirements+"/") && strings.HasPrefix(filepath.Base(filepath.FromSlash(relativePath)), "REQ-") {
 			return InputKindREQ
 		}
 		return InputKindArtifact

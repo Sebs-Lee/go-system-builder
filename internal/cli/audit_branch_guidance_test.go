@@ -64,18 +64,18 @@ func TestAuditS6StatusDoesNotAdvertiseBeforeDocumentPass(t *testing.T) {
 
 // TestAuditGuidanceUsesREQScopedPlanPath catches stale template links left
 // behind by the waves-v1 migration. The current S4 contract is
-// docs/tasks/index-REQ-<id>.md; there is no docs/tasks/index.md entry point.
+// docs/dev/tasks/index-REQ-<id>.md; there is no docs/dev/tasks/index.md entry point.
 func TestAuditGuidanceUsesREQScopedPlanPath(t *testing.T) {
 
 	templatePaths := []string{
-		"docs/contracts/CONTRACTS-template.md",
-		"docs/contracts/FE-contract-template.md",
-		"docs/contracts/BE-contract-template.md",
-		"docs/contracts/SYNC-contract-template.md",
+		"docs/dev/contracts/CONTRACTS-template.md",
+		"docs/dev/contracts/FE-contract-template.md",
+		"docs/dev/contracts/BE-contract-template.md",
+		"docs/dev/contracts/SYNC-contract-template.md",
 		"docs/requirements/REQ-template.md",
 		"docs/project-map-template.md",
 		"docs/reports/acceptance/ACC-template.md",
-		"docs/release_audits/TEMPLATE.md",
+		"docs/reports/release-audits/TEMPLATE.md",
 	}
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -87,11 +87,11 @@ func TestAuditGuidanceUsesREQScopedPlanPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
-		if strings.Contains(string(data), "docs/tasks/index.md") || strings.Contains(string(data), "../tasks/index.md") {
+		if strings.Contains(string(data), "docs/dev/tasks/index.md") || strings.Contains(string(data), "../tasks/index.md") {
 			t.Errorf("%s still points at the absent unscoped plan index", rel)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "docs/tasks/index.md")); !os.IsNotExist(err) {
-		t.Fatalf("docs/tasks/index.md unexpectedly exists: %v", err)
+	if _, err := os.Stat(filepath.Join(repoRoot, "docs/dev/tasks/index.md")); !os.IsNotExist(err) {
+		t.Fatalf("docs/dev/tasks/index.md unexpectedly exists: %v", err)
 	}
 }

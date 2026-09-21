@@ -40,13 +40,13 @@ func TestL4AuditAssignmentAndTaskCompletionRefsShareCanonicalSource(t *testing.T
 		}},
 		"tasks": []any{map[string]any{
 			"id": "TASK-039-01", "state": "in_progress",
-			"path":            "docs/tasks/TASK-039-01.md",
+			"path":            "docs/dev/tasks/TASK-039-01.md",
 			"sha256":          "0000000000000000000000000000000000000000000000000000000000000001",
 			"owner_agent_ids": []any{"builder-ti"},
 		}},
 		"bugs": []any{}, "teams": []any{},
 	}
-	taskPath := filepath.Join(root, "docs/tasks/TASK-039-01.md")
+	taskPath := filepath.Join(root, "docs/dev/tasks/TASK-039-01.md")
 	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestL4AuditS9DispatchWorktreeCopiesFormalInputs(t *testing.T) {
 
 	root := freshRoot(t)
 	setupGitWorktreeFixture(t, root)
-	writeAuditDispatchFile(t, root, "docs/agent-protocol.md", "# agent protocol\n")
+	writeAuditDispatchFile(t, root, "docs/control/agent-protocol.md", "# agent protocol\n")
 	writeAuditDispatchFile(t, root, "agents/backend-builder.md", "# backend builder\n")
 
 	contractRel := ".claude/review/investigation/contracts/repair-contract-audit-s9.json"
@@ -251,7 +251,7 @@ func TestL4AuditS9DispatchWorktreeCopiesFormalInputs(t *testing.T) {
 	}
 	missing := []string{}
 	for _, readPath := range manifest.Assignments[0].ReadPaths {
-		if readPath == "docs/agent-protocol.md" {
+		if readPath == "docs/control/agent-protocol.md" {
 			continue // committed repository input; this one is expected to travel with Git.
 		}
 		if _, err := os.Stat(filepath.Join(workerPath, filepath.FromSlash(readPath))); os.IsNotExist(err) {

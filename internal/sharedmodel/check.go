@@ -5,6 +5,7 @@ package sharedmodel
 import (
 	"bytes"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -98,7 +99,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 	r := Result{Files: map[string][]byte{}}
 	root, _ = filepath.Abs(root)
 	files = bounded(root, files)
-	entries, err := files.ReadDir(filepath.Join(root, "docs/contracts"))
+	entries, err := files.ReadDir(filepath.Join(root, projectlayout.Contracts))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			r.Problems = append(r.Problems, "read contracts: "+err.Error())
@@ -116,7 +117,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 		if e.IsDir() || !strings.HasPrefix(e.Name(), "CONTRACTS-") || !strings.HasSuffix(e.Name(), ".md") || strings.Contains(strings.ToLower(e.Name()), "template") {
 			continue
 		}
-		rel := "docs/contracts/" + e.Name()
+		rel := "docs/dev/contracts/" + e.Name()
 		b, err := files.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			r.Problems = append(r.Problems, err.Error())
@@ -227,7 +228,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 					continue
 				}
 				base := filepath.Base(cp)
-				if filepath.Dir(cp) != "docs/contracts" || !strings.HasSuffix(base, ".md") || !(strings.HasPrefix(base, "FE-") || strings.HasPrefix(base, "BE-") || strings.HasPrefix(base, "SYNC-")) {
+				if filepath.Dir(cp) != projectlayout.Contracts || !strings.HasSuffix(base, ".md") || !(strings.HasPrefix(base, "FE-") || strings.HasPrefix(base, "BE-") || strings.HasPrefix(base, "SYNC-")) {
 					fail(fmt.Errorf("consumer must be a FE/BE/SYNC contract: %s", cp))
 					continue
 				}

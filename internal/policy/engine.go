@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,7 @@ import (
 //   - locked_artifact_write  — the affected path matches a LockedArtifact
 //     manifest entry whose identity is complete (ID/kind/path/version/
 //     sha256/locked_from_stage/baseline_generation).
+//   - retired_layout_write — a known mutation path would recreate docs/product.
 //   - squash_merge           — tokenized resolver proves the command is a
 //     git merge --squash or gh pr merge --squash.
 //   - reviewer_product_write — during the verification stage a write targets
@@ -78,7 +80,7 @@ const (
 	// reverifiers and S10 auditors are all covered by one hard deny.
 	RulePhaseProductWrite = "phase_product_write"
 	// RuleProtectedReleaseCommand wires the data-driven protected-commands
-	// table (docs/release_audits/protected_commands.json) into the PreToolUse
+	// table (docs/control/protected-commands.json) into the PreToolUse
 	// enforce path (RC-06, S10-3 — formerly dead code: classifier.MatchProtectedCommands
 	// was only reachable from tests). git push to protected refs, formal
 	// releases, publishes, infra applies and shell wrappers are hard-denied
@@ -286,7 +288,7 @@ type Guidance struct {
 	Recovery       []string `json:"recovery"`
 }
 
-// Rule is the on-disk representation of a docs/hook-policy.json rules[]
+// Rule is the on-disk representation of a docs/control/hook-policy.json rules[]
 // entry. The repository document keeps the two globally configured rules;
 // lifecycle barriers require the loaded Runtime/Assignment projection and
 // therefore remain deterministic code-level rules. The engine loads the
@@ -305,7 +307,7 @@ type Rule struct {
 	HumanRequired  bool     `json:"human_required"`
 }
 
-// document is the on-disk representation of docs/hook-policy.json.
+// document is the on-disk representation of docs/control/hook-policy.json.
 type document struct {
 	PolicyID string `json:"policy_id"`
 	Version  string `json:"version"`
@@ -364,6 +366,35 @@ func (e *Engine) HasRule(id string) bool {
 	return ok
 }
 
+// RuleRetiredLayoutWrite prevents a tool from creating a directory that the
+// next Harness invocation would reject as a mixed document layout.
+const RuleRetiredLayoutWrite = "retired_layout_write"
+
+func retiredLayoutWriteDecision(input Input) (Decision, bool) {
+	if input.Event != "PreToolUse" {
+		return Decision{}, false
+	}
+	paths, mutating := repairMutationPaths(input)
+	if !mutating {
+		return Decision{}, false
+	}
+	paths = append(paths, provenMutationPaths(input)...)
+	for _, path := range paths {
+		rel := reviewerRelativePath(input, path)
+		if rel != "docs/product" && !strings.HasPrefix(rel, "docs/product/") {
+			continue
+		}
+		return Decision{
+			Decision: "deny", RuleID: RuleRetiredLayoutWrite,
+			Reason:       "docs/product is a retired layout; requirements belong in docs/requirements",
+			AffectedPath: rel, Stage: input.Runtime.CurrentStage,
+			Recovery: []string{"use docs/requirements/ for REQ documents; do not recreate docs/product/"},
+			Retry:    RetryAfterRecoveryValidation, MatchedRuleIDs: []string{RuleRetiredLayoutWrite},
+		}, true
+	}
+	return Decision{}, false
+}
+
 func (e *Engine) Evaluate(input Input) (Decision, error) {
 	input = withPathScope(input)
 	if decision, blocked := unknownMCPToolDecision(input); blocked {
@@ -374,6 +405,9 @@ func (e *Engine) Evaluate(input Input) (Decision, error) {
 	// rule would also match. Fail-closed: an unreadable/malformed table
 	// denies the command rather than letting it through unclassified.
 	if decision, blocked := protectedReleaseDecision(input); blocked {
+		return decision, nil
+	}
+	if decision, blocked := retiredLayoutWriteDecision(input); blocked {
 		return decision, nil
 	}
 	if decision, blocked := lockedArtifactDecision(input); blocked {
@@ -578,7 +612,10 @@ func repairControlPathAllowed(input Input, rawPath string) bool {
 		return true
 	}
 	rel := reviewerRelativePath(input, rawPath)
-	for _, prefix := range []string{".claude/review/repair", ".claude/evidence", "docs/reports"} {
+	if projectlayout.IsReleaseAudit(rel) {
+		return false
+	}
+	for _, prefix := range []string{".claude/review/repair", ".claude/evidence", projectlayout.Reports} {
 		if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
 			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
 		}
@@ -801,7 +838,7 @@ func reviewerProductWriteBlock(input Input, rawPath string) Decision {
 //
 // Allow surfaces mirror reviewerProductWriteDecision: the control plane
 // (.claude/), the report projections (docs/reports/ + the S10 evidence
-// baselines docs/reports/acceptance/ and docs/release_audits/), and the
+// baselines docs/reports/acceptance/ and docs/reports/release-audits/), and the
 // ReviewPlan's verification artifact workspace.
 func phaseProductWriteDecision(input Input) (Decision, bool) {
 	if input.Event != "PreToolUse" || !phaseProductWriteFrozen(input) {
@@ -859,14 +896,14 @@ func phaseProductWriteFrozen(input Input) bool {
 
 // phaseWritePathAllowed extends the reviewer allow list with the two S10
 // evidence baselines (docs/reports/acceptance/ for ACC artifacts and
-// docs/release_audits/ for release-audit reports — docs/rules/change-control
+// docs/reports/release-audits/ for release-audit reports — docs/rules/change-control
 // §2) so audit work stays inside the control/report surfaces.
 func phaseWritePathAllowed(input Input, rawPath string) bool {
 	if temporaryWorktreePath(input, rawPath) {
 		return true
 	}
 	rel := reviewerRelativePath(input, rawPath)
-	for _, prefix := range []string{".claude/evidence/", "docs/reports/", "docs/release_audits/"} {
+	for _, prefix := range []string{".claude/evidence/", "docs/reports/", "docs/reports/release-audits/"} {
 		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
 			return input.Runtime.ProjectRoot == "" || reviewerPathContained(input.Runtime.ProjectRoot, rel)
 		}
@@ -888,10 +925,10 @@ func phaseProductWriteBlock(input Input, rawPath string) Decision {
 	return Decision{
 		Decision:     "deny",
 		RuleID:       RulePhaseProductWrite,
-		Reason:       fmt.Sprintf("%s freezes the product surface; %s is outside the allowed write surfaces (.claude/, docs/reports/, docs/release_audits/, and the ReviewPlan verification_artifact_workspace)", cursor, rel),
+		Reason:       fmt.Sprintf("%s freezes the product surface; %s is outside the allowed write surfaces (.claude/, docs/reports/, docs/reports/release-audits/, and the ReviewPlan verification_artifact_workspace)", cursor, rel),
 		AffectedPath: rel,
 		Recovery: []string{
-			"write investigation, repair and audit artifacts under .claude/ or docs/reports/ (release-audit reports also allow docs/release_audits/)",
+			"write investigation, repair and audit artifacts under .claude/ or docs/reports/ (release-audit reports also allow docs/reports/release-audits/)",
 			"E2E cold-start spec/fixture writes belong in the ReviewPlan verification_artifact_workspace",
 			"product implementation changes are legal only in bug_resolution.fixing through BeginRepairExecution with an approved RepairContract and a dispatched repair Assignment (S9); verification findings must go through a ReviewResult with verdict=finding instead",
 		},
@@ -919,6 +956,9 @@ func reviewerWritePathAllowed(input Input, rawPath string) bool {
 		return true
 	}
 	rel := reviewerRelativePath(input, rawPath)
+	if projectlayout.IsReleaseAudit(rel) {
+		return false
+	}
 	allowed := []string{".claude/evidence/", "docs/reports/"}
 	if workspace := strings.TrimSuffix(filepath.ToSlash(input.Runtime.VerificationWorkspace), "/"); workspace != "" {
 		allowed = append(allowed, workspace+"/")
@@ -1154,7 +1194,7 @@ func bashMutationPaths(command string) ([]string, bool) {
 
 // protectedReleaseDecision implements RC-06 (S10-3): the protected-commands
 // table drives a hard deny on the PreToolUse enforce path. The table is
-// data-driven (docs/release_audits/protected_commands.json) and matched via
+// data-driven (docs/control/protected-commands.json) and matched via
 // classifier.Resolve + classifier.MatchProtectedCommands, which were
 // previously reachable only from tests. ProjectRoot comes from the runtime
 // projection; when it is empty the table cannot be located and the check is
@@ -1173,7 +1213,10 @@ func protectedReleaseDecision(input Input) (Decision, bool) {
 		return Decision{}, false
 	}
 	table, err := classifier.LoadProtectedCommands(root)
-	if err != nil || len(table) == 0 {
+	if err == nil && len(table) == 0 {
+		err = fmt.Errorf("protected command table is empty")
+	}
+	if err != nil {
 		// Fail closed: a broken or missing table means the release surface
 		// is unclassified — refuse the Bash call with the same rule id so
 		// the caller sees the boundary instead of a silent allow.
@@ -1183,7 +1226,7 @@ func protectedReleaseDecision(input Input) (Decision, bool) {
 			Reason:         "protected_commands table unreadable (" + err.Error() + "); refusing unclassified Bash",
 			ParsedCommand:  command,
 			Stage:          input.Runtime.CurrentStage,
-			Recovery:       []string{"repair docs/release_audits/protected_commands.json before running shell commands"},
+			Recovery:       []string{"repair docs/control/protected-commands.json before running shell commands"},
 			Retry:          RetryAfterRecoveryValidation,
 			HumanRequired:  false,
 			MatchedRuleIDs: []string{RuleProtectedReleaseCommand},
@@ -1270,12 +1313,15 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 				samePath(path, artifact.Path) {
 				recovery := []string{"create a new version through the formal rework path"}
 				if input.Runtime.BoundREQID != "" && artifact.Kind != "req" {
-					recovery = []string{ReworkPath(
-						artifact.Kind,
-						input.Runtime.BoundREQID,
-						artifact.BaselineGeneration+1,
-						filepath.Base(artifact.Path),
-					)}
+					kind := artifact.Kind
+					// Architecture documents retain kind=design; their storage root
+					// is determined by the actual locked artifact, not that broad kind.
+					if strings.HasPrefix(artifact.Path, projectlayout.Architecture+"/") {
+						kind = "architecture"
+					}
+					if path := ReworkPath(kind, input.Runtime.BoundREQID, artifact.BaselineGeneration+1, filepath.Base(artifact.Path)); path != "" {
+						recovery = []string{path}
+					}
 				}
 				decision := "block"
 				retry := RetryNever
@@ -1302,18 +1348,15 @@ func lockedArtifactDecision(input Input) (Decision, bool) {
 }
 
 // ReworkPath returns the versioned rework path for a locked artifact. S5
-// after lock requires writes to land under docs/{kind}/versions/{REQ-ID}/
+// after lock requires writes to land under the canonical artifact directory/versions/{REQ-ID}/
 // g{generation}/{canonical-file-name} so the old generation stays
 // immutable until manifest CAS retires it (REQ-039 §10.1.1).
 func ReworkPath(kind, reqID string, generation int, canonicalFileName string) string {
-	return filepath.Join(
-		"docs",
-		kind,
-		"versions",
-		reqID,
-		fmt.Sprintf("g%d", generation),
-		canonicalFileName,
-	)
+	base := map[string]string{"req": projectlayout.Requirements, "contract": projectlayout.Contracts, "contracts": projectlayout.Contracts, "task": projectlayout.Tasks, "tasks": projectlayout.Tasks, "architecture": projectlayout.Architecture, "design": "docs/design", "ui_baseline": "docs/design", "ui_prototype": "docs/design/prototypes", "dispatch_plan": projectlayout.Tasks}[kind]
+	if base == "" {
+		return "" // Unknown kinds need a formal rework plan, not an invented directory.
+	}
+	return filepath.Join(base, "versions", reqID, fmt.Sprintf("g%d", generation), canonicalFileName)
 }
 
 func provenMutationPaths(input Input) []string {

@@ -21,7 +21,10 @@ func newUXTestRoot(t *testing.T, reqs map[string]string) string {
 	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"docs/loop-definition.json", "docs/hook-policy.json"} {
+	if err := os.MkdirAll(filepath.Join(root, "docs/control"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"docs/control/loop-definition.json", "docs/control/hook-policy.json"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)
@@ -232,5 +235,106 @@ func TestREQBindingUsesCommittedBytesAndExplicitDestinations(t *testing.T) {
 	binding := state["bound_req"].(map[string]any)["workspace"].(map[string]any)
 	if binding["dev_branch"] != "feature/req" || binding["release_upstream"] != "origin/release" || binding["bound_commit"] == "" {
 		t.Fatalf("lost binding: %v", binding)
+	}
+}
+
+func TestExplicitLegacyStateCannotBeReconciled(t *testing.T) {
+	for _, legacy := range []string{"definition", "bound_req"} {
+		t.Run(legacy, func(t *testing.T) {
+			root := newUXTestRoot(t, nil)
+			var out, errOut bytes.Buffer
+			if code := cli.Run([]string{"init", "--root", root}, strings.NewReader(""), &out, &errOut); code != 0 {
+				t.Fatal(errOut.String())
+			}
+			original := filepath.Join(root, ".claude/loop-state.json")
+			data, err := os.ReadFile(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state map[string]any
+			if err := json.Unmarshal(data, &state); err != nil {
+				t.Fatal(err)
+			}
+			if legacy == "definition" {
+				state["definition"].(map[string]any)["path"] = "docs/loop-definition.json"
+			} else {
+				state["bound_req"] = map[string]any{"path": "docs/product/requirements/REQ-001.md"}
+			}
+			state["hook_control"].(map[string]any)["policy_ref"].(map[string]any)["sha256"] = strings.Repeat("0", 64)
+			data, err = json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			external := t.TempDir()
+			statePath := filepath.Join(external, "old-state.json")
+			journalPath := filepath.Join(external, "old-events.jsonl")
+			if err := os.WriteFile(statePath, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(filepath.Join(root, ".claude/loop-events.jsonl"), journalPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(original); err != nil {
+				t.Fatal(err)
+			}
+			beforeJournal, _ := os.ReadFile(journalPath)
+			out.Reset()
+			errOut.Reset()
+			code := cli.Run([]string{"runtime", "reconcile-policy-ref", "--root", root, "--state", statePath, "--journal", journalPath}, strings.NewReader(""), &out, &errOut)
+			if code == 0 || !strings.Contains(errOut.String(), "layout migration required") {
+				t.Fatalf("old explicit Runtime accepted: %d %s %s", code, out.String(), errOut.String())
+			}
+			after, err := os.ReadFile(statePath)
+			if err != nil || !bytes.Equal(after, data) {
+				t.Fatal("legacy state changed", err)
+			}
+			afterJournal, err := os.ReadFile(journalPath)
+			if err != nil || !bytes.Equal(afterJournal, beforeJournal) {
+				t.Fatal("legacy journal changed", err)
+			}
+		})
+	}
+}
+
+func TestReadOnlyCommandsValidateExplicitRuntimeLayout(t *testing.T) {
+	root := newUXTestRoot(t, nil)
+	for _, legacy := range []bool{false, true} {
+		reqPath := "docs/requirements/REQ-001.md"
+		if legacy {
+			reqPath = "docs/product/requirements/REQ-001.md"
+		}
+		data := []byte(`{"bound_req":{"path":"` + reqPath + `"},"evidence":[]}`)
+		for _, absolute := range []bool{false, true} {
+			statePath := "external-state.json"
+			actual := filepath.Join(root, statePath)
+			if absolute {
+				actual = filepath.Join(t.TempDir(), "external-state.json")
+				statePath = actual
+			}
+			if err := os.WriteFile(actual, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range [][]string{{"impact", "analyze", "--changed", "docs/requirements/REQ-001.md"}, {"verification", "clean-round"}, {"explain", "TR-001"}} {
+				var out, errOut bytes.Buffer
+				args := append(append([]string{}, command...), "--root", root, "--state", statePath)
+				code := cli.Run(args, strings.NewReader(""), &out, &errOut)
+				if legacy {
+					if code == 0 || !strings.Contains(errOut.String(), "layout migration required") {
+						t.Fatalf("legacy state accepted by %v: %d %s %s", args, code, out.String(), errOut.String())
+					}
+				} else {
+					if errOut.Len() != 0 || out.Len() == 0 {
+						t.Fatalf("current state unreadable by %v: %d %s %s", args, code, out.String(), errOut.String())
+					}
+					if command[0] != "verification" && code != 0 {
+						t.Fatalf("current diagnostic failed: %v %d", args, code)
+					}
+				}
+				after, err := os.ReadFile(actual)
+				if err != nil || !bytes.Equal(after, data) {
+					t.Fatalf("read-only command changed state: %v", args)
+				}
+			}
+		}
 	}
 }

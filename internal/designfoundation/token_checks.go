@@ -245,7 +245,7 @@ func checkGeneratedAssetUnverifiable(root string, idx *ContractIndex) []Finding 
 		}
 		// Verifiable if references generated tokens.css or carries generator digest marker.
 		hasLink := strings.Contains(body, TokensCSSRel) || strings.Contains(body, "tokens.css")
-		hasDigest := strings.Contains(body, "Generated from "+TokensJSONRel) || strings.Contains(body, "Generated from packages/design-tokens/tokens.json")
+		hasDigest := strings.Contains(body, "Generated from "+TokensJSONRel)
 		// Inline digest may also be via "source digest" comment from emit-css
 		if !hasLink && !hasDigest {
 			findings = append(findings, Finding{

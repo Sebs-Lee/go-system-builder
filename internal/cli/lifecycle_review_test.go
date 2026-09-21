@@ -83,7 +83,7 @@ func TestUnbindForceRecordsInFlight(t *testing.T) {
 		"tasks": []any{map[string]any{
 			"id":              "TASK-001",
 			"state":           "in_progress",
-			"path":            "docs/tasks/TASK-001.md",
+			"path":            "docs/dev/tasks/TASK-001.md",
 			"sha256":          "0000000000000000000000000000000000000000000000000000000000000000",
 			"owner_agent_ids": []any{},
 		}},
@@ -311,7 +311,7 @@ func TestBindPreflightsControlPlaneDrift(t *testing.T) {
 	if code := cli.Run([]string{"init", "--root", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("init failed: %s", stderr.String())
 	}
-	defPath := filepath.Join(root, "docs", "loop-definition.json")
+	defPath := filepath.Join(root, "docs", "control", "loop-definition.json")
 	data, err := os.ReadFile(defPath)
 	if err != nil {
 		t.Fatal(err)

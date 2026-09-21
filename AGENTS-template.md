@@ -39,7 +39,7 @@ clean round, but S9 never goes directly to S10.
 **If the Runtime has a bound REQ** (`.claude/loop-state.json` shows `bound_req`):
 
 1. Read the Hook `LOOP RECOVERY` packet and follow its ordered read list.
-2. Read the current stage anchor in `docs/agent-protocol.md`; the packet already
+2. Read the current stage anchor in `docs/control/agent-protocol.md`; the packet already
    carries the canonical current state, objective, missing item and next action.
 3. Run `DRIVE()` (below). Do not stop because evidence is missing, a Hook returned `warn` or `block`, or several compliant implementations exist. Do not mistake “most-forward” for “fastest”: complete the current stage's declared coverage before advancing.
 
@@ -73,7 +73,7 @@ Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or
 
 ```text
 1. Use the current Hook packet/Milestone; verify the bound REQ is locked and its SHA-256 matches the baseline.
-2. Read the current stage contract at docs/agent-protocol.md#<stage>.
+2. Read the current stage contract at docs/control/agent-protocol.md#<stage>.
 3. Inventory completed deliverables and valid evidence from the packet, Runtime, and artifacts.
 4. If the stage is incomplete: pick the most-forward missing deliverable or
    evidence within the current stage contract from the Hook packet
@@ -104,7 +104,7 @@ Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or
 ```text
 Layer 1  Main-session Driver   this file + agent-protocol.md + loop-orchestration Skill    (drives)
 Layer 2  Wake-up Recovery      .claude/loop.md (delivered by Claude /loop)                 (re-seats driver)
-Layer 3  Event Control + Guard docs/hook-policy.json + Hooks + Runtime Milestone       (guides and blocks)
+Layer 3  Event Control + Guard docs/control/hook-policy.json + Hooks + Runtime Milestone       (guides and blocks)
 ```
 
 Layer 3 is an active control plane. Hook events trigger Runtime reconciliation,
@@ -164,7 +164,7 @@ trail.
 
 ## Stage route (summary)
 
-Full stage contracts at `docs/agent-protocol.md#s0` through `#s11`.
+Full stage contracts at `docs/control/agent-protocol.md#s0` through `#s11`.
 
 ```text
 S0 requirement_design
@@ -200,13 +200,13 @@ A Gateway package includes: type, completed work, the single unresolved fact, im
 
 | Concern | Authority |
 |:---|:---|
-| stage contracts | `docs/agent-protocol.md` |
-| legal Loop states/transitions | `docs/loop-definition.json` |
+| stage contracts | `docs/control/agent-protocol.md` |
+| legal Loop states/transitions | `docs/control/loop-definition.json` |
 | current facts + bound REQ | `.claude/loop-state.json` (Harness is sole writer) |
 | methodology | `.claude/skills/*/SKILL.md` |
 | role identity | `.claude/agents/*.md` |
 | assignments + scope | team manifest + Agent message envelopes |
-| permission boundaries | `docs/hook-policy.json` + Claude Code Hooks |
+| permission boundaries | `docs/control/hook-policy.json` + Claude Code Hooks |
 | stable policies | `docs/rules/README.md` |
 
 Do not infer runtime state from this file, `project.yaml`, project-map, a TASK body, or chat.
@@ -217,7 +217,7 @@ Do not infer runtime state from this file, `project.yaml`, project-map, a TASK b
    scheduling checkpoint.
 2. This file.
 3. `.claude/loop-state.json` and its `milestone`.
-4. `docs/agent-protocol.md#<current stage>` from the packet.
+4. `docs/control/agent-protocol.md#<current stage>` from the packet.
 5. The bound locked REQ (path from Runtime), then the primary Skill named by
    the packet.
 6. If blocked or the next action is unclear, read `.claude/bin/loop-harness.md`.

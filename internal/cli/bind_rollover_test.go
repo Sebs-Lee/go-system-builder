@@ -498,7 +498,10 @@ func newBindTestRoot(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "docs", "requirements"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"docs/loop-definition.json", "docs/hook-policy.json"} {
+	if err := os.MkdirAll(filepath.Join(root, "docs/control"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"docs/control/loop-definition.json", "docs/control/hook-policy.json"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", rel))
 		if err != nil {
 			t.Fatal(err)

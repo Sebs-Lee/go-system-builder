@@ -7,7 +7,7 @@ version: 2.2.2
 # Specification Planning
 
 ## Authority
-The locked REQ is the baseline. Design, contracts, and tasks must trace back to it. Runtime authority lives in `docs/loop-definition.json`; stage contracts live in `docs/agent-protocol.md`; Project Design Foundation lives in `docs/rules/design-foundation.md`; the method summary is inlined below.
+The locked REQ is the baseline. Design, contracts, and tasks must trace back to it. Runtime authority lives in `docs/control/loop-definition.json`; stage contracts live in `docs/control/agent-protocol.md`; Project Design Foundation lives in `docs/rules/design-foundation.md`; the method summary is inlined below.
 
 ## Entry Conditions
 - The Loop is in `planning` (phases advance design → contracts → tasks via PTR-PLAN-01/02 and TR-002).
@@ -22,7 +22,7 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 | Derivation template | `docs/design/derivation/DERIVATION-template.md` | write `docs/design/derivation/REQ-<id>.md` before expanding HTML |
 | Module current truth | `docs/design/prototypes/<module>/{index.html, stories.md, flows.md, scenario-model.json, cross-matrix.json, cases.json, scenario-coverage.json, fixture-contract.json, *.html}` | current module package and prototype gate input |
 | Rules | `docs/rules/*.md` | naming, security, api-design, state-machine, design-foundation constraints |
-| Loop Definition | `docs/loop-definition.json` | planning exit transition and executable guards |
+| Loop Definition | `docs/control/loop-definition.json` | planning exit transition and executable guards |
 
 ## Procedure — dual-track convergence (v2.0.0)
 
@@ -142,7 +142,7 @@ win.
 
 **S3/S4 steps:**
 10. Converge the shared data model and SYNC protocol first, then derive FE/BE responsibilities,
-    from the four templates under `docs/contracts/` (CONTRACTS / BE / FE /
+    from the four templates under `docs/dev/contracts/` (CONTRACTS / BE / FE /
     SYNC). Each must link to the REQ source ref and the module
     current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
     universe — one `{id} §{n}` cell per clause, and each `§n` must match
@@ -218,7 +218,7 @@ go run ./cmd/loop-harness runtime evidence add --id planning-design-pass   --kin
 
 ## Exit Conditions
 - The planning checkpoint is committed and the Loop transitioned to `document_verification`.
-- Next (NOT your job): dispatch two document-verifier subagents per `docs/agent-protocol.md #s5` — planning does not continue into S5; the activation envelopes should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
+- Next (NOT your job): dispatch two document-verifier subagents per `docs/control/agent-protocol.md #s5` — planning does not continue into S5; the activation envelopes should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
 
 ## Stop Conditions
 Stop immediately and surface to the human if any of:
@@ -251,12 +251,12 @@ Idempotency uses CAS revision checks; one committed transition per runtime
 revision.
 
 
-For new batches apply [shared-model contracts in the factory](../../docs/rules/shared-model-contracts.md) (after installation: [project rule](../../../docs/rules/shared-model-contracts.md)): explicit policy, native source references, validated examples, committed design closure and role-specific TASK links. Do not create a registry or copy schemas per REQ. Independent generation may run in parallel; only actual shared implementation artifacts require foundation TASK dependencies.
+For new batches apply [shared-model contracts in the factory](../../docs/rules/shared-model-contracts.md) (after installation: [project rule](../../docs/rules/shared-model-contracts.md)): explicit policy, native source references, validated examples, committed design closure and role-specific TASK links. Do not create a registry or copy schemas per REQ. Independent generation may run in parallel; only actual shared implementation artifacts require foundation TASK dependencies.
 
 ## Overall dispatch plan (waves-v1)
 
 Follow [factory dispatch rules](../../docs/rules/dispatch-plan.md), or after installation
-[project dispatch rules](../../../docs/rules/dispatch-plan.md). S4 delivers the REQ's
+[project dispatch rules](../../docs/rules/dispatch-plan.md). S4 delivers the REQ's
 index as an ordered wave checklist; S5 reviews and freezes it with TASKs. S6 reads
 that plan and `s6 status --capacity <actual total slots>` before dispatch, then
 recomputes after integration or capacity release. Start every compatible ready

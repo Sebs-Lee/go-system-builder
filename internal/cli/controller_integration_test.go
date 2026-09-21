@@ -18,13 +18,13 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs", "release_audits"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "reports", "release-audits"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, relative := range []string{
-		"docs/loop-definition.json",
-		"docs/hook-policy.json",
-		"docs/release_audits/protected_commands.json",
+		"docs/control/loop-definition.json",
+		"docs/control/hook-policy.json",
+		"docs/control/protected-commands.json",
 	} {
 		data, err := os.ReadFile(filepath.Join(sourceRoot, relative))
 		if err != nil {
@@ -64,7 +64,7 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	message, _ := hookContextValue(payload).(string)
 	for _, expected := range []string{
 		"LOOP RECOVERY",
-		"docs/agent-protocol.md#s2",
+		"docs/control/agent-protocol.md#s2",
 		"loop-harness.md",
 		"Next:",
 	} {
@@ -147,13 +147,13 @@ func TestPreToolUseHookDelegatesToControllerCycle(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "docs", "release_audits"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "docs", "reports", "release-audits"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, relative := range []string{
-		"docs/loop-definition.json",
-		"docs/hook-policy.json",
-		"docs/release_audits/protected_commands.json",
+		"docs/control/loop-definition.json",
+		"docs/control/hook-policy.json",
+		"docs/control/protected-commands.json",
 	} {
 		data, err := os.ReadFile(filepath.Join(sourceRoot, relative))
 		if err != nil {

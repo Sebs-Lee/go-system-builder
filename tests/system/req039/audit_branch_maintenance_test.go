@@ -23,7 +23,7 @@ func TestBranchAuditMaintenancePreservesReviewedSubjects(t *testing.T) {
 				t.Fatal(err)
 			}
 			task := "TASK-042-02"
-			taskPath := filepath.Join(root, "docs/tasks/"+task+".md")
+			taskPath := filepath.Join(root, "docs/dev/tasks/"+task+".md")
 			b, err := os.ReadFile(taskPath)
 			if err != nil {
 				t.Fatal(err)
@@ -32,7 +32,7 @@ func TestBranchAuditMaintenancePreservesReviewedSubjects(t *testing.T) {
 			if err := os.WriteFile(taskPath, b, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			runGitIn(t, root, "add", "docs/tasks/"+task+".md")
+			runGitIn(t, root, "add", "docs/dev/tasks/"+task+".md")
 			runGitIn(t, root, "commit", "-m", "change scope without S5")
 			manifest := s4AuditManifest(t, root, "maintenance", task, "web/unreviewed", "web/unreviewed/result.json")
 			code, out, errOut := s4AuditRegister(t, root, manifest, task)
