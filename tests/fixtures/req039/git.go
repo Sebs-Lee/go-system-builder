@@ -29,6 +29,12 @@ func commitFixture(t *testing.T, root string, rename bool) string {
 	} else if rename {
 		git("branch", "-M", "test-development")
 	}
+	// Harness integration invokes Git itself, so command-scoped commit flags
+	// are insufficient. Linked worktrees inherit this fixture-local identity;
+	// no developer or CI runner global configuration is required.
+	git("config", "--local", "user.name", "Fixture")
+	git("config", "--local", "user.email", "fixture@example.com")
+	git("config", "--local", "commit.gpgsign", "false")
 	_ = os.MkdirAll(filepath.Join(root, ".git/info"), 0755)
 	_ = os.WriteFile(filepath.Join(root, ".git/info/exclude"), []byte(".claude/\n.worktrees/\nwt/\nwt-feature/\n"), 0644)
 	git("add", "-A")
