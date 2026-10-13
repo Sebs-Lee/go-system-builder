@@ -322,3 +322,9 @@ S4 不任命真实 Agent，不填写运行进度；空 checkbox 表示待执行�
 正式出口增加：计划结构完整、成员闭合、波次不违反真实依赖和已声明资源顺序、已提交且登记。机器检查结构；并行安全、假依赖和任务粒度仍由 S5 判断。
 
 修订记录：2026-09-19 · dispatch-plan-v1，将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](../l4-mechanisms/L4-agent-dispatch-governance.md#177-首版适配边界)。
+
+## 10. 可交付粒度与收尾（2026-10-13）
+
+消费全局G02/G03：TASK本人必交与独立QA/E2E后续责任分开列示；required/conditional/optional读集、明确条件、oracle/命令和closing contract进入当前工作包。语义未知交原规划者决定，不把文件字节当token或难度，也不执行自由文本assert。
+
+粒度分析只给有来源的advisory，S4选择、S5验证可执行性；运行中不能自动拆并已冻结TASK。原条款全集、取消覆盖、dispatch plan和DAG仍是分母；变更沿原规划/失效路径。具体方案承接[全局G03](../global-optimization/G03-task-granularity.md)。

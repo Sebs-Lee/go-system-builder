@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0.0",
+  "stage": "S5",
+  "adapter": "document_review",
+  "authoring_schema": "stage-answer.schema.json",
+  "responsibilities": {
+    "DV-SPEC-CONSISTENCY": {
+      "title": "S05 文档审查 · 规格一致性",
+      "question": "需求、设计、合同、任务是否一致？"
+    },
+    "DV-TASK-EXECUTABILITY": {
+      "title": "S05 文档审查 · 任务可执行性",
+      "question": "任务的范围、依赖、检查与收尾是否足以开工并交付？"
+    }
+  },
+  "instruction": "只修改 answer。null 表示未回答；完整保存即交卷。Main 的汇总由系统生成。",
+  "choices": [
+    "pass",
+    "fix_required",
+    "req_change_required"
+  ],
+  "findings_question": "通过填写 []；未通过时记录实际问题的路径、预期和观察。",
+  "finding_example": {
+    "path": "docs/dev/tasks/TASK-001.md#checks",
+    "expected": "给出能运行的完成检查。",
+    "observed": "只写了完成，未说明如何验证。"
+  }
+}

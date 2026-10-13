@@ -91,6 +91,22 @@ func (v *Validator) ValidateFile(schemaName, dataPath string) error {
 // matches an embedded schema, that schema is used; otherwise it is treated as
 // a disk path for backward compatibility.
 func (v *Validator) ValidateBytes(schemaName string, data []byte) error {
+	if stripDir(schemaName) == "loop-state.schema.json" {
+		var header struct {
+			Version string `json:"schema_version"`
+		}
+		if err := json.Unmarshal(data, &header); err != nil {
+			return fmt.Errorf("decode runtime schema version: %w", err)
+		}
+		switch header.Version {
+		case "1.1.0":
+			schemaName = "loop-state-v1.1.schema.json"
+		case "1.2.0":
+			schemaName = "loop-state-v1.2.schema.json"
+		default:
+			return fmt.Errorf("unsupported runtime schema version")
+		}
+	}
 	compiled, err := v.compileSchema(schemaName)
 	if err != nil {
 		return err

@@ -431,3 +431,11 @@ TASK 是真实产物依赖权威；计划只补成员、波次与必要资源顺
 waves-v1 在新入口按绑定 REQ 收敛发现范围，legacy 保留兼容诊断。验收须证明当前 REQ 范围闭合、两路 subjects 精确、计划不污染其他文档语义、恢复后候选一致且无重复 owner。
 
 修订记录：2026-09-19 · dispatch-plan-v1，将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](L4-agent-dispatch-governance.md#177-首版适配边界)。
+
+## 确定交付的版本、恢复与观测契约（2026-10-13）
+
+新增持久字段必须版本化。Runtime 1.1保留完整封闭Schema；1.2通过固定白名单分派，Writer/semantic/doctor/recovery同路径验证。新二进制更新旧Runtime仍写旧形状；旧版本仅shadow，不写新索引或启用consumer。旧二进制拒写新状态；install不得覆盖活跃项目，活跃迁移另需明确维护契约。
+
+发包/接收索引是原Runtime的版本化消费检查点，不是第二生命周期。稳定submission_identity不含content hash，领域接收和索引原子提交；stable followup事件与原阶段进入身份绑定，转换与去重结果同Writer提交。domain已提交或转换已提交后的响应丢失只恢复原记录/投影，不推进新cursor。详细唯一契约见[L4阶段答卷§13](L4-stage-form.md#13-生产实施契约2026-10-13)。
+
+G08指标区分草稿、完整提交、合法Finding接收和stage PASS；CAS内部重试不算首交拒收。token/加载来自实际宿主，字节代理单列；观测损坏不改变安全门。陌生Agent评估保留必要业务资料、隐藏设计历史及oracle，fixture/not_run/真实宿主分别报告。

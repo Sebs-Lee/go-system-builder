@@ -964,3 +964,6 @@ F0 选择 Local / Core / Extended；F2 独立选择 thin / full
 | 像素正确、方向错误 | 回归通过但体验无特色或不可信 | 回到 Thesis、用户验证和业务证据 |
 | Agent 静默扩张全局 | 一个 REQ 新增风格并传播到其他模块 | 建立修订提案和人闸 |
 
+## 项目惯例的参考视图契约（2026-10-13）
+
+实施[全局G04](../global-optimization/G04-project-conventions.md)：project-conventions registry只索引批准规则/架构决定及真实示例，按topic/scope/明确技术栈解析。规则是真实批准来源，源码仅示例；冲突、迁移例外及失效引用交原Architect，不能以搜索频率或首个匹配作权威。没有registry不新设硬门，影响验收的未决业务仍须专业决定。输入沿原file_sources冻结，可重建卡片不复制业务契约。

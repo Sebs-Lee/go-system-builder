@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ type EvidenceRequest struct {
 	ScopeRefs        []string
 	OccurredAt       time.Time
 	Validator        CandidateValidator
+	Submission       *SubmissionRequest
 }
 
 // IsRegisteredEvidenceKind reports whether kind can be persisted by
@@ -90,6 +92,13 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		return Snapshot{}, fmt.Errorf("read runtime: %w", err)
 	}
 	current := snapshot.State
+	if request.Submission != nil {
+		if _, err := prepareSubmission(root, current, request); errors.Is(err, errSubmissionAccepted) {
+			return snapshot, nil
+		} else if err != nil {
+			return Snapshot{}, err
+		}
+	}
 	if err := validateDocumentRegistration(current, request, data); err != nil {
 		return Snapshot{}, err
 	}
@@ -166,6 +175,17 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		Message:        "Recorded a current fingerprinted evidence artifact.",
 		OccurredAt:     occurredAt,
 		Apply: func(state map[string]any) error {
+			var submission SubmissionRecord
+			if request.Submission != nil {
+				var err error
+				submission, err = prepareSubmission(root, state, request)
+				if err != nil {
+					return err
+				}
+				if err := validateDocumentRegistration(state, request, data); err != nil {
+					return err
+				}
+			}
 			items, ok := state["evidence"].([]any)
 			if !ok {
 				return fmt.Errorf("runtime evidence must be an array")
@@ -207,12 +227,33 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 				"scope_refs":          scopeRefs,
 			})
 			state["evidence"] = items
+			if request.Submission != nil {
+				if err := appendSubmission(state, submission); err != nil {
+					return err
+				}
+			}
 			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
 			return nil
 		},
 	}
 	if request.ExpectedRevision < 0 {
-		return store.UpdateCurrent(mutation)
+		next, err := store.UpdateCurrent(mutation)
+		if err != nil && request.Submission != nil {
+			// The journal rejects duplicate event IDs before Apply. Resolve a
+			// concurrent replay from the atomically committed reception row,
+			// never from the artifact's mere presence or the outer error text.
+			latest, readErr := store.Snapshot()
+			if readErr == nil {
+				_, replayErr := prepareSubmission(root, latest.State, request)
+				if errors.Is(replayErr, errSubmissionAccepted) {
+					return latest, nil
+				}
+				if errors.Is(replayErr, ErrSubmissionConflict) {
+					return Snapshot{}, replayErr
+				}
+			}
+		}
+		return next, err
 	}
 	return store.Update(request.ExpectedRevision, mutation)
 }

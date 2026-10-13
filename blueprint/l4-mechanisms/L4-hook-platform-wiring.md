@@ -204,3 +204,11 @@ payload agent_id → teammate_name（顶层）→ tool_input.teammate_name → �
 PostToolUse(SendMessage) 的 control root 始终是 REQ 权威根目录；非根 `cwd` 提交的 `plan_ref` 必须通过当前 Agent 的已登记 Assignment 核对 worktree 归属和同仓库身份，再从该执行目录读取。拒绝未登记 worker、越界路径、符号链接和不匹配的报告身份，不能用根目录同名旧文件替代 worker 报告。
 
 合法 worker 报告按内容哈希导入根目录 `.claude/evidence/plan-handoffs/`，登记与自动推进使用同一个归一化引用；根目录原有报告流程保留。导入文件不能覆盖已有不同内容，报告拒绝或 Runtime 登记失败后的 additionalContext 必须呈现最终失败原因，不能残留 `plan_report observed`。PostToolUse 仍以 exit 0 反馈观察结果，不升级为平台阻断。
+
+## 12. 受控保存消费与有界观察（2026-10-13）
+
+消费[L4阶段答卷§13](L4-stage-form.md#13-生产实施契约2026-10-13)：PostToolUse仅对当前发行的独占答案文件运行具名consumer；普通工具仍为观察路径。Main matcher须注册Write/Edit/MultiEdit，Worker现有*也须接同consumer。从真实tool payload取路径和可信actor；PreToolUse守写入权限，不消费未保存答案；PostToolUse不能撤销写入或deny，拒收只说明未产生领域完成。
+
+官方additionalContext送达接收/本人完成/等待owner/字段修正；不靠自造平台字段。SessionStart/PreCompact有界恢复，Stop保持原preflight顺序。无Hook环境仅在受控保存/tool-return实际接同consumer时称自动，否则生成兼容入口完整参数。
+
+G08通用进展采样需Main明确监听Read/Glob/Grep，置于非dispatch Bash早返回之前；只读当前作业与有限缓存，不跑Controller、不改Runtime、不记全文。首次读取新的必要来源/范围是进展，重复Read/status不是；观察不足与外部等待不能强判stall。生产有限指标沿原spool，真实trace/模型实验留工厂评估工具。官方wire测试与真实Claude验收分开。

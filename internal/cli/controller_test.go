@@ -16,6 +16,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 func TestMilestoneRefreshFailureReasonIsBoundedAndActionable(t *testing.T) {
@@ -319,7 +320,7 @@ func containsSubstring(values []string, target string) bool {
 }
 
 func TestRefreshMilestoneUsesCASAndIsIdempotent(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -382,7 +383,7 @@ func TestRefreshMilestoneUsesCASAndIsIdempotent(t *testing.T) {
 }
 
 func TestRefreshMilestonePreservesLastTransition(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -677,7 +678,7 @@ func TestMilestoneIdentityIgnoresObservedRevision(t *testing.T) {
 // `milestone.quality_gate` must round-trip as a 9-field object and the
 // Controller fingerprint must defeat the no-op check on the next call.
 func TestRefreshMilestonePersistsQualityGateObject(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")

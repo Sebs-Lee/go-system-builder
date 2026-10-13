@@ -120,3 +120,11 @@ costs and interruption counts before promoting opt-in modes to defaults.
 Change record: 2026-09-21 — PR #8 reproduced R1/R2 plus L3/L4 conflict prompted
 this minimal recovery/observation decision and restored paired-check guidance.
 Revisit through L1's evidence→proposal→cost/consumer→versioned change protocol.
+
+## Check profile, bounded reuse and environment contract (2026-10-13)
+
+Global G07 precedes G05: profiles declare approved command, runner/location, timeout, offline dependencies, fixtures, environment/input closure and side effects. Main also probes required tools/configuration; selecting Main does not prove readiness. Canonicalize existing checkout paths while preserving repository/branch identity; aliases do not authorize relocation or another linked checkout.
+
+Receipt v2 binds actual subject, profile, runner, environment/fixtures, responsibility and integrity to original domain records. Reuse defaults to never; only confirmed deterministic checks with identical complete closure and the same responsibility may reference an existing accepted PASS. Unknown closure, drift, interruption, a new hypothesis, independent review, post-integration and fresh requirements rerun. Do not mint a new PASS, change ready Worker assets, weaken isolation or bypass Main integration/fresh S7.
+
+Typed environment/process/timeout/resource/IO failures carry concrete owner, log and retry condition. Exit failure alone is not a product assertion failure. G05/G07 acceptance includes concurrency, recovery, alias/relocation, real Linux isolation and explicit unsupported-platform/Main paths.

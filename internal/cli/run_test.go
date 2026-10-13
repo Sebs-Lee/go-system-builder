@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 func TestValidateAllCommand(t *testing.T) {
@@ -214,13 +215,7 @@ func TestRuntimeReconcileCommandRestoresMissingJournalEvent(t *testing.T) {
 }
 
 func TestRuntimeTransitionCommandStartsLockedREQ(t *testing.T) {
-	root := func() string {
-		abs, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return abs
-	}()
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -500,13 +495,7 @@ func TestNextProjectsCleanRoundAsS7(t *testing.T) {
 }
 
 func TestRuntimeRegisterWorkgroupCommand(t *testing.T) {
-	root := func() string {
-		abs, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return abs
-	}()
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -728,13 +717,7 @@ func TestRuntimeRegisterWorkgroupCommandAnchorsAgainstRoot(t *testing.T) {
 }
 
 func TestRuntimeAgentEventCommandRecordsReadback(t *testing.T) {
-	root := func() string {
-		abs, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return abs
-	}()
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")
@@ -937,13 +920,7 @@ func copyDir(src, dst string) error {
 // decision is JSON-encoded into the envelope on stdout.
 func TestDryRunEnforcesFirstWriteBarrier(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	root := func() string {
-		abs, err := filepath.Abs(filepath.Join("..", ".."))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return abs
-	}()
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	fixture := filepath.Join(root, "tests", "fixtures", "hook", "pretool-unactivated-write.json")
 
 	code := cli.Run([]string{"dry-run", "--root", root, "--fixture", fixture}, strings.NewReader(""), &stdout, &stderr)

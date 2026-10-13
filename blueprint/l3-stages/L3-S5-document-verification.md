@@ -346,3 +346,13 @@ S5 必须显式审查 [S4 整体派发计划](L3-S4-task-split.md#9-整体派发
 容量调整、运行进度及按真实依赖提前释放不改变静态计划，不重做 S5。审查后的入口为 [S6 持续派发](L3-S6-build.md#dispatch-execution)。
 
 修订记录：2026-09-19 · dispatch-plan-v1，将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](../l4-mechanisms/L4-agent-dispatch-governance.md#177-首版适配边界)。
+
+## 9. 确定交付的阶段消费契约（2026-10-13）
+
+目标实现消费 [L4阶段答卷§13](../l4-mechanisms/L4-stage-form.md#13-生产实施契约2026-10-13)，以新Runtime显式启用为边界；legacy入口在未启用时保留。T1仍由原manifest登记两个不同真实producer；T2由工具发行本责任工作包及独占答案，不要求reviewer复制subject、选择内部事件或造REV信封。本文§3的“后续自然工具调用”只描述旧入口，新入口必须在最后保存的同一PostToolUse消费。
+
+答案只含conclusion与可定位findings。专业结论由本人给出；具名S5 adapter从冻结documents/真实责任生成原document_review envelope并同事务接收。两人PASS仍由GATE-DOCUMENT-PASS/TR-003判定；FIX保持TR-004返规划；REQ-change仍等待TR-005原人闸，不从保存推断人同意。
+
+首人接收回执必须指出本人work_complete及另一个真实责任owner。Main处理剩余派发/系统恢复，不能替另一个reviewer签字。新基线/重入重新发行；同一attempt不同内容冲突，重签须Main明确原因及原前驱接收，按L4具名修订事务。
+
+验收必须覆盖共享checkout两人并行、最后Write/Edit、官方additionalContext、双PASS原门、FIX/REQ-change、路径/身份/冻结漂移、重复与并发、domain提交后与transition提交后中断、旧卷及已完成者Stop。fixture与真实Claude分别留证。

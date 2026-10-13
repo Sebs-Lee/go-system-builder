@@ -10,6 +10,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 // s7RecoveryFixtureState builds an S7 cannot_clean/draining intermediate
@@ -214,7 +215,7 @@ func TestBuildGuidanceS7RecoveryNotAppliedOutsideVerification(t *testing.T) {
 // write so the durable checkpoint (what PreCompact promises the next
 // SessionStart will re-emit) carries the same S7 projection.
 func TestRefreshMilestonePersistsS7RecoveryProjection(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := factory.Clone(t, filepath.Join("..", ".."))
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "loop-state.json")
 	journalPath := filepath.Join(dir, "loop-events.jsonl")

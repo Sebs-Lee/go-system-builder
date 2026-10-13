@@ -1006,3 +1006,11 @@ waves-v1 使用具体仓库相对文件/目录写域，不接受 glob 作为新�
 派发摘要在父会话 SessionStart 及 PostToolUse 的 Agent 返回、Harness register-workgroup/task-complete/task-integrate 检查点生成，进入已有 additionalContext 指引。摘要列出就绪候选、待回收结果和等待原因；每类最多四项，完整清单通过 s6 status 阅读。未声明容量时只说明逻辑候选，不推断实际槽位或声称已派发。
 
 SubagentStop/TeammateIdle 不用普通 systemMessage 冒充父会话投递；异步 Agent 启动不是完成。Worker 不接收全局派发摘要，普通工具调用不重复扫描计划。投影失败只提醒检查，不改变既有 allow/block 判定。
+
+## 18. 当前工作包、加载与接收优先契约（2026-10-13）
+
+实施全局G01/G02/G06时，Assignment仍是派发权威。workpacket是当前recipient的只读投影，按本人owned_outputs、done_when、checks、冻结读集、当前唯一操作、等待owner展开；Main看接收/调度，Worker只看本人作业。长scope不能挤掉动作/路径，短消息按Unicode边界截断。答案接收与离场见[L4阶段答卷§13](L4-stage-form.md#13-生产实施契约2026-10-13)。
+
+加载选择由一个版本化profile生产：核心∪原责任必需∪已确认技术栈∪Assignment登记技能。SelectedContextSkills与原授权SkillRefs分离，不能以减载改变activation命令能力或触发未知技能默认授权。teammate/native/workspace共用选择；workspace没有Skill工具时用已有Read消费安装固定路径与digest，ready资产不覆写。
+
+接收优先建议从原Board与integration checkpoint派生，不建立第二队列。reported不释放依赖，capacity未知不猜slot；默认仅建议integrate_first，显式反压只限制新派发预算、不删除required set。注册继续在原Writer内重验owner/DAG/scope冲突，真实集成及检查保持。
