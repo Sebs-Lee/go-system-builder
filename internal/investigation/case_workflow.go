@@ -1,6 +1,7 @@
 package investigation
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 const caseWorkflowNext = "runtime investigation status --case-id <case>"
@@ -30,6 +32,11 @@ type CaseRevisionRequest struct {
 	Operation            string
 	OccurredAt           time.Time
 	Mutate               func(map[string]any) error
+	// validateCurrent is an internal capability used by issued S8 answer
+	// consumers. It is run against the original, pinned Case bytes before
+	// staging and again inside the original Runtime CAS. It is intentionally
+	// unexported: callers cannot supply a self-authored authority callback.
+	validateCurrent func(root string, state, document map[string]any, caseBytes []byte) error
 }
 
 // HypothesisRequest registers one falsifiable S8 hypothesis inside a Case.
@@ -71,6 +78,12 @@ type HypothesisResultRequest struct {
 	DoesNotExplain       []string
 	NewHypotheses        []map[string]any
 	OccurredAt           time.Time
+	// typedPacket/typedReceipt are an unexported capability carried only by
+	// SubmitIssuedHypothesisResult. Public legacy callers cannot manufacture a
+	// packet-backed acceptance row or bypass an issued packet.
+	typedPacket     *workpacket.HypothesisResultPacket
+	typedReceipt    *runtime.HypothesisResultReceipt
+	typedValidation func(root string, state, document map[string]any, caseBytes []byte) error
 }
 
 // EvidenceReference is a content-addressed artifact carried into S8 when a
@@ -221,6 +234,9 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	if serr != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for HypothesisResult.evidence_refs attestation: %v", serr)
 	}
+	if err := validateHypothesisSubmissionBinding(snapshot.State, request); err != nil {
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+	}
 	if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
 		State:              snapshot.State,
 		Root:               root,
@@ -248,6 +264,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 		CaseID:               request.CaseID,
 		Operation:            "hypothesis_result_submitted",
 		OccurredAt:           request.OccurredAt,
+		validateCurrent:      request.typedValidation,
 		Mutate: func(document map[string]any) error {
 			caseIDs, err := stringSlice(document["source_finding_ids"], "InvestigationCase.source_finding_ids")
 			if err != nil {
@@ -287,7 +304,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 					return fmt.Errorf("HypothesisResult for %s/%s already exists; submit a new assignment or revise the Case", request.HypothesisID, request.AssignmentID)
 				}
 			}
-			results = append(results, map[string]any{
+			resultRow := map[string]any{
 				"hypothesis_id":                   request.HypothesisID,
 				"assignment_id":                   strings.TrimSpace(request.AssignmentID),
 				"method":                          strings.TrimSpace(request.Method),
@@ -298,7 +315,24 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 				"result":                          request.Result,
 				"explains_finding_ids":            stringSliceAny(explains),
 				"does_not_explain":                stringSliceAny(doesNotExplain),
-			})
+			}
+			if request.typedPacket != nil {
+				if request.typedReceipt == nil || request.typedReceipt.PacketID != request.typedPacket.ID ||
+					request.typedReceipt.OwnerAgentID != request.typedPacket.Binding.OwnerAgentID ||
+					request.typedReceipt.AssignmentID != request.AssignmentID {
+					return errors.New("S8 typed result receipt is incomplete or does not match its packet")
+				}
+				receiptBytes, err := json.Marshal(request.typedReceipt)
+				if err != nil {
+					return err
+				}
+				var receipt map[string]any
+				if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
+					return err
+				}
+				resultRow["receipt"] = receipt
+			}
+			results = append(results, resultRow)
 			// S8-H1 supplement: keep the falsifiable status machine honest — the
 			// hypothesis is no longer open once its result is recorded. The
 			// schema accepts "open | supported | refuted | inconclusive"; a
@@ -342,6 +376,24 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 					registeredAssignments[assignmentID] = struct{}{}
 				}
 				document["hypotheses"] = hypothesesToAny(hypotheses)
+			}
+			if request.typedPacket != nil {
+				// The original Case schema keeps the typed receipt and its exact
+				// server-assigned follow-up hypotheses as one indivisible row.
+				// [] is intentional when the author proposed none.
+				for index := range results {
+					if stringField(results[index]["hypothesis_id"]) == request.HypothesisID && stringField(results[index]["assignment_id"]) == request.AssignmentID {
+						newRows := make([]map[string]any, 0, len(request.NewHypotheses))
+						if len(request.NewHypotheses) > 0 {
+							for _, hypothesis := range request.NewHypotheses {
+								newRows = append(newRows, cloneMap(hypothesis))
+							}
+						}
+						results[index]["new_hypotheses"] = hypothesesToAny(newRows)
+						break
+					}
+				}
+				document["hypothesis_results"] = hypothesesToAny(results)
 			}
 			return nil
 		},
@@ -678,6 +730,11 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	if stringField(currentDocument["case_id"]) != request.CaseID || integerValueOrZero(currentDocument["revision"]) != expectedCaseRevision {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Case identity or revision does not match the Runtime pointer; re-read status before retry")
 	}
+	if request.validateCurrent != nil {
+		if err := request.validateCurrent(root, current.State, currentDocument, caseBytes); err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "current Case authorization: %v", err)
+		}
+	}
 	caseIDs, err := stringSlice(currentDocument["source_finding_ids"], "InvestigationCase.source_finding_ids")
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
@@ -748,9 +805,15 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	}
 	nextSHA := sha256Hex(nextBytes)
 	cleanup := func() {
-		if !runtimeReferencesCase(statePath, nextRel, nextSHA) {
-			_ = os.Remove(nextPath)
-		}
+		// The same lock/pending protocol as the original Runtime writer must
+		// guard cleanup. If an interrupted CAS may still publish this artifact,
+		// retain it for recovery instead of racing a raw unlink against state.
+		_, _ = runtime.NewStore(statePath, journalPath).RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{
+			ExpectedRevision: current.Revision,
+			ArtifactPath:     nextRel,
+			ArtifactSHA256:   nextSHA,
+			ReferencedPaths:  stateStringReferences(current.State, nextRel),
+		})
 	}
 	lifecycle, _ := current.State["lifecycle"].(map[string]any)
 	cursor := map[string]any{"state": stringField(lifecycle["state"]), "phase": lifecycle["phase"]}
@@ -790,6 +853,28 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 			}
 			if stringField(existing["case_id"]) != request.CaseID || integerValueOrZero(existing["revision"]) != expectedCaseRevision || stringField(existing["sha256"]) != expectedCaseSHA256 {
 				return fmt.Errorf("active InvestigationCase changed during update; re-read %s and retry", caseWorkflowNext)
+			}
+			if request.validateCurrent != nil {
+				// Re-read the source under the Runtime writer lock. Checking only the
+				// staged candidate would allow Case bytes/route/source registration
+				// to drift after preflight but before the original CAS commits.
+				currentBytes, readErr := os.ReadFile(casePath)
+				if readErr != nil {
+					return fmt.Errorf("re-read pinned InvestigationCase inside CAS: %w", readErr)
+				}
+				if sha256Hex(currentBytes) != expectedCaseSHA256 || !bytes.Equal(currentBytes, caseBytes) {
+					return errors.New("pinned InvestigationCase bytes changed before original CAS")
+				}
+				var lockedDocument map[string]any
+				if err := json.Unmarshal(currentBytes, &lockedDocument); err != nil {
+					return fmt.Errorf("decode pinned InvestigationCase inside CAS: %w", err)
+				}
+				if err := schema.NewEmbeddedValidator().ValidateBytes("review-investigation-case.schema.json", currentBytes); err != nil {
+					return fmt.Errorf("pinned InvestigationCase schema changed before CAS: %w", err)
+				}
+				if err := request.validateCurrent(root, state, lockedDocument, currentBytes); err != nil {
+					return fmt.Errorf("revalidate current Case authorization inside original CAS: %w", err)
+				}
 			}
 			if existing["status"] == "contract_approved" && nextDocument["status"] == "investigating" {
 				if err := retireSupersededRepairPointer(state, request.CaseID); err != nil {
@@ -1338,6 +1423,39 @@ func currentReviewRound(state map[string]any) int {
 	default:
 		return 0
 	}
+}
+
+// stateStringReferences returns the canonical repository-relative path only
+// when the current Runtime state contains that exact reference. Cleanup then
+// rechecks the same Runtime revision under its original lock before unlinking.
+func stateStringReferences(value any, target string) []string {
+	target = filepath.ToSlash(filepath.Clean(filepath.FromSlash(target)))
+	found := false
+	var visit func(any)
+	visit = func(node any) {
+		if found {
+			return
+		}
+		switch typed := node.(type) {
+		case string:
+			if typed == target || filepath.ToSlash(filepath.Clean(filepath.FromSlash(typed))) == target {
+				found = true
+			}
+		case []any:
+			for _, item := range typed {
+				visit(item)
+			}
+		case map[string]any:
+			for _, item := range typed {
+				visit(item)
+			}
+		}
+	}
+	visit(value)
+	if found {
+		return []string{target}
+	}
+	return nil
 }
 
 func caseWorkflowError(caseID, format string, args ...any) error {

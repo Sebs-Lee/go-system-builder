@@ -200,9 +200,17 @@ S0 不建立、不重写项目级设计基础。权威定义在 [L4 项目级设
 | 锁定动作 | 人在对话中明确同意锁定；agent 依据该授权把顶部状态置为 `locked`，填写版本、操作人、日期和 §E 锁定记录 |
 | S0 当场成立的事实 | 需求语义已冻结；根据 change-control，任何后续目标/范围/优先级/验收变化都必须走 human-only 修订，不能用聊天悄悄覆盖 |
 | S1 才成立的事实 | `req bind` 复核 locked/版本/文件名/UI impact/SHA，把 REQ 写入 runtime `bound_req` 与 `documents[]`，建立 generation=1 和唯一授权 |
-| 机械冻结何时生效 | bind 后进入 S2，REQ 已在 `documents[]`，hook 才能以登记指纹机械阻止对当前及旧代 REQ 的改写；S0 锁定到 S1 bind 之间依赖人锁定纪律，不虚称已有运行时拦截 |
+| Hook 何时介入 | S0 尚无 Runtime cursor，不由 Hook 发卷或判断拍板；S1 bind 后 Hook 只监听 graph 并提示下一步，不拦截 REQ、工具或路径写入。锁定后变更仍按 human-only amendment 和原阶段门处理 |
 | 路径口径 | 首次基线位于 `docs/requirements/REQ-{id}.md`；已绑定基线若修订，旧代不覆盖，新代走通用重做路径 `docs/requirements/versions/{REQ-ID}/g{N+1}/...` |
 | 完成产出 | locked REQ + 锁定记录 + 可计算 SHA-256，交给 S1；S0 本身不执行 bind |
+
+**§0 问卷落点**：S0 沿用 [REQ 模板](../../docs/requirements/REQ-template.md) 与
+`requirement-funnel`，当前责任文件是 `docs/requirements/REQ-{实际编号}.md`。
+inactive Hook 可以直接给出此模板路径、目标 REQ 路径和下一项需真人确认的决定，
+但 S0 未绑定 Runtime，不产生 S0 JSON 包或自动接收事实。需求整理由 Agent 写入 REQ；
+每层价值决定和最终锁定仍须真人在对话中明确确认，再如实记录到 §E。不得从保存、
+文件状态或 Agent 答案推导人类 PASS。S0 最小工序仍是 A→B→C 提案、逐层人确认、
+全链自审、最终人锁定；模板字段和 Skill 指导承载这些工作，不另造表单。
 
 这里有两个连续但不同的人闸：S0 的锁定回答“这是不是我要的需求”，S1 的 bind 回答“是否授权这个生命周期以它为唯一对象”。前者管方向，后者管授权，不是重复审批（D6）。
 
@@ -220,7 +228,7 @@ S0 不建立、不重写项目级设计基础。权威定义在 [L4 项目级设
 | 项目级设计基础引用 | agent 检查并声明，人只确认方向级 Foundation（Loop 外） | REQ §C Foundation 字段；权威在 `docs/design/DESIGN.md` | S2 Derivation Note | S0 不复制 Kernel；Runtime 暂不机械检查 |
 | 需求语义锁定 | 人授权、agent 落盘 | 顶部状态 + §E 锁定记录 | S1 bind | 与 bind 不重叠：锁方向，bind 授权 |
 | 指纹与唯一授权 | S1 harness | `req bind` → runtime | hook、全部下游 gate | S0 不手算、不手写 runtime |
-| 锁定后改写控制 | change-control + bind 后 hook | 人修订协议 + `documents[]` 指纹 | 所有写入动作 | 规则给语义，hook 给机械执行 |
+| 锁定后改写控制 | human-only amendment + graph 提醒 | 人修订协议、`documents[]` 基线和原门 | S1/S2 与后续消费者 | Hook 提醒已登记事实，不拦截写入 |
 | 后续覆盖矩阵 | S3 契约索引 | `CONTRACTS-{id}` | S4/S5/S7 | §F 只作指路，不回写 locked REQ |
 
 ### 5.2 重叠与缺口结论
@@ -230,7 +238,7 @@ S0 不建立、不重写项目级设计基础。权威定义在 [L4 项目级设
 - **human lock 与 `req bind` 不重复**：一个冻结语义，一个建立生命周期授权与机器事实；
 - **S5 不替代 S0**：S5 只能审查已锁需求与下游规格是否一致，不能替人创造或修改需求；
 - **机器不判断需求好坏**：`validate --all` 不做 requirements 语义检查是有意边界。S0 的语义质量由 agent 设计、人拍板和 S5 独立审查分层承担；
-- **诚实缺口**：未 bind 的 locked REQ 尚未进入 runtime，hook 无登记对象可拦。这个短窗口依赖 change-control 纪律，机械冻结从 S1 bind 后开始。
+- **诚实缺口**：S0 未绑定 Runtime，Hook 没有 S0 的 graph 事实可投影；bind 后也不承担工具拦截。需求语义与人类确认保留在 REQ/对话及原 amendment 人闸中，不把 Hook 提示写成写保护。
 
 ### 5.3 关键取舍
 
@@ -258,7 +266,7 @@ S0 不建立、不重写项目级设计基础。权威定义在 [L4 项目级设
 | 公理二 分工 | 人不填格式，机器不猜需求，agent 不替人决定价值 |
 | 公理三 消费 | 每个字段都指向明确消费者；§F 活矩阵因不能回写 locked REQ，被移交 S3 索引 |
 | 公理四 成本 | 不用机器重复语义 review，不保留无消费者 checklist；人的拍板每层最多 3 个 |
-| 公理五 传达 | 模板行内说明字段理由；bind/guard/hook 在拒绝时指出缺什么和下一步去哪里 |
+| 公理五 传达 | 模板行内说明字段理由；bind/gate/Hook 提醒具体缺什么和下一步去哪里，不借提醒拦截工具 |
 
 ## 7. 产出、出口门槛与失败路由
 
@@ -313,7 +321,7 @@ S0 只交付一份东西：**human-locked REQ**。它至少包含：
 | 用 REQ 风格句替代 Foundation | 每个 REQ 重新猜品牌，事后横向返工 | 进 §A 前先读 `DESIGN.md`；缺失则 F0～F6 后再锁 `changed` REQ |
 | 把 `unknown` 当作“以后再说” | 未知没有消费者和截止点 | §D 写影响、阻塞范围；S2 guard 消费 |
 | 先问人一串问题再设计 | 人承担了本应由 agent 完成的推理 | 完整提案 + ≤3 个价值拍板点 |
-| 把 human lock 当作已 bind | 误以为 runtime 和 hook 已建立保护 | §4.5 明确语义冻结与机械冻结的时序 |
+| 把 human lock 当作已 bind | 误以为 Runtime 已建立绑定授权 | §4.5 明确语义锁定与 S1 授权的区别 |
 | 在 locked REQ 里回填 §F | 破坏基线指纹，制造双矩阵 | 活矩阵唯一在 S3 CONTRACTS 索引 |
 
 ### 8.2 阅读预算

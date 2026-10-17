@@ -15,7 +15,9 @@ import (
 	"strings"
 	"time"
 
+	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 const artifactRoot = ".claude/review/repair"
@@ -88,6 +90,9 @@ func writeImmutable(root, relative, schemaName string, document any) (ArtifactRe
 	if err != nil {
 		return ArtifactRef{}, fmt.Errorf("encode %s: %w", relative, err)
 	}
+	if len(data) > 20<<20 {
+		return ArtifactRef{}, fmt.Errorf("immutable S9 artifact %s exceeds 20 MiB after final serialization; reduce professional answer content", relative)
+	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes(schemaName, data); err != nil {
 		return ArtifactRef{}, fmt.Errorf("validate %s: %w", relative, err)
 	}
@@ -95,21 +100,37 @@ func writeImmutable(root, relative, schemaName string, document any) (ArtifactRe
 	if err != nil {
 		return ArtifactRef{}, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return ArtifactRef{}, fmt.Errorf("create artifact directory: %w", err)
+	relativeRef, err := relativePath(root, path)
+	if err != nil {
+		return ArtifactRef{}, err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	parent, name, err := workpacket.OpenParent(root, relativeRef, true)
+	if err != nil {
+		return ArtifactRef{}, fmt.Errorf("open immutable artifact parent: %w", err)
+	}
+	defer parent.Close()
+	file, err := parent.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return ArtifactRef{}, fmt.Errorf("write immutable artifact %s: %w", relative, err)
 	}
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
-		_ = os.Remove(path)
+		_ = parent.Remove(name)
 		return ArtifactRef{}, fmt.Errorf("write immutable artifact %s: %w", relative, err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = parent.Remove(name)
+		return ArtifactRef{}, fmt.Errorf("sync immutable artifact %s: %w", relative, err)
+	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
+		_ = parent.Remove(name)
 		return ArtifactRef{}, fmt.Errorf("close immutable artifact %s: %w", relative, err)
+	}
+	// Preserve an artifact when parent durability is unknown. Cleanup must use
+	// the original Writer's pending/reference/SHA checks, never an eager remove.
+	if err := runtimepkg.SyncDirectory(filepath.Dir(path)); err != nil {
+		return ArtifactRef{}, fmt.Errorf("sync immutable artifact parent %s: %w", relative, err)
 	}
 	return fileRef(relative, data), nil
 }
@@ -119,7 +140,11 @@ func readArtifact(root string, ref ArtifactRef, schemaName string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	rel, err := relativePath(root, path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := workpacket.ReadFile(root, rel, 20<<20)
 	if err != nil {
 		return nil, fmt.Errorf("read artifact %s: %w", ref.Path, err)
 	}
@@ -178,12 +203,12 @@ func scopeAllows(path string, prospective, forbidden []string) error {
 //
 // RC-03 (EH-8) narrowing: the exclusion is explicit, not blanket ".claude".
 // Known control-plane subtrees (.claude/review, .claude/evidence,
-// .claude/workgroups and the mutable state files) are skipped, but an
-// unexpected .claude path (e.g., .claude/foo/product.go) is treated as
-// product surface — a repair that hides product writes under .claude must be
-// visible to the Session diff instead of silently excluded. Any legitimate
-// control-plane write must be under the known subtrees; product writes under
-// .claude remain product drift.
+// .claude/workgroups, the explicit machine-output directories, and mutable
+// state files) are skipped, but an unexpected .claude path (e.g.,
+// .claude/foo/product.go) is treated as product surface — a repair that hides
+// product writes under .claude must be visible to the Session diff instead of
+// silently excluded. Any legitimate control-plane write must be under the
+// known paths; product writes under .claude remain product drift.
 func captureRepositoryBaseline(root string, protected ...ArtifactRef) ([]ArtifactRef, string, error) {
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -317,7 +342,11 @@ func isControlPlanePath(rel string, isDir bool) bool {
 	if strings.HasPrefix(rel, ".claude/") && (strings.HasSuffix(rel, ".lock") || strings.HasSuffix(rel, ".lock.process")) {
 		return true
 	}
-	for _, prefix := range []string{".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/"} {
+	for _, prefix := range []string{
+		".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/",
+		".claude/submissions/", ".claude/work-packets/", ".claude/assignment-context/",
+		".claude/runtime-checkpoints/", ".claude/hook-notices/", ".claude/hook-metrics/",
+	} {
 		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
 			return true
 		}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestHookBudgetNeverPublishesPartialAllow(t *testing.T) {
+func TestHookBudgetTimeoutKeepsListenerNonBlocking(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX fake Hook process")
 	}
@@ -24,10 +24,7 @@ func TestHookBudgetNeverPublishesPartialAllow(t *testing.T) {
 			var out, errout bytes.Buffer
 			start := time.Now()
 			code := runBudgetedHook(ctx, script, nil, strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"`+tool+`"}`), &out, &errout)
-			want := 2
-			if tool == "Read" {
-				want = 0
-			}
+			want := 0
 			if code != want || out.Len() != 0 || !strings.Contains(errout.String(), "internal budget") {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, &out, &errout)
 			}

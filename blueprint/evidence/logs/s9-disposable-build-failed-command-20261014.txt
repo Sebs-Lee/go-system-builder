@@ -1,0 +1,4 @@
+First disposable build command (exit 1):
+TMPDIR=$(cat /tmp/gsb-check-permissions-work-path) GOCACHE=<task-tmp>/eval-build-cache GOPROXY=off GOMAXPROCS=2 bash packaging/build-release.sh s9-issued-plan-report-review /home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-01/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz
+
+The script builds Darwin arm64 first. `internal/workspace/check_owned.go` referenced Linux-only helper functions, so no tarball was created. Original output is retained in the temp run root; evidence copy: `s9-disposable-build-failed-cross-platform-20261014.log`.

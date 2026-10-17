@@ -1,0 +1,10 @@
+{
+ "stage":"S2",
+ "adapter":"planning_design",
+ "title":"Complete the current design and receive its original planning evidence",
+ "instruction":"Read the frozen locked REQ. Complete and self-review the original ARCHITECTURE and applicable design/scenario work. Fill only answer; the system provides identity and original evidence bindings. Pass is your professional judgment. Original UI impact, gates, ADR decisions and downstream independent review remain required.",
+ "questions":{
+  "conclusion":{"question":"Has the original design self-review passed for this exact requirement?","choices":["pass"]},
+  "architecture_path":{"question":"Where is the actual locked ARCHITECTURE document for this design?"}
+ }
+}

@@ -111,6 +111,13 @@ func (s *Store) Unbind(freshState map[string]any, archiveRoot string, approval U
 		return RolloverRecord{}, fmt.Errorf("unbind approval: %w", err)
 	}
 
+	freshState, err = PreserveRuntimeFormat(state, freshState)
+	if err != nil {
+		return RolloverRecord{}, err
+	}
+	if err := s.validateCandidate(freshState); err != nil {
+		return RolloverRecord{}, fmt.Errorf("validate reset with source format: %w", err)
+	}
 	extras := map[string]any{"disposition": "unbound", "reason": approval.Reason, "unbound_req": boundID}
 	if approval.Forced {
 		extras["forced"] = true

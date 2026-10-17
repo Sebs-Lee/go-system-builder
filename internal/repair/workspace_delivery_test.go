@@ -6,11 +6,14 @@ import (
 	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/repair"
+	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	req039fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testing.T) {
@@ -72,16 +75,57 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, dir := range []string{"agents", "skills"} {
+		if err := os.MkdirAll(filepath.Join(root, ".claude", dir), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	e, err := b.Plan(ctx, started.State, "assignment-s9-unit-1", "builder-1", authority.Assignment.Scope, authority.Checks, authority.Inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b.Executions[e.AssignmentID] = e
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	persistWorkspace := func(event string) (loopruntime.Snapshot, error) {
+		current, err := store.Snapshot()
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+		key := fmt.Sprintf("fixture-workspace-%s-r%d", event, current.Revision+1)
+		return store.Update(current.Revision, loopruntime.Mutation{
+			EventID: key, TransitionID: "WORKSPACE", Event: "workspace_updated", Actor: "main",
+			RuntimeID: e.RuntimeID, BaselineGeneration: e.BaselineGeneration,
+			IdempotencyKey: key, RetainLastTransition: true, OccurredAt: time.Now().UTC(),
+			Message: "persist original S9 Worker execution registry",
+			Apply: func(state map[string]any) error {
+				state["workspace"] = workspace.Encode(b)
+				return nil
+			},
+		})
+	}
+	if _, err := persistWorkspace("preparing"); err != nil {
+		t.Fatal(err)
+	}
 	if err = b.Materialize(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = b.Bootstrap(e, executable); err != nil {
+		t.Fatal(err)
+	}
+	e.BootstrapSHA256, err = workspace.BootstrapDigest(e)
+	if err != nil {
 		t.Fatal(err)
 	}
 	e.Status = "ready"
 	b.Executions[e.AssignmentID] = e
+	started, err = persistWorkspace("ready")
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeFile(t, e.Path, "internal/api/payload.go", "package api\n")
 	proposal := repair.RepairResultRequest{ResultID: "repair-result-worker", ProducerAgentID: e.AgentID, AssignmentID: e.AssignmentID, UnitResults: []repair.RepairUnitResult{{UnitID: "unit-1", Status: "pass", EvidenceRefs: []string{"test://unit"}}}, Checks: []repair.RepairCheck{{Name: "post-fix", Command: authority.Checks[0], Result: "pass", EvidenceRefs: []string{"test://green"}}}, Result: "pass"}
 	if _, _, err = repair.CreateWorkspaceCandidate(ctx, root, started.State, e, proposal); err == nil {

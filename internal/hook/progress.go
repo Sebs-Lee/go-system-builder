@@ -38,6 +38,9 @@ func qualityNotice(d policy.Decision, q controller.QualityGateResult) string {
 		stage = d.Guidance.Stage + " " + d.Guidance.LifecycleState
 	}
 	s := fmt.Sprintf("Loop | %s | %s", stage, q.Status)
+	if strings.TrimSpace(d.AdditionalContext) != "" {
+		s += " | Details: see Hook additionalContext"
+	}
 	switch {
 	case q.Status == controller.StatusBlocked:
 		s += " | " + d.RuleID + ": " + d.Reason

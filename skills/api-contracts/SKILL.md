@@ -6,15 +6,15 @@ version: 1.1.1
 ---
 # API Contracts
 ## Authority
-The locked contract owns interface semantics. The applicable activation and prompt method is summarized below; stage routing lives in `docs/control/agent-protocol.md`, and current assignment authority comes from the team manifest and Agent message envelopes.
+S3 uses the locked REQ and registered S2 design to define contracts. Locked contracts own implementation semantics. Stage routing lives in `docs/control/agent-protocol.md`; work dispatched through an Assignment uses its manifest and Agent message.
 ## Applicability
 Apply to `api` risk and shared component boundaries.
 ## Required Inputs
-Read FE/BE/SYNC contracts, schemas, consumers, version policy, and error model.
+For S3, read the frozen REQ/S2 inputs and supplied contract templates. For changes to an existing boundary, read its FE/BE/SYNC contracts, schemas, consumers, version policy and error model.
 ## Quality Criteria
 Check field meaning, validation, compatibility, defaults, error codes, idempotency, pagination, ordering, retries, and side effects.
 ## Outputs
-Contract-aligned implementation or compatibility evidence.
+S3 contract design and its professional answer, or contract-aligned implementation and compatibility evidence for an implementation Assignment.
 ## N/A Criteria
 N/A when no machine-consumed boundary changes.
 ## Stop Conditions
@@ -24,7 +24,33 @@ Do not silently extend locked contracts.
 
 ## Inlined Methodology
 
-Loop Engineering uses one stable Agent Definition plus phase-one read-back prompt plus main-session approval plus phase-two activation prompt plus runtime-aware PreToolUse enforcement. The same Agent remains alive across both conversations so its document reading and submitted understanding stay in one context. Phase one is not enforced by trusting the prompt. The Agent Definition declares a static maximum tool set; before phase-two activation the Agent should not write target outputs — the Quality Gate and Transition Guard will return `not_ready` with a `missing[]` list when evidence is insufficient, but `not_ready` itself does not block authorized file listing, search, read, or other non-mutating inspection. Phase-one write, branch, package-install, formatter/generator, task/team/runtime/evidence mutation, or release-shaped attempts are independently rejected with recovery instructions unless they hit a human-only hard block. Read order: `TASK -> CONTRACTS -> REQ -> UI DESIGN PACKAGE/DESIGN -> RULES` for normal assignments; `BUG -> TASK -> CONTRACTS -> REQ -> UI DESIGN PACKAGE/DESIGN -> RULES` for repair assignments. References are ordered and fingerprinted. Phase-one expected operations are file listing, search and read; read-only source inspection; explicitly classified non-mutating commands; messages and structured read-back submission. `git push <remote> master|main`, `gh pr merge`, and `gh release create` that match `docs/control/protected-commands.json` are denied by PreToolUse Hook Policy; the release-ready Gateway and human approval still record the human decision, and the Harness never performs merge, publication, deployment, or formal release side effects. Structured read-back response: `ready`, `conflict`, `missing_input`, or `out_of_scope`. A `ready` response must include objective and user-visible value, single assigned responsibility, REQ/contract/TASK/optional BUG clauses covered, planned files or review surfaces, allowed and forbidden actions, dependencies and integration boundaries, expected outputs and evidence, Closing Contract or review conclusion criteria, selected Skills and how they apply, assumptions, risks and unresolved questions, and document fingerprints actually read. Best-practice selection maps the `api` risk tag to the `api-contracts` Skill. Prompt minimality: prompt content must include only instance identity and correlation metadata, document and Skill references, role responsibility, allowed/prospective/forbidden scope, output and evidence destinations, current phase and stop conditions; it must not include copied specification sections, generic engineering checklists already in Skills, role doctrine already in the Agent Definition, Loop procedure already in Methodology Skills, guessed missing context, or hidden instructions that contradict the envelope.
+When work arrives through an Assignment, use that Assignment's read-back,
+approval and activation flow. Read `TASK -> CONTRACTS -> REQ -> UI DESIGN
+PACKAGE/DESIGN -> RULES`; repair work starts with its approved repair context.
+Keep the same Agent context through read-back and implementation, and follow
+the Assignment's duties and stop conditions.
+
+For S3 Main, follow the frozen REQ/S2 input view and
+[S3 stage instructions](../../docs/control/agent-protocol.md#s3).
+Use the exact answer, output and template paths supplied by the Hook.
+Create the current REQ's index and applicable contracts; fill the professional
+answer once and save. The Hook names the bound development branch and any
+contract outputs read from Git: commit those completed professional files and
+their Git-sourced model/example dependencies there before saving the answer.
+S3 outputs can change during this entry; REQ/S2 inputs remain frozen.
+The original consumer captures model dependencies and
+runs checks and registration. S3 needs no Assignment, second envelope or
+repeated manual checks.
+
+PreToolUse observes graph progress and supplies the current questionnaire's
+exact path, missing duties and next action. It does not authorize or deny tools.
+Fill the professional answers and save at the supplied path; the original
+consumer and stage gates determine reception and progression. Missing input,
+conflicts or unspecified compatibility must be reported explicitly. Human
+release decisions and independent reviews remain in their original stages.
+Prompts reference the relevant contract clauses, role, inputs and expected
+outputs; do not duplicate the full methodology or ask the author to copy
+machine-known identity and evidence metadata.
 
 ## Shared source and reading order
 
@@ -32,4 +58,5 @@ Apply [shared-model contract rules in the factory](../../docs/rules/shared-model
 Converge the shared model and SYNC behavior before finalizing FE/BE contracts.
 Use native definitions and exact references; do not copy field tables. Check
 actual consumer/provider/Mock behavior, including structurally valid business
-rejections. Read only the operation and model slices named by the current TASK.
+rejections. Read only the operation and model slices named by the current TASK
+or the exact S3 Hook view.

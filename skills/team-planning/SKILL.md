@@ -7,7 +7,13 @@ version: 1.3.0
 # Team Planning
 
 ## Authority
-The manifest proposes assignments; Hooks and runtime enforce activation. Runtime authority lives in `.claude/loop-state.json`; stage contracts live in `docs/control/agent-protocol.md`; the team-planning method is inlined below.
+The manifest proposes assignments; the original runtime records activation. Hooks observe progress and provide the exact questionnaire path and missing duties. Runtime authority lives in `.claude/loop-state.json`; stage contracts live in `docs/control/agent-protocol.md`; the team-planning method is inlined below.
+
+Responsibility progress uses the five states in
+[`docs/rules/state-machine.md`](../../docs/rules/state-machine.md#21-loop-responsibility-status).
+Here `ready` means eligible for original dispatch, not that the responsibility
+has started or finished. Team lifecycle and platform session values remain
+their exact current Runtime/host fields; never ask an Agent to write them.
 
 ## Entry Conditions
 - Specification scope is known (contracts, TASKs, modules, risk tags are drafted).
@@ -60,6 +66,38 @@ Claude Code currently permits one Agent Team per session. Therefore `platform_te
 
 ## Dispatch scope and check-target consistency
 
+For ordinary S6 Builder registration, prepare the current eligible TASK with
+`loop-harness s6 prepare --root <authority-root> --task <TASK> --role <Builder-role> --agent-id <actual-platform-Agent-ID> --platform-team-id <actual-platform-Team-ID>`.
+The command projects the current Runtime, REQ, generation, locked document
+fingerprints, TASK write scope, dependencies, and check commands. Main chooses the
+TASK, Builder role, and actual platform Agent/Team identities. If the command
+reports that the TASK has no concrete Worker-owned Closing Contract predicate,
+Main must add that professional decision to the exact draft path it prints;
+the draft stays unregistered until the original consumer accepts it. Use the
+exact registration command printed by `s6 prepare`:
+`loop-harness runtime register-workgroup --manifest <path> --task-id <TASK> --task <locked-task-path>`.
+The example manifest is a schema/compatibility reference for explicit
+native/legacy setup; do not copy it for the ordinary bound-workspace flow or
+manually replace Runtime metadata, hashes, scope, or checks.
+
+For the ordinary S6 bound-workspace route, after registration run
+`runtime workspace prepare --root <authority-root> --assignment <id> --agent <owner>`.
+Read its returned execution/context and submission paths, then run
+`runtime workspace launch` with the same root, Assignment, and owner. The Hook
+supplies the active view and exact answer paths. Do not add `team launch`, export
+a readback template, or create a worktree before this prepare/launch sequence.
+Use registered `team launch` only when the current Runtime explicitly selects
+the native/legacy teammate route instead of a bound workspace.
+
+For canonical S6 Builders (`assignment_record_contract: s6-v1.2`), `done_when`
+describes Worker-owned outcomes verifiable before Result submission. The
+prepared contract places TASK commands in Main `required_checks` and Main
+CheckProfiles. The Builder still runs the TASK checks and cites actual outputs
+in the Result; Main reruns required checks on the integrated tree. An empty
+`worker_checks` list means no separate worker runner is registered; it does not
+mean the TASK checks passed.
+
+
 Before registering a Builder assignment, compare its TASK deliverables with write_paths, shared-type/API/route ownership and dependency order. Assign missing connection work explicitly rather than widening paths silently or instructing a component to duplicate an inaccessible authority. Reuse existing manifest fields and TASK sections; no additional parallel ledger is required.
 
 Bind each required check to an explicit execution tree and commit. A post-merge check must use the integration target supplied by the Integrator, never prefer an old source worktree merely because it exists. Preserve the real exit status and the project's evidence reporter; report zero collection, skipped required cases and missing artifacts as failures, not successful shell wrappers.
@@ -68,4 +106,13 @@ Audit checks executed before and after merge so repeated expensive runs have an 
 
 ## Integration check phase
 
-Keep `legacy_pre_and_post_merge` (or the compatible omitted mode) for ordinary Builder assignments. Select `integration_check_mode: post_merge` only through an explicit reviewed plan explaining why Worker checks cannot run meaningfully or why their measured duplicate cost warrants deferral. Record the reason and recovery choice in the existing plan checkpoint; never fabricate measurements. Static identity, scope, locked-input and conflict inspection remains mandatory, and all required checks still run on the actual Main merge tree before verified/ack. On failure preserve the merge and receipts: retry an environment failure, or use rework for code corrections. Never reset Main automatically or edit an active manifest's mode. Target projects use `docs/workspace-integration.md` for the runner and recovery contract.
+The canonical manifest prepared for the ordinary S6 bound-workspace route uses
+the existing `post_merge` mode with Main CheckProfiles. This keeps Main's
+registered Required Checks on the integrated tree while the Builder records
+the actual TASK-check outputs in the Result. Other manually configured or
+legacy assignments retain their original reviewed check-mode contract. Static
+identity, scope, locked-input and conflict inspection remains part of original
+integration; on failure preserve the merge and receipts, retry an environment
+failure, or use rework for code corrections. Never reset Main automatically
+or edit an active manifest's mode. Target projects use
+`docs/workspace-integration.md` for the runner and recovery contract.

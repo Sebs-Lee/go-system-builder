@@ -41,6 +41,11 @@
 
 ## UI 设计包输入
 
+该表也登记服务行为输入：`UI impact=none` 且 AC 指向 FR 时填写模块七文件行为包
+（五个源文件与两个生成文件，见 `docs/rules/scenario-model.md`），不要求 HTML/PATH。
+服务 CASE 的验证来源是原服务入口的单元/集成检查；`browser_required:false` 只免除
+浏览器 spec，不允许删除 CASE。不能仅凭 none 把模块与验证来源填成 N/A。
+
 | REQ source_ref | UI impact | 模块当前真相包 | Fingerprint (SHA-256) | 合同影响 | E2E 来源 |
 |:---|:---|:---|:---|:---|:---|
 | REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cross-matrix.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |

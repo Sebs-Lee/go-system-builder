@@ -19,13 +19,23 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
-// runS6Command is the `loop-harness s6` dispatcher. Currently only
-// `status` exists: a read-only board of the current S6 batch (which TASKs
-// lack a Builder Result, which have failing checks or deviations, which
-// lack a verified integration checkpoint).
+// runS6Command is the `loop-harness s6` dispatcher. `status` projects the
+// current batch; `prepare` writes a non-authoritative Builder manifest draft
+// from the registered TASK and original dispatch inputs.
 func runS6Command(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "status" {
-		fmt.Fprintln(stderr, "s6 requires <status>")
+	if len(args) == 1 && wantsHelp(args) {
+		printCommandHelp(stdout, "loop-harness s6 <status|prepare> [flags]", "`status` inspects the existing TASK dispatch board; `prepare` projects a non-authoritative manifest draft and leaves registration to the original `runtime register-workgroup` consumer.\nStatus: `loop-harness s6 status --root <authority-root> [--capacity <slots>] [--json] [--advice [--max-unreceived-results <count>]]`.\nPrepare: `loop-harness s6 prepare --root <authority-root> --task <TASK> --role <Builder-role> --agent-id <actual-platform-Agent-ID> --platform-team-id <actual-platform-Team-ID>`.\nFor an existing canonical attempt requiring code correction, add `--revise-assignment <assignment> --revision-intent-key <new-key>` with the new Builder identities; preparation preserves the original contract and returns its exact revision draft path and original registration command. `runtime workspace pending --root <authority-root>` shows the current retry/rework actions.\nIf the Main workspace is not bound, use `loop-harness runtime workspace bind --root <authority-root>` before workspace preparation; it binds the current Main checkout and does not guess `develop`.")
+		return 0
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "s6 requires <status|prepare>")
+		return 2
+	}
+	if args[0] == "prepare" {
+		return runS6PrepareCommand(args[1:], stdout, stderr)
+	}
+	if args[0] != "status" {
+		fmt.Fprintln(stderr, "s6 requires <status|prepare>")
 		return 2
 	}
 	flags := flag.NewFlagSet("s6 status", flag.ContinueOnError)
@@ -33,12 +43,35 @@ func runS6Command(args []string, stdout, stderr io.Writer) int {
 	root := flags.String("root", ".", "repository root")
 	capacity := flags.Int("capacity", 0, "actual total concurrent slots; omit to inspect without selecting a batch")
 	asJSON := flags.Bool("json", false, "machine-readable dispatch projection")
+	advice := flags.Bool("advice", false, "include original reception-first Main action and advisory dispatch budget")
+	maxUnreceived := flags.Int("max-unreceived-results", -1, "optional ceiling for advice recommendations; original registration unchanged")
+	if wantsHelp(args[1:]) {
+		flags.SetOutput(stdout)
+		flags.Usage()
+		return 0
+	}
 	if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
 		return 2
 	}
 	if *capacity < 0 {
 		fmt.Fprintln(stderr, "capacity must be nonnegative")
 		return 2
+	}
+	if *maxUnreceived < -1 || (*maxUnreceived >= 0 && !*advice) {
+		fmt.Fprintln(stderr, "max-unreceived-results requires --advice and a nonnegative ceiling")
+		return 2
+	}
+	if *advice {
+		var declaredCapacity, ceiling *int
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name == "capacity" {
+				declaredCapacity = capacity
+			}
+		})
+		if *maxUnreceived >= 0 {
+			ceiling = maxUnreceived
+		}
+		return runS6DispatchAdvice(*root, *capacity, declaredCapacity, ceiling, true, *asJSON, stdout, stderr)
 	}
 	return runS6DispatchStatus(*root, *capacity, *asJSON, stdout, stderr)
 }
@@ -66,6 +99,8 @@ func runS6Status(root string, stdout io.Writer) int {
 	batch := s6BatchTasks(state)
 	completed := s6Completions(state, root)
 	integrated := s6VerifiedCheckpoints(root, runtimeID, generation)
+	questions, _ := projectS6BuilderQuestionnaires(root, "", snapshot)
+	resultPathsByTask := s6BuilderResultPathsByTask(questions)
 
 	fmt.Fprintf(stdout, "S6 batch board (generation %d, %d task(s) registered)\n", generation, len(batch))
 	if len(batch) == 0 {
@@ -88,7 +123,11 @@ func runS6Status(root string, stdout io.Writer) int {
 				fmt.Fprintln(stdout, "  scope_deviations: none")
 			}
 		} else {
-			fmt.Fprintln(stdout, "  completion: no Builder Result (run `runtime task-complete`)")
+			if paths := resultPathsByTask[taskID]; len(paths) > 0 {
+				fmt.Fprintf(stdout, "  completion: no Builder Result; the assigned Builder owns filling and saving the exact Result questionnaire path(s): %s; Main tracks the original execution and receives the Result\n", strings.Join(paths, ", "))
+			} else {
+				fmt.Fprintln(stdout, "  completion: no Builder Result; no exact Result path is available from a current registered Builder questionnaire")
+			}
 		}
 		if integrated[taskID] {
 			fmt.Fprintln(stdout, "  integration: verified checkpoint present")
@@ -97,6 +136,29 @@ func runS6Status(root string, stdout io.Writer) int {
 		}
 	}
 	return 0
+}
+
+func s6BuilderResultPathsByTask(questions []s6BuilderQuestionnaire) map[string][]string {
+	pathsByTask := make(map[string][]string)
+	seen := make(map[string]map[string]bool)
+	for _, question := range questions {
+		if question.TaskID == "" || question.ResultPath == "" {
+			continue
+		}
+		path := question.ResultPath
+		if absolute, err := filepath.Abs(path); err == nil {
+			path = absolute
+		}
+		if seen[question.TaskID] == nil {
+			seen[question.TaskID] = make(map[string]bool)
+		}
+		if seen[question.TaskID][path] {
+			continue
+		}
+		seen[question.TaskID][path] = true
+		pathsByTask[question.TaskID] = append(pathsByTask[question.TaskID], path)
+	}
+	return pathsByTask
 }
 
 // s6BatchTasks returns the TR-003 exact execution batch: the task documents
@@ -226,6 +288,10 @@ func s6ScopeDeviations(envelope map[string]any) []string {
 }
 
 func runS6DispatchStatus(root string, capacity int, asJSON bool, stdout, stderr io.Writer) int {
+	return runS6DispatchAdvice(root, capacity, nil, nil, false, asJSON, stdout, stderr)
+}
+
+func runS6DispatchAdvice(root string, capacity int, declaredCapacity, ceiling *int, includeAdvice, asJSON bool, stdout, stderr io.Writer) int {
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -245,11 +311,28 @@ func runS6DispatchStatus(root string, capacity int, asJSON bool, stdout, stderr 
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	// A separate explicit flag chooses advice; legacy status keeps its shape.
+	if includeAdvice {
+		a, err := receptionAdvice(root, b, declaredCapacity, ceiling)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		b.ReceptionAdvice = &a
+	}
 	if asJSON {
 		return encodeJSON(stdout, b)
 	}
+	if p := b.Pressure; p != nil {
+		fmt.Fprintf(stdout, "Configured S6 backpressure: paused=%t; original unreceived=%d; trigger=%d; resume<=%d\n", p.Paused, p.Unreceived, p.Max, p.Resume)
+	}
 	if b.Legacy {
 		fmt.Fprintln(stdout, "legacy: no reviewed dispatch plan; existing execution remains recoverable")
+		if b.ReceptionAdvice != nil {
+			for _, line := range receptionAdviceText(*b.ReceptionAdvice) {
+				fmt.Fprintln(stdout, line)
+			}
+		}
 		return runS6Status(root, stdout)
 	}
 	for _, w := range b.Plan.Warnings {
@@ -258,12 +341,17 @@ func runS6DispatchStatus(root string, capacity int, asJSON bool, stdout, stderr 
 	fmt.Fprintf(stdout, "S6 dispatch plan: %s (runtime revision %v, total capacity %d)\n", b.Plan.Path, b.Revision, capacity)
 	for _, r := range b.Rows {
 		mark := " "
-		if r.State == "integrated" {
+		if r.Integrated {
 			mark = "x"
 		}
 		fmt.Fprintf(stdout, "W%d [%s] %s — %s: %s\n", r.Task.Wave, mark, r.Task.ID, r.State, r.Reason)
 	}
 	fmt.Fprintf(stdout, "Next batch: %v\n", b.Next)
+	if b.ReceptionAdvice != nil {
+		for _, line := range receptionAdviceText(*b.ReceptionAdvice) {
+			fmt.Fprintln(stdout, line)
+		}
+	}
 	if capacity == 0 {
 		fmt.Fprintln(stdout, "Declare actual platform capacity with --capacity to select a batch; no fixed default of 2.")
 	}

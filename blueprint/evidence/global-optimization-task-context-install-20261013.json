@@ -1,0 +1,126 @@
+{
+  "package_sha256": "3836b92644fa9268a1c9bef92c60efa368f126402542e3fa7f205a8f9a578660",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-task-context-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "native_s4_task_context_advisory": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "native_s4_task_context_advisory": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "Fresh native default/packet installs: doctor, validate, release graph, docs, consumer Skills and actual S4 tasks-check JSON reading/advisory fixture. Production CLI separately verifies S4 and issued independent S5 review-check analysis without changing original gate or Runtime. No real model consumption or token/compact experiment.",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-task-context-install-qcf9nzu0",
+  "temporary_artifacts_may_expire": true,
+  "release_manifest_files": 205,
+  "verification": {
+    "domain_regression": {
+      "passed": true,
+      "seconds": {
+        "semantic": 4.102,
+        "sharedmodel": 1.661,
+        "transition": 14.78,
+        "qualitygate": 0.603
+      }
+    },
+    "domain_race": {
+      "passed": true,
+      "seconds": {
+        "semantic": 14.185,
+        "sharedmodel": 3.617
+      },
+      "scope": "Parser source/mode/cache/limits and original dispatch/shared-model regression before final explicit-heading alias and cache refinements."
+    },
+    "s4_s5_entrypoints": {
+      "passed": true,
+      "seconds": 7.467,
+      "scope": "Original S4 mechanical gate and issued independent S5 review-check; advisory does not replace Problems or write Runtime."
+    },
+    "s4_s5_race": {
+      "passed": true,
+      "seconds": 27.158
+    },
+    "final_parser_and_entrypoints": {
+      "passed": true,
+      "seconds": {
+        "semantic": 0.078,
+        "cli": 14.193
+      },
+      "scope": "Final explicit heading anchors/fence boundaries, large input, root bounds, cache/empty array refinement and original S4/S5 outputs."
+    },
+    "complete_cli": {
+      "passed": true,
+      "seconds": 538.015,
+      "scope": "Snapshot before final heading/cache refinements; final refinements separately tested above."
+    },
+    "final_vet": {
+      "passed": true
+    }
+  },
+  "environment_event": {
+    "initial_native_install": "failed copying a platform binary: no space left on device",
+    "resolution": "Removed only known obsolete task-generated temporary installation directories; retained source, durable evidence and final archives; same live Go regression was preserved. Fresh installation rerun passed."
+  },
+  "remaining": [
+    "Frozen analysis artifact/parser binding in newly issued formal WorkPackets",
+    "Approved current CASE/input/expected-output behavior examples",
+    "Actual model compact/handoff/conflict/first-delivery comparison through G08",
+    "Other G01-G08 and domain adapters",
+    "Original real Claude and bwrap host limits unchanged"
+  ],
+  "source_files_sha256": {
+    "internal/semantic/task_context.go": "d16300460ce89999bd7ea0ea0fc01d38b86b33ef2a6e77994d70381fe351d6bb",
+    "internal/semantic/tasks.go": "c1331f7b27165e83ae5e846156fdf20cfad3a0c1607c4567ad3f409e4283c092",
+    "internal/cli/tasks_check.go": "f08fd25ee4e93cc2267b6ae1aba8c8ae0c10e5cfbbe4a5cc26e67988f345226b",
+    "skills/specification-planning/SKILL.md": "8900d577279e10f149a638b0086da15f8fe1f0d58cc8213f71343ae5c7668c75",
+    "skills/document-verification/SKILL.md": "07b955b3549b7971f2c90cf5f3d3fe5441b74ca5613855cc2aca62412fbd74ea"
+  }
+}

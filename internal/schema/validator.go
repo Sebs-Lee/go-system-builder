@@ -103,6 +103,8 @@ func (v *Validator) ValidateBytes(schemaName string, data []byte) error {
 			schemaName = "loop-state-v1.1.schema.json"
 		case "1.2.0":
 			schemaName = "loop-state-v1.2.schema.json"
+		case "1.3.0":
+			schemaName = "loop-state-v1.3.schema.json"
 		default:
 			return fmt.Errorf("unsupported runtime schema version")
 		}
@@ -230,10 +232,16 @@ func messageBranchFor(message map[string]any) string {
 	case "readback_response":
 		return "readbackResponse"
 	case "plan_report":
+		if message["assignment_record_contract"] == "s6-v1.2" {
+			return "s6PlanReport"
+		}
 		return "planReport"
 	case "activation":
 		return "activation"
 	case "completion_report":
+		if message["assignment_record_contract"] == "s6-v1.2" {
+			return "s6CompletionReport"
+		}
 		return "completionReport"
 	case "work_start", "completion_ack", "blocker_report", "blocker_resolution", "shutdown_approval":
 		return "lifecycleEvent"
@@ -247,7 +255,7 @@ func messageBranchFor(message map[string]any) string {
 func (v *Validator) compileSchema(schemaName string) (*jsonschema.Schema, error) {
 	name := stripDir(schemaName)
 	if AssetExists(name) {
-		return v.compiler.Compile(name)
+		return compileEmbeddedSchema(name)
 	}
 	// Backward-compat: treat as a disk path.
 	return v.compiler.Compile(v.resolve(schemaName))

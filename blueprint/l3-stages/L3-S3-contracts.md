@@ -6,6 +6,59 @@
 
 ## 1. 第一层：S3 的立意与目标
 
+> 2026-10-16 全链审查：[S3 机制审查与局部返工范围](../global-optimization/S3-MECHANISM-REVIEW.md)。
+> 原 S5 返工暴露的 S3 门前投影、接续及提交视图提示缺口已修复，r115 定向回归 89 项通过。
+> after-r28 用历史 finding fixture 作为前置，真实 muse 保留合同修复并由原 PTR 推进到 S4，
+> 两次重放与下一入口投递通过。全项目 validate/doctor 仍报旧 S5 清单指纹，详见审查记录。
+
+### S3 Main 契约答卷与接续契约
+
+进入或恢复 `planning.contracts` 时，graph listener 自动准备原 S3 问卷并给出准确的
+view/answer 路径、当前已知产物路径与模板、冻结输入、具体缺项和下一动作。S3 是 Main
+责任，不创建 Assignment 或 Contract Planner agent。发行只冻结当时已确定的上游事实：
+当前 locked bound REQ、S2 已登记且仍匹配的设计，以及这些上游来源明确引用的条件资料。
+不从本阶段正在创作的 CONTRACTS 索引推导发行闭包；S3 产物不能成为自身发行前置条件。
+继续使用现有 S3 模板、work_packets/submissions 子类型及原 S2/S5 校验，不增加答案字段。
+
+原项目声明为 `git_tree` 的专业产物从已绑定开发分支的提交读取。Hook 须明确给出该分支及
+当前合同路径：本入口可以修改 S3 交付，完成后先在该分支提交专业文档及其模型/例子，
+再保存当前答卷。问卷和 Runtime 沿原磁盘路径接收。未提交导致的来源差异须直接提示提交
+具体文件，不能让作者误解为本次合同已冻结、回滚必要修复或寻找具名修订。答卷尚未接收时
+修正后继续保存同一路径；已接收时仅显示原回执与接续责任。
+
+Main 依据冻结输入完成共同模型与例子、实际 CONTRACTS 索引及适用 FE/BE/SYNC 合同，
+并逐端说明适用性；机器不猜适用范围。一次答卷对应当前 bound REQ 的一个索引及其合同集。
+历史或其他 REQ 的索引和合同不必重复放入本答卷，也不得帮当前 REQ 补齐合同或通过门。
+集合去重、路径/名称/status/version、索引与本批合同的集合一致性和实际指纹仍由原验证
+检查；本批当前完整交付须是 locked。合同 ID、条款、适用性、语义等价、oracle 翻译、
+兼容性和条件 N/A 保留专业判断，S5 独立审查继续承担独立验证。
+
+保存时，原 shared-model checker 从本次合同与例子读取实际完整依赖闭包，将新共享模型、
+例子及其依赖写入现有 evidence `subject_refs`；保存后按原摘要逐字节校验。已作为 S2
+上游输入冻结的模型和例子仍须匹配原指纹，不得静默修改。原消费者从一次答卷生成
+`planning_contract`（producer 为 Main / Orchestrator）和接收记录；作者不制作信封或复制
+subjects、hash、身份等元数据。原合同检查与 scenario bridge/gate 验证本批完整事实。
+满足条件时仍由 PTR-PLAN-02 原事务运行 `register_locked_contracts`，登记本批合同与
+已有 shared inputs 并进入 S4；答案保存或 self-review `pass` 本身不等于 gate PASS。
+
+同内容重放保留原回执；异内容冲突仍由原消费者处理。上游冻结输入变化时，旧发行不能
+代表新输入；按原规划返工入口接续，不删除发行记录，也不手动推进游标。门未通过时，
+保留原接续的可重试能力：提示准确答卷路径、当前具体缺少的本批文件/条目或系统接续项、
+责任方与下一动作；沿用现有 `no_transition` 兼容，不新增状态或协议，也不要求重交同一
+专业答卷。原完整 pair 校验与 S2/S5 检查保持。REQ 或 breaking 决策仍走原人闸。
+
+检查命令只在具体错误需要诊断时由 Main 运行；普通流程不要求重复手工执行原消费者已经
+运行或原门会重算的 `contracts check` / bridge。进度反馈始终附当前准确 answer 路径，
+并说明实际缺项及系统负责的下一动作；不得用泛化 missing token 要作者猜路径或命令。
+Main 只填本次专业答案并保存一次。专业判断、required coverage、原独立 S5 review、
+REQ/breaking 人类决定和 PTR-PLAN-02 正式登记均保留。
+
+回归入口：`internal/cli/contract_followup_rework_e2e_test.go` 覆盖原接续重试、旧记录恢复与直接跳转拒收；
+`internal/cli/s3_rework_e2e_test.go` 覆盖冷入口、模型依赖闭包、本批登记及其他 REQ 共存；
+`internal/workpacket/contracts_test.go::TestContractProjectionFreezesInputsAndRequiresExplicitApplicability`、
+`TestContractQuestionDeclaresApplicabilityObjectShape`；`internal/cli/contract_answer_e2e_test.go::TestContractAnswerMainHookOriginalRouteAndHistoricalReceipt`、
+`TestContractAnswerPendingAndOriginalPairRecovery`、`TestContractAnswerRejectsDraftAndSourceDriftBeforeReception`。
+
 ### 1.1 为什么需要 S3
 
 S2 给出了系统和用户行为事实，但 Builder 不能直接从整套设计中各自推导接口。前端关心可见状态和交互，后端关心数据、状态与副作用，联调关心 wire shape、错误、幂等和兼容性；若三方分别解释同一设计，就会在字段含义、失败行为和状态转换上产生“各自正确”。
@@ -23,11 +76,11 @@ S3 的本质是把设计事实翻译成**分端可执行、跨端可对照、上
 
 | 项目 | 定义 |
 |:--|:--|
-| 输入 | bound REQ；locked ARCHITECTURE/ADR；当前模块 scenario/story/flow/prototype；`planning.contracts` cursor |
+| 输入 | bound REQ；当前 generation 已登记且仍匹配的 S2 design；这些上游来源明确引用的条件资料；`planning.contracts` cursor |
 | 要搞清楚 | FE、BE、SYNC 各自的边界；两端 wire/error/state/side-effect 是否一致；每个 CASE 与 AC 是否有条款落点 |
 | 核心工作 | 建立条款宇宙 → 模型与 SYNC 共同收敛 → FE/BE 派生 → 索引收口、机检、锁定和登记 |
-| 输出 | locked CONTRACTS 索引与适用的 FE/BE/SYNC 契约；planning_contract 证据；runtime 登记的 contract documents |
-| 完成 | contracts check 与 scenario bridge 均通过；至少一份 locked contract 存在；证据精确覆盖当前设计与 locked contract 集；PTR-PLAN-02 提交 |
+| 输出 | 当前 bound REQ 的 locked CONTRACTS 索引和完整适用 FE/BE/SYNC 集；原消费者生成的 planning_contract 证据；PTR-PLAN-02 登记的 contract documents |
+| 完成 | 当前 REQ 批次的完整合同集合与索引一致且 locked；原 contracts check、scenario bridge 和 evidence/source gate 满足；PTR-PLAN-02 提交 |
 | 下一阶段 | cursor 进入 `planning.tasks`，S4 以 CONTRACTS 索引中的条款宇宙拆任务 |
 
 ### 1.3 Overview：输入、主步骤与输出
@@ -76,9 +129,9 @@ flowchart LR
 - **负责**：合同范围、条款、两端接口语义、错误/状态/副作用、兼容性决策、需求—场景—条款追溯和契约登记；
 - **不负责**：重新设计场景事实。发现 oracle、PATH 或架构错误时返回 S2；
 - **不负责**：把条款拆成 TASK 或回填“派生任务”。任务覆盖的权威在 S4 的 TASK §3 与 `tasks check`；
-- **机器能保证**：引用 token 存在、CASE 反向闭合、索引 clause cell 指向某个含同号 §n 的契约、部分 fingerprint 与磁盘一致、至少存在 contract、AC bridge 可达；
+- **机器能保证**：原 contracts check / bridge 验证其既有范围；S3 gate 还须从当前答卷取得当前 REQ 的完整合同集合，逐项核对索引、状态和指纹。其他 REQ 的索引/合同不得替当前批次补足 coverage；
 - **机器不能保证**：SYNC 两端语义真的等价、oracle 翻译忠实、条款粒度合理、兼容性取舍正确；
-- **锁定时序**：PTR-PLAN-02 登记 exact contract 指纹，但阶段感知的写拦截到 S6 才激活；S4/S5 返工期仍可通过合法流程更新并重登记，不能写成“PTR 后立刻物理不可写”。
+- **锁定时序**：PTR-PLAN-02 登记 exact contract 指纹；Hook 只提醒当前状态和返工流程，不按阶段拦截写工具。S4/S5 返工仍沿原审查/失效/重登记路径处理，不能写成“PTR 后物理不可写”。
 
 ## 2. 第二层：S3 的任务分解
 
@@ -88,7 +141,7 @@ flowchart LR
 | T4 共同模型与 SYNC 协议收敛 | wire shape、错误码、幂等、限流、权限、状态转换是否形成唯一共同基线 | 先确定共享数据模型、HTTP/JSON 样例、错误/状态/幂等和 CT 断言，再在 SYNC 中记录两端对照与差异裁决 | 共享模型闭包、可联调的 SYNC 契约及差异裁决 |
 | T2 派生 FE 契约 | 共享模型与 SYNC 基线如何成为用户可见状态、组件行为、输入依赖和错误恢复承诺 | 以 T4 的共同模型和 SYNC 为输入，将 Story/PATH/oracle 映射到 FE 条款、联调点与验收 | FE 范围、条款、场景与测试映射 |
 | T3 派生 BE 契约 | 共享模型与 SYNC 基线如何成为数据、状态机、权限、副作用和技术约束承诺 | 以 T4 的共同模型和 SYNC 为输入，将 architecture/rule/oracle 翻译为 BE 条款、数据模型和验收 | BE 范围、条款、数据/状态/副作用承诺 |
-| T5 索引收口、机检、锁定与登记 | 追溯是否闭合；哪些事实能进入 runtime | 完成索引；运行 contracts check；修 scenario bridge；翻 locked；登记 planning_contract；PTR-PLAN-02 | registered contract set 与 S4 cursor |
+| T5 索引收口、机检、锁定与登记 | 追溯是否闭合；哪些事实能进入 runtime | 完成当前 REQ 索引及合同；将适用合同状态设为 locked；Main 保存现有专业答卷；原消费者和门自动核查，PTR-PLAN-02 登记本批事实 | registered contract set 与 S4 cursor |
 
 T1 的条款宇宙先建立框架；T4 先收敛共同模型与 SYNC，T2/T3 再从同一基线并行派生并使用稳定编号；T5 再从两端反查。若先分别写三个合同、最后才想编号，索引和正文会形成三套局部真相。
 
@@ -109,14 +162,13 @@ flowchart TD
     SEM -->|需要改变 REQ| PAUSE["暂停并走 amendment"]
     SEM -->|是| INDEX["T5 完成 CONTRACTS 覆盖矩阵"]
 
-    INDEX --> CHECK["contracts check<br/>+ scenario bridge"]
-    CHECK --> OK{"机械检查通过？"}
-    OK -->|否| FIX["按 token / clause / CASE / SHA<br/>定位到对应合同或 S2 源头"]
-    FIX --> INDEX
-    OK -->|是| LOCK["所有适用合同 Status=locked<br/>登记 planning_contract"]
-    LOCK --> GATE{"GATE-PLANNING-CONTRACTS-COMPLETE"}
-    GATE -->|not_ready| FIXG["补 locked 文档或新证据信封"]
-    FIXG --> LOCK
+    INDEX --> LOCK["当前批次适用合同 Status=locked"]
+    LOCK --> SAVE["Main 填现有专业 answer 并保存一次"]
+    SAVE --> ACCEPT["原消费者核查本批合同与来源<br/>生成原 planning_contract evidence"]
+    ACCEPT --> GATE{"原 S3 gate / 当前批次完整 facts"}
+    GATE -->|not_ready| FIXG["系统给准确 answer/产物路径、具体缺项和下一动作"]
+    FIXG --> RETRY["沿原接续重评；已接收的答案不重交<br/>未接收时仅按反馈修正并保存"]
+    RETRY --> GATE
     GATE -->|satisfied| PTR["PTR-PLAN-02<br/>contracts_checked + scenario_bridge_checked<br/>register_locked_contracts"]
     PTR --> S4["planning.tasks<br/>进入 S4"]
 ```
@@ -176,7 +228,10 @@ SYNC 与共享模型共同形成 S3 的先行基线，不是两端实现完成�
 
 ### 4.5 T5 — 机检、锁定、登记与推进
 
-`contracts check` 当前做五类机械工作：
+`contracts check` 保留既有五类机械检查；Main 普通流程不手动重复运行。
+原消费者与 PTR-PLAN-02 在保存/门评估时运行适用检查；Main 可在具体失败时把命令
+作为诊断入口，用其输出修复被点名的文件。当前 S3 gate 必须另行确认本批完整集合，
+不允许只用一份旧 locked contract 或另一 REQ 的文档满足本批要求。
 
 1. CASE/S/F/PATH/FR token 是否存在；
 2. scenario-model 的 CASE 分母与 generated cases 是否一致；
@@ -184,7 +239,7 @@ SYNC 与共享模型共同形成 S3 的先行基线，不是两端实现完成�
 4. 索引 cell 的目标合同是否存在，且目标文本中出现同号 §n；
 5. 带 fingerprint 的模块包行是否与磁盘 SHA-256 一致。
 
-PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound REQ 的 AC→FR→Branch/CASE 或受控 N/A 再核一遍。完成后把所有适用合同顶部状态设为 locked，登记 kind=`planning_contract`、responsibility=Contract Planner/Orchestrator、conclusion=pass 的证据信封；PreToolUse 通过 PTR-PLAN-02 把 locked contracts 登记进 `documents[]` 并进入 S4。
+PTR-PLAN-02 的自然路径执行原 `scenario_bridge_checked`，把 bound REQ 的 AC→FR→Branch/CASE 或受控 N/A 再核一遍。答案保存后，原消费者生成 `kind=planning_contract`、producer=`Main`、responsibility=`Orchestrator` 的 evidence；作者不手工制作信封。满足原 gate 后，PTR-PLAN-02 把当前 REQ 本批 locked contracts 登记进 `documents[]` 并进入 S4。
 
 ## 5. 职责分布与覆盖审计
 
@@ -192,10 +247,10 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 
 | 职能 | 主责 | 承载位置 | 消费者 |
 |:--|:--|:--|:--|
-| 条款宇宙 | Contract Planner | CONTRACTS coverage matrix | S4 tasks check |
+| 条款宇宙 | Main（S3） | CONTRACTS coverage matrix | S4 tasks check |
 | FE 行为 | FE contract 作者 | FE 条款与场景映射 | frontend builder、S5/S7 |
 | BE 行为 | BE contract 作者 | BE 条款、数据/状态/规则 | backend builder、S5/S7 |
-| 两端一致性 | Contract Planner | SYNC 四列、wire 样例、error/CT | FE/BE、S5 |
+| 两端一致性 | Main（S3） | SYNC 四列、wire 样例、error/CT | FE/BE、S5 |
 | 引用与 CASE 闭合 | harness | contracts check + scenario bridge | planning gate |
 | 语义忠实度 | S3 自审、S5 独立审查 | SYNC 与 oracle 抽查 | Builder、验收 |
 | 合同指纹登记 | PTR-PLAN-02/store | runtime documents[] + journal | hook、S4/S5/S6 |
@@ -206,12 +261,12 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 - CONTRACTS 索引和 FE/BE/SYNC 不重复：索引拥有宇宙与关系，分端合同拥有语义正文；
 - S2 bridge 和 S3 check 不重复：前者闭合 AC→CASE，后者闭合 CASE→contract；
 - S3 自审和 S5 review 不重复：前者负责产出正确，后者以独立上下文攻击它；
-- **状态过滤缺口**：`ContractsCheck` 扫描所有非模板 markdown，并不只扫描 locked contract；一个 draft 文档可能提供引用，而 gate 只要求至少一份 locked contract，存在“草稿帮助门变绿但未被注册”的口径缝隙；
-- **REQ 作用域缺口**：FR token 检查当前接受“任意 REQ 中存在的 FR”，不严格限定当前 bound REQ；
+- **原全局检查范围**：`ContractsCheck` 保留对既有目录与引用的全局检查；该检查的通过不能替代 S3 gate 对当前 bound REQ 的完整合同集合核对，历史或其他 REQ 文档不得帮助当前批次满足 required coverage；
+- **原 matcher 边界**：FR token 存在性检查可以看到其他 REQ 的 FR；S3 gate 还须独立确认当前索引及所有 clause/source ref 对应当前 bound REQ 和其冻结上游事实；
 - **条款检查宽松**：目标合同只要任意位置出现同号 `§n` 就算声明，不严格限定「本合同条款」列；它是防明显漂移的地板，不是条款结构证明；
 - **语义缺口**：SYNC 四列、错误恢复、兼容性和 oracle 翻译没有机器 matcher；
 - **消费出口**：FE/BE/SYNC 的任务章节只链接任务索引，S4 的 TASK 声明实际条款覆盖，结果由后续 evidence 回链；不回填 locked 合同；
-- **锁定边界**：runtime 登记在 S3，物理写拦截从 S6 开始；S5 前的合法返工仍可能改变并重登记指纹。
+- **锁定边界**：runtime 登记在 S3；Hook 不物理拦截写入。S5 前合法返工仍沿原流程改变并重登记指纹，消费者与阶段 gate 按实际登记事实判断。
 
 ### 5.3 关键取舍
 
@@ -248,7 +303,7 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 - `docs/dev/contracts/CONTRACTS-*.md`：合同清单、联调点、设计输入和条款宇宙；
 - 适用的 `FE-*.md`、`BE-*.md`、`SYNC-*.md`；
 - 所有进入本批的合同状态为 locked，版本与稳定 ID 明确；
-- valid planning_contract 证据信封；
+- 原消费者生成的 `planning_contract` evidence（不是作者交付物）；
 - PTR-PLAN-02 后 runtime 中的 contract documents 与 `planning.tasks` cursor。
 
 ### 7.2 出口判定
@@ -259,7 +314,7 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 | 两端一致 | wire、error、state、idempotency、permission、side-effect 有同行对照与裁决 |
 | 追溯闭合 | AC→CASE→contract 可达，每个 CASE 至少一个合同消费者 |
 | 机械检查 | contracts check 无 problems；scenario bridge 通过；至少一份 locked contract |
-| 登记完整 | planning_contract 证据覆盖当前 subjects；PTR-PLAN-02 登记 locked contracts |
+| 登记完整 | 原消费者把本答卷及当前完整合同集投影到 `planning_contract` evidence；PTR-PLAN-02 登记当前 REQ 的 locked contracts |
 
 ### 7.3 失败路由
 
@@ -269,7 +324,7 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 | 合同之间可在既有设计内对齐 | 留 S3，修 FE/BE/SYNC 与索引 |
 | 必须改变目标、范围、AC 或硬约束 | pause，走 REQ amendment，从 S2 重做 |
 | contracts check 断链 | 按 token/clause/CASE/SHA 定位；修正确权威源后重跑 |
-| S5 判定 fix_required | TR-004 回 planning；修改后新指纹重签 planning/review evidence |
+| S5 判定 fix_required | TR-004 沿原返工路线回 planning；修改后的当前 REQ 合同集由原 S3 答卷消费者和 PTR-PLAN-02 按新指纹接续登记，不手工造 envelope |
 | S6/S8 发现规格缺陷且 REQ 不变 | TR-007/013/023 回 `planning.design`，S2→S4 重新收敛 |
 
 ## 8. 易错点与渐进披露
@@ -281,9 +336,9 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 - 条款号必须稳定且有语义，不能把章节号当条款；
 - 所有 CASE 都要有合同消费者，不能只覆盖“本次最重要的几个”；
 - FR 存在性检查当前不限定 bound REQ，作者仍必须人工确认 source_ref；
-- draft 文档会被 ContractsCheck 扫描，收口前要移除/明确不属于批次的草稿，避免假绿；
+- 原全局检查会扫描其既有文档范围；S3 当前批次必须独立闭合，其他 REQ 或 draft 文档不能替当前 REQ 提供 coverage；
 - 合同内“派生任务”章节当前不应被当作活权威；
-- registered 不等于 S3 当场物理不可写；真正执行冻结从 S6 生效。
+- registered 是当前图登记事实，不是工具写权限；Hook 提醒阶段责任，原消费者/门和 human-only 变更路线处理契约有效性。
 
 ### 8.2 阅读预算
 
@@ -293,7 +348,7 @@ PTR-PLAN-02 的自然路径还会执行 `scenario_bridge_checked`，把 bound RE
 | 写 FE | FE 模板、Story/PATH/oracle | UI/API 相关 skill | BE 实现细节 |
 | 写 BE | BE 模板、architecture/rule/oracle | DB/state/security skill | FE 组件细节 |
 | 对齐 SYNC | SYNC 模板、FE/BE 草案 | api-contracts | contracts check 算法 |
-| 收口 | CONTRACTS matrix、contracts check/bridge 输出、planning evidence 格式 | 具体报错对应源码说明 | 手工 token/哈希对账 |
+| 收口 | 当前 CONTRACTS matrix 与准确 answer/view 路径 | 具体检查失败时读取对应诊断输出 | 手工运行重复检查、planning evidence 格式、hash/subject 对账 |
 | S5 reviewer | SYNC 四列与 oracle 翻译 | 风险触发专项 | 机械引用重算 |
 
 正常路径只要求作者理解当前合同语义；引用存在、CASE 反向闭合、条款号和指纹由 harness 报错驱动，不写成常读检查清单。

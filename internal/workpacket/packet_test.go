@@ -1,8 +1,10 @@
 package workpacket
 
 import (
+	"bytes"
 	"encoding/json"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,100 @@ func TestS5PacketAndDraftSchemas(t *testing.T) {
 		if err := schema.NewEmbeddedValidator().ValidateBytes(name, data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+	}
+}
+
+func TestS5QuestionnaireStatesReviewCoverageWithoutExtraDeliveries(t *testing.T) {
+	for responsibility, topics := range map[string][]string{
+		"DV-SPEC-CONSISTENCY":   {"AC", "NFR", "负向路径", "CASE"},
+		"DV-TASK-EXECUTABILITY": {"单一职责", "真实依赖", "自包含", "收尾", "并行", "数据迁移", "外部依赖", "高风险"},
+	} {
+		t.Run(responsibility, func(t *testing.T) {
+			binding := testBinding()
+			binding.Responsibility = responsibility
+			p, err := BuildS5(binding, []Reference{{ID: "REQ-039", Path: "docs/requirements/REQ-039.md", Version: "v1", SHA256: strings.Repeat("b", 64)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, topic := range topics {
+				if !strings.Contains(p.Draft.Questions["conclusion"].Question, topic) {
+					t.Errorf("questionnaire omits review topic %q", topic)
+				}
+			}
+			if len(p.Draft.Questions) != 2 || !strings.Contains(p.Draft.Instruction, "不另交 PLAN、信封或重复报告") {
+				t.Fatal("S5 must retain one professional conclusion/findings delivery")
+			}
+			for _, guidance := range []string{
+				"pass（通过）＝本责任未发现问题",
+				"fix_required（修正文档）＝REQ 含义明确",
+				"req_change_required（需求待人决策）＝REQ 本身存在歧义、冲突或缺失",
+				"不表示已获变更授权", "保持预填 []", "不用抄身份、指纹或机检汇总",
+			} {
+				if !strings.Contains(p.Draft.Instruction, guidance) {
+					t.Errorf("questionnaire leaves verdict or authoring boundary implicit: %q", guidance)
+				}
+			}
+			for _, guidance := range []string{"path（read 中的具体文件路径", "expected（应有内容）", "observed（实际缺口）"} {
+				if !strings.Contains(p.Draft.Questions["findings"].Question, guidance) {
+					t.Errorf("questionnaire leaves finding field implicit: %q", guidance)
+				}
+			}
+			if p.Draft.Answer.Conclusion != nil || p.Draft.Answer.Findings == nil || len(p.Draft.Answer.Findings) != 0 || !reflect.DeepEqual(p.Draft.Questions["conclusion"].Choices, []string{"pass", "fix_required", "req_change_required"}) {
+				t.Fatal("guidance must retain the original choices and prefilled empty findings")
+			}
+		})
+	}
+}
+
+func TestS5WordingUpdatePreservesIssuedQuestionnaireAndRevision(t *testing.T) {
+	data, err := schema.ReadAsset("stage-form-s5-template-legacy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Digest(data) != "cbe36ef5367a0684c7538aa18e7f78b753813606f1d2f0967a4326e7a4aa72c2" {
+		t.Fatal("archived template no longer matches the previously issued questionnaires")
+	}
+	inputs := []Reference{{ID: "REQ-039", Path: "docs/requirements/REQ-039.md", Version: "v1", SHA256: strings.Repeat("b", 64)}}
+	for _, responsibility := range []string{"DV-SPEC-CONSISTENCY", "DV-TASK-EXECUTABILITY"} {
+		t.Run(responsibility, func(t *testing.T) {
+			binding := testBinding()
+			binding.Responsibility = responsibility
+			old, err := buildS5(binding, inputs, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldBytes, _ := json.Marshal(old)
+			rebuilt, err := RebuildS5(old)
+			if err != nil || !reflect.DeepEqual(rebuilt, old) {
+				t.Fatalf("issued questionnaire changed: %v", err)
+			}
+			pass := "pass"
+			draft := old.Draft
+			draft.Answer.Conclusion = &pass
+			answerJSON, _ := json.Marshal(draft)
+			if _, issues := ValidateAnswer(old, answerJSON); len(issues) != 0 {
+				t.Fatalf("old answer no longer validates: %+v", issues)
+			}
+			current, err := BuildS5(binding, inputs)
+			if err != nil || current.ID == old.ID || current.TemplateSHA == old.TemplateSHA {
+				t.Fatalf("new issuance did not bind the new wording: %v", err)
+			}
+			binding.Attempt++
+			binding.PreviousSubmissionKey = strings.Repeat("d", 64)
+			binding.RevisionReason = "Recheck one original observation"
+			revision, err := RebuildS5ForBinding(binding, old)
+			if err != nil || revision.TemplateSHA != old.TemplateSHA || revision.ID == old.ID || !reflect.DeepEqual(revision.Draft, old.Draft) {
+				t.Fatalf("named revision lost its original questionnaire: %v", err)
+			}
+			afterBytes, _ := json.Marshal(old)
+			if !bytes.Equal(oldBytes, afterBytes) {
+				t.Fatal("reconstruction changed the issued packet")
+			}
+			old.TemplateSHA = strings.Repeat("0", 64)
+			if _, err := RebuildS5(old); err == nil {
+				t.Fatal("unknown template fingerprint silently used current wording")
+			}
+		})
 	}
 }
 

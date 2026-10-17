@@ -68,5 +68,5 @@ Stage contract: `docs/control/agent-protocol.md` #s0 (primary_skill). Structure 
 - No architecture design (§B ends at direction and constraints; S2 owns architecture).
 - No rewrite of Project Design Foundation (S0 records the version reference; Kernel/Grammar live in `docs/design/DESIGN.md`).
 - No value decisions on the human's behalf (priority, scope, direction sign-off).
-- No bind execution or REQ mutation after lock (human-only; hook-enforced).
+- REQ amendment after lock follows its original human decision and domain transition; Hook reports the missing decision without intercepting tools.
 - No restating template field definitions — the template is self-describing.

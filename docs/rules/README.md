@@ -52,4 +52,23 @@ Hooks; procedures belong to Skills; role behavior belongs to Agent Definitions.
 
 ## Overall dispatch plan
 
-S4 → S5 → S6 follow [dispatch plan rules](dispatch-plan.md). Read the approved wave checklist and live S6 board; schedule compatible ready tasks and integrate results promptly.
+S4 → S5 → S6 follow [dispatch plan rules](dispatch-plan.md). Read the approved wave checklist and live S6 board; schedule compatible tasks that are ready for dispatch and integrate results promptly. `ready` is scheduling eligibility, not a responsibility status.
+
+## Optional project conventions
+
+Start from [the empty conventions template](project-conventions-template.json)
+when Architect indexes existing engineering decisions in
+`docs/rules/project-conventions.json`. The embedded `project-conventions.schema.json`
+defines source references, path scopes, examples, exceptions and declared status.
+The installer ships the empty template and creates no approved project defaults.
+
+`tasks check --json` returns `task_conventions` selected for each TASK's declared
+write scope. A `declared_default` must match the original locked Rules index or
+the original registered locked document, its hash/version, a real source section
+and current example hashes. Registry status alone proves no approval. An absent
+registry creates candidates only for API/error rules explicitly cited by the TASK.
+Candidate/conflict/stale/migration rows belong to the original Architect or rule
+owner; they never change business values, permission, coverage or stage gates.
+Consume resolved `entries[].status`, not the registry's nested `entry.status`
+claim. The projection proves source consistency; reviewers still judge semantic
+applicability and whether an implementation example follows the rule.

@@ -1,0 +1,367 @@
+{
+  "schema_version": "1.0.0",
+  "slice": "S8 typed HypothesisResult issuance, original Case Writer acceptance, receipt and recovery",
+  "recorded_at": "2026-10-14T20:19:00+00:00",
+  "status": "partial",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "authority": "Existing Runtime work_packets/PACKET-ISSUE, actual assignment.Register dispatch, original PLAN/agent lifecycle, investigation.SubmitIssuedHypothesisResult and original immutable Case revision CAS; no parallel queue, Result table, Writer, route or inferred professional verdict.",
+  "verified": [
+    "Closed S8 HypothesisResult packet/answer/template and receipt contracts freeze the current Case/Hypothesis, source Finding/ObservationBatch, registered TASK/manifest/owner, PLAN and route tuple; professional result remains author-authored.",
+    "Actual generation-2 manifest-backed assignment.Register and PLAN/AgentBegin issue packets from the registered manifest/TASK/owner; Team manifest SHA is frozen at registration and post-registration file drift is rejected without Runtime writes.",
+    "Public CLI PostToolUse saves the exact issued answer through the original Case revision/Runtime writer and records receipt in the original hypothesis_results row; no second result store or writer is used.",
+    "plan_approval_required regression: PLAN_REPORT and answer submission do not satisfy or bypass the existing human approval gate. The fixture does not mint human approval.",
+    "Original Stop/Idle responsibility behavior: an accepted Investigator receipt allows that owner to end their responsibility while an unanswered registered owner remains blocked; generic completion labels do not replace the exact receipt.",
+    "Sibling Hypothesis answers remain valid across unrelated Case revisions when their own question/source/dispatch/route closure is unchanged; the original packet and author draft can be restored and the sibling accepted.",
+    "Runtime pointer-only route consumption is rejected against Case bytes; route consumption in immutable Case history continues to invalidate unanswered old packets after a later revision clears the pointer fields and restores the previous visible tuple. Accepted receipts remain read-only queryable.",
+    "Same-packet concurrent direct submissions produce one original Case result/event; exact retry returns the original receipt without another write. Missing author file does not prevent read-only receipt recovery, but save replay fails closed.",
+    "Sealed pending recovery uses actual accepted before/after state and journal event to form the original commit marker, restores the exact committed pair through the original writer, preserves marker/Case artifacts during pending cleanup and creates no duplicate Case revision/event.",
+    "Intake immutable Case publication syncs the parent directory on Unix; existing Windows helper validates the directory but does not claim power-loss durability for the directory entry.",
+    "Only targeted normal/race tests were run. No complete install or supported-host matrix was run; no S8 professional answer fixture is a real model or human judgment."
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-chain-and-recovery-normal-20261014.log",
+      "sha256": "88d2dafea9b49ae2e569dcd88531a780ca67afec536e407bf51a38729503a145",
+      "bytes": 76,
+      "outcome": "PASS",
+      "purpose": "Actual generation-2 Register/PLAN/Issue/public Hook/Case/Stop chain plus concurrency and sealed pending recovery; 10.948s",
+      "format": "command_output",
+      "command": "go test ./internal/investigation -run '^(TestS8IssueUsesActualGenerationTwoInvestigatorRegistration|TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates|TestS8ConcurrentOriginalCaseSubmitIsExactlyOnce|TestS8OriginalCaseReceiptRecoversSealedPendingCommit)$' -count=1"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-chain-and-recovery-race-20261014.log",
+      "sha256": "44b0f621567af4210c7f29ed15618ec9f8174578ef6e50a36efdab50ac7edb6a",
+      "bytes": 76,
+      "outcome": "PASS",
+      "purpose": "Same combined generation-2 chain and recovery/concurrency selection under race; 90.704s",
+      "format": "command_output",
+      "command": "go test -race ./internal/investigation -run '^(TestS8IssueUsesActualGenerationTwoInvestigatorRegistration|TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates|TestS8ConcurrentOriginalCaseSubmitIsExactlyOnce|TestS8OriginalCaseReceiptRecoversSealedPendingCommit)$' -count=1"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-runtime-source-and-continuity-targeted-race-20261014.log",
+      "sha256": "76740b35f92ce30c32f5bd0740af99f78dcfa510ea63187d73143ccdf49dd463",
+      "bytes": 70,
+      "outcome": "PASS",
+      "purpose": "Runtime original source/packet continuity targeted race; 15.922s",
+      "format": "command_output"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-runtime-source-guards-targeted-normal-20261014.log",
+      "sha256": "9d754f7048a37f89ac18890381627816ac6b21ff87fc3e7427e9bf94a13094f7",
+      "bytes": 69,
+      "outcome": "PASS",
+      "purpose": "Runtime original source guards targeted normal; 1.889s",
+      "format": "command_output"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-adapter-focused-final-normal-20261014.log",
+      "sha256": "d51adbc5e1d4c0f5929b6ac95b28e488c110f65b95b99ed9908c2c48eff30155",
+      "bytes": 274,
+      "outcome": "PASS",
+      "purpose": "Focused submission/CLI/hookctx/policy adapter normal selection; 3.183s maximum listed package time",
+      "format": "command_output"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-adapter-final-normal-20261014.log",
+      "sha256": "3a05b502dd77f9cce0b3443ac2176d4c20a3cae6b4e5f560eeecbaf1347296eb",
+      "bytes": 340,
+      "outcome": "PASS",
+      "purpose": "Submission/CLI/hookctx/policy/hook adapter normal selection",
+      "format": "command_output"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-adapter-final-race-20261014.log",
+      "sha256": "689aa5d9628f7d3b832c73c6f2e905c67dcd2d646806a2f2aec386ffad82120d",
+      "bytes": 341,
+      "outcome": "PASS",
+      "purpose": "Submission/CLI/hookctx/policy/hook adapter race selection",
+      "format": "command_output"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-hypothesis-result-workpacket-targeted-20261014.log",
+      "sha256": "e9679ce5dbff1809d61ef0c98c4acc9be1a6cbbf739319c05acf979c2bd6b5ca",
+      "bytes": 72,
+      "outcome": "PASS",
+      "purpose": "Closed S8 workpacket/schema and professional answer targeted tests",
+      "format": "command_output",
+      "command": "go test ./internal/workpacket -run '^(TestBuildHypothesisResultPacketIsStableAndSchemasCompile|TestHypothesisResultRouteAndEvidenceClosuresFailClosed|TestHypothesisQuestionDigestExcludesIdentityButBindsAllQuestionFields|TestValidateHypothesisResultAnswerReturnsOnlyCompleteProfessionalFields)$' -count=1"
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-original-case-intake-register-regression-final-race-20261014.log",
+      "sha256": "7fc3f433e0488d911d8ec97347b8aa189c71a37d9f2923002fa6042ef8ca8128",
+      "bytes": 147,
+      "outcome": "PASS",
+      "purpose": "Original Case intake/Register regression race; investigation 6.782s and assignment 1.708s",
+      "format": "command_output"
+    }
+  ],
+  "source_snapshot_scope": "Exact SHA-256/byte snapshots below were recorded from the repository at evidence assembly after the listed successful test runs. S8-specific sources and their package/adapter interfaces are kept separate from the new S9 work snapshot. This is not a commit or whole-repository snapshot.",
+  "source_snapshot": [
+    {
+      "path": "internal/assignment/register.go",
+      "sha256": "a3e6efc376f09ef5182e57f271ddb971a0448507eb1ac8b3ee3816375c66d54b",
+      "bytes": 45332
+    },
+    {
+      "path": "internal/cli/investigation_command.go",
+      "sha256": "d743d84a2f92ba89c48cd6f9d1d29c05a7643780a7511770c7c22a9b220945d0",
+      "bytes": 72144
+    },
+    {
+      "path": "internal/cli/stage_answer.go",
+      "sha256": "3169862600e84982101e6ac12c4e78d956cdfb77eb32d40c0c84f044ab774865",
+      "bytes": 45977
+    },
+    {
+      "path": "internal/hook/hypothesis_result.go",
+      "sha256": "11ca801eaa8a9830cb1c24aedd58b33a63e69d28c9f3f9f1922d2948878be59e",
+      "bytes": 7807
+    },
+    {
+      "path": "internal/hook/stopidle.go",
+      "sha256": "6190d2fc19c756cb2ffc676af5eb3e7bf50b34d785bcd2762ed7dcb102b85171",
+      "bytes": 39267
+    },
+    {
+      "path": "internal/hookctx/loader.go",
+      "sha256": "1c0d6d94822f8fe456665c6581ff7ece2494e9ad1ba3bcc9bd94e4feaaa7dfea",
+      "bytes": 79281
+    },
+    {
+      "path": "internal/investigation/intake.go",
+      "sha256": "3f341e3629beaa2f64f65da43ff79658433ce464e1802aa7ead7972b1eac891c",
+      "bytes": 28713
+    },
+    {
+      "path": "internal/investigation/hypothesis_result_packet.go",
+      "sha256": "13568fb65825ab3995e6832619c731e866b3dc591ced04e22e9b0ebe71385f4d",
+      "bytes": 44499
+    },
+    {
+      "path": "internal/investigation/hypothesis_result_receipt.go",
+      "sha256": "05d889a59853d0f7946214a1cc341b5c615d9ad3b71b152c40e8634516b0a59a",
+      "bytes": 19776
+    },
+    {
+      "path": "internal/investigation/hypothesis_result_registration_test.go",
+      "sha256": "3e14b3c8d81fe23b1fa462653373d894b1a8bf9586423c8aaf90f0ecf3ae072d",
+      "bytes": 37873
+    },
+    {
+      "path": "internal/investigation/hypothesis_result_recovery_test.go",
+      "sha256": "7590e56728ab1f14fea26ce1e83b6f82b3e3d299f5fab9d550b9248c7c6964b2",
+      "bytes": 13476
+    },
+    {
+      "path": "internal/runtime/hypothesis_result_packet.go",
+      "sha256": "3f6498d7a16ee72676312fd5535beda328befb705e79b1dd9531bf3105ac0d42",
+      "bytes": 19087
+    },
+    {
+      "path": "internal/runtime/hypothesis_result_checkpoint.go",
+      "sha256": "f895a2a5d8081c06f5492422b607319d059359ec820b9768a8770d45afa510b6",
+      "bytes": 16920
+    },
+    {
+      "path": "internal/runtime/hypothesis_result_continuity.go",
+      "sha256": "05d542d679d9e9115032f8fa30e5ff520573e4d43bcdfd1acba9b09e2162368a",
+      "bytes": 5315
+    },
+    {
+      "path": "internal/submission/hypothesis_result.go",
+      "sha256": "15d79950c3fe8295095b359d974bf67be46289ba38484ac410553581596e5642",
+      "bytes": 10989
+    },
+    {
+      "path": "internal/workpacket/hypothesis_result.go",
+      "sha256": "829ab819429001c4ff4c8c4757f0823b61cd2e574a4a39acc7bd13576dc33575",
+      "bytes": 35977
+    },
+    {
+      "path": "internal/schema/assets/hypothesis-result-work-packet.schema.json",
+      "sha256": "0b78290fc60840ef00ef72b2f85eb7ea0e5d858ad268185c6cf9252c4efa0d59",
+      "bytes": 9159
+    },
+    {
+      "path": "internal/schema/assets/stage-answer-s8.schema.json",
+      "sha256": "ca3df5fc587d963da066b0796580e84598e6acdd29ed050a8ba9620be504a428",
+      "bytes": 4721
+    },
+    {
+      "path": "internal/schema/assets/hypothesis-result-receipt.schema.json",
+      "sha256": "16d81681e712af19cf7ec6d4157cd4b7e20b9660c1263d3c6bbb8e224bfde0ad",
+      "bytes": 3296
+    },
+    {
+      "path": "internal/schema/assets/stage-form-s8-template.json",
+      "sha256": "4516c4078cd6d773a0f862d4c992a93ffcfd937248e8f7346e9d83039150601f",
+      "bytes": 2671
+    },
+    {
+      "path": "blueprint/l3-stages/L3-S8-finding-investigation.md",
+      "sha256": "89e3e66597429e2a3926b8312aaf0a4f20c8622ce335d03fd8ca8322ab1e5c0c",
+      "bytes": 72330
+    },
+    {
+      "path": "blueprint/l4-mechanisms/L4-stage-form.md",
+      "sha256": "4c9372443f631b57584aba0cba739575cf37dadde99fe45c7ba945f7493a4281",
+      "bytes": 64629
+    },
+    {
+      "path": "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md",
+      "sha256": "7feeb2e360c47c77094f78fc247f03b4c50ebe48d573fea0e8d9e4257f172a1a",
+      "bytes": 166656
+    }
+  ],
+  "adjacent_s9_work_not_validated_by_s8": {
+    "status": "in_progress_at_evidence_assembly",
+    "note": "S9 PlanReport work started after the S8 verification. The hashes below are only observed source identities; they are not S9 test evidence. S8 tests exercise only their S8 packet/checkpoint paths and do not certify S9 behavior.",
+    "observed_shared_or_s9_paths": [
+      {
+        "path": "internal/runtime/repair_plan_report_packet.go",
+        "sha256": "9980c9f9586a809b5aa9abbf44887b4d8623df47a89d0f43401ac54d5c2de453",
+        "bytes": 14364
+      },
+      {
+        "path": "internal/workpacket/packet.go",
+        "sha256": "509aae2651fc55e399186664e93b8bcc535e5f0684fa6934e2296f4cc648c12e",
+        "bytes": 12973
+      },
+      {
+        "path": "internal/runtime/checkpoint_indices.go",
+        "sha256": "9c6d86a246601f78bebb76ae826778d394a30117fb269111852a6ad6d20c14f5",
+        "bytes": 9391
+      },
+      {
+        "path": "internal/schema/assets/work-packet.schema.json",
+        "sha256": "a8bd3605f1c8c36e069b94aecd7f56effc11c294d22bbae417f63fa2b6d758c7",
+        "bytes": 8698
+      }
+    ]
+  },
+  "nonpassing_or_incomplete_attempts": [
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-20261014.log",
+      "sha256": "d29729e45b6fcaaf64ef52ce61e33168c67ec33c238a3746197ea37e1274d1e0",
+      "bytes": 847,
+      "status": "FAILED_FIXTURE",
+      "reason": "Fixture expected ENTITY-REGISTER events but used the wrong event projection; later corrected and final gen2 selection passed.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-r2-20261014.log",
+      "sha256": "f914f60b789e7d8e4c2269594b51997e8c716de49a7a8d9c020876704d4903ce",
+      "bytes": 901,
+      "status": "FAILED_FIXTURE",
+      "reason": "Fixture lacked the manifest required by original agent-begin; later registration setup fixed.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-r3-20261014.log",
+      "sha256": "0a4ea3a1874bd0194ca243d73ffb5cfa18a6970603f6258af570ad35594c249b",
+      "bytes": 849,
+      "status": "FAILED_FIXTURE",
+      "reason": "REQ authority root missing in fixture; later source setup fixed.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-r4-20261014.log",
+      "sha256": "591e271ca573525569a7051b7283b36f7358bbb0d5937fb73f45fc3b346aafe7",
+      "bytes": 1167,
+      "status": "FAILED_FIXTURE",
+      "reason": "Authored answer omitted required issued envelope fields; fixture now writes complete answer envelope.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-r5-20261014.log",
+      "sha256": "22861234c12cdcdf1c4f5d5a70438a4b37d2e9563d2a1b51de8f9d40d2c28050",
+      "bytes": 973,
+      "status": "FAILED_FIXTURE_OR_GUARD",
+      "reason": "Sibling late-save continuity initially rejected; current history-aware sibling path is covered by final normal/race chain.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-normal-r7-20261014.log",
+      "sha256": "71577084e75c723338b6253db0c0fa1d63d66a98334a6fb9680a9a8b1275a667",
+      "bytes": 334,
+      "status": "TEMPORARY_COMPILE_FAILURE",
+      "reason": "Test source had a duplicate short declaration; corrected before final passing selection.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-sibling-continuity-diagnose-20261014.log",
+      "sha256": "9becb0dbf0bb1d90a706f4add689abab152a82b29eb737dab1c5f9aa7d5dcb90",
+      "bytes": 561,
+      "status": "FAILED_DIAGNOSTIC_FIXTURE",
+      "reason": "Captured the earlier sibling continuity rejection before the current selector/writer fix.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-hypothesis-receipt-projection-final-normal-20261014.log",
+      "sha256": "b036a3d0c0ea36501a8cefd137a4221563a0c191cb82020f3a32bbbef9fea275",
+      "bytes": 359,
+      "status": "TEMPORARY_COMPILE_FAILURE",
+      "reason": "Test fixture used []any where the helper expected []map[string]any; corrected before final targeted runtime tests.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-hypothesis-result-recovery-targeted-normal-20261014.log",
+      "sha256": "d9fe21f561ae2bf84c10cf2d927cd82d08280391a2bf028bc7f4ea60998a0fea",
+      "bytes": 407,
+      "status": "TEMPORARY_COMPILE_FAILURE",
+      "reason": "Initial new recovery test referred to a receipt field not in the neutral receipt DTO; corrected to bind the packet input.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-original-case-intake-register-regression-race-20261014.log",
+      "sha256": "963ce5e01eab9a052832a46b19350ee9a9e4689f27d1c32a2a3ab4bdc0f3df07",
+      "bytes": 355,
+      "status": "TRANSIENT_BUILD_FAILURE",
+      "reason": "Race run's vet phase overlapped an in-progress hook helper edit; later final intake/Register race passed.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-runtime-hypothesis-continuity-normal-20261014.log",
+      "sha256": "2b34e67d993341b11540b54d6bb9aa871efcef392e6c18dd5076d419cae67ca0",
+      "bytes": 775,
+      "status": "FAILED_FIXTURE",
+      "reason": "Continuity test used inconsistent journal/state sequence while mutating and restoring history; later runtime source/continuity race passed.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-generation-two-original-hook-chain-targeted-race-deferred-before-chain-20261014.log",
+      "sha256": "7e21e8326f7a603267b3068804f433e5a1d0cefa1f30f1e9980f602c3fb3923b",
+      "bytes": 482,
+      "status": "DEFERRED_INCOMPLETE",
+      "reason": "Race was intentionally stopped/held for the cold S7 run; no terminal result, not a PASS.",
+      "accepted_as_evidence": false
+    },
+    {
+      "path": "blueprint/evidence/logs/s8-runtime-reader-compile-20261014.log",
+      "sha256": "08734b70bc190d4ec32234426a226f4d3ef6349c88a6ae173771a1d59f09707c",
+      "bytes": 87,
+      "status": "COMPILE_ONLY_NO_TESTS",
+      "reason": "Package compile probe only; '[no tests to run]' is not behavioral evidence.",
+      "accepted_as_evidence": false
+    }
+  ],
+  "limitations": [
+    "The gen2 chain uses a mechanism fixture for authored professional content; it proves registration, file-source, Runtime/Case CAS, receipt, Hook and Stop/Idle wiring, not a valid professional causal judgment.",
+    "No independent Claude Investigator prepare/launch or live platform session was run; public Hook invocation is a local mechanism fixture, not host agent_id/session acceptance.",
+    "Concurrency is same-process goroutine contention; separate-process writer contention was not independently exercised in this S8 slice.",
+    "Sealed pending recovery is simulated using the actual accepted state/journal artifacts and exact marker serialization; the test does not kill a process at the fsync boundary.",
+    "When the active Case and its original pointer/revision-history authority are no longer retained, historical receipt query is fail-closed; no directory scan reconstructs authority.",
+    "Windows directory sync validates the path but does not promise directory-entry durability across power loss; Unix directory sync is used.",
+    "Full install, platform matrix, real model evidence and complete S8→approved Contract→S9 consumer chain remain unverified.",
+    "Global core complete-chain count remains 4/9 and real-model complete-chain count remains 0/9.",
+    "The S9 PlanReport adapter is starting in adjacent shared Runtime/workpacket/schema infrastructure; this S8 evidence is not a source or behavior claim for S9."
+  ],
+  "publication": "No commit, push, install or publication performed"
+}

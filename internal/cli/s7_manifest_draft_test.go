@@ -139,6 +139,10 @@ func TestS7ManifestDraftEndToEnd(t *testing.T) {
 	if manifest["runtime_id"] != "loop-REQ-002-example" {
 		t.Errorf("runtime_id = %v, want the fixture runtime id", manifest["runtime_id"])
 	}
+	validation, _ := manifest["validation"].(map[string]any)
+	if validation["result"] != "warn" || strings.Contains(stdout.String(), "--task-id <") || strings.Contains(stdout.String(), "hand-fill the tuple") {
+		t.Fatalf("draft must disclose incomplete preparation without placeholder commands or manual validation metadata: %s", stdout.String())
+	}
 	rows, _ := manifest["assignments"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("assignments = %d rows, want 1", len(rows))
@@ -146,6 +150,9 @@ func TestS7ManifestDraftEndToEnd(t *testing.T) {
 	row, _ := rows[0].(map[string]any)
 	if row["assignment_id"] != "assignment-qa-static" {
 		t.Errorf("assignment_id = %v", row["assignment_id"])
+	}
+	if outputs, _ := row["output_paths"].([]any); len(outputs) != 0 {
+		t.Fatalf("ordinary Reviewer draft must not require a second report: %v", outputs)
 	}
 	claims, _ := row["claim_ids"].([]any)
 	if len(claims) != 1 || claims[0] != "claim-qa-1" {

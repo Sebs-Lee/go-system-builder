@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-15",
+  "kind": "unified work-state target contract and first shared formal-input selector slice",
+  "canonical_work_status": [
+    "pending",
+    "active",
+    "blocked",
+    "done",
+    "cancelled"
+  ],
+  "identity": "existing responsibility attempt, not an object name or a new registry",
+  "design_authority": "blueprint/l4-mechanisms/L4-state-transition-core.md#unified-work-state",
+  "implementation_scope": "formal input selection only; complete work-status projection/schema migration remains pending",
+  "source_sha256": {
+    "internal/runtime/formal_input_documents.go": "0379246523bd16ea5e14e92d910d00140a845b8bacd486780b67cef398d05583",
+    "internal/runtime/formal_input_documents_test.go": "e7565b118a9d9ea2c6ae6715fd8adaa06c4886e3c3b194d61ed7b041630441f3",
+    "internal/runtime/s5_formal_inputs.go": "b5c060f78440c6a17cfd9b0f357f82eb1e22a1711f0efc38c27be0380d279acf",
+    "internal/cli/context_conventions.go": "8cd19f301b2e93fb55da7b23518c6de8564ba771c4ee21767002673359d28751",
+    "internal/cli/workspace_context.go": "0d07cc830ca395d704e30acf362ba4e072988f05b727e3c9b08b880690c9f57d",
+    "internal/cli/formal_input_selection_e2e_test.go": "65b73eebbbb51b7f1b67f2eac1563d90d13955ab6cfc55f2802bf338f9268760",
+    "blueprint/l4-mechanisms/L4-state-transition-core.md": "a3780cb9f75481e172eb176705d0e4389f774376bdb5abcc4c6d44101c085ba9",
+    "blueprint/l4-mechanisms/L4-agent-dispatch-governance.md": "1f803bda6268fe4add2dffb05f5d36e18bfdca2c5b45d5bd19abd65695a9b4b3",
+    "blueprint/l2-lifecycle/L2-lifecycle-plan.md": "405e9de508381e9d8486f4ce22a8dc274215873a8b14b221c5c6b8807b754f02",
+    "blueprint/l4-mechanisms/L4-runtime-control-plane.md": "f3d6ab4ed384c8f7076d92ca3ddeadfe15e910a81f12bb0f75cd47e552463a0d",
+    "blueprint/l4-mechanisms/README.md": "354dbdd0141c2e7b6874b519976fafe33fd9d8ea5df93aac7ddd3d79c63f74b2",
+    "blueprint/global-optimization/G02-quality-and-completion.md": "aeeaf0ef420eb716f70f2f647b84452bb9b61219e253fa0406e74a3178240ad6",
+    "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md": "22b75f204bea22d99e5fe4563a25eda876cd3c2d1fd40e42e72a8878f9a63a69"
+  },
+  "experiment_root": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z",
+  "evidence_sha256": {
+    "logs/state-model-formal-selector-cli-final-tests.log": "c37941d627fb8c95b0e9d5d53cb87bd25316670f270b503e006368e5a8dfbcfc",
+    "logs/state-model-formal-selector-cli-retest.log": "12fd60c9a105c2b09ffbba881bd392da3c5a53277bea849b62ca88a815516999",
+    "logs/state-model-formal-selector-cli-tests.log": "8a5f5939c5668cd963af274ce93decdd913130986dfc3e151740780c313a7fa2",
+    "logs/state-model-formal-selector-runtime-tests.log": "0f815e45e7584fff204c62d73160f5e8c675b06e565906b212b15f5db11412c3",
+    "reports/state-model-agent-interface-inventory.md": "b831cb175962ad2a8305c40780d881648c9ef045af270bd8437cce661e93cf4d",
+    "reports/state-model-domain-inventory.md": "e8f3259d65b24f76e11b3dbaec876236a8e7d699d964b2ff447ba83ab72c48c7",
+    "reports/state-model-formal-selector-cli-final-tests.json": "24b2fd5933a80b16debf1b0d1a22e9f3f6884e66030f041434e72e23fc749907",
+    "reports/state-model-formal-selector-cli-retest.json": "676649b356f15300e107d1b9c35bfe734dc59dfcc51abdb4965755f828632bdc",
+    "reports/state-model-formal-selector-cli-tests.json": "41d52287d6ce5821db12333d7d34cc568ee51240cb291fec3f2a4e95ac72609a",
+    "reports/state-model-formal-selector-runtime-tests.json": "6634267528e50d6bfd90150676e90ae189bc6e6c242a2ec8509eddb6c512e307"
+  },
+  "tests": {
+    "passed_top_level_tests": 5,
+    "new_tests": 2,
+    "existing_regressions": 3,
+    "runtime_selector_report": "reports/state-model-formal-selector-runtime-tests.json",
+    "cli_initial_report": "reports/state-model-formal-selector-cli-tests.json",
+    "cli_final_new_test_report": "reports/state-model-formal-selector-cli-final-tests.json",
+    "fixture_failures_preserved": [
+      "missing original workspace bind",
+      "missing installed protocol/rule assets"
+    ],
+    "production_guards_relaxed": false
+  },
+  "real_model_stage_count": 3,
+  "real_model_stage_denominator": 9,
+  "not_proven": [
+    "complete five-state production migration",
+    "new package installation",
+    "real S5 reviewer PLAN/answer/receipt closure",
+    "S6-S10 real-model chains",
+    "full test suite or race coverage",
+    "performance improvement"
+  ],
+  "committed": false,
+  "published": false
+}

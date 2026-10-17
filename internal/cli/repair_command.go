@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	assignmentpkg "github.com/entroforge/go-system-builder/internal/assignment"
+	"github.com/entroforge/go-system-builder/internal/catalog"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
@@ -131,6 +133,27 @@ func repairExpected(f *repairCLIFlags) (int, error) {
 	return f.expected, nil
 }
 
+// repairAgentDefinition preserves an explicit operator-supplied path. When
+// omitted, use catalog's single-layout authority so an installed checkout
+// resolves below .claude/agents and a factory checkout resolves below agents/.
+// The catalog never falls back across layouts when an installed asset is
+// missing.
+func repairAgentDefinition(root, role, requested string, explicit bool) (string, []byte, error) {
+	if explicit {
+		path := filepath.ToSlash(requested)
+		data, err := os.ReadFile(resolveRootPath(root, requested))
+		if err != nil {
+			return "", nil, fmt.Errorf("read explicitly selected Agent Definition %q: %w", requested, err)
+		}
+		return path, data, nil
+	}
+	data, path, err := catalog.ReadAgentAsset(root, role)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve Agent Definition for %s from the selected asset layout: %w", role, err)
+	}
+	return path, data, nil
+}
+
 // runRuntimeRepairDispatch materializes one S9 RepairAssignment as a normal
 // builder workgroup. All assignments are dispatched before execution begins
 // so every Builder can submit its domain PlanReport; dependency and lock
@@ -144,23 +167,20 @@ func runRuntimeRepairDispatch(args []string, stdout, stderr io.Writer) int {
 	assignmentID := fs.String("assignment-id", "", "RepairAssignment id")
 	agentID := fs.String("agent-id", "", "Builder Agent id")
 	roleFamily := fs.String("role-family", "backend-builder", "Builder role family")
-	definitionRef := fs.String("agent-definition", "agents/backend-builder.md", "Builder Agent Definition path")
+	definitionRef := fs.String("agent-definition", "", "Builder Agent Definition path (default follows the installed asset layout)")
 	independentVerification := fs.Bool("independent-verification", false, "dispatch the independent verifier assignment for the targeted reverification of --assignment-id (identity registration only: no product writes, test-builder verifier)")
 	if err := parseWorkspaceFlags(fs, args); err != nil {
 		return 2
 	}
+	explicitFlags := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicitFlags[f.Name] = true })
 	// RC-18: a verification identity is registered by the same dispatch chain
 	// but has a fixed shape — an independent test-builder that writes no
 	// product file — so its defaults follow the flag instead of the builder
 	// defaults; an explicitly passed flag always wins.
 	if *independentVerification {
-		explicit := map[string]bool{}
-		fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
-		if !explicit["role-family"] {
+		if !explicitFlags["role-family"] {
 			*roleFamily = "test-builder"
-		}
-		if !explicit["agent-definition"] {
-			*definitionRef = ".claude/agents/test-builder.md"
 		}
 	}
 	if strings.TrimSpace(*assignmentID) == "" || strings.TrimSpace(*agentID) == "" {
@@ -281,9 +301,9 @@ func runRuntimeRepairDispatch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "runtime repair dispatch: baseline.generation is not ready; restore the current baseline before dispatch")
 		return 1
 	}
-	definitionBytes, err := os.ReadFile(resolveRootPath(root, *definitionRef))
+	definitionPath, definitionBytes, err := repairAgentDefinition(root, *roleFamily, *definitionRef, explicitFlags["agent-definition"])
 	if err != nil {
-		fmt.Fprintln(stderr, formatFailure("runtime repair dispatch", fmt.Errorf("read Agent Definition (dispatch derives the worker capability set — allowed tools, write paths, command classes — from the definition file, so it must exist in the repository): %w", err)))
+		fmt.Fprintln(stderr, formatFailure("runtime repair dispatch", err))
 		return 1
 	}
 	protocolBytes, err := os.ReadFile(filepath.Join(root, projectlayout.Protocol))
@@ -313,7 +333,7 @@ func runRuntimeRepairDispatch(args []string, stdout, stderr io.Writer) int {
 	if reviewRound > 0 {
 		reviewRoundValue = reviewRound
 	}
-	definitionPath := filepath.ToSlash(*definitionRef)
+	definitionPath = filepath.ToSlash(definitionPath)
 	manifest := map[string]any{
 		"schema_version": "1.0.0", "manifest_id": manifestID, "version": "1.0.0", "runtime_id": stringValue(snapshot.State["runtime_id"]),
 		"req_id": reqID, "baseline_generation": baselineGeneration, "review_round": reviewRoundValue,
@@ -897,6 +917,39 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 		}
 		response["board"] = board
 		response["next"] = board["next_action"]
+		if runtime.PacketEnabled(snapshot.State) && s9RepairResultStage(snapshot.State) {
+			rows, next := repairResultPacketStatus(*root, snapshot.State)
+			response["repair_result_packets"] = rows
+			response["next"] = next
+		}
+		if runtime.PacketEnabled(snapshot.State) && s9PlanReportPreExecutionState(snapshot.State) {
+			rows, unissued, reportErr := repairPlanReportPacketStatus(*root, snapshot.State, board)
+			if reportErr != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime repair status", reportErr))
+				return 1
+			}
+			response["plan_report_packets"] = rows
+			if len(unissued) > 0 {
+				response["next"] = "The listener must prepare current S9 PlanReport questionnaires for dispatched Assignments: " + strings.Join(unissued, ", ") + "; if no exact path arrives, Main must restore the original dispatch/PLAN facts"
+			} else if len(rows) > 0 {
+				phase := ""
+				if lifecycle, ok := snapshot.State["lifecycle"].(map[string]any); ok {
+					phase = stringValue(lifecycle["phase"])
+				}
+				if phase == "planning" || phase == "reproducing" {
+					pending := []string{}
+					for _, raw := range rows {
+						row, _ := raw.(map[string]any)
+						if row["status"] == "issued" {
+							pending = append(pending, stringValue(row["assignment_id"]))
+						}
+					}
+					if len(pending) > 0 {
+						response["next"] = "Builders must fill each exact S9 answer_path and save through the PostToolUse Hook: " + strings.Join(pending, ", ") + "; these receipts do not release product writes before BeginRepairExecution"
+					}
+				}
+			}
+		}
 	}
 	if resultPath, ok := pointer["result_ref"].(string); ok && strings.TrimSpace(resultPath) != "" {
 		summary, summaryErr := readRepairResultSummary(*root, resultPath)
@@ -907,6 +960,134 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 		response["result_summary"] = summary
 	}
 	return encodeJSON(stdout, response)
+}
+
+func s9RepairResultStage(state map[string]any) bool {
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	return lifecycle["state"] == "bug_resolution" && lifecycle["phase"] == "fixing"
+}
+
+func repairResultPacketStatus(root string, state map[string]any) ([]any, string) {
+	packets, err := runtime.RepairResultPackets(state)
+	if err != nil {
+		return []any{}, "Runtime S9 Result packet registry needs recovery before status can verify it: " + err.Error()
+	}
+	baseline, _ := state["baseline"].(map[string]any)
+	reviewState, _ := state["review"].(map[string]any)
+	round := intFieldCLI(reviewState["round"])
+	generation := intFieldCLI(baseline["generation"])
+	rows := []any{}
+	anyStale, anyIssued, allComplete := false, false, len(packets) > 0
+	for _, packet := range packets {
+		binding := packet.Binding.Sources
+		if binding.RuntimeID != stringValue(state["runtime_id"]) || binding.BaselineGeneration != generation || binding.ReviewRound != round {
+			continue
+		}
+		status := "issued"
+		currentErr := runtime.VerifyRepairResultPacketIssue(root, state, packet)
+		if currentErr == nil {
+			currentErr = runtime.VerifyRepairResultPacketCurrent(root, state, packet)
+		}
+		if currentErr != nil {
+			status = "stale_or_preserved"
+			anyStale = true
+			allComplete = false
+		} else {
+			receipt, accepted, receiptErr := runtime.VerifiedRepairResultCandidateReceipt(root, state, packet.ID, binding.OwnerAgentID)
+			if receiptErr != nil {
+				status = "candidate_receipt_unavailable"
+				anyStale = true
+				allComplete = false
+			} else if accepted {
+				complete, completeErr := repair.RepairResultWorkComplete(root, state, packet.ID, binding.OwnerAgentID)
+				if completeErr != nil {
+					status = "candidate_accepted_owner_proof_unavailable"
+					anyStale = true
+					allComplete = false
+				} else if complete {
+					status = "worker_complete_main_pending"
+				} else {
+					status = "candidate_accepted_preserve_and_recover"
+					anyStale = true
+					allComplete = false
+				}
+				_ = receipt
+			} else {
+				anyIssued = true
+				allComplete = false
+			}
+		}
+		rows = append(rows, map[string]any{
+			"packet_id": packet.ID, "repair_assignment_id": binding.RepairAssignmentID,
+			"manifest_assignment_id": binding.ManifestAssignmentID, "owner_agent_id": binding.OwnerAgentID,
+			"status": status, "view_path": packet.ViewPath, "answer_path": packet.AnswerPath,
+			"receipt_command": fmt.Sprintf("runtime stage-answer receipt --agent %s --packet %s", binding.OwnerAgentID, packet.ID),
+		})
+	}
+	if anyStale {
+		return rows, "Preserve typed S9 candidate evidence; a frozen source, packet, or owner-check proof needs the original named rework/recovery path. Do not submit a legacy Result."
+	}
+	if len(rows) == 0 {
+		return rows, "prepare each registered S9 Worker with explicit `--check-location main|worker`; after a genuine completion_report, the listener prepares the post-execution questionnaire and supplies its exact path"
+	}
+	if anyIssued {
+		return rows, "Builders must fill their exact issued S9-result answer and save through platform PostToolUse; an accepted candidate still requires original Main integration"
+	}
+	if allComplete {
+		return rows, "Worker candidates and own checks are complete; Main must run `runtime task-integrate` for actual merge, required checks, and original Result acceptance"
+	}
+	return rows, "keep the original S9 execution active and follow its named recovery action"
+}
+
+func s9PlanReportPreExecutionState(state map[string]any) bool {
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	return lifecycle["state"] == "bug_resolution" &&
+		(lifecycle["phase"] == "planning" || lifecycle["phase"] == "reproducing")
+}
+
+func repairPlanReportPacketStatus(root string, state map[string]any, board map[string]any) ([]any, []string, error) {
+	packets, err := runtime.CurrentRepairPlanReportPackets(root, state, "")
+	if err != nil {
+		return nil, nil, err
+	}
+	missing := []string{}
+	if raw, ok := board["missing_reports"].([]string); ok {
+		missing = append(missing, raw...)
+	}
+	byAssignment := map[string]bool{}
+	rows := make([]any, 0, len(packets))
+	for _, packet := range packets {
+		if err := runtime.VerifyRepairPlanReportPacketIssue(root, state, packet); err != nil {
+			return nil, nil, fmt.Errorf("S9 packet %s original issuance proof: %w", packet.ID, err)
+		}
+		if err := runtime.VerifyRepairPlanReportCurrent(root, state, packet); err != nil {
+			return nil, nil, fmt.Errorf("S9 packet %s current dispatch proof: %w", packet.ID, err)
+		}
+		status := "issued"
+		if receipt, accepted, err := runtime.VerifiedRepairPlanReportReceipt(root, state, packet.ID, packet.Binding.OwnerAgentID); err != nil {
+			return nil, nil, err
+		} else if accepted {
+			if receipt.WorkComplete {
+				return nil, nil, fmt.Errorf("S9 PlanReport packet %s receipt incorrectly claims work completion", packet.ID)
+			}
+			status = "accepted"
+		}
+		byAssignment[packet.Binding.RepairAssignmentID] = true
+		rows = append(rows, map[string]any{
+			"packet_id": packet.ID, "assignment_id": packet.Binding.RepairAssignmentID,
+			"owner_agent_id": packet.Binding.OwnerAgentID, "status": status,
+			"view_path": packet.ViewPath, "answer_path": packet.AnswerPath,
+			"receipt_command": fmt.Sprintf("runtime stage-answer receipt --agent %s --packet %s", packet.Binding.OwnerAgentID, packet.ID),
+		})
+	}
+	unissued := []string{}
+	for _, assignmentID := range missing {
+		if !byAssignment[assignmentID] {
+			unissued = append(unissued, assignmentID)
+		}
+	}
+	sort.Strings(unissued)
+	return rows, unissued, nil
 }
 
 // repairAssignmentBoard is a read-only projection of the complete S9 batch.
@@ -1003,18 +1184,18 @@ func repairAssignmentBoard(root string, pointer map[string]any) (map[string]any,
 		}
 		if result, ok := results[assignment.AssignmentID]; ok {
 			row["result"] = result.Result
-			row["status"] = "completed"
+			row["status"] = workstate.Done
 			if result.Result != "pass" {
-				row["status"] = "blocked"
+				row["status"] = workstate.Blocked
 				blocked = append(blocked, assignment.AssignmentID)
 			}
 		} else {
 			missingResults = append(missingResults, assignment.AssignmentID)
-			status := "awaiting_plan_report"
+			status := workstate.Pending
 			if _, ok := reports[assignment.AssignmentID]; ok {
-				status = "reported"
+				status = workstate.Active
 				if phase == "repairing" || stringValue(pointer["status"]) == "repairing" {
-					status = "executing"
+					status = workstate.Active
 				}
 			}
 			dependencyBlock := ""
@@ -1038,14 +1219,14 @@ func repairAssignmentBoard(root string, pointer map[string]any) (map[string]any,
 				}
 			}
 			if dependencyBlock != "" {
-				status = "queued"
+				status = workstate.Pending
 				row["queue_reason"] = dependencyBlock
 				queued = append(queued, assignment.AssignmentID)
 			} else if lockBlock != "" {
-				status = "queued"
+				status = workstate.Pending
 				row["queue_reason"] = lockBlock
 				queued = append(queued, assignment.AssignmentID)
-			} else if status == "reported" || status == "executing" {
+			} else if status == workstate.Active {
 				ready = append(ready, assignment.AssignmentID)
 			}
 			row["status"] = status

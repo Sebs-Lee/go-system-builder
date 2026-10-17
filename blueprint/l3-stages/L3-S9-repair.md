@@ -4,9 +4,109 @@
 >
 > 横切机制：[L4 Agent 调度与治理](../l4-mechanisms/L4-agent-dispatch-governance.md)。L4 负责 Assignment、PLAN_REPORT、连续执行、Hook、idle/stop、恢复和拓扑选择；本文只定义 S9 特有的 RepairContract 消费、根因修复、ChangeImpact、定向复验与 S7 回环。
 >
-> 设计状态：本文以目标机制为主；§13 单列当前实现差距。当前已落地第一批可执行事务：S9 artifact/domain 校验、不可变 RepairSession/RepairPlan/RepairAssignment/PlanReport/RepairResult、Changeset、ChangeImpact、独立 TargetedReverification、Targeted failure → S8 causal reassessment 回流、RepairHandoff，以及 Runtime CAS 指针、批次聚合、S9 专属 Hook、RepairAssignment→Builder lifecycle bridge 和 CLI 串联；§13 仍保留高级 ownership/WIP 编译、完整多 Contract batch 和旧证据全量失效账本等差距；S9→S7 seed 的输入基线与最终 ReviewPlan 合并规则已在协议和本节 §14.C 明确。
+> 设计状态：本文以目标机制为主；§13 单列当前实现差距。已落地的 S9 artifact/domain 校验、不可变 RepairSession/RepairPlan/RepairAssignment/PlanReport/RepairResult、Changeset、ChangeImpact、独立 TargetedReverification、Targeted failure → S8 causal reassessment 回流、RepairHandoff、Runtime CAS、批次聚合和 CLI 串联仍属原领域能力。**迁移前 S9 专属 PreToolUse 身份/路径/首写拦截只是历史实现事实，不是目标契约；本次文档更新不表示代码已迁移。**§13 仍记录高级 ownership/WIP 编译、完整多 Contract batch 和旧证据全量失效账本等差距；S9→S7 seed 规则见 §14.C。
+
+> 历史快照说明：以下 §7.52–§7.54 引用保留各自记录时的状态。之后 non-pass 接收、Main resolution 与 Resume lineage 已合入当前 Root 并通过各自定向机械回归；最新范围和剩余缺口见本页“当前优化实施状态”及 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。这些结果仍不计入 S9 真实完整阶段验收。
+>
+> 下一实施契约当时固定于 [L4 stage-form §13.10](../l4-mechanisms/L4-stage-form.md#s9-repair-result-adapter)：typed candidate 本人接收、Main 实际检查与最终原 Result 已经原正向链验证；最终回执重放、候选并发及 candidate/Result sealed-pending 原恢复已验证，独立五目标包与临时安装已通过，更多检查拓扑与真实平台待验收，非 pass/后续 typed consumers 仍待接线；不计入全局完整链。
+
+> 当时的 §7.52 记录了 final 并发/精确重试、合法 sibling CAS 后旧 staging、共享回执 wire 与真实 Worker prepare 能力拒绝；该记录时 Worker 产品检查矩阵仍待受支持宿主，§13.11 的 blocker/resume 也尚未接线。后续进展见本页当前优化实施状态与 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。机器 stale 与 completed 不可集成答卷的额外接收路径仍待设计。
+
+> [全局 §7.53](../GLOBAL-OPTIMIZATION-DESIGN.md#s9-blocker-foundation-progress) 已验证 blocker 数据模型/Schema 基础，并复现后修复原 Agent lifecycle 在 generation 2/3 错记 generation 1 的问题；原 S8/S9 回归通过。历史权威 reader、原 non-pass 接收、Main resolution 与 Resume/Stop 仍待接线，不提高完整链计数。
+
+> [全局 §7.54](../GLOBAL-OPTIMIZATION-DESIGN.md#s9-blocker-reader-progress) 已完成历史 reader、消息/evidence 约束与 blocked PLAN 授权的定向 normal/race。reader 使用机械证据 fixture 验证历史完整性，尚非真实 typed 接收链；原 lifecycle capability/CAS、Hook、Main resolution 与 Resume/Stop 仍在后续实施范围。
+
+> PlanReport 冻结快照已通过五目标本地打包、manifest 校验、临时 --packet 安装及安装后的 release-graph/doctor/validate --all，见[安装证据](../evidence/global-optimization-s9-disposable-install-20261014.json)。后续 RepairResult 工作树变化不继承该快照验收；未执行真实模型或 macOS/Windows 运行。
 
 > **Revision 口径**：S9 消费 approved Contract 的 ID/hash、RepairAssignment、实际 diff 和 targeted assertion；Contract/Assignment 对象版本由工具生成，Runtime `revision` 由 Writer 内部记录。Builder/Repair Lead 不手工计算或复制这些 revision。当前代码中的 CAS/显式 revision 是迁移中的内部实现约束，不是正常 Agent 操作步骤。统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
+
+## 当前优化实施状态（2026-10-15）
+
+本节下方引用的 §7.52–§7.54 是各自记录时的历史快照；Resume 当前状态以本节更新和
+[GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)为准。
+
+non-pass RepairResult 的公开接收已沿原 `SaveRepairResultFrom` → 私有 blocker
+capability → 原 `work_blocked` Writer/CAS 接线。公开 PostToolUse 与原历史回执读取、
+精确重放零写入、当前 blocker/source/PLAN 证明驱动 Stop 已通过定向机械测试。
+通用工作状态为 `blocked`；领域接收事实为 `responsibility_status=blocker_recorded`，
+`work_complete=false`、Main consumer pending。历史接收、generic completion、
+`one_shot` 或裸 Agent 状态不能授 Stop 或新写入权限。
+
+后续 Main resolution 的公开 authoring Hook、私有 capability、同 CAS 的
+message/evidence/Agent pointer 与旧 scope 退役已通过定向机械验证。错误 Main
+身份拒绝、空草稿不消费、精确重放零写、变更重放冲突；contract_conflict 保持 S8
+人闸。通用工作状态仍 active，Main consumer pending，不表示 Worker done。
+
+新 Resume packet lineage 已从隔离副本选择性合入 Root。r34 指定原链/新链用例通过；
+Root r35 的 agentcontext/CLI 包回归和 r36 的 schema/agentcontext/repair/investigation
+选定回归通过。r36 resumed Hook 样本为 8.286s、8.543s，均低于原 10s 上限；
+只是两个指定样本，不声称一般性性能提升。当前可用包仍为 after-r14，尚不含该合入；
+after-r15 尚未构建。其后 r37–r39 的 current-selector / execution-coordinate / revision
+选择回归通过，r40 的三项失败已保留并修正，r41 CLI/integration 选择矩阵通过；这些均是
+机械回归，不代表真实 S9 阶段或全仓通过。
+
+新设计的 typed Impact adapter 尚未实施。Dependency、expectation 与兼容性投影仍按
+本 L3 §13 缺口处理；后续 typed Targeted/Handoff、observability/evaluation 也待完成。
+本轮没有 S9 真实模型整阶段验收。全局真实阶段仍为 S2–S5（4/9）；R11 S6 R4 的
+Builder Result 已接收，但 Root 正串行执行 Main checks/integration，TASK-002 未完成，
+因此不计 S6。上面的 §7.52–§7.54 链接保留各自历史范围；
+当前状态见[全局接续记录](../evidence/global-optimization-continuation-20261015.md)
+和 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。
+
+### 当前单份答卷与原消费者（2026-10-15）
+
+每个 Assignment 的专业工作只有两次有顺序的交付：执行前一份领域 `RepairPlanReport`
+（计划、红/blocked 前检和拟改路径），执行后一份 `RepairResult`（实际结果、证据和
+剩余风险）。派发/Hook 直接展示当前已发行答卷的真实完整路径；保存即交原 Writer，
+由 `execution begin`、Result、Main checks/集成、Impact、独立 Targeted 和 Handoff
+按原门继续。Builder 不找 Runtime/Schema，不手动 issue/consume，不抄身份、revision、
+hash、diff 或检查 receipt。
+
+generic `PLAN_REPORT` 只能作为既有平台 lifecycle checkpoint，由现有 generic adapter
+从同一份 `RepairPlanReport` 派生并交原平台消费者；不得要求 Builder 再写一份相同计划。
+`RepairResult` 是唯一专业完成答卷；generic completion/reported 仅是原 lifecycle 事实，
+由接收适配从真实 Result 与已有运行/检查事实更新，不能要求第二份完成叙述，也不能
+代填尚未执行的检查、Main 集成或 Targeted 结果。现有 S9 接收链若仍依赖两份手工
+PLAN/completion 输入，就是待补 adapter 接线，不是 Builder 的额外工序。当前相关回归
+入口见 `internal/cli/repair_plan_report_hook_test.go`、`internal/cli/stage_answer_e2e_test.go`、
+`internal/investigation/repair_plan_report_hook_test.go` 和 typed RepairResult Hook/恢复测试；
+完整 S9 阶段及真实平台 spawn 仍未验收。
+
+环境阻塞后的 Targeted 恢复继续履行同一份 Contract 义务：只有 `result=pass` 且
+`scope_compliance=pass` 的原报告能满足 required ID；失败或 blocked 产物保留为历史证据，
+不能关闭义务。实际阻塞解除后复用原 `ResumeTargetedReverification`，同一 required ID
+的新尝试仍使用原 Targeted DTO 和 Commit 消费者；不可变产物的存储版本由原
+`blocker_resolved_at` 派生，同一恢复窗口重放命中同一路径，不增加作者 attempt/hash 表单。
+这项恢复接线尚待实现和原链回归，不能计作已完成。
+
+**历史 packet 链路验收（2026-10-14，非当前目标交互）**：此前执行前 PlanReport adapter 的契约见
+[L4 stage-form §13.9](../l4-mechanisms/L4-stage-form.md#s9-plan-report-adapter)。
+它复用原批准、Session/RepairPlan/实际 dispatch、原 PlanReport Writer 与
+`PTR-BUG-10`；professional answer 只含 plan/red_checks/proposed_paths。
+中性卷与 Runtime 来源/receipt/checkpoint 定向验证已通过，原 Writer 与公开
+Hook 的组合正常验收已通过：generation-2 原审批→dispatch→issue→公开
+PostToolUse→原 PlanReport receipt 覆盖了两个 Builder sibling；缺少 sibling 时
+`execution begin` 仍拒绝，完整答卷后才放行，阶段推进后的相同答卷只读重放，改写答卷冲突。
+Hook 从 Runtime `assignment_owners`、原 workgroup manifest Assignment ID 和已发行卷的
+Team/Task/owner 绑定派生 RepairAssignment，不要求 RepairPlan 自带 owner 字段。
+这一临时目录 fixture 证明的是本地原 Writer/Hook 链，不代表 Claude/Agent Team 实际 spawn
+或模型完成了专业判断。
+PlanReport receipt 的 `work_complete=false`；原 BeginRepairExecution、
+RepairResult/Main 集成、独立 targeted、Handoff 和 fresh S7 各门继续保留。
+当前无执行前 Worker prepare/launch 适配，不能回退 Main 身份。四 target 与 assignment
+alias 的定向 race 已通过；原 PlanReport 与 public `stage-answer issue` 的 pending
+恢复目标也已分别 normal 通过。stale-staging 后继恢复的 normal 与 race 定向用例也通过；
+当前仍未完成的范围是执行前 Worker prepare/launch、真实 Claude/Agent Team spawn、模型运行和
+完整 S9 全阶段链。本段机制验证完成时尚未打包；其后的 PlanReport 与 RepairResult
+独立包/临时安装进展见本文顶部引用，不代表已安装到当前项目或已通过真实平台验收。
+
+本次证据索引：[S9 issued PlanReport packet implementation record](../evidence/global-optimization-s9-issued-plan-report-20261014.json)。
+normal：[原审批/dispatch/Hook/双 Assignment](../evidence/logs/s9-original-approval-dispatch-hook-chain-r4-20261014.log)、
+[原 PlanReport recovery](../evidence/logs/s9-plan-report-recovery-normal-r2-20261014.log)、
+[public issue pending recovery](../evidence/logs/s9-public-issue-pending-recovery-normal-r2-20261014.log)。
+race：[原 Hook 与 recovery 四 target + alias](../evidence/logs/s9-original-hook-and-recovery-final-race-20261014.log)。
+stale-staging：[normal](../evidence/logs/s9-stale-staging-sibling-retry-normal-20261014.log)、
+[race](../evidence/logs/s9-stale-staging-sibling-retry-race-20261014.log)。
 
 ## 输入与交付来源
 
@@ -198,7 +298,7 @@ Assignment 不复制整份 protocol，也不要求 Agent 在聊天里复述所�
 
 ### 3.4 RepairResult
 
-Builder 对每个 Assignment 只提交一份 Canonical RepairResult：
+每个 Assignment 只有一份领域 RepairResult。Builder 填写 Hook 给出的准确专业答卷并保存；原 consumer 校验后创建/更新 Canonical RepairResult：
 
 ```text
 RepairResult
@@ -240,6 +340,11 @@ ChangeImpact 必须基于 session 的实际 changeset 计算：
 - reconciliation status/hash。
 
 只有 ChangeImpact 与真实 diff exact set 对齐，证据状态事务也成功后，才能开始 targeted re-verification。
+
+原监听器管理的问卷、派发上下文、检查点和 Hook 记录属于控制产物，不进入 Session
+产品 baseline/diff，不能要求作者为问卷自身补影响分析。复用原控制目录分类；未知的
+`.claude` 文件及冻结输入仍按原契约检查。Handoff 的证据引用集合须完整比较 path/hash，
+不得套用产品差异过滤而跳过控制目录中的证据。
 
 ### 3.6 TargetedReverification 与 RepairHandoff
 
@@ -307,22 +412,24 @@ Main/Repair Lead 按以下顺序生成 RepairPlan：
 沿用 L4 的统一机制：
 
 1. Sub-agent 读取 Assignment 和必需上下文；
-2. 第一条结构化回报必须是 `PLAN_REPORT`；
-3. 计划必须把每一步映射到 `repair_unit_id`、被恢复 invariant、预计 artifacts、checks 和 stop conditions；
-4. 默认回报后直接执行，不进入 idle 等第二轮“批准”；
+2. 第一份专业计划通过当前已投递的 `RepairPlanReport` 答卷保存；
+3. 计划把步骤映射到 `repair_unit_id`、被恢复 invariant、预计 artifacts、checks 和 stop conditions；原 generic adapter 从同一答卷更新 lifecycle checkpoint；
+4. 保存后默认直接执行，不另发第二份 PLAN_REPORT，也不进入 idle 等第二轮“批准”；
 5. Main 只有在计划缺失、偏离 Contract、扩大 scope、采用 forbidden patch 或 high-risk gate 命中时才打断；
 6. 普通计划纠偏通过消息完成，不 kill/recreate Agent。
 
 High-risk 例外包括不可逆数据迁移、权限/安全边界变化、生产发布操作、Contract 显式 `approval_required` 的步骤。此时 Agent 在批准点暂停的是高风险动作，不是整个任务。
 
-#### 4.3.A 通用平台 checkpoint 与 S9 领域 PlanReport
+#### 4.3.A 一份专业 PlanReport 与 lifecycle checkpoint
 
-S9 有两个名字相近、消费者不同的计划回报，必须分别处理：
-
-1. 若 Builder 是通过 L4 平台 Assignment 派发的，仍先按统一调度机制发送 `agent-message` 的 `message_type=plan_report`；它是 Agent lifecycle 的 checkpoint，供 PostToolUse/首写屏障确认“已理解并可继续”，不是 S9 的 repair authorization。
-2. 每个 RepairAssignment 还必须提交 S9 领域 `RepairPlanReport`：使用 `runtime repair plan-report submit --file <report.json>`，文件的 `record_type=repair_plan_report`，绑定 Session/Plan/Assignment、assertion map 和至少一项红/blocked 的 pre-fix check。它是 S9 Runtime 的领域证据，缺失时 `runtime repair execution begin` 不得释放产品写入。
-
-通用 checkpoint 与领域 PlanReport 可以共享同一份计划内容，但不能共享同一个文件契约：领域文件不能直接作为 `SendMessage(plan_ref=...)`。通用 PostToolUse 校验 `agent-message` envelope，并按来源绑定 Assignment：S7 使用当前 ReviewPlan，S6/S8/S9 使用已指纹化的 workgroup manifest（非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`）。S9 平台 manifest 中的 `assignment-s9-*` 只是通用 checkpoint 别名，不能替代领域 `repair-assignment-*`。反过来，发送通用 PLAN_REPORT 也不能代替 S9 的 `runtime repair plan-report submit`。
+每个 RepairAssignment 只要求一份领域 `RepairPlanReport`：绑定原 Session/Plan/Assignment、
+assertion map，并说明计划步骤、至少一项红/blocked 的 pre-fix check 和拟改路径。派发时
+直接展示这份答卷的实际完整路径；保存交原 PlanReport Writer，`execution begin` 继续
+求值原 S9 阶段条件。Builder 不另写 generic `PLAN_REPORT`、不手动 issue/consume、不找
+Runtime/Schema。需要的平台 `agent-message plan_report` lifecycle checkpoint 由现有
+generic adapter 从同一答卷生成/更新并交原平台消费者；若现有宿主仍强制第二次手工提交，
+这是 adapter 缺口，不是第二项专业工作。Hook 给当前准确路径、具体缺项和下一动作，
+不以首个工具调用作许可判断。
 
 ### 4.4 派发时必须注入的思考顺序
 
@@ -331,7 +438,7 @@ Assignment 生成器应直接把以下顺序写进 Agent 的必经 prompt：
 ```text
 理解 invariant → 重放 red → 恢复 authority/ownership →
 处理所有 consumers 与数据兼容 → 补 detection gap →
-运行 scoped checks → 提交 Canonical RepairResult
+运行 scoped checks → 填写并保存 Hook 提供的准确 RepairResult 答卷
 ```
 
 工具还应自动附上：
@@ -421,9 +528,9 @@ Contract 声明这些要求时，RepairResult 必须提供可执行事实：
 
 “先临时兼容以后再收拾”只有在 Contract 中是显式、限时、有 owner 和 removal assertion 的 repair unit 时才允许。
 
-### 5.5 Step 5：提交 RepairResult
+### 5.5 Step 5：原 RepairResult consumer 的检查
 
-`repair result submit` 必须原子执行：
+保存 Hook 提供的专业 RepairResult 答卷时，原 consumer 必须原子执行：
 
 1. 校验 session/plan/assignment/contract identity、object version 和 hash；
 2. 复算当前 worktree/changeset changed artifacts；
@@ -436,7 +543,7 @@ Contract 声明这些要求时，RepairResult 必须提供可执行事实：
 9. 更新 Assignment 状态；
 10. 只有当前 dependency frontier 完成后才释放下游 Assignment。
 
-提交工具不接受一个 markdown “完成报告”同时扮演 RepairResult、impact 和 targeted PASS。
+这条保存路径会更新原 RepairResult；不另交通用完成报告。一个 markdown 答卷不能同时替代 RepairResult、ChangeImpact 和独立 Targeted PASS。直接 RepairResult 提交命令仅供明确的兼容或恢复诊断使用。
 
 ## 6. ChangeImpact：用真实 diff 重建证据可信度
 
@@ -581,7 +688,7 @@ TargetedReverification 回答的是“这个 Contract 的因果断言是否成�
 
 | 工作 | 推荐拓扑 |
 |:--|:--|
-| 单一 repair unit、单一 owner、低风险 | 一个 repair Sub-agent，PLAN_REPORT 后连续执行 |
+| 单一 repair unit、单一 owner、低风险 | 一个 repair Sub-agent，保存 RepairPlanReport 后连续执行 |
 | 多个无写冲突 units | 并行 Sub-agents，Main 按 DAG 汇总 |
 | schema/API/migration 跨模块协同 | Agent Team；Lead 维护 authority 和 integration order，成员按 ownership 执行 |
 | 高风险迁移/安全边界 | 专业 Agent + 明确 approval checkpoint + 独立 reviewer |
@@ -590,22 +697,22 @@ TargetedReverification 回答的是“这个 Contract 的因果断言是否成�
 
 ### 9.2 Main/Repair Lead 的调度循环
 
-1. `repair session open` 校验 Contract DoR 并锁定 baseline。
-2. `repair plan compile` 生成 repair-unit DAG、ownership 和 assertion map。
-3. 用 `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>` 为每个 Assignment 建立一个 Builder Team/Task/Agent/activation；不要把依赖/锁再做成独立 scheduler。
-4. 收每个 Builder 的 generic PLAN_REPORT 和领域 PlanReport；缺失或偏移才打断，正常计划不等第二轮批准。
-5. 观察 first-write barrier、scope/forbidden-path Hook 和 progress events。
-6. 消费 Canonical RepairResult；对 blocked/conflict/stale 立即路由。
-7. 由 Result submit 按 DAG 依赖和共享锁判定 ready/queued；按 `runtime repair status` 的 `queue_reason` 重试下一 Assignment，直到全部 units 完成。
-8. 合并后运行 `repair impact create` / `repair impact commit`，以 actual diff 更新 evidence validity。
-9. 派发独立 TargetedReverification。
-10. 全部 PASS 后原子生成 RepairHandoff 和 S7 新轮。
+1. Main 按已批准 Contract 的原 S9 入口准备责任并派发 Builder Assignment；系统从既有 Session、Plan 和 Contract 投影中准备本责任问卷。
+2. Hook 给每个 Builder 当前 PlanReport 的准确 view/answer 路径。Builder 检查 Contract、assertion 与原规格链，填写有限修复计划、路径和至少一个修复前失败/阻塞检查，然后保存这份专业答案。原 PlanReport consumer 更新既有 plan-checkpoint/AgentBegin；每个 Assignment 各保存一份 PlanReport，不再另交 generic PLAN_REPORT。
+3. 跟踪原 graph/result 更新。每次进度提示都附本责任实际问卷完整路径、具体缺项和下一动作或等待 owner；不按身份或路径拦截工具调用。
+4. Hook 为每个 Builder 提供准确 RepairResult 路径。Builder 填写专业结论、assertion/unit 结果、证据、范围、风险、迁移和回滚字段并保存；原 RepairResult consumer 与 candidate consumer 校验专业答案、真实 Git 改动和必要检查，并投影到既有 completion。Main 继续完成真实集成、必要检查和配置的人类决策。
+5. 全部 RepairResult 通过后，由 Main/Repair Lead 填写并保存 Hook 提供的准确 ChangeImpact 问卷。原 consumer 基于 Session baseline 计算实际 Changeset，检查精确路径与摘要集合并更新 evidence validity；无需作者手算或复制机器字段。
+6. Main 派发与 repair Builder 独立的 verifier。Hook 提供准确 TargetedReverification 路径；verifier 按 Contract 的 Finding/assertion 范围完成专业验证并保存。原 consumer 保留 assignment 独立性、来源、assertion 与结果检查；失败按已记录恢复动作处理。
+7. Targeted PASS 被原 consumer 接收后，下一次 Main Hook 将已登记引用交给原 Handoff consumer，自动生成 handoff 与 S7 seed；不填写或提交 Handoff 表单。Main 继续按原 ReviewPlan 流程检查覆盖并派发新的完整 S7。
+
+正常作者路径只填写 Hook 明确给出的专业问卷并保存到准确路径。低层 session、plan、result、impact、targeted、handoff CLI 仅供明确的兼容、恢复或诊断场景参考，不作为普通工序；缺少准确问卷由 Main/系统接线处理。原 Case/Contract、来源证据、精确改动集合、独立 Targeted、真实 Main 集成检查与人类决策保持有效。
 
 Main 不应逐步遥控 Agent，也不应通过“你现在到哪一步”高频轮询治理。它消费结构化 plan/progress/result events；只有 Contract、scope、风险和路由发生异常才介入。
+任何状态板、Hook 或 Main 进度提示都必须带当前 Assignment 的实际问卷完整路径、具体缺项和下一动作/等待 owner；不得让 Builder 读取 Runtime 或状态文件猜测。若路径无法解析，问题归 Main/系统接线待办，不以残缺提示要求 Builder 自行补查。
 
 ### 9.3 idle、stop 与失败恢复
 
-- Agent 有有效 PLAN_REPORT 且正在执行时，不因暂时无消息判 idle；
+- Builder 的 RepairPlanReport 已接收且责任仍在执行时，不因暂时无消息判 idle；
 - 只有 Agent 在应提交 plan/result 时进入 idle、或 runtime 明确无 active tool/session，才发送纠偏消息；
 - Stop Hook 在 RepairResult 成功提交前阻止任务被误判完成；
 - session restore 读取 RepairPlan、Assignment status、last result/hash 和 worktree，不依赖聊天回忆；
@@ -614,19 +721,19 @@ Main 不应逐步遥控 Agent，也不应通过“你现在到哪一步”高频
 
 ## 10. 指引和控制必须埋在必经路径
 
-长篇 `agent-protocol.md` 只能解释理念，不能独自承担执行正确性。S9 的关键约束必须分别埋在对象、工具、Hook 和状态机中。
+长篇 `agent-protocol.md` 只能解释理念，不能独自承担执行正确性。S9 的关键领域条件由对象、原 Writer/消费者和状态机求值；Hook 监听 graph 并提醒履职，不承担逐工具权限执法。
 
 | 必经路径 | 自动提供/强制的内容 | 强度 |
 |:--|:--|:--|
 | `repair session open` | Contract DoR、revision/hash、baseline/authority stale、source exact set | Hard deny |
 | `repair plan compile` | repair units、DAG、ownership、assertion coverage、verifier independence | Hard deny + generated plan |
 | Assignment/spawn prompt | architecture intent、invariant、forbidden patches、scope、red checks、result schema | Default injection |
-| PLAN_REPORT receiver | unit→step→artifact→check mapping，连续执行语义 | Soft correction；偏移时 interrupt |
-| first-write barrier | valid plan report、active unit、current Contract hash、path scope | Hard deny |
-| file/tool Hook | forbidden scope、共享 write owner、高风险操作审批 | Hard deny/approval |
+| RepairPlanReport / generic adapter | unit→step→artifact→check mapping；从同一答案更新生命周期 checkpoint | 原 PlanReport consumer 校验专业内容；适配器不要求重复 authoring |
+| PreToolUse / graph progress | 本 Assignment 的问卷完整路径、缺少的计划/证据/工序和下一动作 | observe/guidance；不作身份、路径、scope 或 first-write deny |
+| 原 `execution begin` / RepairResult Writer | PlanReport、active unit、current Contract 与专业结果条件 | 原 S9 阶段门；返回具体缺项，由 Hook 提醒，不拦普通文件/工具调用 |
 | `repair result submit` | actual diff、before-red、unit completeness、checks、scope | Hard deny + atomic persist |
 | `repair impact create/commit` | session-wide diff、dependency propagation、evidence validity exact set | Hard deny + atomic update |
-| targeted assignment | original facts、Contract assertions、ChangeImpact、read-only product scope | Generated prompt + hard write deny |
+| targeted assignment | original facts、Contract assertions、ChangeImpact、read-only product responsibility | Generated questionnaire/prompt；Hook 不作逐工具 hard write deny，原 Targeted consumer 校验结果与独立性 |
 | `targeted result submit` | assertion completeness、fresh evidence、independence、scope | Hard deny + route |
 | `repair handoff create/commit` | batch completeness、no open unit、new baseline、new S7 round | Hard deny + atomic transition |
 | Stop/idle/session restore | result checkpoint、non-idle execution、recoverable state | Runtime governance |
@@ -717,10 +824,10 @@ Phase 是对象事实的投影：
 | L1 准则 | S9 落点 |
 |:--|:--|
 | D1 权威外置 | RepairContract、RepairPlan/Result、ChangeImpact、TargetedReverification、RepairHandoff 持久化并带 hash |
-| D2 自然路径观测 | first-write、result submit、合并 diff、impact、targeted、handoff 都是不可绕开的工具路径 |
+| D2 自然路径观测 | assignment/问卷保存、Result submit、合并 diff、impact、targeted、handoff 更新既有 graph；Hook 提醒当前责任，不阻断逐工具路径 |
 | D3 门是顾问 | 缺失时返回具体 contract/unit/assertion/evidence/path，而不是笼统 not ready |
 | D4 引导性产物 | unit→invariant→assertion map 强迫 Builder先理解根因，actual diff→impact 强迫系统重算可信度 |
-| D5 三级强制 | prompt 引导、schema 校验、Hook/状态机硬门分别承担不同强度 |
+| D5 三级强制 | 问卷引导、原 Schema/Writer/阶段门承担各自校验；Hook 负责 graph 监听、具体缺项提示与流转 |
 | D6 三方收敛 | S8 定义修复意图，Builder实施，独立 verifier复验，S7重新审查整体 |
 | D7 收敛可观测 | unit DAG、red/green assertions、scope deviations、evidence validity、reopen rate 可计算 |
 | 公理一 原型 | 对应现实中的 root-cause remediation、change control、impact analysis、targeted retest、full regression |
@@ -734,14 +841,14 @@ Phase 是对象事实的投影：
 ### 13.0 已落地的最小闭环（当前代码）
 
 - `internal/repair` 已将 approved Contract 的 hash/status/provenance 作为 S9 输入门禁，并以不可变文件写入 Session、Plan、Result、Changeset、ChangeImpact、TargetedReverification、RepairHandoff。
-- `runtime repair session open`、`plan compile`、`dispatch`、generic PLAN_REPORT checkpoint、领域 `plan-report submit`、`execution begin`、`result submit`、`impact commit`、`targeted commit`、`handoff commit` 和 `status` 已通过 Writer 当前状态/Assignment 绑定串联；每一步都把下一动作写入 `review.repair.next_action`。显式 Runtime revision 仅为集成/恢复断言保留。generic PLAN_REPORT 只负责平台生命周期，领域 PlanReport 才负责 S9 红前检；execution begin 之后 Builder 继续既有派发，不重复 dispatch。
+- 原 Writer 与 Assignment 事实保留 session、plan、dispatch、执行门、Result、impact、targeted、handoff 的校验和状态投影。普通作者路径由 Hook 准备准确问卷，保存时复用原 consumer；Builder 只填 PlanReport/RepairResult 专业答案，不另发 generic PLAN_REPORT 或 completion。低层 CLI 仅供明确兼容、恢复或诊断使用。显式 Runtime revision 只作为集成/恢复断言；Main 检查/集成、Targeted 与 Handoff 的原有领域门保留。
 - `runtime investigation project` 只生成 canonical BUG JSON/Markdown 兼容投影，不写 Runtime authority；投影必须消费 approved Case/Contract 和 exact Finding set。
 - S9 Runtime 提交点已经绑定当前证据链：`impact commit` 只能消费当前 Runtime 指向的 RepairResult，并要求 RepairResult/ChangeImpact 的 changed-artifact path+SHA exact-set；handoff 还会校验 Changeset 与同一集合一致，targeted reverification 必须命中当前 Impact，不能用同一阶段生成的另一份“看起来有效”的证据替换链上证据。
 - `RepairResult.changed_artifacts[]` 对 deleted 文件也必须携带 base/last-good 内容的 SHA256；S8 intake 会逐个核验 ObservationBatch 中 Finding 的 entities 行、文件存在性、内容哈希、Finding schema 和行/文件身份一致性。CAS 失败时，Session/Plan/Result 以及 `register-workgroup` 预写的 activation envelope 都会在安全条件满足时自动清理，避免留下不可重试的孤儿文件。
 - `TR-012` handoff 会在同一 CAS 中清空旧 `review.investigation` 指针、旧 S7 看板投影，并保存 repair handoff、targeted artifact 的 path+SHA；同时生成带 post-repair frozen subjects、ChangeImpact 引用和基础 Delivery/QA 责任的 S7 ReviewPlan seed，记录 implementation baseline digest；seed 与普通注册入口共用 artifact-level frozen-subject、coverage 和 regression-asset 校验，作为本轮 ReviewPlan r1 投影。Planner 先审查 seed，覆盖变化时用一次受控 `runtime review-plan revise` 形成 r2，再完成派发/消费路径。
 - 本轮已补齐第一阶段执行闭环：Session 打开时冻结非控制面仓库基线，RepairPlan 自动编译一组按 Unit 划分的 RepairAssignment；PlanReport 必须绑定 Assignment 且至少包含一个 red/blocked pre-fix check；Runtime 依次经过 planning→reproducing→fixing，`BeginRepairExecution` 之前不释放执行门。
 - `RepairResult` 提交会重算 Session-wide actual diff，拒绝漏报、虚报和错误 SHA；结果携带 Assignment、PlanReport、before-fix/check、scope deviation、migration/rollback/residual-risk 字段。Targeted 非 PASS 结果不再被裸拒绝，而是记录 failure route 并回到 investigation/blocked，向 Agent 显示下一动作；非 `blocked` 失败的下一动作包含带精确路径的 `runtime investigation route --route investigate_more --reassessment-evidence`，回流时创建新 Case revision 并清除旧 Contract 指针。
-- 已实现的链路不等同于全部目标：RepairAssignment 目前是 Unit→Assignment 的确定性基础编译，`runtime repair dispatch` 已将每个 Assignment 绑定到 Builder Team/Task/Agent/activation，并在同一注册 CAS 写入 `assignment_owners`；尚未完成 ownership/conflict/critical-path 的高级 WIP 编译，实际 Claude/Agent Team 进程启动仍属平台动作。完整多 Contract batch 和跨领域 projection 单一权威仍需后续补齐。S9 专属 Hook 已接入两道硬门：planning/reproducing 阶段禁止产品面写入，fixing 阶段按经 PlanReport 绑定的 Assignment scope 逐工具拒绝越界写入；多 Assignment Result 已按 exact unit/batch 聚合。
+- **历史实现记录（迁移前）**：RepairAssignment 是 Unit→Assignment 的确定性基础编译；`runtime repair dispatch` 曾将 Assignment 绑定到 Builder Team/Task/Agent/activation，并在同一注册 CAS 写入 `assignment_owners`。当时 S9 Hook 拦截 planning/reproducing 阶段产品写入，并按 PlanReport 绑定 scope 逐工具拒绝越界写入。该 Hook 行为待按当前目标迁移；本段不表示已从代码移除，也不作为目标权限契约。多 Assignment Result 按 exact unit/batch 聚合仍是原领域能力。高级 ownership/conflict/critical-path WIP、真实 Claude/Agent Team spawn 与完整多 Contract batch 仍有各自缺口。
 
 ### 13.1 当前事实
 
@@ -749,8 +856,8 @@ Phase 是对象事实的投影：
 |:--|:--|:--|
 | S9 输入 | accepted BUG、自由文本 root cause/Closing Contract，多载体并存 | 只消费 approved RepairContract revision/hash |
 | 修复授权 | BUG→TASK→Builder 多为字符串关系 | RepairPlan/Assignment 已对 unit、scope、派生 assertion map、依赖/锁和 Contract 做基础全链校验；`runtime repair dispatch` 复用 `register-workgroup`/L4 CAS，写入 Team/Task/Agent/activation 与 `assignment_owners`；高级 ownership/conflict/critical-path WIP 仍待补，平台实际 spawn 仍是环境动作 |
-| 两阶段 activation | 一条 activation envelope；read-back 和每个 Builder 未被内容校验 | 已落地 dispatch→generic PLAN_REPORT→领域 PlanReport→BeginRepairExecution 连续链；高风险独立批准仍按 L4 例外使用，Assignment ownership 已写入 Runtime |
-| phase-one no-write | 主要靠纪律，非普遍权限墙 | Runtime first-write checkpoint + S9 planning/reproducing 产品面 Hook hard deny 已落地；fixing 阶段按 active Assignment/path 约束 |
+| 两阶段 activation | 一条 activation envelope；read-back 和每个 Builder 未被内容校验 | 当前普通路径以一份领域 PlanReport 更新既有 lifecycle checkpoint，不另要 generic PLAN_REPORT；显式高风险审批仍按原 L4 例外使用 |
+| phase-one / 首写条件 | 迁移前 Hook 曾拦截 planning/reproducing 产品写及 fixing 越界路径 | **历史接线事实，待迁移**；目标由问卷提醒当前缺项，原 `execution begin`/Result Writer 保留 S9 阶段条件，不作逐工具拦截 |
 | “最小修复” | 容易被理解为 smallest diff | 明确定义 Minimum Complete Root-Cause Repair |
 | fix report | `fix_ref` 非空即可推进 entity | RepairResult 已有 Assignment/PlanReport/actual diff/before-fix/check/scope/migration/rollback 字段，并拒绝绿前置、越界和未覆盖 unit |
 | repair batch gate | 一条 repair/impact envelope 可推进共享 phase | Runtime 已按每个 Assignment 的 exact unit 收集 Result，完整批次才允许 impact reconciliation；聚合后的 actual diff 才是 ChangeImpact 输入 |
@@ -766,7 +873,7 @@ Phase 是对象事实的投影：
 | TR-012/new round | round++、clean_round=null；handoff 已清理旧投影并生成 seed（作为 ReviewPlan r1 投影） | handoff 与普通注册共用 artifact-level frozen-subject、coverage、regression-asset 检查；Planner 审查 seed，覆盖变化时通过同一 plan id 的一次 `runtime review-plan revise` 形成最终 ReviewPlan |
 | S9 dispatch | RepairPlan 编译出每 Unit 一个 RepairAssignment，owner 在 PlanReport/Result 链上记录 | `runtime repair dispatch` 已复用 `register-workgroup`/L4 CAS，创建 Builder Team/Task/Agent/activation，并把 owner 绑定到 Assignment；注册时还校验 manifest 中的 Agent 与 owner 一致；平台实际 spawn、idle/stop 事件仍由 Claude/Agent Team 运行时提供 |
 | dependency/lock semantics | schema、模型、计划语义校验和 Result/status 消费均已落地 | 校验 unit/assignment 引用、DAG 无环、scope/assertion/依赖/锁 exact-set；Result 按依赖与共享锁确定性排队，status 同时投影 Assignment `status` 与锁 `lock_state`（available/held/released）；不引入独立 S9 scheduler |
-| plan report naming | S9 domain `repair-plan-report` 可提交并驱动 S9 phase；通用 `agent-message` `PLAN_REPORT` 由平台 Assignment checkpoint 消费 | 它不是通用 `agent-message` `PLAN_REPORT`；运行时分别校验两者，没有把领域文件自动转换为通用 envelope 的 adapter，角色卡和恢复文案必须同时说明适用范围 |
+| plan report naming | S9 domain `repair-plan-report` 是专业计划事实；同一保存结果更新已有 lifecycle checkpoint | 不另造答卷或状态；generic PLAN_REPORT 的旧双提交说明属于迁移前记录，不能作为普通 Builder 步骤 |
 | ChangeImpact/Targeted schema | domain validator 通过 `review-evidence` oneOf 分支校验 | 独立 schema 文件虽已出现于工作树，但尚未成为所有 CLI/文档的单一 authoring 面；不能以“有文件”推断所有入口都消费它 |
 | repair-limit | typed helper、adapter、生产路径未接；same-contract counter 不增长 | 以 Case/Contract revisions 和 reopen policy统一防振荡 |
 
@@ -778,14 +885,14 @@ Phase 是对象事实的投影：
 - S9 内部已闭合到 targeted：PlanReport 是领域硬门，`execution begin` 释放写入，Result/Changeset/Impact/Targeted 按 exact set 消费；Targeted 非 `blocked` 失败可沿 exact artifact ref 回到同一 S8 Case，形成可执行的因果重评估闭环。
 - S9→S7 只闭合到 registration staging：handoff 已在同一 CAS 递增 round、写 baseline、清理旧投影并应用 seed projection；Planner 仍需把 seed 当本轮 r1 输入重新核对，覆盖变化时以一次受控 `runtime review-plan revise` 形成最终 ReviewPlan。
 - S9 依赖/锁是“计划声明 + 轻量确定性消费”，不是独立 scheduler：Agent 以 `runtime repair status` 的 `queue_reason`/`lock_state` 为准，按 `next_action` 提交结果；系统不会后台自动唤醒或替 Agent 修改 Assignment。
-- S9 Builder 的通用平台 PLAN_REPORT 和领域 RepairPlanReport 是两道不同的消费门；任何角色卡只写其中一个都会留下首写或 execution gate 断点。
+- 历史链曾要求 Builder 分别交 generic PLAN_REPORT 与领域 RepairPlanReport。当前正常合同是一份专业 RepairPlanReport，由原 consumer/adapter 更新既有 lifecycle checkpoint；旧双提交要求仅作历史说明，不让 Builder 手工补交第二份。`BeginRepairExecution`、专业前置检查和后续原门仍按真实事实求值，Hook 只提示准确问卷路径和缺项。
 
 ### 13.2 P0：先闭合授权、结果与回环
 
 1. 定义并启用 RepairPlan/RepairAssignment/RepairResult/ChangeImpact/TargetedReverification/RepairHandoff schema；
 2. 将 S9 入口改为 approved RepairContract revision/hash 的 hard gate；
-3. 实现 `repair session open`、PlanReport→execution first-write checkpoint 和 `repair result submit` 原子事务；
-4. 用 session-wide actual diff 替换当前单次 `AffectedPaths` 影响输入；（已落地，并由 S9 planning/reproducing/fixing Hook 约束写入面）
+3. 实现 `repair session open`、PlanReport→原 `BeginRepairExecution` 阶段门和 `repair result submit` 原子事务；
+4. 用 session-wide actual diff 替换当前单次 `AffectedPaths` 影响输入；（实际 diff 已由原 Result/Impact 消费；迁移前的 planning/reproducing/fixing Hook 写入拦截是历史接线，待按目标迁移）
 5. 实现 ChangeImpact→evidence validity 的原子 reconcile；
 6. 实现逐 Contract/assertion targeted completeness 和 verifier independence；
 7. 将 RepairHandoff、新 baseline、旧证据失效和 S7 新 ReviewPlan seed 创建合成一个事务；（handoff CAS、baseline digest、seed projection 和 seed/普通注册共用的 artifact-level 校验已落地；完整旧 evidence invalidation 与 seed 的受控 r2 refinement 由后续 S7 consumer 完成）
@@ -813,7 +920,7 @@ Phase 是对象事实的投影：
 1. 观测 Contract→plan、plan→first write、repair→impact、impact→targeted、targeted→S7 lead time；
 2. 统计 symptom-patch rejection、scope deviation、root-cause reopen 和 stale session；
 3. 对同一 Case 多次 Contract revision/reopen 设置结构化升级策略；
-4. 记录 Tool/Hook 在关键偏移发生前拦截的比例；
+4. 记录进度提示是否同时给出实际问卷完整路径、具体缺项和下一动作，以及遗漏工序/重复交付情况；
 5. 依据真实数据调整 WIP、high-risk checkpoints 和 full-review risk hints。
 
 ## 14. 系统测试与运营指标
@@ -823,15 +930,15 @@ Phase 是对象事实的投影：
 | 场景 | 期望 |
 |:--|:--|
 | 缺 Contract hash/revision/source Finding | S9 session 原子拒绝并指出 exact field |
-| authority 或 baseline 已变化 | session/plan/first write 标 stale，不能继续 |
+| authority 或 baseline 已变化 | 原 Session/Plan/Result Writer 不接收过期事实；提示给出问卷完整路径、具体缺项和恢复动作 |
 | RepairPlan 的 unit 没有 invariant/assertion mapping | plan compile 拒绝 |
-| 计划只修一个 source Finding | PLAN_REPORT receiver 纠偏；first write 前仍未修正则拒绝 |
-| 计划采用 Contract forbidden symptom patch | hard deny 并返回对应条款 |
-| Agent 正常提交 PLAN_REPORT | 不进入 idle 等待第二轮，直接连续执行 |
+| 计划只修一个 source Finding | 原 PlanReport consumer 给出缺失 Finding/断言；提示定位问卷路径与修正动作，不以 first-write Hook 拒绝工具 |
+| 计划采用 Contract forbidden symptom patch | 原 S9 领域结果/impact 门拒收并返回对应条款；Hook 提醒专业修正，不在写工具前拦截 |
+| Builder 保存领域 RepairPlanReport | 原 generic adapter 同步 lifecycle checkpoint；不要求第二次手工 PLAN_REPORT，也不进入 idle 等第二轮批准 |
 | Agent 未回计划就 idle | Main 可恢复/纠偏，不误判 completed |
 | before-fix symptom/root assertion 不红 | RepairResult 不可提交，typed route 回 S8 |
 | changed path 越 prospective scope | submit 拒绝；不可用文本 deviation 自动放行 |
-| changed path 命中 forbidden scope | hard deny；高风险不得落盘 |
+| changed path 命中 forbidden scope | 原 Result/Impact/集成门按实际 diff 拒收或保全；Hook 不作逐工具 hard deny |
 | 两个 Builder争写同一 artifact | ownership gate 阻止第二个 active writer |
 | 多 worktree 合并 | ChangeImpact exact set 等于最终 merged diff，而非各 Agent 自报并集 |
 | 最后一次工具调用无 path | 不影响 session-wide diff；impact 仍能正确计算 |
@@ -874,8 +981,8 @@ S9 机制只有满足以下条件才算设计完成：
 
 - 唯一输入是 approved RepairContract identity/version/hash（由工具生成，Agent 不手工推进）；
 - RepairContract 可以稳定编译为 unit DAG、ownership、Assignment 和 assertion map；
-- PLAN_REPORT 后默认连续执行，普通任务不再依赖脆弱的第二轮授意；
-- first-write 和每次关键提交都校验 active Contract/unit/scope；
+- RepairPlanReport 保存后默认连续执行，平台 lifecycle checkpoint 由原 generic adapter 同步，普通任务不依赖第二轮授意；
+- 原 `execution begin`、Result 与后续关键领域提交继续核验 active Contract/unit/scope；Hook 不对 first-write 或每次工具调用拦截，并在进度提示中列出问卷完整路径、具体缺项和下一动作；
 - Builder 在写前证明全部必要 symptom/root assertions 为 red；
 - 修复遵循 Minimum Complete Root-Cause Repair，而不是 smallest diff；
 - detection gap、compatibility、migration、rollout、rollback 均被作为 repair unit 消费；
@@ -938,7 +1045,7 @@ S9 机制只有满足以下条件才算设计完成：
 > ② **invalidation_rule 空值**：impact commit 写 `invalidation_rule: null` 被 loop-state schema 拒绝（要求字符串）——
 > markEvidence 现按 `change_impact_<status>` 类型化落值；
 > ③ **skill 动词链漏两个硬门**：bug-resolution SKILL 的 S9 链缺 `plan-report submit` 与 `execution begin`
-> （首写屏障的释放动词）——补全并标注各步骤语义（红前检、精确 diff、同事务作废、独立复验、TR-012 种子）；
+> （迁移前首写屏障的释放动词；历史实现记录，不是目标 Hook 策略）——补全并标注各步骤语义（红前检、精确 diff、同事务作废、独立复验、TR-012 种子）；
 > ④ **run.go 相位指引缺 planning/reproducing**：恢复投影只认旧相位名——补两相位的 agent 指引
 > （plan-report submit 红前检 + execution begin 释放写入）。
 >
@@ -1009,8 +1116,8 @@ status/next_action 中披露边界。
 ## 14.D · 当前引导与身份边界补充（2026-08-26）
 
 - `runtime repair dispatch` 的输入是 `--assignment-id` + `--agent-id`；manifest/task 由命令从不可变 RepairAssignment 生成，调用者不再猜测或传入 `--manifest`。可复制的 PlanReport、RepairResult、ChangeImpact、RepairHandoff 请求形状统一收录在 [`docs/examples/s7-s9/`](../../docs/examples/s7-s9)。
-- generic `PLAN_REPORT` 与 S9 domain `repair_plan_report` 仍是两个有意分离的事实：前者驱动 Agent lifecycle，后者在 `execution begin` 前提供红色前检。二者不合并为第三种报告，也不增加额外批准轮。
-- `runtime repair execution begin` 的 `next_action` 只要求继续已派发且已通过计划门的 Builder，并按 Assignment 提交 exact-unit RepairResult；不会让 Builder 重复执行 `runtime repair dispatch`。这与 S8 Investigator 的 dispatch→PLAN_REPORT→继续判别语义相同，都是一次绑定、连续执行。
+- 历史接线把 generic `PLAN_REPORT` 与 S9 `repair_plan_report` 作为两次输入。当前设计保留两个原消费者，但 Builder 只写领域计划；generic adapter 从同一已保存答卷更新 lifecycle，不创建第三种报告或额外批准轮。
+- S9 的普通 next action 继续已派发且已通过计划门的 Builder；不要求重复 dispatch 或额外 lifecycle 提交。Builder 保存 Hook 提供的 exact-unit RepairResult 专业答卷，原 consumer 接受并更新 graph。这与 S8 Investigator 的一次派发→保存专业答卷→继续判别相同，都是一次绑定、连续执行。
 - 真实平台 Agent identity 在 S9 dispatch 进入通用注册边界时校验；空值、控制字符和 `TODO(planner)` 不会进入 Runtime agent projection、PostToolUse sender binding 或 auto-chain。该约束只保护 identity 完整性，不收紧合法平台 ID 的前缀或 revision 数量。
 - S9 handoff 后的 TR-012 provenance、seed projection gap 和 Claim focus/target mapping 由 S7 status 展示；S9 只负责把可验证 seed 交给下一轮，不把 targeted PASS 伪装成 S7 clean round。
 
@@ -1081,7 +1188,7 @@ status/next_action 中披露边界。
 
 ## 14.E · S7~S9 当前实现复审（2026-08-27）
 
-本轮重新沿真实对象和工具路径核对闭环：S7 的 `ObservationBatch` 是唯一正常调查入口；S8 的 `InvestigationCase` 是假设、结果和路由的事实源；approved `RepairContract` 通过 `S8-REPAIR-CONTRACT-APPROVAL` 才能打开 S9；S9 的 RepairPlan/Assignment、双层 PlanReport、执行首写门、exact-unit Result、session-wide Impact、独立 Targeted 和 Handoff 依次消费；TR-012 只把可验证 seed 交给新的 S7 full round。每个跨阶段箭头都有 CAS、path+SHA 或 exact-set consumer，兼容 BUG/状态看板不承担授权。
+历史实现复审记录（2026-08-27）：S7 `ObservationBatch` → S8 `InvestigationCase`/approved `RepairContract` → S9 RepairPlan/Assignment、双层 PlanReport、当时的执行首写门、exact-unit Result、session-wide Impact、独立 Targeted 和 Handoff → S7 full round。此处首写门描述迁移前实现，不作为当前 Hook 目标；兼容 BUG/状态看板不承担授权。
 
 确认的实现偏差已收敛为两项低复杂度输入修复：S8 的重复 flags 现在保留完整值，路由 authoring 文件缺失或非法 JSON 现在返回具体 flag、路径和恢复动作；S8 route 的下一步也会给出完整 Contract approve 命令。它们都不增加生命周期、调度器或额外人工批准，只减少静默数据丢失和反查成本。未实现且有意延后的仍是高级 ownership/conflict WIP、CaseSet、真实平台 spawn/doctor 和产品侧浏览器采集 wrapper，不能在当前文档中写成已完成。
 

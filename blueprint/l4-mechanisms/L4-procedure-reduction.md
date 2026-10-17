@@ -6,6 +6,17 @@
 >
 > 状态：v0.3.0 目标设计。本文提出的统一手续收敛尚未在生产实现；既有机制的实现情况见第 12 节。[S5 隔离原型](../../tools/stage-form-prototype/README.md)仅验证交互契约。本文不新增状态机，不放宽既有门禁。答卷篇规定生成、保存与消费；本文规定执行者应保留哪些工作、移走哪些手续。
 
+## 本轮收缩（2026-10-15，优先于下文旧方案）
+
+Hook 承接 graph engineering 的监听与流转，提醒遗漏工序。直接给出当前阶段的
+履职问卷：工序、每题要求、答案形状、产物引用与填写路径；填写保存后更新原 graph，
+提示距下一 stage 的具体缺项。问题与缺项来自同一阶段要求，不新增手续或验收。
+
+取消 Hook 身份/权限/scope 拦截；不让 Agent 猜交什么、找 Schema、发行答卷、抄机器
+字段、另跑接收命令或重复总结。JSON 可以保留为问卷载体。详见
+[全局设计 §0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-15优先于旧方案)。
+当前代码尚未迁移，下文保留旧方案来源与已实现契约用于定位。
+
 ## 1. 核对
 
 2026-10-12 对照 `docs/control/agent-protocol.md`、`internal/cli/action_catalog.go`、`internal/cli/repair_command.go`、`internal/cli/investigation_command.go`、`internal/assignment/lifecycle.go`、`internal/review/draft.go`、`internal/review/manifest_draft.go`、`internal/review/plan.go`、`internal/schema/assets/agent-message.schema.json`。六条里有四条按原话成立，两条要收窄。

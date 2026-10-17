@@ -1,0 +1,295 @@
+{
+  "schema_version": "1.0.0",
+  "slice": "S6 original Assignment revision issuance, source audit snapshots and fresh Main revision slots",
+  "recorded_at": "2026-10-14T15:14:58.644095+00:00",
+  "status": "partial",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "authority": "original Register Runtime Writer under original Main workspace lock; original source view/PLAN/Result/Main checkpoint CAS/ACK/TR-006",
+  "verified": [
+    "Initial r1 and new revisions capture bounded content-addressed actual authority source bytes; current source authority still uses original refs/SHA; old Record shape unchanged via omitempty",
+    "Profile fragments captured through actual manifest bytes; roles/selected Skills/embedded sources/declared profile dependencies and fixtures covered; 16MiB per source and 64MiB bundle bounds",
+    "Publication cleanup intent tracked before final-link/sync/readback may fail; original pending and SHA/reference guards preserve potentially committed artifacts; simulated post-publication error cleanup case passed",
+    "Original revision Writer requires exact locked TASK and plan_checkpoint, fresh Team/Agent, explicit stable intent and current predecessor ref/SHA; source closure included in request digest and recomputed under Apply",
+    "Original Record history append, next business revision allocated under Writer; old Team retired only when unused, active owner stopped, terminal owner state retained with current pointers cleared",
+    "Prior current Result superseded/invalidated without body rewrite; old execution moved to history; fresh owner cannot inherit PLAN/Result/ACK or old workspace scope",
+    "RegisterWithReceipt returns original issuance tuple/event/commit with explicit current/replayed flags; r2→r3→r2 replay is noncurrent and zero state/journal writes",
+    "CLI paired flags, stale/different-source refusal, concurrent same-predecessor intents single winner; Main lock busy refusal is zero-write and release allows retry",
+    "Original Store pending-boundary reconstruction/recovery and missing/wrong journal issuance event negatives tested; reconstructed mechanism fixture is not a live crash",
+    "Main r1 checkpoint path retained; r2+ exact aN slot from current authoritative Record; controller/ACK/pending/workspace/current receipt use revision slot, not caller or checkpoint self-description",
+    "Exact technical projection whitelist for revision checkpoints and original Runtime checkpoint files; other product/control paths remain dirty",
+    "Real Git original r1 Register/PLAN/Result/Main chain followed by original r2 issuance/fresh PLAN/Result/new scoped commit/non-squash merge/fresh all Main checks/current receipt/TR-006 normal and race pass",
+    "R1 checkpoint bytes unchanged, R2 receipts/head/SHA not borrowed, old Owner Result and ACK rejected without runtime writes; Gate not_ready before Main and satisfied after Main",
+    "Historical canonical submitted Results excluded from legacy completed evidence without shrinking original TR-003 exact TASK denominator",
+    "Merged writer/CLI/source/qualitygate/context/path targeted race and ten affected packages vet"
+  ],
+  "limitations": [
+    "First revision slice explicitly requires same exact locked TASK ID/path/SHA and plan_checkpoint; TASK source revisions and plan_approval_required new-version human binding remain unfinished",
+    "Existing side-parent merge provenance across Record revisions is preserved pending until audited safely; predecessor verified/checks/ACK never reused",
+    "Native frozen manifest worktree and current SourceHead restrictions remain; sidecar-only source binding incomplete",
+    "Workspace full supported-host runner-to-Result PASS remains unexecuted because original Bubblewrap/seccomp capability gate denied current host",
+    "Real temporary Git mechanism tests do not establish real model/platform complete-chain acceptance; fresh S7, S8/S9/S10, full appropriate regression/install/platform/live acceptance remain",
+    "No standalone runtime test matched the first combined proof regexp; runtime issuance proof negatives are exercised through original CLI race tests",
+    "The standalone 91.003s Main r1→r2 race run preceded final Register workspace-lock composition; latest composed chain passed normally in 18.397s, with final Writer lock/concurrency covered separately by merged assignment/CLI race. No claim that latest composed Main chain ran under race."
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s6-source-snapshot-record-core-race-20261014.log",
+      "sha256": "249e016f6144a00cacde44550ca29602c757670a17b30e734d466437dd200d2c",
+      "bytes": 78
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-source-register-result-receiver-race-20261014.log",
+      "sha256": "9f865c828ba994a053a1eaedcc8964a154a108ea2514def68373a746a3af9e3d",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-writer-focused-20261014.log",
+      "sha256": "5e70af8c93638c594ef54b230122d6cf15f8b57c6a25be843498ca325808f801",
+      "bytes": 73
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-cli-focused-20261014.log",
+      "sha256": "44b29bffb3402b10958658a4a227ece77272c9e6897c7486fc2f7383ac50f161",
+      "bytes": 66
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-cli-replay-focused-20261014.log",
+      "sha256": "b3f9d29aa92296207627a0a1a20ef75ddfe5481dc32f7f681007699f6c6f3267",
+      "bytes": 66
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-merged-race-20261014.log",
+      "sha256": "4a36c1a6ba06f16d884407281f0095f3f480aba2ee062f9a88f9547081a131bc",
+      "bytes": 139
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-proof-gate-race-20261014.log",
+      "sha256": "9a6f16b200a87f7e41f54ee256e0e243168e1a80b24cac605ceda04f12b493ed",
+      "bytes": 152
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-revision-workspace-slot-targeted-20261014.log",
+      "sha256": "22adfbf1737831b61cc1749701c057915ee4047c01bfcd2578b6700c81856a14",
+      "bytes": 65
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-revision-gate-context-targeted-race-20261014.log",
+      "sha256": "a03aa96ecdc93ea6bfe3b1149e146056a43583983c7d5c7738784aa715995a9f",
+      "bytes": 143
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-main2-20261014.log",
+      "sha256": "a234e78bfd1208504a2a837544e7fb0744b7ab748a447e2d1bef0ad88514ba1e",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-cli-20261014.log",
+      "sha256": "2a5b1342fcb651596e70b457993b9c27ba33e1967143922264551b0ff33506f9",
+      "bytes": 65
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-git-guard-20261014.log",
+      "sha256": "26a4ab788d2e638c5685cd9ed314b85335004cf7510340a3a77dea5ac24efeb9",
+      "bytes": 73
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-r1-r2-e2e-20261014.log",
+      "sha256": "09b88d20c2620d8795b9d2aa352abdc0cd5dec6ebc959894a1ca398b9047593a",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-r1-r2-e2e-race-20261014.log",
+      "sha256": "073be43effadd6182e18f1a468762591f5ebf0af4d193b2dedc5c546da2bb934",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-assignment-revision-final-vet-20261014.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-main-revision-final-composed-chain-20261014.log",
+      "sha256": "b4a09584951c66645a60903cdc512367b295e1bea7d420ae6ec53a57f794bfb1",
+      "bytes": 74
+    }
+  ],
+  "source_snapshot": [
+    {
+      "path": "internal/assignment/register.go",
+      "sha256": "4b04e13cddf22f09cad0e13802ba9de0b8c2980c2c782519c6f0650960851479",
+      "bytes": 44924
+    },
+    {
+      "path": "internal/assignment/record_registration.go",
+      "sha256": "3e964d411282a0c2d260859dd1b144c9663b4095f87074f64ccf8ef6068f9111",
+      "bytes": 20662
+    },
+    {
+      "path": "internal/assignment/record_revision.go",
+      "sha256": "1a792086b4171e4e52d67a1384ab33b5166c3ca682479e33ab4bcaaa3a1edcc1",
+      "bytes": 37928
+    },
+    {
+      "path": "internal/assignment/record_source_staging.go",
+      "sha256": "d7647320413d1e729a8cfa93b0600dbc0ea5b9cd214161b5fa649bb85812fa7a",
+      "bytes": 2363
+    },
+    {
+      "path": "internal/assignment/completion_canonical.go",
+      "sha256": "ffee6b26b74355f747a10c12051dd8223d956f0d10c3371c79c479698b5b391b",
+      "bytes": 46123
+    },
+    {
+      "path": "internal/assignment/worker_closure_collect.go",
+      "sha256": "8d82293b7e737bdb96479a09d1199f5211bff908387443303748e29307de9645",
+      "bytes": 14396
+    },
+    {
+      "path": "internal/assignmentrecord/record.go",
+      "sha256": "d79c2fe1cfb167534669cd783f551f0812ffc623f53faf194bc106bde6e7712f",
+      "bytes": 49806
+    },
+    {
+      "path": "internal/assignmentrecord/source_snapshots.go",
+      "sha256": "0959e58e90a034676a898938a4d2a083ac9f3e44ea992d529f9f2bcacaa21dd9",
+      "bytes": 12198
+    },
+    {
+      "path": "internal/assignmentrecord/owner_history.go",
+      "sha256": "80c3a6ae1d4b1affef0669146e216cd5105ce3133b68656234b8da358bf73d94",
+      "bytes": 1353
+    },
+    {
+      "path": "internal/assignmentrecord/checkpoint_path.go",
+      "sha256": "e7388a0ca4099df5a2245df5b14280c501f8a564408af0cd7b4ec4544023c835",
+      "bytes": 1047
+    },
+    {
+      "path": "internal/runtime/assignment_revision_receipt.go",
+      "sha256": "1c7a51b03be8a2f6d1d465300da3296cdc1cc219d9bb4e3513d5beae7c7dbff0",
+      "bytes": 8699
+    },
+    {
+      "path": "internal/runtime/checkpoint_indices.go",
+      "sha256": "a08c8f8fe2ecba06a8243392eae987f2f49bd97502f8160d84f64af9e420077a",
+      "bytes": 8879
+    },
+    {
+      "path": "internal/runtime/integration_register.go",
+      "sha256": "474a1f3336f0a9c4b8ee9b1adc5caa3a560b422d59657000e0076d5e0d6a2a56",
+      "bytes": 5754
+    },
+    {
+      "path": "internal/schema/assets/assignment-record.schema.json",
+      "sha256": "a84bf6d800f940ac69a6f32a5e67aad9bce5ca6f4b2257d45b61037041e2adf2",
+      "bytes": 14221
+    },
+    {
+      "path": "internal/schema/assets/loop-state-v1.2.schema.json",
+      "sha256": "0651a8b7d4e8979bcb42c14d0c68ca7967f960f8929d4c69568ecee86ca8b9f8",
+      "bytes": 178647
+    },
+    {
+      "path": "docs/control/loop-definition.json",
+      "sha256": "dbc7818bcf2147431a6cf84bd2fa8357c58276771cb7ec5d2c57dbdf5f497c19",
+      "bytes": 78960
+    },
+    {
+      "path": "internal/cli/run.go",
+      "sha256": "7d3b82bd43eec50055241fcb583885d857355b6c1ba090cb675c5ea2bddb8b43",
+      "bytes": 168308
+    },
+    {
+      "path": "internal/cli/workspace_checkpoint_record.go",
+      "sha256": "408ebd66e357fecf888d97ee22d44a782f8c77aa2c0dc98d718fe3ac0a997079",
+      "bytes": 1572
+    },
+    {
+      "path": "internal/cli/workspace_completion.go",
+      "sha256": "b7a34a2b378ed4b0314ce79bc241d65e1521d0ae262f48edf62caecf99754ead",
+      "bytes": 3744
+    },
+    {
+      "path": "internal/cli/workspace_rebind_checkpoints.go",
+      "sha256": "90b263539e1aa711f84a4c7c8470e735e07277c40f624c922fa765dda2f996a0",
+      "bytes": 6882
+    },
+    {
+      "path": "internal/cli/integration_ack.go",
+      "sha256": "113ed2c8279bb500e0f602c0d460a7cf1b0664c59a6dd2f496a8cc37334e1b29",
+      "bytes": 8976
+    },
+    {
+      "path": "internal/cli/controller.go",
+      "sha256": "73d6b602243f588b32646f979af47f1f43d4dc4215e9a875e7d324c7d7d8a253",
+      "bytes": 100144
+    },
+    {
+      "path": "internal/hookctx/loader.go",
+      "sha256": "d9ce5582e5eedc569f87170032f368de33d998cb334338889a0af41f9e03142e",
+      "bytes": 68543
+    },
+    {
+      "path": "internal/integration/checkpoint.go",
+      "sha256": "6ccc4c77b3ff4327078f9de181bc0d318abf3f3107d9d1f620b085583540937c",
+      "bytes": 8740
+    },
+    {
+      "path": "internal/integration/types.go",
+      "sha256": "5f78203773dcaf81ae2ee7238f34f66fbe978d4fe600937f2f1b9602ac4e2165",
+      "bytes": 15428
+    },
+    {
+      "path": "internal/integration/integrate.go",
+      "sha256": "4b849a3fba14003d035cc6903039c298209756ff77fa50cd87673e1550287b11",
+      "bytes": 49412
+    },
+    {
+      "path": "internal/integration/canonical_result.go",
+      "sha256": "0906bc2544de74cbe511293236b05a2f17ca0f71ed7e9fc511a8d6b261008601",
+      "bytes": 28728
+    },
+    {
+      "path": "internal/integration/git_worktree.go",
+      "sha256": "500ac6b369cc3f8859aee6486f2f218df3dd874936ddb2f28b888ac1f72938f8",
+      "bytes": 11524
+    },
+    {
+      "path": "internal/integration/pending.go",
+      "sha256": "b5c0963e237e95c2a2f98b2bb4a245b1ab846f14375b7bbd332cba88c1811211",
+      "bytes": 8289
+    },
+    {
+      "path": "internal/qualitygate/canonical_builder_result.go",
+      "sha256": "8faa49d84c4ccc6704e29a52aaa59baabc876f5f967eb96bf5e42286c1796300",
+      "bytes": 39079
+    },
+    {
+      "path": "internal/qualitygate/evaluator.go",
+      "sha256": "b49a37984f38fb6a6e6a6acb35ca297dacdc52f5f97961f6b8b7249c32f4a269",
+      "bytes": 62236
+    },
+    {
+      "path": "internal/integration/canonical_revision_external_test.go",
+      "sha256": "7e1780962fbd898f0c03c0301707db91afcb9b2b0693ec34662c2095d5172fbd",
+      "bytes": 17369
+    },
+    {
+      "path": "internal/cli/s6_assignment_revision_e2e_test.go",
+      "sha256": "c3c76e2df02fa56e945fbdf38e7949c8e2958cbc00a829ffbef51ef6a605b512",
+      "bytes": 25481
+    },
+    {
+      "path": "internal/assignment/record_source_staging_test.go",
+      "sha256": "e768a7e0abe0700b7b2dfcbfd89e5a11850ed534f924560c265a1fa45e28c033",
+      "bytes": 3457
+    }
+  ]
+}

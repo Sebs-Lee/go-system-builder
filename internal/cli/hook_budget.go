@@ -27,7 +27,7 @@ func RunWithHookBudget(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	executable, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
-		return 2
+		return 1
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -48,18 +48,21 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	select {
 	case in := <-inputs:
 		if in.err != nil || len(in.data) > 4*1024*1024 {
-			fmt.Fprintln(stderr, "Hook input unavailable or exceeds 4 MiB; retry with valid platform input")
-			return 2
+			fmt.Fprintln(stderr, "Hook input unavailable or exceeds 4 MiB; graph progress was not updated")
+			return 1
 		}
 		data = in.data
 	case <-ctx.Done():
-		fmt.Fprintln(stderr, "Hook input deadline exceeded; tool blocked")
-		return 2
+		fmt.Fprintln(stderr, "Hook input deadline exceeded; graph progress was not updated")
+		return 1
 	}
 	var input policy.Input
 	decodeErr := json.Unmarshal(data, &input)
 	fail := func(err error) int {
 		fmt.Fprintf(stderr, "Harness Hook did not complete within its internal budget: %v; preserve Runtime and retry after checking the external terminal.\n", err)
+		if input.Event == "PreToolUse" {
+			return 0
+		}
 		if decodeErr != nil || policy.UnavailableDecision(input, err).Decision == "deny" {
 			return 2
 		}
@@ -80,7 +83,7 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			// Exit 1 is a non-blocking platform error. Convert incomplete mutable
-			// evaluations to a blocking outcome, while retaining native deny feedback.
+			// evaluations to feedback, while retaining Stop/Idle continuation.
 			if exit.ExitCode() != 2 {
 				return fail(err)
 			}
@@ -88,6 +91,9 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 				return fail(writeErr)
 			}
 			_, _ = stderr.Write(errout.Bytes())
+			if input.Event == "PreToolUse" {
+				return 0
+			}
 			return 2
 		}
 		return fail(err)

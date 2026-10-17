@@ -73,6 +73,19 @@ func runWorkspaceLaunch(args []string, stdout, stderr io.Writer) int {
 	if !ok || e.AgentID != *agent || e.Status != "ready" || e.BootstrapSHA256 == "" {
 		return fail(fmt.Errorf("launch requires current bootstrapped Worker owner"))
 	}
+	if e.Purpose == workspace.DocumentReviewPurpose {
+		p, err := workspace.DocumentReviewPacket(snap.State, e)
+		if err != nil {
+			return fail(err)
+		}
+		life, _ := snap.State["lifecycle"].(map[string]any)
+		if life["state"] != "document_verification" || stageAnswerEntry(life["phase_revision"]) != p.Binding.StageEntry {
+			return fail(fmt.Errorf("S5 review origin changed; restore the original receipt or rework dispatch"))
+		}
+		if err := b.ValidateDocumentReviewView(e, p); err != nil {
+			return fail(err)
+		}
+	}
 	if err = b.PreflightChecks(ctx, e, e.Path); err != nil {
 		return fail(err)
 	}

@@ -31,6 +31,10 @@
 
 ### 1.1 单一权威与单一写者
 
+全局工作状态词表、责任粒度与共享资格判定唯一由
+[状态机核心篇 §0.1](L4-state-transition-core.md#unified-work-state)
+定义。本文的来源、冻结与证据约束为其事实输入；各阶段不得各自解释“完成”。
+
 - `.claude/loop-state.json` 是唯一的工程事实源；`journal` 只追加；终态周期整体归档到 `runtime-archive`（带 disposition），REQ 文件状态只是给浏览者的可读性镜像。
 - **所有权威写入都经 Runtime Store/Writer 完成，由单写者内部串行化并自动分配 revision**。Hook 是触发器不是存储：PostToolUse(SendMessage) 捕获 PLAN_REPORT 后落库走的也是同一条 Runtime 写路径，不自带第二套存储；revision 的 Agent-facing 边界见 [revision 篇](L4-revision-usage.md)。
 - 板（board）、CLI 回执、hook 投影都是**只读视图**；视图不参与判定真值，与权威不一致时触发 reconcile 而非互相说服。
@@ -318,6 +322,25 @@ preserves         本方案保住了什么现场（可选）
 
 ### 12.2 词汇边界
 
+#### 真实宿主求门失败的最小投影契约（2026-10-15）
+
+`quality_gate.satisfied` 只说明 evaluator 的证据条件齐全，不证明原 transition guards
+已执行或提交。只读 `ready` 明示 `evaluation_scope=quality_gate` 与
+`transition_guards_evaluated=false`；satisfied 时的 instruction 必须说明这一边界，
+不能承诺必然推进。它不调用 Writer、执行 actions 或复制一套原 guards 来预演。
+
+Controller 调用原 `transition.Apply` 失败时保留 `unknown`、原错误码、原 cursor 和
+`transition_committed=false`；在已有 `quality_gate.conflicts[]` 传递
+`transition:<原 transition ID>:<原失败原因>`。该内容为有界 UTF-8 单行诊断，
+不是新的缺项分母或可执行命令。Hook JSON、模型 additionalContext 与审计投影均须保留，
+不能仅在终端 stderr/内部 ControlResult.Error 中出现。实际 guard 名、失败输入与
+当前 cursor 来自原 Apply 前快照，上游修复责任仅在原失败原因明确给出时展示，不猜
+额外 owner；不得因 missing=[] 推断阶段已完成或开始后续阶段。
+原 guard 重试和最终 CAS 仍由既有入口执行；诊断不授予越门、直接改 Runtime 或扩大写面。
+
+首版复用既有 conflicts 字段，保持 Runtime/next/Hook 的封闭 Schema 与旧实例格式；
+失败原因截断必须保留 UTF-8 边界和明确省略标记，不能将截断文本冒充完整原错误。
+
 | 近义词组 | 边界 |
 |:--|:--|
 | 通用 `plan_report` vs 领域 PlanReport（`repair_plan_report`） | 前者是平台生命周期检查点；后者是领域执行计划证据。不可互换（细节归调度篇） |
@@ -439,3 +462,33 @@ waves-v1 在新入口按绑定 REQ 收敛发现范围，legacy 保留兼容诊�
 发包/接收索引是原Runtime的版本化消费检查点，不是第二生命周期。稳定submission_identity不含content hash，领域接收和索引原子提交；stable followup事件与原阶段进入身份绑定，转换与去重结果同Writer提交。domain已提交或转换已提交后的响应丢失只恢复原记录/投影，不推进新cursor。详细唯一契约见[L4阶段答卷§13](L4-stage-form.md#13-生产实施契约2026-10-13)。
 
 G08指标区分草稿、完整提交、合法Finding接收和stage PASS；CAS内部重试不算首交拒收。token/加载来自实际宿主，字节代理单列；观测损坏不改变安全门。陌生Agent评估保留必要业务资料、隐藏设计历史及oracle，fixture/not_run/真实宿主分别报告。
+
+## Optimization Runtime reset compatibility (2026-10-13)
+
+New initialization uses schema 1.2 with packet consumer disabled unless explicitly selected on a fresh install/init. Bind preserves this format. Normal updates and pending transactions retain their original 1.1/1.2 shape. Human-authorized rollover/unbind keep the actual source schema and optimization configuration inside the original Writer lock, archive the complete old pair and clear only the new inactive indices. Pending reset verifies that same format against its sealed archive. An older writer refuses an actual 1.2 mutation and its Schema validation fails; a legacy no-op is not compatibility certification. Legacy RR-A artifact import cannot mint packet/reception/activation/followup facts; a known 1.2 source with issued indices or unreadable format is refused until those original indices have a verified recovery path; provably empty 1.2 sources retain their configuration. See L4-stage-form §13.1.1.
+
+Issued indices use a complete original Writer checkpoint and the existing reviewed RR-A apply, never document-based regeneration of identity, activation, accepted keys or control results. The checkpoint contains all journal segments and is recovery evidence only. Its bounded publication and recovery contracts, including pending priority, rollback rejection, closed Runtime exclusion and original launch leases, are specified in L4-stage-form §13.6. Implementation evidence must be recorded separately from this design contract.
+
+Before accepting an ordinary mutation that will publish an issued-index checkpoint,
+the original Writer checks the exact final state serialization against 16 MiB and
+the complete existing journal plus the new event against 64 MiB. This happens
+before writing the pending marker, state or event. Reception/evidence growth has
+the same boundary as issuance; it cannot commit first and strand an oversized
+checkpoint. Legacy/no-index and offline recovery keep their original behavior.
+The check changes no source hashing, event sequencing or acceptance authority.
+
+One complete journal inspection may reuse its locally compiled embedded event
+schema across that read's events. Every event is still validated, and sequence,
+Runtime identity, duplicate IDs, cursor and archive rules remain unchanged.
+No event/source/state validation result is cached across inspections or Writers.
+
+Compiled schemas from the immutable assets embedded in one binary may be shared
+across Validator instances. Only the compiled schema is cached by its exact
+embedded basename after Runtime version dispatch; every input still decodes and
+validates on every call. Concurrent compilation uses a per-key synchronization
+boundary and no shared mutable Compiler. Disk schemas retain the original
+uncached per-Validator behavior. No source bytes, Runtime snapshot, identity,
+professional answer or validation result may enter this cache. A new binary
+provides its own asset set and cache; no cross-release persistence is allowed.
+This keeps the existing bounded Hook deadlines while removing repeated parsing
+and compilation of the same trusted embedded schema.

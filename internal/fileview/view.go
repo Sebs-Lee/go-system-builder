@@ -38,9 +38,13 @@ func Resolve(root, ref string) (string, error) {
 func git(root string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, e := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...).Output()
+	out, e := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...).CombinedOutput()
 	if e != nil {
-		return nil, fmt.Errorf("git %s: %w", args[0], e)
+		detail := strings.TrimSpace(string(out))
+		if len(detail) > 1024 {
+			detail = detail[:1024]
+		}
+		return nil, fmt.Errorf("git %s in %s: %w: %s", strings.Join(args, " "), root, e, detail)
 	}
 	return out, nil
 }
@@ -215,7 +219,13 @@ func (v *View) Verify() error {
 	}
 	return nil
 }
-func (v *View) Source(path string) (string, error) { _, s, e := v.source(path); return s, e }
+
+// Source returns the declared source for path using the same containment and
+// source-rule resolution as ReadFile and ReadDir.
+func (v *View) Source(path string) (string, error) {
+	_, source, err := v.source(path)
+	return source, err
+}
 
 type entry struct {
 	name string

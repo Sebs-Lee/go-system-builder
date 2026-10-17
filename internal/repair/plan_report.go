@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 )
 
 // PlanReportRequest is the immutable input envelope for one Assignment's
@@ -21,6 +23,10 @@ type PlanReportRequest struct {
 	RedChecks     []RepairCheck `json:"red_checks"`
 	ProposedPaths []string      `json:"proposed_paths"`
 	OccurredAt    time.Time     `json:"occurred_at"`
+	// issuedReceipt is a package-private projection supplied only by the
+	// issued-packet adapter. It cannot be authored through the legacy direct
+	// PlanReport request API.
+	issuedReceipt *runtimepkg.RepairPlanReportReceipt
 }
 
 // CreatePlanReport persists the mandatory pre-write report. At least one red
@@ -114,7 +120,7 @@ func CreatePlanReport(root string, request PlanReportRequest) (PlanReport, Artif
 			return PlanReport{}, ArtifactRef{}, fmt.Errorf("proposed path %q is outside RepairAssignment %s scope", paths[i], assignment.AssignmentID)
 		}
 	}
-	report := PlanReport{SchemaVersion: "1.0.0", RecordType: "repair_plan_report", ReportID: request.ReportID, SessionID: session.SessionID, PlanID: plan.PlanID, AssignmentID: assignment.AssignmentID, AssertionIDs: assertionIDs, AgentID: request.AgentID, Plan: request.PlanText, RedChecks: append([]RepairCheck(nil), request.RedChecks...), ProposedPaths: paths, Status: "reported", ReportedAt: nowOr(request.OccurredAt)}
+	report := PlanReport{SchemaVersion: "1.0.0", RecordType: "repair_plan_report", ReportID: request.ReportID, SessionID: session.SessionID, PlanID: plan.PlanID, AssignmentID: assignment.AssignmentID, AssertionIDs: assertionIDs, AgentID: request.AgentID, Plan: request.PlanText, RedChecks: append([]RepairCheck(nil), request.RedChecks...), ProposedPaths: paths, Status: "reported", ReportedAt: nowOr(request.OccurredAt), Receipt: request.issuedReceipt}
 	ref, err := writeImmutable(root, filepath.Join(artifactRoot, "plan-reports", request.ReportID+".json"), "repair-plan-report.schema.json", report)
 	return report, ref, err
 }

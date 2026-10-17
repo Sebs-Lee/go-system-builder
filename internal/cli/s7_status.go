@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 // runS7Command is the `loop-harness s7` dispatcher: `status` is the
@@ -41,10 +43,15 @@ func runS7Command(args []string, stdout, stderr io.Writer) int {
 		flags := flag.NewFlagSet("s7 workspace-digest", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		root := flags.String("root", ".", "repository root")
-		if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
+		if err := flags.Parse(args[1:]); err != nil {
 			return 2
 		}
-		return runS7WorkspaceDigest(*root, stdout)
+		requestedRoot := *root
+		if err := routeWorkspaceFlags(flags); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		return runS7WorkspaceDigest(requestedRoot, stdout)
 	}
 	if args[0] == "manifest-draft" {
 		flags := flag.NewFlagSet("s7 manifest-draft", flag.ContinueOnError)
@@ -87,6 +94,12 @@ func runS7Command(args []string, stdout, stderr io.Writer) int {
 // (RC-12 Step A): static-wave A-completeness, behavior-wave B-admission,
 // and the exact next CLI verb.
 func runS7Status(root string, stdout io.Writer, explain bool) int {
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(stdout, "s7 status: resolve root: %v\n", err)
+		return 1
+	}
+	root = absoluteRoot
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	store := runtime.NewStore(statePath, journalPath)
@@ -99,6 +112,7 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		return 1
 	}
 	state := snapshot.State
+	packetMode := runtime.PacketEnabled(state)
 
 	reviewMap, _ := state["review"].(map[string]any)
 	round := 0
@@ -142,7 +156,18 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 			fmt.Fprintf(stdout, "seed_projection: missing (seed=%s is present in round_entry but review.plan is absent)\n", seedRef)
 			fmt.Fprintln(stdout, "next: reconcile the S9 handoff projection before drafting or registering another plan")
 		}
-		fmt.Fprintln(stdout, "(no ReviewPlan registered — create one and run `runtime review-plan --file <plan.json>`)")
+		if packetMode {
+			path := review.PlanQuestionnairePath(root, state)
+			if path == "" {
+				fmt.Fprintln(stdout, "ReviewPlan questionnaire preparation gap: Main/system must restore the current Runtime generation and round.")
+			} else if _, err := os.Stat(path); err != nil {
+				fmt.Fprintf(stdout, "ReviewPlan questionnaire: %s; preparation gap: %v; Main/system must prepare this exact questionnaire through the original listener.\n", path, err)
+			} else {
+				fmt.Fprintf(stdout, "ReviewPlan questionnaire: %s; Main fills the professional Claims, oracles, methods and assignments, then saves this file for original registration.\n", path)
+			}
+		} else {
+			fmt.Fprintln(stdout, "(no ReviewPlan registered — create one and run `runtime review-plan --file <plan.json>`)")
+		}
 		return 0
 	}
 	fmt.Fprintf(stdout, "plan: %s status=%s revision=%d e2e_coverage=%s\n",
@@ -165,7 +190,11 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		// Every ReviewResult must bind this exact digest; printing it here
 		// saves the reviewer from re-deriving the frozen-baseline hash
 		// (the submit-time verifier rejects mismatches).
-		fmt.Fprintf(stdout, "subject_digest: %s (every review-result submit must bind exactly this value)\n", review.SubjectDigest(plan))
+		if packetMode {
+			fmt.Fprintf(stdout, "subject_digest: %s (machine-bound in the issued Reviewer questionnaire)\n", review.SubjectDigest(plan))
+		} else {
+			fmt.Fprintf(stdout, "subject_digest: %s (every review-result submit must bind exactly this value)\n", review.SubjectDigest(plan))
+		}
 	}
 	dispositions := review.Dispositions(state)
 	claimsByID := map[string]review.Claim{}
@@ -247,7 +276,11 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 			if queuedAgent, _ := row["queued_agent_id"].(string); queuedAgent != "" {
 				agent = fmt.Sprintf("(queued for %s)", queuedAgent)
 			} else {
-				agent = "(not dispatched — run `runtime register-workgroup`)"
+				if packetMode {
+					agent = "(not dispatched — Main selects the real Reviewer for original registration and dispatch)"
+				} else {
+					agent = "(not dispatched — run `runtime register-workgroup`)"
+				}
 			}
 		}
 		status := row["status"]
@@ -257,7 +290,11 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		line := fmt.Sprintf("  %s [%s] status=%s agent=%s", id, row["lens"], status, agent)
 		if status == "blocked" {
 			if ref, _ := row["blocker_ref"].(string); ref != "" {
-				line += fmt.Sprintf("\n    blocker_ref=%s (record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>` after the capture conditions are fixed, then resubmit)", ref)
+				if packetMode {
+					line += fmt.Sprintf("\n    blocker_ref=%s; Main/Reviewer must resolve this recorded blocker through its original recovery path", ref)
+				} else {
+					line += fmt.Sprintf("\n    blocker_ref=%s (record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>` after the capture conditions are fixed, then resubmit)", ref)
+				}
 			}
 		}
 		if queuedAgent, _ := row["queued_agent_id"].(string); queuedAgent != "" {
@@ -295,7 +332,10 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		fmt.Fprintln(stdout, "clean round: machine CleanRound registered — the next PreToolUse auto-commits TR-009 (do not invoke the transition CLI)")
 		return 0
 	}
-	if len(pending) > 0 {
+	if packetMode {
+		fmt.Fprintf(stdout, "pending required claims: %d %v\n", len(pending), pending)
+		printS7PacketQuestionnaires(root, stdout, state, plan, pending)
+	} else if len(pending) > 0 {
 		fmt.Fprintf(stdout, "pending required claims: %d — next: dispatch/consume results via `runtime review-result submit`\n", len(pending))
 	} else {
 		fmt.Fprintln(stdout, "all required claims dispositioned; round consumer closes on the next submit")
@@ -316,6 +356,70 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 	return 0
 }
 
+// Read only the original plan, assignment and issued-packet facts. Domain
+// statuses remain domain facts; this board introduces no new work states.
+func printS7PacketQuestionnaires(root string, stdout io.Writer, state map[string]any, plan *review.Plan, pending []string) {
+	if plan == nil {
+		fmt.Fprintln(stdout, "Reviewer questionnaire preparation gap: Main/system must restore the registered ReviewPlan before resolving current responsibilities.")
+		return
+	}
+	if len(pending) == 0 {
+		fmt.Fprintln(stdout, "All required Claims have dispositions; Main/system follows the original round consumer's current routing facts.")
+		return
+	}
+	missing := map[string]bool{}
+	for _, id := range pending {
+		missing[id] = true
+	}
+	facts, _ := state["review"].(map[string]any)
+	assignments, _ := facts["assignments"].(map[string]any)
+	packets, packetErr := runtime.CurrentReviewResultPackets(state, "")
+	packetByAssignment := map[string]int{}
+	for i, packet := range packets {
+		packetByAssignment[packet.Binding.AssignmentID] = i
+	}
+	if packetErr != nil {
+		fmt.Fprintf(stdout, "Reviewer questionnaire preparation gap: %v; Main/system must restore the original current packets.\n", packetErr)
+	}
+	for _, assignment := range plan.Assignments {
+		var claims []string
+		for _, id := range assignment.ClaimIDs {
+			if missing[id] {
+				claims = append(claims, id)
+			}
+		}
+		if len(claims) == 0 {
+			continue
+		}
+		row, _ := assignments[assignment.AssignmentID].(map[string]any)
+		owner := stringValue(row["agent_id"])
+		if owner == "" {
+			if queued := stringValue(row["queued_agent_id"]); queued != "" {
+				fmt.Fprintf(stdout, "dispatch pending: %s claims=%v queued Reviewer=%s reason=%v; Main follows the original queue/dependency release.\n", assignment.AssignmentID, claims, queued, row["queue_reason"])
+			} else {
+				fmt.Fprintf(stdout, "dispatch pending: %s claims=%v wave=%s; Main selects a real Reviewer and completes original registration/dispatch when dependencies allow.\n", assignment.AssignmentID, claims, assignment.ExecutionWave)
+			}
+			continue
+		}
+		path := ""
+		if i, issued := packetByAssignment[assignment.AssignmentID]; issued {
+			packet := packets[i]
+			binding := packet.Binding
+			source, err := questionnaireSourceRoot(root, state, assignment.AssignmentID, binding.OwnerAgentID, binding.RuntimeID, binding.BaselineGeneration)
+			if err == nil {
+				path, _ = filepath.Abs(filepath.Join(source, filepath.FromSlash(packet.AnswerPath)))
+			}
+		}
+		if path == "" {
+			fmt.Fprintf(stdout, "Reviewer questionnaire preparation gap: %s owner=%s claims=%v; Main/system must prepare the original current packet and exact answer path.\n", assignment.AssignmentID, owner, claims)
+		} else if _, err := os.Stat(path); err != nil {
+			fmt.Fprintf(stdout, "Reviewer questionnaire: %s; preparation gap: %v; Main/system must restore this issued answer for %s claims=%v.\n", path, err, assignment.AssignmentID, claims)
+		} else {
+			fmt.Fprintf(stdout, "Reviewer questionnaire: %s; %s owner=%s pending claims=%v; fill the professional answers and save this file for the original consumer.\n", path, assignment.AssignmentID, owner, claims)
+		}
+	}
+}
+
 // printS7WaveExplain renders the three-line --explain expansion of the wave
 // gate (RC-12 Step A): A-completeness counts the static-wave claims that
 // still need a final disposition, B-admission states whether the behavior
@@ -325,6 +429,14 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 func printS7WaveExplain(stdout io.Writer, state map[string]any, plan *review.Plan, remaining int) {
 	fmt.Fprintf(stdout, "explain A-completeness: %d required static-wave claim(s) still awaiting a pass/finding/blocked disposition (static settled=%t)\n",
 		remaining, review.StaticClaimsSettled(state, plan))
+	if runtime.PacketEnabled(state) {
+		if remaining > 0 {
+			fmt.Fprintln(stdout, "explain B-admission: behavior dispatch waits for the remaining static Claim dispositions; Reviewers fill and save their exact questionnaires shown above.")
+		} else {
+			fmt.Fprintln(stdout, "explain B-admission: behavior dispatch is ADMITTED; Main selects real Reviewers for the pending Assignments shown above and uses original registration/dispatch.")
+		}
+		return
+	}
 	if remaining > 0 {
 		fmt.Fprintln(stdout, "explain B-admission: behavior-wave dispatch is BLOCKED — `runtime register-workgroup` rejects a behavior Assignment until A settles (L3-S7 §5.2-5.3)")
 		fmt.Fprintln(stdout, "explain next-verb: `loop-harness runtime review-result submit --assignment-id <static-assignment-id> --result <result.json>` to settle the remaining static claims, then re-run `loop-harness s7 status --explain`")
@@ -477,8 +589,25 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 // exactly this value as verification_artifact_digest (L3-S7 §3.5); computing
 // it by hand is error-prone, so the submit-time error message points here.
 func runS7WorkspaceDigest(root string, stdout io.Writer) int {
-	statePath := filepath.Join(root, ".claude", "loop-state.json")
-	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	controlRoot := root
+	digestRoot := root
+	workerRoot, marked, err := workspace.PointerRoot(root)
+	if err != nil {
+		fmt.Fprintf(stdout, "resolve workspace pointer: %v\n", err)
+		return 1
+	}
+	if marked {
+		controlRoot, err = workspace.ResolveControl(context.Background(), root)
+		if err != nil {
+			fmt.Fprintf(stdout, "resolve Worker control Runtime: %v\n", err)
+			return 1
+		}
+		// The plan is owned by Main, while the cold-start evidence lives in
+		// the registered Worker's corresponding repository-relative path.
+		digestRoot = workerRoot
+	}
+	statePath := filepath.Join(controlRoot, ".claude", "loop-state.json")
+	journalPath := filepath.Join(controlRoot, ".claude", "loop-events.jsonl")
 	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
 		fmt.Fprintf(stdout, "read runtime: %v\n", err)
@@ -489,7 +618,7 @@ func runS7WorkspaceDigest(root string, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "no verification artifact workspace is pinned (the plan is not registered or e2e_coverage_state is not cold_start); E2E results do not bind a workspace digest")
 		return 0
 	}
-	digest, err := review.WorkspaceDigest(root, ptr.VerificationArtifactWorkspace)
+	digest, err := review.WorkspaceDigest(digestRoot, ptr.VerificationArtifactWorkspace)
 	if err != nil {
 		fmt.Fprintf(stdout, "compute workspace digest: %v\n", err)
 		return 1

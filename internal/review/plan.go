@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
+	"github.com/entroforge/go-system-builder/internal/reviewmeta"
 )
 
 // ---------------------------------------------------------------------------
@@ -15,50 +18,26 @@ import (
 // disk and hash-verified on every load so consumers never trust a stale copy.
 // ---------------------------------------------------------------------------
 
-// PlanPointer is the state.review.plan projection.
-type PlanPointer struct {
-	PlanID                        string
-	Path                          string
-	SHA256                        string
-	Revision                      int
-	ReviewRound                   int
-	Status                        string
-	E2ECoverageState              string
-	VerificationArtifactWorkspace string
-	VerificationArtifactDigest    string
-	SubmittedAt                   string
+// PlanPointer retains the original API for the shared read-only projection.
+type PlanPointer = reviewmeta.PlanPointer
+
+// PlanQuestionnairePath names the current Main authoring file. Both the
+// listener and product-drift check use this path; it is not a product subject.
+func PlanQuestionnairePath(root string, state map[string]any) string {
+	id, _ := state["runtime_id"].(string)
+	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
+		return ""
+	}
+	generation, round := baselineGeneration(state), currentReviewRound(state)
+	if generation < 1 || round < 1 {
+		return ""
+	}
+	return filepath.Join(root, ".claude/submissions", id, fmt.Sprintf("g%d/S7/r%d", generation, round), "review-plan.json")
 }
 
-// PlanPointerFromState extracts the registered plan pointer, or nil.
+// PlanPointerFromState reads the existing Runtime projection without mutation.
 func PlanPointerFromState(state map[string]any) *PlanPointer {
-	review, _ := state["review"].(map[string]any)
-	if review == nil {
-		return nil
-	}
-	raw, _ := review["plan"].(map[string]any)
-	if raw == nil {
-		return nil
-	}
-	ptr := &PlanPointer{
-		PlanID:           stringField(raw["plan_id"]),
-		Path:             stringField(raw["path"]),
-		SHA256:           stringField(raw["sha256"]),
-		Revision:         intField(raw["revision"]),
-		ReviewRound:      intField(raw["review_round"]),
-		Status:           stringField(raw["status"]),
-		E2ECoverageState: stringField(raw["e2e_coverage_state"]),
-		SubmittedAt:      stringField(raw["submitted_at"]),
-	}
-	if ws, ok := raw["verification_artifact_workspace"].(string); ok {
-		ptr.VerificationArtifactWorkspace = ws
-	}
-	if digest, ok := raw["verification_artifact_digest"].(string); ok {
-		ptr.VerificationArtifactDigest = digest
-	}
-	if ptr.PlanID == "" || ptr.Path == "" {
-		return nil
-	}
-	return ptr
+	return reviewmeta.FromState(state)
 }
 
 // LoadPlan reads and hash-verifies the pinned plan file.
@@ -89,9 +68,41 @@ func LoadPlan(root string, state map[string]any) (*Plan, *PlanPointer, error) {
 }
 
 // SubjectDigest computes the frozen product baseline digest every
-// ReviewResult must bind: sha256 over the sorted "path:sha256" lines of the
-// plan's frozen_subjects (L3-S7 §3.5).
+// ReviewResult must bind. Historical plans keep the original sorted
+// "path:sha256" digest; canonical plans also bind the machine snapshot and
+// each frozen subject's kind (L3-S7 §3.5).
 func SubjectDigest(plan *Plan) string {
+	if plan.ProductBaseline != nil {
+		snapshotDigest, err := buildsurface.Digest(*plan.ProductBaseline)
+		if err != nil {
+			snapshotDigest = "invalid"
+		}
+		subjects := append([]FrozenSubject(nil), plan.FrozenSubjects...)
+		sort.Slice(subjects, func(i, j int) bool {
+			if subjects[i].Path != subjects[j].Path {
+				return subjects[i].Path < subjects[j].Path
+			}
+			if subjects[i].Kind != subjects[j].Kind {
+				return subjects[i].Kind < subjects[j].Kind
+			}
+			return subjects[i].SHA256 < subjects[j].SHA256
+		})
+		payload, marshalErr := json.Marshal(struct {
+			Contract       string          `json:"contract"`
+			SnapshotDigest string          `json:"snapshot_digest"`
+			DeclaredDigest string          `json:"declared_digest"`
+			FrozenSubjects []FrozenSubject `json:"frozen_subjects"`
+		}{
+			Contract:       "review-subject-v2",
+			SnapshotDigest: snapshotDigest,
+			DeclaredDigest: plan.ProductBaseline.Digest,
+			FrozenSubjects: subjects,
+		})
+		if marshalErr != nil {
+			return sha256Of([]byte("review-subject-v2:invalid"))
+		}
+		return sha256Of(payload)
+	}
 	lines := make([]string, 0, len(plan.FrozenSubjects))
 	for _, subject := range plan.FrozenSubjects {
 		lines = append(lines, subject.Path+":"+subject.SHA256)

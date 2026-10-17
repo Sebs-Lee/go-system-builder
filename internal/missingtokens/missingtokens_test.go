@@ -14,9 +14,10 @@ func TestLegendCoversPresentTokensOnly(t *testing.T) {
 	for _, want := range []string{
 		"MISSING TOKENS:",
 		"`evidence:completion_report:<id>`",
-		"run `runtime task-complete` for the named TASK",
+		"Main coordinates the original registered Builder execution for that TASK and waits",
+		"its assigned Builder implements the TASK and fills and saves its own exact Result questionnaire",
 		"`integration_checkpoint:<id>`",
-		"run `runtime task-integrate --assignment-id <id>`",
+		"Main integrates the named Assignment and runs its required checks",
 	} {
 		if !strings.Contains(legend, want) {
 			t.Fatalf("legend missing %q:\n%s", want, legend)
@@ -32,12 +33,24 @@ func TestLegendCoversPresentTokensOnly(t *testing.T) {
 	}
 }
 
+func TestBuilderMissingResultGuidanceAssignsTheAnswerToItsOwner(t *testing.T) {
+	legend := RenderMissingTokenLegend("GATE-BUILDER-BATCH-READY", []string{"evidence:completion_report"})
+	for _, want := range []string{"Main coordinates each original registered Builder execution", "each assigned Builder implements its TASK", "fills and saves its own exact Result questionnaire", "Main integrates"} {
+		if !strings.Contains(legend, want) {
+			t.Fatalf("missing Result guidance omits %q: %s", want, legend)
+		}
+	}
+	if strings.Contains(legend, "Main fills") || strings.Contains(legend, "complete each unfinished TASK") {
+		t.Fatalf("missing Result guidance assigns Builder work to Main: %s", legend)
+	}
+}
+
 func TestLegendNamesUnknownTokens(t *testing.T) {
 	legend := RenderMissingTokenLegend("GATE-BUILDER-BATCH-READY", []string{
 		"evidence:completion_report:TASK-1",
 		"some_future_token",
 	})
-	if !strings.Contains(legend, "some_future_token") || !strings.Contains(legend, "no legend entry") {
+	if !strings.Contains(legend, "some_future_token") || !strings.Contains(legend, "no guidance entry") {
 		t.Fatalf("unknown token must be surfaced, got:\n%s", legend)
 	}
 }
@@ -64,5 +77,17 @@ func TestFullLegendListsEveryFamily(t *testing.T) {
 		if !strings.Contains(legend, want) {
 			t.Fatalf("full legend missing %q:\n%s", want, legend)
 		}
+	}
+}
+
+func TestPlanningMissingRecordNamesQuestionnaireWork(t *testing.T) {
+	legend := RenderMissingTokenLegend("GATE-PLANNING-DESIGN-COMPLETE", []string{"evidence:planning_design_record"})
+	for _, wanted := range []string{"architecture_path", "conclusion", "exact questionnaire path", "then save"} {
+		if !strings.Contains(legend, wanted) {
+			t.Fatalf("planning guidance missing %q: %s", wanted, legend)
+		}
+	}
+	if strings.Contains(legend, "runtime evidence add") || strings.Contains(legend, "stage-answer issue") || strings.Contains(legend, "inspect the gate implementation") {
+		t.Fatal(legend)
 	}
 }

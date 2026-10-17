@@ -196,7 +196,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Advance formal planning from contracts to tasks after the contract quality gate passes. Gate readiness facts: a contract declaring `Status: locked` on disk (or an already-registered locked contract in runtime documents[]) plus valid planning_contract evidence — the missing token `document:contract:locked` means neither was found; flip the contract's top status line（状态/Status）to locked."
+          "description": "Advance contracts to tasks through the original S3 gate and PTR-PLAN-02. In questionnaire mode the listener gives exact answer and output paths; Main saves one professional answer, and the original consumer checks the current bound REQ's complete locked contract batch and shared-model dependencies. The gate rechecks the accepted subjects before the original transaction registers them. An unready gate retains its original followup for listener retry; an accepted answer is not a completed stage. Explicitly unpacketized legacy flows retain their existing disk/evidence path."
         }
       ]
     },
@@ -594,7 +594,7 @@
         },
         {
           "id": "PTR-BUG-12",
-          "from": "investigation",
+          "from": "targeted_reverification",
           "selector": "SEL-BUG-OUTCOME",
           "automation": {
             "eligible": true,
@@ -781,6 +781,60 @@
             "blocker_recorded",
             "activation_scope_still_valid"
           ]
+        },
+        {
+          "from": "spawned",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "queued",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "reading",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "understanding_submitted",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "understanding_approved",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "activated",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "working",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "reported",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
+        },
+        {
+          "from": "blocked",
+          "event": "assignment_revision_issued",
+          "to": "stopped",
+          "guards": []
         }
       ]
     },
@@ -873,6 +927,36 @@
             "blocker_recorded",
             "activation_scope_still_valid"
           ]
+        },
+        {
+          "from": "locked",
+          "event": "assignment_revision_issued",
+          "to": "in_progress",
+          "guards": []
+        },
+        {
+          "from": "in_progress",
+          "event": "assignment_revision_issued",
+          "to": "in_progress",
+          "guards": []
+        },
+        {
+          "from": "review",
+          "event": "assignment_revision_issued",
+          "to": "in_progress",
+          "guards": []
+        },
+        {
+          "from": "blocked",
+          "event": "assignment_revision_issued",
+          "to": "in_progress",
+          "guards": []
+        },
+        {
+          "from": "done",
+          "event": "assignment_revision_issued",
+          "to": "in_progress",
+          "guards": []
         }
       ]
     },
@@ -1041,7 +1125,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Planning completes when contracts are locked and the TASK batch is fully complete on disk (planning_complete), with clause coverage, DAG acyclicity, and closing contracts verified (tasks_checked). Gate readiness facts: a TASK declaring `Status: complete` on disk (or a registered complete task) plus valid planning_task evidence — the missing token `document:task:complete` means neither was found. On commit, locked contracts and complete tasks are registered into documents[]."
+      "description": "In questionnaire mode, the current S4 professional answer must be received by the original consumer. The gate checks the complete accepted REQ-scoped TASK/index batch, clause coverage, DAG and Closing Contracts; accepted source drift is reported as a concrete conflict. TR-002 revalidates the original reception and sources in its Writer transaction and registers that exact contract/TASK delivery before entering document_verification. An incomplete gate keeps the original followup retryable. Legacy packet-off planning retains its original checks and registration path."
     },
     {
       "id": "TR-003",
@@ -2300,6 +2384,10 @@
       "source": "git_tree"
     },
     {
+      "path": "s10",
+      "source": "disk"
+    },
+    {
       "path": ".claude/evidence",
       "source": "disk"
     },
@@ -2337,6 +2425,10 @@
     },
     {
       "path": ".claude/agents",
+      "source": "disk"
+    },
+    {
+      "path": ".claude/skills",
       "source": "disk"
     },
     {

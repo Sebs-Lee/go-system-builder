@@ -2,41 +2,385 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
-// worktreeClean excludes only unstaged writes to named Harness-owned runtime
-// projections. Tracked product/config/skill changes, staged changes, deletions
-// and renames still block. Untracked files retain the existing policy.
+// worktreeClean accepts named runtime projections and the exact pinned
+// Harness files appropriate to a Main or Worker checkout. Product changes,
+// staged changes, deletions and renames still block.
 func worktreeClean(ctx context.Context, root string) (bool, error) {
+	workerAssets, err := workerBootstrapProjection(ctx, root)
+	if err != nil {
+		return false, err
+	}
+	return worktreeCleanWithProjection(ctx, root, workerAssets)
+}
+
+func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets map[string]string) (bool, error) {
 	out, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
 	}
-	for _, entry := range strings.Split(out, "\x00") {
+	entries := strings.Split(out, "\x00")
+	var registeredWorktrees map[string]bool
+	mainRootChecked, mainRoot := false, false
+	for _, entry := range entries {
 		if entry == "" {
 			continue
 		}
-		if len(entry) < 4 || (entry[:2] != " M" && entry[:2] != "??") || !runtimeProjection(entry[3:]) {
+		if len(entry) < 4 {
 			return false, nil
 		}
+		status, path := entry[:2], filepath.ToSlash(filepath.Clean(entry[3:]))
+		if status != " M" && status != "??" {
+			return false, nil
+		}
+		if runtimeProjection(path) {
+			continue
+		}
+		if (status == " M" || status == "??") && workerAssets[path] != "" && fileMatchesDigest(root, path, workerAssets[path]) {
+			continue
+		}
+		if status == "??" && mainHarnessProjectionPath(path) {
+			if strings.HasPrefix(path, ".worktrees/") {
+				if registeredWorktrees == nil {
+					registeredWorktrees, _ = registeredMainWorktreeProjections(ctx, root)
+				}
+				if registeredWorktrees[path] {
+					continue
+				}
+			} else if !mainRootChecked {
+				mainRoot = isOriginalMainWorkspace(ctx, root)
+				mainRootChecked = true
+			}
+			if mainRoot && !strings.HasPrefix(path, ".worktrees/") {
+				continue
+			}
+		}
+		return false, nil
 	}
 	return true, nil
 }
+
+func isOriginalMainWorkspace(ctx context.Context, root string) bool {
+	registry, _, err := workspace.Load(root)
+	if err != nil || registry == nil {
+		return false
+	}
+	main, err := workspace.Canonical(root)
+	return err == nil && main == registry.MainRoot && registry.Validate(ctx, main) == nil
+}
+
+func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string) (bool, error) {
+	pinned, err := registeredWorkerBootstrapPin(ctx, mainRoot, workerRoot)
+	if err != nil {
+		return false, err
+	}
+	var projection map[string]string
+	if pinned {
+		projection, err = workerBootstrapProjection(ctx, workerRoot)
+		if err != nil {
+			return false, err
+		}
+		if len(projection) == 0 {
+			return false, fmt.Errorf("Main-pinned Worker bootstrap pointer is missing")
+		}
+	} else if _, err := os.Lstat(filepath.Join(workerRoot, ".claude", "loop-workspace.json")); err == nil {
+		return false, fmt.Errorf("Worker control pointer has no matching Main-pinned execution")
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	return worktreeCleanWithProjection(ctx, workerRoot, projection)
+}
+
+func registeredWorkerBootstrapPin(ctx context.Context, mainRoot, workerRoot string) (bool, error) {
+	registry, _, err := workspace.Load(mainRoot)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if registry == nil {
+		return false, nil
+	}
+	main, err := workspace.Canonical(mainRoot)
+	if err != nil || main != registry.MainRoot {
+		return false, fmt.Errorf("Worker receipt lookup requires its original Main checkout")
+	}
+	if err := registry.Validate(ctx, main); err != nil {
+		return false, err
+	}
+	worker, err := workspace.Canonical(workerRoot)
+	if err != nil {
+		return false, err
+	}
+	for _, execution := range registry.AllExecutions() {
+		path, err := workspace.Canonical(execution.Path)
+		if err == nil && path == worker && execution.Path == worker && execution.BootstrapSHA256 != "" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// workerBootstrapProjection resolves a Worker's generated files only through
+// its pointer, the original Main execution registry, and Main's pinned receipt
+// digest. It grants no projection to files outside that receipt.
+func workerBootstrapProjection(ctx context.Context, workerRoot string) (map[string]string, error) {
+	return workerBootstrapProjectionAt(ctx, workerRoot, false)
+}
+
+// During verified cleanup, an asset already restored to HEAD or removed need
+// not match its installation bytes. The original receipt itself stays pinned.
+func workerBootstrapProjectionAt(ctx context.Context, workerRoot string, restoring bool) (map[string]string, error) {
+	pointerPath := filepath.Join(workerRoot, ".claude", "loop-workspace.json")
+	info, err := os.Lstat(pointerPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("Worker control pointer is not a regular file")
+	}
+	data, err := os.ReadFile(pointerPath)
+	if err != nil {
+		return nil, err
+	}
+	var pointer struct {
+		ControlRoot string `json:"control_root"`
+		Assignment  string `json:"assignment_id"`
+		Runtime     string `json:"runtime_id"`
+		Generation  int    `json:"execution_generation"`
+	}
+	if err := json.Unmarshal(data, &pointer); err != nil || pointer.ControlRoot == "" || pointer.Assignment == "" || pointer.Runtime == "" || pointer.Generation < 1 {
+		return nil, fmt.Errorf("invalid Worker control pointer")
+	}
+	mainRoot, err := workspace.Canonical(pointer.ControlRoot)
+	if err != nil {
+		return nil, err
+	}
+	worker, err := workspace.Canonical(workerRoot)
+	if err != nil || worker == mainRoot {
+		return nil, fmt.Errorf("Worker control pointer does not identify another workspace")
+	}
+	registry, state, err := workspace.Load(mainRoot)
+	if err != nil {
+		return nil, fmt.Errorf("Worker Main execution registry unavailable: %w", err)
+	}
+	if registry == nil {
+		return nil, fmt.Errorf("Worker Main execution registry unavailable")
+	}
+	if registry.MainRoot != mainRoot {
+		return nil, fmt.Errorf("Worker pointer differs from its registered Main root")
+	}
+	if err := registry.Validate(ctx, mainRoot); err != nil {
+		return nil, err
+	}
+	e, ok := registry.Execution(pointer.Assignment, pointer.Runtime, workspace.Generation(state))
+	if !ok || e.AssignmentID != pointer.Assignment || e.RuntimeID != pointer.Runtime || e.Generation != pointer.Generation || e.Path != worker || e.BootstrapSHA256 == "" {
+		return nil, fmt.Errorf("Worker pointer is stale or has no Main-pinned bootstrap receipt")
+	}
+	coordinate := e
+	if restoring {
+		coordinate.BootstrapSHA256 = ""
+	}
+	if err := registry.ValidateExecution(ctx, coordinate, false); err != nil {
+		return nil, err
+	}
+	pointerBytes, err := json.Marshal(map[string]any{
+		"control_root": mainRoot, "assignment_id": e.AssignmentID,
+		"runtime_id": e.RuntimeID, "execution_generation": e.Generation,
+	})
+	if err != nil || string(pointerBytes) != string(data) {
+		return nil, fmt.Errorf("Worker control pointer differs from its exact registered identity")
+	}
+	pointerHash := sha256.Sum256(pointerBytes)
+	pointerDigest := hex.EncodeToString(pointerHash[:])
+	receiptPath := filepath.Join(worker, ".claude", "loop-bootstrap.json")
+	receiptBytes, err := os.ReadFile(receiptPath)
+	if restoring && os.IsNotExist(err) {
+		// The last attempt may have removed the receipt immediately before
+		// interruption. Only this exact remaining pointer can be projected;
+		// any remaining asset or product dirt still blocks cleanup.
+		return map[string]string{".claude/loop-workspace.json": pointerDigest}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	receiptHash := sha256.Sum256(receiptBytes)
+	if hex.EncodeToString(receiptHash[:]) != e.BootstrapSHA256 {
+		return nil, fmt.Errorf("Worker bootstrap receipt differs from Main's recorded digest")
+	}
+	var receipt workspace.BootstrapReceipt
+	if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
+		return nil, err
+	}
+	projection := make(map[string]string, len(receipt.Files)+2)
+	for path, digest := range receipt.Files {
+		if path == ".claude/loop-bootstrap.json" || path == ".claude/loop-workspace.json" {
+			return nil, fmt.Errorf("Worker bootstrap receipt includes a reserved control path")
+		}
+		projection[filepath.ToSlash(filepath.Clean(path))] = digest
+	}
+	projection[".claude/loop-bootstrap.json"] = e.BootstrapSHA256
+	projection[".claude/loop-workspace.json"] = pointerDigest
+	return projection, nil
+}
+
+func fileMatchesDigest(root, rel, expected string) bool {
+	if !validRuntimeCheckpointID(expected) || !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return false
+	}
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	physical, err := workspace.Canonical(path)
+	if err != nil || physical != path {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]) == expected
+}
+
+var mainHarnessProjectionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^\.claude/assignment-context/[a-f0-9]{64}/g[1-9][0-9]*/[A-Za-z0-9][A-Za-z0-9._-]*-e[1-9][0-9]*\.json$`),
+	regexp.MustCompile(`^\.claude/assignment-context/native/[a-f0-9]{64}/g[1-9][0-9]*/[a-f0-9]{64}\.json$`),
+	regexp.MustCompile(`^\.claude/assignment-context/roles/[a-f0-9]{64}\.md$`),
+	regexp.MustCompile(`^\.claude/assignment-context/schemas/agent-message-[a-f0-9]{64}\.json$`),
+	regexp.MustCompile(`^\.claude/workgroups/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/(manifest\.json|manifest\.draft\.json|manifest-s6-r[1-9][0-9]*\.json|readback-request\.json)$`),
+	regexp.MustCompile(`^\.claude/workspace-launch/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/attempt-[1-9][0-9]*\.log(\.json)?$`),
+	regexp.MustCompile(`^\.claude/workspace-launch/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/g[1-9][0-9]*-[A-Za-z0-9][A-Za-z0-9._-]*-e[1-9][0-9]*\.lock$`),
+	regexp.MustCompile(`^\.claude/worktree-reminders/[a-f0-9]{64}\.txt$`),
+	regexp.MustCompile(`^\.worktrees/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`),
+}
+
+func mainHarnessProjectionPath(path string) bool {
+	for _, pattern := range mainHarnessProjectionPatterns {
+		if pattern.MatchString(filepath.ToSlash(filepath.Clean(path))) {
+			return true
+		}
+	}
+	return false
+}
+
+func registeredMainWorktreeProjections(ctx context.Context, root string) (map[string]bool, error) {
+	registry, _, err := workspace.Load(root)
+	if err != nil {
+		return nil, fmt.Errorf("Main workspace registry unavailable: %w", err)
+	}
+	if registry == nil {
+		return nil, fmt.Errorf("Main workspace registry unavailable")
+	}
+	mainRoot, err := workspace.Canonical(root)
+	if err != nil || mainRoot != registry.MainRoot {
+		return nil, fmt.Errorf("worktree projection requires the original Main checkout")
+	}
+	if err := registry.Validate(ctx, mainRoot); err != nil {
+		return nil, err
+	}
+	listed, err := defaultRunner.Run(ctx, mainRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	worktreePaths, err := parseWorktreeListPaths(listed)
+	if err != nil {
+		return nil, err
+	}
+	projected := map[string]bool{}
+	for _, execution := range registry.AllExecutions() {
+		path, err := workspace.Canonical(execution.Path)
+		if err != nil || path != execution.Path || !worktreePaths[path] {
+			continue
+		}
+		rel, err := filepath.Rel(mainRoot, path)
+		if err != nil || rel == "." || filepath.Dir(rel) != ".worktrees" || !mainWorktreeNamePattern.MatchString(filepath.Base(rel)) {
+			continue
+		}
+		projected[filepath.ToSlash(rel)] = true
+	}
+	return projected, nil
+}
+
+var mainWorktreeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+func parseWorktreeListPaths(output string) (map[string]bool, error) {
+	paths := map[string]bool{}
+	for _, field := range strings.Split(strings.ReplaceAll(output, "\x00", "\n"), "\n") {
+		if !strings.HasPrefix(field, "worktree ") {
+			continue
+		}
+		path := strings.TrimPrefix(field, "worktree ")
+		if strings.HasPrefix(path, "\"") {
+			decoded, err := strconv.Unquote(path)
+			if err != nil {
+				return nil, fmt.Errorf("decode registered worktree path: %w", err)
+			}
+			path = decoded
+		}
+		canonical, err := workspace.Canonical(path)
+		if err == nil {
+			paths[canonical] = true
+		}
+	}
+	return paths, nil
+}
 func runtimeProjection(path string) bool {
 	switch path {
-	case ".claude/integration.lock", ".claude/loop-state.json", ".claude/loop-events.jsonl", ".claude/loop-metrics.json", ".claude/hook-decisions.jsonl":
+	case ".claude/integration.lock", ".claude/loop-state.json", ".claude/loop-events.jsonl", ".claude/loop-metrics.json", ".claude/hook-decisions.jsonl", ".claude/runtime-checkpoints/index.json":
 		return true
 	}
 	parts := strings.Split(path, "/")
 	if len(parts) == 3 && parts[0] == ".claude" && parts[1] == "hook-metrics" && strings.HasPrefix(parts[2], ".pending-") && strings.HasSuffix(parts[2], ".json") {
 		return true
 	}
-	return len(parts) == 7 && parts[0] == ".claude" && parts[1] == "evidence" && strings.HasPrefix(parts[2], "loop-") && strings.HasPrefix(parts[3], "g") && parts[4] == "worktree" && parts[5] != "" && parts[6] == "checkpoint.json"
+	if len(parts) == 4 && parts[0] == ".claude" && parts[1] == "runtime-checkpoints" && validRuntimeCheckpointID(parts[2]) {
+		switch parts[3] {
+		case "events.jsonl", "manifest.json", "state.json":
+			return true
+		}
+	}
+	legacyCheckpoint := len(parts) == 7 && parts[0] == ".claude" && parts[1] == "evidence" && strings.HasPrefix(parts[2], "loop-") && strings.HasPrefix(parts[3], "g") && parts[4] == "worktree" && parts[5] != "" && parts[6] == "checkpoint.json"
+	if legacyCheckpoint {
+		return true
+	}
+	if len(parts) != 8 || parts[0] != ".claude" || parts[1] != "evidence" || !strings.HasPrefix(parts[2], "loop-") || !strings.HasPrefix(parts[3], "g") || parts[4] != "worktree" || parts[5] == "" || parts[7] != "checkpoint.json" {
+		return false
+	}
+	revisionText := strings.TrimPrefix(parts[6], "a")
+	revision, err := strconv.Atoi(revisionText)
+	return strings.HasPrefix(parts[6], "a") && err == nil && revision >= 2 && strconv.Itoa(revision) == revisionText
+}
+
+func validRuntimeCheckpointID(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // branchExists returns true if `git -C root show-ref --verify` exits

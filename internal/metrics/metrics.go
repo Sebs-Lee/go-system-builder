@@ -30,6 +30,8 @@ const (
 	metricMilestoneRefreshFailures = "loop_milestone_refresh_failures_total"
 	metricRecoveryPackets          = "loop_recovery_packets_total"
 	metricIntegrationDuration      = "loop_integration_duration_ms"
+	metricSubmissionSave           = "loop_submission_save_total"
+	metricSubmissionSaveDuration   = "loop_submission_save_duration_ms"
 	// Hook registrations currently use the Claude Code default command
 	// timeout configured by this repository. Forty percent is the early
 	// warning point: PreToolUse command timeouts can silently let the tool
@@ -53,6 +55,8 @@ type Snapshot struct {
 	MilestoneRefreshFailureReasons map[string]int64         `json:"loop_milestone_refresh_failure_reasons,omitempty"`
 	RecoveryPackets                int64                    `json:"loop_recovery_packets_total"`
 	IntegrationDuration            map[string]DurationStats `json:"loop_integration_duration_ms"`
+	SubmissionSaves                map[string]int64         `json:"loop_submission_save_total,omitempty"`
+	SubmissionSaveDuration         map[string]DurationStats `json:"loop_submission_save_duration_ms,omitempty"`
 	// S7 verification-round series (L3-S7 §14.2 machine-collectible subset;
 	// see s7.go).
 	S7Assignments        map[string]int64         `json:"loop_s7_assignments,omitempty"`
@@ -93,6 +97,8 @@ func emptySnapshot() Snapshot {
 		TransitionCommits:              map[string]int64{},
 		MilestoneRefreshFailureReasons: map[string]int64{},
 		IntegrationDuration:            map[string]DurationStats{},
+		SubmissionSaves:                map[string]int64{},
+		SubmissionSaveDuration:         map[string]DurationStats{},
 		S7Assignments:                  map[string]int64{},
 		S7Claims:                       map[string]int64{},
 		S7PlanRevision:                 map[string]int64{},
@@ -143,6 +149,12 @@ func (s *Store) readBase() (Snapshot, error) {
 	}
 	if snap.IntegrationDuration == nil {
 		snap.IntegrationDuration = map[string]DurationStats{}
+	}
+	if snap.SubmissionSaves == nil {
+		snap.SubmissionSaves = map[string]int64{}
+	}
+	if snap.SubmissionSaveDuration == nil {
+		snap.SubmissionSaveDuration = map[string]DurationStats{}
 	}
 	if snap.S7Assignments == nil {
 		snap.S7Assignments = map[string]int64{}
@@ -219,24 +231,28 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 }
 
 // maxTrackedFamilies documents the RC-17 family budget: the durable snapshot
-// tracks sixteen loop_* families — seven core control-plane families plus
-// nine S7 round/outcome families — and every one is wired at both ends:
+// tracks eighteen loop_* families — seven core control-plane families plus
+// nine S7 round/outcome families and two S5 save families. Every one is wired
+// at both ends:
 //   - core seven: recorded by controller/cycle.go, cli/controller.go,
 //     cli/run.go and integration/integrate.go; rendered by FormatDoctor /
 //     FormatHealth;
 //   - S9 nine: recorded from review submit/supplement (RecordS7RoundShape,
 //     RecordS7ResultSubmit, RecordS7SubmitPhase, ...); all rendered by
 //     FormatS7 (cli/s7_status.go).
+//   - S5 two: one bounded observation per recognized Save invocation from
+//     submission/service.go; counters and durations rendered by FormatDoctor
+//     and FormatHealth. These include replay and are not first-submit metrics.
 //
 // The audit's "15→≤10, remove S7PlanRevision as zero-consumer" does not
 // survive contact with the wiring: S7PlanRevision has live producers
 // (RecordS7RoundShape via review/supplement.go and review/submit.go) and a
 // live renderer (FormatS7), so it is kept and documented instead of cut. The
-// cap is therefore a review guard, not a quota — adding a seventeenth family
+// cap is therefore a review guard, not a quota — adding a nineteenth family
 // requires either retiring a dead one in the same change or extending this
 // comment with the new producer/consumer pair. Enforced by
 // TestTrackedFamilyBudget.
-const maxTrackedFamilies = 16
+const maxTrackedFamilies = 18
 
 // pruneDeadFamilies trims unparseable labels out of the round-keyed S7 maps
 // before the snapshot is persisted. Round-keyed families may only carry
@@ -317,6 +333,7 @@ func FormatDoctor(root string) (string, error) {
 	writeLabeledCounter(&b, metricMilestoneRefreshFailures, "reason", snap.MilestoneRefreshFailureReasons)
 	fmt.Fprintf(&b, "  %s %d\n", metricRecoveryPackets, snap.RecoveryPackets)
 	writeDurationStats(&b, metricIntegrationDuration, snap.IntegrationDuration)
+	writeSubmissionSaves(&b, snap)
 	hookTiming, err := readHookTiming(root)
 	if err != nil {
 		return "", err
@@ -351,6 +368,7 @@ func FormatHealth(root string) (string, error) {
 	fmt.Fprintf(&b, "  %s=%d\n", metricMilestoneRefreshFailures, snap.MilestoneRefreshFailures)
 	writeLabeledCounter(&b, metricGateEvaluations, "status", snap.GateEvaluations)
 	writeHookTimingStats(&b, timing)
+	writeSubmissionSaves(&b, snap)
 	if degraded {
 		b.WriteString("  next: inspect runtime state/journal with `loop-harness runtime reconcile`\n")
 	}

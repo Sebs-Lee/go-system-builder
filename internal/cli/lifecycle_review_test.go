@@ -81,11 +81,12 @@ func TestUnbindForceRecordsInFlight(t *testing.T) {
 		"bugs":   []any{},
 		"teams":  []any{},
 		"tasks": []any{map[string]any{
-			"id":              "TASK-001",
-			"state":           "in_progress",
-			"path":            "docs/dev/tasks/TASK-001.md",
-			"sha256":          "0000000000000000000000000000000000000000000000000000000000000000",
-			"owner_agent_ids": []any{},
+			"id":                   "TASK-001",
+			"state":                "active",
+			"last_lifecycle_event": "builder_activated",
+			"path":                 "docs/dev/tasks/TASK-001.md",
+			"sha256":               "0000000000000000000000000000000000000000000000000000000000000000",
+			"owner_agent_ids":      []any{},
 		}},
 	}
 	writeJSONMap(t, statePath, state)

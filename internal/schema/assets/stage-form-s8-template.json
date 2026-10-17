@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0.0",
+  "stage": "S8",
+  "adapter": "hypothesis_result",
+  "title": "S08 调查 · HypothesisResult",
+  "instruction": "只修改 answer。依据本卷冻结的 Case、Hypothesis、Finding encounter 与证据资料，填写实际判别方法、证据、观察和结论。不要填写根因、路由、RepairContract、审批、ID 或 Assignment。新假设只写问题与来源；Main 会通过原派发登记。",
+  "questions": {
+    "method": {
+      "question": "你如何判别这个假设与竞争解释？写出实际采用的调查方法，不要把计划当作执行结果。",
+      "example": {"path": "answer.method", "expected": "具体的判别操作与比较对象", "observed": "只写了‘分析代码’"}
+    },
+    "evidence_refs": {
+      "question": "引用支持本次结果的现有注册证据或真实 execution anchor。新证据必须先通过原证据登记。",
+      "example": {"path": "answer.evidence_refs", "expected": "可由原 Runtime index/SHA 或执行锚核验的引用", "observed": "引用了未登记的文件名"}
+    },
+    "source_boundary_refs": {
+      "question": "指出本卷冻结 Finding encounter 中实际使用的步骤、检查点或边界，说明调查从哪个原现场出发。",
+      "example": {"path": "answer.source_boundary_refs", "expected": "Finding encounter 中的实际 step/checkpoint", "observed": "仅引用了 Case 标题"}
+    },
+    "observed": {
+      "question": "写出调查中实际观察到的事实；不要把推断写成观察。"
+    },
+    "counterfactual_or_discriminator": {
+      "question": "写出什么结果可以区分该假设与竞争假设。"
+    },
+    "result": {
+      "question": "给出对当前注册 Hypothesis 的本人专业判断。该结论由你作出，不由证据数量或绿色检查自动推导。",
+      "choices": ["supported", "refuted", "inconclusive"]
+    },
+    "explains_finding_ids": {
+      "question": "填写当前 Case 中由该假设解释的 Finding ID；没有时填 []。"
+    },
+    "does_not_explain": {
+      "question": "填写当前 Case 中该假设仍不能解释的 Finding ID；没有时填 []。"
+    },
+    "new_hypotheses": {
+      "question": "只有确有需要时提出后续可证伪假设，写明 invariant、discriminator、support/refute outcomes、Case Finding 子集与证据引用。不要填写 ID、Assignment 或状态；Main 会走原注册与派发流程。",
+      "example": {
+        "path": "answer.new_hypotheses/0",
+        "expected": "完整的问题、判别条件和来源 Finding",
+        "observed": "只写了一个未经说明的原因猜测。"
+      }
+    }
+  }
+}

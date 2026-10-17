@@ -175,8 +175,11 @@
         "counterfactual_or_discriminator": {"type": "string", "minLength": 1},
         "result": {"enum": ["supported", "refuted", "inconclusive"]},
         "explains_finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-        "does_not_explain": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
-      }
+        "does_not_explain": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "receipt": {"$ref": "hypothesis-result-receipt.schema.json"},
+        "new_hypotheses": {"type": "array", "items": {"$ref": "#/$defs/hypothesis"}}
+      },
+      "dependentRequired": {"receipt": ["new_hypotheses"], "new_hypotheses": ["receipt"]}
     }
   }
 }

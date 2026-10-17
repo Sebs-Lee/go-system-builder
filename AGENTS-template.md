@@ -11,32 +11,64 @@ finisher. Its job is to protect the complete engineering result: requirements,
 architecture, implementation, evidence, operations, maintainability, and
 release responsibility must all remain coherent.
 
-The shortest path is always the worst engineering decision for this project.
-Never optimize for the fastest apparent completion, the smallest diff, the
-fewest agents, or the earliest move to S11. Optimize for a complete,
-professional, reversible, and
-auditable result. A green aggregate, an existing document, or a plausible
-assumption is not a substitute for checking the declared coverage.
+Choose the simplest maintainable solution that satisfies the requirement,
+declared coverage, permissions and acceptance checks. Reuse existing authority
+and evidence. Add review or recovery steps when the task or an observed risk
+requires them; routine work does not require a separate ceremony. Keep material
+decisions and unresolved blockers concrete and traceable.
 
-Use this decision standard for every meaningful choice:
-
-1. State the requirement, invariant, scope, and current evidence.
-2. Enumerate the affected surfaces and the relevant normal, failure, boundary,
-   permission, concurrency, migration, rollback, and recovery cases.
-3. Ask what evidence would disprove the proposed conclusion, then look for it.
-4. Record alternatives, trade-offs, residual risk, owner, and recovery route.
-5. Choose the lowest-risk maintainable option only after the above review; do
-   not choose an option merely because it is the quickest.
-
-Unknown is unfinished. Do not turn an unchecked case into `N/A`, a missing
+Unknown remains unresolved. Do not turn an unchecked case into `N/A`, a missing
 owner into a non-blocking risk, or a targeted check into a complete review.
 Every stage must be completed according to its own contract. In particular,
 S9 has one exit only: a fresh complete S7 round. S10 may consume that new S7
 clean round, but S9 never goes directly to S10.
 
+## Work status
+
+Describe each responsibility attempt with one status:
+
+| Status | Meaning |
+| --- | --- |
+| `pending` | Not started. |
+| `active` | Started; work remains. |
+| `blocked` | Progress requires resolving a specific blocker. |
+| `done` | The original receiver accepted the required delivery and own checks. |
+| `cancelled` | This attempt was withdrawn or replaced. |
+
+Use `done` consistently for completion. Document delivery, implementation,
+integration and review are separate responsibilities; an accepted finding can
+make a review `done`. Follow the Hook's current responsibility, next action and
+waiting owner. Hook listens to graph progress, reminds you of unfinished duties,
+and advances eligible stages. Each progress reminder gives the exact current
+questionnaire path. Rework follows the updated responsibility.
+
+The five values describe a responsibility attempt only. A stage cursor, a
+professional conclusion, document status (`complete` on a TASK means the plan
+document is finished), receipt field, assignment-consumption value, and platform
+session state remain separate facts. Follow their exact current schema/CLI names
+when required; never write or infer a generic status from one of them. See
+[`docs/rules/state-machine.md`](docs/rules/state-machine.md#21-loop-responsibility-status)
+for the compatibility boundary.
+
 ## What to do right now
 
-**If the Runtime has a bound REQ** (`.claude/loop-state.json` shows `bound_req`):
+**For a dispatched Worker:** read your registered Assignment and its frozen
+inputs. Apply the quality checks to your declared scope, assertions and required
+coverage. Commit source changes through the original adapter before submitting
+the Result. Record concrete unknowns with their evidence, impact and original
+responsible consumer; a risk that blocks your own acceptance requires the
+original BLOCKER path. Register your own Result before ending execution.
+When your responsibility is `done`, end that responsibility; Main owns
+integration, peer deliveries and the global stage. A report's existence alone
+does not prove completion. Follow an explicit original rework assignment if
+inputs change.
+
+PLAN assertions prove behavior or artifacts verifiable before submitting the Result.
+The receiver's acceptance receipt proves registration; keep that workflow
+requirement out of the Result's pre-submission assertions and evidence. Main-owned checks remain
+Main's integration requirements.
+
+**For Main, if the Runtime has a bound REQ** (`.claude/loop-state.json` shows `bound_req`):
 
 1. Read the Hook `LOOP RECOVERY` packet and follow its ordered read list.
 2. Read the current stage anchor in `docs/control/agent-protocol.md`; the packet already
@@ -46,6 +78,11 @@ clean round, but S9 never goes directly to S10.
 The normal path is Hook-driven and does not call `loop-harness status`, `next`, or
 `runtime reconcile`. Manual CLI is reserved for initialization/binding, an
 integrity failure, rollback/rollover, or the human release Gateway.
+In packet mode, the Hook gives your current questionnaire's exact path, clear
+questions and remaining stage work. Fill the professional answers and actual
+artifact paths there, then save. The listener prepares missing questionnaires
+and preserves saved answers; do not run issue/consume commands or manufacture
+evidence envelopes for normal continuation.
 
 **If the Runtime is a fresh inactive Runtime with no bound REQ:**
 
@@ -56,8 +93,9 @@ integrity failure, rollback/rollover, or the human release Gateway.
    via `.claude/skills/design-foundation/SKILL.md` before locking the UI REQ.
    Pure backend work records Foundation as `N/A` on the project map.
 1. Get one REQ locked via the human lock gesture at `docs/requirements/REQ-<id>.md` — the human approves the lock in conversation and **you execute the file flip** on that authorization (see the lifecycle-verb whitelist below).
-2. `loop-harness req bind --req <path> --approved-by <human identity>`
-3. Then proceed above.
+2. Explicitly select the development branch and final release upstream from project facts. Local Git identity setup and routine local branch naming are environment setup, not new approval; do not guess `main`, the current branch, or a remote default. Ensure the locked REQ is committed on the selected development branch; if it is only in the working tree or index, make the routine local commit there before binding, without pushing it.
+3. Run `loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>`. Replace all placeholders before execution. `--approved-by` names the human authorized for this lock/bind; never infer it from `git config user.name`.
+4. Then proceed above.
 
 **If the Runtime is terminal** (`release_authorized` or `aborted`) **and a
 new REQ must start:** a human first runs
@@ -66,7 +104,7 @@ Rollover archives the completed runtime and journal, then seeds a fresh
 inactive Runtime. Do not edit `loop-state.json` or reuse a terminal Runtime.
 
 `awaiting_human_release` is a non-terminal human decision gateway, not a
-rollover source. Follow `docs/agent-protocol.md#s11` for the human decision;
+rollover source. Follow `docs/control/agent-protocol.md#s11` for the human decision;
 `approve` reaches `release_authorized`. `paused` is a resumable wait state,
 not a terminal state. Release authorization records the handoff only; it
 does not execute a merge, deployment, publication, or release.
@@ -74,6 +112,9 @@ does not execute a merge, deployment, publication, or release.
 `/loop` is **not** an authorization and does not bind a REQ. It only delivers the Layer 2 Wake-up prompt on a schedule.
 
 ## DRIVE()
+
+This is the Main-session loop. Workers execute their current Assignment's
+closing contract and report remaining work to its original consumer.
 
 Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or tool result. Full procedure, autonomous decision rules, and stop conditions live in `.claude/skills/loop-orchestration/SKILL.md`.
 
@@ -110,13 +151,13 @@ Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or
 ```text
 Layer 1  Main-session Driver   this file + agent-protocol.md + loop-orchestration Skill    (drives)
 Layer 2  Wake-up Recovery      .claude/loop.md (delivered by Claude /loop)                 (re-seats driver)
-Layer 3  Event Control + Guard docs/control/hook-policy.json + Hooks + Runtime Milestone       (guides and blocks)
+Layer 3  Graph listener        Hooks + Runtime Milestone                                  (observes, reminds, advances)
 ```
 
 Layer 3 is an active control plane. Hook events trigger Runtime reconciliation,
 the canonical `status/next` projection, Milestone persistence, and a positive
-recovery packet. Guard decisions remain enforcement, but they are not the only
-purpose of Hook. If a session compacts, `SessionStart` re-seats the Driver from
+recovery packet with the exact questionnaire path and remaining duties.
+PreToolUse observes progress without tool authorization or interception. If a session compacts, `SessionStart` re-seats the Driver from
 the Milestone instead of relying on conversation memory.
 
 ## Control boundaries
@@ -130,8 +171,8 @@ the Milestone instead of relying on conversation memory.
   | `runtime pause` / `runtime resume` / `req amend` / `req unbind` / `runtime rollover` / `runtime human-decision` | only when the human supplies the complete command line verbatim (including `--approved-by`) | the human's own typed/approved command — never infer the approver name from context |
   "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization, and `req bind --approved-by <same human>` is the second confirmation. When in doubt, hand the command up and wait.
 - `/loop` only delivers the Layer 2 prompt. REQ binding is `loop-harness req bind`; the two are independent lifetimes.
-- Subagents follow their declared dispatch mode: `plan_checkpoint` requires the recorded PLAN_REPORT before writes, without a second approval wait; `plan_approval_required` requires read-back approval and activation.
-- Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for its required checkpoint or result; it does not complete the delegated responsibility itself unless the assignment is revoked or reassigned.
+- Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. S6 Builders retain their professional PLAN_REPORT. S9 Builders use the original PlanReport and RepairResult questionnaires; saving the PlanReport projects the existing checkpoint/AgentBegin flow, and saving the RepairResult updates its original completion projection. Do not add generic PLAN or completion submissions. Any `plan_approval_required` assignment waits for its original approval and activation.
+- Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for its required checkpoint or result; it does not take over or project that responsibility to `done` unless the assignment is revoked or reassigned.
 - Blocking findings enter the canonical BUG cycle. Targeted re-verification never produces a clean round.
 - S10 is an anti-shortcut acceptance and release audit. It requires a finite
   coverage inventory, adversarial counterevidence, objective completion
@@ -200,7 +241,7 @@ For exceptional blockers, the main session uses the Gateway types below. Explici
 | `missing_external_permission` | external access the main session cannot obtain, after all other work is done |
 | `runtime_integrity` | snapshot/journal cannot be safely reconciled |
 
-A Gateway package includes: type, completed work, the single unresolved fact, impact, recommendation, resume stage. Everything else is autonomous work — do not stop.
+A Gateway package includes: type, `completed work` (a human-readable evidence inventory, not a responsibility status), the single unresolved fact, impact, recommendation, resume stage. Everything else is autonomous work — do not stop.
 
 ## Runtime authority
 
@@ -212,21 +253,44 @@ A Gateway package includes: type, completed work, the single unresolved fact, im
 | methodology | `.claude/skills/*/SKILL.md` |
 | role identity | `.claude/agents/*.md` |
 | assignments + scope | team manifest + Agent message envelopes |
-| permission boundaries | `docs/control/hook-policy.json` + Claude Code Hooks |
+| progress listener | Claude Code Hooks: exact questionnaire path, missing duties and next action |
 | stable policies | `docs/rules/README.md` |
 
 Do not infer runtime state from this file, `project.yaml`, project-map, a TASK body, or chat.
 
 ## First read (every session start)
 
-1. Read the Hook `LOOP RECOVERY` packet when present; it is the current
-   scheduling checkpoint.
-2. This file.
-3. `.claude/loop-state.json` and its `milestone`.
-4. `docs/control/agent-protocol.md#<current stage>` from the packet.
-5. The bound locked REQ (path from Runtime), then the primary Skill named by
-   the packet.
-6. If blocked or the next action is unclear, read `.claude/bin/loop-harness.md`.
+In packet mode, after S7 Reviewer registration, the Hook automatically prepares
+their current questionnaires and supplies the exact view and answer paths.
+Give each Reviewer its immutable view and exact answer path. The Reviewer fills
+the professional fields and reads save feedback; ordinary `plan_checkpoint`
+reviewers do not send a separate generic PLAN_REPORT first. If the registered
+mode is `plan_approval_required`, follow that original approval before review.
+An accepted Result projects that Reviewer's responsibility to `done` when the
+original receipt is current and valid; the original round consumer still decides
+the whole-round outcome. Reissue after controlled Plan
+revision and after queued Assignments become dispatched. Never fill another
+Reviewer's verdict or select a producer from an answer body.
+
+In S8 packet mode, first register the Hypothesis and dispatch its real
+Investigator manifest/TASK/owner; the Hook then prepares the current questionnaire
+and supplies its exact view and answer paths. On ordinary `plan_checkpoint`, the
+Investigator saves the professional causal result directly, without a separate
+generic PLAN_REPORT. An explicit `plan_approval_required` assignment keeps its
+original approval step. The original Case Writer records the result
+and receipt; new questions still require Main dispatch. Follow the original
+Case route and scoped contract approval after investigation; an answer is
+not an approval or a repair authorization.
+
+1. Read the Hook's current responsibility, exact questionnaire view/answer
+   paths, missing duties and next action.
+2. Read this file and the supplied questionnaire view.
+3. Follow that view's required input paths and the current stage's protocol
+   section and primary Skill. Read only the relevant clauses.
+4. If the Hook reports unavailable state or an inconsistent checkpoint, inspect
+   `.claude/loop-state.json` and its `milestone` for that diagnostic. Missing
+   questionnaire paths are a system preparation issue; do not guess directories.
+5. Use `.claude/bin/loop-harness.md` when the named recovery action needs it.
 
 Load the rest on demand.
 
@@ -242,7 +306,8 @@ Load the rest on demand.
 Loop commands:
 
 ```bash
-.claude/bin/loop-harness req bind --req <path> --approved-by <identity>
+.claude/bin/loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>
+# Replace each placeholder before execution; a remote release destination includes its remote.
 # Exceptions only: initialization/binding, integrity recovery, rollback/rollover, release Gateway.
 # Diagnostics (optional): live Quality Gate checklist — never use its result to hand-push a Transition.
 .claude/bin/loop-harness ready --root .
@@ -289,7 +354,7 @@ current implementation boundaries.
 The recovery packet is a scheduling checkpoint, not a work report. At the
 start of work, after a meaningful deliverable, on a blocker or change of
 approach, and approximately every 60 seconds during sustained work, tell the
-user briefly what has completed, what action is underway, and what comes
+user briefly what deliverable or evidence is now accepted, what action is underway, and what comes
 next. Use the user's language. Do not narrate every tool call or expose
 internal reasoning. Report only observed results: a revision increment, an
 intended action, or a repeated Hook message is not evidence of progress.
@@ -331,7 +396,7 @@ Existing bound runtimes are not retroactively granted this authority.
 
 REQ 绑定必须显式提供 `--dev-branch <开发主分支>` 和 `--release-upstream <最终发布上游>`，远程发布目标包含 remote；没有 develop 默认值。项目根目录是当前 REQ 唯一权威。
 
-派发前将上游正式 Markdown、代码和测试产出整理提交；不要自动提交用户无关变更。新 worktree 不含主会话未提交或仅暂存的文件。主会话用 `runtime worktree-create --assignment-id <id> --root <项目根目录>` 从绑定开发分支的明确 commit 创建；不要依赖平台默认分支或复制整个目录。明确不入 Git 的 evidence 单独按依赖交接，不能复制整个控制面。
+派发前将上游正式 Markdown、代码和测试产出整理提交；不要自动提交用户无关变更。新 worktree 不含主会话未提交或仅暂存的文件。主会话用 `runtime workspace prepare --assignment <id> --agent <owner> --root <项目根目录>` 准备 native Worker，再使用返回的 launch 命令；实际 checkout 由原 registry 创建。不要在它之前另跑 `worktree-create`，也不要依赖平台默认分支或复制目录。明确不入 Git 的 evidence 单独按依赖交接，不能复制整个控制面。
 
 子会话在子分支提交成果并报告，主会话在项目根目录执行 `runtime task-integrate --assignment-id <id>`，生成合并提交、校验、接收并及时清理。集成不是 release；临时 worktree 不是交付终点。未回收、分支偏离、积压只提醒，不新增 Stop 或普通工具硬门禁。
 
@@ -345,3 +410,24 @@ For S6 start from the TASK's ordered file links, scope and closing assertions;
 read only the relevant contract/protocol/model slices. Register committed model
 inputs in the existing baseline, and require real consumers to validate or
 generate from them. Do not create a per-REQ model copy or an extra registry.
+
+### S9 repair questionnaires
+
+After the approved RepairContract, original Session/RepairPlan and Builder
+dispatch, use the Hook's exact PlanReport view and answer paths. Fill and save
+only the professional plan, red pre-fix checks and proposed paths. The original
+PlanReport consumer validates the answer and projects the existing
+plan-checkpoint/AgentBegin flow; do not send another generic PLAN_REPORT or
+reconstruct a packet path or command.
+
+Once the original S9 graph reaches `fixing`, implement only the approved repair
+scope. Use the Hook's exact RepairResult view and answer paths to report the
+professional verdict, frozen assertion results, unit results, evidence, scope,
+risk, migration and rollback. Saving invokes the original RepairResult
+consumer to validate the professional answer and the original candidate
+consumer to check actual changed paths, Git state and required checks, then
+project this same professional result onto the existing completion record. Do
+not send a separate generic completion report or infer completion from green checks. Main retains
+the original candidate integration, required Main/Git checks, configured human
+decisions, independent targeted verification and fresh complete S7 round.
+Never guess paths or run manual `stage-answer issue/consume` commands.

@@ -61,6 +61,9 @@ func RevivePlan(
 		Message:        fmt.Sprintf("ReviewPlan %s revived from stale after drift re-check passed (revision %d unchanged; no claim, assignment or result touched)", ptr.PlanID, ptr.Revision),
 		OccurredAt:     time.Now().UTC(),
 		Apply: func(state map[string]any) error {
+			if err := verifyFrozenSubjects(root, plan, state); err != nil {
+				return fmt.Errorf("canonical product baseline changed before ReviewPlan revive: %w", err)
+			}
 			reviewMap, ok := state["review"].(map[string]any)
 			if !ok {
 				return fmt.Errorf("runtime review section must be an object")

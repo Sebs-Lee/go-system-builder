@@ -60,3 +60,27 @@ Hook 原生消息按身份→本人状态→动作→包路径→等待 owner �
 ## 7. 完成与迁移边界
 
 设计完成要求能定位所有三个入口的 selection 生产者，并明确授权不变。实现完成要求一致性/权限/恢复测试通过；行为改善另需实测。旧 manifest 和现有 ready Worker 不自动重写，兼容路径标 legacy，下一次合法发行使用新 profile。
+
+## 8. 首个实施切片状态（2026-10-13）
+
+集中 profile 和原 mandatory/legacy 列表已落地，首版 mode=shadow；原角色 frontmatter、readback.skills 和激活 SkillRefs 保持。workspace 新 1.2 execution 用原 Runtime/manifest/committed 文档生成冻结 context，实际安装 Skill、规则、协议和完整计划 Schema 进入原输入/Bootstrap 链，给未答专业字段的计划草稿。显式 replacement 保留原 profile/资料，只重绑执行代数；已有 ready 和 legacy preparing 不补写。lifecycle 最终 additionalContext 统一800 rune，保持完整动作/入口与合法 UTF-8。具体契约见 [L4 §18.1](../l4-mechanisms/L4-agent-dispatch-governance.md#181-g01-首个实施切片shadow-与实际资料送达)，实际回归及安装证据见 [全局实施记录](../GLOBAL-OPTIMIZATION-DESIGN.md#78-g01-shadow冻结资料与生命周期预算)。
+
+此进展不替代§6第5项：native/teammate/workspace 的真实宿主 Skill/Read 消费、首次有效操作与 token 对照仍待执行；首个 Builder profile 的 enabled 及最小 frontmatter 生成仍待后续切片。shadow 元数据或文件存在不算已经减载。全局优化目标保持 active。
+
+## 9. Native/teammate 接线进展（2026-10-13）
+
+共同 Assignment/PlanTemplate/InputReadingOrder 已用于三入口；新1.2 注册 native/teammate 可读取实际来源的内容寻址视图与摘要，完整 Schema/未答计划支架不依赖工厂源码。teammate template 文档须精确匹配原 manifest，示例不附注册视图；真实 owner、缺源、不覆盖作者字节、独立执行禁止 Main 回落、S5退役和原计划/保存链已有 production CLI 验证。完整证据见 [全局 §7.9](../GLOBAL-OPTIMIZATION-DESIGN.md#79-g01-nativeteammate-共同资料投影)。
+
+仍是 shadow：native/teammate 的 enabled 执行版本固定、首个 Builder 最小 frontmatter 生成、真实宿主 Skill/Read 消费和 token/首次有效操作对照尚未完成。现有 workspace Inputs/Bootstrap 继续固定原资料；本切片不替换原授权或完成门。
+
+## 10. 固定执行版本与首个角色生成器进展（2026-10-13）
+
+1.2原Agent.context_binding/Writer已固定native/teammate资料引用与profile，普通重试/并发和原S5具名换代接到同一链；启动/readback不静默重选。checkpoint包括无packet的knowledge绑定，文档重建不能丢掉它后再选版本。backend-builder生成器和实际CLI返回仅减少Skill preload的四core候选，原权限字段、正文、安装资产和激活来源保持；当前enabled=false。证据见 [全局§7.10](../GLOBAL-OPTIMIZATION-DESIGN.md#710-g01-固定执行资料绑定与首个-builder-角色生成器)。
+
+实际新execution的Bootstrap/launch装配、native/teammate角色加载和真实宿主消费/token对照仍待实施/验收。此进展不把候选生成当作启用或G01完成。
+
+## 11. 首个 workspace Backend enabled 接线（2026-10-13）
+
+新1.2 S6 backend-builder的显式prepare backend-core已实际安装固定生成角色，额外selected资料通过原Read路径可达；默认shadow、既有实例不改，原授权SkillRefs与其他authority字节保持。原S5→S6→登记Builder→计划→受控commit/report→真实Main集成/检查生产CLI链通过，原replacement保留生成源，fake子进程验证真实argv/CWD/角色/读取路径。详见 [全局§7.11](../GLOBAL-OPTIMIZATION-DESIGN.md#711-g01-首个-workspace-backend-enabled-profile)。
+
+此为首个workspace装配；native/teammate的enabled角色装配、真实模型消费及token/首次有效操作对照仍待实施/验收，不能把fixture读取或四core计数当G01完成。原专业和集成门持续适用。

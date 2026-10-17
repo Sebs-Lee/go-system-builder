@@ -26,9 +26,9 @@ func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	return draftPlanForRoot("", state, round)
 }
 
-// DraftPlanForRoot is the production S7 draft path. It reads the immutable
-// completion envelope through the repository root so changed surfaces can be
-// frozen with their actual disk digest instead of relying on copied state.
+// DraftPlanForRoot is the production S7 draft path. Canonical S6 generations
+// are projected from the original machine snapshot and Main Git range;
+// historical runtimes use the immutable completion envelope path.
 func DraftPlanForRoot(root string, state map[string]any, round int) (*Plan, []string) {
 	return draftPlanForRoot(root, state, round)
 }
@@ -36,23 +36,33 @@ func DraftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []string) {
 	generation := baselineGeneration(state)
 	var notes []string
+	productBaseline, baselineErr := readCanonicalProductBaseline(root, state)
+	if baselineErr != nil {
+		return nil, []string{"canonical S6 product baseline cannot be verified: " + baselineErr.Error()}
+	}
 
 	var tasks []taskDoc
-	for _, raw := range stateDocuments(state) {
-		doc, _ := raw.(map[string]any)
-		if doc == nil || doc["kind"] != "task" {
-			continue
+	if productBaseline != nil {
+		for _, task := range productBaseline.Tasks {
+			tasks = append(tasks, taskDoc{id: task.ID, path: task.Path, sha256: task.SHA256})
 		}
-		if intField(doc["generation"]) != generation {
-			continue
+	} else {
+		for _, raw := range stateDocuments(state) {
+			doc, _ := raw.(map[string]any)
+			if doc == nil || doc["kind"] != "task" {
+				continue
+			}
+			if intField(doc["generation"]) != generation {
+				continue
+			}
+			id, _ := doc["id"].(string)
+			path, _ := doc["path"].(string)
+			sha, _ := doc["sha256"].(string)
+			if id == "" || path == "" {
+				continue
+			}
+			tasks = append(tasks, taskDoc{id: id, path: path, sha256: sha})
 		}
-		id, _ := doc["id"].(string)
-		path, _ := doc["path"].(string)
-		sha, _ := doc["sha256"].(string)
-		if id == "" || path == "" {
-			continue
-		}
-		tasks = append(tasks, taskDoc{id: id, path: path, sha256: sha})
 	}
 	sort.Slice(tasks, func(i, j int) bool { return tasks[i].id < tasks[j].id })
 
@@ -66,20 +76,35 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		frozen = append(frozen, FrozenSubject{Path: task.path, SHA256: task.sha256, Kind: "task"})
 	}
 
-	projection := buildS7BaselineProjection(root, state)
-	for _, diagnostic := range projection.Diagnostics {
-		notes = append(notes, "S7 baseline projection: "+diagnostic+"; registration will reject an unverifiable completion artifact")
-	}
-	changedSubjects, subjectDiagnostics := changedSurfaceSubjects(root, projection.ChangedPaths)
-	for _, diagnostic := range subjectDiagnostics {
-		notes = append(notes, "S7 baseline projection: "+diagnostic+"; add a valid frozen subject before registration")
-	}
-	for _, subject := range changedSubjects {
-		if seenFrozen[subject.Path] {
-			continue
+	projection := s7BaselineProjection{}
+	if productBaseline != nil {
+		var err error
+		frozen, err = frozenSubjectsForProductBaseline(productBaseline)
+		if err != nil {
+			return nil, append(notes, "canonical S6 frozen subjects cannot be built: "+err.Error())
 		}
-		seenFrozen[subject.Path] = true
-		frozen = append(frozen, subject)
+		for _, path := range productBaseline.Paths {
+			projection.ChangedPaths = append(projection.ChangedPaths, path.Path)
+		}
+		for _, file := range productBaseline.UnattributedPaths {
+			notes = append(notes, "Main product change has no registered S6 contribution; it remains in full review coverage: "+file)
+		}
+	} else {
+		projection = buildS7BaselineProjection(root, state)
+		for _, diagnostic := range projection.Diagnostics {
+			notes = append(notes, "S7 baseline projection: "+diagnostic+"; registration will reject an unverifiable completion artifact")
+		}
+		changedSubjects, subjectDiagnostics := changedSurfaceSubjects(root, projection.ChangedPaths)
+		for _, diagnostic := range subjectDiagnostics {
+			notes = append(notes, "S7 baseline projection: "+diagnostic+"; add a valid frozen subject before registration")
+		}
+		for _, subject := range changedSubjects {
+			if seenFrozen[subject.Path] {
+				continue
+			}
+			seenFrozen[subject.Path] = true
+			frozen = append(frozen, subject)
+		}
 	}
 
 	claims := []Claim{}
@@ -132,6 +157,10 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	// independent questions independently dispatchable: platform capacity may
 	// queue them, but it must not collapse six quality perspectives into one
 	// overloaded QA session.
+	qaSourceRefs := taskIDs(tasks)
+	if productBaseline != nil {
+		qaSourceRefs = sortedUniqueRefs(append(qaSourceRefs, projection.ChangedPaths...))
+	}
 	for _, focus := range []struct{ key, assertion string }{
 		{"design-boundary", "module boundaries, ownership and contracts are explicit; invalid crossings are rejected at the right layer"},
 		{"pattern-idiom-fit", "the implementation uses the project's established design patterns and idioms where they reduce coupling or risk"},
@@ -158,7 +187,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			Oracle:        "TODO(planner): the observable fact proving " + focus.key,
 			Method:        method,
 			Applicability: "required",
-			SourceRefs:    taskIDs(tasks),
+			SourceRefs:    qaSourceRefs,
 			FocusKey:      focus.key,
 		})
 		assignments = append(assignments, PlanAssignment{
@@ -277,6 +306,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		ReviewPlanID:                  fmt.Sprintf("review-plan-draft-r%d", round),
 		ReviewRound:                   round,
 		BaselineGeneration:            generation,
+		ProductBaseline:               productBaseline,
 		FrozenSubjects:                frozen,
 		CoverageInventory:             BuildCoverageInventoryForRoot(root, state),
 		ChangeImpact:                  changeImpactFromPaths(changedList),
@@ -308,6 +338,18 @@ func taskIDs(tasks []taskDoc) []string {
 		ids = append(ids, task.id)
 	}
 	return ids
+}
+
+func sortedUniqueRefs(refs []string) []string {
+	sort.Strings(refs)
+	out := refs[:0]
+	for _, ref := range refs {
+		if ref == "" || len(out) > 0 && out[len(out)-1] == ref {
+			continue
+		}
+		out = append(out, ref)
+	}
+	return out
 }
 
 func e2eScenarioTarget(scenario e2eScenario) string {

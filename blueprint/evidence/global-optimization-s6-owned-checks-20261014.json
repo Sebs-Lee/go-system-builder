@@ -1,0 +1,321 @@
+{
+  "schema_version": "1.0.0",
+  "slice": "S6 nonempty original owner checks and composite durable Result replay",
+  "recorded_at": "2026-10-14T14:11:41.725014+00:00",
+  "status": "partial",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "authority": "original Register/PLAN and isolated workspace/native check capture; original Runtime Writer and CompleteTask; original checkpoint journal proofs, Main consumer and TR-006",
+  "verified": [
+    "Frozen WorkerChecks independent of Main RequiredChecks; bounded 64-check and 1024-receipt/alias indexes with no eviction",
+    "Original workspace owned-check runner and native assignment-context check use frozen command/profile, original copy/bwrap/seccomp/process capture and Writer; no authored machine proof",
+    "Native actual host checks twice return fail/exit 1; original CompleteTask preserves exact failed sealed receipt/log and durable SHA artifacts; no synthesized PASS",
+    "Actual native CLI same registered key zero-write replay, new-key same answer/closure durable alias, same answer with fresh changed-source receipt creates new Result revision",
+    "Native consecutive source changes without running checks create distinct stale Result revisions 3/4 via current_source_snapshot_sha256; same AnswerDigest, no extra receipt, never complete",
+    "Historical Results 1/2 validate durable copies after current source drift and newer revisions; unavailable closure acceptance/alias tested independently",
+    "Original alias Writer pending-boundary reconstruction/recovery preserves accepted pair and key binding; this is not a live crash experiment",
+    "Workspace durable replay binds sealed Record/SHA, check index/contract, execution snapshot/bootstrap; tampered proofs rejected",
+    "Checkpoint restore requires exact original events for legacy, workspace owned, native owned and Result aliases; rebind preserves original captured checkout without granting current freshness",
+    "Exact trusted native policy command allowed with unrelated workspace executions; modified command/unknown identity denied",
+    "Local executable runner fingerprint stable across copied roots while preserving script coordinates and actual binary bytes",
+    "Current facts/qualitygate/schema, receiver, checkpoint/policy targeted race; original Main closing blocking/gate targeted tests and 12 affected packages vet"
+  ],
+  "host_acceptance": {
+    "native_runner_result_chain": {
+      "executed": true,
+      "captured_statuses": [
+        "fail",
+        "fail"
+      ],
+      "positive_PASS": false
+    },
+    "workspace_prepare_denial": {
+      "executed": true,
+      "state_and_journal_unchanged": true,
+      "reason": "WorkerCheck Bubblewrap/seccomp capability unavailable"
+    },
+    "workspace_full_runner_to_result": {
+      "executed": false,
+      "reason": "original prepare capability gate denies host"
+    },
+    "supported_host_positive_PASS": {
+      "executed": false
+    },
+    "real_platform_or_model_complete_chain": {
+      "executed": false
+    }
+  },
+  "limitations": [
+    "Pure captured-PASS DTO/receipt/Gate fixtures are not a live supported-host PASS",
+    "Native requires frozen manifest worktree, fixed context and activated plan_checkpoint; sidecar-only authority and human approval-mode ownership receipt chain remain unfinished",
+    "Native current SourceHead exact binding and workspace rebind require fresh capture for new acceptance; historical durable Result replay keeps original proof",
+    "Hookctx native projection checked separately; combined runtime/policy race command intentionally omitted Hookctx after its prior regex matched no tests",
+    "Assignment revision Writer and human approval new-version binding not implemented; revision design audit proceeds separately",
+    "S6 still partial; fresh S7, S8/S9/S10 adapters, full appropriate regression/install/platform/live acceptance remain required"
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s6-owned-check-targeted.log",
+      "sha256": "49d62e8734e37d42064a05bc9b5176c029a55925e50afe2552af40a7a66d2167",
+      "bytes": 139
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-check-runner-targeted.log",
+      "sha256": "f84cdcc9da6bc3859a8fd8e399b9c9ed2253be0ad7f37eaf6ed71770eeadd19c",
+      "bytes": 390
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-check-cli-targeted.log",
+      "sha256": "1c773bbd073cb3afa6035564d87c78faa02d54048a91e4ecc91b17febccbcfa2",
+      "bytes": 65
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-observation-relative-runner.log",
+      "sha256": "2e98dcb6f151b6e43d9f88422dd296e0e8759a667ffbc9ca3d0ba7ddb16017c8",
+      "bytes": 395
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-local-runner-fingerprint-race-20261014.log",
+      "sha256": "f8cda4e392615152bce57c2506b8cc05cfdd1d19d3476008bc47e51d2ddac8c9",
+      "bytes": 71
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-native-owned-check-targeted-20261014.log",
+      "sha256": "077149c78835243d6c94ff26d41507d77036afddb781b2991b9f7d9dfc9c9375",
+      "bytes": 138
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-native-owned-policy-targeted-20261014.log",
+      "sha256": "e8793453104ccdd49985d6790259d39db38c275e945585c354717e9ae7801393",
+      "bytes": 68
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-native-owned-hookctx-targeted-20261014.log",
+      "sha256": "acf25289aaca1c47d4bb6fc1a78f618870ed31a4d2aa4a6a909de7e3e2c54bb1",
+      "bytes": 69
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-native-owned-boundary-targeted.log",
+      "sha256": "8fc012c8dd26dc43d388c456ffff85771309e0bbe8af3475db645fefc2aadaa8",
+      "bytes": 516
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-native-worker-result-e2e-race-20261014.log",
+      "sha256": "0fea00607edccad89eee7d610efac9335487faf7b0c7c92a3f1391a7afbeb803",
+      "bytes": 899
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-workspace-owned-check-completion-targeted.log",
+      "sha256": "43d6ae03130be2e9eff4f99f17eb37ed7ac1362ecd62c7242d3ceb3953312b79",
+      "bytes": 515
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-worker-result-alias-recovery-race-20261014.log",
+      "sha256": "da61bd0b1bdb124a8cc5d1d20b457fc42bbeff7040f327f2a79f35bf76bde494",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-current-source-receiver-race-20261014.log",
+      "sha256": "c6059992d541cdd989a9b2395ff0db02aa36fa5ec6fe3501fe9ec7fb53b42703",
+      "bytes": 73
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-current-source-consumers-race-20261014.log",
+      "sha256": "0ce4fdd37bb99d5e2f15f556aaca07f755bcf83752ee5f9141232c9005ce861e",
+      "bytes": 220
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-checkpoint-policy-race-20261014.log",
+      "sha256": "9ee7998f6944eeab47239911ce7eadb9727b2489cfc3a5142e8d65e31f6a7694",
+      "bytes": 137
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-main-consumer-targeted-20261014.log",
+      "sha256": "28169d3b534abcdd76669fc052dd9670e4c7e85e82c5fcd192c435779251ccb6",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s6-owned-final-affected-vet-20261014.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ],
+  "source_snapshot": [
+    {
+      "path": "internal/assignment/completion_canonical.go",
+      "sha256": "d12fcdba1178709c15fc85016a95571ee72939f991d871b1e67c0fddfb59f7ce",
+      "bytes": 46123
+    },
+    {
+      "path": "internal/assignment/completion_submission_keys.go",
+      "sha256": "b3ca9955a04c51309366d66f833436cf534a705588798918eb3168d1477dbbb7",
+      "bytes": 9777
+    },
+    {
+      "path": "internal/assignment/worker_closure_collect.go",
+      "sha256": "28356443b6b04cb275cf98f7123ef05fe2fdbb52ff6bdb94c25bf2cf6e22f15c",
+      "bytes": 14396
+    },
+    {
+      "path": "internal/assignment/native_check_receipt.go",
+      "sha256": "3eb510e8e09c37cc0c61d8fae753507532f42e8fe07995794cd29e1d00990fc1",
+      "bytes": 5873
+    },
+    {
+      "path": "internal/assignment/newnative_check_source.go",
+      "sha256": "909ee1f67892b174194ae05668ef14cfaf5569475910ed84436a0be2296dc213",
+      "bytes": 6745
+    },
+    {
+      "path": "internal/assignmentresult/worker_facts.go",
+      "sha256": "d44c398687d3835aada064bf44b80e0be2278c3cbef3af307accc88a37cc3468",
+      "bytes": 29027
+    },
+    {
+      "path": "internal/assignmentresult/accepted.go",
+      "sha256": "ba2211ba959334d5f68ba2de31caee0d6d885171f6defd69743ad65990ac113a",
+      "bytes": 11479
+    },
+    {
+      "path": "internal/assignmentrecord/record.go",
+      "sha256": "86b89c0eb1c9f354f8ac71dccabbc2659c59c9723c4aac981fd12a25d395f0d2",
+      "bytes": 48338
+    },
+    {
+      "path": "internal/checkexec/fingerprint.go",
+      "sha256": "3b6f71aa78072164e28bddada88bb85e96929c458ee12f20482ed221e5925da7",
+      "bytes": 6381
+    },
+    {
+      "path": "internal/workspace/check_owned.go",
+      "sha256": "8934f39ca8d256004ab693ab5e464a91b670aebe4db742f1362343135840d64b",
+      "bytes": 34589
+    },
+    {
+      "path": "internal/workspace/assignment_record.go",
+      "sha256": "8e10b81ddf8d7cdad1017b07017b27fcb6975e5e4acd1236992bcc83591c7244",
+      "bytes": 6303
+    },
+    {
+      "path": "internal/workspace/rebind.go",
+      "sha256": "c3e1b05b947dae18bdd6486765797a2a1f9ed003601fb4541f3bd0975f4e8ba4",
+      "bytes": 5724
+    },
+    {
+      "path": "internal/workspace/workspace.go",
+      "sha256": "497937bb14c704c21418cdff8dfa7db01bee1597e00cf4403b5ac287441cd0a5",
+      "bytes": 26696
+    },
+    {
+      "path": "internal/cli/workspace_check.go",
+      "sha256": "00fb808892b0d5b4723105deca5681879f399081d827fb03cddc6cdcc9384918",
+      "bytes": 12381
+    },
+    {
+      "path": "internal/cli/newassignment_context_check.go",
+      "sha256": "24fd5ea546da339b584927a85b9f5a7d680536e76c6b800296f445f45f4d0706",
+      "bytes": 16902
+    },
+    {
+      "path": "internal/cli/assignment_context.go",
+      "sha256": "b449eead7e0c3e165dc70c2d2b25de0d91e877c08025852c70021243525271bd",
+      "bytes": 22881
+    },
+    {
+      "path": "internal/cli/assignment_context_binding.go",
+      "sha256": "2368eb136495e9cd0ba86d71892b878a47541b3105107d2c57fc3b744ccfa190",
+      "bytes": 18096
+    },
+    {
+      "path": "internal/runtime/checkpoint_checks.go",
+      "sha256": "06398d360d47bd72920bbab9ab500cda91de82f59350b9d096637235d82bf57c",
+      "bytes": 14321
+    },
+    {
+      "path": "internal/policy/newnative_owned_check.go",
+      "sha256": "65e870036e2865d23ea8b34376ee243b915ddf76ad3a13c1c36a31beeb653810",
+      "bytes": 5547
+    },
+    {
+      "path": "internal/policy/workspace_boundary.go",
+      "sha256": "dbc21afefbc844f66935546d2c9dbcd7a891ca9e1ceddde7e466adee3334a3ef",
+      "bytes": 9939
+    },
+    {
+      "path": "internal/hookctx/newnative_owned_check.go",
+      "sha256": "6bfd2c49725a36b6576efc04a2830e66ee53473f85b8a7708e95ce09f14deac0",
+      "bytes": 6674
+    },
+    {
+      "path": "internal/integration/closing_contract.go",
+      "sha256": "aa1f9723c0b0c204a0ff09de3448510f400b1aaefffcef7460eb774b1cac8e68",
+      "bytes": 5211
+    },
+    {
+      "path": "internal/qualitygate/canonical_builder_result.go",
+      "sha256": "95dccb541dd8e22892f68672f41c504fb135519ab4f887cc148f8bc5d55cdabc",
+      "bytes": 38656
+    },
+    {
+      "path": "internal/schema/assets/assignment-record.schema.json",
+      "sha256": "8fe19356de44a954e62c2f970a9e681a7b47f123a5d1a7d4d97c27f47fbdf001",
+      "bytes": 10997
+    },
+    {
+      "path": "internal/schema/assets/team-manifest.schema.json",
+      "sha256": "e73956cb2d628bb7e55faf10c4e8e40da04fe1f9038d4992a71ea22f77700ef5",
+      "bytes": 20905
+    },
+    {
+      "path": "internal/schema/assets/loop-state-v1.2.schema.json",
+      "sha256": "9ec8310b0a4aca5616fdf3c2eec72909cd29c334f447a7764c553e429607fda9",
+      "bytes": 172914
+    },
+    {
+      "path": "internal/schema/assets/builder-receipt.schema.json",
+      "sha256": "a545c56197cc25337c81924d8b4a37d3ebb29a7a7af58c890f2ae2b96628fc8f",
+      "bytes": 12983
+    },
+    {
+      "path": "internal/schema/assets/native-assignment-context.schema.json",
+      "sha256": "8e7559e6d446ee3f2fdd233169825e27cdafa2287d612ef86e2042411f40ab05",
+      "bytes": 23316
+    },
+    {
+      "path": "internal/assignment/completion_submission_keys_test.go",
+      "sha256": "4ca9d4a39817a0e54b64cb6f0dde762a42b5aed6ebc9cb631dbfbd46155cd337",
+      "bytes": 4738
+    },
+    {
+      "path": "internal/assignment/completion_worker_closure_test.go",
+      "sha256": "e4219bd009109b0fcd84b5d0f7eb7ffc6fc8af8aa4f2452668ce41611fcfb0f6",
+      "bytes": 3956
+    },
+    {
+      "path": "internal/cli/s6_native_worker_result_e2e_test.go",
+      "sha256": "99e34b6d90e40762bf6ee4d381cb2177dc94da142e3e4a552bb45fb95b0a2576",
+      "bytes": 22492
+    },
+    {
+      "path": "internal/cli/s6_workspace_owned_check_completion_e2e_test.go",
+      "sha256": "7991438c681e04d73dc2fe970fcb02a88ff13319770bc1cd59f61eb530a6c6f8",
+      "bytes": 19398
+    },
+    {
+      "path": "internal/runtime/checkpoint_checks_test.go",
+      "sha256": "84aee79472c6260cedc2c3d65e453155130aeb5443eb6312c2a95494559c5446",
+      "bytes": 10872
+    },
+    {
+      "path": "internal/assignmentresult/worker_facts_test.go",
+      "sha256": "8ade3e0a74b882f61897fda52a9a6923e7eb2f0b590f7217714373d3f65afd63",
+      "bytes": 29018
+    }
+  ]
+}

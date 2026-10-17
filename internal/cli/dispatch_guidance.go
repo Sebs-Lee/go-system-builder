@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/dispatch"
+	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -22,6 +23,14 @@ func applyDispatchGuidance(root string, state map[string]any, event string, inpu
 		return
 	}
 	guidance.Automation = append(guidance.Automation, dispatch.Advisory(board)...)
+	if !board.Legacy || board.Pressure != nil || integration.ObserveWorkspace(root).LockState == "busy" {
+		advice, err := receptionAdvice(root, board, nil, nil)
+		if err != nil {
+			guidance.Automation = append(guidance.Automation, "S6 reception projection unavailable; inspect original workspace pending and checkpoint before choosing another dispatch")
+		} else {
+			guidance.Automation = append(guidance.Automation, receptionAdviceText(advice)...)
+		}
+	}
 }
 
 func dispatchGuidanceCheckpoint(event string, input policy.Input) bool {
@@ -62,8 +71,16 @@ func postToolDispatchContext(root string, input policy.Input) string {
 		return ""
 	}
 	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
-	if lifecycle["state"] != "building" || !qualitygate.HasDispatchPlan(snapshot.State) {
+	if lifecycle["state"] != "building" {
 		return ""
+	}
+	if !qualitygate.HasDispatchPlan(snapshot.State) {
+		config, err := runtime.DispatchConfig(snapshot.State)
+		if err != nil || config == nil {
+			if integration.ObserveWorkspace(root).LockState != "busy" {
+				return ""
+			}
+		}
 	}
 	guidance := policy.Guidance{}
 	applyDispatchGuidance(root, snapshot.State, "PostToolUse", input, &guidance)

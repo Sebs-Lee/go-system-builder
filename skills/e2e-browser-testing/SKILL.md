@@ -75,6 +75,14 @@ Team planning uses a mandatory responsibility baseline plus risk-triggered respo
 
 ## Core Principle
 
+If Main supplies an issued `s7-review-result-v1` packet, follow the original
+PLAN/activation and fill only its professional `answer` at the exact issued path.
+Record the workspace digest actually executed in `verification_artifact_digest`
+for cold-start E2E; the original consumer checks it against workspace bytes.
+Preserve questions and machine bindings, provide explicit Claim conclusions and
+your own verdict, and read the save receipt. Saving does not replace live browser
+execution, evidence provenance or the complete current module CASE/PATH coverage.
+
 E2E tests are the **executable transcription of current module `flows.md` and CASE oracle**.
 The current module package is the source of truth; the spec is its compiled, runnable form.
 Therefore:

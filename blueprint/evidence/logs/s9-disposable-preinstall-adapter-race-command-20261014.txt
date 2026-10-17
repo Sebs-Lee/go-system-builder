@@ -1,0 +1,4 @@
+Exact adapter race command:
+TMPDIR=$(cat /tmp/gsb-check-permissions-work-path) GOCACHE=<task-tmp>/eval-build-cache GOPROXY=off GOMAXPROCS=2 go test -race ./internal/submission ./internal/cli ./internal/hookctx ./internal/policy -run '^(TestSavedRepairPlanReportHookRejectsUnissuedPathWithoutRuntimeWrite|TestStageAnswerTerminalConsumeCannotTrustAgentFlagForS9|TestS9RepairAssignmentUsesPointerOwnerAndExactRegisteredManifestTuple|TestLoadFullBindsS9AssignmentScopeFromPlanReport|TestRepairPlanReportWriteRequiresExactCurrentTrustedGrant|TestRepairPlanReportWriteNeedsPlatformIdentityAndPreExecutionPhase|TestRepairPlanReportWriteRejectsSymlinkedPacketPath)$' -count=1
+
+`internal/submission` reported `[no tests to run]`; this command compiled that package. The S9 submission/Hook behavior is covered by the original Hook integration-chain log, not by this adapter regex.

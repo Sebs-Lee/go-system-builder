@@ -79,18 +79,47 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	}
 
 	out := Inspection{
-		LockedPaths:        lockedArtifacts(cfg, req),
-		AssignmentID:       req.Assignment.AssignmentID,
-		TaskID:             req.Assignment.TaskID,
-		WorktreePath:       req.Assignment.WorktreePath,
-		SourceBranch:       req.Assignment.Branch,
-		TargetBranch:       targetBranch,
-		BaselineGeneration: req.BaselineGeneration,
-		NonSquashMode:      true, // invariant: this package never squash-merges
+		LockedPaths:          lockedArtifacts(cfg, req),
+		AssignmentID:         req.Assignment.AssignmentID,
+		TaskID:               req.Assignment.TaskID,
+		WorktreePath:         req.Assignment.WorktreePath,
+		SourceBranch:         req.Assignment.Branch,
+		TargetBranch:         targetBranch,
+		BaselineGeneration:   req.BaselineGeneration,
+		NonSquashMode:        true, // invariant: this package never squash-merges
+		EffectiveWritePaths:  append([]string{}, req.Assignment.WritePaths...),
+		AssignmentProjection: req.Assignment,
 	}
+	projection, err := cloneAssignmentProjection(req.Assignment)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("copy canonical Assignment projection: %w", err)
+	}
+	out.AssignmentProjection = projection
 	addBlocker := func(reason string) {
 		out.Ready = false
 		out.Blockers = append(out.Blockers, reason)
+	}
+
+	canonical, err := resolveCanonicalResult(req.Root, req.RuntimeID, req.Assignment)
+	if err != nil {
+		addBlocker(fmt.Sprintf("canonical Assignment/Result binding failed: %v", err))
+		return out, nil
+	}
+	if canonical != nil {
+		out.CanonicalResult = &canonical.Binding
+		out.CompletionReportPath = canonical.Binding.ResultPath
+		out.CompletionReportSHA256 = canonical.Binding.ResultSHA256
+		out.EffectiveWritePaths = append([]string{}, canonical.Record.EffectiveWritePaths...)
+		if blockers := canonicalClosingBlockers(canonical); len(blockers) > 0 {
+			for _, blocker := range blockers {
+				addBlocker(blocker)
+			}
+			return out, nil
+		}
+		// v1.2 RequiredChecks are Main post-merge facts. Inspect uses the
+		// canonical scope and locks but does not treat worker-side checks as
+		// Main receipts or a completion verdict.
+		cfg.RequiredChecks = nil
 	}
 
 	// 1. Completion report. We don't schema-validate here — that gate is
@@ -98,7 +127,10 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	//    Inspect only confirms the file is present and parseable so a
 	//    missing report is surfaced as an integration blocker, not as a
 	//    generic controller failure.
-	if !cfg.SkipCompletionCheck && cfg.ValidateDelivery == nil {
+	if canonical != nil {
+		out.CompletionReportPath = canonical.Binding.ResultPath
+		out.CompletionReportSHA256 = canonical.Binding.ResultSHA256
+	} else if !cfg.SkipCompletionCheck && cfg.ValidateDelivery == nil {
 		reportPath := completionReportPath(req.Root, req.Assignment.AssignmentID, req.RuntimeID, req.Assignment.CompletionRef, req.BaselineGeneration)
 		if reportPath == "" {
 			addBlocker("completion report missing: provide an explicit CompletionRef or valid current Runtime, generation and assignment identity")
@@ -128,12 +160,14 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	}
 
 	// 2. Worktree clean.
-	clean, err := worktreeClean(ctx, req.Assignment.WorktreePath)
+	clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath)
 	if err != nil {
-		return out, fmt.Errorf("worktree clean check: %w", err)
+		workerRoot := req.Assignment.WorktreePath
+		return out, fmt.Errorf("Worker checkout %q clean check failed; inspect with git -C %q status --short: %w", workerRoot, workerRoot, err)
 	}
 	if !clean {
-		addBlocker(ErrDirtyWorktree.Error())
+		workerRoot := req.Assignment.WorktreePath
+		addBlocker(fmt.Sprintf("Worker checkout %q is dirty; inspect with git -C %q status --short: %s", workerRoot, workerRoot, ErrDirtyWorktree))
 		return out, nil
 	}
 
@@ -194,17 +228,15 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 
 	// 6. Enforce the Runtime lock set independently of task checks.
 	locked := out.LockedPaths
-	// The changed-file list feeds both the locked-artifact screen and the
-	// write-scope audit below; compute it once when either consumer needs
-	// it.
-	var changedFiles []string
-	if len(locked) > 0 || len(req.Assignment.WritePaths) > 0 {
-		files, err := listChangedFiles(ctx, targetRepo, base, sourceHead)
-		if err != nil {
-			return out, fmt.Errorf("list changed files: %w", err)
-		}
-		changedFiles = files
+	// Capture the full actual Git delta, even if this assignment has no lock
+	// or scope rule. The same immutable path set feeds both audits and the
+	// durable integration checkpoint.
+	changedFiles, changedDigest, err := canonicalGitChangedPaths(ctx, targetRepo, base, sourceHead)
+	if err != nil {
+		return out, fmt.Errorf("list changed files: %w", err)
 	}
+	out.ChangedPaths = changedFiles
+	out.ChangedPathsSHA256 = changedDigest
 	if len(locked) > 0 {
 		out.LockedDiff = intersectLocked(changedFiles, locked)
 		if len(out.LockedDiff) > 0 {

@@ -13,9 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/builderbatch"
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/impact"
 	"github.com/entroforge/go-system-builder/internal/repairpolicy"
+	"github.com/entroforge/go-system-builder/internal/review"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/verification"
@@ -55,15 +58,21 @@ type Request struct {
 	OccurredAt    time.Time
 	Params        map[string]any
 	// Journal audit fields propagated into the runtime Store (SYNC-039 §7).
-	RequestID              string
-	BaselineGeneration     int
-	GateID                 string
+	RequestID          string
+	BaselineGeneration int
+	GateID             string
+	// GateEvidenceRefs preserves the complete S5 gate proof, including both
+	// reviewers when RequiredEvidence has only one document_review slot.
+	GateEvidenceRefs       []string
 	GateFingerprint        string
 	ProducerResponsibility string
 	// RecoveryWriter is an explicit capability for recovery-plan replay over
 	// a temporary Runtime pair. A zero capability selects the strict active
 	// authority writer; paths never select recovery mode implicitly.
 	RecoveryWriter loopruntime.OfflineRecoveryCapability
+	// SubmissionFollowupID binds this control request to one accepted domain
+	// result and its original cursor. The origin/result are read from Runtime.
+	SubmissionFollowupID string
 }
 
 type resolvedTransition struct {
@@ -91,6 +100,11 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
 	}
 	current := snapshot.State
+	if request.SubmissionFollowupID != "" {
+		if _, err := loopruntime.SubmissionFollowup(current, request.SubmissionFollowupID); err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+	}
 	currentLifecycle, ok := current["lifecycle"].(map[string]any)
 	if !ok {
 		return loopruntime.Snapshot{}, fmt.Errorf("runtime lifecycle must be an object")
@@ -141,7 +155,7 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	if err := enforceForbiddenEvents(catalog, resolved.Spec, current); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateRequest(root, current, resolved.Spec, request); err != nil {
+	if err := validateRequest(root, current, resolved.Spec, request, true); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	fromCursor := cursor(currentState, currentPhase)
@@ -176,8 +190,9 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	if request.BaselineGeneration > 0 {
 		baselineGen = request.BaselineGeneration
 	}
+	eventID := mutationEventID(request.TransitionID, commitRevision)
 	mutation := loopruntime.Mutation{
-		EventID:                fmt.Sprintf("evt-%s-r%d", strings.ToLower(request.TransitionID), commitRevision+1),
+		EventID:                eventID,
 		TransitionID:           resolved.Spec.ID,
 		Event:                  resolved.Spec.Event,
 		Actor:                  request.Actor,
@@ -197,6 +212,11 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 		ProducerResponsibility: request.ProducerResponsibility,
 		BoundaryReset:          resolved.Spec.ID == "TR-001",
 		Apply: func(state map[string]any) error {
+			if request.SubmissionFollowupID != "" {
+				if _, err := loopruntime.SubmissionFollowup(state, request.SubmissionFollowupID); err != nil {
+					return err
+				}
+			}
 			// Direct-check guards resolve disk paths from state["root"]. The
 			// writer re-reads state from disk before invoking this closure, so
 			// the default must live HERE: without it guards fall back to "." and
@@ -361,7 +381,32 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 				guardResults[index]["detail"] = "Guard evaluated successfully."
 			}
 
-			actionContext := &ActionContext{Root: root, Spec: resolved.Spec, From: fromCursor, To: toCursor, Evidence: request.Evidence, OccurredAt: occurredAt, Params: request.Params, Request: &request}
+			beforeRevision := integerOf(state["revision"])
+			journalCursor, _ := state["journal"].(map[string]any)
+			transitionSequence := integerOf(journalCursor["last_sequence"]) + 1
+			actionFrom := fromCursor
+			if resolved.Spec.ID == "TR-004" {
+				// The document-review batch is identified by the cursor entry and
+				// baseline that existed before this transition. Keep these facts
+				// local to the action context; persisted transition cursors retain
+				// their original state/phase shape.
+				actionFrom = map[string]any{"state": fromCursor["state"], "phase": fromCursor["phase"]}
+				if value, ok := lifecycle["phase_revision"]; ok {
+					actionFrom["phase_revision"] = value
+				}
+				if currentBaseline, ok := state["baseline"].(map[string]any); ok {
+					if value, ok := currentBaseline["generation"]; ok {
+						actionFrom["baseline_generation"] = value
+					}
+				}
+			}
+			actionContext := &ActionContext{
+				Root: root, Spec: resolved.Spec, From: actionFrom, To: toCursor,
+				Evidence: request.Evidence, OccurredAt: occurredAt, Params: request.Params,
+				Request: &request, EventID: eventID,
+				BeforeRevision: beforeRevision, AfterRevision: beforeRevision + 1,
+				TransitionSequence: transitionSequence,
+			}
 			if err := dispatchAction("capture_pause_checkpoint", actionResults, state, actionContext); err != nil {
 				return err
 			}
@@ -413,6 +458,11 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 				state["pause"] = nil
 			}
 			state["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
+			if request.SubmissionFollowupID != "" {
+				if err := loopruntime.StampSubmissionTransition(state, request.SubmissionFollowupID, mutationEventID(request.TransitionID, commitRevision)); err != nil {
+					return err
+				}
+			}
 			if view, ok := request.Files.(interface{ Verify() error }); ok {
 				return view.Verify()
 			}
@@ -422,10 +472,24 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 
 	// Inject the root-aware semantic validator at the composition boundary.
 	// Runtime owns the commit boundary but does not import this package.
+	var next loopruntime.Snapshot
 	if request.ExpectedRevision < 0 {
-		return store.UpdateCurrent(mutation)
+		next, err = store.UpdateCurrent(mutation)
+	} else {
+		next, err = store.Update(request.ExpectedRevision, mutation)
 	}
-	return store.Update(request.ExpectedRevision, mutation)
+	if err != nil && request.SubmissionFollowupID != "" {
+		if latest, readErr := store.Snapshot(); readErr == nil {
+			if _, checkErr := loopruntime.SubmissionFollowup(latest.State, request.SubmissionFollowupID); errors.Is(checkErr, loopruntime.ErrSubmissionFollowupProcessed) || errors.Is(checkErr, loopruntime.ErrSubmissionFollowupOriginChanged) {
+				return latest, checkErr
+			}
+		}
+	}
+	return next, err
+}
+
+func mutationEventID(transitionID string, revision int) string {
+	return fmt.Sprintf("evt-%s-r%d", strings.ToLower(transitionID), revision+1)
 }
 
 // enforceForbiddenEvents is the Apply-time consumer of the Loop Definition's
@@ -509,12 +573,61 @@ func resolveCatalog(catalog *Catalog, id, currentState string, currentPhase any)
 	return resolvedTransition{}, fmt.Errorf("unknown transition %q", id)
 }
 
-func validateRequest(root string, state map[string]any, spec TransitionSpec, request Request) error {
+func validateRequest(root string, state map[string]any, spec TransitionSpec, request Request, deferTR006BatchProof ...bool) error {
+	// Apply's preflight retains all other request checks. The original gate
+	// and Writer/CAS validate the complete TR-006 batch; direct callers and
+	// the locked Apply call retain the full proof by default.
+	if spec.ID == "TR-006" && !(len(deferTR006BatchProof) > 0 && deferTR006BatchProof[0]) {
+		// The original Writer must prove the canonical batch regardless of
+		// which compatible report kind the caller binds to the evidence slot.
+		// A legacy aggregate cannot substitute for missing current Main facts.
+		canonical, err := buildsurface.SelectCanonical(root, state)
+		if err != nil {
+			return fmt.Errorf("transition TR-006 current batch source: %w", err)
+		}
+		if canonical {
+			if _, err := buildsurface.Read(root, state); err != nil {
+				return fmt.Errorf("transition TR-006 current canonical Main batch: %w", err)
+			}
+		} else {
+			batch := builderbatch.EvaluateLegacy(root, state, request.Files)
+			if len(batch.Conflicts) > 0 {
+				return fmt.Errorf("transition TR-006 current Builder batch conflicts: %s", strings.Join(batch.Conflicts, ", "))
+			}
+			if !batch.Ready {
+				return fmt.Errorf("transition TR-006 current Builder batch is incomplete: %s", strings.Join(batch.Missing, ", "))
+			}
+		}
+	}
+	if spec.ID == "TR-009" || spec.ID == "TR-015" || spec.ID == "TR-017" {
+		if err := review.VerifyCurrentProductBaseline(root, state); err != nil {
+			return fmt.Errorf("transition %s current product baseline: %w", spec.ID, err)
+		}
+	}
+	if spec.ID == "TR-009" && review.HasPacketBoundE2EReceipts(state) {
+		reviewState, _ := state["review"].(map[string]any)
+		assignments, _ := reviewState["assignments"].(map[string]any)
+		if err := review.VerifySealedArtifactDigests(root, state, review.PlanPointerFromState(state), assignments); err != nil {
+			return fmt.Errorf("transition TR-009 typed E2E execution artifact: %w", err)
+		}
+	}
 	if request.Actor == "" {
 		return fmt.Errorf("transition actor is required")
 	}
 	if len(spec.Actors) > 0 && !contains(spec.Actors, request.Actor) {
 		return fmt.Errorf("actor %q cannot execute %s", request.Actor, spec.ID)
+	}
+	if spec.ID == "TR-003" || spec.ID == "TR-004" {
+		for _, ref := range request.GateEvidenceRefs {
+			if err := validateCurrentEvidenceWithFiles(root, state, "document_review_record", ref, request.Files); err != nil {
+				return fmt.Errorf("transition %s gate proof: %w", spec.ID, err)
+			}
+		}
+		if spec.ID == "TR-003" {
+			if err := loopruntime.ValidateCurrentDocumentReviewRevisions(root, state, request.Files); err != nil {
+				return fmt.Errorf("transition %s current revision: %w", spec.ID, err)
+			}
+		}
 	}
 	seen := map[string]bool{}
 	catalog := evidence.DefaultCatalog()
@@ -625,6 +738,21 @@ func validateCurrentEvidenceWithFiles(root string, state map[string]any, require
 	want, _ := evidenceItem["sha256"].(string)
 	if actual := SHA256(data); want == "" || actual != want {
 		return fmt.Errorf("reference %q fingerprint mismatch", ref)
+	}
+	if requiredKind == "builder_report_record" && actualKind == "completion_report" {
+		snapshot, err := buildsurface.Read(root, state)
+		if err != nil {
+			return fmt.Errorf("canonical builder report source: %w", err)
+		}
+		matched := false
+		for _, contribution := range snapshot.Contributions {
+			if contribution.ResultRef == rel {
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("canonical builder report is not part of the current proven Main batch")
+		}
 	}
 	return nil
 }

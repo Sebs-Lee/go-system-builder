@@ -44,6 +44,8 @@ var markdownPathPattern = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.(md|json|sh|y
 // informational ("see the embedded schema") and must not be flagged as
 // dangling references.
 var embeddedAssetPatterns = []string{
+	"project-conventions.schema.json",
+	"task-conventions.schema.json",
 	"loop-state.schema.json",
 	"loop-state.example.json",
 	"loop-event.schema.json",
@@ -75,6 +77,7 @@ var disallowedReleasePathPrefixes = []string{
 }
 
 var disallowedInstanceGlobs = []string{
+	"docs/rules/project-conventions.json",
 	"docs/dev/tasks/TASK-[0-9]*.md",
 	"docs/requirements/REQ-[0-9]*.md",
 	"docs/control/loop-definition.json.bak-*",
@@ -277,6 +280,10 @@ func shouldSkipPathReference(raw string) bool {
 	if raw == "docs/project-map.md" {
 		return true
 	}
+	// Optional project-specific index, authored from the shipped empty template.
+	if raw == "docs/rules/project-conventions.json" {
+		return true
+	}
 	// Live Design Foundation files are copied from *-template.md in the
 	// target project (DESIGN.md, Grammar, Evidence Field, portable snapshot).
 	// The factory ships the templates only; Skills must still name the live
@@ -336,6 +343,7 @@ var RequiredDocumentAssets = []string{
 	"docs/control/agent-protocol.md",
 	"docs/project.yaml",
 	"docs/project-map-template.md",
+	"docs/rules/project-conventions-template.json",
 	"docs/requirements/REQ-template.md",
 	"docs/design/tokens/README.md",
 	"docs/design/tokens/tokens.json",

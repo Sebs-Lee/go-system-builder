@@ -1,0 +1,719 @@
+{
+  "schema_version": "1.0.0",
+  "kind": "global_optimization_s9_blocker_foundation_evidence",
+  "created_at": "2026-10-14T23:56:23.807862+00:00",
+  "status": "MODEL_AND_ORIGINAL_PRODUCER_FIX_SCOPED_PASS_NOT_NONPASS_ACCEPTANCE_CHAIN",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "changes": [
+    "After the L4 13.11 contract, added a closed S9 nonpass blocker artifact schema and strict runtime Artifact/readonly Receipt DTOs. Artifact excludes self hash and acceptance coordinates; canonical answer SHA is locally checked. Accepting completed as a blocker, null professional fields, duplicate/unknown fields and missing artifact in receipt are refused.",
+    "Fixed original assignment.AdvanceAgent Mutation.BaselineGeneration to use the real positive snapshot generation, and recheck runtime/generation inside the same original CAS. Prior events are not rewritten.",
+    "Original generation 1/2/3 journal identity cases and existing legacy activation/readback/blocker-resolved surfaces pass scoped normal/race after an actual failing reproduction.",
+    "Original S8 generation-2, S9 PlanReport and S9 Hook/Worker candidate/Main actual checks/final Result/ACK/cleanup regression chains pass after the producer fix.",
+    "Final blocker model race additionally verifies both existing canonical RepairAssignment and manifest Assignment execution slot spellings. Registry authority remains the future reader responsibility."
+  ],
+  "go_environment": {
+    "TMPDIR": "/home/sebs/.cache/gsb-adapter-work-mp771m5c",
+    "GOCACHE": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/eval-build-cache",
+    "GOPROXY": "off",
+    "GOMAXPROCS": "2"
+  },
+  "commands": [
+    {
+      "name": "model-lifecycle-normal-r2",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/runtime",
+        "./internal/assignment",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestAdvanceAgent.*|TestBlockerResolvedReturnsReviewerToWorking)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-foundation-model-lifecycle-normal-r2-20261014.log",
+      "started_at": "2026-10-14T23:47:08.436262+00:00",
+      "finished_at": "2026-10-14T23:48:02.725161+00:00",
+      "duration_seconds": 54.289,
+      "exit_code": 0
+    },
+    {
+      "name": "original-s8-s9-normal",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/investigation",
+        "-run",
+        "^(TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates|TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier|TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-foundation-original-s8-s9-normal-20261014.log",
+      "started_at": "2026-10-14T23:48:02.726546+00:00",
+      "finished_at": "2026-10-14T23:49:13.214878+00:00",
+      "duration_seconds": 70.488,
+      "exit_code": 0
+    },
+    {
+      "name": "model-lifecycle-race",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-p=1",
+        "./internal/runtime",
+        "./internal/assignment",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestAdvanceAgent.*|TestBlockerResolvedReturnsReviewerToWorking)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-foundation-model-lifecycle-race-20261014.log",
+      "started_at": "2026-10-14T23:49:13.215907+00:00",
+      "finished_at": "2026-10-14T23:50:42.086695+00:00",
+      "duration_seconds": 88.871,
+      "exit_code": 0
+    },
+    {
+      "name": "final-model-race",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-p=1",
+        "./internal/runtime",
+        "-run",
+        "^TestRepairResultBlocker.*$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-foundation-final-model-race-20261014.log",
+      "started_at": "2026-10-14T23:52:06.189270+00:00",
+      "finished_at": "2026-10-14T23:52:39.098494+00:00",
+      "duration_seconds": 32.909,
+      "exit_code": 0
+    }
+  ],
+  "command_metadata": [
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-foundation-validation-20261014.json",
+      "sha256": "738019b856dd2e9fc66b59eec642902f39bf9f93cf1ff90af8c9e659518a8641",
+      "bytes": 2012
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-foundation-final-model-validation-20261014.json",
+      "sha256": "7bf919cceedfaf6440636c13c291adf8792ae3366a66472703f530cf8123f4c0",
+      "bytes": 459
+    }
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-foundation-model-lifecycle-normal-r2-20261014.log",
+      "sha256": "f12cb65e254c75e49f17ea29d33101cda4fb9f6766d5613f54699f6a79607643",
+      "bytes": 6700,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "model-lifecycle-normal-r2",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.06
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestAdvanceAgentRecordsCurrentBaselineGeneration",
+          "duration_seconds": 0.13
+        },
+        {
+          "name": "TestAdvanceAgentRequiresReadbackApprovalBeforeActivation",
+          "duration_seconds": 0.07
+        },
+        {
+          "name": "TestAdvanceAgentAcceptsMessageWithoutRuntimeRevision",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestAdvanceAgentRejectsAuthoringPlaceholderAgentID",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestAdvanceAgentRejectsActivationBeforeApproval",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestBlockerResolvedReturnsReviewerToWorking",
+          "duration_seconds": 0.02
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-foundation-original-s8-s9-normal-20261014.log",
+      "sha256": "4f1db5286d314a71506dd0a94739864f6ff16e97df7ee89d68ad21338fd5db25",
+      "bytes": 4479,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "original-s8-s9-normal",
+      "top_level_passes": [
+        {
+          "name": "TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates",
+          "duration_seconds": 7.63
+        },
+        {
+          "name": "TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier",
+          "duration_seconds": 6.6
+        },
+        {
+          "name": "TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain",
+          "duration_seconds": 39.21
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-foundation-model-lifecycle-race-20261014.log",
+      "sha256": "6626d8e3fc7f4ccc067cbb30123b4127fba5f5f4ad999e558f7eec9e172118f6",
+      "bytes": 6708,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "model-lifecycle-race",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.34
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.07
+        },
+        {
+          "name": "TestAdvanceAgentRecordsCurrentBaselineGeneration",
+          "duration_seconds": 0.8
+        },
+        {
+          "name": "TestAdvanceAgentRequiresReadbackApprovalBeforeActivation",
+          "duration_seconds": 0.49
+        },
+        {
+          "name": "TestAdvanceAgentAcceptsMessageWithoutRuntimeRevision",
+          "duration_seconds": 0.15
+        },
+        {
+          "name": "TestAdvanceAgentRejectsAuthoringPlaceholderAgentID",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestAdvanceAgentRejectsActivationBeforeApproval",
+          "duration_seconds": 0.05
+        },
+        {
+          "name": "TestBlockerResolvedReturnsReviewerToWorking",
+          "duration_seconds": 0.15
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-foundation-final-model-race-20261014.log",
+      "sha256": "8f7668db5593a0ef9db275c4f786e84f612dea42417e55c3a10b3ed3d322b31f",
+      "bytes": 5712,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "final-model-race",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.34
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.07
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-lifecycle-generation-normal-r1-20261014.log",
+      "sha256": "9d46bc1a9c51044291896730ac08a10fa5da57a54f096092fb5cced80481f912",
+      "bytes": 2959,
+      "status": "FAIL",
+      "exit_code": 1,
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/assignment",
+        "-run",
+        "^TestAdvanceAgentRecordsCurrentBaselineGeneration$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "duration_seconds": 39.416,
+      "scope": "Actual original lifecycle writer records generation 2/3 as 1 before the explicit generation fix. generation 1 passes; complete command remains FAIL. This is not a compile failure."
+    }
+  ],
+  "log_counts": {
+    "PASS": 4,
+    "FAIL": 1
+  },
+  "unique_passing_top_level_tests": [
+    "TestAdvanceAgentAcceptsMessageWithoutRuntimeRevision",
+    "TestAdvanceAgentRecordsCurrentBaselineGeneration",
+    "TestAdvanceAgentRejectsActivationBeforeApproval",
+    "TestAdvanceAgentRejectsAuthoringPlaceholderAgentID",
+    "TestAdvanceAgentRequiresReadbackApprovalBeforeActivation",
+    "TestBlockerResolvedReturnsReviewerToWorking",
+    "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+    "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+    "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+    "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+    "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+    "TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates",
+    "TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier",
+    "TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain"
+  ],
+  "previous_frozen_shared_receipt_evidence": {
+    "path": "blueprint/evidence/global-optimization-shared-submission-receipt-20261014.json",
+    "sha256": "7e6acc21cff726e4c2258341fcf18c9105f8b896f3d689b1b6441ddf765898c2",
+    "bytes": 31253
+  },
+  "previous_log_integrity": "All eight previous receipt evidence log digests checked unchanged; previous protected package tar/installation evidence/run-metadata hashes checked unchanged.",
+  "pre_fix_lifecycle_source_snapshot": {
+    "path": "internal/assignment/lifecycle.go",
+    "sha256": "5d329c475c013498e6bf9907683b630ddc088104e994df09c8008e1550f534bf",
+    "bytes": 19564
+  },
+  "source_snapshot": {
+    "head": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+    "dirty": true,
+    "scope": "Selected current relevant source/schema/test/contract/shipped-doc files. Earlier source snapshots remain historical and are not refreshed. Initial normal and scoped race precede the final unused-blocker-schema execution-ID spelling refinement; final model race validates its final source. Three original S8/S9 chains validate the unchanged lifecycle generation fix; this evidence does not attest a new typed nonpass consumer.",
+    "files": [
+      {
+        "path": "agents/backend-builder.md",
+        "sha256": "6d0ee78a9543169fe4b2b9b4bea3dd3ccbaf830e417b1b7eba9ab372f5ad3494",
+        "bytes": 10012
+      },
+      {
+        "path": "agents/frontend-builder.md",
+        "sha256": "cfb27d50ecbd33132a9da835c5d9ec3c2657f028faf88866988c14debf87a6ae",
+        "bytes": 7912
+      },
+      {
+        "path": "agents/test-builder.md",
+        "sha256": "b7f6ead9d6d52013b9e62cfa5bafc2a72c33fa32fd13a0b71b92f2295791d22c",
+        "bytes": 8281
+      },
+      {
+        "path": "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md",
+        "sha256": "95bea775ba58cb95c42985da15dd991f11cbbbb3619b3130e00c75cfd450a088",
+        "bytes": 196677
+      },
+      {
+        "path": "blueprint/l3-stages/L3-S9-repair.md",
+        "sha256": "f8a80c5cbb9a6cde339c8e7d46ad66b755aaccf0f67fab57e757ab2ed3533efc",
+        "bytes": 88391
+      },
+      {
+        "path": "blueprint/l4-mechanisms/L4-stage-form.md",
+        "sha256": "1b3963416c975b1390d3c93b91e12c31907a2d5701f1121e03dbd146043adaa1",
+        "bytes": 103260
+      },
+      {
+        "path": "docs/workspace-integration.md",
+        "sha256": "026136bac43d1bce6b3ee38fdc3a0d605db73ec9cb5c3e4188c16d61ba29ade3",
+        "bytes": 62940
+      },
+      {
+        "path": "internal/agentauth/working.go",
+        "sha256": "6a1ef1e2699f0b58aedfeff21637da0dc3f2061a91262dc05d89898c5596f2b1",
+        "bytes": 3331
+      },
+      {
+        "path": "internal/assignment/completion.go",
+        "sha256": "9f49d7ea981a09e8e6b66b192a3e38894a299bc3b96f86c23ac0dbdbcc536c67",
+        "bytes": 17417
+      },
+      {
+        "path": "internal/assignment/lifecycle.go",
+        "sha256": "f4a1b806196beafd87cd3b38c36e422f427fdbf21c6deb64fb82326515dc146f",
+        "bytes": 20149
+      },
+      {
+        "path": "internal/assignment/lifecycle_generation_test.go",
+        "sha256": "f2ea676a61bbd4a01666f515c62b184c5145dac1417cb086ed368e9c7c5afa40",
+        "bytes": 2857
+      },
+      {
+        "path": "internal/cli/controller.go",
+        "sha256": "a137a0b19280253954af089b2e27b763ba9f9e64f23f056779327a9f10a9f44e",
+        "bytes": 109670
+      },
+      {
+        "path": "internal/cli/repair_command.go",
+        "sha256": "10765bbc40cdb526756604b1ff139a1fc8bf04a816520b1f7342f17354e7bd48",
+        "bytes": 61784
+      },
+      {
+        "path": "internal/cli/repair_command_agent_definition_test.go",
+        "sha256": "9edcb410c7f2d0c2af73bb11f5805d9b76765ccb5856b05388a69cf681305990",
+        "bytes": 3109
+      },
+      {
+        "path": "internal/cli/repair_dispatch_test.go",
+        "sha256": "bf4aef223bbce31bdf41043421102a097af941c332e262d7b3bf37cb703905ca",
+        "bytes": 7439
+      },
+      {
+        "path": "internal/cli/repair_status_test.go",
+        "sha256": "f79f5146a5119a2d63296487c87987a765d3e300e9f3889503977e63920b5d33",
+        "bytes": 3416
+      },
+      {
+        "path": "internal/cli/stage_answer.go",
+        "sha256": "050d968f42ee2c2a49893d612ad3ed384638af45d1a35f46f1e1245eddb1c2f1",
+        "bytes": 77395
+      },
+      {
+        "path": "internal/cli/stage_answer_e2e_test.go",
+        "sha256": "91bc5bf4cbbe73ca289ab6a83fa4a69a3a147d34b7fa7a42c86d3f483a2f290f",
+        "bytes": 27820
+      },
+      {
+        "path": "internal/cli/stage_answer_receipt_readonly_test.go",
+        "sha256": "c428c4ab9c9c936d40b9465cf22d31b39ec5487cfdcc6ec1f2dec14cb78bb8b5",
+        "bytes": 1791
+      },
+      {
+        "path": "internal/cli/workspace_command.go",
+        "sha256": "1df0f7a2f983bea8acd6bc383f523cb9e9f74925af190dad1348723a7a3c2bea",
+        "bytes": 18499
+      },
+      {
+        "path": "internal/cli/workspace_delivery.go",
+        "sha256": "1aea03d98c674bd7e2d08d7a2bf9041ba0d977593430ca233703d055f45e5e51",
+        "bytes": 22277
+      },
+      {
+        "path": "internal/cli/workspace_delivery_matcher_test.go",
+        "sha256": "3531e2777ace294c2e3f2f6f3472049eaf2c5d775dcfea73dc3183416f4b2d04",
+        "bytes": 7826
+      },
+      {
+        "path": "internal/cli/workspace_pending.go",
+        "sha256": "4a45172a77026311cf4a23a5fbc835abbba958eb72ba5e00b8f49f5ba1fa2ae0",
+        "bytes": 1164
+      },
+      {
+        "path": "internal/cli/workspace_rework.go",
+        "sha256": "e9dc49166f20467cee6a025abea6f026c68ed64d086c962d4879a7e015b25e4a",
+        "bytes": 8051
+      },
+      {
+        "path": "internal/controlproof/journal.go",
+        "sha256": "255705f7562c72a7aa777d636f2e06c9ba23a94f88034d4a2d8e2928d31d8e14",
+        "bytes": 8505
+      },
+      {
+        "path": "internal/controlproof/s6_main_baseline.go",
+        "sha256": "a39f02573c2ccbad787475e5d16bcaebc31f09d76adbf349cc8566b87151a510",
+        "bytes": 7580
+      },
+      {
+        "path": "internal/hook/repair_result.go",
+        "sha256": "211848d9e5d7d1b077887c9ce318c92fc813935744b1034f608a17843f6b2b5c",
+        "bytes": 5743
+      },
+      {
+        "path": "internal/hookctx/loader.go",
+        "sha256": "a4706f33ce37ac4efc586a8a239b1d27d1fc390b4a37e5565c07fdcc82451b9e",
+        "bytes": 89027
+      },
+      {
+        "path": "internal/hookctx/loader_s9_assignment_internal_test.go",
+        "sha256": "35ada1bce7219e38a7411caa1627bc257f028b1696a82039d4d7df373d4b1e1d",
+        "bytes": 2745
+      },
+      {
+        "path": "internal/integration/s7_issued_result_external_test.go",
+        "sha256": "9ba82d0c14bbdb3721b4b782604242c2f8e2599986e73f12db9b13922829c65a",
+        "bytes": 34549
+      },
+      {
+        "path": "internal/investigation/hypothesis_result_registration_test.go",
+        "sha256": "37760f83fef5f6bab5cfe1939aa649756421f36348b7b3368584e77fa6286bfd",
+        "bytes": 37955
+      },
+      {
+        "path": "internal/investigation/repair_plan_report_hook_test.go",
+        "sha256": "2b94ecdec8c9e306921818e607fed60dd2862a0b86b8a1b16d2b3a454f949182",
+        "bytes": 33355
+      },
+      {
+        "path": "internal/investigation/repair_result_candidate_recovery_test.go",
+        "sha256": "256a73a7f6b5136ceae003c9b93ad0330daaf8d9d5c4c59567c59cb14a9b49fa",
+        "bytes": 15933
+      },
+      {
+        "path": "internal/investigation/repair_result_final_retry_test.go",
+        "sha256": "27f69d3dd83a7546e8432d806eb72231f9d753bd7427edb3dabbdc10a5e5e5dd",
+        "bytes": 22294
+      },
+      {
+        "path": "internal/investigation/repair_result_hook_test.go",
+        "sha256": "7e7349c6c294ebdea4957a7c4399946476b3c88dac9f33479325864177952db3",
+        "bytes": 40066
+      },
+      {
+        "path": "internal/investigation/repair_result_recovery_test.go",
+        "sha256": "1933ada51418d4e8df8ece598a268bd5960b877e3550921af2cf13130c07924f",
+        "bytes": 27318
+      },
+      {
+        "path": "internal/investigation/repair_result_worker_host_gate_test.go",
+        "sha256": "605a1df6808597be440a0689dad9e35bc12a2f349cf32483f8ab53500ed41bd1",
+        "bytes": 10390
+      },
+      {
+        "path": "internal/policy/work_packet.go",
+        "sha256": "60b586ccf64d78b03713a19518c0075f29909adb23f2369fe9bfe9201652257a",
+        "bytes": 7872
+      },
+      {
+        "path": "internal/repair/issued_repair_result.go",
+        "sha256": "2c32cf62e3f251c133f2d8a9360fd7577e16e32bd7d18830202950ec8359a3f6",
+        "bytes": 91550
+      },
+      {
+        "path": "internal/repair/issued_repair_result_attempt_test.go",
+        "sha256": "d19a1fbb10092d4e3ec47d1a0d733767dc07c729455285624788fb28d371b1a9",
+        "bytes": 11444
+      },
+      {
+        "path": "internal/repair/model.go",
+        "sha256": "aea4a337a477ed20140581ff6b0b2f82b4ee1fcb65fc9d55fbc8667c404276d9",
+        "bytes": 20282
+      },
+      {
+        "path": "internal/repair/result.go",
+        "sha256": "26a30c80e03bc999bab552fc055cb2954e1359a414a1f10075a5538db2c98d72",
+        "bytes": 11268
+      },
+      {
+        "path": "internal/repair/runtime.go",
+        "sha256": "638958af2f56799325a02a63a99a66a2baa95a55dda9cdefdbc82b3a7a639ee3",
+        "bytes": 116951
+      },
+      {
+        "path": "internal/repair/workspace_delivery.go",
+        "sha256": "a638c4da91fa38e73e08a513c0be58a9f9f9078a5bc65ae851655e8ca4117f24",
+        "bytes": 13781
+      },
+      {
+        "path": "internal/runtime/checkpoint_indices.go",
+        "sha256": "a1646affa4ebdf9301364c95984a1c79561210544e3b2b1c8337746e427d9606",
+        "bytes": 9541
+      },
+      {
+        "path": "internal/runtime/repair_plan_report_packet.go",
+        "sha256": "f4540106f33ef289f7305f9e3c8c723b751a0e9e89214af3fb7cae55a1cc764f",
+        "bytes": 24795
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_types.go",
+        "sha256": "a0b631929303cc148d320683f461064c542eb31cb174364a4c6a30170eb630c3",
+        "bytes": 6649
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_types_test.go",
+        "sha256": "89888e785660737966cdec28cd54c462b5b54fe29a4bdfa1d61392e843919297",
+        "bytes": 12811
+      },
+      {
+        "path": "internal/runtime/repair_result_checkpoint.go",
+        "sha256": "384b3d090688b21bdc41d23917dd22375d511072716f0e3e6d655e5374a1b428",
+        "bytes": 32368
+      },
+      {
+        "path": "internal/runtime/repair_result_completion.go",
+        "sha256": "873e2df3492b7b99c3f065f48303af6aa224f1bd352c0a783719d3f8f39e8e2e",
+        "bytes": 7503
+      },
+      {
+        "path": "internal/runtime/repair_result_packet.go",
+        "sha256": "a8bc1efe86f0b8016bfa232ca88d67129ec2c28b4f6c6c07c22f8d6388b9972c",
+        "bytes": 21989
+      },
+      {
+        "path": "internal/runtime/repair_result_packet_test.go",
+        "sha256": "62cbb1f5fb1856de7ad8ab243bd585098729cb9e9cae4d9727d324900c9c0441",
+        "bytes": 20755
+      },
+      {
+        "path": "internal/runtime/repair_result_profiles.go",
+        "sha256": "d21b32bbc06ce285f5f59b5ea4495a2b1b25271a6f8f93785359de323ee14223",
+        "bytes": 2475
+      },
+      {
+        "path": "internal/runtime/repair_result_profiles_test.go",
+        "sha256": "7da4cd08970e5c73583ef6bb7aa138c79e37c4489f7bfa39846e95a5cda52a46",
+        "bytes": 1976
+      },
+      {
+        "path": "internal/runtime/repair_result_types.go",
+        "sha256": "9f9822e0e64539ba09f4a0e71d2912de2f4627ecc1037a037bed580f2cd95758",
+        "bytes": 7972
+      },
+      {
+        "path": "internal/runtime/repair_result_types_test.go",
+        "sha256": "64099120e36d2977f6a684cd2ca12a45a1e8d9e3329dc4c107f03ba53a1ac0e4",
+        "bytes": 11132
+      },
+      {
+        "path": "internal/schema/assets/agent-message.schema.json",
+        "sha256": "c3457ba0cba419cbe12736ebe71196d65a25f3742dc2e28493fa7c53cf28c7e1",
+        "bytes": 35848
+      },
+      {
+        "path": "internal/schema/assets/loop-state-v1.2.schema.json",
+        "sha256": "165600b56f8e6f5bc1c63664cc2def2fe2a5931942de6414682a3f379762f109",
+        "bytes": 188283
+      },
+      {
+        "path": "internal/schema/assets/repair-result-blocker.schema.json",
+        "sha256": "e38ad3f8a7e06bedc7e35fd0b56ca541e03395529d08a16f32e2e46b3db7d4b7",
+        "bytes": 2626
+      },
+      {
+        "path": "internal/schema/assets/repair-result-candidate-provenance.schema.json",
+        "sha256": "fb3352363399889c577c40ce9dd20038120a455bc87c9c586a7f9bf24944eceb",
+        "bytes": 4028
+      },
+      {
+        "path": "internal/schema/assets/repair-result-receipt.schema.json",
+        "sha256": "cb9fa163be10ec78a76f61f2bdce0d6e5ba90f37d47fca39bc3c94ac5e5cf3bb",
+        "bytes": 4398
+      },
+      {
+        "path": "internal/schema/assets/repair-result-work-packet.schema.json",
+        "sha256": "a4d73b6dca873a8ae3227a4b32a2c7c15304dd810d946570b66085ffe332a5d2",
+        "bytes": 6164
+      },
+      {
+        "path": "internal/schema/assets/repair-result.schema.json",
+        "sha256": "43453d8378b8a27c7d83b9e69ced2698be146b8ca7e3efbf468cee72e150a37f",
+        "bytes": 4501
+      },
+      {
+        "path": "internal/schema/assets/repair-workspace-candidate.schema.json",
+        "sha256": "d873f3627ad3ebf6c7ddc5bad24a69de3d6bac2571096ba484dc4d7a9c8bc75e",
+        "bytes": 1308
+      },
+      {
+        "path": "internal/schema/assets/stage-answer-s9-result.schema.json",
+        "sha256": "90fad61987ceffeb2c920ff183052f966e0d06191b99a0f0a0403aa5ee5e38d3",
+        "bytes": 4675
+      },
+      {
+        "path": "internal/schema/assets/stage-form-s9-result-template.json",
+        "sha256": "13d82a193152a53324754fae9796ce6d9eaa4f99f1e02d9f64710e3db5a95f6e",
+        "bytes": 3655
+      },
+      {
+        "path": "internal/schema/assets/submission-receipt.schema.json",
+        "sha256": "074baacfc53a3d7ec4434cb44e868a4bb04755ec16cff8bfcd0aa28e1c01809f",
+        "bytes": 11350
+      },
+      {
+        "path": "internal/schema/submission_receipt_test.go",
+        "sha256": "a9fafb8796ec1756fb1d0d5481f94be47c57c690ffa71b48d47427f2c1fb67a2",
+        "bytes": 11162
+      },
+      {
+        "path": "internal/submission/receipt.go",
+        "sha256": "c3350d815420c9cd877c4e92686bcfdb434855c652a4c46d6b25589150657929",
+        "bytes": 14871
+      },
+      {
+        "path": "internal/submission/repair_result.go",
+        "sha256": "70b709a6ea609059a421e7ddcf42b775264d8f74a8c0e238d0f276d172d1a447",
+        "bytes": 19635
+      },
+      {
+        "path": "internal/submission/service.go",
+        "sha256": "480133ae37b107327580256cc6e09805ccbb1606badb9447e1f48deee1a5d266",
+        "bytes": 10709
+      },
+      {
+        "path": "internal/workpacket/repair_result.go",
+        "sha256": "0b3be7ab1d1848f109d54672af54e98c4580e8f23405f2b4b9c827728bcd54e2",
+        "bytes": 31955
+      },
+      {
+        "path": "internal/workpacket/repair_result_test.go",
+        "sha256": "6678e42da3af473d1f8f5132eab99c18dfb344b876c58977f25f1a136448dc52",
+        "bytes": 16001
+      },
+      {
+        "path": "skills/agent-dispatch/SKILL.md",
+        "sha256": "980c9e2579fe232e88370986adbeec786237120c0054af70770d5d887129cb2c",
+        "bytes": 32191
+      },
+      {
+        "path": "skills/bug-resolution/SKILL.md",
+        "sha256": "192e1f315082712dede0bf8d9a06b18382e3b7d7e92a961ec5ad0068c07dc261",
+        "bytes": 18843
+      }
+    ]
+  },
+  "limits_and_remaining": [
+    "Artifact/Receipt DTO tests validate shapes and local canonical digest consistency only. Fixture coordinates and input identities are not original typed blocker acceptance evidence.",
+    "Authoritative historical blocker reader is being drafted outside the repo; evidence kind/catalog/loop-state row, original same-CAS typed lifecycle guard, opaque blocker/resolution capability, actual host Hook, Stop and Resume packet/provenance/completion integration are not implemented by this evidence.",
+    "Existing shared public receipt remains its seven currently implemented statuses; blocker_recorded is designed but not enabled.",
+    "Machine-stale operational-owner recovery and completed-but-ineligible professional result reception need their own original domain contracts.",
+    "No live Claude/Agent Team/model judgment, supported sandbox Worker pass/fail matrix, native Main topology or real macOS/Windows execution is attested.",
+    "No new release package or disposable install is performed for these changes; earlier package evidence remains historical.",
+    "Per-unit diff attribution, repeated-command indexed runner, later typed Impact/Targeted/Handoff/fresh S7, remaining global cards and platform checks still remain.",
+    "No commit/tag/push/publish/current-project installation."
+  ],
+  "goal": "active"
+}

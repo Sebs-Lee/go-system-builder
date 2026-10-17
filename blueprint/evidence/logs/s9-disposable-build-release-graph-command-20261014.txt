@@ -1,0 +1,4 @@
+Second disposable build command (exit 1 at staged release-graph validation):
+TMPDIR=$(cat /tmp/gsb-check-permissions-work-path) GOCACHE=<task-tmp>/eval-build-cache GOPROXY=off GOMAXPROCS=2 bash packaging/build-release.sh s9-issued-plan-report-review /home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-02/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz
+
+All five platform builds completed. Staged release-graph validation rejected seven document links to blueprint files intentionally absent from the package; the build script removed its private stage and did not create the tarball/manifest.

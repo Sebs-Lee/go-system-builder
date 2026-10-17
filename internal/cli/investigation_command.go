@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -238,6 +239,9 @@ func runRuntimeInvestigationDispatch(args []string, stdout, stderr io.Writer) in
 		"validation":         map[string]any{"result": "pass", "missing_responsibilities": []any{}, "unresolved_conflicts": []any{}, "warnings": []any{}, "validated_at": time.Now().UTC().Format(time.RFC3339Nano)},
 	}
 	nextAction := fmt.Sprintf("send one generic PLAN_REPORT while still running, then submit `runtime investigation hypothesis result --case-id %s --hypothesis-id %s --assignment-id %s --method <...> --observed <...> --result <supported|refuted|inconclusive> --explains <finding> --source-boundary <ref> --evidence <ref> --counterfactual <...>`", *caseID, *hypothesisID, resolvedAssignmentID)
+	if runtime.PacketEnabled(snapshot.State) {
+		nextAction = "The Hook listener prepares the exact registered S8 question and supplies its view/answer paths; the Investigator reads that packet, writes only its answer.json, and saves through the platform PostToolUse Hook. Main or the owner may inspect the original receipt with `runtime stage-answer receipt --agent " + strings.TrimSpace(*agentID) + " --packet <packet-id>`."
+	}
 	task := map[string]any{
 		"task_id": taskID, "case_id": strings.TrimSpace(*caseID), "hypothesis_id": strings.TrimSpace(*hypothesisID), "assignment_id": resolvedAssignmentID,
 		"state": "reviewed", "objective": stringValue(hypothesis["discriminator"]),
@@ -1339,15 +1343,89 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 			pendingHypotheses = append(pendingHypotheses, id)
 		}
 	}
+	var hypothesisResultPackets []any
+	packetMode := state != nil && runtime.PacketEnabled(state)
+	issuedHypothesisResult := false
+	unissuedDispatchedHypothesis := false
+	packetProjectionProblem := false
+	if packetMode {
+		packets, packetErr := runtime.CurrentHypothesisResultPackets(root, state, "")
+		if packetErr != nil {
+			return nil, fmt.Errorf("read current S8 issued questions: %w", packetErr)
+		}
+		for _, packet := range packets {
+			if packet.Binding.CaseID != stringValue(document["case_id"]) {
+				continue
+			}
+			row := map[string]any{
+				"packet_id":      packet.ID,
+				"owner_agent_id": packet.Binding.OwnerAgentID,
+				"assignment_id":  packet.Binding.AssignmentID,
+				"hypothesis_id":  packet.Binding.HypothesisID,
+				"status":         "issued",
+			}
+			receipt, accepted, receiptErr := runtime.VerifiedHypothesisResultReceipt(root, state, packet.ID, packet.Binding.OwnerAgentID)
+			if receiptErr != nil {
+				row["status"] = "invalid"
+				row["source_error"] = receiptErr.Error()
+				packetProjectionProblem = true
+			} else if accepted && receipt.PacketID == packet.ID && receipt.OwnerAgentID == packet.Binding.OwnerAgentID {
+				row["status"] = "accepted"
+			} else {
+				issuedHypothesisResult = true
+			}
+			viewPath, answerPath, pathsErr := hypothesisResultLifecyclePaths(context.Background(), root, state, packet, "", "")
+			if pathsErr != nil {
+				row["source_error"] = pathsErr.Error()
+				packetProjectionProblem = true
+			} else {
+				row["view_path"] = viewPath
+				row["answer_path"] = answerPath
+			}
+			row["receipt_command"] = "runtime stage-answer receipt --agent " + packet.Binding.OwnerAgentID + " --packet " + packet.ID
+			hypothesisResultPackets = append(hypothesisResultPackets, row)
+		}
+		for _, hypothesis := range hypotheses {
+			id := stringValue(hypothesis["hypothesis_id"])
+			if id == "" {
+				continue
+			}
+			if _, accepted := resultByHypothesis[id]; accepted {
+				continue
+			}
+			if investigationAssignmentDispatched(root, state, stringValue(hypothesis["assignment_id"])) {
+				hasPacket := false
+				for _, packet := range packets {
+					if packet.Binding.CaseID == stringValue(document["case_id"]) && packet.Binding.HypothesisID == id {
+						hasPacket = true
+						break
+					}
+				}
+				if !hasPacket {
+					unissuedDispatchedHypothesis = true
+				}
+			}
+		}
+	}
 	nextAction := "register one falsifiable hypothesis with `runtime investigation hypothesis register --case-id <case> --id <hypothesis> --assignment-id <assignment> --statement <...> --invariant <...> --discriminator <...> --support <...> --refute <...> --source-finding <finding> --evidence <current-evidence-id-or-test://repo-relative-path>`"
 	if len(pendingHypotheses) > 0 {
-		nextAction = "dispatch it with `runtime investigation dispatch --case-id <case> --hypothesis-id <hypothesis> --agent-id <agent>`, then submit runtime investigation hypothesis result"
+		nextAction = "dispatch it with `runtime investigation dispatch --case-id <case> --hypothesis-id <hypothesis> --agent-id <agent>`"
 	} else if len(awaitingResultHypotheses) > 0 {
 		nextAction = "submit it with `runtime investigation hypothesis result --case-id <case> --hypothesis-id <hypothesis> --assignment-id <assignment> --method <...> --observed <...> --result <supported|refuted|inconclusive> --explains <finding> --source-boundary <ref> --evidence <ref> --counterfactual <...>`"
 	} else if len(unexplained) == 0 && len(hypotheses) > 0 {
 		nextAction = "record the Case disposition with `runtime investigation route --case-id <case> --route <s9_repair|investigate_more|duplicate|s2_spec_rework|human_req_change|s7_no_change> --reason <...>`; for s9_repair also provide the root-cause and three evidence files"
 	}
-	if route := stringValue(document["route"]); route != "" {
+	if packetMode {
+		switch {
+		case packetProjectionProblem:
+			nextAction = "Main must inspect the original S8 packet, Case and registered execution source before continuing; do not edit or issue a replacement answer by hand"
+		case unissuedDispatchedHypothesis:
+			nextAction = "The Hook listener prepares the dispatched Investigator questionnaire and supplies its exact paths; queued Assignments wait for dispatch"
+		case issuedHypothesisResult:
+			nextAction = "the assigned Investigator reads its exact view_path and writes only answer_path from hypothesis_result_packets, then saves through the platform PostToolUse Hook; inspect the original receipt with its receipt_command"
+		}
+	}
+	if route := stringValue(document["route"]); route != "" && !issuedHypothesisResult && !unissuedDispatchedHypothesis && !packetProjectionProblem {
 		nextAction = investigationRouteNextAction(route, pointer)
 	}
 	// RC-18 S8-H3: surface the baseline-drift warning on the status board so
@@ -1372,8 +1450,9 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 			"completed":        completedHypotheses,
 			"dispatch_unknown": unknownDispatchHypotheses,
 		},
-		"ready_for_contract": len(unexplained) == 0 && stringValue(document["route"]) == "s9_repair",
-		"next_action":        nextAction,
+		"hypothesis_result_packets": hypothesisResultPackets,
+		"ready_for_contract":        len(unexplained) == 0 && stringValue(document["route"]) == "s9_repair",
+		"next_action":               nextAction,
 	}, nil
 }
 

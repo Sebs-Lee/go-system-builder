@@ -4,7 +4,10 @@ S4 delivers one `docs/dev/tasks/index-REQ-<id>.md` plan for the current REQ, usi
 [index template](../dev/tasks/index-template.md). Every non-cancelled TASK appears
 exactly once as an unchecked Markdown file link under `## W1`, `## W2`, etc.
 The header declares `REQ`, `Dispatch policy: waves-v1`, a positive `Revision`,
-and `Status: complete` before review. TASKs explicitly declare Source REQ refs.
+and `Status: complete` before review. This is the plan-document status required
+by its original gate; it does not mean any implementation responsibility is
+`done`. Responsibility progress follows the shared five-state semantics in
+[`state-machine.md`](state-machine.md#21-loop-responsibility-status). TASKs explicitly declare Source REQ refs.
 New REQs and TASKs declare waves-v1; missing plans are not a legacy exemption.
 
 Keep real artifact dependencies in TASK Dependencies, not in a second graph.
@@ -29,8 +32,9 @@ Use `loop-harness s6 status --capacity <total available concurrent slots>`;
 `--json` gives the same projection. Outside the building state, status reports
 the lifecycle state without readiness or a selected Builder batch. Capacity is the actual total, not remaining
 slots. Without a capacity declaration the command shows readiness but does not
-claim a dispatch batch. A completed predecessor releases its consumers without
-waiting for unrelated tasks in the prior wave. Queued work is retained.
+claim a dispatch batch. A predecessor releases its consumers only after the
+original Result has been consumed and its required integration checkpoint
+verified, without waiting for unrelated tasks in the prior wave. Queued work is retained.
 
 A reported result is not integration. The current result, checks and matching
 assignment checkpoint must be verified after merging back into the root's bound

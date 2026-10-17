@@ -14,3 +14,6 @@
 - [L4-state-transition-core](L4-state-transition-core.md)
 - [L4-worktree-governance](L4-worktree-governance.md)
 - [L4-workspace-execution-profiles](L4-workspace-execution-profiles.md)
+
+跨阶段工作状态统一入口：[全局通用工作状态模型](L4-state-transition-core.md#unified-work-state)。
+状态语义只在该处定义，其他机制消费，不另起词表。

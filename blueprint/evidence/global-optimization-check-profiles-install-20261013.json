@@ -1,0 +1,172 @@
+{
+  "package_sha256": "4ff066c301d5f9f22fd855971782e9ca5044c3f2b6ac691db441b2627e2f7b0a",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-check-profiles-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true,
+        "native_s4_behavior_inputs_oracles_conditions_source_hashes": true,
+        "tampered_generated_cases_unresolved_without_new_gate": true,
+        "behavior_projection_consumer_assets": true,
+        "empty_template_no_approved_registry_installed": true,
+        "explicit_rule_candidate_then_source_proven_default": true,
+        "conflicting_defaults_preserve_original_task_verdict": true,
+        "conventions_sources_consumer_assets": true,
+        "fixed_context_conventions_protocol_and_role_assets": true,
+        "native_check_capability_help_and_protocol_assets": true,
+        "explicit_profile_protocol_and_receipt_boundaries": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true,
+        "native_s4_behavior_inputs_oracles_conditions_source_hashes": true,
+        "tampered_generated_cases_unresolved_without_new_gate": true,
+        "behavior_projection_consumer_assets": true,
+        "empty_template_no_approved_registry_installed": true,
+        "explicit_rule_candidate_then_source_proven_default": true,
+        "conflicting_defaults_preserve_original_task_verdict": true,
+        "conventions_sources_consumer_assets": true,
+        "fixed_context_conventions_protocol_and_role_assets": true,
+        "native_check_capability_help_and_protocol_assets": true,
+        "explicit_profile_protocol_and_receipt_boundaries": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "native fresh installation plus actual explicit Rule candidate/indexed default/conflict projection and original unchanged S4 verdict, Scenario generation and S4 behavior projection from explicit test fixtures; source examples are not product tests or browser PASS; original recover help and readback projection from explicit source-example test fixtures, validated by the packaged embedded Schema, with exact installed Skill hashes; no registered business task or real model session is claimed; original S5-to-S6 enabled Builder prepare/launch/commit/report/verified integration tested separately through production CLI; launch substitute is not real Claude consumption",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-check-profiles-install-ben4ut3m",
+  "temporary_artifacts_may_expire": true,
+  "slice": "G07 explicit frozen CheckProfile and actual v2 profile observations",
+  "acceptance_status": "completed_slice_whole_optimization_active",
+  "implementation": {
+    "authority": "Original manifest optional check_profiles; exact required_checks index/command; new 1.2 execution only; location unchanged and timeout 1-300 seconds within original outer deadline",
+    "sources": "Declared dependency/fixture path/hash frozen into original input set; unique approved environment whitelist and unset/empty distinction; declared_only does not inherit arbitrary environment",
+    "lifecycle": "Original profile retained through workspace replacement and exposed through original workspace/native context; legacy ready executions not retrofitted and legacy Runtime registration rejects new profile authority",
+    "execution": "Original Worker/Main runners apply actual profile timeout/environment, record original Runtime/generation/Assignment/owner/responsibility and whole tested-tree/runner/environment/dependency/fixture fingerprints",
+    "receipt": "Profile-backed v2 receipts preserve original fields and real failure, log SHA256 and corruption-detection receipt_integrity; integrity is not authenticated domain acceptance",
+    "reuse": "All checks still execute; reuse_eligible=false; required Main post integration and independent fresh S7 unchanged"
+  },
+  "regressions": [
+    {
+      "command": "GOPROXY=off go test ./internal/checkexec ./internal/integration ./internal/assignment ./internal/runtime ./internal/workspace -skip ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "status": "pass",
+      "package_seconds": {
+        "checkexec": 0.049,
+        "integration": 7.397,
+        "assignment": 9.606,
+        "runtime": 25.828,
+        "workspace": 7.995
+      },
+      "scope": "Profile binding/environment/content/timeout/drift and original domains; only recorded bwrap host limitation excluded"
+    },
+    {
+      "command": "GOPROXY=off go test ./internal/cli -run profile actual integration/replacement/native targets -count=1",
+      "status": "pass",
+      "seconds": 59.978,
+      "scope": "Original S5-to-S6 actual checked commit/report/verified Main integration with profile receipt, fixed replacement and native context"
+    },
+    {
+      "command": "GOPROXY=off go test ./internal/checkexec ./internal/integration -count=1",
+      "status": "pass",
+      "package_seconds": {
+        "checkexec": 0.05,
+        "integration": 8.723
+      },
+      "scope": "Final observation Schema addition after broad regressions started"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/checkexec ./internal/integration ./internal/assignment ./internal/runtime ./internal/workspace -skip ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "status": "pass",
+      "package_seconds": {
+        "checkexec": 1.316,
+        "integration": 10.908,
+        "assignment": 59.089,
+        "runtime": 146.74,
+        "workspace": 15.24
+      },
+      "scope": "Before final observation Schema validation; original host exclusion explicit"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/cli -run profile actual integration/replacement/native targets -count=1",
+      "status": "pass",
+      "seconds": 199.523,
+      "scope": "Actual profile and original responsibility/integration fixtures"
+    },
+    {
+      "command": "GOPROXY=off go vet ./internal/checkexec ./internal/integration ./internal/hookctx ./internal/assignment ./internal/workspace ./internal/cli",
+      "status": "pass",
+      "scope": "Before final observation Schema-only addition"
+    },
+    {
+      "command": "GOPROXY=off go test ./internal/cli -count=1 -timeout 30m",
+      "status": "pass",
+      "session_id": 24504,
+      "log": "/tmp/gsb-check-profiles-full-cli.log",
+      "scope": "Started before final observation Schema validation; final change separately tested",
+      "seconds": 768.699,
+      "terminal_exit_code": 0
+    }
+  ],
+  "initial_failures_and_resolution": [
+    "Added typed profiles to hook context before adding the import; compile failure fixed before acceptance.",
+    "During review, receipt sealing assigned to the execution err variable and could erase a failed process; replaced with separate sealErr and reran real failure/timeout/drift tests before acceptance."
+  ],
+  "limits": {
+    "real_claude": "not_executed",
+    "worker_isolation": "Previously verified bwrap UID-map host restriction; unchanged original isolation",
+    "other_platforms": "Cross compile only; actual native Linux/amd64",
+    "reuse": "not enabled or claimed; profile observations alone are not original domain reception",
+    "environment": "Inherited policy captures only declared whitelist facts; it has no complete reusable environment closure"
+  },
+  "remaining": "G05 authenticated original tool receipt acceptance, complete applicability/reuse keys, concurrency/interruption recovery, and all other remaining G01-G08/named adapters/real-platform/model acceptance remain in the unchanged active goal.",
+  "temporary_cleanup": "Removed only evidenced obsolete task-owned temporary installation copies; acceptance JSON, source, archives, current install and live test directories retained.",
+  "publication": "No commit, push, publication or active installation overlay performed",
+  "diff_check": "pass",
+  "terminal_verification_date_utc": "2026-10-14"
+}

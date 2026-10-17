@@ -1,0 +1,107 @@
+{
+  "package_sha256": "fdd148b1d71c8c8b454f7d70d4c0d3239c395f59ca2b0dd714012a817e0a8e3e",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-backend-core-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "native fresh installation, original recover help and readback projection from explicit source-example test fixtures, validated by the packaged embedded Schema, with exact installed Skill hashes; no registered business task or real model session is claimed; original S5-to-S6 enabled Builder prepare/launch/commit/report/verified integration tested separately through production CLI; launch substitute is not real Claude consumption",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-backend-core-install-_icm75if",
+  "temporary_artifacts_may_expire": true,
+  "release_manifest_files": 205,
+  "verification": {
+    "production_backend_core": {
+      "command": "GOPROXY=off go test ./internal/cli -run ^TestWorkspaceBackendCore -count=1",
+      "passed": true,
+      "seconds": 79.892,
+      "scope": "Original S5 dual PASS, S6 Builder register, fixed generated role, unchanged Main role/activation, original begin/commit/report/non-squash merge/required checks; default shadow, no retrofit, replacement and source drift."
+    },
+    "workspace_agentcontext_race": {
+      "command": "GOPROXY=off go test -race ./internal/agentcontext ./internal/workspace -skip ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "passed": true,
+      "workspace_seconds": 29.978,
+      "host_exclusion": "Original bwrap uid-map Permission denied restriction remains recorded; no isolation change or fallback."
+    },
+    "domain_regression": {
+      "command": "GOPROXY=off go test ./internal/runtime ./internal/schema ./internal/controller ./internal/transition ./internal/policy ./internal/assignment ./internal/integration ./internal/hookctx ./internal/team -count=1",
+      "passed": true,
+      "runtime_seconds": 79.019
+    },
+    "final_vet": {
+      "command": "GOPROXY=off go vet ./internal/agentcontext ./internal/workspace ./internal/cli",
+      "passed": true
+    },
+    "complete_cli": {
+      "command": "GOPROXY=off go test ./internal/cli -count=1",
+      "passed": true,
+      "seconds": 596.439,
+      "scope": "All CLI cases including enabled core profile, original S5/S6 business chain, fixed native context and checkpoint recovery."
+    },
+    "core_worker_native_race": {
+      "command": "GOPROXY=off go test -race ./internal/cli -run ^(TestWorkspaceBackendCore|TestWorker|TestNativeContextBinding) -count=1",
+      "passed": true,
+      "seconds": 522.031
+    },
+    "diff_check": {
+      "passed": true
+    }
+  },
+  "remaining": [
+    "Real Claude consumption and token/effective-operation measurements",
+    "Native/teammate enabled role assembly and remaining role profiles",
+    "G02-G08 and remaining named domain adapters under original goal"
+  ],
+  "temporary_log_files": [
+    "/tmp/gsb-core-profile-all-tests.log",
+    "/tmp/gsb-core-profile-full-chain.log",
+    "/tmp/gsb-core-profile-cli-full.log",
+    "/tmp/gsb-core-profile-cli-race.log",
+    "/tmp/gsb-backend-core-domain-regression.log",
+    "/tmp/gsb-backend-core-workspace-race.log",
+    "/tmp/gsb-backend-core-final-vet.log",
+    "/tmp/gsb-backend-core-build.log",
+    "/tmp/gsb-backend-core-native-smoke.log"
+  ]
+}

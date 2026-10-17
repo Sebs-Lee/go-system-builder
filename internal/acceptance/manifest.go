@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
@@ -45,8 +46,12 @@ var AuditAreaIDs = []string{
 // Manifest is the structured completion ledger referenced by an S10
 // acceptance or release-audit evidence envelope.
 type Manifest struct {
-	SchemaVersion      string                `json:"schema_version"`
-	ManifestType       string                `json:"manifest_type"`
+	SchemaVersion string `json:"schema_version"`
+	ManifestType  string `json:"manifest_type"`
+	// Outcome is the professional S10 conclusion. It is optional for existing
+	// manifests; the automated Hook save path requires it and uses the same
+	// value for the existing evidence envelope.
+	Outcome            string                `json:"outcome,omitempty"`
 	RuntimeID          string                `json:"runtime_id"`
 	BaselineGeneration int                   `json:"baseline_generation"`
 	ReviewRound        int                   `json:"review_round"`
@@ -97,6 +102,9 @@ type Baseline struct {
 	// AffectedPathsAll reports that the caller explicitly declared the full
 	// surface (the "all" token), which waives the exact-set comparison.
 	AffectedPathsAll bool
+	// CanonicalProduct preserves the full literal machine path denominator
+	// even when the request selects an all-surface audit.
+	CanonicalProduct bool
 }
 
 // InventoryAuthority is the finite S10 denominator reconstructed from facts
@@ -129,11 +137,38 @@ var s10RequirementToken = regexp.MustCompile(`\b(?:FR|NFR)-[A-Z0-9]+(?:-[A-Z0-9]
 // decoded is an authority failure. Returning an empty baseline in that case
 // would silently hand the denominator back to the manifest author.
 func BuildS10ExternalBaseline(root string, state map[string]any, affectedPaths []string) (Baseline, error) {
+	canonical, selectionErr := buildsurface.SelectCanonical(root, state)
+	if selectionErr != nil {
+		return Baseline{}, selectionErr
+	}
+	if canonical {
+		snapshot, err := buildsurface.ReadRegistered(root, state)
+		if err != nil {
+			return Baseline{}, err
+		}
+		baseline := Baseline{CanonicalProduct: true, ChangedPaths: []string{}}
+		seen := map[string]bool{}
+		for _, file := range snapshot.Paths {
+			baseline.ChangedPaths = append(baseline.ChangedPaths, file.Path)
+			seen[file.Path] = true
+		}
+		for _, file := range affectedPaths {
+			if strings.EqualFold(strings.TrimSpace(file), "all") {
+				baseline.AffectedPathsAll = true
+				continue
+			}
+			if file != "" && !seen[file] {
+				baseline.ChangedPaths = append(baseline.ChangedPaths, file)
+				seen[file] = true
+			}
+		}
+		sort.Strings(baseline.ChangedPaths)
+		return baseline, nil
+	}
 	baseline := Baseline{}
 	for _, path := range affectedPaths {
 		if strings.EqualFold(strings.TrimSpace(path), "all") {
 			baseline.AffectedPathsAll = true
-			return baseline, nil
 		}
 	}
 	seen := map[string]struct{}{}
@@ -164,6 +199,13 @@ func BuildS10ExternalBaseline(root string, state map[string]any, affectedPaths [
 		}
 		switch kind {
 		case "completion_report":
+			var envelope map[string]json.RawMessage
+			if err := json.Unmarshal(data, &envelope); err != nil {
+				return Baseline{}, fmt.Errorf("S10 inventory authority completion evidence %s is invalid JSON: %w", id, err)
+			}
+			if _, canonical := envelope["assignment_record"]; canonical {
+				return Baseline{}, fmt.Errorf("S10 inventory authority canonical S6 evidence %s requires the original Main facts changed-surface projection", id)
+			}
 			var completion struct {
 				ChangedPaths []string `json:"changed_paths"`
 			}
@@ -188,6 +230,9 @@ func BuildS10ExternalBaseline(root string, state map[string]any, affectedPaths [
 		}
 	}
 	for _, path := range affectedPaths {
+		if strings.EqualFold(strings.TrimSpace(path), "all") {
+			continue
+		}
 		add(path)
 	}
 	sort.Strings(baseline.ChangedPaths)
@@ -334,11 +379,67 @@ func ValidateForOutcomeWithBaselineAndAuthority(data []byte, expectedType, outco
 	return validateInventoryAuthority(data, summary, authority)
 }
 
+// DeriveMetrics computes the machine-owned S10 metrics from the existing
+// manifest rows. The validator calls the same function so draft preparation
+// and gate validation cannot acquire separate counting rules.
+func DeriveMetrics(manifest Manifest) Metrics {
+	counts := make(map[string]int)
+	dispositioned := make(map[string]int)
+	metrics := Metrics{BlockingFindingCount: len(manifest.BlockingFindings)}
+	for _, item := range manifest.CoverageInventory {
+		counts[item.Category]++
+		if item.Disposition == "pass" || item.Disposition == "not_applicable" {
+			dispositioned[item.Category]++
+		}
+		if item.Disposition == "unknown" {
+			metrics.UnknownCount++
+		}
+		if item.Disposition == "pass" && len(nonEmpty(item.EvidenceRefs)) == 0 {
+			metrics.UnsupportedPassCount++
+		}
+	}
+	for _, item := range manifest.Counterevidence {
+		if item.Outcome == "unknown" || item.Outcome == "fail" {
+			metrics.UnknownCount++
+		}
+	}
+	coverage := func(category string) float64 {
+		if counts[category] == 0 {
+			return 1
+		}
+		return float64(dispositioned[category]) / float64(counts[category])
+	}
+	metrics.RequirementCoverage = coverage("requirement")
+	metrics.ContractCoverage = coverage("contract")
+	metrics.ChangedPathCoverage = coverage("changed_path")
+	if manifest.ManifestType == ManifestReleaseAudit {
+		metrics.AuditAreaCoverage = float64(len(manifest.AuditAreas)) / float64(len(AuditAreaIDs))
+	}
+	for _, risk := range manifest.Risks {
+		if strings.TrimSpace(risk.Owner) == "" || strings.TrimSpace(risk.TrackingRef) == "" || strings.TrimSpace(risk.RecoveryPoint) == "" {
+			metrics.UnownedRiskCount++
+		}
+	}
+	for _, debt := range manifest.TechnicalDebt {
+		if strings.TrimSpace(debt.Owner) == "" || strings.TrimSpace(debt.TrackingRef) == "" {
+			metrics.UntrackedDebtCount++
+		}
+	}
+	return metrics
+}
+
 // S10AuthorityAvailable reports whether the Runtime has the minimum
 // production pointers needed to reconstruct the non-self-declared S10
 // denominator. Rootless/unit-test callers intentionally stay on the legacy
 // structural validator; a real S10 round has a registered pinned ReviewPlan.
 func S10AuthorityAvailable(state map[string]any) bool {
+	if buildsurface.HasCanonical(state) {
+		return true
+	}
+	return hasS10References(state)
+}
+
+func hasS10References(state map[string]any) bool {
 	bound, boundOK := state["bound_req"].(map[string]any)
 	review, reviewOK := state["review"].(map[string]any)
 	plan, planOK := review["plan"].(map[string]any)
@@ -355,8 +456,23 @@ func BuildS10InventoryAuthority(root string, state map[string]any, baseline Base
 	if strings.TrimSpace(root) == "" {
 		return InventoryAuthority{}, fmt.Errorf("S10 inventory authority requires a repository root")
 	}
-	if !S10AuthorityAvailable(state) {
+	if !hasS10References(state) {
 		return InventoryAuthority{}, fmt.Errorf("S10 inventory authority is unavailable: current Runtime must contain a bound REQ and a pinned current-round ReviewPlan")
+	}
+	canonical, selectionErr := buildsurface.SelectCanonical(root, state)
+	if selectionErr != nil {
+		return InventoryAuthority{}, selectionErr
+	}
+	if canonical {
+		snapshot, err := buildsurface.ReadRegistered(root, state)
+		if err != nil {
+			return InventoryAuthority{}, err
+		}
+		baseline.CanonicalProduct = true
+		for _, file := range snapshot.Paths {
+			baseline.ChangedPaths = append(baseline.ChangedPaths, file.Path)
+		}
+		baseline.ChangedPaths = literalUniquePaths(baseline.ChangedPaths)
 	}
 	authority := InventoryAuthority{}
 
@@ -473,13 +589,21 @@ func BuildS10InventoryAuthority(root string, state map[string]any, baseline Base
 	authority.ContractIDs = sortedUniqueStrings(authority.ContractIDs)
 	authority.TaskIDs = sortedUniqueStrings(authority.TaskIDs)
 	authority.ClaimIDs = sortedUniqueStrings(authority.ClaimIDs)
-	if !baseline.AffectedPathsAll {
+	if baseline.CanonicalProduct || !baseline.AffectedPathsAll {
 		for _, path := range baseline.ChangedPaths {
+			if baseline.CanonicalProduct {
+				authority.ChangedPaths = append(authority.ChangedPaths, path)
+				continue
+			}
 			if normalized := normalizeBaselinePath(path); normalized != "" {
 				authority.ChangedPaths = append(authority.ChangedPaths, normalized)
 			}
 		}
-		authority.ChangedPaths = sortedUniqueStrings(authority.ChangedPaths)
+		if baseline.CanonicalProduct {
+			authority.ChangedPaths = literalUniquePaths(authority.ChangedPaths)
+		} else {
+			authority.ChangedPaths = sortedUniqueStrings(authority.ChangedPaths)
+		}
 	}
 	return authority, nil
 }
@@ -515,7 +639,11 @@ func inventoryAuthorityIssues(inventory []CoverageItem, authority InventoryAutho
 		if actual[item.Category] == nil {
 			actual[item.Category] = map[string]struct{}{}
 		}
-		actual[item.Category][strings.TrimSpace(item.ID)] = struct{}{}
+		id := strings.TrimSpace(item.ID)
+		if item.Category == "changed_path" {
+			id = item.ID
+		}
+		actual[item.Category][id] = struct{}{}
 	}
 	var issues []string
 	for category, ids := range expected {
@@ -664,7 +792,6 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 	itemsByID := make(map[string]CoverageItem, len(manifest.CoverageInventory))
 	evidenceRefs := make(map[string]struct{})
 	categoryCounts := make(map[string]int)
-	categoryDispositioned := make(map[string]int)
 	for i, item := range manifest.CoverageInventory {
 		row := fmt.Sprintf("coverage_inventory[%d] (%s)", i, item.ID)
 		if strings.TrimSpace(item.ID) == "" {
@@ -678,10 +805,7 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 		itemsByID[item.ID] = item
 		categoryCounts[item.Category]++
 		if item.Disposition == "pass" || item.Disposition == "not_applicable" {
-			categoryDispositioned[item.Category]++
 			summary.DispositionedCount++
-		} else if item.Disposition == "unknown" {
-			summary.UnknownCount++
 		}
 		if strings.TrimSpace(item.Category) == "" {
 			issues = append(issues, fmt.Sprintf("%s.category is required", row))
@@ -704,7 +828,6 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 		switch item.Disposition {
 		case "pass":
 			if len(nonEmpty(item.EvidenceRefs)) == 0 {
-				summary.UnsupportedPassCount++
 				issues = append(issues, fmt.Sprintf("%s is PASS without evidence_refs; replace unsupported PASS with evidence or UNKNOWN", row))
 			}
 		case "not_applicable":
@@ -719,7 +842,12 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 			issues = append(issues, fmt.Sprintf("%s.disposition must be pass, not_applicable, unknown, or fail", row))
 		}
 	}
-	requiredCategories := []string{"requirement", "contract", "changed_path"}
+	requiredCategories := []string{"requirement", "contract"}
+	// An independently verified empty product diff has no path to invent or
+	// disposition. Unknown/legacy denominators still require an explicit row.
+	if baseline == nil || !baseline.CanonicalProduct || len(baseline.ChangedPaths) != 0 {
+		requiredCategories = append(requiredCategories, "changed_path")
+	}
 	if expectedType == ManifestReleaseAudit {
 		requiredCategories = append(requiredCategories, "audit_area")
 	}
@@ -759,7 +887,6 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 		switch item.Outcome {
 		case "pass", "not_applicable":
 		case "unknown", "fail":
-			summary.UnknownCount++
 			if requireClean {
 				issues = append(issues, fmt.Sprintf("%s.outcome is %s; unresolved counterevidence cannot enter an S10 PASS", row, item.Outcome))
 			}
@@ -872,7 +999,10 @@ func validate(data []byte, expectedType string, requireClean bool, baseline *Bas
 		issues = append(issues, baselineChangedPathIssues(manifest.CoverageInventory, *baseline)...)
 	}
 
-	validateMetrics(&issues, manifest.Metrics, categoryCounts, categoryDispositioned, summary, manifest.ManifestType, requireClean)
+	derivedMetrics := DeriveMetrics(manifest)
+	summary.UnknownCount = derivedMetrics.UnknownCount
+	summary.UnsupportedPassCount = derivedMetrics.UnsupportedPassCount
+	validateMetrics(&issues, manifest.Metrics, derivedMetrics, manifest.ManifestType, requireClean)
 	if len(issues) > 0 {
 		return summary, fmt.Errorf("S10 manifest invalid: %s; next: correct the named rows, run `loop-harness s10 manifest validate --file <path>`, then register a new fingerprinted evidence envelope", strings.Join(issues, "; "))
 	}
@@ -928,13 +1058,25 @@ func validTrackingRef(ref string) bool {
 // a changed_path row citing a repo path outside the baseline is an invented
 // (or stale) surface.
 func baselineChangedPathIssues(inventory []CoverageItem, baseline Baseline) []string {
-	if baseline.AffectedPathsAll || len(baseline.ChangedPaths) == 0 {
+	if !baseline.CanonicalProduct && (baseline.AffectedPathsAll || len(baseline.ChangedPaths) == 0) {
 		// No externally-projectionable denominator: nothing to reconcile.
 		return nil
 	}
+	if baseline.CanonicalProduct && len(baseline.ChangedPaths) == 0 {
+		for _, item := range inventory {
+			if item.Category == "changed_path" {
+				return []string{"changed_path inventory invents a path outside the verified empty canonical product baseline"}
+			}
+		}
+		return nil
+	}
+	normalize := normalizeBaselinePath
+	if baseline.CanonicalProduct {
+		normalize = func(value string) string { return value }
+	}
 	baselineSet := make(map[string]struct{}, len(baseline.ChangedPaths))
 	for _, path := range baseline.ChangedPaths {
-		baselineSet[normalizeBaselinePath(path)] = struct{}{}
+		baselineSet[normalize(path)] = struct{}{}
 	}
 	covered := make(map[string]struct{}, len(inventory))
 	var issues []string
@@ -942,8 +1084,8 @@ func baselineChangedPathIssues(inventory []CoverageItem, baseline Baseline) []st
 		if item.Category != "changed_path" {
 			continue
 		}
-		for _, ref := range nonEmpty(item.SourceRefs) {
-			normalized := normalizeBaselinePath(ref)
+		for _, ref := range item.SourceRefs {
+			normalized := normalize(ref)
 			if normalized == "" {
 				continue
 			}
@@ -961,7 +1103,7 @@ func baselineChangedPathIssues(inventory []CoverageItem, baseline Baseline) []st
 	}
 	missing := make([]string, 0, len(baseline.ChangedPaths))
 	for _, path := range baseline.ChangedPaths {
-		normalized := normalizeBaselinePath(path)
+		normalized := normalize(path)
 		if _, ok := covered[normalized]; !ok {
 			missing = append(missing, path)
 		}
@@ -987,6 +1129,19 @@ func looksLikeRepoPath(path string) bool {
 // rows and baseline entries compare equal despite "./" prefixes or
 // backslashes. Values containing a ":" (e.g. "REQ-1#ac-1" anchors) are not
 // repo paths and normalize to "".
+func literalUniquePaths(paths []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, p := range paths {
+		if p != "" && !seen[p] {
+			out = append(out, p)
+			seen[p] = true
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 func normalizeBaselinePath(path string) string {
 	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
 	path = strings.TrimPrefix(path, "./")
@@ -1171,52 +1326,46 @@ func safeManifestPath(root, value string) (string, error) {
 	return filepath.Join(rootAbs, clean), nil
 }
 
-func validateMetrics(issues *[]string, metrics Metrics, counts, dispositioned map[string]int, summary Summary, manifestType string, requireClean bool) {
+func validateMetrics(issues *[]string, metrics, derived Metrics, manifestType string, requireClean bool) {
 	coverage := []struct {
-		name     string
-		category string
-		value    float64
+		name  string
+		want  float64
+		value float64
 	}{
-		{"requirement_coverage", "requirement", metrics.RequirementCoverage},
-		{"contract_coverage", "contract", metrics.ContractCoverage},
-		{"changed_path_coverage", "changed_path", metrics.ChangedPathCoverage},
+		{"requirement_coverage", derived.RequirementCoverage, metrics.RequirementCoverage},
+		{"contract_coverage", derived.ContractCoverage, metrics.ContractCoverage},
+		{"changed_path_coverage", derived.ChangedPathCoverage, metrics.ChangedPathCoverage},
 	}
 	if manifestType == ManifestReleaseAudit {
 		coverage = append(coverage, struct {
-			name     string
-			category string
-			value    float64
-		}{"audit_area_coverage", "audit_area", metrics.AuditAreaCoverage})
+			name  string
+			want  float64
+			value float64
+		}{"audit_area_coverage", derived.AuditAreaCoverage, metrics.AuditAreaCoverage})
 	}
 	for _, item := range coverage {
 		if item.value < 0 || item.value > 1 || math.IsNaN(item.value) {
 			*issues = append(*issues, fmt.Sprintf("metrics.%s must be between 0 and 1", item.name))
 			continue
 		}
-		want := 1.0
-		if item.category == "audit_area" && manifestType == ManifestReleaseAudit {
-			want = float64(summary.AuditAreaCount) / float64(len(AuditAreaIDs))
-		} else if counts[item.category] > 0 {
-			want = float64(dispositioned[item.category]) / float64(counts[item.category])
-		}
-		if math.Abs(item.value-want) > 0.000001 {
-			*issues = append(*issues, fmt.Sprintf("metrics.%s=%g does not match %s coverage %g; derive it from the frozen rows", item.name, item.value, item.category, want))
+		if math.Abs(item.value-item.want) > 0.000001 {
+			*issues = append(*issues, fmt.Sprintf("metrics.%s=%g does not match derived coverage %g; derive it from the frozen rows", item.name, item.value, item.want))
 		}
 	}
-	if metrics.UnknownCount != summary.UnknownCount {
-		*issues = append(*issues, fmt.Sprintf("metrics.unknown_count=%d does not match derived unknown_count=%d", metrics.UnknownCount, summary.UnknownCount))
+	if metrics.UnknownCount != derived.UnknownCount {
+		*issues = append(*issues, fmt.Sprintf("metrics.unknown_count=%d does not match derived unknown_count=%d", metrics.UnknownCount, derived.UnknownCount))
 	}
-	if metrics.UnsupportedPassCount != summary.UnsupportedPassCount {
-		*issues = append(*issues, fmt.Sprintf("metrics.unsupported_pass_count=%d does not match derived unsupported_pass_count=%d", metrics.UnsupportedPassCount, summary.UnsupportedPassCount))
+	if metrics.UnsupportedPassCount != derived.UnsupportedPassCount {
+		*issues = append(*issues, fmt.Sprintf("metrics.unsupported_pass_count=%d does not match derived unsupported_pass_count=%d", metrics.UnsupportedPassCount, derived.UnsupportedPassCount))
 	}
-	if metrics.UnownedRiskCount != 0 {
-		*issues = append(*issues, fmt.Sprintf("metrics.unowned_risk_count=%d; every risk must have owner, tracking_ref, and recovery_point", metrics.UnownedRiskCount))
+	if metrics.UnownedRiskCount != derived.UnownedRiskCount {
+		*issues = append(*issues, fmt.Sprintf("metrics.unowned_risk_count=%d does not match derived unowned_risk_count=%d", metrics.UnownedRiskCount, derived.UnownedRiskCount))
 	}
-	if metrics.UntrackedDebtCount != 0 {
-		*issues = append(*issues, fmt.Sprintf("metrics.untracked_debt_count=%d; every technical_debt row must have owner and tracking_ref", metrics.UntrackedDebtCount))
+	if metrics.UntrackedDebtCount != derived.UntrackedDebtCount {
+		*issues = append(*issues, fmt.Sprintf("metrics.untracked_debt_count=%d does not match derived untracked_debt_count=%d", metrics.UntrackedDebtCount, derived.UntrackedDebtCount))
 	}
-	if metrics.BlockingFindingCount != summary.BlockingFindingCount {
-		*issues = append(*issues, fmt.Sprintf("metrics.blocking_finding_count=%d does not match blocking_findings=%d", metrics.BlockingFindingCount, summary.BlockingFindingCount))
+	if metrics.BlockingFindingCount != derived.BlockingFindingCount {
+		*issues = append(*issues, fmt.Sprintf("metrics.blocking_finding_count=%d does not match blocking_findings=%d", metrics.BlockingFindingCount, derived.BlockingFindingCount))
 	}
 	if requireClean {
 		for name, value := range map[string]int{

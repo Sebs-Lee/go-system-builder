@@ -10,6 +10,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/checkexec"
 	"github.com/entroforge/go-system-builder/internal/controller"
 	"github.com/entroforge/go-system-builder/internal/hook"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
@@ -26,6 +28,8 @@ import (
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/submission"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
@@ -41,12 +45,52 @@ const loopManualFallbackRef = ".claude/bin/loop-harness.md"
 // consumes projectNext/buildNextProjection, the same projection used by
 // `status` and `next`, so a compacted Agent cannot be handed a second,
 // slightly-different lifecycle interpretation.
+// s7GraphControlForHook observes unfinished packet-mode review work. Only
+// committed domain handoff states return to the original gate/transition cycle.
+func s7GraphControlForHook(root string, request policy.Input) (controller.ControlResult, bool) {
+	switch request.Event {
+	case "PreToolUse", "SessionStart", "SubagentStart", "PreCompact", "Stop", "SubagentStop", "TeammateIdle":
+	default:
+		return controller.ControlResult{}, false
+	}
+	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil || !runtime.PacketEnabled(snapshot.State) {
+		return controller.ControlResult{}, false
+	}
+	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+	if lifecycle["state"] != "verification" {
+		return controller.ControlResult{}, false
+	}
+	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil {
+		switch ptr.Status {
+		case "clean", "observation_sealed", "paused":
+			return controller.ControlResult{}, false
+		}
+	}
+	// PreToolUse guidance reads graph facts; completion proof checks belong
+	// to the existing Stop/Idle cases, never to this ordinary observation.
+	guidance := s7GraphGuidance(root, snapshot.State, request)
+	return controller.ControlResult{
+		Snapshot: snapshot,
+		Decision: policy.Decision{Decision: "allow", Guidance: &guidance},
+	}, true
+}
+
+// Stop/Idle projections describe the round; the original stop handler checks
+// the owner's responsibility separately, without a second proof in guidance.
+func s7GraphGuidance(root string, state map[string]any, request policy.Input) policy.Guidance {
+	guidance := BuildGuidanceForState(root, state, "PreToolUse", request)
+	guidance.Event = request.Event
+	applyS7RecoveryProjection(state, &guidance)
+	return guidance
+}
+
 func buildGuidance(root string, state map[string]any, event string, input policy.Input) policy.Guidance {
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	lifecycleState, _ := lifecycle["state"].(string)
 	lifecyclePhase, _ := lifecycle["phase"].(string)
 	stage, skill, action := projectNext(lifecycleState, lifecyclePhase, root)
-	next := buildNextProjection(state, stage, skill, action, root)
+	next := buildNextProjection(state, stage, skill, action, root, isMainPlanningViewer(input))
 	applyS7BudgetGateway(&next, state)
 	if lifecycleState == "bug_resolution" && lifecyclePhase == "investigation" {
 		next.Action = investigationNextAction(state)
@@ -79,13 +123,14 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		HumanRequired: next.HumanRequired,
 		Recovery:      []string{"continue from this packet's Stage and Next", "read " + next.ProtocolRef, "if blocked or unclear read " + loopManualRef},
 	}
+	applyMainPlanningAutomation(&guidance, next.mainPlanning)
 
 	if lifecycleState == "paused" || lifecycleState == "awaiting_human_release" || lifecycleState == "aborted" {
 		guidance.HumanRequired = true
 		guidance.Blocked = true
 		guidance.Blocker = pauseReason(state, lifecycleState)
 		if lifecycleState == "awaiting_human_release" {
-			guidance.Action = "stop automation and submit one explicit runtime human-decision (approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort)"
+			guidance.Action = "present the current release request and evidence paths to the human; await the actual disposition and use the original human-decision entry; a saved Agent answer is not human approval"
 		} else {
 			guidance.Action = "stop automation and surface the human Gateway"
 		}
@@ -101,12 +146,16 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		addDelegationPreflight(&guidance, input)
 		if input.Runtime.Agent != nil {
 			approvalRequired := input.Runtime.Agent.DispatchMode == "plan_approval_required"
-			switch input.Runtime.Agent.State {
+			questionnaire := input.Runtime.Agent.DocumentReviewAssignment || input.Runtime.Agent.ReviewAssignment || input.Runtime.Agent.HypothesisResultAssignment
+			switch input.Runtime.Agent.LifecycleActivity() {
 			case "spawned", "reading":
 				if !approvalRequired {
-					guidance.Missing = appendUnique(guidance.Missing, "plan_report")
-					guidance.Action = "read the assignment, send one PLAN_REPORT via SendMessage(message_type=plan_report, plan_ref=<path>), then continue executing immediately; do not wait for Main approval"
-					guidance.Automation = append(guidance.Automation, "plan_checkpoint is the normal dispatch mode; PLAN_REPORT is a live checkpoint, not a final response or an idle barrier")
+					if questionnaire {
+						guidance.Action = "read the supplied professional questionnaire and source paths, perform the assigned review, then fill and save that exact answer file"
+					} else {
+						guidance.Missing = appendUnique(guidance.Missing, "plan_report")
+						guidance.Action = "read the supplied assignment and professional plan questions, fill and save the exact plan path, then continue the assigned work"
+					}
 					break
 				}
 				guidance.Blocked = true
@@ -147,7 +196,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		}
 		guidance.Automation = append(guidance.Automation,
 			"re-wake the same Agent when its report is missing; do not silently spawn a replacement",
-			"SubagentStop is not completion until the worktree integration checklist is complete",
+			"SubagentStop: Worker execution may end after its recorded Result; Main completes the worktree integration checklist before global completion",
 		)
 		// L4 §10.3 / §16.1: completion/blocker facts come from the
 		// control plane (agent state + assignment report), not from a
@@ -164,7 +213,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 			guidance.Missing = appendUnique(guidance.Missing, "agent_completion_report")
 			guidance.Action = "submit completion or blocker report before stopping"
 		} else {
-			guidance.Action = "review and integrate the subagent worktree into the current development branch then acknowledge and clean it via runtime task-integrate"
+			guidance.Action = "Worker: follow your original execution close-out and await the original consumer. Main: consume the report; review and integrate a completed subagent worktree into the current development branch then acknowledge and clean it via runtime task-integrate"
 		}
 	case "TeammateIdle":
 		guidance.Automation = append(guidance.Automation,
@@ -184,7 +233,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 			guidance.Missing = appendUnique(guidance.Missing, "assignment_report")
 			guidance.Action = "re-wake the same teammate, resume the assignment, and submit the current-round report"
 		} else {
-			guidance.Action = "acknowledge the current teammate report and schedule the next legal assignment"
+			guidance.Action = "Worker: follow your original execution close-out and await the original consumer. Main: consume the current teammate report and schedule the next legal assignment"
 		}
 	}
 
@@ -216,13 +265,23 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		applyS10Guidance(&guidance)
 	}
 
-	if lifecycleState == "building" && qualitygate.HasDispatchPlan(state) {
+	if lifecycleState == "building" {
 		applyDispatchGuidance(root, state, event, input, &guidance)
-		guidance.Automation = append(guidance.Automation, "read the approved overall dispatch plan and `loop-harness s6 status --capacity <actual total slots>`; dispatch compatible ready tasks, integrate reported results promptly and refill slots without waiting for unrelated tasks in a prior wave")
+		if qualitygate.HasDispatchPlan(state) {
+			guidance.Automation = append(guidance.Automation, "read the approved overall dispatch plan and `loop-harness s6 status --capacity <actual total slots>`; dispatch compatible ready tasks, integrate reported results promptly and refill slots without waiting for unrelated tasks in a prior wave")
+		}
 	}
 
 	guidance.Instruction = formatGuidanceInstruction(guidance)
 	return guidance
+}
+
+func applyMainPlanningAutomation(guidance *policy.Guidance, planning *mainPlanningNext) {
+	if planning == nil {
+		return
+	}
+
+	guidance.Automation = append(guidance.Automation, planning.Automation)
 }
 
 func applyS10Guidance(guidance *policy.Guidance) {
@@ -276,18 +335,28 @@ func repairNextAction(state map[string]any, phase string) string {
 	}
 	pointer, _ := reviewMap["repair"].(map[string]any)
 	if pointer == nil {
-		return "consume the approved S8 RepairContract: run `runtime repair session open --session-id <session> --created-by <agent>`"
+		return "the approved S8 RepairContract is ready; the next writable Main Hook prepares the original RepairSession and RepairPlan. Main owns Assignment dispatch, and the listeners supply each Builder's exact PlanReport questionnaire path"
 	}
 	switch stringValue(pointer["status"]) {
 	case "planning":
-		return "dispatch each RepairAssignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, then submit one S9 domain PlanReport per Builder"
+		return "Main dispatches the original RepairAssignments; each Builder fills and saves the exact supplied PlanReport questionnaire with its professional plan and genuine pre-fix checks. The original PlanReport consumer advances S9 when its requirements are met"
 	case "reproducing":
-		return "submit any missing S9 domain PlanReports; when every Assignment is reported run `runtime repair execution begin`"
+		return "complete each dispatched Builder's exact supplied PlanReport questionnaire and save it for the original consumer; follow the updated Hook checkpoint when the required reports are accepted"
+	case "repairing":
+		return "complete the assigned Contract work and actual required checks; fill and save each exact RepairResult questionnaire supplied by the listener. The original consumer records the result and completion; Main retains the original `runtime task-integrate` flow and real acceptance checks"
+	case "impact_reconciliation":
+		return "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis. The independent verifier fills and saves its separately supplied TargetedReverification questionnaire for the original Contract checks"
+	case "targeted_reverification":
+		return "the registered independent verifier fills and saves the exact TargetedReverification questionnaire supplied by the listener; the original consumer checks the Contract assertions, and Main retains the original integration and handoff work"
+	case "ready_for_full_review":
+		return "S9 has no author-filled Handoff form; the next writable Main Hook passes current references through the original Handoff consumer and supplies the S7 seed path"
+	case "closed":
+		return "the original S9 Handoff consumer has seeded a fresh S7 round; use the supplied ReviewPlan questionnaire path and continue through the original S7 registration, dispatch, checks, and evaluation"
 	}
 	if action := stringValue(pointer["next_action"]); action != "" {
 		return action
 	}
-	return fmt.Sprintf("continue S9 repair phase %s: run `runtime repair status` and follow the recorded next action", phase)
+	return fmt.Sprintf("continue from the current S9 %s Hook checkpoint; follow its supplied questionnaire paths and recorded recovery action", phase)
 }
 
 func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
@@ -301,29 +370,16 @@ func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
 	}
 	pointer, _ := reviewMap["repair"].(map[string]any)
 	if pointer == nil {
-		line := "S9 RepairSession not opened: consume the approved Contract with `runtime repair session open --session-id <session> --created-by <agent>`"
+		line := "S9 approved RepairContract is ready; the next writable Main Hook prepares the original RepairSession and RepairPlan. Main owns Assignment dispatch, and the listeners supply each Builder's exact PlanReport questionnaire path"
 		guidance.Automation = append(guidance.Automation, line)
 		guidance.Recovery = append([]string{line}, guidance.Recovery...)
 		return
 	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	line := fmt.Sprintf("S9 repair %s: session=%s; next=%s", stringValue(pointer["status"]), stringValue(pointer["session_id"]), repairNextAction(state, stringValue(lifecycle["phase"])))
-	switch stringValue(pointer["status"]) {
-	case "planning":
-		line += "; dispatch every RepairAssignment with `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>`, then submit one domain PlanReport per Builder with a red/blocked pre-fix check"
-	case "reproducing":
-		line += "; all PlanReports must be present before `runtime repair execution begin`; implementation writes remain gated"
-	case "repairing":
-		line += "; submit one exact-unit RepairResult per Assignment; the batch stays in fixing until every Assignment is reported"
-	case "impact_reconciliation":
-		line += "; the complete Assignment Result batch is present; compute session-wide Changeset and commit ChangeImpact"
-	case "blocked":
+	if stringValue(pointer["status"]) == "blocked" {
 		if route := stringValue(pointer["failure_route"]); route != "" {
 			line += "; failure_route=" + route + " — follow the recorded recovery action; do not create a symptom-only patch"
-		}
-	case "closed":
-		if seed := stringValue(pointer["review_plan_seed_ref"]); seed != "" {
-			line += "; consume the registration-ready S7 seed with `runtime review-plan --file " + seed + "` after refreshing frozen hashes"
 		}
 	}
 	guidance.Automation = append(guidance.Automation, line)
@@ -360,6 +416,12 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 	guidance.Automation = append(guidance.Automation,
 		fmt.Sprintf("S7 review round %d: plan %s", round, planDesc),
 	)
+	if planStatus == "stale" {
+		guidance.Action = s7RecoveryNextAction(planStatus, round, nil, nil, nil, nil, nil)
+		guidance.Missing = []string{"Main: recover the frozen baseline and original stale ReviewPlan"}
+		guidance.Recovery = append([]string{fmt.Sprintf("S7 recovery: round %d, plan %s; next: %s", round, planDesc, guidance.Action)}, guidance.Recovery...)
+		return
+	}
 	if maxRounds := s7MaxRounds(state); maxRounds > 0 && round >= maxRounds {
 		guidance.Automation = append(guidance.Automation,
 			fmt.Sprintf("S7 budget: current round %d of %d may drain, but opening another full round requires the human `runtime s7-budget-decision` gateway", round, maxRounds),
@@ -379,7 +441,7 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 		if row == nil {
 			continue
 		}
-		status := stringValue(row["status"])
+		status := workstate.ReviewAssignmentActivity(row)
 		agent := stringValue(row["agent_id"])
 		label := id
 		if agent != "" {
@@ -405,7 +467,7 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 		"S7 assignments running: "+s7Bucket(running),
 		"S7 assignments queued: "+s7Bucket(queued),
 		"S7 assignments blocked: "+s7Bucket(blocked),
-		"S7 unconsumed ReviewResults (dispatched, result not yet consumed via `runtime review-result submit`): "+s7Bucket(unconsumed),
+		"S7 unconsumed ReviewResults (dispatched, professional answer not yet received by the original consumer): "+s7Bucket(unconsumed),
 	)
 
 	// Claim coverage gaps: required Claims with no final disposition yet.
@@ -504,6 +566,8 @@ func s7ObservationBatchLine(reviewMap map[string]any) string {
 // first, then unblock, then dispatch queued coverage, then close the round.
 func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked, unconsumed, gaps []string) string {
 	switch planStatus {
+	case "stale":
+		return "Main must resolve the original baseline drift feedback and recover the original ReviewPlan through its existing revive/revise path; queued dispatch and old answers await a valid plan"
 	case "observation_sealed":
 		return "the sealed ObservationBatch hands off to S8 automatically: the next PreToolUse auto-commits TR-008 — do not invoke the transition CLI"
 	case "clean":
@@ -511,12 +575,12 @@ func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked
 	case "paused":
 		return "resolve the recorded pause verdict checkpoint; the round resumes only through the human gateway (TR-010/TR-011)"
 	case "planned", "":
-		return fmt.Sprintf("register the ReviewPlan for round %d: `loop-harness s7 draft --out plan.json`, fill the TODO oracles and generated `coverage_inventory`/`e2e_assets` facts, then `runtime review-plan --file plan.json`", round)
+		return fmt.Sprintf("complete and save the current round %d ReviewPlan questionnaire at the exact path supplied by the listener; resolve the professional TODOs and required coverage", round)
 	}
 	// running / cannot_clean / discovery_draining: coverage continues even
 	// after an ordinary finding (drain_policy=complete_required_claims).
 	if len(running) > 0 {
-		return fmt.Sprintf("consume the pending ReviewResult for %s via `runtime review-result submit --assignment-id %s --result <result.json>`", running[0], firstAssignmentID(running[0]))
+		return fmt.Sprintf("Reviewer %s must complete the assigned checks, fill and save its supplied exact ReviewResult questionnaire; the original consumer receives it", running[0])
 	}
 	if len(blocked) > 0 {
 		return fmt.Sprintf("assignment %s is blocked: fix the capture conditions, record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, then resubmit the same review result; blocked coverage must still be consumed before the round can close", blocked[0])
@@ -525,12 +589,12 @@ func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked
 		return fmt.Sprintf("dispatch queued assignment %s via `runtime register-workgroup`; queued coverage is never dropped (L3-S7 §4.5)", queued[0])
 	}
 	if len(unconsumed) > 0 {
-		return fmt.Sprintf("consume the pending ReviewResult for %s via `runtime review-result submit`", unconsumed[0])
+		return fmt.Sprintf("receive the saved professional ReviewResult for %s through its original consumer; if reception failed, report the exact answer path and validation feedback", unconsumed[0])
 	}
 	if len(gaps) > 0 {
 		return "claim coverage gaps remain without an assignment (" + strings.Join(gaps, ", ") + "); inspect `loop-harness s7 status` and repair the dispatch"
 	}
-	return "all required Claims are dispositioned; the round consumer seals on the next `runtime review-result submit` — verify via `loop-harness s7 status`"
+	return "all required Claims are dispositioned; the original round consumer evaluates sealing and the listener reports the next stage"
 }
 
 // s7Bucket renders one assignment bucket for the recovery packet, keeping
@@ -579,10 +643,8 @@ func blockedAgentIDs(state map[string]any) map[string]bool {
 
 func addDelegationPreflight(guidance *policy.Guidance, input policy.Input) {
 	guidance.Questions = []string{
-		"Is a single subagent necessary, or should this responsibility use an Agent Team?",
-		"Which predefined agent template under .claude/agents/ is being used?",
-		"Is the assignment isolated in a worktree?",
-		"Does the spawn carry the registered assignment/agent identity and its required plan checkpoint or activation?",
+		"What professional work and checks does this assignment require?",
+		"Which supplied source and answer paths belong to this assignment?",
 	}
 	if subType, _ := input.ToolInput["subagent_type"].(string); subType != "" {
 		guidance.ReadOrder = insertReadOrder(guidance.ReadOrder, ".claude/agents/"+subType+".md", 2)
@@ -590,7 +652,7 @@ func addDelegationPreflight(guidance *policy.Guidance, input policy.Input) {
 	guidance.Automation = append(guidance.Automation,
 		"on Claude Code >=2.1.178 use session-managed teams only when needed; TeamCreate/TeamDelete are removed and team_name is not an authority identity",
 		"isolate execution in a worktree before writing",
-		"default: send one PLAN_REPORT through SendMessage while the Worker is running, then continue; only plan_approval_required waits for activation",
+		"fill and save the supplied professional questionnaire; the listener reports missing duties and the original consumer receives the answer; an explicit plan_approval_required assignment retains its real approval step",
 	)
 }
 
@@ -695,7 +757,8 @@ func refreshMilestone(root, statePath, journalPath string, snapshot runtime.Snap
 
 func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runtime.Snapshot, guidance policy.Guidance, event string, gate controller.QualityGateResult) (runtime.Snapshot, bool, error) {
 	current, _ := snapshot.State["milestone"].(map[string]any)
-	if milestoneMatchesWithGate(current, guidance, gate) {
+	s6Observation := event == "PreToolUse" && guidance.LifecycleState == "building" && gate.Status != ""
+	if milestoneMatchesWithGate(current, guidance, gate) && (!s6Observation || current["source_revision"] != nil && integerValue(current["source_revision"]) == snapshot.Revision) {
 		return snapshot, false, nil
 	}
 
@@ -707,6 +770,10 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 	milestone := guidanceMapWithGate(persistedGuidance, controller.QualityGateResult{}, event, snapshot.Revision+1, now, gate)
 	from := lifecycleCursor(snapshot.State)
 	store := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	idempotencyKey := milestoneIdempotencyWithGate(guidance, gate)
+	if s6Observation {
+		idempotencyKey = fmt.Sprintf("%s:r%d", idempotencyKey, snapshot.Revision)
+	}
 	updated, err := store.Update(snapshot.Revision, runtime.Mutation{
 		EventID:              fmt.Sprintf("evt-milestone-refreshed-r%d", snapshot.Revision+1),
 		TransitionID:         "MILESTONE-REFRESH",
@@ -719,7 +786,7 @@ func refreshMilestoneWithGate(root, statePath, journalPath string, snapshot runt
 		From:                 from,
 		To:                   from,
 		EvidenceIDs:          []string{},
-		IdempotencyKey:       milestoneIdempotencyWithGate(guidance, gate),
+		IdempotencyKey:       idempotencyKey,
 		Message:              "Controller refreshed the resumable lifecycle milestone.",
 		OccurredAt:           now,
 		Apply: func(state map[string]any) error {
@@ -820,7 +887,9 @@ func reconcileSpecialGuidance(root string, snapshot runtime.Snapshot, event stri
 	case "SubagentStop":
 		guidance := buildGuidance(root, snapshot.State, event, input)
 		if a := findAssignmentForInput(loaded, input); a != nil {
-			guidance.Action = fmt.Sprintf("run runtime task-integrate --assignment-id %s --root %s in the main workspace", a.AssignmentID, root)
+			if a.WorktreePath != "" && hook.HasCompletionReport(a) {
+				guidance.Action = fmt.Sprintf("Worker: your report is recorded; await Main. Main: run runtime task-integrate --assignment-id %s --root %s in the main workspace", a.AssignmentID, root)
+			}
 			guidance.Integration = appendUniqueStrings(guidance.Integration, "integration pending; required checks run through the explicit command outside the Hook timeout")
 			guidance.Instruction = formatGuidanceInstruction(guidance)
 		}
@@ -1027,27 +1096,58 @@ func resolveAgentReportComplete(root string, input policy.Input) bool {
 	if agentID == "" {
 		return false
 	}
-	loaded, err := hookctx.LoadFull(root, agentID)
+	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl")).Snapshot()
+	if err != nil {
+		return false
+	}
+	reviewAssignmentID, reviewBound := hook.ReviewAssignmentBinding(snapshot.State, agentID)
+	hypothesisAssignmentID, hypothesisBound := hook.HypothesisResultAssignmentBinding(root, snapshot.State, agentID)
+	loaded, err := hookctx.FromSnapshot(root, agentID, snapshot)
 	if err != nil || loaded == nil {
 		return false
 	}
 	assignment := hook.AssignmentForAgent(loaded.Assignments, agentID)
-	if hook.HasCompletionReport(assignment) || hook.HasBlockerReport(assignment) {
-		return true
-	}
-	// Final fallback for the no-assignment case (one-shot dispatch):
-	// when the agent's own state already reports completion the loop
-	// considers the report consumed without a separate Assignment row.
-	if loaded.PolicyContext.Agent != nil {
-		switch loaded.PolicyContext.Agent.State {
-		case "reported", "done", "completed", "closed":
-			return true
+	if hypothesisBound || (loaded.PolicyContext.Agent != nil && loaded.PolicyContext.Agent.HypothesisResultAssignment) {
+		agent := loaded.PolicyContext.Agent
+		if !hypothesisBound || hypothesisAssignmentID == "" || agent == nil || !agent.HypothesisResultAssignment ||
+			agent.ID != agentID || agent.AssignmentID != hypothesisAssignmentID {
+			return false
 		}
-		if loaded.PolicyContext.Agent.CompletionReportedRef != "" {
-			return true
+		assignment = nil
+		for i := range loaded.Assignments {
+			row := &loaded.Assignments[i]
+			if row.OwnerAgentID != agentID || row.AssignmentID != hypothesisAssignmentID {
+				continue
+			}
+			if assignment != nil {
+				return false
+			}
+			assignment = row
 		}
+		if assignment == nil {
+			return false
+		}
+		return hook.CurrentResponsibility(root, snapshot, agent, assignment, false).ExecutionMayEnd
 	}
-	return false
+	if agent := loaded.PolicyContext.Agent; reviewBound || (agent != nil && agent.ReviewAssignment) {
+		if agent == nil || !agent.ReviewAssignment || reviewAssignmentID == "" || agent.AssignmentID != reviewAssignmentID {
+			return false
+		}
+		return hook.CurrentResponsibility(root, snapshot, agent, assignment, false).ExecutionMayEnd
+	}
+	repairAssignmentID, repairBound := hook.RepairResultAssignmentBinding(root, snapshot.State, agentID)
+	if repairBound || (loaded.PolicyContext.Agent != nil && loaded.PolicyContext.Agent.RepairResultAssignment) {
+		agent := loaded.PolicyContext.Agent
+		if !repairBound || repairAssignmentID == "" || agent == nil || !agent.RepairResultAssignment ||
+			agent.ID != agentID || agent.RepairAssignmentID != repairAssignmentID {
+			return false
+		}
+		return hook.CurrentResponsibility(root, snapshot, agent, assignment, false).ExecutionMayEnd
+	}
+	packetReceived := loaded.PolicyContext.PacketMode && submission.CompletedOwner(root, agentID)
+	facts := hook.CurrentResponsibility(root, snapshot, loaded.PolicyContext.Agent, assignment, packetReceived)
+	return facts.DeliveryRecorded || facts.Status == workstate.Blocked && facts.ExecutionMayEnd
+
 }
 
 func pauseReason(state map[string]any, lifecycleState string) string {
@@ -1349,6 +1449,44 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 		guidance := buildGuidance(root, snapshot.State, event, input)
 		return guidance, snapshot, nil
 	}
+	correctionAction := "re-wake the same subagent to remediate the blockers and resubmit the report"
+	if assignment.AssignmentRecord != nil {
+		correctionAction = fmt.Sprintf("Main: preserve the failed checkpoint. If source changes or a new report are required, author a fresh manifest and use runtime register-workgroup --revise-assignment %s --revision-intent-key <new-intent> with the original locked TASK; do not reopen this Record. For an environment-only failure, retry the original integration after resolving the cause.", assignment.AssignmentID)
+	}
+	if packetBackedRepairResultStage(snapshot.State) {
+		packet, found, err := typedRepairResultPacketForAssignment(root, snapshot.State, assignment.AssignmentID, assignment.OwnerAgentID)
+		if err != nil {
+			return policy.Guidance{}, snapshot, err
+		}
+		if found {
+			if packet.Binding.Sources.OwnerAgentID != assignment.OwnerAgentID {
+				return policy.Guidance{}, snapshot, fmt.Errorf("typed S9 packet owner differs from the current registered Assignment")
+			}
+			guidance := buildGuidance(root, snapshot.State, event, input)
+			guidance.Blocked = true
+			guidance.HumanRequired = false
+			guidance.Missing = appendUnique(guidance.Missing, "typed_s9_repair_result_candidate")
+			if err := runtime.VerifyRepairResultPacketIssue(root, snapshot.State, packet); err != nil {
+				return policy.Guidance{}, snapshot, fmt.Errorf("typed S9 packet proof failed; preserve the Worker: %w", err)
+			}
+			candidate, accepted, err := runtime.VerifiedRepairResultCandidateReceipt(root, snapshot.State, packet.ID, assignment.OwnerAgentID)
+			if err != nil {
+				return policy.Guidance{}, snapshot, err
+			}
+			if !accepted {
+				guidance.Blocker = "typed S9 answer has not been received by the original workspace_updated Writer"
+				guidance.Action = "keep the Builder active and save the exact issued RepairResult through the platform PostToolUse Hook"
+			} else {
+				if candidate.Provenance.PacketID != packet.ID || candidate.Provenance.OwnerAgentID != assignment.OwnerAgentID {
+					return policy.Guidance{}, snapshot, fmt.Errorf("typed S9 candidate receipt differs from the exact Assignment owner")
+				}
+				guidance.Blocker = "typed S9 candidate must pass the original owner-check and Main integration path"
+				guidance.Action = fmt.Sprintf("Main: run `runtime task-integrate --root %s --assignment-id %s --agent-id %s`; it routes through the original workspace Inspect/Integrate/Result Writer", root, packet.Binding.Sources.ManifestAssignmentID, assignment.OwnerAgentID)
+			}
+			guidance.Instruction = formatGuidanceInstruction(guidance)
+			return guidance, snapshot, nil
+		}
+	}
 	ctx, release, lockErr := integration.LockWorkspace(ctx, root)
 	if lockErr != nil {
 		return policy.Guidance{}, snapshot, lockErr
@@ -1394,9 +1532,27 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 
 	// Consult the receipt before inspection: received branches have no new
 	// commits beyond the merge base, and cleanup may already have removed the path.
-	prior := loadPriorIntegrationState(root, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration, assignment.AssignmentID)
-	priorPath := integration.DefaultCheckpointStore().Path(root, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration, assignment.AssignmentID)
-	priorCheckpoint, priorFound, _ := integration.DefaultCheckpointStore().Load(priorPath)
+	priorPath, err := checkpointPathForLoadedAssignment(root, loaded, *assignment)
+	if err != nil {
+		return policy.Guidance{}, snapshot, err
+	}
+	priorCheckpoint, priorFound, err := integration.DefaultCheckpointStore().Load(priorPath)
+	if err != nil {
+		return policy.Guidance{}, snapshot, err
+	}
+	currentRecord, canonicalAssignment, err := hookctx.ResolveAssignmentRecordProjection(root, snapshot.State, *assignment)
+	if err != nil {
+		return policy.Guidance{}, snapshot, fmt.Errorf("resolve current Assignment before checkpoint recovery: %w", err)
+	}
+	if priorFound && canonicalAssignment {
+		if err := integration.ValidateCheckpointRecordBinding(priorCheckpoint, currentRecord); err != nil {
+			return policy.Guidance{}, snapshot, fmt.Errorf("current revision checkpoint recovery: %w", err)
+		}
+	}
+	prior := ""
+	if priorFound {
+		prior = priorCheckpoint.State
+	}
 	if priorFound && priorCheckpoint.MergeCommit == "" && priorCheckpoint.SourceHead != "" && priorCheckpoint.TargetHead != "" {
 		// A lost merge response may be followed by ordinary commits on the
 		// bound development branch. Walk that branch's first-parent merge
@@ -1469,7 +1625,7 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 	recoveryBase := ""
 	retry := input.Facts["integration_retry"]
 	if retry {
-		cpPath := integration.DefaultCheckpointStore().Path(root, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration, assignment.AssignmentID)
+		cpPath := priorPath
 		cp, found, err := integration.DefaultCheckpointStore().Load(cpPath)
 		if err != nil {
 			return policy.Guidance{}, snapshot, err
@@ -1503,7 +1659,7 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 		return policy.Guidance{}, snapshot, err
 	}
 	inspectConfig.RecoveryBase = recoveryBase
-	inspectConfig.CheckRunner = integration.CommandCheckRunner
+	inspectConfig.CheckRunner = integration.ProfileCheckRunner(assignment.CheckProfiles, checkexec.Binding{RuntimeID: loaded.PolicyContext.RuntimeID, Generation: workspace.Generation(snapshot.State), AssignmentID: assignment.AssignmentID, Owner: assignment.OwnerAgentID, Responsibility: "main_required_integration"})
 	var inspectResult integration.Inspection
 	reinspectReady := false
 	if prior == integration.StateReady {
@@ -1520,7 +1676,7 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 		}
 	}
 	if (prior == integration.StateReady && !reinspectReady) || prior == integration.StateMerged || prior == integration.StateVerified || prior == integration.StateAcknowledged || prior == integration.StateCleanupPending || prior == integration.StateComplete {
-		cpPath := integration.DefaultCheckpointStore().Path(root, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration, assignment.AssignmentID)
+		cpPath := priorPath
 		cp, found, loadErr := integration.DefaultCheckpointStore().Load(cpPath)
 		if loadErr != nil || !found {
 			return policy.Guidance{}, snapshot, fmt.Errorf("load cleanup checkpoint: %v", loadErr)
@@ -1564,12 +1720,17 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 				inspectResult.SourceHead = priorCheckpoint.SourceHead
 			}
 		} else {
+			// Preserve rejected pre-merge inspections in the Integrator's
+			// original durable store. Milestone text alone cannot drive rework.
+			if _, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: inspectResult, ExpectedRevision: int64(snapshot.Revision)}, integration.IntegrateConfig{Root: root, GitRoot: root, RuntimeID: loaded.PolicyContext.RuntimeID}); err != nil {
+				return policy.Guidance{}, snapshot, err
+			}
 			guidance := buildGuidance(root, snapshot.State, event, input)
 			guidance.Integration = appendUniqueStrings(guidance.Integration, inspectResult.Blockers...)
 			guidance.Blocked = true
 			guidance.Blocker = "worktree integration is not ready; preserving worktree and branch"
 			guidance.Missing = appendUniqueStrings(guidance.Missing, inspectResult.Blockers...)
-			guidance.Action = "re-wake the same subagent to remediate the blockers and resubmit the report"
+			guidance.Action = correctionAction
 			guidance.Instruction = formatGuidanceInstruction(guidance)
 			// Surface the failed inspection via the Milestone so the next
 			// event can reconcile from a durable record.
@@ -1591,7 +1752,7 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 				guidance.Blocked = true
 				guidance.Blocker = "worktree integration is not ready; preserving worktree and branch"
 				guidance.Missing = appendUniqueStrings(guidance.Missing, inspectResult.Blockers...)
-				guidance.Action = "re-wake the same subagent to remediate the blockers and resubmit the report"
+				guidance.Action = correctionAction
 				guidance.Instruction = formatGuidanceInstruction(guidance)
 			}
 			return guidance, snapshot, nil
@@ -1617,7 +1778,7 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 		RuntimeID: loaded.PolicyContext.RuntimeID,
 		// Delivery checks always run on the merged target. The manifest mode
 		// controls only whether legacy pre-merge checks also run.
-		CheckRunner:    integration.CommandCheckRunner,
+		CheckRunner:    integration.ProfileCheckRunner(assignment.CheckProfiles, checkexec.Binding{RuntimeID: loaded.PolicyContext.RuntimeID, Generation: workspace.Generation(snapshot.State), AssignmentID: assignment.AssignmentID, Owner: assignment.OwnerAgentID, Responsibility: "main_required_integration"}),
 		RequiredChecks: assignment.RequiredChecks,
 	}
 	integrationResult, err := integration.Integrate(ctx, integrateReq, integrateConfig)
@@ -1777,25 +1938,107 @@ func HandleSubagentStopForController(ctx context.Context, root string, snapshot 
 	return guidance, snapshot, nil
 }
 
-// loadPriorIntegrationState reads the durable worktree checkpoint so a
-// subsequent SubagentStop can decide whether to run the ack/cleanup
-// follow-up. Missing or unreadable checkpoints return "" (first-call path).
-func loadPriorIntegrationState(root, runtimeID string, generation int, assignmentID string) string {
-	if assignmentID == "" {
-		return ""
+func packetBackedRepairResultStage(state map[string]any) bool {
+	if !runtime.PacketEnabled(state) {
+		return false
 	}
-	if runtimeID == "" {
-		runtimeID = "loop-REQ-039"
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	return lifecycle["state"] == "bug_resolution" && lifecycle["phase"] == "fixing"
+}
+
+func typedRepairResultPacketForAssignment(root string, state map[string]any, assignmentID, owner string) (workpacket.RepairResultPacket, bool, error) {
+	packets, err := runtime.RepairResultPackets(state)
+	if err != nil {
+		return workpacket.RepairResultPacket{}, false, err
 	}
-	if generation <= 0 {
-		generation = 1
+	reviewMap, _ := state["review"].(map[string]any)
+	pointer, _ := reviewMap["repair"].(map[string]any)
+	baseline, _ := state["baseline"].(map[string]any)
+	if pointer == nil {
+		return workpacket.RepairResultPacket{}, false, nil
 	}
-	path := integration.DefaultCheckpointStore().Path(root, runtimeID, generation, assignmentID)
-	cp, found, err := integration.DefaultCheckpointStore().Load(path)
-	if err != nil || !found {
-		return ""
+	runtimeID, _ := state["runtime_id"].(string)
+	sessionID, _ := pointer["session_id"].(string)
+	planRef, _ := pointer["plan_ref"].(string)
+	planSHA, _ := pointer["plan_sha256"].(string)
+	currentGeneration := integerValue(baseline["generation"])
+	currentRound := integerValue(reviewMap["round"])
+	if runtimeID == "" || sessionID == "" || planRef == "" || planSHA == "" || currentGeneration <= 0 || currentRound <= 0 {
+		return workpacket.RepairResultPacket{}, false, nil
 	}
-	return cp.State
+	allMatches := make([]workpacket.RepairResultPacket, 0, 1)
+	for _, packet := range packets {
+		binding := packet.Binding.Sources
+		if binding.RuntimeID != runtimeID || binding.BaselineGeneration != currentGeneration || binding.ReviewRound != currentRound ||
+			binding.SessionID != sessionID || binding.PlanRef != planRef || binding.PlanSHA256 != planSHA ||
+			binding.ManifestAssignmentID != assignmentID && binding.RepairAssignmentID != assignmentID {
+			continue
+		}
+		allMatches = append(allMatches, packet)
+	}
+	if len(allMatches) == 0 {
+		return workpacket.RepairResultPacket{}, false, nil
+	}
+	// Prefer the packet whose frozen attempt is still current. A packet from
+	// this same canonical Session/Plan still fences the legacy Result route if
+	// its source or rework attempt has gone stale; it must remain on the typed
+	// preservation path until a new packet is issued.
+	current, err := runtime.CurrentRepairResultPackets(root, state, "")
+	if err != nil {
+		return workpacket.RepairResultPacket{}, false, err
+	}
+	var selected *workpacket.RepairResultPacket
+	for _, candidate := range allMatches {
+		for _, currentPacket := range current {
+			if currentPacket.ID != candidate.ID {
+				continue
+			}
+			if selected != nil {
+				return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 Assignment %s has multiple current typed RepairResult packets", assignmentID)
+			}
+			copyPacket := candidate
+			selected = &copyPacket
+		}
+	}
+	if selected != nil {
+		return *selected, true, nil
+	}
+	if len(allMatches) != 1 {
+		return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 Assignment %s has multiple historical typed attempts and no unique current packet; preserve the original packets and use named recovery", assignmentID)
+	}
+	return allMatches[0], true, nil
+}
+
+func typedRepairResultExecution(registry *workspace.ExecutionRegistry, state map[string]any, packet workpacket.RepairResultPacket) (workspace.Execution, bool, error) {
+	if registry == nil {
+		return workspace.Execution{}, false, fmt.Errorf("workspace registry is missing")
+	}
+	if err := registry.ValidateAuthority(state); err != nil {
+		return workspace.Execution{}, false, err
+	}
+	binding := packet.Binding.Sources
+	var selected *workspace.Execution
+	for _, id := range []string{binding.ManifestAssignmentID, binding.RepairAssignmentID} {
+		if id == "" {
+			continue
+		}
+		execution, ok := registry.Execution(id, binding.RuntimeID, binding.BaselineGeneration)
+		if !ok {
+			continue
+		}
+		if execution.AssignmentID != id || execution.AgentID != binding.OwnerAgentID || execution.Status != "ready" && execution.Status != "complete" || execution.ReworkRef != packet.Binding.ReworkRef {
+			return workspace.Execution{}, false, fmt.Errorf("S9 typed packet execution owner/status/rework differs")
+		}
+		if selected != nil && (selected.AssignmentID != execution.AssignmentID || filepath.Clean(selected.Path) != filepath.Clean(execution.Path)) {
+			return workspace.Execution{}, false, fmt.Errorf("S9 typed packet has multiple registered Worker executions")
+		}
+		copyExecution := execution
+		selected = &copyExecution
+	}
+	if selected == nil {
+		return workspace.Execution{}, false, nil
+	}
+	return *selected, true, nil
 }
 
 // inspectionForAckCleanup builds a Ready Inspection for the post-merge
@@ -1949,13 +2192,14 @@ func findIdleTeammate(state map[string]any, agentID string) *teammateRow {
 		if agentID != "" && id != agentID {
 			continue
 		}
-		if status, _ := row["state"].(string); status == "done" || status == "closed" || status == "completed" {
+		projection, err := workstate.AgentProjection(row, fmt.Sprint(state["schema_version"]))
+		if err != nil || projection.Status == workstate.Done || projection.Status == workstate.Cancelled {
 			continue
 		}
 		t := &teammateRow{
 			ID:     id,
 			Role:   stringValue(row["role"]),
-			Status: stringValue(row["state"]),
+			Status: string(projection.Status),
 		}
 		t.TeamID = stringValue(row["team_id"])
 		t.WorktreePath = stringValue(row["worktree_path"])
@@ -1973,7 +2217,7 @@ func findIdleTeammate(state map[string]any, agentID string) *teammateRow {
 		if t.Status == "idle" || t.Status == "" {
 			return t
 		}
-		if agentID == "" && t.Status == "working" {
+		if agentID == "" && projection.Status == workstate.Active {
 			// surface the first working teammate as a fallback so the
 			// scheduler still emits a real decision when no explicit idle
 			// row is found (legacy state may carry no explicit idle entry).
@@ -2034,14 +2278,7 @@ func findAssignmentForInput(loaded *hookctx.LoadedContext, input policy.Input) *
 }
 
 func isAssignmentComplete(assignment *hookctx.AssignmentContext) bool {
-	if assignment == nil {
-		return false
-	}
-	switch assignment.State {
-	case "complete", "completed", "done", "verified", "merged", "acknowledged":
-		return true
-	}
-	return false
+	return assignment != nil && assignment.State == string(workstate.Done)
 }
 
 func isAssignmentBlocked(assignment *hookctx.AssignmentContext) bool {
@@ -2058,23 +2295,11 @@ func isAssignmentBlocked(assignment *hookctx.AssignmentContext) bool {
 }
 
 func hasCompletionReport(assignment *hookctx.AssignmentContext) bool {
-	if assignment == nil {
-		return false
-	}
-	if assignment.CompletionRef != "" {
-		return true
-	}
-	if assignment.ReportStatus == "completion_report" || assignment.ReportStatus == "complete" || assignment.ReportStatus == "completed" {
-		return true
-	}
-	return false
+	return hook.HasCompletionReport(assignment)
 }
 
 func hasBlockerReport(assignment *hookctx.AssignmentContext) bool {
-	if assignment == nil {
-		return false
-	}
-	return assignment.ReportStatus == "blocked" || assignment.ReportStatus == "blocker_report"
+	return hook.HasBlockerReport(assignment)
 }
 
 func persistSubagentCheckpoint(root, statePath, journalPath string, snapshot runtime.Snapshot, inspection *integration.Inspection, targetBranch, event, integratedState string) (runtime.Snapshot, bool, error) {
@@ -2171,7 +2396,7 @@ func decisionLabel(kind teammateDecisionKind) string {
 func idleAfterCompletionDecision(source teammateDecision) teammateDecision {
 	next := source
 	next.kind = teammateIdleAwaitingConsumer
-	next.action = "acknowledge the completion report; idle is allowed — the scheduler allocates the next legal task in the same Team"
+	next.action = "Worker: idle is allowed; await the original consumer. Main: acknowledge the completion report; the scheduler allocates the next legal task in the same Team"
 	next.blocker = ""
 	next.blockedFlag = false
 	next.automation = appendUniqueStrings(next.automation,

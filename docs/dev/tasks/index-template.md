@@ -8,7 +8,7 @@
 入口：[需求](../../requirements/REQ-{id}.md) · [合同](../contracts/CONTRACTS-{id}.md)
 规则：[整体派发计划](../../rules/dispatch-plan.md)
 
-Status=complete 只表示计划文档完成。提交 TASK 与计划后再进入 S5。
+Status=complete 只表示静态计划文档完成并可交原 gate；不表示任一 Builder 责任为 `done`。责任进度按 `docs/rules/state-machine.md` 的五态语义查看，实时执行进度不得回填到本文。提交 TASK 与计划后再进入 S5。
 下列空框是静态计划，冻结后不回填；实时进度用 `loop-harness s6 status --capacity <实际并发总槽位>` 查看。
 
 ## W1 · 输入齐备的独立任务并行

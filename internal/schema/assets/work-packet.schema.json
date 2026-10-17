@@ -72,8 +72,58 @@
         "attempt": {
           "type": "integer",
           "minimum": 1
+        },
+        "previous_submission_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "revision_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "execution_required": {
+          "const": true
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "attempt": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "previous_submission_key"
+                  ]
+                },
+                {
+                  "required": [
+                    "revision_reason"
+                  ]
+                },
+                {
+                  "required": [
+                    "execution_required"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "previous_submission_key",
+              "revision_reason"
+            ]
+          }
+        }
+      ]
     },
     "inputs": {
       "type": "array",
@@ -285,6 +335,28 @@
               }
             }
           }
+        }
+      }
+    },
+    "task_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "parser_version"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^\\.claude/work-packets/analysis/[a-f0-9]{64}\\.json$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "parser_version": {
+          "const": "1.0.0"
         }
       }
     }

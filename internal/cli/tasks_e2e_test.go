@@ -13,7 +13,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/cli"
 )
 
-// TestS4TaskSplitPipelineE2E walks the S4 exit path end to end (L3-S4 v4.0.1):
+// TestS4TaskSplitPipelineE2E walks the legacy packet-off S4 exit path:
 // tasks check red/green with named problems → TR-002 dual guards (planning
 // complete pointing at PTR-PLAN-02, tasks_checked surfacing batch problems at
 // guard level) → register_planning_tasks with EMPTY evidence (TR-002's
@@ -117,6 +117,11 @@ func TestS4TaskSplitPipelineE2E(t *testing.T) {
 	}
 
 	// --- planning_complete points at PTR-PLAN-02 when nothing is registered ---
+	// Direct transitions and empty evidence exercise the retained legacy path.
+	// The questionnaire path is covered by task_planning_answer_e2e_test.go.
+	if _, stderr, code := run("init", "--root", root, "--packet=false"); code != 0 {
+		t.Fatalf("legacy packet-off init failed: %s", stderr)
+	}
 	if _, stderr, code := run("req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root), "--approved-by", "bob"); code != 0 {
 		t.Fatalf("bind failed: %s", stderr)
 	}
@@ -363,6 +368,17 @@ func TestTasksCheckReportsReferenceLoads(t *testing.T) {
 	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("tasks check failed: %s", stderr.String())
+	}
+	var jsonOut, jsonErr bytes.Buffer
+	if code := cli.Run([]string{"tasks", "check", "--root", root, "--json"}, nil, &jsonOut, &jsonErr); code != 0 {
+		t.Fatalf("advisory changed original gate: %s", jsonErr.String())
+	}
+	var analysis map[string]any
+	if err := json.Unmarshal(jsonOut.Bytes(), &analysis); err != nil {
+		t.Fatal(err)
+	}
+	if analysis["context_analysis_version"] != "1.0.0" || len(analysis["task_contexts"].([]any)) != 1 || len(analysis["granularity_advice"].([]any)) == 0 {
+		t.Fatalf("structured oracle/reading advice missing: %s", jsonOut.String())
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "TASK-830-01: required reading ~") || !strings.Contains(out, "write paths 2") || !strings.Contains(out, "reference only") {

@@ -22,6 +22,12 @@ tracking artifact, impact, and recovery point.
 ## Authority
 Automation stops before squash merge, main-branch publication, or formal release. Runtime authority lives in `docs/control/loop-definition.json`; the stage contract lives in `docs/control/agent-protocol.md`; the method summary is inlined below.
 
+Responsibility progress uses the shared five-state model in
+[`docs/rules/state-machine.md`](../../docs/rules/state-machine.md#21-loop-responsibility-status).
+The clean-round result, S10 gate, professional verdicts, artifact evidence, and
+human-release decision remain separate outcomes and are read from their
+original consumers.
+
 ## Entry Conditions
 - A `clean_round_valid` evidence record exists and is referenced by ID and hash.
 - The Loop is in top-level `acceptance` or `release_audit`.
@@ -68,10 +74,15 @@ Automation stops before squash merge, main-branch publication, or formal release
    counterexample check. Any unanswered item remains `UNKNOWN` and blocks.
 7. **Check objective completion.** Require requirement/contract/changed-path/
    audit coverage of 100%, zero `UNKNOWN`, zero unsupported PASS, zero
-   unowned risks, zero untracked debt, and zero blocking findings. Only then
-   run `loop-harness s10 manifest validate --file <manifest.json> --type acceptance`
-   and register an envelope carrying `audit_manifest_path` plus its SHA-256;
-   only then request TR-015 (`acceptance_completed` → `release_audit`).
+   unowned risks, zero untracked debt, and zero blocking findings. The Hook
+   supplies the exact current manifest answer path. Fill the required
+   top-level `outcome` with a professional disposition allowed for the current
+   audit type, complete the ledger at that path, and save it; the original consumer validates the
+   manifest, derives the evidence envelope/source hash, and records it through
+   the existing Writer/Controller path. Do not assemble another envelope,
+   copy manifest hashes, or run `runtime evidence add` in the packet-enabled
+   normal flow. The original gate requests TR-015 only when its requirements
+   pass.
 8. **Execute the release architecture audit.** Review the eight system areas:
    state machine; transaction/UoW/session; concurrency/idempotency; data
    model/identity/migration; call sites/runtime topology; observability/errors;
@@ -85,8 +96,9 @@ Automation stops before squash merge, main-branch publication, or formal release
     ID/hash, coverage metrics, ACC ID/hash, audit ID/hash, baseline generation,
     completed scope, unresolved fact, impact, residual risks and owners,
     recommendation, recovery point, and an explicit `automation stops`.
-    Request TR-017. Never request, attempt, or proxy merge, publication,
-    deployment, or formal release.
+    Save the exact Hook-supplied release-audit answer; the original consumer
+    and Controller request TR-017 only when the original gate passes. Never
+    request, attempt, or proxy merge, publication, deployment, or formal release.
 
 ## Design Foundation feedback transaction
 
@@ -109,7 +121,15 @@ projection. Its shape authority is
 Copyable starting shapes are `docs/examples/s10/acceptance-manifest.json` and
 `docs/examples/s10/release-audit-manifest.json`; replace their placeholder
 facts with the current Runtime evidence.
-The normal handoff is:
+The packet-enabled normal handoff is: use the exact manifest answer path shown
+by the Hook, fill the professional ledger, and save. The original consumer
+validates the saved manifest and handles rendering/evidence registration. Do
+not copy `audit_manifest_path`, `audit_manifest_sha256`, evidence IDs, or
+Runtime revisions into a second envelope.
+
+The following CLI chain is retained only for explicit legacy diagnosis or
+system recovery when no packet-enabled answer path exists; it is not a new
+author's normal sequence:
 
 ```text
 loop-harness s10 manifest validate --root <root> \
@@ -133,7 +153,8 @@ gate names `s10:<type>_manifest:<id>`,
 correct the manifest or envelope and register a new fingerprint; do not edit
 the previously registered artifact in place.
 
-For a routed non-passing outcome, validate with the matching mode:
+For the legacy CLI path only, a routed non-passing outcome is validated with
+the matching mode:
 `--outcome review_required` for acceptance (TR-016 back to S7), or
 `--outcome blocked` for release audit (TR-018 to `paused`). These modes keep
 the unresolved rows and blocker route visible, while still requiring the

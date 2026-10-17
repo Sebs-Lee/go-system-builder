@@ -65,8 +65,16 @@ The machine manifest must contain explicit rows for `requirement`, `contract`,
 an empty 100% denominator. Use an evidence-backed `not_applicable` row only
 when the locked scope proves that category is genuinely out of scope.
 
-Machine companion: save the frozen ledger as JSON and validate all eight audit
-areas before registering the audit evidence:
+Machine companion (schema/example reference; not the packet-enabled normal
+submission path): the Hook supplies the exact current manifest answer path.
+Fill the required top-level `outcome` with the professional release-audit
+disposition (`approved`, `approved_with_risk`, or `blocked`), complete the
+frozen ledger there, and save it; the original S10 consumer validates
+it, derives the evidence binding and hash, and records it through the existing
+evidence/Controller path. Do not make a second envelope, copy machine fields,
+or run `runtime evidence add` in the normal flow.
+
+For explicit legacy diagnosis or recovery only, the original validation CLI is:
 
 ```text
 loop-harness s10 manifest validate --file <release-audit-manifest.json> --type release_audit
@@ -80,12 +88,11 @@ the zero-blocker requirement needed by an approval artifact.
 
 Copyable JSON shape: `docs/examples/s10/release-audit-manifest.json`.
 
-The release-audit evidence envelope must carry `audit_manifest_path` and
-`audit_manifest_sha256`. The Quality Gate consumes the JSON ledger described
-by `internal/schema/assets/s10-audit-manifest.schema.json`; this Markdown is
-the human-readable explanation and cannot replace the ledger. After
-validation, register the envelope with `runtime evidence add`; do not invoke
-`runtime transition` manually.
+The Quality Gate consumes the JSON ledger described by
+`internal/schema/assets/s10-audit-manifest.schema.json`; this Markdown is the
+human-readable explanation and cannot replace the ledger. Manually assembling
+an evidence envelope and running `runtime evidence add` remains a legacy or
+explicit recovery interface only; the normal author saves the exact Hook path.
 
 ### 2.3 Markdown 渲染（single source）
 

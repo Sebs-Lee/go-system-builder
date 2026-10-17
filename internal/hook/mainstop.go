@@ -8,6 +8,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // Rule IDs for the Main Stop gate. Main Stop is intentionally separate from
@@ -66,38 +67,34 @@ func mainStopDecisionForState(state map[string]any, input policy.Input) (policy.
 		if !ok {
 			continue
 		}
-		if pendingDispatch(id, row) {
+		version := stringValue(state["schema_version"])
+		if pendingDispatch(id, row, version) {
 			return mainStopPendingDispatch(id), true
 		}
-		if unconsumedResult(id, row) {
+		if unconsumedResult(id, row, version) {
 			return mainStopUnconsumedResult(id), true
 		}
 	}
 	return policy.Decision{}, false
 }
 
-func pendingDispatch(id string, row map[string]any) bool {
-	status := stringValue(row["status"])
-	if status != "planned" && status != "queued" && status != "ready" {
+func pendingDispatch(id string, row map[string]any, versions ...string) bool {
+	if workstate.ReviewAssignmentActivity(row, versions...) != "planned" {
 		return false
 	}
 	return strings.TrimSpace(stringValue(row["agent_id"])) == "" &&
 		strings.TrimSpace(stringValue(row["result_ref"])) == ""
 }
 
-func unconsumedResult(id string, row map[string]any) bool {
-	if stringValue(row["status"]) == "consumed" {
+func unconsumedResult(id string, row map[string]any, versions ...string) bool {
+	activity := workstate.ReviewAssignmentActivity(row, versions...)
+	if activity == "consumed" {
 		return false
 	}
 	if strings.TrimSpace(stringValue(row["result_ref"])) != "" {
 		return true
 	}
-	switch stringValue(row["status"]) {
-	case "result_submitted", "submitted", "awaiting_consumption":
-		return true
-	default:
-		return false
-	}
+	return activity == "result_submitted"
 }
 
 func mainStopPendingDispatch(id string) policy.Decision {

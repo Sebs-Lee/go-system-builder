@@ -114,7 +114,13 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 	if code != 0 {
 		t.Fatalf("delegation preflight hook failed: code=%d stderr=%s", code, stderr.String())
 	}
-	for _, expected := range []string{"Preflight questions", "Agent Team", "worktree", "LOOP RECOVERY"} {
+	for _, expected := range []string{
+		"Preflight questions",
+		"professional work and checks",
+		"supplied source and answer paths",
+		"Main performs the original integration and required checks",
+		"LOOP RECOVERY",
+	} {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("delegation preflight output missing %q: %s", expected, stdout.String())
 		}
@@ -208,21 +214,20 @@ func TestPreToolUseHookDelegatesToControllerCycle(t *testing.T) {
 	if !strings.Contains(stdout.String(), "LOOP RECOVERY") {
 		t.Fatalf("controller cycle must emit LOOP RECOVERY packet, got: %s", stdout.String())
 	}
-	// The rendered PreToolUse output (hookSpecificOutput.permissionDecision)
-	// must be "allow" because not_ready must NEVER block the tool
-	// (BE-039 §3.2 / REQ-039 §10.2).
+	// PreToolUse reports the not_ready graph status without setting a
+	// permissionDecision; the observer does not authorize or deny tools.
 	var payload map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("hook output is not JSON: %v; output=%s", err, stdout.String())
 	}
 	output, _ := payload["hookSpecificOutput"].(map[string]any)
 	permissionDecision, _ := output["permissionDecision"].(string)
-	if permissionDecision != "" {
-		t.Fatalf("PreToolUse must allow not_ready, got permissionDecision=%q payload=%v", permissionDecision, payload)
+	if permissionDecision == "deny" {
+		t.Fatalf("PreToolUse observer must not deny not_ready, got permissionDecision=%q payload=%v", permissionDecision, payload)
 	}
 }
 
-func TestPreToolUsePreservesUnknownMCPWarningAtControllerBoundary(t *testing.T) {
+func TestPreToolUseObservesUnknownMCPWithoutToolClassification(t *testing.T) {
 	root := acFixtureRoot(t)
 	writeACState(t, root, planningState(t, root, "design", 1))
 
@@ -245,12 +250,12 @@ func TestPreToolUsePreservesUnknownMCPWarningAtControllerBoundary(t *testing.T) 
 		t.Fatalf("warning must still allow the tool, got %v", specific["permissionDecision"])
 	}
 	reason, _ := specific["additionalContext"].(string)
-	if !strings.Contains(reason, "unknown_mcp_tool") || !strings.Contains(reason, "classify") {
-		t.Fatalf("warning must survive the Controller projection with recovery guidance: %s", reason)
+	if !strings.Contains(reason, "QUALITY_GATE") || !strings.Contains(reason, "LOOP RECOVERY") || strings.Contains(reason, "unknown_mcp_tool") {
+		t.Fatalf("listener must give graph progress without classifying tools: %s", reason)
 	}
 }
 
-func TestPreToolUseBlocksUnknownMCPForActivatedWorker(t *testing.T) {
+func TestPreToolUseObservesUnknownMCPForWorker(t *testing.T) {
 	root := acFixtureRoot(t)
 	writeACState(t, root, planningState(t, root, "design", 1))
 
@@ -264,17 +269,17 @@ func TestPreToolUseBlocksUnknownMCPForActivatedWorker(t *testing.T) {
 		"runtime_context":{"runtime_id":"loop-test","revision":1,"agent":{"id":"agent-worker-1","state":"working"}}
 	}`), &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("unknown MCP for a Worker must be denied with exit 2: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+		t.Fatalf("unknown MCP must remain available to the Worker: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("Hook output is not JSON: %v; output=%s", err, stdout.String())
 	}
 	specific, _ := payload["hookSpecificOutput"].(map[string]any)
-	if specific["permissionDecision"] != "deny" {
-		t.Fatalf("Worker unknown MCP must render deny, got %v", specific["permissionDecision"])
+	if specific["permissionDecision"] == "deny" {
+		t.Fatalf("Worker graph listener must not deny tools, got %v", specific["permissionDecision"])
 	}
-	if !strings.Contains(stdout.String(), "unknown_mcp_tool") || !strings.Contains(stdout.String(), "activated Assignment") {
-		t.Fatalf("Worker deny must preserve the actionable policy recovery: %s", stdout.String())
+	if !strings.Contains(stdout.String(), "QUALITY_GATE") || strings.Contains(stdout.String(), "unknown_mcp_tool") {
+		t.Fatalf("Worker listener must preserve graph feedback without tool policy: %s", stdout.String())
 	}
 }

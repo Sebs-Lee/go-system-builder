@@ -109,7 +109,7 @@ func TestBuildGuidanceS7RecoveryProjectionCannotClean(t *testing.T) {
 					t.Fatalf("settled/N/A claim %s must not be reported as a coverage gap, got %#v", settled, guidance.Missing)
 				}
 			}
-			if !strings.Contains(guidance.Action, "assignment-qa-2") || !strings.Contains(guidance.Action, "review-result submit") {
+			if !strings.Contains(guidance.Action, "assignment-qa-2") || !strings.Contains(guidance.Action, "fill and save") {
 				t.Fatalf("the single next action must consume the running assignment's Result, got %q", guidance.Action)
 			}
 			if len(guidance.Recovery) == 0 || !strings.Contains(guidance.Recovery[0], "S7 recovery: round 2") {
@@ -131,7 +131,7 @@ func TestBuildGuidanceS7RecoveryProjectionDraining(t *testing.T) {
 	if !strings.Contains(automation, "status=discovery_draining") {
 		t.Fatalf("draining round must surface its plan status, got:\n%s", automation)
 	}
-	if !strings.Contains(guidance.Action, "review-result submit") {
+	if !strings.Contains(guidance.Action, "fill and save") {
 		t.Fatalf("draining round must keep consuming pending Results, got %q", guidance.Action)
 	}
 }
@@ -182,7 +182,7 @@ func TestBuildGuidanceS7RecoveryTerminalActions(t *testing.T) {
 	}{
 		{"observation_sealed", "observation_sealed", "TR-008"},
 		{"clean", "clean", "TR-009"},
-		{"planned", "", "runtime review-plan"},
+		{"planned", "", "ReviewPlan questionnaire"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.phase, func(t *testing.T) {

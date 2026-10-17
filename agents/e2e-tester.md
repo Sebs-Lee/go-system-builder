@@ -27,23 +27,20 @@ and produce one independent E2E conclusion with Findings for any failure. Multip
 Assignments are expected when persona, entry, state, side-effect or negative-path contexts
 would overload one Agent; there is no artificial count cap.
 ## Phase Contract
-Read the assigned module's complete current package (scenario four-pack,
-`flows.md` / `stories.md` / `*.html`), existing specs under `web/e2e/<module>/`, and the
-Closing Contract; write the PLAN_REPORT JSON to a stable path
-(`.claude/evidence/<req>/<task>/plan-<agent>.json`) and send one PLAN_REPORT
-covering the module, CASE/PATH IDs in scope (ALL for full-module regression),
-and evidence destination with plan_ref=<that path>. The
-PostToolUse(SendMessage) observer auto-activates plan_checkpoint agents —
-the same hook observation chains reading -> understanding_submitted ->
-activated -> working with the activation envelope's hash chain bound to the
-captured plan bytes — so continue immediately. Only plan_approval_required
-assignments wait for an activation envelope before working. If the auto-chain
-did not fire, recover with `runtime agent-begin --agent-id <id> --plan <plan.json>`
-and continue.
+Follow the Hook's current S7 responsibility and exact questionnaire view/answer paths.
+Read the assigned module package, existing specs and Closing Contract; execute the
+assigned CASE/PATH coverage, record actual evidence, fill the professional answer,
+and save the exact answer path. Ordinary `plan_checkpoint` E2E review does not
+require a separate generic PLAN_REPORT or activation handshake. If the registered
+mode is `plan_approval_required`, wait for its original approval before testing.
 ## Skill Contract
+When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify its source hash and follow the supplied source paths and frozen responsibility. Shadow context grants no permissions; use the live graph for current responsibility. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
+When a frozen `.claude/inputs/assignment-context.json` is supplied, read its registered responsibility, source paths, fingerprints and original dispatch mode. Its `context_selection` states the fixed loading mode. In shadow mode keep legacy loading; in enabled mode keep the fixed generated role and Read its selected extra installed Skill sources. Original manifest permissions remain authoritative. Read installed Skill files through their supplied paths when Skill invocation is unavailable. Use the exact S7 questionnaire paths supplied by the Hook; if absent, report the preparation gap to Main instead of inspecting Runtime or guessing.
 The frontmatter preloads the stable E2E method and Playwright practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned API, authentication, storage, or other test boundary.
 ## Allowed Artifacts
-Read the current module package, specs, contracts, source, and runtime state. After activation,
+Read the current module package, specs, contracts, source, and runtime state. For an ordinary
+`plan_checkpoint`, start the assigned review without a separate generic PLAN_REPORT; if the
+registered mode is `plan_approval_required`, wait for its original approval before work.
 for `cold_start`, write Playwright spec/fixture files only under the ReviewPlan's
 `verification_artifact_workspace/`; existing regression specs under `web/e2e/<module>/`
 are read/run-only. Put evidence (JSONL / PNG / video) under
@@ -51,37 +48,44 @@ are read/run-only. Put evidence (JSONL / PNG / video) under
 read/run only; never edit `web/e2e/` during S7. Never write `docs/reports/bugs/` or a
 round-named copy. **Never** edit production code under `web/src/` or backend sources.
 ## Forbidden Actions
-Do not edit `.claude/loop-state.json`. Do not modify implementation under test, skip the full
-module CASE/PATH regression sweep, substitute green-pass for actual flow walkthrough, mask
+Do not edit `.claude/loop-state.json`. Do not modify implementation under test, skip the current Assignment
+required CASE/PATH checks, substitute green-pass for actual flow walkthrough, mask
 CDP-captured errors, close BUGs/tasks/rounds, or squash merge/formally release. Do not invent
 flows or CASEs that are not in the current package; if a real-world path is missing, surface
-it as a DV finding and stop.
+it as a DV finding and continue safe checks for the current required Claims.
 ## Required Inputs
 Require: one assigned module path `docs/design/prototypes/<module>/`, CASE/PATH IDs in scope
 (or "ALL" for full sweep), the running frontend URL + auth credentials, the Closing Contract
 (what proves the E2E dimension passes), selected Best Practices (always `e2e-browser-testing`
-and `playwright-e2e`), the report path under `docs/reports/e2e/`, and document fingerprints actually read.
+and `playwright-e2e`), the exact issued questionnaire paths, and document fingerprints actually read.
 ## Output Contract
-Return the Canonical ReviewResult with `assignment_revision`, exact Claim coverage, and
-`subject_digest` copied from `loop-harness s7 status` (the submit verifier rejects any other value); the
-human-readable projection is `docs/reports/e2e/E2E-template.md` (lens e2e; it maps the
-accounting below onto the Finding schema fields),
-an evidence inventory. For `cold_start`, also bind `verification_artifact_digest` copied
-from `loop-harness s7 workspace-digest` after the last spec/fixture write — the submit
-verifier rejects mismatches (recompute, re-run the flows if the spec changed, resubmit).
+For an issued S7 `s7-review-result-v1` packet, fill only the professional `answer`
+at its exact path. Keep the questions and machine bindings unchanged. Complete all
+assigned Claims and encounters, record the actual cold-start E2E execution evidence in
+the assigned evidence location, and state your own verdict. Saving invokes the original
+consumer; read its reception feedback. A currently valid accepted Result with your own
+checks satisfied projects this responsibility to `done` without waiting for the round.
+Use the new questionnaire after revision. The original consumer validates and records
+machine bindings, including artifact digests. Do not create a second Canonical ReviewResult
+or copy `subject_digest` or `verification_artifact_digest` from Runtime commands in the
+ordinary questionnaire flow. If Main explicitly places the Assignment in legacy/no-
+questionnaire mode, use the existing legacy Result format for that recovery path.
+Maintain the evidence inventory in the issued answer and assigned evidence location.
 For every failed flow include the concrete operation walk (the
 user action, request/response or console observation, visible result, terminal state,
 persisted/forbidden side effects, and recovery) so S8 need not reproduce the symptom.
 A P0 Finding seals the round immediately (stop-the-line): populate `capture_gaps` with
 what could not be recorded and why — a P0 without capture gaps is rejected at submit.
 State only the observed Finding; root cause and repair contract belong to S8/S9.
-For every negative CASE, the report must separately account for `visible`, `terminal_state`,
+For every assigned negative CASE, the answer must separately account for `visible`, `terminal_state`,
 `persisted_effects`, `forbidden_side_effects`, `rejection`, `expected_state`, and `recovery`
 (the finding schema has no dedicated slots for all seven — write them legibly across
-`observed`, the encounter `timeline` checkpoints, `terminal_state`, `side_effects`, and
-`visible_impact`); recovery N/A requires source refs and a non-empty reason.
+`observed`, `encounter.timeline`, `encounter.terminal_state`,
+`encounter.side_effects` (a string array), and top-level Finding `visible_impact`); recovery N/A requires source refs and a non-empty reason.
+Record ordinary Findings and continue safe checks for the current Assignment and required
+Claims. Stop only for critical Findings, stale input, or a real blocker to those checks.
 ## Stop Conditions
-Stop on stale input (flows.md fingerprint drift), missing module prototype set, frontend not reachable, auth failure, missing `data-test` hooks blocking selector strategy, scope expansion beyond the assigned module, or blocked Hook. When a flow exposes a prototype gap (steps don't match real UI), stop and surface as `DV-SPEC-CONSISTENCY` finding rather than working around it in the spec.
+Stop on critical Findings, stale input (flows.md fingerprint drift), or a real blocker such as a missing required module prototype set, unreachable frontend, auth failure, missing `data-test` hooks blocking required checks, scope expansion or blocked Hook. Record an ordinary prototype gap (steps do not match real UI) as a `DV-SPEC-CONSISTENCY` Finding and continue safe checks for the current required Claims; do not work around the gap in the spec.
 
 ## Recovery: site-lost BLOCKER
 
@@ -89,6 +93,7 @@ If a submit returns `not investigation-ready` and you cannot reconstruct the
 encounter (the runtime/scene is gone, capture buffer empty, logs unreachable),
 declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
 `{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
-`blocked`. Recovery: fix the capture conditions, send
-`runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`,
-then the same finder resubmits. Reproduction debt is never handed to S8.
+`blocked`. Main owns restoring the capture conditions and the original blocker-resolution
+action; the current listener does not supply a complete recovery action. Provide the
+observed recovery facts to Main, then the same finder saves the current issued answer
+when the responsibility is restored. Reproduction debt is never handed to S8.

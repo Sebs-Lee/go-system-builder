@@ -8,15 +8,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/entroforge/go-system-builder/internal/controlproof"
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/runtimemeta"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 
 	"github.com/entroforge/go-system-builder/internal/filelock"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -123,10 +127,7 @@ type AuditEnvelope struct {
 	EvidenceIDs    []string
 }
 
-type Snapshot struct {
-	Revision int
-	State    map[string]any
-}
+type Snapshot = runtimemeta.Snapshot
 
 // ArtifactCleanupRequest describes a staged repository artifact that may be
 // removed only when the Runtime is stable and the artifact is not reachable
@@ -531,8 +532,46 @@ func validateRuntimeSemanticCore(root string, state map[string]any) error {
 			if !ok || strings.TrimSpace(entityState) == "" {
 				return fmt.Errorf("entities.%s[%d] state is required", field, index)
 			}
-			if !containsRuntimeState(allowed.States, entityState) {
+			activity := entityState
+			var err error
+			event, _ := entity["last_lifecycle_event"].(string)
+			switch lifecycleName {
+			case "agent":
+				activity, err = workstate.LegacyAgentActivity(fmt.Sprint(state["schema_version"]), entityState, event)
+			case "task":
+				activity, err = workstate.LegacyTaskActivity(fmt.Sprint(state["schema_version"]), entityState, event)
+			}
+			if err != nil {
+				return fmt.Errorf("entities.%s[%d] lifecycle activity: %w", field, index, err)
+			}
+			if !containsRuntimeState(allowed.States, activity) {
 				return fmt.Errorf("unknown %s state %q", lifecycleName, entityState)
+			}
+		}
+	}
+	if workstate.Unified(state["schema_version"]) {
+		review, err := objectField(state, "review")
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		// No review round has been opened before S7. Its assignments field
+		// is absent in the original initial state and carries no responsibility.
+		if review["assignments"] == nil {
+			return nil
+		}
+		assignments, ok := review["assignments"].(map[string]any)
+		if !ok {
+			return errors.New("review.assignments must be an object")
+		}
+		for id, raw := range assignments {
+			row, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("review.assignments[%q] must be an object", id)
+			}
+			status, _ := row["status"].(string)
+			event, _ := row["last_lifecycle_event"].(string)
+			if _, err := workstate.LegacyReviewAssignmentActivity(workstate.UnifiedVersion, status, event); err != nil {
+				return fmt.Errorf("review.assignments[%q] lifecycle activity: %w", id, err)
 			}
 		}
 	}
@@ -578,21 +617,34 @@ func (s *Store) requireCandidateValidator() error {
 }
 
 func validateJournalEvent(event map[string]any) error {
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("encode journal event: %w", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("loop-event.schema.json", encoded); err != nil {
-		return fmt.Errorf("journal event schema: %w", err)
-	}
-	return nil
+	return controlproof.ValidateJournalEvent(event)
 }
 
 // Snapshot reads the current runtime revision while holding the runtime lock.
 // Callers still pass the returned revision into Update, which retains the CAS
 // check if another writer commits after this snapshot is released.
 func (s *Store) Snapshot() (Snapshot, error) {
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	return s.snapshotWithLockBudget(5 * time.Second)
+}
+
+// ObservationSnapshot retains original pair/pending checks with a short lock
+// budget. It cannot recover a pending transaction or be used as a Writer API.
+func (s *Store) ObservationSnapshot() (Snapshot, error) {
+	if s.mutationCapable {
+		return Snapshot{}, fmt.Errorf("observation requires a read-only Runtime store")
+	}
+	info, err := os.Lstat(s.statePath)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 4<<20 {
+		return Snapshot{}, fmt.Errorf("Runtime observation exceeds bounded regular source")
+	}
+	return s.snapshotWithLockBudget(25 * time.Millisecond)
+}
+
+func (s *Store) snapshotWithLockBudget(budget time.Duration) (Snapshot, error) {
+	release, err := acquireLock(s.statePath+".lock", budget)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -605,7 +657,24 @@ func (s *Store) Snapshot() (Snapshot, error) {
 		return Snapshot{}, err
 	}
 
-	state, err := s.read()
+	var state map[string]any
+	if !s.mutationCapable && budget == 25*time.Millisecond {
+		f, openErr := os.Open(s.statePath)
+		if openErr != nil {
+			return Snapshot{}, openErr
+		}
+		data, readErr := io.ReadAll(io.LimitReader(f, (4<<20)+1))
+		f.Close()
+		if readErr != nil {
+			return Snapshot{}, readErr
+		}
+		if len(data) > 4<<20 {
+			return Snapshot{}, fmt.Errorf("Runtime observation exceeds source budget")
+		}
+		state, err = s.decodeState(data)
+	} else {
+		state, err = s.read()
+	}
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -774,6 +843,13 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 		return RolloverRecord{}, err
 	}
 
+	freshState, err = PreserveRuntimeFormat(state, freshState)
+	if err != nil {
+		return RolloverRecord{}, err
+	}
+	if err := s.validateCandidate(freshState); err != nil {
+		return RolloverRecord{}, fmt.Errorf("validate reset with source format: %w", err)
+	}
 	return s.archiveAndReset(stateData, journalData, runtimeID, revision, freshState, archiveRoot, nil, "", approval, occurredAt)
 }
 
@@ -1469,6 +1545,9 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 			return Snapshot{}, err
 		}
 	}
+	if err := validateSameRuntimeFormat(previousState, state); err != nil {
+		return Snapshot{}, fmt.Errorf("ordinary mutation format: %w", err)
+	}
 	if err := validateMutationApplyBoundary(previousState, state, mutation.RetainLastTransition); err != nil {
 		return Snapshot{}, fmt.Errorf("mutation apply coherence: %w", err)
 	}
@@ -1522,6 +1601,9 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	}
 	if err := validateJournalEvent(journalEvent); err != nil {
 		return Snapshot{}, fmt.Errorf("post-mutation journal invalid: %w", err)
+	}
+	if err := s.validateCheckpointPublicationBudget(state, journalEvent, existingJournal); err != nil {
+		return Snapshot{}, err
 	}
 	previousStateSHA256, err := hashState(previousState)
 	if err != nil {
@@ -1709,6 +1791,13 @@ func validateMutationApplyBoundary(previousState, candidateState map[string]any,
 func (s *Store) commitJournalOnlyLocked(state map[string]any, event map[string]any) error {
 	if err := validateJournalEvent(event); err != nil {
 		return fmt.Errorf("journal-only commit event invalid: %w", err)
+	}
+	existingJournal, err := inspectJournal(s.journalPath)
+	if err != nil {
+		return err
+	}
+	if err := s.validateCheckpointPublicationBudget(state, event, existingJournal); err != nil {
+		return err
 	}
 	stateHash, err := hashState(state)
 	if err != nil {
@@ -1925,6 +2014,10 @@ func (s *Store) read() (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read runtime: %w", err)
 	}
+	return s.decodeState(data)
+}
+
+func (s *Store) decodeState(data []byte) (map[string]any, error) {
 	if err := projectlayout.CheckRuntime(data); err != nil {
 		return nil, err
 	}
@@ -2095,6 +2188,9 @@ func (s *Store) recoverPendingFingerprintLocked() error {
 }
 
 func (s *Store) clearFingerprintMarkerLocked() error {
+	if err := s.publishCheckpointLocked(); err != nil {
+		return fmt.Errorf("checkpoint fingerprint refresh (pending retained): %w", err)
+	}
 	if err := os.Remove(s.fingerprintMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear pending fingerprint refresh: %w", err)
 	}
@@ -2301,6 +2397,9 @@ func validatePendingCommitCoherence(pending commitPending) error {
 }
 
 func (s *Store) clearCommitMarkerLocked() error {
+	if err := s.publishCheckpointLocked(); err != nil {
+		return fmt.Errorf("checkpoint committed Runtime (pending retained): %w", err)
+	}
 	if err := os.Remove(s.commitMarkerPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear pending runtime commit: %w", err)
 	}
@@ -2364,6 +2463,9 @@ func (s *Store) recoverPendingRolloverLocked() error {
 	archivedState, err := readRolloverArchiveState(pending.Record)
 	if err != nil {
 		return err
+	}
+	if err := validateSameRuntimeFormat(archivedState, pending.FreshState); err != nil {
+		return fmt.Errorf("pending reset format: %w", err)
 	}
 	if pending.BoundaryKind != "bind" {
 		scopePrefix := "runtime_rollover"
@@ -2592,6 +2694,11 @@ func ValidateBindEligibleState(state map[string]any) error {
 	for _, field := range []string{"agents", "tasks", "bugs", "teams"} {
 		if !emptyArray(entities[field]) {
 			return fmt.Errorf("entities.%s must be empty", field)
+		}
+	}
+	for _, field := range []string{"work_packets", "submissions"} {
+		if value, exists := entities[field]; exists && !emptyArray(value) {
+			return fmt.Errorf("entities.%s must be empty before a new Runtime boundary", field)
 		}
 	}
 	return nil
@@ -3106,29 +3213,7 @@ func ExtractArchiveSeq(p string) int {
 }
 
 func journalSegmentPaths(path string) ([]string, error) {
-	pattern := path + ".archive.*.jsonl"
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("glob journal archives: %w", err)
-	}
-	// Filter out files whose archive sequence cannot be parsed. The
-	// marker-driven rotation guarantees `.archive.<sequence>.jsonl`
-	// naming; any non-numeric or malformed segment is a stray file that
-	// must not participate in the contiguous merge (otherwise inspectJournal
-	// would fail on its malformed JSONL).
-	filtered := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if _, ok := parseArchiveSeq(m); !ok {
-			continue
-		}
-		filtered = append(filtered, m)
-	}
-	sort.Slice(filtered, func(i, j int) bool {
-		left, _ := parseArchiveSeq(filtered[i])
-		right, _ := parseArchiveSeq(filtered[j])
-		return left < right
-	})
-	return filtered, nil
+	return controlproof.JournalSegmentPaths(path)
 }
 
 // parseArchiveSeq extracts the rotation sequence from an archive path of
@@ -3192,58 +3277,13 @@ func appendJSONLine(path string, value any) error {
 	return nil
 }
 
-type journalInspection struct {
-	Events       []map[string]any
-	EventIndex   map[string]int
-	RuntimeID    string
-	TailSequence int
-}
+type journalInspection = controlproof.JournalInspection
 
 func validateStateJournalPair(state map[string]any, inspection journalInspection) error {
-	runtimeID, _ := state["runtime_id"].(string)
-	if strings.TrimSpace(runtimeID) == "" {
-		return errors.New("state runtime_id is required")
-	}
-	if inspection.RuntimeID != "" && inspection.RuntimeID != runtimeID {
-		return fmt.Errorf("journal runtime_id %q does not match state runtime_id %q", inspection.RuntimeID, runtimeID)
-	}
-	stateJournal, err := objectField(state, "journal")
-	if err != nil {
-		return fmt.Errorf("state journal: %w", err)
-	}
-	return validateStateJournalCursor(stateJournal, inspection)
+	return controlproof.ValidateStateJournalPair(state, inspection)
 }
-
-func validateStateJournalCursor(stateJournal map[string]any, inspection journalInspection) error {
-	stateSequence, err := integerField(stateJournal, "last_sequence")
-	if err != nil {
-		return fmt.Errorf("state last_sequence: %w", err)
-	}
-	if inspection.TailSequence != stateSequence {
-		return fmt.Errorf("existing runtime journal tail sequence %d does not match state last_sequence %d", inspection.TailSequence, stateSequence)
-	}
-	stateEventID := stateJournal["last_event_id"]
-	if inspection.TailSequence == 0 {
-		if stateEventID == nil {
-			return nil
-		}
-		if eventID, ok := stateEventID.(string); ok && strings.TrimSpace(eventID) == "" {
-			return errors.New("state journal last_event_id must be null when the journal is empty")
-		}
-		return fmt.Errorf("state journal last_event_id %v must be null when the journal is empty", stateEventID)
-	}
-	if len(inspection.Events) == 0 {
-		return errors.New("non-empty state journal cursor has no journal tail")
-	}
-	tailEventID, _ := inspection.Events[len(inspection.Events)-1]["event_id"].(string)
-	if tailEventID == "" {
-		return errors.New("journal tail event_id is required")
-	}
-	stateEventIDString, ok := stateEventID.(string)
-	if !ok || stateEventIDString != tailEventID {
-		return fmt.Errorf("state journal last_event_id %q does not match journal tail event_id %q", stateEventIDString, tailEventID)
-	}
-	return nil
+func validateStateJournalCursor(cursor map[string]any, inspection journalInspection) error {
+	return controlproof.ValidateStateJournalCursor(cursor, inspection)
 }
 
 // inspectJournal validates the complete journal (archived segments + active
@@ -3282,65 +3322,13 @@ func inspectJournal(path string) (journalInspection, error) {
 }
 
 func inspectJournalData(data []byte) (journalInspection, error) {
-	return inspectJournalSegmentDataFrom(data, 1)
+	return controlproof.InspectJournalData(data)
 }
-
-// inspectJournalSegmentData validates one active/archive segment while
-// allowing its first sequence to be greater than one. Active journal files
-// are retained as the tail after rotation, so their first event may be the
-// sequence immediately following an archived segment.
 func inspectJournalSegmentData(data []byte) (journalInspection, error) {
-	return inspectJournalSegmentDataFrom(data, 0)
+	return controlproof.InspectJournalSegmentData(data)
 }
-
 func inspectJournalSegmentDataFrom(data []byte, firstSequence int) (journalInspection, error) {
-	inspection := journalInspection{
-		Events:     make([]map[string]any, 0),
-		EventIndex: make(map[string]int),
-	}
-	scanner := bufio.NewScanner(strings.NewReader(string(data)))
-	expectedSequence := firstSequence
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		var event map[string]any
-		if err := json.Unmarshal(line, &event); err != nil {
-			return journalInspection{}, fmt.Errorf("decode journal event: %w", err)
-		}
-		if err := validateJournalEvent(event); err != nil {
-			return journalInspection{}, err
-		}
-		sequence, err := integerField(event, "sequence")
-		if expectedSequence == 0 {
-			expectedSequence = sequence
-		}
-		if err != nil || sequence != expectedSequence {
-			return journalInspection{}, fmt.Errorf("journal sequence %d is not contiguous; expected %d", sequence, expectedSequence)
-		}
-		runtimeID, _ := event["runtime_id"].(string)
-		if runtimeID == "" {
-			return journalInspection{}, errors.New("journal runtime_id is required")
-		}
-		if inspection.RuntimeID == "" {
-			inspection.RuntimeID = runtimeID
-		} else if inspection.RuntimeID != runtimeID {
-			return journalInspection{}, fmt.Errorf("journal runtime_id %q does not match journal runtime_id %q", runtimeID, inspection.RuntimeID)
-		}
-		eventID, _ := event["event_id"].(string)
-		if eventID == "" {
-			return journalInspection{}, errors.New("journal event_id is required")
-		}
-		if _, exists := inspection.EventIndex[eventID]; exists {
-			return journalInspection{}, fmt.Errorf("journal event_id %q is duplicated", eventID)
-		}
-		inspection.EventIndex[eventID] = len(inspection.Events)
-		inspection.Events = append(inspection.Events, event)
-		inspection.TailSequence = sequence
-		expectedSequence++
-	}
-	if err := scanner.Err(); err != nil {
-		return journalInspection{}, fmt.Errorf("scan journal: %w", err)
-	}
-	return inspection, nil
+	return controlproof.InspectJournalSegmentDataFrom(data, firstSequence)
 }
 
 func journalContains(path, eventID string) (bool, error) {

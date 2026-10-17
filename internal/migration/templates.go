@@ -2,10 +2,11 @@ package migration
 
 import (
 	"fmt"
-	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/projectlayout"
 )
 
 type fileContract struct {
@@ -36,9 +37,13 @@ func ValidateTemplates(root string) error {
 			path:     "AGENTS-template.md",
 			optional: true,
 			required: []string{
-				"loop-definition.json", ".claude/loop-state.json", ".claude/skills/",
-				".claude/agents/", "hook-policy.json", "awaiting_human_release",
-				projectlayout.Protocol, "DRIVE()", "S0", "S11",
+				".claude/loop-state.json", projectlayout.Protocol, "DRIVE()", "S0", "S11",
+				"Describe each responsibility attempt with one status:",
+				"`pending`", "`active`", "`blocked`", "`done`", "`cancelled`",
+				"The five values describe a responsibility attempt only.",
+				"Use `done` consistently for completion.",
+				"Each progress reminder gives the exact current questionnaire path.",
+				"awaiting_human_release", "Release requires separate human approval.",
 			},
 			forbidden: []string{"Delivery Verifier Team：", "QA Team："},
 		},
@@ -128,14 +133,15 @@ func ValidateTemplates(root string) error {
 			}
 			return fmt.Errorf("%s: %w", contract.path, err)
 		}
-		content := string(data)
+		// Prose wrapping does not change the user-facing template contract.
+		content := strings.Join(strings.Fields(string(data)), " ")
 		for _, value := range contract.required {
-			if !strings.Contains(content, value) {
+			if !strings.Contains(content, strings.Join(strings.Fields(value), " ")) {
 				return fmt.Errorf("%s: missing migrated field or route %q", contract.path, value)
 			}
 		}
 		for _, value := range contract.forbidden {
-			if strings.Contains(content, value) {
+			if strings.Contains(content, strings.Join(strings.Fields(value), " ")) {
 				return fmt.Errorf("%s: contains migrated responsibility %q", contract.path, value)
 			}
 		}

@@ -47,6 +47,15 @@ func applyObservation(s *Snapshot, o observation, count int64) error {
 		v.Count += count
 		v.SumMS += o.Duration
 		s.IntegrationDuration[o.Label] = v
+	case "submission_save":
+		if !validSubmissionOutcome(o.Label) || o.Duration < 0 || count < 1 {
+			return fmt.Errorf("invalid submission save observation")
+		}
+		s.SubmissionSaves[o.Label] += count
+		v := s.SubmissionSaveDuration[o.Label]
+		v.Count += count
+		v.SumMS += o.Duration
+		s.SubmissionSaveDuration[o.Label] = v
 	default:
 		return fmt.Errorf("unknown metrics observation %q", o.Kind)
 	}

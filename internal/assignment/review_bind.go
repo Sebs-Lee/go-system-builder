@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/review"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // bindReviewPlanAssignments binds a reviewer workgroup's manifest
@@ -58,7 +59,7 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		if review.LensToWorkgroupKind(lens) != kind {
 			return fmt.Errorf("assignment %s belongs to lens %s but the workgroup kind is %s; a workgroup never mixes lenses (L3-S7 §3.4)", item.AssignmentID, lens, kind)
 		}
-		status, _ := row["status"].(string)
+		status := workstate.ReviewAssignmentActivity(row)
 		if status != "planned" && status != "blocked" {
 			return fmt.Errorf("assignment %s is already %s; one plan Assignment dispatches once", item.AssignmentID, status)
 		}
@@ -86,14 +87,18 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		// conflict and stay planned. queue_reason names the held keys
 		// so the next register-workgroup attempt sees exactly why.
 		if conflict := findResourceLockConflict(item.AssignmentID, row, assignmentsProjection); conflict != "" {
-			row["status"] = "planned"
+			if err := workstate.RecordReviewAssignmentActivity(state, row, "planned", "workgroup_registered"); err != nil {
+				return fmt.Errorf("record queued Review Assignment work state: %w", err)
+			}
 			row["queued_agent_id"] = item.AgentID
 			row["queue_reason"] = "resource_lock:" + conflict
 			// Claims stay planned; the assignment is on the queue, not
 			// running, so the round consumer does not expect a Result.
 			continue
 		}
-		row["status"] = "dispatched"
+		if err := workstate.RecordReviewAssignmentActivity(state, row, "dispatched", "workgroup_registered"); err != nil {
+			return fmt.Errorf("record dispatched Review Assignment work state: %w", err)
+		}
 		row["queue_reason"] = nil
 		row["agent_id"] = item.AgentID
 		row["queued_agent_id"] = nil
@@ -172,7 +177,7 @@ func findResourceLockConflict(candidateID string, candidateRow map[string]any, p
 // declared locks — the assignment was dispatched but has not yet had its
 // Result consumed. consumed / result_submitted rows release the locks.
 func isLockHeldBy(row map[string]any) bool {
-	status, _ := row["status"].(string)
+	status := workstate.ReviewAssignmentActivity(row)
 	switch status {
 	case "dispatched":
 		// dispatched but no Result yet = actively holding the lock.

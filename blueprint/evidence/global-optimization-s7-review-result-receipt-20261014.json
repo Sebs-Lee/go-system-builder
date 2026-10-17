@@ -1,0 +1,180 @@
+{
+  "schema_version": "1.0.0",
+  "slice": "Original S7 SubmitResult durable author/effective answer receipt and exact replay, revision ownership invalidation, pending recovery",
+  "recorded_at": "2026-10-14T17:43:40.809646+00:00",
+  "status": "partial",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "authority": "Existing review.SubmitResult Runtime CAS and original evidence/journal/round consumers; no second Writer or professional verdict synthesis",
+  "verified": [
+    "Only schema1.2 packetmode records stable result_id receipt alongside original consumed Assignment in the same original Runtime CAS; legacy1.1/nonpacket shape retained",
+    "Original result envelope preserves existing projection and complete authored/effective answers with canonical professional digests; duplicatekeys refused and nested keyorder normalized; machine tuple separately closed",
+    "Accepted replay validates original/current Plan, unchangedAssignment digest and tuples, unique valid/live Result/Finding indexes and bounded immutable artifacts, actual committed original journal event and coordinates; accepted replay precedes mutable capture/stale caller/closedround checks and produces no duplicate domain or metrics writes",
+    "Fresh submit retains original Claim/capture/evidence/verdict/Finding/siteLost/independence checks and rechecks current Plan/owner at CAS",
+    "Actual original SubmitResult PASS and Finding chains, samekey concurrency exactlyonecommit plus exactretry, lostresponse/absentcapture replay, samekey differentanswer/newkey conflict, tuple/effective/index/artifact/journal tamper refusal",
+    "Controlled Plan revision invalidates full Assignment metadata changes and perClaim owner changes including newlynamedAssignment; old PASS cannot seal before freshmovedClaim answer; unchangedAssignment retained receipt replays through original pinnedPlan proof",
+    "Receipt normalized to pureJSONmap before insertion preserves original Runtime state hash across marker serialization; real acceptedstate/event sealedmarker recovery after restoring beforepair covers CleanRound and Finding/ObservationBatch, exactlyoneevent and artifact set",
+    "Main or external Worker Result input remains supported with20MiB regularfile bound; oversize creates no domain acceptance; file/dir sync and original lock-held cleanup API preserve pending/referenced artifacts for typed and legacy modes",
+    "Final full receipt/revision/legacy targeted normal31.155s and race156.852s passed; added owner/input/cleanup race31.501s passed; latepending/concurrent race31.950s passed; schema item in earlier race log is compile-only with no matchedtests",
+    "Canonical TR006 validates complete original Main batch regardless compatible report kind; currentregisteredcanonicalcompletion/pinnedPlan declarations prevent missingregistry downgrade; retained historicalPlan cannot select newgeneration mode; selector/acceptance/Writer targetedrace and finaltrueS5→S6→TR006→S7Register normal17.114s passed"
+  ],
+  "limitations": [
+    "No trusted typed S7 scaffold issuance/exactpath saveHook or completeprofessional Reviewer→writer→receipt→StopIdle/Gate chain; realmodelchain remains0/9",
+    "SubmitResult explicitlegacyCLI preserves original dispatch-based producer checks; actualprocess authorship/trustedsessionidentity requires futureissuance/saveHook adapter",
+    "Receiptless historical Results do not receive guessed fullanswer digests or replay eligibility; no reactivation of invalidated oldjudgments",
+    "Standalone orphan O_EXCL files without proven Runtime acceptance remain explicitrecovery cases; no automaticunlink of unknown/conflicting staging",
+    "Only targeted mechanism/regression/race/vet runs; no newfullinstall/platform/native/workspace or realsupportedhost/Claude acceptance",
+    "Original protectedWriter state/index/artifact directories trusted; no coordinatedwholebundle rewrite-resistance claim",
+    "Initial selector guard regression failed only on legacydiagnostic text assertion after strictrouting changed; finalactionable originalMainfacts diagnostic and newselector tests pass"
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s7-review-result-receipt-targeted-20261014.log",
+      "sha256": "5a323f9f205d1c4580bc79b9033354499720b3a08f20907597bfacccfe0b05ed",
+      "bytes": 4344
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-result-receipt-cleanup-20261014.log",
+      "sha256": "6228a293026d6c9d731c88726accf2104780ab150d1754c627c7dc14dbdf5fe3",
+      "bytes": 4508
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-pending-recovery-20261014.log",
+      "sha256": "959c148fadf5f19138623aa19a65139611bddda19edbe998b6a255228ae6bf6d",
+      "bytes": 557
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-receipt-final-targeted-20261014.log",
+      "sha256": "c736df81262b561d84abbaa0d07725371b8a8e2fb455f4bc1e9a449232ac8652",
+      "bytes": 5142
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-result-receipt-final-race-20261014.log",
+      "sha256": "37c76452c24879b8a91017720d17d0de9158ff497481f7edf0a473208118f133",
+      "bytes": 156
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-receipt-stop-idle-late-cases-race-20261014.log",
+      "sha256": "b16dac0e1a062203114808528454179e759f76e4cf3064a15527bb013506f482",
+      "bytes": 218
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-receipt-audit-targeted-20261014.log",
+      "sha256": "dcbb84fe21e0f4eecc945cb3088b5fb7a1b28648a23810c218d47c64156cebd0",
+      "bytes": 69
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-receipt-audit-race-20261014.log",
+      "sha256": "397d428b3ccaa7a526e2409ea24fc7c8837de4063a2aa5b1ff6f2ea11002a3ce",
+      "bytes": 70
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-review-owner-input-cleanup-final-race-20261014.log",
+      "sha256": "8ddb6c45a1e12f4b5c7d378d3d83c277c8bc249d105641ca7e415cc10cab281a",
+      "bytes": 69
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-all-slices-final-vet-20261014.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-common-chain-final-writer-guard-20261014.log",
+      "sha256": "6c6e1ba9b013e61f7ba652a5cc76867b9bc388125781612a47fd250738d1b836",
+      "bytes": 74
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-product-selector-tr006-final-race-20261014.log",
+      "sha256": "bcb9d77d76055f4830ec7b7ce5b75b5607c7738073835d933167ea1eca7299eb",
+      "bytes": 1222
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-product-selector-tr006-audit-final-race-20261014.log",
+      "sha256": "375591bf199b3bce889915a8abe902bec8e1bd2abf98ff42312343e0e89980fa",
+      "bytes": 218
+    },
+    {
+      "path": "blueprint/evidence/logs/s7-tr006-all-report-kinds-final-race-20261014.log",
+      "sha256": "fb856e2b01f08d95552f88eb1386d9f7b8c8cb6eefaeedf5a7354e5951de3deb",
+      "bytes": 72
+    }
+  ],
+  "source_snapshot": [
+    {
+      "path": "internal/review/submit.go",
+      "sha256": "e413f9d395c753a50734e49be073dca5e6863ed491be11f588877927d932362f",
+      "bytes": 84928
+    },
+    {
+      "path": "internal/review/revise.go",
+      "sha256": "76f6871aaae00cf130033b961dfc1982d9588b03678f8d9290823a457b0efe22",
+      "bytes": 19790
+    },
+    {
+      "path": "internal/review/result_receipt.go",
+      "sha256": "6a5af035e2cca2848a9b1912b825f8603e24b21e14fd7f599dcdd432394bef8c",
+      "bytes": 31166
+    },
+    {
+      "path": "internal/review/result_receipt_test.go",
+      "sha256": "8081c6533c45c284206600a52a6db64c253bf807f41212bf51b735e02d238cf9",
+      "bytes": 46331
+    },
+    {
+      "path": "internal/schema/assets/loop-state-v1.2.schema.json",
+      "sha256": "c488d9b02d8df2291ba9cca0320da5ed763055505562dbd0ab2766734ce6472d",
+      "bytes": 184778
+    },
+    {
+      "path": "internal/buildsurface/selection.go",
+      "sha256": "77796b2fd91081f3b81a27f9ae8b426be47ee52cfa1fc098b41619ffc1a3501a",
+      "bytes": 2269
+    },
+    {
+      "path": "internal/buildsurface/selection_test.go",
+      "sha256": "10bd8fa3f9fa4294c6928f7bbb088d5b88ebad02403ae32720597631ff8e6446",
+      "bytes": 3560
+    },
+    {
+      "path": "internal/buildsurface/registered.go",
+      "sha256": "631a5c964de93d8d468a2418e757648e17997394445523c8066388fe88d32684",
+      "bytes": 3026
+    },
+    {
+      "path": "internal/transition/engine.go",
+      "sha256": "763d15a325008dab3d850d2f191d57cd8c89afdc701c22ce0887da76a70ca96f",
+      "bytes": 62386
+    },
+    {
+      "path": "internal/transition/product_baseline_test.go",
+      "sha256": "79557d67e6bba5d637d498fa75379dfc61247bdb331b1b386ff6a5ba60908b6a",
+      "bytes": 3047
+    },
+    {
+      "path": "blueprint/l3-stages/L3-S7-verification-round.md",
+      "sha256": "ad922ce7d36e23f25862171e2cd26c77a01b07d9ef724f0654738c4e6103325d",
+      "bytes": 182312
+    },
+    {
+      "path": "blueprint/l4-mechanisms/L4-stage-form.md",
+      "sha256": "e659852665785fff3fa9bffc79c39c6b8a894ba6e1e160efb220e371606da44a",
+      "bytes": 44952
+    },
+    {
+      "path": "blueprint/global-optimization/G02-quality-and-completion.md",
+      "sha256": "2e923db9f9375cc97729d578ac5763884213bed39e2cb561c9b7ee550b1f585f",
+      "bytes": 17113
+    },
+    {
+      "path": "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md",
+      "sha256": "26c2e1a74a36841e4354ec01d6ecf934f9812c373109a967b49dad13839aea29",
+      "bytes": 159595
+    }
+  ]
+}

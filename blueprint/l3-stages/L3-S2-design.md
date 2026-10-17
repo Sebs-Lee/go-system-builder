@@ -6,6 +6,56 @@
 
 ## 1. 第一层：S2 的立意与目标
 
+### S2 设计答卷接收契约（2026-10-14，Main 机制链已落地）
+
+首版支持原 Main 在 planning.design 的设计收口责任。绑定当前
+runtime/generation/stage_entry、Main 主体与 locked bound REQ 指纹；
+不伪造 workgroup/Assignment 或 Architect agent。工作包使用明确的
+main_stage=S2 分支，规划者只提供原架构产物路径和设计自审结论，
+机器字段、原 Orchestrator producer、subject_refs 与证据 ID 由 adapter 生成。
+已有 ARCHITECTURE 的专业内容与 locked 状态仍由规划者负责，
+不能从文件存在推导 pass；未回答结论、缺产物、资料漂移或 unknown
+UI impact 给字段/原门缺口，不占用有效接收。
+
+保存消费调用原 RecordEvidence，登记 planning_design 的原 Schema
+信封，并在同一 Writer 事务保存本次接收键/内容摘要及 pending followup；
+原 Controller/qualitygate 决定 PTR-PLAN-01，原动作登记 design documents。
+subject 必须覆盖本次 frozen REQ 与实际 locked ARCHITECTURE 字节/版本，
+信封不得与已校验答卷矛盾。Main 不代签独立 S5，也不把 ADR 方法约定
+变成新自动审批权；UI/场景工作仍是 S2 的专业责任。PTR-PLAN-01 当前不验证完整
+UI 包；scenario bridge 在 PTR-PLAN-02 才机械运行，不能声称这些工作已由 S2 出口门覆盖。
+
+发行、答卷题干、接收、historical receipt、原 pair checkpoint、Stop/Hook
+消费按显式 S2 模板扩展，保持 S5 子类型和历史索引校验。同内容重放
+重建原 domain refs；异内容或离开当前 stage/基线拒绝；原接收后中断
+只恢复 system followup。首次支持主责 Main；专业子代理/其他入口另列
+适配，不把 Main 接收证明当全部宿主闭环。
+
+Status/Next 的 S2 缺口只描述当前 S2 目标及其条件包。仅从阶段合同与文件系统
+生成投影时，保留 `architecture_record`（以及适用时的 S2 UI 包目标）；
+ARCHITECTURE 文件存在或标为 locked 都不证明当前 design 已被接收，也不推出
+`contract_set`、`locked_contract_set` 或 S4 TASK 缺口。S3 的合同提示只在原 cursor
+进入 `planning.contracts` 后出现。
+
+**§0 问卷落点与缺口**：进入/恢复 S2 时现有 graph listener 自动准备原 S2 JSON 问卷，
+并把发行返回的实际 view/answer 全路径交给 Main；按该 view 给出的 REQ 和资料完成设计，
+只填写现有 `answer` 并保存。Write/Edit/MultiEdit 的 PostToolUse 将保存直接交给
+`SaveDesign` / 原 `RecordEvidence` / Controller；不运行手工 `stage-answer issue/consume`，
+不另写 evidence 信封。路径是发行结果，不让执行者从 Runtime 或阶段号重建。
+
+问卷现有内容要求 locked ARCHITECTURE 路径和专业自审，但 view 的 read 当前只有 REQ，
+且问题没有展开架构/ADR、受影响模块、scenario bridge/generate/validate 的具体资料和
+逐项验收。入口提示也只说“完成专业答案”，接收回执多为“按原门继续”，没有把
+**准确 answer 路径 + 当前具体缺项 + 下一动作**稳定合成一条消息。最小补齐是让既有
+S2 view/进度投影呈现当前 REQ 的 UI 分支、准确的架构/条件场景资料路径、应完成检查及
+具体缺项；不新增 consumer/gate。保留当前对 scenario 包的专业要求、原 PTR-PLAN-01
+事实和 S5 独立审查；不得把专业自审 `pass`、文件存在或提醒表述成人闸/全包已过。
+
+回归入口：`internal/workpacket/planning_test.go::TestDesignProjectionFrozenMainAndProfessionalAnswer`；
+`internal/cli/design_answer_e2e_test.go::TestDesignAnswerMainSaveOriginalTransitionAndReplay`、
+`TestDesignAnswerRejectsIncompleteDriftAndUnknownUI`、`TestDesignAnswerPendingRecoveryPreservesReception`；
+listener 路径由 `internal/cli/questionnaire_listener_e2e_test.go::TestQuestionnaireListenerRestoresExactPathAndPreservesAnswer` 覆盖。
+
 ### 1.1 为什么需要 S2
 
 REQ 说明要实现什么，却不能直接替代实现各方共同依赖的设计事实。若没有 S2，前端、后端、测试和运维会分别补全组件边界、状态转换、错误恢复和用户路径，最终得到多套彼此合理却不能组合的系统。
@@ -26,7 +76,7 @@ S2 要解决四个根问题：
 | 输入 | 当前 bound REQ；既有 `docs/design/**`；受影响模块的现有真相包；项目规则；runtime 的 `planning.design` cursor |
 | 要搞清楚 | 架构边界和风险决策；UI impact 路由；受影响模块的完整正反行为；AC 到 CASE/N/A 的可达性 |
 | 核心工作 | 建立架构与 ADR → 解析 UI 分支 → 必要时双轨构造模块真相 → 自审、生成、校验、锁定并登记 |
-| 输出 | locked ARCHITECTURE；必要 ADR；UI/行为变化时的当前模块真相包；planning_design 证据；runtime 中登记的 design 文档 |
+| 输出 | locked ARCHITECTURE；必要 ADR；UI 变化时的当前模块 UI 包，或 FR 行为所需的服务行为包；planning_design 证据；runtime 中登记的 design 文档 |
 | 完成 | 架构足以约束契约；UI impact 不为 unknown；应有的场景包通过 generate/validate/bridge；design gate 通过并提交 PTR-PLAN-01 |
 | 下一阶段 | cursor 进入 `planning.contracts`，S3 只从 locked REQ、设计和模块真相翻译契约 |
 
@@ -43,14 +93,14 @@ flowchart LR
 
     subgraph S2["S2 Design"]
         T1["T1 建立架构边界与风险决策"] --> T2["T2 解析 UI / 写 Derivation"]
-        T2 --> T3["T3 双轨建立系统事实与用户故事"]
+        T2 --> T3["T3 双轨建立系统事实与行为角色"]
         T3 --> T4["T4 汇聚行为、oracle、fixture 与路径"]
         T4 --> T5["T5 自审、校验、锁定与登记"]
     end
 
     subgraph OUTPUT["Output"]
         O1["locked ARCHITECTURE + ADR"]
-        O2["当前模块真相包<br/>条件产出"]
+        O2["当前模块真相包<br/>UI 包或服务行为包，按需"]
         O3["planning_design evidence"]
         O4["registered design document"]
         O5["cursor = planning.contracts"]
@@ -68,7 +118,7 @@ flowchart LR
     O5 --> NEXT["S3 Contracts"]
 ```
 
-T3、T4 是条件路径：UI impact=`changed` 或行为模型确实变化时执行；`none` 只跳过 UI/场景包工作，不跳过架构决策和 S2 收口。
+T3、T4 按 UI 资产与业务行为分别路由：UI impact=`changed` 时执行完整 UI 包；UI impact=`none` 跳过 Foundation 推导、页面 HTML、`index.html`、PATH 与浏览器 spec。若任一 AC 指向 FR，仍须维护模块级服务行为包，不能跳过 facts、story、rule/branch、oracle、fixture、flow、cross-matrix 与生成 CASE；既有服务行为真相变化也必须更新同一模块包，若 bound REQ 没有可引用的 FR 则走 amendment。这里的 `none` 表示无 UI 产出，不表示无 CASE 分母。
 
 ### 1.4 S2 的边界与现状结论
 
@@ -78,7 +128,7 @@ T3、T4 是条件路径：UI impact=`changed` 或行为模型确实变化时执�
 - **验证边界**：`scenario-coverage.json` 的 100% 是设计分支已构造，不是 S7 的执行证据；
 - **当前接线事实**：PTR-PLAN-01 的真实机械门要求 locked REQ、locked ARCHITECTURE、planning_design 证据和 `ui_impact_resolved`；它没有直接运行完整 UI package 校验，也不检查 Project Design Foundation 或 Derivation Note；
 - **当前保护事实**：PTR-PLAN-01 只把 ARCHITECTURE 登记进 `documents[]`。stories/flows/JSON/HTML 真相包目前没有进入 runtime 的精确指纹集，也不受同等级 locked-artifact 保护；
-- **当前方法事实**：`specification-planning` Step 0 在 `none` 时跳过 Foundation 推导与 UI 包，仍完成架构与 ADR；与 design gate 必须存在 locked ARCHITECTURE 对齐；
+- **当前方法事实**：`specification-planning` Step 0 在 `none` 时跳过 Foundation 推导与 UI 资产；有 FR-targeted AC 时仍须构造服务 CASE 包。该包不需要 HTML/PATH/浏览器 spec，但沿用模块级 facts、stories、flows、rules、fixture、cross-matrix 和生成物；与 design gate 必须存在 locked ARCHITECTURE 对齐；
 - **当前人闸事实**：ADR 方向签核是方法层约定，不是 loop-definition 中的 human-boundary transition，不能写成已被 runtime 强制。
 
 ## 2. 第二层：S2 的任务分解
@@ -86,9 +136,9 @@ T3、T4 是条件路径：UI impact=`changed` 或行为模型确实变化时执�
 | 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
 |:--|:--|:--|:--|
 | T1 建立架构边界与风险决策 | 契约和实现依赖的技术决定是否齐全；为什么这样选 | 沿架构模板覆盖上下文、模块、数据流、状态/数据模型、安全、性能、部署回滚；实质取舍进入 ADR | 架构草案、风险—决策—后果链、ADR 集 |
-| T2 解析 UI / 行为影响 | 是否需要新建或更新模块真相包；影响哪些既有模块 | 读取 bound REQ 顶部 UI impact 与模块绑定；unknown 停止；none/changed 分流；`changed` 先写 Derivation Note 再读模块包 | 明确的受影响模块清单、推导说明和条件工作范围 |
-| T3 建立两条事实轨 | 系统词汇和用户意图如何在汇聚前各自完整 | 系统轨从架构落 facts/partitions；用户轨从 REQ §A 落 stories，复用稳定 S-NNN | 可汇聚的系统 facts 与用户 stories |
-| T4 汇聚完整行为与可走查路径 | 每条规则的正反结果、数据和真实路径是否齐全 | facts × FR × stories 找 rules/branches；branch 同写 oracle；cross-matrix 查沉默格；再写 fixtures、flows、HTML 原型 | source package、生成前 bridge 结果、可执行路径和 fixture |
+| T2 解析 UI / 行为影响 | 是否需要新建或更新模块 UI/行为真相；影响哪些既有模块 | 读取 bound REQ 顶部 UI impact 与模块绑定；unknown 停止；changed 进入完整 UI 路径；none 跳过 UI 资产，但对 FR-targeted AC 进入服务行为路径 | 明确的受影响模块清单、推导说明和条件工作范围 |
+| T3 建立两条事实轨 | 系统词汇和调用方意图如何在汇聚前各自完整 | 系统轨从架构落 facts/partitions；用户轨从 REQ §A 落稳定 S-NNN；纯服务情景把调用方/worker 作为行为角色，不虚构页面角色 | 可汇聚的系统 facts 与行为角色意图 |
+| T4 汇聚完整行为与可走查路径 | 每条规则的正反结果、数据和可复现操作顺序是否齐全 | facts × FR × story 找 rules/branches；branch 同写 oracle；cross-matrix 查沉默格；再写 fixtures 和 F-NNN 操作流；仅 UI 路径需要 PATH/HTML | source package、生成前 bridge 结果、可执行服务或 UI 路径和 fixture |
 | T5 自审、校验、锁定与登记 | 设计是否可实现、可取证、可维护；机器事实能否进入 S3 | 三角色攻击；generate/validate；锁 ARCHITECTURE；登记 planning_design；由 gate 提交 PTR-PLAN-01 | 可审计设计出口与 `planning.contracts` cursor |
 
 任务有两个关键顺序：stories 必须先于引用它的 branches；fixture 必须晚于行为分支定型。系统轨和用户轨可由同一 agent 自由交错，但不是把互相依赖的设计切给互不共享上下文的子代理。
@@ -100,20 +150,28 @@ flowchart TD
     IN["planning.design<br/>bound REQ"] --> ARCH["T1 起草 ARCHITECTURE<br/>风险取舍进入 ADR"]
     ARCH --> UI{"UI impact"}
     UI -->|unknown| STOP["停止推进<br/>走 REQ amendment 澄清"]
-    UI -->|none| REVIEW["T5 三角色自审"]
+    UI -->|none| DOMAIN{"有 AC→FR 或服务行为真相变化？"}
     UI -->|changed| DERIVE["读 Next-agent card<br/>写 Derivation Must not"]
+    DOMAIN -->|否：全部 AC 均有受控 N/A 且行为不变| NA_BRIDGE["仍运行 scenario bridge<br/>不生成行为包"]
+    DOMAIN -->|是| SERVICE["模块服务行为包<br/>7 文件；browser_required=false<br/>无 HTML / PATH / browser spec"]
     DERIVE --> MODULES["确定受影响模块<br/>先读既有完整模块包"]
 
     MODULES --> SYS["T3 系统轨<br/>architecture → facts"]
-    MODULES --> USER["T3 用户轨<br/>REQ §A → stories"]
+    MODULES --> USER["T3 行为角色轨<br/>REQ §A → stories"]
+    SERVICE --> SYS
+    SERVICE --> USER
     SYS --> CONV1["T4 汇聚①<br/>facts × FR × stories<br/>rules + branches + oracle + cross-matrix"]
     USER --> CONV1
     CONV1 --> BRIDGE{"AC→FR→Branch bridge 通过？"}
-    BRIDGE -->|否| FIX1["补行为分支<br/>或提交可背书 N/A"]
+    BRIDGE -->|否| FIX1["补 FR 规则/分支<br/>或澄清 REQ 引用"]
     FIX1 --> CONV1
+    NA_BRIDGE --> REVIEW
     BRIDGE -->|是| FIXTURE["写 synthetic fixture + cleanup"]
-    FIXTURE --> CONV2["汇聚②<br/>flows + PATH + HTML prototype"]
-    CONV2 --> REVIEW
+    FIXTURE --> CONV2{"汇聚②<br/>按 browser_required 收敛路径"}
+    CONV2 -->|false| BACKENDFLOW["F-NNN 服务操作流<br/>no PATH / HTML / Playwright"]
+    CONV2 -->|true| UIPATH["F-NNN + PATH + HTML prototype"]
+    BACKENDFLOW --> REVIEW
+    UIPATH --> REVIEW
 
     REVIEW --> DEFECT{"发现哪一层问题？"}
     DEFECT -->|REQ 语义| PAUSE["暂停并走 amendment"]
@@ -127,7 +185,7 @@ flowchart TD
     PTR --> S3["planning.contracts<br/>进入 S3"]
 ```
 
-对 changed 路径，`scenario bridge` 应在汇聚①后先做源头检查，`scenario generate` / `scenario validate` 在收口时做全包检查。当前自然路径直到 PTR-PLAN-02 才机械执行 `scenario_bridge_checked`，所以 S2 主会话主动完成这两次校验仍是流程必要动作，而不是已经由本阶段出口门完整替代。
+对任何存在 FR-targeted AC 的路径（包括 UI impact=`none` 的服务 CASE），`scenario bridge` 应在汇聚①后先做源头检查，`scenario generate` / `scenario validate` 在收口时做全包检查。仅当所有 AC 都是受控 N/A 且不需要更新行为包时，不需要生成场景文件；仍保留原 bridge / PTR-PLAN-02 检查。当前自然路径直到 PTR-PLAN-02 才机械执行 `scenario_bridge_checked`，所以 S2 主会话主动完成源头和全包校验仍是流程必要动作，而不是已经由本阶段出口门完整替代。
 
 ## 4. 第三层：每项任务如何被引导和承载
 
@@ -147,9 +205,10 @@ flowchart TD
 | 情况 | 动作 | 不能做什么 |
 |:--|:--|:--|
 | `unknown` | 停止；指出 REQ §D 中要澄清的事实，走 human-only amendment | 猜成 none/changed 后继续 |
-| `none` 且无行为包变化 | 保留 T1/T5，跳过 T3/T4 的 UI 包生产 | 跳过 ARCHITECTURE，或把“无 UI”误写成“无设计” |
+| `none` 且所有 AC 均为受控 N/A、无行为包变化 | 保留 T1/T5，跳过 Foundation 与 UI 资产生产 | 跳过 ARCHITECTURE，或把 `none` 当作 AC 的 N/A 背书 |
+| `none` 且有 AC→FR 或服务行为真相变化 | 不读 Foundation，不产出 HTML/index/PATH/浏览器 spec；在同一模块真相路径维护 7 文件服务行为包：`scenario-model.json`、`fixture-contract.json`、`cross-matrix.json`、`stories.md`、`flows.md`、生成的 `cases.json`、生成的 `scenario-coverage.json`。story 表达 API caller/worker 意图，F-NNN 表达请求、校验、响应及持久化顺序；每个 branch 使用 `browser_required:false`；没有可引用 FR 的行为变化走 REQ amendment | 静默跳过 CASE；新建 REQ 私有 CASE；把 `browser_required:false` 当作 N/A |
 | `changed` | 先读 Next-agent card（`DESIGN.md` §0）与 Surface 行，写含 Must not 的 Derivation Note，再更新模块真相包；架构轨不向 Kernel 要模块图 | 跳过推导直接画 HTML；把施工 hex 当品牌；新建 REQ 私有副本 |
-| 非 UI 但 AC→FR 仍需要 CASE | 按 AC bridge 的实际分母补模块行为包，或使用 NFR/§A4 的受控 N/A | 用 ui_impact=none 静默删除验收项 |
+| 非 UI 但 AC→FR 仍需要 CASE | 按 AC bridge 的实际分母补模块行为包 | 把 FR-targeted AC 改判为 N/A；用 ui_impact=none 静默删除验收项 |
 
 当前 `hasCompleteUIDesignPackageForREQ` 主要进入 status/next 投影；它会检查模块绑定、必需文件、HTML 头和 symlink 边界，但不是 PTR-PLAN-01 的 transition guard。此处必须如实把它称为**引导性检查**，不能称为已接线的硬门。
 
@@ -175,9 +234,9 @@ flowchart TD
 | 子步骤 | 载体 | 机器承担 | 人/agent 承担 |
 |:--|:--|:--|:--|
 | 行为汇聚 | `scenario-model.json` rules/branches + `cross-matrix.json` | 引用存在、fact/story 地板、branch 与 FR 真实关联、正反比例 | 找出哪些 facts×FR×stories 组合有意义；写忠实 oracle |
-| 源头桥 | `scenario bridge` | AC→FR→Rule/Branch 可达；N/A 只认现存 NFR 或 §A4 指针 | 判断该 AC 应进入行为分母还是确属 N/A |
+| 源头桥与模块校验 | `scenario bridge`、`scenario validate`、PTR-PLAN-02 | bridge 校验 AC→FR 源头；validate 校验模块包/生成物；PTR-PLAN-02 校验完整 FR→Rule/Branch→CASE；N/A 只认现存 NFR 或 §A4 指针 | 判断该 AC 应进入行为分母还是确属 N/A |
 | 数据装配 | `fixture-contract.json` | schema、fixture 引用、synthetic/setup/cleanup 形状 | 设计不会污染真实数据且能复现分支的装配 |
-| 可走查汇聚 | `flows.md`、PATH-*、模块 HTML、index | 引用和格式的一部分由 validate/projection 检查 | 真实入口、操作顺序、可见结果、恢复路径与页面设计 |
+| 可走查汇聚 | 服务行为使用 `flows.md` / F-NNN；浏览器行为再使用 PATH-*、模块 HTML、index | 引用和格式的一部分由 validate/projection 检查 | 服务调用顺序，或 UI 的真实入口、可见结果和恢复路径 |
 | 生成物 | `cases.json`、`scenario-coverage.json` | harness 原子生成、字节比对；禁止手改 | 只改 source package 后重新生成 |
 
 oracle 正向至少表达 visible、terminal_state、persisted_effects、forbidden_side_effects；负向再表达 rejection、expected_state、recovery。结构完整可以机检，但“这个结果是否忠实于业务”仍是判断层责任。
@@ -192,7 +251,7 @@ oracle 正向至少表达 visible、terminal_state、persisted_effects、forbidd
 | e2e-tester | 哪个负向 CASE 无法在七个结果维度上取证 | 同上 |
 | maintainer | 哪条规则会与模块后续演进冲突 | 同上 |
 
-changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有路径都必须把 ARCHITECTURE 顶部状态改为 locked，并登记 kind=`planning_design`、responsibility=Architect/Orchestrator、conclusion=pass 的 JSON 证据信封。下一次 PreToolUse 由 gate 求值并通过 PTR-PLAN-01 登记 design 文档，agent 不手工拨 cursor。
+存在 UI 或服务行为包时运行 `scenario generate` 和 `scenario validate`；无包且所有 AC 均有受控 N/A 时仍核对 `scenario bridge`。所有路径都把 ARCHITECTURE 顶部状态改为 locked，并在问卷保存时由原 consumer/Writer 生成 `planning_design` 证据；不要手工写 JSON 信封。随后原 graph gate 求值并可通过 PTR-PLAN-01 登记 design 文档，agent 不拨 cursor。当前 PTR-PLAN-01 不核完整场景包，不能把它当作已自动完成这些专业检查。
 
 ## 5. 职责分布与覆盖审计
 
@@ -202,9 +261,9 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 |:--|:--|:--|:--|
 | 架构完整性 | Architect/main agent | ARCHITECTURE 12 节 | S3、S5、S6、S10 |
 | 长期决策与风险 | agent 提案，必要时人裁定 | ADR | S3、S5、维护者 |
-| 模块行为真相 | design agent | scenario source package | S3、S7、S8 |
+| 模块行为真相 | design agent | scenario source package（UI 包或 7 文件服务行为包） | S3、S7、S8 |
 | 正反结构与引用 | harness | scenario generate/validate/bridge | S3 gate、验证者 |
-| 用户旅程 | design agent | stories/flows/PATH/HTML | FE 契约、E2E |
+| 行为角色与路径 | design agent | stories/flows；浏览器场景另有 PATH/HTML | FE/BE 契约及相应验证者 |
 | 项目级设计推导 | design agent | `docs/design/derivation/REQ-*` + Foundation | 模块原型、S5 语义审查 |
 | 设计登记与 cursor | gate + transition/store | planning_design evidence、documents[]、PTR-PLAN-01 | hook、S3 |
 | UI 包完整性提示 | projection | status/next 的 missing 项 | 主会话 |
@@ -217,10 +276,10 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 - stories、branches、flows 不是三份用户故事：分别表达意图、行为结果和可执行路径；
 - `scenario bridge` 与 `contracts check` 不重复：前者管 AC→CASE，后者管 CASE→契约；
 - **接线缺口**：完整 UI package 检查尚未挂到 PTR-PLAN-01；S2 可以在只有 locked architecture + evidence 时机械进入 S3；Project Design Foundation 与 Derivation Note 同样尚未成为机械门；
-- **锁定缺口**：模块真相包未登记进 runtime `documents[]`，S5 的 exact subject 和后续 locked-artifact hook 不覆盖它；
-- **方法缺口（已修）**：`specification-planning` Step 0 在 `none` 时不再跳过架构；仍跳过 Foundation 推导与 UI 包；
+- **锁定缺口**：模块真相包未登记进 runtime `documents[]`，S5 的 exact subject 不覆盖它；Hook 提醒当前状态，不按 locked artifact 拦截工具写入；
+- **方法缺口（已修）**：`specification-planning` Step 0 在 `none` 时跳过 Foundation 与 UI 资产；FR-targeted AC 仍需 7 文件服务 CASE 包；
 - **判断缺口**：oracle 语义、fact×story 组合和真实用户路径不能由 schema 证明正确；
-- **分母边界**：AC bridge 对非 UI AC 也可能要求 CASE；不能把“只对 changed 强制”写成无条件现状。
+- **分母边界**：AC bridge 对非 UI 的 FR-targeted AC 同样要求 CASE；`browser_required:false` 只跳过浏览器 spec，不跳过 CASE、合同映射或 S7 执行分母。
 
 ### 5.3 关键取舍
 
@@ -256,7 +315,7 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 
 - `docs/architecture/ARCHITECTURE-*.md`，顶部状态 locked；
 - 必要的 `docs/design/decisions/ADR-*.md`，含风险、备选、后果、Depth Self-Review 与 endorsed N/A；
-- 条件产出的模块包：index、stories、flows、HTML、scenario-model、cross-matrix、fixture-contract，以及生成的 cases/coverage；
+- 条件产出的模块包：UI impact=`changed` 时为完整 UI 包；UI impact=`none` 但有 AC→FR 时为 7 文件服务行为包（`scenario-model.json`、`fixture-contract.json`、`cross-matrix.json`、`stories.md`、`flows.md`、生成的 `cases.json`、生成的 `scenario-coverage.json`，branch 使用 `browser_required:false`，没有 HTML/PATH/浏览器 spec）；
 - valid planning_design 证据信封；
 - PTR-PLAN-01 提交后 runtime 中的 design document 与 `planning.contracts` cursor。
 
@@ -266,7 +325,7 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 |:--|:--|
 | 架构充分 | 契约需要的模块、状态、数据、接口、安全、性能和回滚决定不再留给 S3 猜 |
 | 风险诚实 | 重大决策有风险、备选和后果；冲突没有被静默覆盖 |
-| UI/行为受控 | unknown 不推进；changed/行为变化时模块包更新；none 不删除非 UI 验收分母 |
+| UI/行为受控 | unknown 不推进；changed 更新 UI/行为包；none 跳过 UI 资产但保留所有 FR-targeted CASE，不删除非 UI 验收分母 |
 | 分母可达 | 每条 AC 到 CASE，或通过受控 N/A；source package 与生成物一致 |
 | 机器出口 | locked REQ/design + valid planning_design + `ui_impact_resolved`；PTR-PLAN-01 成功登记 design |
 
@@ -285,7 +344,7 @@ changed 路径随后运行 `scenario generate` 和 `scenario validate`；所有�
 
 ### 8.1 易错点
 
-- UI impact=`none` 不等于“不做架构”；
+- UI impact=`none` 不等于“不做架构”或“没有 CASE”；FR-targeted AC 仍需服务 CASE；
 - “模块全量”不是做 facts×stories 的机械笛卡尔积，而是每个有意义组合必须覆盖或说明；
 - branches 必须引用已经存在的 stories；fixtures 在分支稳定后再写；
 - oracle 是判定结果，不是实现步骤；

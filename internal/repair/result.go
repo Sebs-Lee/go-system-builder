@@ -4,10 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 )
 
 func SubmitRepairResult(root string, request RepairResultRequest) (RepairResult, ArtifactRef, error) {
+	if request.Verdict != "" || request.Receipt != nil {
+		if request.issuedFinal == nil || request.Receipt == nil || !reflect.DeepEqual(request.Receipt, &request.issuedFinal.receipt) {
+			return RepairResult{}, ArtifactRef{}, errors.New("typed S9 RepairResult must enter through the private issued-result integration capability")
+		}
+	}
 	contract, err := ValidateApprovedContractRef(root, request.Contract)
 	if err != nil {
 		return RepairResult{}, ArtifactRef{}, err
@@ -157,9 +163,20 @@ func SubmitRepairResult(root string, request RepairResultRequest) (RepairResult,
 		ProducerAgentID: request.ProducerAgentID, AssignmentID: request.AssignmentID, BeforeFixChecks: beforeChecks, Checks: checks,
 		UnitResults: append([]RepairUnitResult{}, request.UnitResults...), ChangedArtifacts: changed, ScopeDeviations: scopeDeviations,
 		MigrationRef: request.MigrationRef, RollbackRef: request.RollbackRef, ResidualRisks: residualRisks, Result: resultValue, SubmittedAt: nowOr(request.OccurredAt),
+		Verdict: request.Verdict, BeforeFixResults: append([]RepairBeforeFixResult{}, request.BeforeFixResults...),
+		DetectionGapArtifacts: append([]string{}, request.DetectionGapArtifacts...), EvidenceRefs: append([]string{}, request.EvidenceRefs...),
+		Receipt: request.Receipt,
 	}
 	if request.PlanReport.Path != "" {
 		document.PlanReportRef = &ArtifactRef{ID: request.PlanReport.ID, Path: request.PlanReport.Path, SHA256: request.PlanReport.SHA256}
+	}
+	if request.issuedFinal != nil {
+		if request.issuedFinal.cleanup == nil {
+			return RepairResult{}, ArtifactRef{}, errors.New("typed S9 Result has no exact unaccepted staging cleanup capability")
+		}
+		if err := request.issuedFinal.cleanup(document); err != nil {
+			return RepairResult{}, ArtifactRef{}, fmt.Errorf("S9 staged Result conflicts with this exact retry: %w", err)
+		}
 	}
 	ref, err := writeImmutable(root, artifactRoot+"/results/"+request.ResultID+".json", "repair-result.schema.json", document)
 	if err != nil {

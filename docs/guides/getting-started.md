@@ -110,8 +110,22 @@ evidence, pass `--scope-ref runtime_rollover:current`; the harness expands it
 to the commit's terminal revision. This is an
 auditable local authorization record, not an external identity-provider
 assertion. The first
-`loop-harness req bind` on a human-locked REQ overwrites the inactive placeholder
-authorization and sets the cursor to S1.
+`loop-harness req bind` on a human-locked REQ replaces the inactive placeholder
+authorization and enters `planning.design`. Before binding, choose the explicit
+development branch and final release destination from project facts, then make
+sure the locked REQ is committed on that development branch. Include the
+remote when the release destination is remote. If the REQ is only in the
+working tree or index, commit that locked file there before binding; this local
+setup does not authorize a push or release. Local Git identity setup and
+routine branch naming need no new approval. Neither branch value has an
+implicit `main`, current-branch, or remote default, and `--approved-by` must
+name the actual human authorized for this lock/bind rather than Git `user.name`.
+
+Use the complete command below after replacing every placeholder:
+
+```bash
+loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>
+```
 
 The target project ends up with this shape:
 
@@ -177,18 +191,21 @@ its permanent prompt.
 ## 4. Subagents
 
 Claude Code subagents use `.claude/agents/*.md`. Every assignment is singular
-and fingerprinted. The default dispatch mode is `plan_checkpoint`: the Worker
-reads the fingerprinted chain, sends one PLAN_REPORT, and continues
-immediately (the PostToolUse observer records the checkpoint and activates the
-Worker). `plan_approval_required` keeps the two-round flow: phase one is
-read-only and follows the document order in the request; phase two is a
-separate activation bound to the approved read-back, tools, paths, commands,
-and current runtime revision.
+and fingerprinted. `plan_checkpoint` means work continues without a second
+approval; the required professional answer depends on the stage. S5/S7/S8 use
+their exact domain questionnaire, S9 uses its PlanReport/RepairResult answers,
+and S6 Builders retain their professional PLAN_REPORT. A generic PLAN_REPORT
+is sent only when the original role contract requires it. An explicit
+`plan_approval_required` assignment keeps its original read-back and approval
+flow; phase one is read-only and phase two is bound to the approved assignment.
 
-After the main session dispatches, the active Driver work is to watch for that
-Agent's PLAN_REPORT (or, in approval mode, collect and verify the read-back,
-then approve, reject, revoke, or reactivate the same Agent). The main session
-must not finish the delegated responsibility itself while the Agent is pending.
+After dispatch, the Driver follows the role's original receiver: watch for a
+generic PLAN_REPORT only when that role requires one, otherwise follow the
+Hook's exact domain-answer path and save feedback. In approval mode, collect
+and review the read-back before the original approval/activation. The main
+session must not take over or mark the delegated responsibility `done`; follow
+its current Runtime projection and original result receiver. Reassignment or
+replacement requires the original lifecycle path.
 
 Team construction uses `.claude/skills/team-planning/SKILL.md` and a manifest
 validated by:

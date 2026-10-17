@@ -1,0 +1,121 @@
+{
+  "package_sha256": "c5c905f202b299cc42f6be510fe4a9521830978daddecedaebc6afe2d854a062",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-native-context-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "native fresh installation, original recover help and readback projection from explicit source-example test fixtures, validated by the packaged embedded Schema, with exact installed Skill hashes; no registered business task or real model session is claimed; original S5 native/Worker flows tested separately through production CLI",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-native-context-install-h6g7bx5d",
+  "temporary_artifacts_may_expire": true,
+  "release_manifest_files": 205,
+  "verification": {
+    "complete_cli": {
+      "command": "GOPROXY=off go test ./internal/cli -count=1",
+      "passed": true,
+      "seconds": 395.93,
+      "scope": "Full CLI for the common native/teammate source projection; started before the final S5 retirement guard. Final guard covered by the separately listed production CLI and race cases."
+    },
+    "native_teammate_worker_targeted": {
+      "command": "GOPROXY=off go test ./internal/cli -run ^(TestNativeAssignmentContext|TestRegisteredTeammateContext|TestWorker) -count=1",
+      "passed": true,
+      "seconds": 38.792,
+      "scope": "Shared plan/reading-order refactor, native source and registered teammate delivery, original Worker behavior; before final shortened artifact filenames and retirement guard."
+    },
+    "native_teammate_worker_race": {
+      "command": "GOPROXY=off go test -race ./internal/cli -run ^(TestNativeAssignmentContext|TestRegisteredTeammateContext|TestWorker) -count=1",
+      "passed": true,
+      "seconds": 202.857,
+      "scope": "Source delivery and Worker compatibility including shortened artifact paths; before final retirement guard."
+    },
+    "final_native_teammate": {
+      "command": "GOPROXY=off go test ./internal/cli -run ^(TestNativeAssignmentContext|TestRegisteredTeammateContext) -count=1",
+      "passed": true,
+      "seconds": 27.854,
+      "scope": "Final production code, including real FIX route retiring the unfinished peer with no new source view or plan."
+    },
+    "final_native_teammate_race": {
+      "command": "GOPROXY=off go test -race ./internal/cli -run ^(TestNativeAssignmentContext|TestRegisteredTeammateContext) -count=1",
+      "passed": true,
+      "seconds": 90.176
+    },
+    "core_race": {
+      "command": "GOPROXY=off go test -race ./internal/agentcontext ./internal/team ./internal/schema ./internal/hook ./internal/hookctx",
+      "passed": true
+    },
+    "workspace": {
+      "command": "GOPROXY=off go test ./internal/workspace -skip ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "passed": true,
+      "seconds": 24.603,
+      "excluded_test": "Original host-limited isolated check remains excluded; its bwrap uid-map Permission denied was recorded in preceding context evidence. No isolation change or fallback."
+    },
+    "domain_regression": {
+      "command": "GOPROXY=off go test ./internal/runtime ./internal/controller ./internal/transition ./internal/policy ./internal/assignment ./internal/semantic ./internal/releasegraph -count=1",
+      "passed": true,
+      "runtime_seconds": 55.419
+    },
+    "final_vet": {
+      "command": "GOPROXY=off go vet ./internal/agentcontext ./internal/team ./internal/schema ./internal/hook ./internal/hookctx ./internal/workspace ./internal/cli",
+      "passed": true
+    },
+    "diff_check": {
+      "passed": true
+    }
+  },
+  "remaining": [
+    "Native/teammate fixed execution profile/version binding before enabled rollout",
+    "Enabled first Builder profile and generated minimal role frontmatter",
+    "Real native/teammate/workspace Skill or Read consumption and token/effective-operation comparisons",
+    "G02-G08 and remaining named domain adapters in the original goal"
+  ],
+  "temporary_log_files": [
+    "/tmp/gsb-native-context-cli-full.log",
+    "/tmp/gsb-native-context-cli-race.log",
+    "/tmp/gsb-native-context-retirement.log",
+    "/tmp/gsb-native-context-final-race.log",
+    "/tmp/gsb-native-context-core-race.log",
+    "/tmp/gsb-native-context-workspace.log",
+    "/tmp/gsb-native-context-regression.log",
+    "/tmp/gsb-native-context-vet-final-guard.log",
+    "/tmp/gsb-native-context-build-final.log",
+    "/tmp/gsb-native-context-native-smoke.log"
+  ]
+}

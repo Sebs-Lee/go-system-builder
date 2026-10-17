@@ -1,0 +1,47 @@
+{
+  "version": "1.0.0",
+  "state": "s3_projection_and_supplied_input_authority_foundation_verified",
+  "updated_at": "2026-10-14T08:27:52.901727+00:00",
+  "source_sha256": {
+    "blueprint/l3-stages/L3-S3-contracts.md": "e04208610062eb6c4b2d0620d1846d56867bfa590d875e5ea4f34f4762283013",
+    "internal/workpacket/contracts.go": "4861025d7351f7c9c2b906a8903e0896e560ee81c5aaa0ed6fd23a503dc462b6",
+    "internal/workpacket/contracts_test.go": "32298e2742b753df67d016826790265139503b25eb1b30df1f2955149aab9246",
+    "internal/runtime/contract_authority.go": "7bc899d7bf0d62b7685cfd410b98cf3e3be356bd41a234a016e290df6f940b0c",
+    "internal/cli/design_answer_e2e_test.go": "f21d31020695573a6b68f9732be7326f4df1ddaf86d5b28b8ea0e3f8a00280c4",
+    "internal/schema/assets/stage-form-s3-template.json": "ef9706f7f058a5bdbad3f064d718e8c497a06e8a954fb798349a848cf6b0e3a4",
+    "internal/schema/assets/stage-answer-s3.schema.json": "94420b71b0cdfb609f9eec33b106348d44ca29ff2f90f98147d3c8a453c2cc24"
+  },
+  "logs": {
+    "/tmp/gsb-s3-projection-race.log": "bc5102af3647dcc6092d55fbd1d11db5252f0c7ea3957d6637c327434e0e52ee",
+    "/tmp/gsb-s3-authority-race.log": "30a3fa8ff060645d2d1fc884060a491df1f1e5628169688748bdcf90fda9330e",
+    "/tmp/gsb-s3-authority-race-retry.log": "4eec5776825edd476e4c38a1fc89cc98327111f125ac2601ab7507ca5cd56af1",
+    "/tmp/gsb-s3-foundation-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/gsb-s3-original-source-authority-race.log": "f01a238957740ed3f44d580b00f962a329d588aad3e96ee6421db05bdf2d0e78"
+  },
+  "verification": {
+    "projection_race": "PASS 1.277s explicit applicability, inconsistent/missing decisions, invalid directory manifests, canonical order, copied frozen inputs, source-dependent identity",
+    "registered_design_authority_race_retry": "PASS 7.730s actual production S2 issuance/reception/PTR-PLAN-01 source baseline, S3 binding, original generation field, different root/design drift/wrong cursor rejection",
+    "vet": "PASS workpacket/runtime/CLI",
+    "diff": "PASS",
+    "original_declared_source_authority_race": "PASS 7.676s: actual submission.New original declared Git/disk fileview after original S2 registration; wrong root/design drift/wrong stage rejected"
+  },
+  "preserved_failure": {
+    "log": "/tmp/gsb-s3-authority-race.log",
+    "reason": "New S3 binding mistakenly read documents[].baseline_generation. Original PTR-PLAN-01 registers documents[].generation. Corrected to original generation; no schema or original registration changed."
+  },
+  "scope": "Typed S3 Main question projection and validation of supplied frozen input refs only. This does not prove completeness of conditional source closure, register a packet, consume planning_contract evidence, advance PTR-PLAN-02, or perform real model work.",
+  "required_next": [
+    "Complete original source resolver for conditional scenario/ADR/shared-model closure and directory manifests",
+    "Exact locked CONTRACTS index and full contract-set verification plus original contracts/scenario checks",
+    "Explicit S3 subtype issuance and original Writer planning_contract/reception/followup",
+    "Actual save Hook, receipt/replay/pending recovery and original PTR-PLAN-02 registration",
+    "Original complete pair checkpoint and historical subtype recovery",
+    "Document/skill synchronization and targeted whole mechanism acceptance"
+  ],
+  "core_complete_count_unchanged": {
+    "full_new_mechanism_chain": 2,
+    "named_stage_adapters": 9,
+    "real_model_whole_chains": 0
+  },
+  "not_a_publication": true
+}

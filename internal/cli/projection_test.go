@@ -63,8 +63,8 @@ func TestS10ProjectionKeepsTheAuditSequenceVisible(t *testing.T) {
 		state string
 		want  []string
 	}{
-		{state: "acceptance", want: []string{"coverage_inventory", "counterevidence", "s10 manifest validate", "do not modify product code"}},
-		{state: "release_audit", want: []string{"8 release-audit areas", "counterevidence", "s10 manifest validate", "S7"}},
+		{state: "acceptance", want: []string{"exact questionnaire path supplied by the listener", "professional dispositions", "counterevidence", "references and conclusion", "original acceptance consumer"}},
+		{state: "release_audit", want: []string{"exact supplied path", "all eight areas", "counterevidence", "original consumer", "blocking findings through the original rework route"}},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
 			stage, _, action := projectNext(tc.state, "", ".")
@@ -77,5 +77,52 @@ func TestS10ProjectionKeepsTheAuditSequenceVisible(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestS6DoneWhenUsesSavedResultAndOriginalConsumer(t *testing.T) {
+	contract := contractFor("S6", map[string]any{}, t.TempDir())
+	joined := strings.Join(contract.DoneWhen, " ")
+	for _, want := range []string{"Builder Result", "exact Result path supplied by the listener", "original Result consumer", "Main verifies the required integration checkpoints"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("S6 DoneWhen lacks %q: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "runtime task-complete") {
+		t.Fatalf("S6 DoneWhen still asks for a manual completion command: %s", joined)
+	}
+}
+
+func TestS6NextAssignsAuthoringToRegisteredBuildersAndIntegrationToMain(t *testing.T) {
+	stage, skill, action := projectNext("building", "", t.TempDir())
+	if stage != "S6" || skill != "agent-dispatch" {
+		t.Fatalf("S6 projection = stage %q skill %q", stage, skill)
+	}
+	for _, want := range []string{"Main coordinates", "each assigned Builder", "its TASK", "its own exact PLAN/Result questionnaires", "Main then performs the original integration"} {
+		if !strings.Contains(action, want) {
+			t.Fatalf("S6 projection omits responsibility guidance %q: %s", want, action)
+		}
+	}
+	for _, stale := range []string{"complete Builder assignments", "Main fills", "Main completes each TASK"} {
+		if strings.Contains(action, stale) {
+			t.Fatalf("S6 projection retains ambiguous Main authoring language %q: %s", stale, action)
+		}
+	}
+}
+
+func TestS7FallbackUsesListenerQuestionnairesAndOriginalMainFlow(t *testing.T) {
+	stage, skill, action := projectNext("verification", "unclassified_phase", t.TempDir())
+	if stage != "S7" || skill != PrimarySkillS7 {
+		t.Fatalf("S7 fallback projected stage=%q skill=%q", stage, skill)
+	}
+	for _, want := range []string{"exact ReviewPlan", "questionnaire paths", "original consumers", "Main retains plan registration, dispatch and queue release"} {
+		if !strings.Contains(action, want) {
+			t.Fatalf("S7 fallback action lacks %q: %s", want, action)
+		}
+	}
+	for _, stale := range []string{"s7 status", "s7 draft", "manifest-draft", "register it"} {
+		if strings.Contains(action, stale) {
+			t.Fatalf("S7 fallback action still asks the user to guess a CLI step %q: %s", stale, action)
+		}
 	}
 }

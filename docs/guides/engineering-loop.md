@@ -163,7 +163,7 @@ Each layer answers exactly one question and does not cross its boundary.
 | Current runtime | `.claude/loop-state.json` | what the current facts are | **current state** |
 | Methodology + practices | `.claude/skills/` | which method applies to an event | advisory |
 | Agent definitions | `.claude/agents/` | who a role is and its maximum capability | boundary |
-| Hook policy | `docs/control/hook-policy.json` | whether an action is blocked | **enforcement** |
+| Hook listener | Hook events | current questionnaire path, missing duties and next action | **progress observation** |
 | Loop Controller / Milestone | Hook events + `milestone` field in `.claude/loop-state.json` | where the Agent is and what it should do next | **recovery guidance** |
 | Harness CLI | `.claude/bin/loop-harness` | who executes validation, transition, audit | **mechanism** |
 
@@ -178,13 +178,13 @@ graph TB
     Runtime["Loop Runtime<br/>what is the current fact"]:::runtime
     Skills["Skills<br/>which method applies"]:::skill
     Agents["Agent Definitions<br/>who is this role"]:::agent
-    Policy["Hook Policy<br/>is this action blocked"]:::hook
+    Policy["Hook listener<br/>questionnaire path + missing duties"]:::hook
     Harness["Harness CLI<br/>who executes"]:::harness
     Protocol --> Definition --> Runtime
     Protocol --> Skills
     Protocol --> Agents
     Protocol --> Policy
-    Runtime -.->|validates input| Policy
+    Runtime -.->|current progress| Policy
     Policy -.->|invokes| Harness
     Skills -.->|routed into| Agents
     Definition -.->|referenced by| Harness
@@ -214,7 +214,7 @@ concern.
 | **Methodology + Best-practice Skills** | how to do it well | state authority, role identity |
 | **Agent Definition** | who does it (identity, tools, permissions) | per-instance scope, methodology |
 | **Task Prompt** | what to do this specific time | role doctrine, methodology |
-| **Hooks** | trigger recovery guidance and enforce which boundaries cannot be crossed | full engineering methodology |
+| **Hooks** | observe progress, deliver the exact questionnaire path and missing duties, trigger original graph progression | tool authorization, full engineering methodology |
 | **Human** | requirements and release decisions | mid-loop engineering |
 
 Two consequences worth stating explicitly, because they explain the shape of
@@ -455,17 +455,19 @@ Key invariants:
 
 ## 9. Agent Activation (three dispatch modes)
 
-Dispatch defaults to `plan_checkpoint` continuous execution: the Worker sends
-one structured PLAN_REPORT (`skills/agent-dispatch/SKILL.md` has the complete
-file example) and continues immediately — the PostToolUse(SendMessage)
-observer chains reading → activated → working automatically, and Main stays
-silent when aligned (CORRECTION only on semantic drift). The two-round
-read-back → approval → activation flow below is the `plan_approval_required`
-exception for genuinely high-risk or irreversible work; `one_shot` covers
-idempotent single actions. Once the main session delegates an assignment, the
-Driver's next work is that Agent's plan checkpoint (or approval chain); it
-must not complete the delegated responsibility itself unless the assignment is
-revoked or reassigned.
+`plan_checkpoint` means continuous work without a second approval; the original
+role contract determines the professional answer. S5/S7/S8 use the Hook's exact
+domain questionnaire, S9 uses its PlanReport/RepairResult answers, and S6
+Builders keep their professional PLAN_REPORT. A generic PLAN_REPORT is sent
+only when the original role contract requires it. The PostToolUse observer
+projects the saved answer/checkpoint through its existing consumer. The
+two-round read-back → approval → activation flow below is the
+`plan_approval_required` exception for genuinely high-risk or irreversible
+work; `one_shot` covers idempotent single actions. Once the main session
+delegates an assignment, the Driver follows that role's original answer or
+approval path; it must not take over or mark the delegated responsibility
+`done` unless the assignment is cancelled, replaced, or reassigned through its
+original path.
 
 ```mermaid
 sequenceDiagram
@@ -500,8 +502,8 @@ sequenceDiagram
         Main->>RT: agent-event work_started
         Agent->>Out: write assigned output
         Agent->>Hook: PreToolUse Write
-        Hook->>RT: Agent=working AND path in scope AND fingerprint matches
-        Hook-->>Agent: allow
+        Hook->>RT: observe current duties and graph facts
+        Hook-->>Agent: exact questionnaire path + remaining work
         Agent-->>Main: completion_report
     end
     Main->>RT: runtime task-complete (one atomic Builder Result: envelope + Agent reported + TASK review + evidence)
@@ -509,28 +511,15 @@ sequenceDiagram
     Main->>RT: the stage's own gate evaluates the batch (S6: TR-006 / TR-007)
 ```
 
-The effective activation scope is the intersection of six conditions:
+The Assignment, TASK and original activation describe the Agent's work and
+required checks. Their domain consumers validate the resulting facts; stage
+conditions and human decisions remain in the original graph.
 
-```text
-Agent Definition maximum
-AND team-manifest single responsibility
-AND TASK allowed paths
-AND activation envelope allowed paths
-AND current runtime lifecycle
-AND Hook policy
-```
-
-Anything outside the intersection is out of scope and must be corrected before
-the assignment is considered valid. An activation is invalidated by a document
-fingerprint change, a task or responsibility replacement, a baseline generation
-change, an explicit revoke, a pause, or a scope-expansion request.
-
-The Hook in this chain observes the boundary (may this Agent write this path
-now?) and emits either a human-only block or a recoverable warning. On
-lifecycle events it also re-seats the Agent at the current Milestone and points
-to the exact protocol/manual anchors. It does not encode the complete
-methodology that defines how the work should be done; that remains in the
-stage protocol and Skill loaded by the Agent Definition.
+PreToolUse observes graph progress and provides the exact current questionnaire
+path, missing duties and next action. It does not decide whether an Agent may
+use a tool or write a path. Saving the questionnaire invokes the original
+consumer; lifecycle reminders help the Agent finish its duties. Detailed
+engineering methods stay in the stage protocol and applicable Skill.
 
 ---
 
@@ -641,10 +630,10 @@ before any later runtime operation. Only this clean Runtime may be bound to the
 next locked REQ. `init` is bootstrap-only and refuses to overwrite existing
 runtime files; rerun it if its own bootstrap marker remains after interruption.
 
-### Any finding means the REQ is not yet done
+### A blocking finding keeps the REQ acceptance gate open
 
-There is no "REQ complete with known minor issues" middle state. Either a clean
-round passes, or any blocking Delivery Verifier, QA, or E2E Browser finding
+There is no accepted REQ with known blocking issues. Either a clean round
+passes, or any blocking Delivery Verifier, QA, or E2E Browser finding
 forces S8 finding investigation through `bug_resolution` (TR-008). The finding
 is reproduced, root cause is investigated, a canonical BUG is written and
 accepted, a Builder reads the BUG plus the original specification chain, the fix
@@ -678,7 +667,7 @@ Warn-and-self-correct (recoverable process completeness):
 - closing a TASK without required critical evidence
 - a Skill that should be loaded is missing
 - document links or versions are stale
-- Agent Team responsibilities are incomplete
+- Agent Team coverage has an unassigned mandatory responsibility or one without a current accepted outcome
 - a BUG lacks root cause or reproduction evidence
 - Verifier or QA lacks valid evidence
 - impact analysis was not run after a repair

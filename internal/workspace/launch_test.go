@@ -9,6 +9,24 @@ import (
 	"testing"
 )
 
+func TestWorkerSubmissionPathProjectionRequiresAnActualPlanDraft(t *testing.T) {
+	paths := newWorkerSubmissionPaths()
+	questionnaire := DispatchContext{AnswerPath: AnswerDraftPath}
+	projected := workerSubmissionPathProjection(questionnaire, paths)
+	if _, exists := projected["plan"]; exists {
+		t.Fatalf("questionnaire-only dispatch exposed a generic PLAN path: %#v", projected)
+	}
+	if projected["answer"] != AnswerDraftPath {
+		t.Fatalf("questionnaire-only dispatch omitted its exact answer path: %#v", projected)
+	}
+
+	builder := DispatchContext{PlanDraft: map[string]any{"objective": nil}, ResultDraft: map[string]any{"summary": nil}, ProductWritePaths: []string{"src/**"}}
+	projected = workerSubmissionPathProjection(builder, paths)
+	if projected["plan"] != PlanDraftPath || projected["completion"] != ResultDraftPath || projected["commit"] != CommitRequestPath {
+		t.Fatalf("S6 Builder lost its original lifecycle submission paths: %#v", projected)
+	}
+}
+
 func TestLaunchUsesOnlyChildDirectoryAndRegisteredSession(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake CLI uses POSIX shell")
@@ -53,6 +71,9 @@ func TestLaunchUsesOnlyChildDirectoryAndRegisteredSession(t *testing.T) {
 		}
 		if !strings.HasPrefix(text, e.Path+"\n") || !strings.Contains(text, flag+"\n"+e.PlatformSessionID) || !strings.Contains(text, "parent=unset") || strings.Contains(text, "skip-permissions") {
 			t.Fatalf("bad launch: %s", text)
+		}
+		if !strings.Contains(text, builderSubmissionOrder) {
+			t.Fatal("Builder launch omitted commit-before-report order")
 		}
 	}
 	after, _ := os.Getwd()

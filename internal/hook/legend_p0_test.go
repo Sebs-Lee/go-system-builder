@@ -44,8 +44,8 @@ func TestNotReadyBuilderPacketCarriesTokenLegend(t *testing.T) {
 	}
 	for _, want := range []string{
 		"MISSING TOKENS:",
-		"run `runtime task-complete` for the named TASK",
-		"run `runtime task-integrate --assignment-id <id>`",
+		"fill its Result questionnaire at the exact path shown in this Hook, then save",
+		"Main integrates the named Assignment and runs its required checks",
 	} {
 		if !strings.Contains(payload.Specific.Context, want) {
 			t.Fatalf("model context missing %q:\n%s", want, payload.Specific.Context)

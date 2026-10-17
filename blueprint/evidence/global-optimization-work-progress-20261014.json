@@ -1,0 +1,126 @@
+{
+  "version": "1.0.0",
+  "state": "shadow_progress_mechanism_targeted_verified_whole_goal_active",
+  "updated_at": "2026-10-14T07:18:26.355681+00:00",
+  "source_sha256": {
+    "internal/hook/work_progress.go": "82a4e0a8021e029c9e019552060192cd91bd103a0c1c7defc25e90f8776bd9f9",
+    "internal/hook/work_progress_test.go": "d723cc4b5317b94582f807d7496058ef3bb2e2f055e336df2f95ea85ea199305",
+    "internal/cli/work_progress.go": "0ac8cd53c68a6806105c84106285d6e2cbe561625be5bf79e92c80fb8fedb945",
+    "internal/cli/work_progress_tools.go": "57d6dfe65df3b4cdfc4e8417a86f2a778aef9cca66c566041495097093993468",
+    "internal/cli/work_progress_test.go": "33368d8b1c81929867c7658496b50e9bd29e75f36bb4633c2007c98373900260",
+    "internal/cli/work_progress_e2e_test.go": "62157619dc58979c39c999c56298068b03c6f055d940ceb27fe01d0c0289c163",
+    "internal/cli/run.go": "59df02f16dc65e2d03ffb084b8e7cd608f2c28dc03985e948d2d69733d619420",
+    "internal/runtime/store.go": "6b9c6afe26adca729e65524538f66e79f5510c162e41ba684f111bd76e37646d",
+    "internal/runtime/observation_snapshot_test.go": "2e6d6422e654ccbe7830a528d12bc6649cb9031d25e230e62f6ec19bf0255336",
+    "internal/schema/assets/work-progress-notice.schema.json": "ef37be52c3748d1df36881a5775f31fbf0fcf8234b3839ac25eb456e9657ca03",
+    "settings.json": "4287fedbaacdaaa00f20fbb5f33744df29122dfc58e27328dbbb7a1b2d9e4e3e",
+    "docs/workspace-integration.md": "4b141d5030474412e9fca50306c6c135dbf480da1a8f2bc59b0c5e4fd98d7e01",
+    "blueprint/global-optimization/G08-evaluation-and-observability.md": "e051bfe5d34d17ff09db2e0cc29382aca0bb3955937cd7f98afa48d4d5c9231a",
+    "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md": "7f96844d0a1678d80cdf14ad8185801cf6dbf33e0d7479571d593ab378573316"
+  },
+  "mode": "default shadow; explicit trusted hook --progress-mode notify for diagnostic wire, never enabled by tool payload",
+  "checks": {
+    "core_initial_race": "PASS 1.525s",
+    "original_main_worker_wire": "PASS 8.352s; original Runtime/journal unchanged; normal observed Main calls about 1-2ms and Worker 96-143ms, fixture-specific total Hook latencies, not production overhead or A/B benefit",
+    "after_import_cycle_fix": "PASS CLI 40.529s / hook 1.538s",
+    "final_targeted": "PASS runtime 1.309s / hook 1.579s / CLI 51.974s",
+    "shadow_mode_targeted": "PASS CLI 41.265s / hook 1.733s / runtime 1.313s",
+    "default_shadow_payload_schema": "PASS CLI 0.247s; added schema/default tests after previous race compilation",
+    "vet_diff": "PASS"
+  },
+  "bounds": {
+    "repeat_threshold": 5,
+    "source_files": 16,
+    "source_bytes": 4194304,
+    "runtime_source_bytes": 4194304,
+    "owned_code_walk_entries": 256,
+    "context_agents_tasks_teams_each": 32,
+    "check_run_entries": 128,
+    "cache_bytes": 65536,
+    "source_ranges": 64,
+    "lock_wait_ms": 25
+  },
+  "coverage": [
+    "current issued S5 answer and original reception reference",
+    "original Assignment closing facts, bound native professional drafts and scoped code",
+    "original Main milestone and explicit human/external wait",
+    "actual successful Read bytes/ranges and closed read-only status commands",
+    "unknown response, new range, meaningful change, concurrency once-only, saturation, damaged cache and held locks",
+    "read-only original Runtime pending protocol, source/link bounds"
+  ],
+  "failure_preserved": {
+    "log": "/tmp/gsb-work-progress-race.log",
+    "reason": "Internal cli test imported fixtures package which imports cli; corrected by using existing internal fixture helpers. Production tests after correction passed."
+  },
+  "official_reference": {
+    "url": "https://code.claude.com/docs/en/hooks#posttooluse-input",
+    "scope": "Successful PostToolUse, tool-dependent response, Read offset/limit and additionalContext semantics. Documentation is not actual model execution or proof of the concrete Read response fixture."
+  },
+  "scope_limits": [
+    "Mechanism fixtures and source CLI Hook wire only; no real model usage/trace or matched A/B.",
+    "Generic Assignment/milestone facts do not prove every named stage professional gap adapter.",
+    "No full suite/cross-platform build/package/install rerun this slice; intentionally deferred to a consolidated milestone per user steering.",
+    "Payload byte/range response adapter rejects missing/unproven shapes instead of guessing progress."
+  ],
+  "next_core_sequence": [
+    "S2 design deterministic registration and original PTR-PLAN-01",
+    "S3 contracts",
+    "S4 task planning",
+    "S6 builder answer adapters",
+    "S7 claim/result",
+    "S8 investigation",
+    "S9 repair/independent verification",
+    "S10 acceptance/audit"
+  ],
+  "core_counts": {
+    "named_stage_adapters": 9,
+    "new_full_mechanism_chain_verified": 1,
+    "partial_new_stage_capabilities": 1,
+    "remaining_full_new_chains": 7,
+    "real_model_whole_chains_verified": 0,
+    "not_overall_percentage": true
+  },
+  "not_a_publication": true,
+  "logs": {
+    "/tmp/gsb-work-progress-compile.log": {
+      "sha256": "6bb71aaec15452d9458ff7b89a3fba535f2494bccb2f93439d7b9c6bcef70375",
+      "bytes": 167
+    },
+    "/tmp/gsb-work-progress-unit-race.log": {
+      "sha256": "8e1de5259c458721732bdb457ee4e3f1103daed8c0d84a4bcf6e65cbbfcbf73b",
+      "bytes": 66
+    },
+    "/tmp/gsb-work-progress-wire.log": {
+      "sha256": "46bc2854ce248d178c13f75be8e579b78b6c74afc380ad7c7dd73accac5a393a",
+      "bytes": 2155
+    },
+    "/tmp/gsb-work-progress-race.log": {
+      "sha256": "73acd62bba165331e3c52d8bf84a5dc7b26d96b49e04e282538f992d6142f0b1",
+      "bytes": 982
+    },
+    "/tmp/gsb-work-progress-race-retry.log": {
+      "sha256": "6c8e776247dd6a0e4969fcf95fe4737d2abb6d2606f1a6fd9952e910bf5aba16",
+      "bytes": 3139
+    },
+    "/tmp/gsb-work-progress-observation-race.log": {
+      "sha256": "19a2d5eee3ab13fea21de642cda2dbcc2788ca655b1f3e2037286263e8885f5e",
+      "bytes": 69
+    },
+    "/tmp/gsb-work-progress-targeted-final.log": {
+      "sha256": "97003ac50671e9c483e9b04605fc9324cf9c9899e73c20b321879ac4eff22e2d",
+      "bytes": 201
+    },
+    "/tmp/gsb-work-progress-shadow-final.log": {
+      "sha256": "ee33937c10ab9a9542dc81821a5e56ef2aebfd7b896819b320ae113146626393",
+      "bytes": 201
+    },
+    "/tmp/gsb-work-progress-shadow-schema.log": {
+      "sha256": "3193dbb8c793658fde57fd1aa6131ff48d54e9bbe35d9a896ce6c674150fdf14",
+      "bytes": 65
+    },
+    "/tmp/gsb-work-progress-vet.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  }
+}

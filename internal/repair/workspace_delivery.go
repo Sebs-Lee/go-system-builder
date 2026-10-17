@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"strings"
 
+	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
@@ -90,49 +92,80 @@ func ResolveWorkspaceAuthority(root string, state map[string]any, id, owner stri
 }
 
 type WorkspaceCandidate struct {
-	Version             int                 `json:"version"`
-	RecordType          string              `json:"record_type"`
-	RuntimeID           string              `json:"runtime_id"`
-	BaselineGeneration  int                 `json:"baseline_generation"`
-	ExecutionGeneration int                 `json:"execution_generation"`
-	AssignmentID        string              `json:"assignment_id"`
-	SourceHead          string              `json:"source_head"`
-	BaseCommit          string              `json:"base_commit"`
-	SessionID           string              `json:"session_id"`
-	PlanID              string              `json:"plan_id"`
-	ContractSHA256      string              `json:"contract_sha256"`
-	Proposal            RepairResultRequest `json:"proposal"`
+	Version             int                                         `json:"version"`
+	RecordType          string                                      `json:"record_type"`
+	RuntimeID           string                                      `json:"runtime_id"`
+	BaselineGeneration  int                                         `json:"baseline_generation"`
+	ExecutionGeneration int                                         `json:"execution_generation"`
+	AssignmentID        string                                      `json:"assignment_id"`
+	SourceHead          string                                      `json:"source_head"`
+	BaseCommit          string                                      `json:"base_commit"`
+	SessionID           string                                      `json:"session_id"`
+	PlanID              string                                      `json:"plan_id"`
+	ContractSHA256      string                                      `json:"contract_sha256"`
+	Proposal            RepairResultRequest                         `json:"proposal"`
+	Provenance          *runtimepkg.RepairResultCandidateProvenance `json:"provenance,omitempty"`
 }
 
 func CreateWorkspaceCandidate(ctx context.Context, root string, state map[string]any, e workspace.Execution, proposal RepairResultRequest) (WorkspaceCandidate, ArtifactRef, error) {
-	a, err := ResolveWorkspaceAuthority(root, state, e.AssignmentID, e.AgentID)
+	candidate, err := prepareWorkspaceCandidate(ctx, root, state, e, proposal)
 	if err != nil {
 		return WorkspaceCandidate{}, ArtifactRef{}, err
 	}
+	data, err := canonicalJSON(candidate)
+	if err != nil {
+		return candidate, ArtifactRef{}, err
+	}
+	key := sha256Bytes(data)
+	refPath := artifactRoot + "/candidates/" + key + ".json"
+	// Identical proposals reuse immutable bytes; no overwrite on retry.
+	ref := fileRef(refPath, data)
+	if existing, readErr := readArtifact(root, ref, "repair-workspace-candidate.schema.json"); readErr == nil && len(existing) > 0 {
+		return candidate, ref, nil
+	}
+	ref, err = writeImmutable(root, refPath, "repair-workspace-candidate.schema.json", candidate)
+	return candidate, ref, err
+}
+
+// prepareWorkspaceCandidate runs the exact source, scope, check-independent
+// candidate validations without publishing an artifact. The S9 original
+// receiver uses this before it auto-records the same professional Result in
+// the generic completion checkpoint, so a malformed proposal cannot leave a
+// completed Agent with no valid domain candidate.
+func prepareWorkspaceCandidate(ctx context.Context, root string, state map[string]any, e workspace.Execution, proposal RepairResultRequest) (WorkspaceCandidate, error) {
+	a, err := ResolveWorkspaceAuthority(root, state, e.AssignmentID, e.AgentID)
+	if err != nil {
+		return WorkspaceCandidate{}, err
+	}
 	if proposal.ProducerAgentID != e.AgentID || canonicalPlanAssignmentID(a.Plan, proposal.AssignmentID) != a.Assignment.AssignmentID {
-		return WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("candidate proposal owner/assignment mismatch")
+		return WorkspaceCandidate{}, fmt.Errorf("candidate proposal owner/assignment mismatch")
 	}
 	if !strings.HasPrefix(proposal.ResultID, "repair-result-") {
-		return WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("candidate needs a final RepairResult identity")
+		return WorkspaceCandidate{}, fmt.Errorf("candidate needs a final RepairResult identity")
+	}
+	typed := proposal.issued != nil
+	if err := guardIssuedRepairResultCandidate(root, state, e, proposal.issued); err != nil {
+		return WorkspaceCandidate{}, err
 	}
 	ids := []string{}
 	for _, unit := range proposal.UnitResults {
 		ids = append(ids, unit.UnitID)
 	}
 	if err = exactIDs(a.Assignment.UnitIDs, ids); err != nil {
-		return WorkspaceCandidate{}, ArtifactRef{}, err
+		return WorkspaceCandidate{}, err
 	}
 	head, err := workspace.Git(ctx, e.Path, "rev-parse", "HEAD")
 	if err != nil {
-		return WorkspaceCandidate{}, ArtifactRef{}, err
+		return WorkspaceCandidate{}, err
 	}
-	status, err := workspace.Git(ctx, e.Path, "status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).claude/submissions/**")
+	statusArgs := append([]string{"status", "--porcelain", "--untracked-files=all", "--", "."}, workspace.WorkerSubmissionStatusExcludes()...)
+	status, err := workspace.Git(ctx, e.Path, statusArgs...)
 	if err != nil || status != "" {
-		return WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("candidate requires a clean committed Worker: %s %v", status, err)
+		return WorkspaceCandidate{}, fmt.Errorf("candidate requires a clean committed Worker: %s %v", status, err)
 	}
 	paths, err := workspace.GitBytes(ctx, e.Path, "diff", "--no-renames", "--name-only", "-z", e.BaseCommit, head)
 	if err != nil {
-		return WorkspaceCandidate{}, ArtifactRef{}, err
+		return WorkspaceCandidate{}, err
 	}
 	changed := []ChangedArtifact{}
 	for _, path := range strings.Split(string(paths), "\x00") {
@@ -140,7 +173,7 @@ func CreateWorkspaceCandidate(ctx context.Context, root string, state map[string
 			continue
 		}
 		if err = scopeAllows(path, a.Contract.ProspectiveScope, a.Contract.ForbiddenScope); err != nil {
-			return WorkspaceCandidate{}, ArtifactRef{}, err
+			return WorkspaceCandidate{}, err
 		}
 		matched := false
 		for _, scope := range a.Assignment.Scope {
@@ -149,7 +182,7 @@ func CreateWorkspaceCandidate(ctx context.Context, root string, state map[string
 			}
 		}
 		if !matched {
-			return WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("candidate changed path outside domain assignment: %s", path)
+			return WorkspaceCandidate{}, fmt.Errorf("candidate changed path outside domain assignment: %s", path)
 		}
 		kind := "modified"
 		data, err := workspace.GitBytes(ctx, e.Path, "show", head+":"+path)
@@ -160,33 +193,27 @@ func CreateWorkspaceCandidate(ctx context.Context, root string, state map[string
 			kind = "added"
 		}
 		if err != nil {
-			return WorkspaceCandidate{}, ArtifactRef{}, err
+			return WorkspaceCandidate{}, err
 		}
 		hash := sha256.Sum256(data)
 		changed = append(changed, ChangedArtifact{Path: path, SHA256: hex.EncodeToString(hash[:]), Status: kind})
 	}
 	if len(changed) == 0 {
-		return WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("candidate has no source changes")
+		return WorkspaceCandidate{}, fmt.Errorf("candidate has no source changes")
 	}
 	proposal.AssignmentID = a.Assignment.AssignmentID
 	proposal.ChangedArtifacts = changed
-	if err = validateCandidateProposal(a, &proposal); err != nil {
-		return WorkspaceCandidate{}, ArtifactRef{}, err
+	if err = validateCandidateProposal(a, &proposal, typed); err != nil {
+		return WorkspaceCandidate{}, err
 	}
 	c := WorkspaceCandidate{Version: 1, RecordType: "repair_workspace_candidate", RuntimeID: e.RuntimeID, BaselineGeneration: e.BaselineGeneration, ExecutionGeneration: e.Generation, AssignmentID: e.AssignmentID, SourceHead: head, BaseCommit: e.BaseCommit, SessionID: a.Session.SessionID, PlanID: a.Plan.PlanID, ContractSHA256: a.Contract.Ref.SHA256, Proposal: proposal}
-	data, err := canonicalJSON(c)
-	if err != nil {
-		return c, ArtifactRef{}, err
+	if typed {
+		provenance := proposal.issued.provenance
+		provenance.SourceHead = head
+		provenance.BaseCommit = e.BaseCommit
+		c.Provenance = &provenance
 	}
-	key := sha256Bytes(data)
-	refPath := artifactRoot + "/candidates/" + key + ".json"
-	// Identical proposals reuse immutable bytes; no overwrite on retry.
-	ref := fileRef(refPath, data)
-	if existing, readErr := readArtifact(root, ref, "repair-workspace-candidate.schema.json"); readErr == nil && len(existing) > 0 {
-		return c, ref, nil
-	}
-	ref, err = writeImmutable(root, refPath, "repair-workspace-candidate.schema.json", c)
-	return c, ref, err
+	return c, nil
 }
 
 func ValidateWorkspaceCandidate(root string, state map[string]any, e workspace.Execution, ref ArtifactRef) (WorkspaceCandidate, error) {
@@ -201,7 +228,27 @@ func ValidateWorkspaceCandidate(root string, state map[string]any, e workspace.E
 	if c.RuntimeID != e.RuntimeID || c.BaselineGeneration != e.BaselineGeneration || c.ExecutionGeneration != e.Generation || c.AssignmentID != e.AssignmentID || c.BaseCommit != e.BaseCommit || c.SessionID != a.Session.SessionID || c.PlanID != a.Plan.PlanID || c.ContractSHA256 != a.Contract.Ref.SHA256 || c.Proposal.ProducerAgentID != e.AgentID {
 		return c, fmt.Errorf("candidate no longer matches current S9 authority")
 	}
-	if err := validateCandidateProposal(a, &c.Proposal); err != nil {
+	typed := c.Provenance != nil
+	if err := guardIssuedRepairResultCandidate(root, state, e, nil); err != nil && !typed {
+		return c, err
+	}
+	if typed {
+		if c.Provenance.PacketID == "" || c.Provenance.OwnerAgentID != e.AgentID {
+			return c, fmt.Errorf("typed S9 candidate provenance owner/packet differs")
+		}
+		proof, accepted, proofErr := runtimepkg.VerifiedRepairResultCandidateReceipt(root, state, c.Provenance.PacketID, e.AgentID)
+		if proofErr != nil || !accepted || proof.CandidateRef != ref.Path || proof.CandidateSHA256 != ref.SHA256 || !reflect.DeepEqual(proof.Provenance, *c.Provenance) {
+			return c, fmt.Errorf("typed S9 candidate lacks the exact original Runtime delivery receipt: %v", proofErr)
+		}
+		packet, found, packetErr := runtimepkg.FindRepairResultPacket(state, c.Provenance.PacketID)
+		if packetErr != nil || !found {
+			return c, fmt.Errorf("typed S9 candidate packet is unavailable: %v", packetErr)
+		}
+		if err := runtimepkg.VerifyRepairResultPacketCurrent(root, state, packet); err != nil {
+			return c, err
+		}
+	}
+	if err := validateCandidateProposal(a, &c.Proposal, typed); err != nil {
 		return c, err
 	}
 	return c, nil
@@ -234,12 +281,15 @@ func RegisteredWorkspaceResult(root string, state map[string]any, c WorkspaceCan
 
 // Validate the final result shape before a candidate may cause a merge. Main
 // disk/Session checks still run after merge through the ordinary domain API.
-func validateCandidateProposal(a WorkspaceAuthority, p *RepairResultRequest) error {
+func validateCandidateProposal(a WorkspaceAuthority, p *RepairResultRequest, typed bool) error {
 	if p.Result == "" {
 		p.Result = "pass"
 	}
-	if p.Result != "pass" || !allChecksPass(p.Checks) || len(p.ScopeDeviations) > 0 {
+	if p.Result != "pass" || (!typed && !allChecksPass(p.Checks)) || len(p.ScopeDeviations) > 0 {
 		return fmt.Errorf("only passing, scoped candidates with non-empty passing checks may be integrated; report failures through domain recovery")
+	}
+	if typed && p.Verdict != "completed" {
+		return fmt.Errorf("only a completed typed S9 result can create a successful candidate")
 	}
 	for _, u := range p.UnitResults {
 		if u.Status != "pass" {
@@ -256,7 +306,7 @@ func validateCandidateProposal(a WorkspaceAuthority, p *RepairResultRequest) err
 		return fmt.Errorf("candidate requires contract migration and rollback references")
 	}
 	p.PlanReport = a.ReportRef
-	document := RepairResult{SchemaVersion: "1.0.0", RecordType: "repair_result", ResultID: p.ResultID, SessionID: a.Session.SessionID, PlanID: a.Plan.PlanID, ContractID: a.Contract.ContractID, BaselineGeneration: a.Session.BaselineGeneration, ProducerAgentID: p.ProducerAgentID, AssignmentID: p.AssignmentID, BeforeFixChecks: append([]RepairCheck{}, p.BeforeFixChecks...), Checks: append([]RepairCheck{}, p.Checks...), UnitResults: append([]RepairUnitResult{}, p.UnitResults...), ChangedArtifacts: append([]ChangedArtifact{}, p.ChangedArtifacts...), ScopeDeviations: append([]string{}, p.ScopeDeviations...), ResidualRisks: append([]string{}, p.ResidualRisks...), MigrationRef: p.MigrationRef, RollbackRef: p.RollbackRef, Result: p.Result, SubmittedAt: "2000-01-01T00:00:00Z"}
+	document := RepairResult{SchemaVersion: "1.0.0", RecordType: "repair_result", ResultID: p.ResultID, SessionID: a.Session.SessionID, PlanID: a.Plan.PlanID, ContractID: a.Contract.ContractID, BaselineGeneration: a.Session.BaselineGeneration, ProducerAgentID: p.ProducerAgentID, AssignmentID: p.AssignmentID, BeforeFixChecks: append([]RepairCheck{}, p.BeforeFixChecks...), Checks: append([]RepairCheck{}, p.Checks...), UnitResults: append([]RepairUnitResult{}, p.UnitResults...), ChangedArtifacts: append([]ChangedArtifact{}, p.ChangedArtifacts...), ScopeDeviations: append([]string{}, p.ScopeDeviations...), MigrationRef: p.MigrationRef, RollbackRef: p.RollbackRef, ResidualRisks: append([]string{}, p.ResidualRisks...), Result: p.Result, SubmittedAt: "2000-01-01T00:00:00Z", Verdict: p.Verdict, BeforeFixResults: append([]RepairBeforeFixResult{}, p.BeforeFixResults...), DetectionGapArtifacts: append([]string{}, p.DetectionGapArtifacts...), EvidenceRefs: append([]string{}, p.EvidenceRefs...)}
 	data, err := canonicalJSON(document)
 	if err != nil {
 		return err

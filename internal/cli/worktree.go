@@ -153,6 +153,48 @@ func runWorktreeCreate(args []string, stdout, stderr io.Writer) int {
 
 // reminderDelivery computes a per-session, fact-deduplicated soft message.
 // The returned callback records delivery only after stdout succeeded.
+func shouldRemindWorktreeIntegration(
+	a hookctx.AssignmentContext,
+	registry *workspace.ExecutionRegistry,
+	runtimeID string,
+	generation int,
+) bool {
+	if registry != nil {
+		if execution, ok := registry.Execution(a.AssignmentID, runtimeID, generation); ok && execution.Purpose == workspace.DocumentReviewPurpose {
+			return false
+		}
+	}
+	if a.CompletionRef == "" || (a.State != "active" && a.State != "done") {
+		return false
+	}
+	for _, responsibility := range a.ResponsibilityIDs {
+		if responsibility == "S5" || responsibility == "S7" || responsibility == "S8" ||
+			strings.HasPrefix(responsibility, "DV-") || strings.HasPrefix(responsibility, "VER-") ||
+			strings.HasPrefix(responsibility, "QA-") || strings.HasPrefix(responsibility, "E2E-") {
+			return false
+		}
+	}
+	switch a.RoleFamily {
+	case "backend-builder", "frontend-builder", "test-builder":
+		return true
+	}
+	for _, responsibility := range a.ResponsibilityIDs {
+		if responsibility == "BUILD-WORK-PACKAGE" {
+			return true
+		}
+	}
+	return false
+}
+
+func worktreeIntegrationFact(a hookctx.AssignmentContext) string {
+	return fmt.Sprintf(
+		"assignment %s retains %s; Main: run runtime task-integrate --assignment-id %s at the authority root for merge, verification, acknowledgement and cleanup",
+		a.AssignmentID,
+		a.WorktreePath,
+		a.AssignmentID,
+	)
+}
+
 func reminderDelivery(root string, input policy.Input) (string, func()) {
 	noop := func() {}
 	if input.EffectiveAgentID() != "" {
@@ -178,16 +220,22 @@ func reminderDelivery(root string, input policy.Input) (string, func()) {
 		}
 	}
 	knownTrees := map[string]bool{}
+	remindableTrees := map[string]bool{}
 	if loaded, e := hookctx.LoadFull(root, ""); e == nil {
+		registry := loaded.PolicyContext.Workspace
 		for _, a := range loaded.Assignments {
-			knownTrees[filepath.Clean(a.WorktreePath)] = true
-			if a.WorktreePath == "" {
+			path := filepath.Clean(a.WorktreePath)
+			if a.WorktreePath != "" {
+				knownTrees[path] = true
+			}
+			if !shouldRemindWorktreeIntegration(a, registry, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration) || a.WorktreePath == "" {
 				continue
 			}
 			if _, e := os.Stat(a.WorktreePath); e != nil {
 				continue
 			}
-			facts = append(facts, fmt.Sprintf("assignment %s retains %s (state=%s, report=%s, completion=%s); commit worker results, then run runtime task-integrate --assignment-id %s at the authority root; integration includes merge, verification, acknowledgement and cleanup", a.AssignmentID, a.WorktreePath, a.State, a.ReportStatus, a.CompletionRef, a.AssignmentID))
+			remindableTrees[path] = true
+			facts = append(facts, worktreeIntegrationFact(a))
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -200,7 +248,9 @@ func reminderDelivery(root string, input policy.Input) (string, func()) {
 			}
 			if strings.HasPrefix(field, "HEAD ") && path != "" && filepath.Clean(path) != filepath.Clean(root) {
 				if knownTrees[filepath.Clean(path)] {
-					facts = append(facts, "temporary checkout "+path+" "+field)
+					if remindableTrees[filepath.Clean(path)] {
+						facts = append(facts, "temporary checkout "+path+" "+field)
+					}
 				} else {
 					facts = append(facts, "unassociated checkout "+path+" "+field+"; inspect ownership and pending results before dispatching more work; preserve until explicitly received")
 				}
@@ -293,7 +343,15 @@ func runWorkspaceBind(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, e)
 		return 1
 	}
-	next, e := writer.UpdateCurrent(runtime.Mutation{TransitionID: "REQ-WORKSPACE-BIND", Event: "req_workspace_bound", Actor: "user", OccurredAt: time.Now().UTC(), From: snap.State["lifecycle"].(map[string]any), To: snap.State["lifecycle"].(map[string]any), Apply: func(state map[string]any) error {
+	occurredAt := time.Now().UTC()
+	runtimeID, _ := snap.State["runtime_id"].(string)
+	bindingBytes, e := json.Marshal(binding.Map())
+	if e != nil {
+		fmt.Fprintln(stderr, e)
+		return 1
+	}
+	operation := fmt.Sprintf("%x", sha256.Sum256([]byte(runtimeID+"\x00"+occurredAt.Format(time.RFC3339Nano)+"\x00"+string(bindingBytes))))
+	next, e := writer.UpdateCurrent(runtime.Mutation{EventID: "evt-req-workspace-" + operation, IdempotencyKey: "runtime:req-workspace:" + runtimeID + ":" + operation, RuntimeID: runtimeID, TransitionID: "REQ-WORKSPACE-BIND", Event: "req_workspace_bound", Actor: "user", OccurredAt: occurredAt, Apply: func(state map[string]any) error {
 		bound, _ := state["bound_req"].(map[string]any)
 		if bound == nil {
 			return fmt.Errorf("bind a REQ first")

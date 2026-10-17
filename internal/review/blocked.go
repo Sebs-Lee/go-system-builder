@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"os"
 	"path/filepath"
 	"sort"
@@ -462,29 +463,17 @@ func submitSiteLostBlocker(
 		return loopruntime.Snapshot{}, err
 	}
 	committed := false
+	blockerSHA := sha256Of(blockerBytes)
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	commitRevision := currentCommitRevision(request.ExpectedRevision, current)
 	defer func() {
 		if committed {
 			return
 		}
-		// If the CAS error was returned after a commit became visible, keep
-		// the immutable bytes so the evidence index cannot be orphaned. Only
-		// clean an artifact when the caller's revision is still persisted.
-		stateBytes, readErr := os.ReadFile(statePath)
-		if readErr != nil {
-			return
-		}
-		var persisted map[string]any
-		if json.Unmarshal(stateBytes, &persisted) != nil || intField(persisted["revision"]) != currentCommitRevision(request.ExpectedRevision, current) {
-			return
-		}
-		if path, pathErr := repositoryContainedPath(root, blockerRel); pathErr == nil {
-			_ = os.Remove(path)
-		}
+		// The original Writer lock proves no pending commit or references
+		// remain before deleting staged bytes, including an uncertain CAS.
+		_, _ = removeStagedArtifactIfUnreferenced(store, current, commitRevision, blockerRel, blockerSHA)
 	}()
-	blockerSHA := sha256Of(blockerBytes)
-
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
-	commitRevision := currentCommitRevision(request.ExpectedRevision, current)
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-site-lost-%s-r%d", result.ResultID, commitRevision+1),
 		TransitionID:   "REVIEW-RESULT",
@@ -498,6 +487,9 @@ func submitSiteLostBlocker(
 			result.AssignmentID, readiness.FindingID, reason),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
+			if err := validateIssuedResultRequest(root, state, request, result, false); err != nil {
+				return err
+			}
 			reviewMap, ok := state["review"].(map[string]any)
 			if !ok {
 				return fmt.Errorf("runtime review section must be an object")
@@ -507,7 +499,7 @@ func submitSiteLostBlocker(
 			if row == nil {
 				return fmt.Errorf("assignment %s is not registered in the runtime projection; dispatch it via `runtime register-workgroup` first", assignment.AssignmentID)
 			}
-			if status, _ := row["status"].(string); status == "result_submitted" || status == "consumed" {
+			if status := workstate.ReviewAssignmentActivity(row); status == "result_submitted" || status == "consumed" {
 				return fmt.Errorf("assignment %s already has a consumed ReviewResult; one Assignment submits exactly one Result (L3-S7 §3.5)", assignment.AssignmentID)
 			}
 			agentID, _ := row["agent_id"].(string)
@@ -517,7 +509,9 @@ func submitSiteLostBlocker(
 			if agentID != result.ProducerAgentID {
 				return fmt.Errorf("ReviewResult producer %s does not match the dispatched Agent %s for assignment %s", result.ProducerAgentID, agentID, assignment.AssignmentID)
 			}
-			row["status"] = "blocked"
+			if err := workstate.RecordReviewAssignmentActivity(state, row, "blocked", "review_assignment_blocked"); err != nil {
+				return err
+			}
 			row["queue_reason"] = "site_lost:" + readiness.FindingID
 			row["blocker_ref"] = blockerRel
 			row["blocked_at"] = occurredAt.UTC().Format(time.RFC3339Nano)
@@ -528,10 +522,15 @@ func submitSiteLostBlocker(
 				if agent["id"] != agentID {
 					continue
 				}
-				if currentState, _ := agent["state"].(string); currentState != "working" {
-					return fmt.Errorf("reviewer Agent %s is %s; a site_lost BLOCKER requires working state", agentID, currentState)
+				currentState := workstate.AgentActivity(agent)
+				readingPlanCheckpoint := currentState == "reading" &&
+					(agent["dispatch_mode"] == "plan_checkpoint" || agent["dispatch_mode"] == "one_shot")
+				if currentState != "working" && !readingPlanCheckpoint {
+					return fmt.Errorf("reviewer Agent %s is %s; a site_lost BLOCKER requires an active Reviewer assignment", agentID, currentState)
 				}
-				agent["state"] = "blocked"
+				if err := workstate.RecordAgentActivity(state, agent, "blocked", "work_blocked"); err != nil {
+					return err
+				}
 				agent["work_blocked_ref"] = blockerRel
 				agent["blocker_resolved_ref"] = nil
 				agent["updated_at"] = occurredAt.UTC().Format(time.RFC3339Nano)

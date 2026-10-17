@@ -1,0 +1,156 @@
+{
+  "package_sha256": "6c316065e6a72ae4978ac0ff2b7ca5598e7892a050a1e070843018ca5d2d6003",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-task-behavior-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true,
+        "native_s4_behavior_inputs_oracles_conditions_source_hashes": true,
+        "tampered_generated_cases_unresolved_without_new_gate": true,
+        "behavior_projection_consumer_assets": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true,
+        "native_s4_behavior_inputs_oracles_conditions_source_hashes": true,
+        "tampered_generated_cases_unresolved_without_new_gate": true,
+        "behavior_projection_consumer_assets": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "native fresh installation plus actual Scenario generation and S4 behavior projection from explicit test fixtures; source examples are not product tests or browser PASS; original recover help and readback projection from explicit source-example test fixtures, validated by the packaged embedded Schema, with exact installed Skill hashes; no registered business task or real model session is claimed; original S5-to-S6 enabled Builder prepare/launch/commit/report/verified integration tested separately through production CLI; launch substitute is not real Claude consumption",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-task-behavior-install-ijl560py",
+  "temporary_artifacts_may_expire": true,
+  "slice": "G03: explicit TASK CASE behavior references in original S4 and frozen S5 analysis",
+  "acceptance_status": "completed_slice_whole_optimization_active",
+  "source_contract": {
+    "selection": "Only explicit TASK Manifest cases.json paths and CASE IDs in Clauses; no repository-wide discovery or inferred module ownership",
+    "validation": "Original Scenario source schema/generator validation and byte equality of current cases.json and scenario-coverage.json",
+    "examples": "Original CASE/rule/branch/polarity/required/browser_required, original witness partition values, oracle and fixture; no executed product result",
+    "closure": "Seven module files plus every formal bound REQ actually read by original validation, with raw SHA256; concurrent source read drift rejected",
+    "conditions": "Reading Source/Mode/Purpose/condition_unknown preserved; same CASE in different Manifest rows retains each source",
+    "authority": "Original packet inputs and conclusion scope unchanged; artifact and source closure installed through original Execution/Bootstrap; original Writer/validator/save/revision retained",
+    "legacy": "Behavior fields optional; old issued analysis not retrofitted; review-check clears current inferred behavior before restoring frozen optional fields",
+    "failure": "Unknown or absent CASE references and unvalidated generation are unresolved professional questions; no new Problems, automatic approval, test PASS or stage authorization"
+  },
+  "regressions": [
+    {
+      "command": "GOPROXY=off go test ./internal/cli -run behavior and frozen-analysis targeted tests -count=1",
+      "status": "pass",
+      "seconds": 35.824,
+      "scope": "Final source, including repeated CASE in distinct reading rows; actual S5 issue/prepare/source install/review-check/begin/source drift rejects original answer without Runtime mutation/restore reception/named revision freezes original analysis"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/cli -run behavior, frozen-analysis, original save and independent-source tests -count=1",
+      "status": "pass",
+      "seconds": 242.118,
+      "scope": "Before final one-line per-reading-row dedup refinement"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/cli -run behavior and frozen-analysis targeted tests -count=1",
+      "status": "pass",
+      "seconds": 84.129,
+      "scope": "Final source and final targeted tests"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/scenario ./internal/semantic ./internal/workpacket ./internal/runtime -count=1",
+      "status": "pass",
+      "package_seconds": {
+        "scenario": 11.19,
+        "semantic": 11.928,
+        "workpacket": 1.23,
+        "runtime": 158.406
+      },
+      "scope": "Before final per-reading-row refinement; original runtime regression preserved"
+    },
+    {
+      "command": "GOPROXY=off go test -race ./internal/scenario ./internal/semantic ./internal/workpacket -count=1",
+      "status": "pass",
+      "package_seconds": {
+        "scenario": 14.767,
+        "semantic": 16.631,
+        "workpacket": 1.254
+      },
+      "scope": "Final source; source change during read, original scenario, context and legacy packet reconstruction cases"
+    },
+    {
+      "command": "GOPROXY=off go vet ./internal/scenario ./internal/semantic ./internal/workpacket ./internal/submission ./internal/cli ./internal/schema",
+      "status": "pass",
+      "scope": "Final source"
+    },
+    {
+      "command": "GOPROXY=off go test ./internal/cli -count=1",
+      "status": "pass",
+      "log": "/tmp/gsb-behavior-cli-full-final.log",
+      "scope": "Started before final per-reading-row refinement; final difference covered by separate targeted and race regressions",
+      "seconds": 597.054,
+      "terminal_exit_code": 0
+    }
+  ],
+  "initial_failures_and_resolution": [
+    "Embedded behavior fixture schema initially lacked referenced steps definition; restored original fixture schema definitions.",
+    "Test fixture tried to commit before original workspace Git initialization; moved setup before original initialization and retained original bind/commit flow.",
+    "Real S5 cross-matrix FR join rejected fixture lacking bound REQ denominator; fixed fixture and included actual bound REQ read in source closure rather than weakening validation.",
+    "Original Scenario fingerprint includes sha256 prefix; new cross-domain closure uses raw SHA256 required by original packet/schema.",
+    "Stop rejection alone did not establish drift enforcement; tests now assert original review-check and answer consumer source errors and unchanged Runtime before source restoration.",
+    "One obsolete full CLI run was stopped once its known incorrect test assertion was demonstrated; final full run is separate and not claimed passed until terminal result."
+  ],
+  "host_limits": {
+    "real_claude_delivery": "not_executed",
+    "browser_or_product_scenario_execution": "not_executed",
+    "token_compact_or_first_effective_operation_experiment": "not_executed",
+    "bwrap_isolation": "No change to original isolation; this behavior slice does not execute isolated product checks",
+    "other_platforms": "Five-platform compile only; native acceptance linux/amd64"
+  },
+  "temporary_cleanup": "Only identified obsolete task-owned installation copies under /tmp were removed for disk space; persistent acceptance JSON, archived packages, repo source, current installs and live Go test directories retained.",
+  "remaining": "G03 real behavior/compact/handoff experiment; G04 resolver/registry and other G01-G08 implementation; remaining named domain adapters and full optimization acceptance. Whole goal remains active.",
+  "diff_check": "pass",
+  "publication": "No commit, push, publication or active installation overlay performed"
+}

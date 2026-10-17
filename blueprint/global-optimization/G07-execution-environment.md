@@ -1,6 +1,6 @@
 # G07 — 执行环境、检查入口与故障恢复的落地设计
 
-> 全局设计；承接 [G07 guideline](../GLOBAL-OPTIMIZATION-GUIDELINES.md#g07--检查环境提供稳定执行入口)。新profile、diagnostic code与测试为拟实现。
+> 全局设计；承接 [G07 guideline](../GLOBAL-OPTIMIZATION-GUIDELINES.md#g07--检查环境提供稳定执行入口)。Main 入口预检、typed failure/只读能力、显式冻结 CheckProfile 和实际指纹采集已落地；G05 可信接收/受限复用及真实环境对照待实施。
 
 ## 1. 调查证据与实际运行
 
@@ -18,7 +18,7 @@
 
 `Preflight(profile, execution, host) -> CapabilityReport`返回可用runner、缺工具/依赖/资源、环境指纹和具体恢复；必要checks无可用环境时不发布ready。读取配置、探测工具版本和无副作用能力检查有超时，不跑长业务suite作为预检。
 
-Main模式也校验实际工具和配置；必须支持命令运行的环境才能称可开工。当前PreflightChecks对main直接返回的路径需接上这部分，不因选择Main就声称环境已完整验证。
+Main模式也校验实际工具和配置；必须支持命令运行的环境才能称可开工。初始 PreflightChecks 对 main 直接返回的缺口已通过 §7 的入口预检修正；完整工具配置/依赖/profile 仍待接续，不因选择Main就声称环境已完整验证。
 
 ## 3. 平台与路径治理
 
@@ -44,6 +44,8 @@ Main集成检查失败保持checkpoint/候选；代码改变走原rework，新�
 
 回执按G05 v2补环境/fixture/runner字段；日志与最小输出示例随错误送达，完整日志路径可读。Schema错误用现有discriminator pruning为基础生成JSON Pointer，不丢原详细错误。
 
+无法识别目标分支时，摘要按分支逐行给首个错误，不在标题再次枚举同一分支名；原完整错误保留在unwrap链和verbose入口。接手时在干净`ed61728`复现分支摘要长度用例失败，重复名称是可移除的反馈负担，不能通过降低测试门槛解决。
+
 ## 6. 改动位置与验收
 
 修改 workspace/capabilities、check、check_other/linux、binding、原workspace prepare/launch、integration/check_runner与对应Schema；若profile入Execution，同步rebind/recovery/replace/bootstrap的复制和验证，不遗漏历史记录。
@@ -53,3 +55,52 @@ Main集成检查失败保持checkpoint/候选；代码改变走原rework，新�
 真实平台分别执行：Linux支持runner；macOS/Windows明确的不可用及Main路径；安装资产、路径空格/中文、临时目录别名和中断恢复。交叉编译不替代这些运行。
 
 先补path/能力diagnostic与Main预检，再上线少量profile；完整环境指纹后才启用G05复用。旧命令profile默认never复用，缺字段保留legacy限制；本次没有修改环境或生产绑定。
+
+## 7. 首个 Main 入口预检与真实故障契约
+
+原 Main runner 使用继承环境中的 `sh -c <已登记命令>`。Main prepare/launch
+新增只读入口预检，核验真实 shell 和可解析的简单字面命令工具是否存在，
+不执行检查或版本探测/安装脚本。仅可证明入口可用，不能据此宣称依赖、fixture
+或服务全部准备好。复杂 shell/变量/控制流保留 legacy 执行语义，投影明确
+unverified，不从文本猜全部工具。required check 的明确入口缺失拒绝 ready；
+`locked:` 仍非可执行检查，Worker 隔离模式与现有上界不变。
+
+公共 typed Failure 仅表达 code/category/owner/check/observed/repair/
+retry_condition/receipt/log 与原 error unwrap 链。process_exit 不等于产品
+assertion_failed；timeout/cancelled、diagnostic_io、capability_missing 保留
+明确来源。Main/Worker 的真实运行回执增加 failure 对象，保留旧字段；不用
+调用者填写 status 或存在日志来证明 PASS。旧检查没有完整 profile/environment
+闭包，复用仍 never；本切片不改变 Integrate 的 required/fresh 检查。
+
+预检在原 prepare/launch 发布/预留 session 前执行；无副作用输出 Capability
+Report 可只读查询并给实际 owner 修复动作，不写 Runtime、PASS 或新批准。
+Main 的 shell/工具路径空格、中文和引用语法覆盖；未知语法不伪称 verified。
+真实执行失败/中断/诊断 I/O 保持原 checkpoint/候选，不自动换 runner、合并、
+修环境或放宽 Worker 隔离。显式 profile 与完整 G05 键保持后续必须完成项。
+
+首个切片的源码/实际执行/安装范围见 [全局设计 §7.19](../GLOBAL-OPTIMIZATION-DESIGN.md#719-g07-main-检查入口预检只读能力与真实故障分类) 和 [检查能力安装证据](../evidence/global-optimization-check-capability-install-20261013.json)。
+
+## 8. CheckProfile 冻结与回执采集契约
+
+原 manifest Assignment 可选 check_profiles，每项 id/version/check_index/command/
+location/timeout_seconds/environment_policy/environment/dependencies/fixtures/
+input_closure/side_effects/reuse_policy。check_index 必须命中同一原 required_checks
+且命令逐字相同；不得覆盖 locked: 或增加第二命令。location 与原新执行选择
+一致，timeout 为1–300秒、外层 Hook/Integration 的更短截止仍优先。旧无字段
+保留旧5分钟/继承环境，旧 ready execution不补 profile；replace/rebind/adopt
+保留原 profile，而不是从当前文件抓取新命令。
+
+profile 位于已登记 manifest 原批准边界，不建立新批准索引。依赖/fixture
+为明确仓库相对路径+摘要，实际 source closure 经原 frozen inputs/Bootstrap
+校验。environment_policy 为 inherited 或 declared_only；后者只传批准白名单
+事实，记录 unset 与值的差异，不转储所有环境变量或秘密。未声明完整环境、
+副作用unknown、旧回执、不完整输入一律没有复用资格。
+
+第一次启用 profile 仍执行原检查；实际回执采集 profile canonical digest、
+实际受测树/依赖/fixture内容、runner二进制及平台指纹、白名单环境与日志摘要、
+原Runtime/generation/Assignment/owner/执行代次，保留原字段。输入在执行中
+变化或诊断缺失不得写PASS。Main post integration与独立责任保留原fresh要求，
+profile不把作者检查替代领域判断。G05只有原工具回执经原登记接收验证后，才
+能按完整键考虑同责任复用；本阶段先完成采集，不假造命中或启用全局缓存。
+
+显式 profile 采集链与真实集成/安装范围见 [全局设计 §7.20](../GLOBAL-OPTIMIZATION-DESIGN.md#720-g07-显式-checkprofile实际指纹与-v2-观测回执) 和 [CheckProfile安装证据](../evidence/global-optimization-check-profiles-install-20261013.json)。

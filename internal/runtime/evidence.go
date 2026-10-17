@@ -41,12 +41,23 @@ func IsRegisteredEvidenceKind(kind string) bool {
 // mutation. It rejects absolute or escaping paths, missing artifacts, invalid
 // kinds, empty producers, duplicate IDs, and stale revisions before commit.
 func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest) (Snapshot, error) {
+	if request.Submission != nil {
+		frozen := *request.Submission
+		frozen.AnswerJSON = append([]byte(nil), frozen.AnswerJSON...)
+		request.Submission = &frozen
+	}
 	if request.ID == "" {
 		return Snapshot{}, fmt.Errorf("evidence id is required")
 	}
 	catalog := evidence.DefaultCatalog()
 	if !catalog.IsRegisteredKind(request.Kind) {
 		return Snapshot{}, fmt.Errorf("unsupported evidence kind %q; registered kinds: %s; note: the Quality Gate records S10 artifacts as acceptance_record/release_audit_record, but registration uses --kind acceptance or --kind release_audit (bind --review-round to the current round; S10 envelopes also auto-inherit it from the envelope file)", request.Kind, strings.Join(catalog.RegisteredKinds(), ", "))
+	}
+	switch strings.TrimSpace(request.Kind) {
+	case "repair_result_blocker":
+		return Snapshot{}, fmt.Errorf("evidence kind %q is pipeline-owned: only the original S9 work_blocked lifecycle CAS may append its blocker artifact evidence; manual evidence registration would split the blocker pointer, immutable message, and evidence row", request.Kind)
+	case "repair_result_resolution":
+		return Snapshot{}, fmt.Errorf("evidence kind %q is pipeline-owned: only the original S9 blocker_resolved lifecycle CAS may append its resolution evidence; manual evidence registration would split the Agent resolution pointer, immutable message, and evidence row", request.Kind)
 	}
 	// finding_supplement is pipeline-owned: review.SubmitSupplement persists
 	// the entities.finding_supplements index row and the evidence entry in one
@@ -93,7 +104,7 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	}
 	current := snapshot.State
 	if request.Submission != nil {
-		if _, err := prepareSubmission(root, current, request); errors.Is(err, errSubmissionAccepted) {
+		if _, err := prepareSubmission(root, current, request, data); errors.Is(err, errSubmissionAccepted) {
 			return snapshot, nil
 		} else if err != nil {
 			return Snapshot{}, err
@@ -178,13 +189,13 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 			var submission SubmissionRecord
 			if request.Submission != nil {
 				var err error
-				submission, err = prepareSubmission(root, state, request)
+				submission, err = prepareSubmission(root, state, request, data)
 				if err != nil {
 					return err
 				}
-				if err := validateDocumentRegistration(state, request, data); err != nil {
-					return err
-				}
+			}
+			if err := validateDocumentRegistration(state, request, data); err != nil {
+				return err
 			}
 			items, ok := state["evidence"].([]any)
 			if !ok {
@@ -244,7 +255,7 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 			// never from the artifact's mere presence or the outer error text.
 			latest, readErr := store.Snapshot()
 			if readErr == nil {
-				_, replayErr := prepareSubmission(root, latest.State, request)
+				_, replayErr := prepareSubmission(root, latest.State, request, data)
 				if errors.Is(replayErr, errSubmissionAccepted) {
 					return latest, nil
 				}
@@ -337,6 +348,22 @@ func s10EnvelopeReviewRound(data []byte) (int, bool) {
 func validateDocumentRegistration(state map[string]any, req EvidenceRequest, data []byte) error {
 	if req.Kind != "document_review" {
 		return nil
+	}
+	if req.Submission == nil && PacketEnabled(state) {
+		life, _ := state["lifecycle"].(map[string]any)
+		baseline, _ := state["baseline"].(map[string]any)
+		entities, _ := state["entities"].(map[string]any)
+		rows, _ := entities["work_packets"].([]any)
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			b, _ := row["binding"].(map[string]any)
+			entry, eErr := integerField(b, "stage_entry")
+			currentEntry, cErr := integerField(life, "phase_revision")
+			g, gErr := integerField(baseline, "generation")
+			if eErr == nil && cErr == nil && gErr == nil && life["state"] == "document_verification" && entry == currentEntry && numberBindingGeneration(b) == g && b["runtime_id"] == state["runtime_id"] && b["responsibility"] == req.ResponsibilityID {
+				return fmt.Errorf("issued S5 responsibility requires its saved-answer consumer; manual evidence registration cannot bypass its current attempt")
+			}
+		}
 	}
 	bound, _ := state["bound_req"].(map[string]any)
 	if bound == nil || bound["id"] == nil || bound["id"] == "" {

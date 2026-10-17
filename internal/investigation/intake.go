@@ -192,7 +192,7 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 		return runtime.Snapshot{}, fmt.Errorf("inspect InvestigationCase artifact %s: %w", caseRel, err)
 	}
 
-	caseBytes, err := buildInitialCase(caseID, batch, caseRel, pointer.SHA256, request.GroupingRationale, baselineGeneration)
+	caseBytes, err := buildInitialCase(caseID, batch, pointer.Path, pointer.SHA256, request.GroupingRationale, baselineGeneration)
 	if err != nil {
 		return runtime.Snapshot{}, err
 	}
@@ -590,6 +590,13 @@ func writeExclusive(path string, data []byte) error {
 	if err := file.Close(); err != nil {
 		_ = os.Remove(path)
 		return err
+	}
+	// The immutable Case file must be durably named before the original
+	// Runtime pointer transaction can refer to it. If the directory sync fails,
+	// retain the file: its directory-entry durability is uncertain and a blind
+	// unlink could destroy an artifact that recovery must inspect.
+	if err := runtime.SyncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync parent directory for immutable Case %s (retained for recovery): %w", path, err)
 	}
 	return nil
 }

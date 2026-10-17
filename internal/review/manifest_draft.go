@@ -2,6 +2,7 @@ package review
 
 import (
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"sort"
 	"strings"
 	"time"
@@ -150,7 +151,7 @@ func roleFamilyDefinitionRef(roleFamily string) string {
 // visible without asking the Worker to infer it from a role name.
 func assignmentDoneWhen(kind, assignmentID string, claimIDs []string) []string {
 	claims := strings.Join(claimIDs, ", ")
-	result := fmt.Sprintf("register one complete ReviewResult for %s covering exactly Claims [%s]", assignmentID, claims)
+	result := fmt.Sprintf("fill and save the exact issued professional answer for %s covering exactly Claims [%s], accepted by the original consumer", assignmentID, claims)
 	evidence := "each Claim has a disposition and the required evidence is referenced"
 	if kind == "e2e_browser" {
 		evidence = "each assigned user flow has executable evidence, or an explicit applicability and rationale"
@@ -198,7 +199,7 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	reviewMap, _ := state["review"].(map[string]any)
 	if projection, _ := reviewMap["assignments"].(map[string]any); projection != nil {
 		if row, _ := projection[assignmentID].(map[string]any); row != nil {
-			if status, _ := row["status"].(string); status != "" && status != "planned" {
+			if status := workstate.ReviewAssignmentActivity(row); status != "" && status != "planned" {
 				return nil, nil, fmt.Errorf("assignment %s is already %s; one plan Assignment dispatches once", assignmentID, status)
 			}
 		}
@@ -219,9 +220,9 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		round = currentReviewRound(state)
 	}
 
-	// Identity: reuse the platform team id of an already-registered
-	// workgroup when one exists; otherwise mirror the example convention.
+	// Reuse a platform team only when registered facts name a single team.
 	platformTeamID := ""
+	platformTeams := map[string]bool{}
 	entities, _ := state["entities"].(map[string]any)
 	teams, _ := entities["teams"].([]any)
 	workgroupTaken := map[string]bool{}
@@ -230,13 +231,14 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		if id, _ := team["id"].(string); id != "" {
 			workgroupTaken[id] = true
 		}
-		if platformTeamID == "" {
-			platformTeamID, _ = team["platform_team_id"].(string)
+		if id, _ := team["platform_team_id"].(string); id != "" {
+			platformTeams[id] = true
+			platformTeamID = id
 		}
 	}
-	if platformTeamID == "" {
-		platformTeamID = "claude-team-" + runtimeID
-		notes = append(notes, "platform_team_id is guessed as claude-team-<runtime_id>; align it with the platform's real team id if one exists")
+	if len(platformTeams) != 1 {
+		platformTeamID = "TODO(planner): logical dispatch group label string"
+		notes = append(notes, "platform_team_id is a string label for this logical dispatch group, chosen by Main (for example s7-r1-review); no opaque platform identity lookup is required")
 	}
 
 	suffix := strings.TrimPrefix(assignmentID, "assignment-")
@@ -307,9 +309,10 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		scope = []string{"TODO(planner): review scope"}
 	}
 
+	notes = append(notes, `skill_refs is a string array of existing Skill names required by the role, chosen by Main; for example ["integration-verification"] or ["testing-strategy"], not objects or digests`)
 	skillRefs := responsibilityRequiredSkills[responsibility]
 	if len(skillRefs) == 0 {
-		skillRefs = []string{fmt.Sprintf("TODO(planner): skill ref for %s", responsibility)}
+		skillRefs = []string{fmt.Sprintf("TODO(planner): existing Skill name string for %s", responsibility)}
 	} else {
 		skillRefs = append([]string(nil), skillRefs...)
 	}
@@ -328,15 +331,14 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		notes = append(notes, "read_paths are the plan's frozen subjects; widen them to the spec/test surface the reviewer needs")
 	}
 
-	reportPath := fmt.Sprintf("docs/reports/review/%s.json", assignmentID)
-	writePaths := []string{reportPath}
+	writePaths := []string{".claude/"}
 	if plan.VerificationArtifactWorkspace != nil && strings.TrimSpace(*plan.VerificationArtifactWorkspace) != "" {
 		writePaths = append(writePaths, *plan.VerificationArtifactWorkspace)
 	}
-	notes = append(notes, "write_paths stay inside the reviewer write rule (.claude/, docs/reports/, the plan's verification_artifact_workspace); the runtime hard-denies product writes")
+	notes = append(notes, "write_paths describe the Reviewer questionnaire/evidence responsibility and the registered verification_artifact_workspace; they are not a tool ACL")
 
 	agentID := fmt.Sprintf("TODO(planner):agent-id-for-%s", suffix)
-	notes = append(notes, "agent_id is a TODO marker; name the reviewer Agent before registering")
+	notes = append(notes, "agent_id is this Reviewer dispatch name string, chosen by Main (for example s7-r1-qa); no opaque platform ID lookup is required")
 
 	roleFamily := lensToRoleFamily(planned.Lens)
 	dispositions := make([]ManifestDisposition, 0, len(mandatoryResponsibilities[kind]))
@@ -362,7 +364,7 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		SkillRefs:          skillRefs,
 		ReadPaths:          readPaths,
 		WritePaths:         writePaths,
-		OutputPaths:        []string{reportPath},
+		OutputPaths:        []string{},
 		DependsOn:          []string{},
 		ReuseDecision:      "create",
 		GroupingRationale: fmt.Sprintf(
@@ -395,27 +397,15 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 			"One reviewer Agent answers plan Assignment %s (%d Claims); one plan Assignment dispatches exactly once with its exact Claim set.",
 			assignmentID, len(planned.ClaimIDs)),
 		Validation: ManifestValidation{
-			Result:                  "pass",
+			Result:                  "warn",
 			MissingResponsibilities: []string{},
 			UnresolvedConflicts:     []string{},
-			Warnings:                []string{},
+			Warnings:                []string{"Draft preparation is incomplete: Main must choose the Reviewer dispatch name and logical dispatch group label and complete professional responsibility choices; this is not validation evidence."},
 			ValidatedAt:             time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		},
 	}
 	notes = append(notes, "risk_tags left empty on purpose: adding a tag can force extra `assigned` responsibility dispositions at registration (internal/team validator)")
-	// Disclosure for the validation five-tuple (E2E known-friction: the
-	// team-manifest schema rejects empty arrays in some interpreter
-	// flavours and the planner only learns the required shape on the
-	// first register attempt). We pre-populate the tuple with `pass` plus
-	// empty arrays and the current timestamp so the JSON validates; the
-	// final values MUST be hand-filled before dispatch:
-	//   result                  ∈ {"pass", "warnings", "fail"}
-	//   missing_responsibilities array of responsibility_id strings
-	//   unresolved_conflicts    array of conflict descriptions
-	//   warnings                array of planner-visible warnings
-	//   validated_at            RFC3339 timestamp of the hand review
-	// (Shape authority: internal/schema/assets/team-manifest.schema.json.)
-	notes = append(notes, "manifest `validation` (result/missing_responsibilities/unresolved_conflicts/warnings/validated_at) is pre-filled as pass/[]/[]/[]/<now>; hand-fill the tuple before dispatch — `result` accepts only pass|warnings|fail and the shape authority is the team-manifest schema (internal/schema/assets/)")
+	notes = append(notes, "validation uses the existing pass|warn|block schema; warn and its timestamp describe this generated draft, not professional review or registration acceptance. The original register-workgroup validates the completed manifest; no manual validation tuple or timestamp is required.")
 	return draft, notes, nil
 }
 

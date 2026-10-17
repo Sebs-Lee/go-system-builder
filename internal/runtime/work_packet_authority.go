@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // ValidateWorkPacket checks current ownership and the complete frozen subject
@@ -32,28 +32,25 @@ func ValidateWorkPacket(root string, state map[string]any, packet workpacket.Pac
 	if state["runtime_id"] != b.RuntimeID || generation != b.Generation || lifecycle["state"] != "document_verification" || entry != b.StageEntry {
 		return fmt.Errorf("packet runtime, generation or stage entry is stale")
 	}
-	expected, err := workpacket.BuildS5(b, packet.Inputs)
+	expected, err := workpacket.RebuildS5(packet)
 	if err != nil {
 		return err
 	}
 	if !reflect.DeepEqual(packet, expected) {
 		return fmt.Errorf("packet differs from registered template projection")
 	}
+	if err := workpacket.ValidateTaskAnalysisSources(root, packet, files); err != nil {
+		return err
+	}
 	if err := validatePacketAssignment(root, state, b); err != nil {
 		return err
 	}
-	documents, _ := state["documents"].([]any)
-	refs := []workpacket.Reference{}
-	for _, raw := range documents {
-		d, _ := raw.(map[string]any)
-		g, err := integerField(d, "generation")
-		if err != nil {
-			return err
-		}
-		if g != generation || (d["status"] != "registered" && d["status"] != "locked") {
-			continue
-		}
-		ref := workpacket.Reference{ID: stringValue(d["id"]), Path: stringValue(d["path"]), Version: stringValue(d["version"]), SHA256: stringValue(d["sha256"])}
+	formalInputs, err := S5FormalInputs(root, state, files)
+	if err != nil {
+		return fmt.Errorf("resolve current S5 formal inputs: %w", err)
+	}
+	refs := formalInputs.References
+	for _, ref := range refs {
 		data, err := files.ReadFile(ref.Path)
 		if err != nil {
 			return fmt.Errorf("read frozen packet input: %w", err)
@@ -72,11 +69,28 @@ func ValidateWorkPacket(root string, state map[string]any, packet workpacket.Pac
 		if workpacket.Digest(disk) != ref.SHA256 {
 			return fmt.Errorf("packet input checkout drifted")
 		}
-		refs = append(refs, ref)
 	}
-	sort.Slice(refs, func(i, j int) bool { return refs[i].Path < refs[j].Path })
 	if !reflect.DeepEqual(refs, packet.Inputs) {
-		return fmt.Errorf("packet does not cover the exact current document set")
+		return fmt.Errorf("packet does not cover the exact current formal S5 input set")
+	}
+	bound, _ := state["bound_req"].(map[string]any)
+	if bound == nil || bound["status"] != "locked" {
+		return fmt.Errorf("packet requires the current locked REQ baseline")
+	}
+	boundFound := false
+	for _, ref := range refs {
+		if ref.ID == bound["id"] && ref.Path == bound["path"] && ref.Version == bound["version"] && ref.SHA256 == bound["sha256"] {
+			boundFound = true
+			break
+		}
+	}
+	if !boundFound {
+		return fmt.Errorf("packet document set differs from the authorized locked REQ baseline")
+	}
+	if verified, ok := files.(interface{ Verify() error }); ok {
+		if err := verified.Verify(); err != nil {
+			return fmt.Errorf("packet file source moved: %w", err)
+		}
 	}
 	return nil
 }
@@ -92,7 +106,11 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 			break
 		}
 	}
-	if agent == nil || (agent["role"] != "document-verifier" && agent["role"] != "document_verifier") || agent["state"] == "stopped" || agent["state"] == "blocked" || agent["state"] == "queued" {
+	activity := ""
+	if agent != nil {
+		activity = workstate.AgentActivity(agent)
+	}
+	if agent == nil || (agent["role"] != "document-verifier" && agent["role"] != "document_verifier") || activity == "stopped" || activity == "blocked" || activity == "queued" {
 		return fmt.Errorf("packet owner is not a current document reviewer")
 	}
 	teams, _ := entities["teams"].([]any)
@@ -106,6 +124,11 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 	}
 	if team == nil || team["kind"] != "document_verifier" || (team["status"] != "planned" && team["status"] != "active") || !containsString(team["agent_ids"], b.Owner) || !containsString(team["responsibility_ids"], b.Responsibility) {
 		return fmt.Errorf("packet owner has no current registered document responsibility")
+	}
+	teamEntry, entryErr := integerField(team, "packet_stage_entry")
+	teamGeneration, generationErr := integerField(team, "packet_generation")
+	if entryErr != nil || generationErr != nil || teamEntry != b.StageEntry || teamGeneration != b.Generation {
+		return fmt.Errorf("document reviewer dispatch is not registered for this S5 entry and generation")
 	}
 	manifestRef, _ := team["manifest_ref"].(string)
 	if agent["prompt_ref"] != manifestRef+"#"+b.AssignmentID {
@@ -123,6 +146,10 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 		return fmt.Errorf("packet assignment manifest drifted")
 	}
 	var manifest struct {
+		RuntimeID   string `json:"runtime_id"`
+		Generation  int    `json:"baseline_generation"`
+		WorkgroupID string `json:"workgroup_id"`
+		Kind        string `json:"workgroup_kind"`
 		Assignments []struct {
 			ID             string `json:"assignment_id"`
 			Owner          string `json:"agent_id"`
@@ -131,6 +158,9 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return fmt.Errorf("decode packet manifest: %w", err)
+	}
+	if manifest.RuntimeID != b.RuntimeID || manifest.Generation != b.Generation || manifest.WorkgroupID != team["id"] || manifest.Kind != "document_verifier" {
+		return fmt.Errorf("packet manifest belongs to another Runtime, generation or workgroup")
 	}
 	for _, a := range manifest.Assignments {
 		if a.ID == b.AssignmentID && a.Owner == b.Owner && a.Responsibility == b.Responsibility {

@@ -21,14 +21,17 @@ import (
 )
 
 type Binding struct {
-	RuntimeID      string `json:"runtime_id"`
-	Generation     int    `json:"generation"`
-	StageEntry     int    `json:"stage_entry"`
-	Owner          string `json:"owner"`
-	AssignmentID   string `json:"assignment_id"`
-	AssignmentSHA  string `json:"assignment_sha256"`
-	Responsibility string `json:"responsibility"`
-	Attempt        int    `json:"attempt"`
+	RuntimeID             string `json:"runtime_id"`
+	Generation            int    `json:"generation"`
+	StageEntry            int    `json:"stage_entry"`
+	Owner                 string `json:"owner"`
+	AssignmentID          string `json:"assignment_id"`
+	AssignmentSHA         string `json:"assignment_sha256"`
+	Responsibility        string `json:"responsibility"`
+	Attempt               int    `json:"attempt"`
+	PreviousSubmissionKey string `json:"previous_submission_key,omitempty"`
+	RevisionReason        string `json:"revision_reason,omitempty"`
+	ExecutionRequired     bool   `json:"execution_required,omitempty"`
 }
 
 type Reference struct {
@@ -69,14 +72,69 @@ type Draft struct {
 }
 
 type Packet struct {
-	ID          string      `json:"packet_id"`
-	TemplateID  string      `json:"template_id"`
-	TemplateSHA string      `json:"template_sha256"`
-	Binding     Binding     `json:"binding"`
-	Inputs      []Reference `json:"inputs"`
-	AnswerPath  string      `json:"answer_path"`
-	ViewPath    string      `json:"view_path"`
-	Draft       Draft       `json:"draft"`
+	TaskAnalysis *TaskAnalysisRef `json:"task_analysis,omitempty"`
+	ID           string           `json:"packet_id"`
+	TemplateID   string           `json:"template_id"`
+	TemplateSHA  string           `json:"template_sha256"`
+	Binding      Binding          `json:"binding"`
+	Inputs       []Reference      `json:"inputs"`
+	AnswerPath   string           `json:"answer_path"`
+	ViewPath     string           `json:"view_path"`
+	Draft        Draft            `json:"draft"`
+}
+
+type TaskAnalysisRef struct {
+	Path          string `json:"path"`
+	SHA256        string `json:"sha256"`
+	ParserVersion string `json:"parser_version"`
+}
+
+// BindTaskAnalysis changes only the frozen knowledge binding, never formal
+// subjects or answer authority. Nil preserves the original v1 packet exactly.
+func BindTaskAnalysis(p Packet, ref *TaskAnalysisRef) (Packet, error) {
+	if ref == nil {
+		return p, nil
+	}
+	if !safeRelative(ref.Path) || ref.Path != ".claude/work-packets/analysis/"+ref.SHA256+".json" || !digestPattern.MatchString(ref.SHA256) || ref.ParserVersion != "1.0.0" {
+		return Packet{}, fmt.Errorf("invalid frozen task analysis reference")
+	}
+	data, err := json.Marshal(ref)
+	if err != nil {
+		return Packet{}, err
+	}
+	oldID := p.ID
+	p.ID = "packet-" + Digest(append([]byte(oldID+":"), data...))
+	p.ViewPath = strings.Replace(p.ViewPath, oldID, p.ID, 1)
+	p.AnswerPath = strings.Replace(p.AnswerPath, oldID, p.ID, 1)
+	copyRef := *ref
+	p.TaskAnalysis = &copyRef
+	p.Draft.Read = append(p.Draft.Read, ReadItem{Path: ref.Path, Purpose: "读取这一冻结解析器版本的 TASK 读集/粒度 advisory；它不证明 PASS，也不扩大本责任。"})
+	return p, nil
+}
+
+func RebuildS5(p Packet) (Packet, error) {
+	// Wording updates apply to new questionnaires. Reconstruct an issued
+	// packet from its original bundled template, including named revisions.
+	for _, name := range []string{"stage-form-s5-template.json", "stage-form-s5-template-legacy.json"} {
+		data, err := schema.ReadAsset(name)
+		if err != nil {
+			return Packet{}, fmt.Errorf("read S5 template: %w", err)
+		}
+		if Digest(data) != p.TemplateSHA {
+			continue
+		}
+		base, err := buildS5(p.Binding, p.Inputs, data)
+		if err != nil {
+			return Packet{}, err
+		}
+		return BindTaskAnalysis(base, p.TaskAnalysis)
+	}
+	return Packet{}, fmt.Errorf("unknown issued S5 template fingerprint")
+}
+
+func RebuildS5ForBinding(binding Binding, old Packet) (Packet, error) {
+	old.Binding = binding
+	return RebuildS5(old)
 }
 
 type FieldError struct {
@@ -87,6 +145,14 @@ type FieldError struct {
 }
 
 func BuildS5(binding Binding, inputs []Reference) (Packet, error) {
+	data, err := schema.ReadAsset("stage-form-s5-template.json")
+	if err != nil {
+		return Packet{}, fmt.Errorf("read S5 template: %w", err)
+	}
+	return buildS5(binding, inputs, data)
+}
+
+func buildS5(binding Binding, inputs []Reference, data []byte) (Packet, error) {
 	if err := identity.ValidateAgentID(binding.Owner); err != nil {
 		return Packet{}, fmt.Errorf("work packet owner: %w", err)
 	}
@@ -95,9 +161,12 @@ func BuildS5(binding Binding, inputs []Reference) (Packet, error) {
 		binding.Generation < 1 || binding.StageEntry < 0 || binding.Attempt < 1 {
 		return Packet{}, fmt.Errorf("invalid work packet binding")
 	}
-	data, err := schema.ReadAsset("stage-form-s5-template.json")
-	if err != nil {
-		return Packet{}, fmt.Errorf("read S5 template: %w", err)
+	if binding.Attempt == 1 {
+		if binding.PreviousSubmissionKey != "" || binding.RevisionReason != "" || binding.ExecutionRequired {
+			return Packet{}, fmt.Errorf("first attempt cannot declare a revision")
+		}
+	} else if !digestPattern.MatchString(binding.PreviousSubmissionKey) || strings.TrimSpace(binding.RevisionReason) == "" || len(binding.RevisionReason) > 1024 {
+		return Packet{}, fmt.Errorf("revision requires a previous submission key and a concrete reason <=1024 bytes")
 	}
 	var template struct {
 		Stage            string `json:"stage"`
@@ -159,6 +228,12 @@ func ValidateAnswer(packet Packet, data []byte) (Answer, []FieldError) {
 	if len(data) > 256*1024 {
 		return Answer{}, []FieldError{issue("/", "JSON <= 256 KiB", "oversized", "只提交当前责任的结论与发现。")}
 	}
+	if err := rejectDuplicateKeys(data); err != nil {
+		return Answer{}, []FieldError{issue("/", "唯一的JSON字段", err.Error(), "删除重复字段后保存。")}
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer.schema.json", data); err != nil {
+		return Answer{}, []FieldError{issue("/", "注册的答卷结构", err.Error(), "保留机器题干，补齐answer中的必填字段。")}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var draft Draft
@@ -204,6 +279,68 @@ func ValidateAnswer(packet Packet, data []byte) (Answer, []FieldError) {
 		}
 	}
 	return answer, issues
+}
+
+// AnswerDigest hashes the validated professional answer, independent of JSON
+// formatting and object key order. Callers must validate against the packet first.
+func AnswerDigest(answer Answer) (string, error) {
+	data, err := json.Marshal(answer)
+	if err != nil {
+		return "", err
+	}
+	return Digest(data), nil
+}
+
+// JSON decoders normally accept duplicate fields and keep the last value. A
+// signed questionnaire must have one unambiguous value for every field.
+func rejectDuplicateKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var readValue func() error
+	readValue = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				if !ok || seen[name] {
+					return fmt.Errorf("duplicate JSON field %q", name)
+				}
+				seen[name] = true
+				if err := readValue(); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := readValue(); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	if err := readValue(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("trailing JSON data")
+	}
+	return nil
 }
 
 var componentPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

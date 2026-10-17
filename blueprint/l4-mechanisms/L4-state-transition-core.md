@@ -12,6 +12,137 @@
 
 基石五问：① 自有对象模型——`loop-state` 全部顶层实体 + 三台 phase 机 + 三套实体生命周期，是全系统最大的一台状态机；② 全部十二个 stage 直接读写；③ 独立失败面——stale 冲突、半写状态、journal 断尾、指纹漂移、pending 残留，每种都有专门恢复语义；④ 外部边界——文件系统持久化格式与锁协议即是接线面；⑤ 自带风险分级（guard/action/evidence 三级约束）与专属验收命令族。五问全中，成篇。
 
+<a id="unified-work-state"></a>
+
+## 0.1 全局通用工作状态模型（2026-10-15，目标契约）
+
+本节是控制面工作状态的唯一语义定义。目标是让 Agent 直接知道“我现在做什么、
+交给谁、何时结束”，并让代码各入口使用同一判断。新实例使用 Runtime 1.3：Agent、TASK、S7 ReviewAssignment 与 Change WorkItem 的
+工作字段均采用五态；新 RepairPlan 1.1 的 Assignment 初值为 pending。CLI、Hook、
+派发与责任回执共用 `internal/workstate`。已有 Runtime 1.1/1.2 和 RepairPlan 1.0
+保留原格式与原 journal 字节，由具名兼容边界读取；§2 的旧枚举只用于解释原事件及
+旧格式，不再作为新 Runtime 的工作字段。具体回归及仿真结论见 GLOBAL 的验收记录。
+
+### 建模单位：责任的一次尝试
+
+工作身份沿用当前 Runtime/generation、subject、responsibility、owner、attempt 的
+原绑定，不另建工作注册表。状态必须附着在这个身份上，不附着在含混的对象名上。
+例如 `TASK-001/任务规格交付` 与 `TASK-001/实现交付` 是两项责任：前者完成不意味着
+后者完成。Worker 交付、Main 集成和独立审查各有原责任，使用同一套状态词。
+旧 TASK entity 还可能由审查 workgroup 更新；必须先解析实际阶段、角色与责任绑定，
+不能把 S5 审查登记的 in_progress 当成 S6 产品实现已经开始。
+
+阶段回答“处于哪一步”，状态回答“这项责任进展如何”。S2–S10、planning/design、
+reading、reviewing、integrating 等步骤或活动名称不得再扩成另一组工作状态。
+
+### 唯一状态词表
+
+| 状态 | 唯一含义 | 当前责任应看到的动作 |
+| --- | --- | --- |
+| `pending` | 责任已确定，尚未开始；包括尚待派发或前置责任未完成 | 系统指出前置项及其 owner；条件满足后给原开工入口 |
+| `active` | 本次责任已开始，尚未完成；可含原流程中的正常批准等待 | 给当前题目、精确路径和合法命令；等待时明确下一 owner |
+| `blocked` | 已开始，但继续工作需要先消除明确阻碍 | 给阻碍、处理 owner 和恢复动作；可处理的答案字段错误仍是 active |
+| `done` | 本次责任要求的交付及本人检查已被原消费者接收，当前完成依据有效 | 本人结束；下游责任交给其 owner |
+| `cancelled` | 本次尝试被原撤销、替换或失效流程终止，已不再授权继续执行 | 结束旧尝试；需要重做时指向新尝试 |
+
+完成统一使用 `done`，不再新增 `finished`、`complete`、`completed`、`closed` 等同义
+工作状态。`ready` 是前置条件满足的事实，`accepted` 是原接收事件的事实，`locked`
+是冻结约束；它们均不构成第六种工作状态。队列等待不生成 waiting/queued 双状态。
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> active: 原开工条件满足并开始
+    active --> blocked: 确认阻碍
+    blocked --> active: 原恢复条件满足
+    active --> done: 原消费者接收且本人完成依据成立
+    pending --> cancelled: 原撤销或替换
+    active --> cancelled: 原撤销或失效
+    blocked --> cancelled: 原撤销或失效
+    done --> cancelled: 原流程明确撤销或替换本次责任
+    done --> [*]
+    cancelled --> [*]
+```
+
+这些是业务事件的语义顺序，不要求每条边另写一次 Runtime。原原子接收可一次
+持久化完整事实，恢复时直接投影 done。done→cancelled 仅消费原责任撤销/替换事件，
+不改写历史成功接收事件。普通证据过期不得自动反写历史 attempt。返工由原流程
+创建新 attempt，从 pending 开始；当前视图指向新责任，旧答案不能重新激活。
+若来源已失效但接续尚未建立，系统明确报告当前覆盖受阻及原恢复 owner，不能用旧 done
+充当当前完成证明，也不要求 Agent 自行发明或修改 attempt。
+非法转换仍由原 Writer/guard 拒绝；超时不能自动变 done，重复事件不能创建新尝试。
+
+### 不再把不同问题压进一个 status
+
+- **状态与结论**：`pass`、`fix_required`、`req_change_required` 是专业结论。合法
+  fix_required 已接收时，审查责任可以 done，规划修订责任随后开始；阶段仍由原门推进。
+- **本人完成与阶段完成**：S6 Worker done 不等于 Main 集成 done；两个 reviewer
+  中一个 done 不等于 S5 通过。阶段出口必须有原 gate/transition 提交依据。
+- **活动与权限**：active 不授产品写权限，reading/PLAN 等活动只影响原权限检查。
+  blocked 不自动允许 Stop；仅原有效阻塞交接或等待批准依据允许结束当前执行。
+  正常排队、计划等待批准按是否已开工保持 pending/active，并指出等待 owner；
+  不因正在等另一个合法步骤而生成新的工作状态或伪造 blocker。
+- **历史接收与当前效力**：原 receipt 永久保留；输入漂移、换代、返工后不得由历史
+  accepted 或文件存在推导当前 done。缺少可验证绑定时不给完成或权限。
+
+Agent 的主要响应统一为“当前责任 + 上述 status + 下一动作”。下一动作必须包含
+真实 owner、具体缺口及已支持的命令/路径；本人 done 时直接说明可结束。需要等待
+别人时指出对方责任，不让本人从全局阶段未推进反推欠项。安全退出仍消费同一原事实。
+内部阶段名、journal/revision、receipt 子类型只用于按需诊断，不要求 Agent 解码。
+
+### 统一到判断入口，不止统一显示名称
+
+状态与正式输入资格由共享读模型从**同一 Runtime/journal 与冻结来源快照**计算；
+CLI、Hook、Gate、派发、Stop/Idle 调用同一语义函数。该读模型不持久化另一份状态，
+不自建 Writer，不增加网络调用或自动轮询。领域专业判断仍由原消费者作出。
+done 必须调用该责任的原 Consumer 完成判定；例如已接收 S9 PlanReport 只证明
+计划交付事实，不能把整个修复责任判 done。不能用 accepted 的通用布尔替代领域收尾。
+
+正式文档资格统一为“原交付已接收 + 当前身份/版本/来源匹配 + 未被失效 + 本阶段
+所需冻结条件满足”。调用方不得自行列 `status == registered || status == locked`
+一类枚举白名单。S5 必须消费原 S4 的完整 TASK/dispatch plan 及冻结源闭包；旧记录
+中的 complete 不能被误判为未交付，也不能据此推导 TASK 实现完成。
+
+旧字符串只在具名兼容读取边界解释，且必须结合对象类型、责任与原接收证据：
+
+| 旧字段/值 | 迁移语义 |
+| --- | --- |
+| Agent spawned/queued | 对应责任 pending；是否可派发由前置条件求值 |
+| Agent reading/activated/working | 对应责任 active；原 PLAN/activation 权限继续独立核验 |
+| TASK entity candidate/reviewed/locked/in_progress/review/blocked/done/cancelled | 执行责任按原事件投影五态；锁定/待审是前置事实或当前动作，不能与同 ID 的 TASK 文档交付混用 |
+| Agent reported；receipt accepted/candidate_accepted | 接收或报告事实；仅本人完整条件成立才投影 done |
+| document registered/complete/locked | 原文档交付与冻结事实；经统一资格验证后作为输入，不映射为实现完成 |
+| workspace preparing/ready | 执行资源的准备进度和可用事实，不证明 Worker 交付完成 |
+| Team complete/closed/retired | 协作容器的聚合/撤收事实，不直接证明任何成员责任 done |
+| work_complete / execution_may_end / consumer_pending | 兼容输出；由当前责任完成、原安全退出依据及下一 owner 待办统一派生，不独立存储/相互猜测 |
+| replaced/retired/stale/invalid | 先核验原替换/失效事件及绑定；撤销对应尝试时投影 cancelled，不把失败查询当合法终态 |
+
+禁止把全部旧值简单做字符串同义替换。存储枚举的合并经显式 Schema 版本迁移，
+保留原 journal/receipt 字节；迁移完成后删除对应旧判断和重复投影，不长期维护两套
+状态机。专业结论、来源效力与授权事实保留各自原依据，不转成需要 Agent 填写的新状态。
+
+收敛要求包括内部模型：工作实体最终复用同一五态类型；reading、批准、激活等已有
+过程保留为原事件/凭据和当前动作，不再各占一个工作状态。能够从原 receipt 重建的
+ready/received/complete 投影不再各存一份。资源准备完毕由原 bootstrap receipt 证明，
+不靠重命名再增加一套“环境完成”状态。不能仅在显示层改成 done、底层继续让每个
+调用者维护自己的完成词典。
+
+### 实施与收口顺序
+
+1. 先集中正式输入资格读取，修复本次 S4→S5 complete 被遗漏的问题；同时覆盖
+   未接收、过代、漂移、失效和未冻结反例，保持非 S5 的原冻结要求。
+2. 将既有 ResponsibilityFacts、receipt、Controller 与 Stop/Idle 的重复完成判断
+   收到同一读模型，输出统一状态和下一动作；移除每阶段各自解释终态的分支。
+3. 同步 Agent/Skill/CLI 文案；对需要更名的持久字段执行版本迁移并删除旧分支。
+   不在每个阶段另起一个状态 Schema 或新协调流程。
+4. 用真实 Claude 验证“收到题目→保存→原接收→本人结束/准确交接”，同时证明
+   下一 owner 能接续、原门及人闸仍生效。不能用枚举单测或文字统一宣布闭环。
+
+最低验收矩阵：S4 文档 done 而实现 pending；一名 S5 reviewer done 而同事 active；
+合法 Finding 交付 done 并回规划；S6 本人 done 而 Main 集成 active；接收响应丢失
+恢复 done 且不重交；旧输入失效不得复活 done；有效 blocker 可交接但不冒充 done。
+同一份事实在 CLI/Hook/Gate/Stop 中必须得出一致结果，新增状态必须证明五态不能表达。
+
 ## 1. 存储模型对象总览
 
 ### 1.1 loop-state 顶层结构

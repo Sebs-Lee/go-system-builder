@@ -78,7 +78,7 @@ func TestRuntimeRepairSessionAndPlanAdvanceByCAS(t *testing.T) {
 
 func TestResumeTargetedReverificationAfterBlockedResult(t *testing.T) {
 	root := req039fixtures.FreshRoot(t)
-	state := req039fixtures.BaseState(t, root, "bug_resolution", "investigation", 0)
+	state := req039fixtures.BaseState(t, root, "bug_resolution", "targeted_reverification", 0)
 	state["review"].(map[string]any)["repair"] = map[string]any{
 		"session_id": "repair-session-blocked", "case_id": "investigation-case-1", "contract_id": "repair-contract-1",
 		"contract_ref": ".claude/review/investigation/contracts/repair-contract-1.json", "contract_sha256": strings.Repeat("a", 64),
@@ -244,7 +244,7 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	impact, impactRef, err := repair.CreateChangeImpact(root, repair.ChangeImpactRequest{ImpactID: "impact-1", RuntimeID: "loop-req039-ct", ReqID: "REQ-039", BaselineGeneration: 1, SourceBugIDs: []string{"BUG-001"}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-api", Path: "internal/api/payload.go", SHA256: fileHash(changedData)}}, Decisions: []repair.ImpactDecision{{SourceID: "BUG-001", TargetID: "claim-1", Relation: "invalidates", RuleID: "IM-API", Decision: "reverify", ResponsibilityID: nil, Scope: []string{"internal/api/payload.go"}, Rationale: "repair changed the boundary", RecoveryEvidence: []string{resultRef.Path}}}, EscalationLevel: "assignment", AnalyzedBy: "qa"})
+	impact, impactRef, err := repair.CreateChangeImpact(root, repair.ChangeImpactRequest{ImpactID: "impact-1", RuntimeID: "loop-req039-ct", ReqID: "REQ-039", BaselineGeneration: 1, SourceBugIDs: []string{"BUG-001"}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-api", Path: "internal/api/payload.go", SHA256: fileHash(changedData)}}, Decisions: []repair.ImpactDecision{{SourceID: "BUG-001", TargetID: "claim-1", Relation: "invalidates", RuleID: "IM-API", Decision: "reverify", ResponsibilityID: nil, Scope: []string{"internal/api/payload.go"}, Rationale: "repair changed the boundary", RecoveryEvidence: []string{resultRef.Path}}}, EscalationLevel: "assignment", RequiredReverificationIDs: []string{"reverify-1"}, AnalyzedBy: "qa"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +255,13 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: otherImpactRef}); err == nil {
 		t.Fatal("CommitChangeImpact must reject an artifact not bound to the current RepairResult")
 	}
-	if _, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef}); err != nil {
+	impactSnapshot, err := repair.CommitChangeImpact(root, statePath, journalPath, repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Impact: impactRef})
+	if err != nil {
 		t.Fatal(err)
+	}
+	impactPointer := impactSnapshot.State["review"].(map[string]any)["repair"].(map[string]any)
+	if ids := impactPointer["required_reverification_ids"].([]any); len(ids) != 1 || ids[0] != "reverify-1" {
+		t.Fatalf("ChangeImpact must register the resumed logical obligation before the blocked attempt: %#v", impactPointer["required_reverification_ids"])
 	}
 	// RC-01 fixture strengthening: the performing verifier must be a
 	// dispatched identity. Bind a second owner into the runtime
@@ -295,7 +300,13 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	// chain — the original is the actual repair assignment (its manifest
 	// alias assignment-s9-unit-1), the performing verifier is a dispatched
 	// identity that is not owned by the repair owner builder-1.
-	_, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{ReverificationID: "reverify-1", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier", ContinuityReason: "test://verifier-log: independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "pass"})
+	blockedRequest := repair.TargetedReverificationRequest{ReverificationID: "reverify-1", RuntimeID: "loop-req039-ct", BugID: "BUG-001", BaselineGeneration: 1, OriginalAssignmentID: "assignment-s9-unit-1", PerformingAssignmentID: "assignment-s9-qa-verifier", ContinuityReason: "test://verifier-log: independent verifier", ImpactID: impact.ImpactID, AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}, {AssertionID: "root-1", Result: "blocked", EvidenceRefs: []string{"test://root-blocked"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap"}}}, ScopeCompliance: "pass", Result: "blocked", FailureClass: "blocked"}
+	_, blockedRef, err := repair.CreateTargetedReverification(root, blockedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedPath := filepath.Join(root, filepath.FromSlash(blockedRef.Path))
+	blockedBytes, err := os.ReadFile(blockedPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +357,52 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: ""}, Reverification: fakeVerifierReverifyRef}); err == nil || !strings.Contains(err.Error(), "requires an explicit actor") {
 		t.Fatalf("CommitTargetedReverification must reject an omitted actor, got %v", err)
 	}
-	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: reverifyRef}); err != nil {
+	blockedSnapshot, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 6, Actor: "qa"}, Reverification: blockedRef})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blockedSnapshot.State["review"].(map[string]any)["repair"].(map[string]any)["status"] != "blocked" {
+		t.Fatalf("blocked targeted result status = %#v", blockedSnapshot.State["review"].(map[string]any)["repair"])
+	}
+	if phase := blockedSnapshot.State["lifecycle"].(map[string]any)["phase"]; phase != "targeted_reverification" {
+		t.Fatalf("blocked targeted result phase = %#v, want targeted_reverification", phase)
+	}
+	resumeAt := time.Date(2026, 8, 26, 0, 5, 0, 0, time.UTC)
+	resumed, err := repair.ResumeTargetedReverification(root, statePath, journalPath, repair.ResumeTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 7, Actor: "qa", OccurredAt: resumeAt}, Reason: "the verifier's browser session was restored"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumedPointer := resumed.State["review"].(map[string]any)["repair"].(map[string]any)
+	if ids := resumedPointer["required_reverification_ids"].([]any); len(ids) != 1 || ids[0] != "reverify-1" {
+		t.Fatalf("Resume must preserve the same required ID: %#v", resumedPointer["required_reverification_ids"])
+	}
+	if refs := resumedPointer["targeted_reverification_artifacts"].([]any); len(refs) != 1 || refs[0].(map[string]any)["path"] != blockedRef.Path {
+		t.Fatalf("Resume must preserve the failed immutable artifact: %#v", resumedPointer["targeted_reverification_artifacts"])
+	}
+	resolvedAt, err := time.Parse(time.RFC3339Nano, resumedPointer["blocker_resolved_at"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	passRequest := blockedRequest
+	passRequest.PerformedAt = resolvedAt.Add(time.Minute)
+	passRequest.AssertionResults = []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom-after-resume"}}, {AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://root-after-resume"}}, {AssertionID: "gap-1", Result: "pass", EvidenceRefs: []string{"test://gap-after-resume"}}}
+	passRequest.Result = "pass"
+	passRequest.FailureClass = ""
+	_, reverifyRef, err := repair.CreateTargetedReverificationForResume(root, passRequest, resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, replayRef, err := repair.CreateTargetedReverificationForResume(root, passRequest, resolvedAt)
+	if err != nil || replayRef.Path != reverifyRef.Path || replayRef.SHA256 != reverifyRef.SHA256 {
+		t.Fatalf("same Resume/ID replay = %#v, %v; want stable path/hash %#v", replayRef, err, reverifyRef)
+	}
+	if reverifyRef.Path == blockedRef.Path {
+		t.Fatalf("resumed attempt must keep its logical ID at a new immutable path: %s", reverifyRef.Path)
+	}
+	if after, readErr := os.ReadFile(blockedPath); readErr != nil || string(after) != string(blockedBytes) {
+		t.Fatalf("resumed attempt changed the old blocked artifact: %v", readErr)
+	}
+	if _, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 8, Actor: "qa"}, Reverification: reverifyRef}); err != nil {
 		t.Fatal(err)
 	}
 	var persistedSession repair.RepairSession
@@ -363,7 +419,7 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handoff, handoffRef, err := repair.CreateRepairHandoff(root, repair.HandoffRequest{HandoffID: "repair-handoff-1", Session: sessionRef, Plan: planRef, Contract: contractRef, Result: resultRef, Changeset: changesetRef, ChangeImpact: impactRef, TargetedReverifications: []repair.ArtifactRef{reverifyRef}, HandedOffBy: "main", NextAction: "S7 full review", OccurredAt: time.Now().UTC()})
+	handoff, handoffRef, err := repair.CreateRepairHandoff(root, repair.HandoffRequest{HandoffID: "repair-handoff-1", Session: sessionRef, Plan: planRef, Contract: contractRef, Result: resultRef, Changeset: changesetRef, ChangeImpact: impactRef, TargetedReverifications: []repair.ArtifactRef{blockedRef, reverifyRef}, HandedOffBy: "main", NextAction: "S7 full review", OccurredAt: time.Now().UTC()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,14 +434,14 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	if err != nil || alternateHandoff.HandoffID == "" {
 		t.Fatalf("alternate handoff = %#v, %v", alternateHandoff, err)
 	}
-	if _, err := repair.CommitRepairHandoff(root, statePath, journalPath, repair.CommitHandoffRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 5, Actor: "main"}, Handoff: alternateHandoffRef}); err == nil {
-		t.Fatal("CommitRepairHandoff must reject targeted evidence not recorded by the current Runtime chain")
+	if _, err := repair.CommitRepairHandoff(root, statePath, journalPath, repair.CommitHandoffRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 9, Actor: "main"}, Handoff: alternateHandoffRef}); err == nil || !strings.Contains(err.Error(), "exact artifact set failed between Runtime targeted reverifications and RepairHandoff targeted reverifications") {
+		t.Fatalf("CommitRepairHandoff must reject an unregistered TargetedReverification through exact Runtime set binding, got %v", err)
 	}
-	snapshot, err := repair.CommitRepairHandoff(root, statePath, journalPath, repair.CommitHandoffRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 7, Actor: "main"}, Handoff: handoffRef})
+	snapshot, err := repair.CommitRepairHandoff(root, statePath, journalPath, repair.CommitHandoffRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: 9, Actor: "main"}, Handoff: handoffRef})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Revision != 8 || snapshot.State["lifecycle"].(map[string]any)["state"] != "verification" || snapshot.State["lifecycle"].(map[string]any)["phase"] != "running" {
+	if snapshot.Revision != 10 || snapshot.State["lifecycle"].(map[string]any)["state"] != "verification" || snapshot.State["lifecycle"].(map[string]any)["phase"] != "running" {
 		t.Fatalf("handoff cursor = %#v revision=%d", snapshot.State["lifecycle"], snapshot.Revision)
 	}
 	if investigation := snapshot.State["review"].(map[string]any)["investigation"]; investigation != nil {

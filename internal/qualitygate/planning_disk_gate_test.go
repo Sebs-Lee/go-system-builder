@@ -127,6 +127,36 @@ func TestPlanningGatesStillRefuseWhenDiskAlsoLacks(t *testing.T) {
 	}
 }
 
+func TestPlanningContractsGateLeavesAnUnacceptedPacketAsMissing(t *testing.T) {
+	evaluator := newTestEvaluator(t)
+	input := planningInputForGate(t, "GATE-PLANNING-CONTRACTS-COMPLETE", "PTR-PLAN-02", "contracts", "planning_contract_record", "Contract Planner")
+	state := input.Snapshot.State
+	state["schema_version"] = "1.2.0"
+	state["configuration"] = map[string]any{"optimization": map[string]any{"packet": true}}
+	lifecycle := state["lifecycle"].(map[string]any)
+	lifecycle["phase_revision"] = float64(3)
+	state["entities"] = map[string]any{
+		"work_packets": []any{map[string]any{
+			"packet_id": "packet-unaccepted-s3", "template_id": "s3-contract-v1",
+			"binding": map[string]any{
+				"runtime_id": "loop-test", "generation": float64(1), "stage_entry": float64(3),
+				"stage": "S3", "owner": "Main",
+			},
+		}},
+		"submissions": []any{},
+	}
+	result, err := evaluator.Evaluate(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if result.Status != qualitygate.StatusNotReady || result.ErrorCode != "" {
+		t.Fatalf("an issued but unaccepted S3 questionnaire should remain ordinary not_ready: status=%q error=%q conflicts=%v", result.Status, result.ErrorCode, result.Conflicts)
+	}
+	if len(result.Missing) != 1 || result.Missing[0] != "evidence:planning_contract_record" {
+		t.Fatalf("missing = %#v, want the unfilled S3 contract deliverable", result.Missing)
+	}
+}
+
 // TestPlanningDesignGateReadsDiskDeclaredArchitecture verifies that:
 // the S2 exit gate must accept a disk-declared locked architecture document
 // without a pre-existing documents[] registration (the registration happens

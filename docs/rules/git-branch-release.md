@@ -61,7 +61,7 @@ the workspace execution record; Main retains its bound checkout and branch.
 
 Branch creation requires a permitted Loop transition and an activated assignment
 whose scope includes the branch operation. This rule defines branch shape; the
-Loop Definition, runtime, activation, and Hooks enforce timing.
+Loop Definition, runtime and original domain gates determine timing; Hooks report progress and missing duties.
 
 ## 6. Merge Rules
 

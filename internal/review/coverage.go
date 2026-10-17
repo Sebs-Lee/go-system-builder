@@ -24,8 +24,8 @@ func BuildCoverageInventory(state map[string]any) []CoverageItem {
 	return legacyBuildCoverageInventory(state)
 }
 
-// BuildCoverageInventoryForRoot reads the current-generation completion
-// envelope through its indexed path+sha256 when root is available. The
+// BuildCoverageInventoryForRoot reads the canonical S6 product snapshot when
+// one exists; historical runtimes use the indexed completion envelope. The
 // resulting changed-surface set is the denominator that S7 must cover.
 func BuildCoverageInventoryForRoot(root string, state map[string]any) []CoverageItem {
 	seen := map[string]bool{}
@@ -114,6 +114,15 @@ func legacyBuildCoverageInventory(state map[string]any) []CoverageItem {
 }
 
 func validateCoverageInventory(root string, state map[string]any, plan *Plan) error {
+	if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+		return s7GateError(
+			"S7_PRODUCT_BASELINE",
+			"ReviewPlan does not carry the current canonical S6 product baseline",
+			[]string{err.Error()},
+			[]string{"re-draft from the pinned original TR-003 source and current official Main HEAD; do not hand-edit ProductBaseline or frozen_subjects"},
+			"loop-harness s7 draft --out plan.json",
+		)
+	}
 	if err := validateS7BaselineProjection(root, state); err != nil {
 		return err
 	}

@@ -49,7 +49,11 @@ func runWorkspaceCommit(args []string, stdout, stderr io.Writer) int {
 	if !ok || e.AgentID != *agent || e.Status != "ready" || e.BootstrapSHA256 == "" {
 		return fail(fmt.Errorf("commit requires the active bootstrapped Worker owner"))
 	}
-	path := filepath.Join(e.Path, ".claude/submissions/commit.json")
+	submissionPaths, err := b.WorkerSubmissionPaths(e)
+	if err != nil {
+		return fail(err)
+	}
+	path := filepath.Join(e.Path, filepath.FromSlash(submissionPaths.Commit))
 	actual, err := workspace.Canonical(path)
 	if err != nil || actual != path {
 		return fail(fmt.Errorf("commit request must be a regular local submission"))
@@ -66,7 +70,7 @@ func runWorkspaceCommit(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	if loaded.PolicyContext.Agent == nil || loaded.PolicyContext.Agent.State != "working" {
+	if loaded.PolicyContext.Agent == nil || loaded.PolicyContext.Agent.LifecycleActivity() != "working" {
 		return fail(fmt.Errorf("commit requires working owner with recorded plan/activation"))
 	}
 	engine, err := policy.Load(filepath.Join(*root, "docs/control/hook-policy.json"))

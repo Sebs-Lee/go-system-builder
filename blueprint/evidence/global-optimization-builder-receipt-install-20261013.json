@@ -1,0 +1,158 @@
+{
+  "package_sha256": "95224ce41b18a088736834ab2b243ab37be7d9009b9e18c42de4b9828929fc1e",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-builder-receipt-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "Fresh native default and packet installations, installed hashes, new task-receipt leaf help and scoped guidance. Separate production CLI validates S5-to-S6 delivery, current receipt, actual failed check/integration preservation, original rework, new report and actual merged required check. No real Claude consumption or token experiment.",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-builder-receipt-install-yv32lmci",
+  "temporary_artifacts_may_expire": true,
+  "release_manifest_files": 205,
+  "verification": {
+    "initial_full_cli": {
+      "passed": false,
+      "seconds": 537.074,
+      "cause": "Legacy not-ready/missing-worktree fixture exposed checkout before pure !Ready preservation; fixed ordering and original preservation regression passed."
+    },
+    "original_delivery_rework_chain": {
+      "passed": true,
+      "seconds": 43.333,
+      "scope": "Actual failed owned Go test, original report, Main inspect failure, durable preserved checkpoint, original rework, old ref cleared/history kept, actual corrected check/new report and Main verified integration."
+    },
+    "fixed_recovery_and_chain": {
+      "passed": true,
+      "seconds": 41.379,
+      "scope": "Pure preservation before checkout, missing worktree regression and complete business chains."
+    },
+    "worker_receipt_hook": {
+      "passed": true,
+      "seconds": 29.657,
+      "scope": "Actual Hook fixed receipt command allowed; compound shell denied; real delivery/receipt/integration chain."
+    },
+    "cli_race": {
+      "passed": true,
+      "seconds": 110.519,
+      "scope": "Original failure/rework/current-resubmission plus explicit reconciliation integration tests; before pure-preservation checkout ordering fix, covered separately below."
+    },
+    "projection_policy_assignment_race": {
+      "passed": true,
+      "seconds": {
+        "qualitygate": 3.97,
+        "policy": 6.58,
+        "assignment": 67.051
+      }
+    },
+    "final_integrator_projection_race": {
+      "passed": true,
+      "seconds": {
+        "integration": 9.512,
+        "qualitygate": 3.974
+      },
+      "scope": "Final preservation-before-checkout and current projection, before added checkpoint-only test matrix."
+    },
+    "final_checkpoint_matrix": {
+      "passed": true,
+      "seconds": 0.299,
+      "scope": "Real non-squash Git ancestry plus wrong task/assignment/generation/report/time/state/target and branch rewrite; invalid integration remains Main work."
+    },
+    "domain_regression": {
+      "passed": true,
+      "seconds": {
+        "qualitygate": 0.814,
+        "policy": 4.648,
+        "schema": 1.019,
+        "assignment": 12.345,
+        "integration": 8.051,
+        "transition": 15.277
+      }
+    },
+    "final_schema_projection": {
+      "passed": true,
+      "seconds": {
+        "schema": 0.606,
+        "qualitygate": 0.451
+      }
+    },
+    "final_integration": {
+      "passed": true,
+      "seconds": 7.551
+    },
+    "complete_cli": {
+      "scope": "Snapshot with final preservation ordering and leaf help; final additional committed-view recheck separately tested.",
+      "passed": true,
+      "seconds": 503.955,
+      "command": "GOPROXY=off go test ./internal/cli -count=1 -timeout 20m"
+    },
+    "final_vet": {
+      "passed": true
+    },
+    "final_source_recheck": {
+      "passed": true,
+      "seconds": 49.446,
+      "scope": "Final extra committed-view verification after snapshot recheck; both original Builder chains and pure-preservation legacy recovery test."
+    }
+  },
+  "remaining": [
+    "S6 typed WorkPacket adapter and other stage domain receipts",
+    "Dispatch closing-contract constraints and G03-G08",
+    "Real model Skill/Read delivery, token and effective-operation comparison",
+    "Original bwrap uid-map host restriction remains"
+  ],
+  "source_files_sha256": {
+    "internal/qualitygate/builder_receipt.go": "7f359a3d1949018541345aef97d235e1d11f43b819834bdc8f1acda6856694d4",
+    "internal/cli/task_receipt.go": "215183ed0af64a83b2367e9c9f57658eb21bebfe019cfbbb3209b389768f2327",
+    "internal/assignment/register.go": "ec1b3221063dde69d280c4fbaac2c70bca9e6d6087800856b45204b1917f1536",
+    "internal/cli/controller.go": "d50ac8354777c8701dded763a2a594cf2f9c7c1207832ef0d728f1a18c15e57e",
+    "internal/integration/integrate.go": "ff160dfad0af48c2b65dda90842b2a95caed276017c77cc612b250a407343c38",
+    "internal/schema/assets/builder-receipt.schema.json": "339e8c1979151a8fd78bfc308a47b5f53536b2968769aabc0eff6db67d72e065"
+  }
+}

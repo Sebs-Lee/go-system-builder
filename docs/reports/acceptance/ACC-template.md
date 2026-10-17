@@ -40,8 +40,16 @@ and `changed_path` row. If a hard category is genuinely outside scope, keep it
 in the inventory as an evidence-backed `not_applicable` row; an omitted
 category is not 100% coverage.
 
-Machine companion: save the finite ledger as JSON and validate it before
-registering the acceptance evidence:
+Machine companion (schema/example reference; not the packet-enabled normal
+submission path): the Hook supplies the current manifest's exact JSON answer
+path. Fill the required top-level `outcome` with the professional acceptance
+disposition (`pass` or `review_required`), complete the finite ledger there,
+and save it; the original S10 consumer
+validates it, derives the evidence binding and hash, and records it through the
+existing evidence/Controller path. Do not make a second envelope, copy machine
+fields, or run `runtime evidence add` in the normal flow.
+
+For explicit legacy diagnosis or recovery only, the original validation CLI is:
 
 ```text
 loop-harness s10 manifest validate --file <acceptance-manifest.json> --type acceptance
@@ -55,12 +63,11 @@ PASS.
 
 Copyable JSON shape: `docs/examples/s10/acceptance-manifest.json`.
 
-The acceptance evidence envelope must point to that immutable file with
-`audit_manifest_path` and `audit_manifest_sha256`. The shape authority is
-`internal/schema/assets/s10-audit-manifest.schema.json`; the Quality Gate
-consumes the ledger, not a free-form overall PASS. After validation, register
-the envelope with `runtime evidence add` and let the Controller request
-TR-015.
+`internal/schema/assets/s10-audit-manifest.schema.json` is the shape authority;
+the Quality Gate consumes the ledger, not a free-form overall PASS. The
+`runtime evidence add` and manually assembled envelope path is retained only
+for explicit legacy/unpacketized diagnosis or recovery, never as the normal
+author workflow.
 
 ## 2. Clean Round
 

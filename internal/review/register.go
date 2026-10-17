@@ -73,7 +73,12 @@ func RegisterPlan(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
-	if err := ValidatePlanArtifactForRegistration(root, &plan, current); err != nil {
+	// The original CAS below checks the complete frozen baseline. Preflight
+	// retains professional coverage and regression assets without repeating it.
+	if err := ValidatePlan(&plan); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan coverage: %w", err)
+	}
+	if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if request.ExpectedRevision >= 0 && intField(current["revision"]) != request.ExpectedRevision {
@@ -177,6 +182,9 @@ func RegisterPlan(
 			plan.ReviewPlanID, round, len(plan.Claims), len(plan.Assignments), plan.E2ECoverageState),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
+			if err := verifyFrozenSubjects(root, &plan, state); err != nil {
+				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
+			}
 			return ApplyRegisteredPlanProjection(state, plan, planRel, planSHA, round, workspace, artifactDigest, occurredAt)
 		},
 	})

@@ -1,0 +1,123 @@
+{
+  "package_sha256": "dc3a9abbf5eac1039f88bde81ad9c89c2ddc08f1330fe66f0c013a258c3b04e0",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-frozen-task-analysis-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_roles_have_native_context_guidance": true,
+        "unregistered_examples_have_no_registered_source_view": true,
+        "native_prepare_help_and_non_enabling_role_candidate": true,
+        "native_workspace_prepare_core_profile_flag": true,
+        "all_eight_role_frontmatters_equal_original": true,
+        "scoped_completion_assets": true,
+        "native_task_receipt_help": true,
+        "builder_receipt_guidance_assets": true,
+        "task_context_consumer_skills": true,
+        "frozen_analysis_guidance": true,
+        "native_s4_task_context_advisory": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "Fresh default/packet native installation, doctor/validation/release graph/docs/frozen-analysis consumer guidance and original S4 fixture; production CLI separately verifies new S5 frozen analysis, Worker installation, original reception, exact named revision and rejection of damaged original analysis. No actual model consumption or token experiment.",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-frozen-task-analysis-install-5nuafp69",
+  "temporary_artifacts_may_expire": true,
+  "release_manifest_files": 205,
+  "verification": {
+    "domain_regression": {
+      "passed": true,
+      "seconds": {
+        "runtime": 26.787,
+        "workpacket": 0.034,
+        "workspace": 7.461
+      },
+      "host_exclusion": "Original bwrap uid-map limitation unchanged; isolated host test excluded and not claimed."
+    },
+    "frozen_binding_s5": {
+      "passed": true,
+      "seconds": 11.991
+    },
+    "initial_s5_receivers": {
+      "passed": true,
+      "seconds": 23.709
+    },
+    "domain_race": {
+      "passed": true,
+      "seconds": {
+        "workpacket": 1.408,
+        "runtime": 140.845
+      }
+    },
+    "s5_binding_reception_race": {
+      "passed": true,
+      "seconds": 133.792
+    },
+    "complete_cli": {
+      "passed": true,
+      "seconds": 556.009
+    },
+    "final_vet": {
+      "passed": true
+    },
+    "legacy_identity_and_named_revision": {
+      "passed": true
+    }
+  },
+  "remaining": [
+    "Approved current CASE/contract behavior examples",
+    "S6 and other typed domain adapters",
+    "Remaining G01-G08 implementation and acceptance",
+    "Real Claude Skill/Read/token/compact/effective-operation comparison",
+    "Original bwrap host limitation remains"
+  ],
+  "source_files_sha256": {
+    "internal/workpacket/packet.go": "509aae2651fc55e399186664e93b8bcc535e5f0684fa6934e2296f4cc648c12e",
+    "internal/workpacket/task_analysis.go": "a82f149f70213d7d15f4b729a9dc2b17e9c576694a844c9f09037b6ffed36ae4",
+    "internal/submission/task_analysis.go": "695ddcb0e64b1758e66de078e9d1bf8ce643b1addd479e8c75b4ce412d4215ba",
+    "internal/runtime/work_packet_authority.go": "d118a59743bec924d7748c08234bb8fe744a32c6869b75e22391d5506e539b54",
+    "internal/runtime/checkpoint_indices.go": "8f259ae0b22d549e0b5416b793f4426d3a508d604ac2371e51876d786be150b7",
+    "internal/workspace/document_review.go": "719c949705ddde8bd2eb3ebb4a87cb1de9d1928e4a52089cc96880db0b545f89",
+    "internal/cli/workspace_answer.go": "50ada3f6374464d9587d396f787beabcd1f36e808db4150cf724b08838ed81f7",
+    "internal/schema/assets/task-analysis-artifact.schema.json": "268f6d23027a5b09f0c8c135589faa1399f11ab2eecc874fb4d884c08418cfff"
+  }
+}

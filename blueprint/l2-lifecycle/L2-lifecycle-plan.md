@@ -10,6 +10,11 @@
 
 ## 总览：主干与纠错回路
 
+各阶段的工作统一以“责任的一次尝试”为单位，使用 pending、active、blocked、done、
+cancelled 五态；阶段名称、专业结论和冻结/授权分别表达。唯一语义及迁移规则见
+[L4 全局通用工作状态模型](../l4-mechanisms/L4-state-transition-core.md#unified-work-state)。
+下文“阶段出口达成”由原门确认，不因某一执行者 done 自动成立。
+
 ```mermaid
 flowchart TD
     S0["S0 需求<br/>人锁定 REQ"] --> S1["S1 绑定<br/>唯一授权"]

@@ -132,7 +132,7 @@ func TestNoticeCacheFailureIsFailOpen(t *testing.T) {
 		}
 	}
 }
-func TestConcurrentNoticeWritersPreserveModelAndSafety(t *testing.T) {
+func TestConcurrentNoticeWritersPreserveProgressContext(t *testing.T) {
 	root := t.TempDir()
 	b := progressPacket(t, 1, "a", false)
 	var wg sync.WaitGroup
@@ -153,8 +153,9 @@ func TestConcurrentNoticeWritersPreserveModelAndSafety(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		out, commit := PrepareNotice(root, "s", "a", "PreToolUse", deny)
 		commit()
-		if unpack(t, out)["systemMessage"] == nil {
-			t.Fatal("denial hidden")
+		specific := unpack(t, out)["hookSpecificOutput"].(map[string]any)
+		if specific["additionalContext"] == nil || specific["permissionDecision"] == "deny" {
+			t.Fatal("listener lost progress context or denied the tool")
 		}
 	}
 }

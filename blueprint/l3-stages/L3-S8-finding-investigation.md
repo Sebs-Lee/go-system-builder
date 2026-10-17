@@ -8,6 +8,65 @@
 
 > **Revision 口径**：Case/Contract revision 是工具生成的对象版本，Runtime `revision` 是 Writer 内部提交序号；二者都不是 Investigator/Main Agent 的手工编号任务。S8 只提交 Case ID/hash、Finding exact set、Hypothesis/Result、Contract draft hash 和路由意图，Writer/API 负责版本与提交协调。统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
 
+## 本轮阶段答卷优化（2026-10-14，机制链已验证）
+
+已先在 [L4 stage-form §13.8](../l4-mechanisms/L4-stage-form.md#s8-hypothesis-result-adapter)
+固定 S8 typed HypothesisResult 契约：原 Case/Hypothesis 加真实注册的
+Investigator manifest/TASK/owner 才可由 Main 发卷。专业内容仍进入原
+`SubmitHypothesisResult` / Case revision CAS，receipt 嵌在原结果行，不新增
+接收表、路由、Writer 或授权来源。原 route consumer 与 scoped human approval
+继续决定 Case 出口和 S9 批准；本人答卷不构成 root cause、route 或 approval。
+
+卷面冻结问题、Finding/Batch/evidence 与路由消费 tuple。兄弟结果追加
+不使同源且问题未变的其他卷失效；派发时与发行时 Case revision 可以不同，
+但须复验两个原 Case 中与本人相关的完整闭包等价。自身问题/资料/派发或
+路由变化后旧卷拒绝。当前 `investigate_more` 未消费时可继续调查；其他
+已决定出口不因 status 仍为 investigating 而接受晚到的新判断。
+
+原 Register → generation-2 PLAN/AgentBegin → packet Issue → 公开 CLI
+PostToolUse → 原 Case revision CAS 与 receipt → Stop/Idle 已有定向真实机制夹具；
+同一组合加入双提交并发、sealed pending 恢复后 normal 10.948s、race 90.704s
+通过。测试也覆盖原 manifest 注册摘要漂移拒绝、`plan_approval_required` 未经
+批准不接收、已接收与未回答 Investigator 的 Stop/Idle 差异，以及同一 Case 内
+兄弟结果追加后仍能恢复原未回答 packet。专业答卷是机制测试输入，不是模型结论。
+
+原 `ConsumeCaseRoute` 可只更新 Runtime pointer，Case 文件仍保留旧 route tuple；
+当前保存会检查两处来源。更进一步，真实 Case revision history 中的
+`S8-ROUTE-CONSUME` 会永久使当时尚未回答的 packet 失效，即使后续 Case 修订
+清除 pointer 消费标记并恢复此前可见 tuple。已接收的历史 receipt 仍可只读查证。
+原保存重放重新读取当前作者文件并复验来源；答案文件丢失后只读 receipt 仍可用，
+保存则 fail-closed。相同答案重放零写，异答 conflict。
+
+receipt 不嵌所在 Case 文件的自引用 SHA，只保存后继 ref/revision 和原事件，读时
+由原 pointer/revision_history 证明。活动 Case 整体替换且缺原历史权威时，旧
+receipt 查询拒绝，不能扫描目录猜接收。并发和 pending 测试使用同进程并发调用，
+并由真实接受 state/journal 派生 sealed marker 模拟恢复点；未执行 fsync 边界硬杀。
+Intake 目录同步在 Unix 使用目录 fsync；Windows 只验证目录，断电后的目录项持久性
+仍不保证。
+
+证据与来源快照列于 [S8 机制证据](../evidence/global-optimization-s8-issued-hypothesis-result-20261014.json)。
+当前未完成独立 Investigator 的真实平台 prepare/launch、supported-host/安装矩阵、
+真实模型专业判断及完整端到端产品验收。Global 核心完整链仍为 4/9，真实模型
+完整链仍为 0/9。开始中的 S9 PlanReport 工作及与之共享的 Runtime、workpacket、
+schema 文件不由本节 S8 用例背书。
+
+### 当前履职答卷与接收路径（2026-10-15）
+
+每个 Investigator 只提交一份专业 HypothesisResult：判别方法、现场/来源证据、
+supported/refuted/inconclusive、解释与未解释 Finding。当前派发直接给出已发行
+答卷的完整实际路径；保存后由原 PostToolUse 入口调用 `SubmitHypothesisResult`，
+写入 Case revision/receipt，再由原 route consumer 判断整体出口。作者不运行
+issue/consume、不抄 runtime、Case revision、身份或哈希，也不把自由文本结论另交一遍。
+
+普通 `plan_checkpoint` Investigator 只保存当前 HypothesisResult 专业答卷，不发送 generic
+`PLAN_REPORT`。若无答卷发行的旧兼容实例仍配置 generic lifecycle checkpoint，由原生命周期
+适配处理，不作为 Investigator 的第二项专业交付。剩余专业工作仍是 Main/Investigation Lead 汇总竞争假设、
+因果模型、blast radius 与 detection gap，再由原 Contract approve 人闸决定是否交 S9。
+适配缺失或实际路径无法解析时，报告 Main/Hook 接线缺口，不让 Investigator 搜 Runtime
+或猜路径。当前验证入口为 `internal/investigation/hypothesis_result_*_test.go`、
+`internal/cli/hypothesis_result_hook_test.go` 及现有 PostToolUse、SessionStart/
+PreToolUse、Stop/Idle Hook；真实平台 launch 和完整产品阶段仍未验收。
+
 ## 0. 一句话结论与阶段关系
 
 S7 证明“某些可观察事实与权威预期冲突”，并保存当时实际发生的操作现场；S8 从已冻结的 `last-good → wall-action → first-bad` 边界出发，证明“什么机制导致这些冲突、同一机制还影响哪里、恢复哪个架构不变量才能完整解决”；S9 才负责实施。
@@ -104,7 +163,7 @@ S8 不负责：
 2. **聚类可逆**：candidate group 可以 split/merge，并保留理由和工具生成的对象版本历史；canonicalization 发生在因果模型成立之后。
 3. **根因必须因果化**：根因能解释触发条件、传播路径和所有归入 Case 的表象；只相关、不因果的事实不能收口。
 4. **重要替代假设必须处理**：supported/refuted/inconclusive 均有证据；不能因一个看似合理的解释停止调查。
-5. **调查不改系统**：S8 任何产品写入都会污染 before-fix baseline 和因果判断，必须 hard deny。
+5. **调查只产出诊断事实**：S8 不承担产品修复；产品写入不作为合格调查产物，需恢复现场并沿已批准 Contract 交给 S9。Hook 只提示与流转，不作逐工具权限拒绝。
 6. **现场已经由 S7 建立**：S8 不重复执行用户旅程来证明 Finding 存在；调查从 evidence-backed failure boundary 开始。新 observation 必须绑定某个 discriminator，而不是笼统“再试一次”。
 7. **修复目标是恢复不变量**：RepairContract 必须覆盖 root cause、所有 source Findings、detection gap 和 blast radius，禁止局部症状补丁。
 8. **层级授权正确**：implementation/test/tooling 可进入 S9；spec 错回 S2；REQ 变化交人；S8 不跨层授权。
@@ -371,7 +430,7 @@ Main/Investigation Lead 先建立最小竞争假设集，再创建 Assignment。
 | 高风险生产式数据/破坏性实验 | `plan_approval_required` 或 human gateway |
 | CausalModel/RepairContract 集成 | Main/Investigation Lead；不得由单个假设 Worker 自动批准 |
 
-PLAN_REPORT 至少包含 hypothesis coverage、source failure-boundary refs、read/command scope、discriminator、expected evidence、risks，以及是否需要新 observation。发送后连续调查；Main 对齐时保持沉默，偏移、无 discriminator 却准备重跑用户旅程，或开始设计补丁时发送 CORRECTION。
+普通 `plan_checkpoint` 下 Investigator 不另发通用 PLAN_REPORT：Hook 给出准确专业答卷路径，保存后由 HypothesisResult 原消费者校验并更新 Case。hypothesis coverage、source failure-boundary、discriminator、预期证据和风险都属于这份专业结果；不得让作者复制到第二份计划或生命周期报告。显式 `plan_approval_required` 仍走原审批。
 
 ### 6.4 调查停止条件
 
@@ -559,10 +618,10 @@ canonical Problem/BUG、人读报告、S9 work-package 和 Finding mapping 都�
 | InvestigationCase schema | source set、failure-boundary refs、group rationale、hypotheses、causal model、unexplained set | create/revise/split/merge 时验证 |
 | Hypothesis Assignment generator | hypothesis、source boundary refs、discriminator、read/command scope、expected evidence | 派发前生成，按 L4 plan_checkpoint |
 | Agent Definition | Investigator 只读产品、可运行受控诊断、禁止修复 | 长期角色边界 |
-| PostToolUse(SendMessage) | PLAN_REPORT/BLOCKER/CLARIFICATION | 调查消息必经路径 |
+| PostToolUse(SendMessage) | BLOCKER/CLARIFICATION；generic PLAN_REPORT 仅旧兼容 lifecycle 信号 | 不作为普通 Investigator 答卷或 prerequisite |
 | Follow-up observation request | 必须有 hypothesis/discriminator、可区分结果、最小只读 scope 和安全条件 | 拒绝无目的“再复现一次” |
-| PreToolUse Write/Edit/Bash/diagnostic runner | 产品/规格写入 hard deny；诊断命令按风险控制；新 observation 必须绑定 discriminator | 每次 mutation/command/实验必经路径 |
-| `hypothesis result submit` | supported/refuted/inconclusive、evidence、residual facts | 调查结果唯一入口 |
+| PreToolUse / graph progress | 当前 HypothesisResult 完整路径、缺项和下一步；提醒调查与修复边界 | observe/guidance；不按身份、路径、scope 或工具调用拒绝 |
+| HypothesisResult 原消费者 | supported/refuted/inconclusive、evidence、residual facts | 调查结果唯一入口；packet 正常保存驱动该消费者 |
 | `case split/merge` | 可逆 grouping history 与 exact source set | 不删除 Finding |
 | `causal-model evaluate` | 因果边、Finding coverage、竞争假设、blast/detection gap | 不判断业务优劣，只查完整性 |
 | `repair-contract approve` | authority、root cause、repair units、forbidden patches、assertions | Main/Architect 唯一批准入口 |
@@ -623,7 +682,7 @@ S8 状态页至少展示：
 | Duplicate route | CLI/Runtime 要求并校验 `canonical_case_id`，Case revision 保存 canonical path+SHA，status/next_action 指向 canonical Case | canonical Case 仍由人工/上层流程继续消费；当前不引入 CaseSet 或自动合并 |
 | `investigate_more` 重入 | 首次 route 可记录 `investigate_more`；补充 Hypothesis/Result 后，`route` 可在新 Case revision 中重路由，并追加 route_history | 无新增证据时仍拒绝覆盖；若仍无法闭合，继续停留 `investigate_more`，而不是反复创建 Case |
 | Contract | approved RepairContract 以 Case revision/hash、exact Finding set 和 CAS 写入，S9 以它为唯一修复输入；新 CLI 自己执行 Case/Contract readiness gate | `RepairContract.revision` 仍表示批准时绑定的 Case revision，后续可重命名字段但不在本轮复制第二套版本；新 authority 使用 `S8-REPAIR-CONTRACT-APPROVAL`，`PTR-BUG-08` 仅保留 legacy catalog 语义 |
-| Product write scope | S8 Investigator 产品/spec 写入已由 Hook hard deny 覆盖 | 只读边界不是 Investigator Assignment lifecycle 的替代品；诊断命令、证据目录和运行环境仍需保持可用 |
+| Product write scope | Investigator role/task 限定为调查，不负责产品/spec 修复；Hook 不作逐工具 hard deny | 若工作树被修改，恢复现场后再调查；产品修复进入 S9 approved Contract |
 | S8→S9 | approved Contract 直接推进 `bug_resolution.repair_readback`；BUG 是批准后的兼容投影；S9 以 `runtime repair dispatch` 接住每个 RepairAssignment | S9 的依赖/锁消费与 generic/domain PlanReport 适配由 S9 侧负责；平台实际 Agent spawn 仍是运行时动作 |
 
 ### 13.1.A S8 的消费、派发与出口边界（2026-08-26）
@@ -634,7 +693,7 @@ S8 的必经链只有一条：
 
 - `runtime investigation status` 是当前 Case 的恢复入口；它展示 Case 对象版本/hash、未解释 Findings、假设和下一动作。`status --all` 只能帮助人工发现目录中的其他 Case，不能写入指针、不能决定 mixed route，也不能替代 CaseSet coordinator。
 - 假设按独立证据问题派发，而不是按 Finding 数量机械派发。`runtime investigation dispatch` 将 Hypothesis 的 `assignment_id` 接到现有 workgroup/Task/Agent lifecycle，并预置通用 `plan_checkpoint` activation；显式传入的 Assignment 必须与 Hypothesis 登记值一致；Agent 进程本身由 Claude/Agent Team 平台启动，Runtime 不假装已经 spawn。HypothesisResult 产生的 `new_hypotheses[]` 也必须已经完整可派发，不能先写入一个没有 Assignment 的半成品。
-- Investigator 的通用 `agent-message` `PLAN_REPORT` 是平台生命周期 checkpoint，不是 HypothesisResult 或根因结论；PostToolUse 按已指纹化 workgroup manifest 校验 S8 的 `assignment-*`、Agent、Task、Team 和当前 runtime，非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`。计划回报通过后立即继续 discriminator，不等待 Main 的第二轮批准；最终因果事实仍必须由 `runtime investigation hypothesis result` 写入 Case。
+- 普通 `plan_checkpoint` Investigator 直接完成 Hook 给出的 HypothesisResult 问卷，不另交通用 `PLAN_REPORT`；显式 `plan_approval_required` 仍走其原审批。HypothesisResult 保存后由原 Case consumer 写入结果，Case route 与 RepairContract 审批仍是后续独立步骤。旧 generic-checkpoint 兼容路径不属于普通新流程。
 - `route` 是持久化的诊断决定，不是自动推进所有生命周期的万能 Transition；`contract approve` 的 S9 路由在同一 CAS 中推进到 S9，`investigation consume` 接走 S2、duplicate 和 no-change 路由，REQ 变更仍停在人闸。普通 `investigate_more` 只有在新增 Hypothesis/Result 后才能在新的 Case revision 中显式重路由；S9 targeted failure 使用带精确证据 hash 的 `--reassessment-evidence` 作为例外入口，先清除旧 Contract 指针并退休旧 `review.repair` 指针，再继续调查；duplicate 的 canonical Case path+SHA 已持久化。
 - 不添加 CaseSet、独立 Failure Episode 或第二份 root-cause report，除非出现明确消费者、恢复动词和回归测试；当前单 active Case 限制应被 status/Controller 明示，而不是靠新增控制面掩盖。
 
@@ -644,7 +703,7 @@ S8 的必经链只有一条：
 2. 实现最小 `investigation ingest`：exact set、hash、baseline、最低 boundary 校验，创建一个 Case pointer；
 3. Case/Result/Contract 使用共享控制面与 CAS，但不新增 Failure Episode、ledger 或 BUG batch 生命周期；
 4. 从 Finding/evidence refs 计算 failure-boundary/cross-layer/evidence-gap 视图，不复制成新实体；
-5. 增加 Investigator 只读范围和产品写 hard deny；
+5. 保留 Investigator 只读调查的角色说明，移除 Hook 逐工具权限/路径拒绝；产品修复交给 S9 Contract 和原领域结果门；
 6. canonical Problem ID 延后到 contract approval。
 
 ### 13.3 P1：建立假设调查与因果收口
@@ -698,7 +757,7 @@ S8 的必经链只有一条：
 | 只因同文件/同报错尝试合并 | case validator 要求因果/contract grouping rationale |
 | 一个 Finding 两个 contributing causes | 允许多 Case 关系，不强制一对一 |
 | Hypothesis Worker 发送计划后等待 | 提示连续执行；无业务批准门 |
-| Investigator 尝试写产品代码 | PreToolUse hard deny |
+| Investigator 发现需要产品修复 | Hook 提醒 S8 只负责诊断并指向 Contract/人闸；不得把工具拒绝伪装为领域结论 |
 | HypothesisResult 只写“看起来是”无证据 | submit 拒绝 |
 | supported hypothesis 不能解释一个 source Finding | Case 保留 unexplained，不能进入 contract review |
 | 竞争假设未处理 | causal model incomplete |
@@ -769,7 +828,7 @@ S8 的必经链只有一条：
 本轮对 S7→S8 的实际接线只补必要的可发现性，不增加 Case、Failure Episode 或第二套调度状态机：
 
 - S8 假设仍通过 flags 注册/提交；S8/S9 的 `--file` 请求形状统一收录在 [`docs/examples/s7-s9/`](../../docs/examples/s7-s9)，避免 Investigator/Repair Lead 反查 Go 结构体。
-- Investigator 通过 `runtime investigation dispatch --case-id <case> --hypothesis-id <hypothesis> --agent-id <agent>` 复用既有 Assignment/Task/Agent 生命周期；命令只建立登记和生命周期绑定，Worker 仍必须在运行中发送 generic PLAN_REPORT 并继续判别，不等待第二轮批准。真实 Agent identity 必须是平台身份，注册边界拒绝 `TODO(planner)` 占位符，PostToolUse 观察失败仍保持 fail-open。S8 status 的顶层 `next` 是当前 Case 的唯一可执行下一动作。
+- Investigator 通过 `runtime investigation dispatch --case-id <case> --hypothesis-id <hypothesis> --agent-id <agent>` 复用既有 Assignment/Task/Agent 生命周期；派发后 Hook 提供准确专业问卷路径，普通 `plan_checkpoint` 下 Worker 填答并保存 HypothesisResult，不再发送重复 generic PLAN_REPORT。显式 `plan_approval_required` 保留原审批。Case route/RepairContract 审批和 status 的原下一动作语义不变；此处旧通用 PLAN_REPORT 说明已由当前答卷路径取代。
 - S7 的 `round_entry`/seed provenance 由 `s7 status` 直接披露；S8 不把 TR-012 seed 当成已完成的新一轮，也不要求重新复现原始症状。
 - S8 假设的 `--source-finding` 与结果的 `--source-boundary`、`--evidence`、`--explains`、`--does-not-explain` 支持重复 flag 或逗号分隔值；路由的三个 `--*-file` 输入在 CLI 层明确报告缺失/非法 JSON 的文件路径和恢复动作。这样多 Finding/多边界证据不会因 flag 解析被静默截断，也不会把 authoring 文件错误误报为因果模型缺失。
 - 这些变化属于工具引导和输入边界增强，既有 exact Finding、Case revision、Hypothesis discriminator 与 Contract approval 不变；复杂度收益来自减少反查和伪身份污染，而不是增加新的业务状态。
@@ -795,7 +854,7 @@ S8 目标机制只有在以下条件全部成立时才算落地：
 - 无 discriminator 的 symptom re-reproduction 被工具拒绝；
 - InvestigationCase grouping 可逆且不丢 source facts；
 - 调查按假设和判别证据派发，不按表象机械派修；
-- Investigator 产品/spec 写入被真实 hard deny；
+- Investigator 只提交诊断结果；Hook 提醒履职与路由，不作逐工具授权/拒绝；产品修复仍须经 approved RepairContract 进入 S9；
 - CausalModel 解释全部 source Findings、blast radius 和 detection gap；
 - Case 可表达一因多果、多个 contributing causes 和 split/merge history；
 - RepairContract 定义架构不变量、最小完整根因修复、禁止局部补丁和三层 assertions；

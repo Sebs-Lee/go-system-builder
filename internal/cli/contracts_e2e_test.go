@@ -100,7 +100,13 @@ func TestS3ContractPipelineE2E(t *testing.T) {
 		return s
 	}())
 
-	// --- registration via PTR-PLAN-02: bind, then fire the transition ---
+	// This historical disk-registration fixture deliberately uses packet-off
+	// mode. Current questionnaire mode is covered by the original-consumer
+	// tests and must reject this direct, unreceived transition path.
+	if _, stderr, code := run("init", "--root", root, "--packet=false"); code != 0 {
+		t.Fatalf("initialize explicit legacy contract fixture: %s", stderr)
+	}
+	// --- legacy registration via PTR-PLAN-02: bind, then fire the transition ---
 	if _, stderr, code := run("req", "bind", "--dev-branch", "test-development", "--release-upstream", "origin/release", "--root", commitStageFixture(t, root), "--approved-by", "bob"); code != 0 {
 		t.Fatalf("bind failed: %s", stderr)
 	}

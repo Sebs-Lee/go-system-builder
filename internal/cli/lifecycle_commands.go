@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"io"
 	"os"
 	"path/filepath"
@@ -240,7 +241,7 @@ func inFlightEntities(state map[string]any) []string {
 		if task == nil {
 			continue
 		}
-		if taskState, _ := task["state"].(string); taskState == "in_progress" || taskState == "review" || taskState == "blocked" {
+		if taskState := workstate.TaskActivity(task); taskState == "in_progress" || taskState == "review" || taskState == "blocked" {
 			if id, _ := task["id"].(string); id != "" {
 				out = append(out, "task "+id+" ("+taskState+")")
 			}

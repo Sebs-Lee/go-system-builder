@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "stage": "S9",
+  "adapter": "repair_plan_report",
+  "title": "S09 修复计划 · PlanReport",
+  "instruction": "只填写 answer 中的 plan、red_checks 和 proposed_paths。依据本卷冻结的批准 Contract、Session、RepairPlan、原 Assignment 和 TASK，说明开始写入前的实施计划与实际红检查。证据锚点的形式不证明命令已执行。不要填写 ID、断言清单、审批、状态、时间或产物摘要。",
+  "questions": {
+    "plan": {
+      "question": "说明本 Assignment 开始写入前的具体实施计划、依赖顺序和关键边界。计划不可代替后续实际实施与复验。",
+      "example": {"path": "answer.plan", "expected": "按本 Assignment 的 unit、依赖与资源锁说明有限步骤", "observed": "只写‘修复问题’"}
+    },
+    "red_checks": {
+      "question": "列出开始修复前实际复核或重现的检查，记录名称、命令、结果和原 execution anchor。至少一项必须 fail 或 blocked；anchor 形式不表示系统已执行验证。",
+      "choices": ["fail", "pass", "blocked"],
+      "example": {"path": "answer.red_checks/0/evidence_refs", "expected": "至少一个原 test://、runtime:// 等 execution anchor", "observed": "只有未注册的自然语言说明"}
+    },
+    "proposed_paths": {
+      "question": "列出计划修改的安全相对路径。每条路径必须同时属于原 RepairAssignment 与批准的 prospective scope，并在 forbidden scope 之外。",
+      "example": {"path": "answer.proposed_paths/0", "expected": "仅本 Assignment 实际负责的产品路径", "observed": "列入另一个 Assignment 或 forbidden 路径"}
+    }
+  }
+}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 )
 
 // s7BaselineProjection is the one planner-facing view of the S6 completion
@@ -19,6 +21,19 @@ type s7BaselineProjection struct {
 }
 
 func buildS7BaselineProjection(root string, state map[string]any) s7BaselineProjection {
+	if buildsurface.HasCanonical(state) {
+		projection := s7BaselineProjection{}
+		snapshot, err := buildsurface.Read(root, state)
+		if err != nil {
+			projection.Diagnostics = []string{fmt.Sprintf("canonical S6 product baseline: %v", err)}
+			return projection
+		}
+		for _, path := range snapshot.Paths {
+			projection.ChangedPaths = append(projection.ChangedPaths, path.Path)
+		}
+		sort.Strings(projection.ChangedPaths)
+		return projection
+	}
 	generation := baselineGeneration(state)
 	seen := map[string]bool{}
 	projection := s7BaselineProjection{}
@@ -82,6 +97,12 @@ func completionChangedPaths(root string, entry map[string]any) ([]string, error)
 	}
 	if kind := stringField(envelope["kind"]); kind != "" && kind != "completion_report" {
 		return nil, fmt.Errorf("artifact kind is %q, want completion_report", kind)
+	}
+	// A thin canonical Result deliberately contains no product diff. Only
+	// the original Main facts can supply it; treating the absent legacy
+	// changed_paths field as an empty surface would silently waive coverage.
+	if _, canonical := envelope["assignment_record"]; canonical {
+		return nil, fmt.Errorf("canonical S6 Result requires the original Main facts changed-surface projection; this reader cannot establish the fresh S7 baseline")
 	}
 	paths := normalizeBaselinePaths(stringSliceValue(envelope["changed_paths"]))
 	for _, changed := range paths {
@@ -156,7 +177,7 @@ func validateS7BaselineProjection(root string, state map[string]any) error {
 		"S7_BASELINE_PROJECTION",
 		"S7 cannot build a verified projection of the current-generation S6 completion evidence",
 		projection.Diagnostics,
-		[]string{"restore the canonical completion artifact or run the S6 completion path again so its path and sha256 are registered together"},
+		[]string{"restore any missing or changed original completion artifact; a thin canonical S6 Result requires the Main facts projection adapter before fresh S7 can register"},
 		"loop-harness s7 draft --out plan.json",
 	)
 }

@@ -2,10 +2,13 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -14,8 +17,59 @@ var ErrCleanupPending = errors.New("integration verified; worktree cleanup pendi
 
 // A missing directory is not a failed cleanliness check. Only remove its exact
 // Git registration; never prune other worktrees or force-delete remaining files.
-func cleanupWorktree(ctx context.Context, root, path string) error {
+// The checkpoint is the existing authorization: this helper is called only
+// after verified Main checks, ACK, and cleanup_pending have been persisted.
+func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoint) error {
+	if checkpoint.State != StateCleanupPending || checkpoint.VerifiedAt == "" || checkpoint.MergeCommit == "" || checkpoint.SourceHead == "" || checkpoint.TargetBranch == "" || filepath.Clean(checkpoint.WorktreePath) != filepath.Clean(path) {
+		return fmt.Errorf("Worker cleanup requires its verified cleanup_pending checkpoint")
+	}
+	if _, err := RecoveryBaseForCheckpoint(ctx, root, checkpoint); err != nil {
+		return fmt.Errorf("verified cleanup checkpoint no longer matches the target merge: %w", err)
+	}
 	if _, err := os.Lstat(path); err == nil {
+		head, err := revParse(ctx, path, "HEAD")
+		if err != nil || head != checkpoint.SourceHead {
+			return fmt.Errorf("Worker HEAD differs from verified checkpoint source; preserve it")
+		}
+		// A previous attempt may have restored all installation files before
+		// ordinary Git removal failed. The verified source coordinate above
+		// and a clean checkout are enough to retry that removal.
+		clean, err := worktreeCleanWithProjection(ctx, path, nil)
+		if err != nil {
+			return err
+		}
+		if clean {
+			return removeWorktree(ctx, root, path)
+		}
+		projection, err := workerBootstrapProjectionAt(ctx, path, true)
+		if err != nil {
+			return fmt.Errorf("revalidate Main-pinned Worker bootstrap before cleanup: %w", err)
+		}
+		clean, err = worktreeCleanWithProjection(ctx, path, projection)
+		if err != nil {
+			return err
+		}
+		if !clean {
+			return ErrDirtyWorktree
+		}
+		if len(projection) > 0 {
+			// Recheck the source coordinate immediately before restoring only the
+			// receipt-listed installation overlay.
+			head, err = revParse(ctx, path, "HEAD")
+			if err != nil || head != checkpoint.SourceHead {
+				return fmt.Errorf("Worker HEAD changed before bootstrap cleanup; preserve it")
+			}
+			if err := restorePinnedBootstrap(ctx, path, projection); err != nil {
+				return err
+			}
+			clean, err = worktreeCleanWithProjection(ctx, path, nil)
+			if err != nil {
+				return err
+			}
+			if !clean {
+				return ErrDirtyWorktree
+			}
+		}
 		return removeWorktree(ctx, root, path)
 	} else if !os.IsNotExist(err) {
 		return err
@@ -44,8 +98,95 @@ func cleanupWorktree(ctx context.Context, root, path string) error {
 	return nil
 }
 
+// restorePinnedBootstrap removes only unchanged receipt-backed untracked
+// assets and restores only unchanged receipt-backed tracked overlays. The Git
+// index is never changed and cleanup remains non-forced.
+func restorePinnedBootstrap(ctx context.Context, root string, projection map[string]string) error {
+	paths := make([]string, 0, len(projection))
+	for path := range projection {
+		if path != ".claude/loop-bootstrap.json" && path != ".claude/loop-workspace.json" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	// Keep the original pinned receipt and pointer until all assets are
+	// restored, so interruption can resume without another persistent object.
+	paths = append(paths, ".claude/loop-bootstrap.json", ".claude/loop-workspace.json")
+	for _, rel := range paths {
+		expected := projection[rel]
+		status, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "--untracked-files=all", "--", rel)
+		if err != nil {
+			return err
+		}
+		if status == "" {
+			continue
+		}
+		if !fileMatchesDigest(root, rel, expected) {
+			return fmt.Errorf("preserve Worker bootstrap asset changed after receipt validation: %s", rel)
+		}
+		tracked, err := defaultRunner.Run(ctx, root, "ls-files", "-z", "--", rel)
+		if err != nil {
+			return fmt.Errorf("inspect receipt-backed Worker path %s: %w", rel, err)
+		}
+		if tracked != "" {
+			for _, recorded := range strings.Split(tracked, "\x00") {
+				if recorded != "" && filepath.ToSlash(recorded) != rel {
+					return fmt.Errorf("Git returned an unexpected tracked Worker path for %s", rel)
+				}
+			}
+			if _, err := defaultRunner.Run(ctx, root, "restore", "--worktree", "--", rel); err != nil {
+				return fmt.Errorf("restore receipt-backed tracked Worker asset %s: %w", rel, err)
+			}
+			continue
+		}
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("preserve non-regular receipt-backed Worker asset %s", rel)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(data)
+		if hex.EncodeToString(digest[:]) != expected {
+			return fmt.Errorf("preserve changed receipt-backed Worker asset %s", rel)
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func InspectionFromCheckpoint(cp Checkpoint) Inspection {
-	return Inspection{CompletionReportPath: cp.CompletionReportPath, CompletionReportSHA256: cp.CompletionReportSHA256, Ready: true, AssignmentID: cp.AssignmentID, TaskID: cp.TaskID, WorktreePath: cp.WorktreePath, SourceBranch: cp.SourceBranch, SourceHead: cp.SourceHead, TargetBranch: cp.TargetBranch, TargetHead: cp.TargetHead, MergeBase: cp.MergeBase, BaselineGeneration: cp.BaselineGeneration, NonSquashMode: true}
+	out := Inspection{
+		CompletionReportPath:   cp.CompletionReportPath,
+		CompletionReportSHA256: cp.CompletionReportSHA256,
+		ChangedPaths:           append([]string{}, cp.ChangedPaths...),
+		ChangedPathsSHA256:     cp.ChangedPathsSHA256,
+		Ready:                  true,
+		AssignmentID:           cp.AssignmentID,
+		TaskID:                 cp.TaskID,
+		WorktreePath:           cp.WorktreePath,
+		SourceBranch:           cp.SourceBranch,
+		SourceHead:             cp.SourceHead,
+		TargetBranch:           cp.TargetBranch,
+		TargetHead:             cp.TargetHead,
+		MergeBase:              cp.MergeBase,
+		BaselineGeneration:     cp.BaselineGeneration,
+		NonSquashMode:          true,
+	}
+	if cp.CanonicalMainFacts != nil {
+		binding := cp.CanonicalMainFacts.Binding
+		out.CanonicalResult = &binding
+		out.ChangedPaths = append([]string{}, cp.CanonicalMainFacts.ChangedPaths...)
+		out.ChangedPathsSHA256 = cp.CanonicalMainFacts.ChangedPathsSHA256
+	}
+	return out
 }
 
 func deferCleanup(store *CheckpointStore, path string, current, next Checkpoint, cause error) (Result, error) {

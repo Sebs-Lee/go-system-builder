@@ -1,73 +1,94 @@
 ---
 name: document-verification
-description: Use when S5 document verification assigns you one review responsibility — write the envelope first (REV-template §0), findings only when found
+description: Use when assigned one S5 document review — save the exact issued professional answer; use the legacy envelope only in an explicitly unpacketized Runtime
 category: methodology
 version: 2.2.0
 ---
 # Document Verification
 
 ## Authority
-You produce evidence; the gate evaluates it. Runtime authority lives in `docs/control/loop-definition.json`; the S5 stage contract lives in `docs/control/agent-protocol.md #s5`（三步：派活→审查→收口三岔路）; the envelope skeleton and findings format live in `docs/reports/review/REV-template.md`.
+You produce an independent professional review; the original S5 consumer and gate evaluate it. Runtime authority lives in `docs/control/loop-definition.json`; the S5 stage contract lives in `docs/control/agent-protocol.md #s5`. The REV template remains a legacy/unpacketized report reference, not the packet-enabled normal answer.
 
 ## Role Contract
 
-You are one of two independent reviewers of the frozen spec chain. You verify
-exactly one responsibility — `DV-SPEC-CONSISTENCY`（规格链自洽吗？）or
-`DV-TASK-EXECUTABILITY`（Builder 照着能干吗？）— assigned in your activation
-envelope. You never repair what you review.
+You are one of two independent reviewers of the frozen spec chain. The current
+Assignment and Hook identify your responsibility. You verify exactly one —
+`DV-SPEC-CONSISTENCY`（规格链自洽吗？）or
+`DV-TASK-EXECUTABILITY`（Builder 照着能干吗？）. You never repair what you review.
 
 ## Entry Conditions
-- The Loop is in `document_verification` and you hold an activation envelope naming exactly one responsibility.
+- The Loop is in `document_verification` and the Hook supplies your current responsibility's exact questionnaire view/answer paths. An explicit `plan_approval_required` assignment must first follow its original approval path; an absent path for expected packet work is a Main/system preparation gap, not a legacy fallback.
 - The spec chain carries fingerprints (path + version + SHA-256 + baseline generation).
 
 ## Required Inputs
 
-Activation envelope (responsibility, report path, fingerprints, skills to
-load), the locked spec chain (REQ → design → contracts → tasks), and the
-module current-truth package when the REQ touches UI.
+Hook-supplied view and exact answer path (or, only for an explicitly
+unpacketized Runtime, its original legacy report path), the locked spec chain (REQ → design → contracts → tasks), and the
+applicable module current-truth package resolved through the original accepted
+S3/S4 frozen source closure and its document refs. If UI impact is `none` but
+an AC targets an FR or service behavior truth changes, the required package is
+the seven-file service behavior package: `scenario-model.json`,
+`fixture-contract.json`, `cross-matrix.json`, `stories.md`, `flows.md`,
+generated `cases.json`, and generated `scenario-coverage.json`. Its service
+branches use `browser_required:false`, so HTML, PATH, and browser specs are not
+required. Read only the frozen inputs named by the original refs; if a ref or
+file is missing or its fingerprint differs, report the source-closure defect
+and stop signing that subject. Do not replace it with a same-path live file
+found by Glob.
 
 ## Procedure — 3 mandatory, 1 triggered
 
-1. **落信封骨架（激活后第一件事）**：复制 `docs/reports/review/REV-template.md` §0 到你的报告路径 `docs/reports/review/REV-{runid}-{resp}.json`——每个字段带一行填写指引，写骨架即读懂要交什么。`subject_refs` 从 `.claude/loop-state.json` 的 documents[] 逐条复制（故意没有自动命令——逐条抄写就是"我签的是哪一版"的对峙，这一步的笨拙是审查的锚）。
+先检查 Hook 是否给出当前责任的准确 view/answer 路径。有卷时：读冻结资料 → 做第 2 步专业审查 → 只填写并保存该卷 answer → 阅读保存反馈。普通 `plan_checkpoint` 不另写 generic PLAN_REPORT、readback 或 begin，也不复制 subject/hash 或手工 issue/consume；原 Writer 从登记责任/冻结输入生成 envelope 和 receipt。`plan_approval_required` 仍走原审批。只有 Runtime 明确 unpacketized 时才用下述 legacy envelope 步骤；packet-enabled Runtime 缺路径时报告 Main/system，不改走 legacy。
+
+独立 S5 execution 的 view 是 `.claude/inputs/work-packet.json`，`read[].path` 从该 view 的 `frozen_input_root` 下读取。普通 `plan_checkpoint` 只完成该责任的专业答卷，不另写 generic PLAN_REPORT 或执行 begin。只有当前 Runtime 明确走旧兼容入口且其原登记上下文提供相应步骤时，才遵循那些旧步骤；它们不是普通 S5 的前置项。答卷只用 view 的 `authoring_path`，保存自动消费；无宿主保存 Hook 时执行提供的 `answer_command`。不要向共享 Main 答卷、其他执行目录或 Builder commit/report/deliver 路径回退。
+
+1. **Legacy only — envelope skeleton**: for a genuinely unpacketized compatibility instance, use `docs/reports/review/REV-template.md` §0 as the old envelope shape. Do not do this in packet-enabled normal work: the Hook's frozen view and the original S5 Writer supply the bound subjects and machine metadata.
 2. **审查（按职责）**：
-   - SPEC-CONSISTENCY：自底向上读 TASK → 主契约 → 关联契约 → locked REQ → 设计/rules，核对验收↔条款映射、跨文档引用指纹、FE/BE/SYNC 边界一致（数据形状/错误码/状态机/API 面）、场景包与契约映射不矛盾。三项深挖：
-     - **需求覆盖端到端**：抽 2-3 条 AC 走完最后一公里——AC → 契约条款 → TASK §3 声明 → 收尾契约 assert 行，全程指名到位；任何一跳"对不上号"即 finding（机器只保到 AC↔CASE，这最后一公里归你）；
+   - SPEC-CONSISTENCY：自底向上读 TASK → 主契约 → 关联契约 → locked REQ → 设计/rules，核对验收↔条款映射、跨文档引用指纹、FE/BE/SYNC 边界一致（数据形状/错误码/状态机/API 面）、场景包与契约映射不矛盾。FR-targeted/service-behavior changes require checking all seven service-package files through the frozen refs even when UI impact is `none`; `browser_required:false` skips only browser artifacts. 三项深挖：
+     - **需求覆盖端到端**：抽 2-3 条 AC 走完最后一公里——AC → 契约条款 → TASK §3 声明 → 收尾契约 assert 行，全程指名到位；任何一跳"对不上号"即 finding（机器只保到 AC↔CASE，这最后一公里归你）；服务 CASE 继续参与 AC 覆盖分母，不因没有 PATH 或 browser spec 而免检；
      - **NFR 落地追踪**：REQ 非功能表的每一行有没有落进某张契约的条款（`NFR-{id}` 被 CONTRACTS 索引引用或条款显式声明）？NFR 是最易静默掉队的——没落地的每一行都是 finding；
      - **负向与错误路径对账**：契约错误码表 ↔ 场景包负向分支 ↔ 权限拒绝用例三方对得上吗？REQ 流程表声明了权限列的，场景包里必须有"无权限被拒"的负向分支。
-   - TASK-EXECUTABILITY：跑 `.claude/bin/loop-harness tasks check --root .` 消费机检结论（覆盖双向/DAG 无环机器已判，不重算），再审机器判不了的**五问+半问**（代入 builder 视角——"我拿到这个任务单能顺利干完吗"）：
+   - TASK-EXECUTABILITY：先消费 packet 冻结 `task_analysis.structural_check`（覆盖与 DAG 结果由原 S4 checker 提供，不重算、不重复运行），再审机器判不了的**五问+半问**（代入 builder 视角——"我拿到这个任务单能顺利干完吗"）。仅当明确的旧 packet 缺少此摘要且原始冻结输入仍可用时，才用提供的 `review_check_command` 作为兼容补充；缺少输入时报告 Main/system。该命令也可用于具体问题诊断，但不是普通审查步骤：
      1. **单一职责**：一句话测试——说不成交付物、跨层混拆（FE+BE+SYNC 同任务）、收尾契约 assert 超四行，都是拆分信号；
-     2. **单窗口可行**：**builder 中途 compact 丢任务信息是灾难性表现**——按 §2 清单量与 §4 写路径量判断会不会撞上（`tasks check` 输出的 reference load 是参考数字不是门槛——它同时供第五问判断证据产出成本）；能拆小/裁清单的都不是"设计如此"而是缺陷；
+     2. **上下文与耦合可行**：消费冻结 `task_analysis.task_contexts` 与 `granularity_advice`；对新 packet 以原分析字节及 parser 版本为准。若该冻结资料缺失或漂移，报告 Main/system 走原恢复，不自行重跑后改写分析。按必要读集、未知条件、明确共享写入、依赖和独立 oracle 判断当前任务是否可执行。目录未展开和无法定位的 anchor 是具体资料缺口；字节数不是 token 或拆分门槛。保留源 TASK/条款/路径并回答建议，结合真实 compact/返工观察判断，不能仅凭一次 compact 或可拆分就认定设计缺陷；
+        `behavior_examples` 仅包含该 TASK Manifest 明确引用且经原 Scenario 校验的当前 CASE，保留 oracle/fixture/来源 hash 和读集 Mode/未知条件。新冻结分析有此字段时消费冻结字节，旧分析不补样例。缺引用、过期 CASE 或源包未验证给 unresolved，由原合同/设计责任补齐；样例存在不代表产品执行通过、不扩大覆盖、不替代独立 S7。
+        `task_conventions` 有字段时消费原冻结投影和来源；检查默认是否在原规范/决定段落、适用 scope 与例外是否对应本人任务、示例是否真正吻合。candidate/conflict/stale/migration 不当当前默认，缺索引不构成自动缺陷。原登记/hash/版本只证明来源，不替代语义判断；偏离按原计划/结果和变更控制处理，不扩批准范围。
      3. **语义连贯**：地基（类型/schema/迁移）先于依赖者？有没有 B 用 A 产物却没声明依赖的缺失边？有没有复制粘贴来的假边？
      4. **自包含**：任务单给的是精确锚点（路径+条款号）还是"自己去理解模块"？builder 要 grep 找活干 = 任务书写得不合格；
      5. **可测性前向**：收尾契约要求的证据在 S7 三角度（DV/QA/E2E）下真的能产出吗？验收标准本身可判定吗——"响应快""体验好"这类无指标的表述，到 S7 只能靠猜，finding；
      批次节奏（附加半问）：DAG 机器已判无环——再看一眼关键路径：有没有一串任务全是单链依赖（串行瓶颈拖死并行分派）？有没有本可并行的任务被假依赖串起来了？
-3. **收口（登记 + 回填）**：信封回填 `conclusion`（pass / fix_required / req_change_required——与 gate 同词，全流程没有第二套枚举）与 `requested_event`（仅 fix_required 填 document_fix_required；req_change_required 留空走人闸）；然后按 REV-template §0 注 2 的命令行把信封**登记进 runtime**（`runtime evidence add`，`--kind document_review` 与信封同词）——未登记的信封 gate 看不见；**重签（fix 回路第二轮起）须用带 `-r2` 后缀的新 ID**（同 ID 会被拒——旧条目即使已 invalid 也占 ID）。此后不调用任何 transition 命令——PreToolUse 按你的 conclusion 自动路由。
-4. **触发——有 finding 才写 REV 报告**：按 `REV-template.md` §1-§5 写（findings 表带 P0-P3/定位/预期/实测/证据；N/A 须记理由与证据）。双 pass 不产报告——没有人读"都挺好"。
+3. **Save the domain answer.** In packet-enabled normal work, choose the conclusion in the exact answer path, add findings only when needed, then save. Choose `pass` when this responsibility finds no issue and keep the prefilled `findings: []`. Choose `fix_required` when the locked REQ is clear and correcting design, contracts or TASKs can satisfy it. Choose `req_change_required` when the REQ itself is ambiguous, conflicting or missing a necessary decision; a human must clarify or change it, and this answer does not authorize that change. For each issue, fill only `path` (a supplied reviewed source, optionally with an anchor), `expected` (what should be present), and `observed` (the actual gap). Do not copy identity, fingerprints or machine-check summaries. Those structured findings are the normal finding record; do not create a second Markdown report. The original S5 Writer creates and registers the `document_review` envelope and receipt. Do not hand-create an envelope, choose/copy evidence IDs, or run `runtime evidence add`/`stage-answer issue/consume`. In an explicitly unpacketized legacy instance only, retain the old envelope registration and revision-ID rules from the REV template; do not invoke transition commands manually.
+4. **Legacy only — separate REV report:** packet-enabled answers already carry their findings; do not duplicate them in Markdown. Only if an explicitly unpacketized legacy Runtime's original contract requires it, use `REV-template.md` §1-§5 and retain its finding, priority, evidence, and N/A rules.
 
-## Triggered Deep-Dives（按需触发——激活信封指名或触发条件命中时才审，不均匀付费）
+## Triggered Deep-Dives（按冻结输入的适用条件审查）
 
-**归属**：三项全归 **TASK-EXECUTABILITY 审查者**（数据迁移任务在批里、外部依赖看 SYNC 契约、critical 看 REQ——都是任务/REQ 视角）。主会话派活时按 REQ/契约特征核对本表并在激活信封指名（写在 expected_outputs 或附言均可）；若信封漏指名而你在审查中命中触发条件，**自查自救直接开审**——漏审比越权严重。
+**归属**：三项全归 **TASK-EXECUTABILITY 审查者**（数据迁移任务在批里、外部依赖看 SYNC 契约、critical 看 REQ——都是任务/REQ 视角）。根据当前冻结输入逐项判断下表条件，完成适用的专业检查，并把发现写入同一份答卷。问卷给出检查要求，不自动判断哪些条件命中。
 
 | 触发条件 | 专项审查 |
 |:--|:--|
 | BE 契约含数据模型/schema 变更（新增/删除/改型字段、建表、迁移） | **迁移与破坏性变更处置**：默认**干净断裂，不默认向后兼容**（owner 裁定——兼容是必须辩护的技术债）。逐项核对：该变更选了兼容还是断裂？选兼容的有没有登记（决策理由/影响面/移除路径+责任人，入 REQ 债务记录或 §A4）？破坏性变更的数据迁移任务在不在 TASK 批里？**无登记的兼容 = 无声负债，直接 finding** |
 | SYNC 契约存在，或 REQ/契约声明外部依赖（第三方 API/服务） | **外部集成韧性**：每个外部调用点有没有超时、失败重试策略、降级行为的声明？SYNC 契约的字段映射把外部错误翻译成本地错误码了吗？没有声明的调用点 = 生产环境的第一批故障源 |
-| REQ 绑定的场景包 `coverage_profile: critical`（或 REQ 风险声明为高） | **风险触发验证就位**：S7 会按风险加派验证维度——现在预检它的"座位"在不在：场景包的 required 分支覆盖是否声明到位、每条 critical 需求有没有对应的 E2E 路径（PATH）座位？（负向分支齐备性归职责 A 深挖项，不在此重复）座位缺失在 S5 补，比 S7 临时加人便宜 |
+| REQ 绑定的场景包 `coverage_profile: critical`（或 REQ 风险声明为高） | **风险触发验证就位**：S7 会按风险加派验证维度——现在预检它的"座位"在不在：场景包 required 分支覆盖是否声明到位；有浏览器的 CASE 检查 E2E PATH 座位，服务 CASE（`browser_required:false`）检查其服务 oracle 和对应的 S7 行为验证安排，不要求虚构 PATH。负向分支齐备性归职责 A 深挖项，不在此重复；座位缺失在 S5 补 |
 
-触发段产出的结论照常进信封与 findings——专项维度算进你 assigned conclusion 的审查范围。
+触发项的检查结论写入当前专业答卷的 conclusion/findings；原 Writer 负责信封和机器元数据。
 
 ## Outputs
 
-- 必产物：`REV-{runid}-{resp}.json` 证据信封（11 字段、10 个机器校验 + review_round 故意不写）+ runtime 登记（§0 注 2）。
-- 条件产物：`REV-{runid}-{resp}.md` findings 报告（仅有 finding 时）。
+有已发行的 S5 packet 时，只在该 owner 的确切答卷路径填写 `answer.conclusion`/`answer.findings`，保留机器题干；普通 `plan_checkpoint` 不另交 generic PLAN_REPORT、readback 或 activation。显式 `plan_approval_required` 仍等待原审批。保存由原领域 Writer 派生和登记信封；现有回执 `work_complete=true` 是兼容投影，只有原答卷接收有效且当前，才把本人审查责任投影为全局 `done`。合法 finding 不会撤销本人的已接收交付；同事未交、系统 pending 或需求人闸归回执指定 owner，不重新打开本人的责任。此模式不另抄 subjects、选择 evidence ID、写重复 Markdown 或手工登记第二份信封；已接收判断不能就地覆盖，修订或规格变化由 Main 走相应原路由。仅当 Runtime 明确 unpacketized 时采用旧信封流程；packet-enabled 缺卷应交 Main/system，不得手改 Runtime 启用。
+
+具名修订必须读取当前 packet 的 `binding.revision_reason`，重新审查具体观察及完整冻结资料；旧回执 `replaced` 不完成新 attempt。新答案只保存到当前派发的确切路径。独立修订由 Main 退役旧 execution、prepare 新目录，旧答案/view 保留；未 ready 时不得借 Main 路径或手工 evidence add 提交。
+
+- packet-enabled 必产物：Hook 答卷路径中的专业答案；原 Writer 派生/登记证据信封和 receipt。
+- legacy/unpacketized 必产物：旧 `REV-{runid}-{resp}.json` 证据信封及原 Runtime 登记（只走兼容路径）。
+- legacy-only 条件产物：只有明确 unpacketized Runtime 的原契约要求时才写 `REV-{runid}-{resp}.md`；普通 packet findings 保留在专业答卷中。
 
 ## Exit Conditions
 
-- 信封 conclusion 已回填且 subject_refs 精确等于当前 documents[] 指纹集（多一少一 gate 都拒）。
+- 专业结论及 findings 已由当前责任的原答卷/Writer 接收；冻结 subjects、独立性和原 gate 检查仍必须满足。
 
 ## Stop Conditions
 
-Stop signing the affected review when its inputs drift, a document layer is missing, or reviewer independence is lost. Report to the Driver: refresh the review against the registered versions, route missing documents through fix_required, or reassign an independent reviewer. These technical recovery actions do not require a new human decision by themselves. Never sign stale evidence or review your own authored content. Only an unresolved contradiction requiring changed locked REQ/business semantics routes to the corresponding human Gateway.
+Stop signing the affected review when its inputs drift, a document layer or required frozen source ref is missing, or reviewer independence is lost. Report the defect to Main so the original S3/S4 source closure can be restored or the existing rework route used; then review the resulting current inputs. Do not refresh old hashes or replace missing frozen inputs with live workspace files. Never sign stale evidence or review your own authored content. These technical recovery actions do not require a new human decision by themselves. Only an unresolved contradiction requiring changed locked REQ/business semantics routes to the corresponding human Gateway.
 
 ## Non-Goals
 

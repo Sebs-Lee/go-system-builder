@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"os"
 	"path"
 	"sort"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/acceptance"
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
+	"github.com/entroforge/go-system-builder/internal/builderbatch"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
@@ -89,11 +92,22 @@ func NewEvaluator(registry *Registry) *Engine {
 // the current cursor. The Controller supplies these facts to the catalog
 // selector without re-implementing evidence qualification.
 func (e *Engine) RequestedEvents(input Input) []string {
-	return e.qualifiedRequestedEvents(input, verifiedCurrentDocuments(input))
+	documents, err := verifiedCurrentDocumentsWithS5Facts(input)
+	if err != nil {
+		return nil
+	}
+	return e.qualifiedRequestedEvents(input, documents)
 }
 
 func evidenceKindsEqual(requirementKind, actualKind string) bool {
 	return evidence.DefaultCatalog().Accepts(requirementKind, actualKind)
+}
+
+func currentS5Evidence(state map[string]any, evidenceID, kind string) bool {
+	if !runtime.PacketEnabled(state) || !evidenceKindsEqual("document_review_record", kind) {
+		return true
+	}
+	return runtime.CurrentDocumentReviewEvidence(state, evidenceID)
 }
 
 // Evaluate reports unknown for unregistered gates. Registered gate semantics
@@ -134,7 +148,12 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 	}
 	result.CandidateTransition = spec.TransitionID
 	result.NextCursor = currentCursor(input.Snapshot.State)
-	documents := verifiedCurrentDocuments(input)
+	documents, err := verifiedCurrentDocumentsWithS5Facts(input)
+	if err != nil {
+		result.ErrorCode = ErrorGateUnknown
+		result.Conflicts = []string{"s4_source_closure:unverifiable"}
+		return result, nil
+	}
 	if events := e.qualifiedRequestedEvents(input, documents); len(events) > 1 {
 		result.Status = StatusUnknown
 		result.ErrorCode = ErrorTriggerConflict
@@ -160,9 +179,58 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 		}
 	}
 	if input.GateID == "GATE-PLANNING-CONTRACTS-COMPLETE" {
+		facts, accepted, factErr := verifiedContractPacketFacts(input)
+		if factErr != nil {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = []string{"s3_source_closure:" + factErr.Error()}
+			return result, nil
+		}
+		if accepted {
+			documents = append(documents, facts...)
+		} else if runtime.PacketEnabled(input.Snapshot.State) {
+			// In packet mode the questionnaire's accepted submission is the
+			// original S3 delivery record. Locked files on disk do not stand in
+			// for that record; disk-declared artifacts remain a legacy-mode
+			// fallback only.
+			result.Status = StatusNotReady
+			result.Missing = []string{"evidence:planning_contract_record"}
+			result.Fingerprint = fingerprint(
+				result.GateID,
+				spec.SemanticVersion,
+				input.Snapshot.State,
+				nestedInt(input.Snapshot.State, "baseline", "generation"),
+				documents,
+				nil,
+			)
+			return result, nil
+		}
 		return evaluatePlanningArtifact(input, result, spec, documents, "contract", "locked", "document:contract:locked"), nil
 	}
 	if input.GateID == "GATE-PLANNING-TASKS-COMPLETE" {
+		if runtime.PacketEnabled(input.Snapshot.State) {
+			sources, accepted, factErr := verifiedTaskPlanningPacketFacts(input)
+			if factErr != nil {
+				result.Status = StatusUnknown
+				result.ErrorCode = ErrorGateUnknown
+				result.Conflicts = []string{"s4_source_closure:" + factErr.Error()}
+				return result, nil
+			}
+			if !accepted {
+				result.Status = StatusNotReady
+				result.Missing = []string{"evidence:planning_task_record"}
+				result.Fingerprint = fingerprint(
+					result.GateID,
+					spec.SemanticVersion,
+					input.Snapshot.State,
+					nestedInt(input.Snapshot.State, "baseline", "generation"),
+					documents,
+					nil,
+				)
+				return result, nil
+			}
+			documents = append(documents, sources...)
+		}
 		return evaluatePlanningArtifact(input, result, spec, documents, "task", "complete", "document:task:complete"), nil
 	}
 	return evaluateRegisteredGate(input, result, spec, documents), nil
@@ -321,6 +389,13 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 	}
 	var evidenceIDs []string
 	for _, requirement := range spec.EvidenceRequirements {
+		if result.GateID == "GATE-BUILDER-BATCH-READY" && evidenceKindsEqual("completion_report", requirement.Kind) {
+			// S6 completion evidence has two wire contracts. The exact batch
+			// consumer below qualifies legacy `completed` envelopes and the
+			// current Record-bound `submitted` Result separately; generic
+			// qualification cannot read/interpret canonical Result artifacts.
+			continue
+		}
 		if requirement.ProducedByTransition {
 			// The transition engine validates the canonical generated token and
 			// materializes this evidence while committing the transition. It
@@ -805,6 +880,7 @@ func unauthorizedProducerConflicts(
 			}
 		}
 		if !relevant ||
+			!currentS5Evidence(input.Snapshot.State, stringValue(index["id"]), kind) ||
 			stringValue(index["status"]) != "valid" ||
 			intValue(index["baseline_generation"]) != generation ||
 			index["invalidated_by"] != nil ||
@@ -881,6 +957,7 @@ func (e *Engine) qualifiedRequestedEvents(input Input, documents []documentFact)
 	for _, item := range raw {
 		index, _ := item.(map[string]any)
 		if index == nil ||
+			!currentS5Evidence(state, stringValue(index["id"]), stringValue(index["kind"])) ||
 			stringValue(index["status"]) != "valid" ||
 			intValue(index["baseline_generation"]) != generation ||
 			index["invalidated_by"] != nil {
@@ -951,6 +1028,9 @@ func qualifiedEvidence(
 	for _, item := range raw {
 		index, _ := item.(map[string]any)
 		if index == nil || !evidenceKindsEqual(requirement.Kind, stringValue(index["kind"])) {
+			continue
+		}
+		if !currentS5Evidence(state, stringValue(index["id"]), stringValue(index["kind"])) {
 			continue
 		}
 		if stringValue(index["status"]) != "valid" ||
@@ -1132,30 +1212,153 @@ func evidenceEnvelopesByID(input Input, ids []string) []evidenceEnvelope {
 func applyBuilderBatchCompleteness(input Input, result *Evaluation) {
 	batch := executionBatchTasks(input.Snapshot.State)
 	if len(batch) == 0 {
+		// Preserve the generic legacy completion projection even when TR-003
+		// has lost its exact batch. The aggregate evidence remains informative,
+		// but cannot make an empty batch ready.
+		requirement := EvidenceRequirement{Kind: "completion_report", Responsibilities: []string{"BUILD-WORK-PACKAGE", "Builder"}, Conclusions: []string{"completed"}}
+		ids, conflicts := qualifiedEvidence(input.Snapshot.State, input.Files, stringValue(input.Snapshot.State["runtime_id"]), nestedInt(input.Snapshot.State, "baseline", "generation"), nestedInt(input.Snapshot.State, "review", "round"), requirement, verifiedCurrentDocuments(input))
+		result.EvidenceRefs = append(result.EvidenceRefs, ids...)
+		if len(conflicts) > 0 {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+			result.Conflicts = sortedUnique(append(result.Conflicts, conflicts...))
+			return
+		}
+		if len(ids) == 0 {
+			result.Missing = append(result.Missing, "evidence:completion_report")
+		}
 		result.Missing = append(result.Missing, "batch:execution_batch_empty")
+		result.EvidenceRefs = sortedUnique(result.EvidenceRefs)
+		result.Missing = sortedUnique(result.Missing)
 		result.Status = StatusNotReady
 		return
 	}
-	if HasDispatchPlan(input.Snapshot.State) {
-		progress := PlannedBuilderProgress(input)
-		for _, taskID := range batch {
-			if progress[taskID].State != "integrated" {
-				result.Missing = append(result.Missing, "integration_checkpoint:"+taskID+":"+progress[taskID].Reason)
+	canonicalOwners := map[string]bool{}
+	canonicalTasks := map[string]canonicalAssignmentMode{}
+	canonicalTaskErrors := map[string]error{}
+	for _, taskID := range batch {
+		task, found, err := uniqueEntityByID(input.Snapshot.State, "tasks", taskID)
+		if err != nil {
+			canonicalTaskErrors[taskID] = err
+			continue
+		}
+		if !found {
+			continue
+		}
+		mode, canonical, modeErr := canonicalModeForTask(input, task)
+		if canonical {
+			canonicalTasks[taskID] = mode
+			canonicalTaskErrors[taskID] = modeErr
+			for _, owner := range canonicalStringValues(task["owner_agent_ids"]) {
+				if agent, exists, _ := uniqueEntityByID(input.Snapshot.State, "agents", owner); exists && containsAny(agent["task_ids"], taskID) {
+					if _, opted, _ := canonicalModeForOwner(input, owner); opted {
+						canonicalOwners[owner] = true
+					}
+				}
 			}
 		}
+	}
+	// Historical canonical submitted Results retain their original bytes and
+	// cannot become legacy completed evidence after their owner is superseded.
+	records, registryErr := assignmentrecord.RecordsFromState(input.Snapshot.State)
+	if registryErr != nil {
+		result.Status, result.ErrorCode = StatusUnknown, ErrorGateUnknown
+		result.Conflicts = sortedUnique(append(result.Conflicts, "assignment_registry:"+registryErr.Error()))
+		return
+	}
+	runtimeID := stringValue(input.Snapshot.State["runtime_id"])
+	generation := nestedInt(input.Snapshot.State, "baseline", "generation")
+	for _, record := range records {
+		if record.RuntimeID == runtimeID && record.BaselineGeneration == generation {
+			canonicalOwners[record.OwnerAgentID] = true
+		}
+	}
+	legacyOnly := len(canonicalTasks) == 0
+	for _, record := range records {
+		if record.RuntimeID == runtimeID && record.BaselineGeneration == generation {
+			legacyOnly = false
+			break
+		}
+	}
+	if legacyOnly {
+		shared := builderbatch.EvaluateLegacy(input.Root, input.Snapshot.State, input.Files)
+		result.EvidenceRefs = append(result.EvidenceRefs, shared.EvidenceIDs...)
+		result.Missing = append(result.Missing, shared.Missing...)
+		result.Conflicts = append(result.Conflicts, shared.Conflicts...)
+		result.EvidenceRefs = sortedUnique(result.EvidenceRefs)
+		result.Missing = sortedUnique(result.Missing)
+		result.Conflicts = sortedUnique(result.Conflicts)
+		if len(result.Conflicts) > 0 {
+			result.Status = StatusUnknown
+			result.ErrorCode = ErrorGateUnknown
+		} else if len(result.Missing) > 0 {
+			result.Status = StatusNotReady
+		}
+		return
+	}
+	legacyState := stateWithoutCanonicalBuilderEvidence(input.Snapshot.State, canonicalOwners)
+	legacyRequirement := EvidenceRequirement{Kind: "completion_report", Responsibilities: []string{"BUILD-WORK-PACKAGE", "Builder"}, Conclusions: []string{"completed"}}
+	legacyIDs, conflicts := qualifiedEvidence(legacyState, input.Files, stringValue(input.Snapshot.State["runtime_id"]), nestedInt(input.Snapshot.State, "baseline", "generation"), nestedInt(input.Snapshot.State, "review", "round"), legacyRequirement, verifiedCurrentDocuments(input))
+	result.EvidenceRefs = append(result.EvidenceRefs, legacyIDs...)
+	if len(conflicts) > 0 {
+		result.Status = StatusUnknown
+		result.ErrorCode = ErrorGateUnknown
+		result.Conflicts = append(result.Conflicts, conflicts...)
+		result.Conflicts = sortedUnique(result.Conflicts)
+		return
+	}
+	completions := make(map[string]evidenceEnvelope)
+	for _, envelope := range evidenceEnvelopesByID(input, legacyIDs) {
+		if evidenceKindsEqual("completion_report", envelope.Kind) && envelope.TaskID != "" {
+			completions[envelope.TaskID] = envelope
+		}
+	}
+	progress := PlannedBuilderProgress(input)
+	for _, taskID := range batch {
+		if mode, canonical := canonicalTasks[taskID]; canonical {
+			progressForTask, projected := progress[taskID]
+			if !projected || !progressForTask.Canonical {
+				// The exact batch also includes TASK states omitted by the
+				// dispatch projection; those still need their original check.
+				progressForTask = canonicalProgressForTask(input, mustTaskRow(input.Snapshot.State, taskID), mode, canonicalTaskErrors[taskID])
+			}
+			if progressForTask.EvidenceID != "" {
+				result.EvidenceRefs = append(result.EvidenceRefs, progressForTask.EvidenceID)
+			} else {
+				result.Missing = append(result.Missing, "evidence:completion_report:"+taskID)
+			}
+			if !progressForTask.Integrated || progressForTask.State != workstate.Done {
+				missingKind := "integration_checkpoint"
+				if progressForTask.Canonical && strings.HasPrefix(progressForTask.Reason, "professional_closure_incomplete:") {
+					missingKind = "professional_closure"
+				}
+				result.Missing = append(result.Missing, missingKind+":"+taskID+":"+progressForTask.Reason)
+			}
+			continue
+		}
+		if HasDispatchPlan(input.Snapshot.State) {
+			p := progress[taskID]
+			if _, ok := completions[taskID]; !ok {
+				result.Missing = append(result.Missing, "evidence:completion_report:"+taskID)
+			}
+			if !p.Integrated || p.State != workstate.Done {
+				result.Missing = append(result.Missing, "integration_checkpoint:"+taskID+":"+p.Reason)
+			}
+		}
+	}
+	if HasDispatchPlan(input.Snapshot.State) {
+		result.EvidenceRefs = sortedUnique(result.EvidenceRefs)
+		result.Missing = sortedUnique(result.Missing)
 		if len(result.Missing) > 0 {
 			result.Status = StatusNotReady
 		}
 		return
 	}
-	completions := make(map[string]evidenceEnvelope)
-	for _, envelope := range evidenceEnvelopesByID(input, result.EvidenceRefs) {
-		if evidenceKindsEqual("completion_report", envelope.Kind) && envelope.TaskID != "" {
-			completions[envelope.TaskID] = envelope
-		}
-	}
 	integrated := verifiedIntegrationTaskIDs(input)
 	for _, taskID := range batch {
+		if _, canonical := canonicalTasks[taskID]; canonical {
+			continue
+		}
 		envelope, ok := completions[taskID]
 		if !ok {
 			result.Missing = append(result.Missing, "evidence:completion_report:"+taskID)
@@ -1173,9 +1376,43 @@ func applyBuilderBatchCompleteness(input Input, result *Evaluation) {
 		}
 	}
 	result.Missing = sortedUnique(result.Missing)
+	result.EvidenceRefs = sortedUnique(result.EvidenceRefs)
 	if len(result.Missing) > 0 {
 		result.Status = StatusNotReady
 	}
+}
+
+func stateWithoutCanonicalBuilderEvidence(state map[string]any, owners map[string]bool) map[string]any {
+	if len(owners) == 0 {
+		return state
+	}
+	copyState := make(map[string]any, len(state))
+	for key, value := range state {
+		copyState[key] = value
+	}
+	rows, _ := state["evidence"].([]any)
+	filtered := make([]any, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row != nil && evidenceKindsEqual("completion_report", stringValue(row["kind"])) {
+			for owner := range owners {
+				if containsAny(row["produced_by"], owner) {
+					row = nil
+					break
+				}
+			}
+		}
+		if row != nil {
+			filtered = append(filtered, raw)
+		}
+	}
+	copyState["evidence"] = filtered
+	return copyState
+}
+
+func mustTaskRow(state map[string]any, taskID string) map[string]any {
+	row, _, _ := uniqueEntityByID(state, "tasks", taskID)
+	return row
 }
 
 // executionBatchTasks returns the TR-003 exact execution batch: the task
@@ -1233,11 +1470,8 @@ func verifiedIntegrationTaskIDs(input Input) map[string]bool {
 		if json.Unmarshal(data, &checkpoint) != nil || checkpoint.TaskID == "" {
 			continue
 		}
-		switch checkpoint.State {
-		case "verified", "acknowledged", "cleanup_pending", "complete":
-			if checkpointMergeValid(input, checkpoint) {
-				integrated[checkpoint.TaskID] = true
-			}
+		if builderbatch.VerifiedCheckpointState(checkpoint.State) && checkpointMergeValid(input, checkpoint) {
+			integrated[checkpoint.TaskID] = true
 		}
 	}
 	return integrated

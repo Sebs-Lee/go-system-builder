@@ -12,6 +12,20 @@ This Skill is the operational core of **Layer 1** (the Main-session Driver).
 It is advisory: it shapes how the main session decides the next action. It is
 **not** authoritative on legality or current facts.
 
+Workers use their own Assignment's scope, required checks and closing contract.
+After their original Result is recorded, they await its consumer. Main applies
+DRIVE to integration, peer results and full stage coverage; global missing work
+does not extend a Worker's assignment. A concrete risk that blocks the Worker's
+acceptance uses the original BLOCKER route with evidence and impact. Recording
+a report does not prove required checks passed or bypass independent review.
+
+Loop responsibility progress uses the five statuses in
+[`docs/rules/state-machine.md`](../../docs/rules/state-machine.md#21-loop-responsibility-status).
+Stage gates, document/package status, professional outcomes, Runtime/CLI wire
+values, and host session events remain separate facts; use their exact current
+fields without treating `complete`, `ready`, or `consumed` as synonyms for
+responsibility `done`.
+
 | Concern | Authority |
 |:---|:---|
 | what is currently true | `.claude/loop-state.json` |
@@ -29,8 +43,8 @@ always the most-forward missing piece of work the current stage requires.
 |:---|:---|:---|
 | stage `done_when` predicate is false | "no transition qualifies, surface blocker" | produce the missing deliverable / evidence |
 | several compliant implementations exist | "surface A/B/C menu to user" | pick the lowest-risk reversible one per the autonomous decision rules and continue |
-| Hook returns Quality `not_ready` | "ask the human" | read the Recovery Packet missing list, produce the missing work, and let the next Hook re-evaluate |
-| subagent finishes one TASK | "wait for next instruction" | inventory the stage, pick the next missing piece, continue DRIVE() |
+| Hook reminder names missing work | "ask the human" | produce the named work and let the original consumer/gate evaluate it |
+| a responsibility attempt becomes `done` | "wait for next instruction" | inventory the stage, pick the next missing piece, continue DRIVE() |
 | transition requires evidence | "wait for evidence to appear" | do the work that produces the evidence |
 
 ## Entry Conditions
@@ -38,7 +52,6 @@ always the most-forward missing piece of work the current stage requires.
 - A locked REQ exists; its SHA-256 matches the Runtime baseline.
 - `.claude/loop-state.json` is readable and schema-valid.
 - The Loop Definition under `docs/control/loop-definition.json` is readable.
-- Hook policy health is `healthy`.
 
 If any entry condition fails, see "Stop conditions" below.
 
@@ -49,20 +62,20 @@ If any entry condition fails, see "Stop conditions" below.
 | Runtime status | `loop-harness status --root .` | coarse stage projection only — not live gate `missing[]` |
 | Next projection | `loop-harness next --root .` | coarse missing-work projection — not live gate checklist |
 | Ready diagnostics | `loop-harness ready --root .` | dry-run current Quality Gate (`missing[]`); never hand-push Transition from it |
-| Hook packet | PreToolUse / SessionStart Recovery Packet | authoritative live `quality_gate.missing` + candidate |
+| Hook context | PreToolUse / SessionStart / Stop reminder | current progress, exact questionnaire path, owner-specific missing work and next action |
 | Stage contract | `docs/control/agent-protocol.md#<current stage>` | the stage's `done_when`, `actions`, `failure_route` |
 | Bound locked REQ | `runtime.bound_req.path` | verify the locked baseline |
 | Evidence map | `runtime.evidence[]` | check validity per stage `done_when` |
 
-If the Hook packet or `loop-harness ready` returns a non-empty `missing[]`,
-the named missing work **is** the next action — that is not a blocker.
+If Hook context or `loop-harness ready` names missing work,
+the named work **is** the next action — that is not a tool blocker.
 `status`/`next` are coarse projections only; live checklist authority is the
-Hook packet or `ready`.
+original stage contract and domain gate, with Hook context as a reminder.
 
 ## Procedure
 
-Run this on every session start, Wake-up, subagent return, Safety
-`block`, Quality Gate `not_ready`, or tool result.
+Run this on session start, wake-up, subagent return, lifecycle reminder, or
+meaningful tool result.
 
 ```text
 DRIVE()
@@ -74,23 +87,28 @@ DRIVE()
    - Read the Runtime's Main Spine stage (S0–S11).
    - Read docs/control/agent-protocol.md#<stage> for done_when and actions.
 
-3. Inventory completed and open work for this stage.
-   - Prefer the Hook packet `quality_gate.missing[]`. When unclear, run
-     `loop-harness ready --root .` (diagnostics only).
+3. Inventory responsibility attempts by `pending` / `active` / `blocked` /
+   `done` / `cancelled`; separately inventory stage deliverables and valid
+   evidence from Hook context, Runtime, and artifacts.
+   - Use the Hook's current owner-specific reminder and exact answer path.
+     When the checklist is unclear, run `loop-harness ready --root .`
+     (diagnostics only).
    - Treat `status`/`next` as coarse projections, not live gate checklist.
    - Treat invalid evidence as missing; treat superseded evidence as not
      usable for this round.
 
 4. Pick the next action.
-   - If any Agent assignment is spawned, reading, or waiting for approval:
-     the next action = complete the Agent Activation Barrier below.
-   - If the stage's done_when is incomplete:
+   - If the Runtime shows a legacy Agent lifecycle value such as `spawned` or
+     `reading`, or an original approval is pending: use the Agent Activation
+     Barrier below. Those are Runtime/approval facts, not extra responsibility
+     statuses.
+   - If the stage's `done_when` is not satisfied:
      the next action = produce the most-forward missing deliverable or
-     evidence named by Hook/`ready` missing[].
+     evidence named by the Hook reminder or `ready` diagnostics.
    - Else:
-     the next action = produce nothing extra; the next PreToolUse
-     auto-commits the stage advance when the gate is satisfied.
-     Do not call `runtime transition`.
+     the next action = produce nothing extra; let the existing stage gate
+     and graph transition flow report or apply the legal next stage.
+     Do not bypass the original gate with a manual transition.
 
 5. Load the minimum context.
    - The current stage's direct upstream specs.
@@ -113,12 +131,12 @@ DRIVE()
      evidence fingerprint and validity.
 
 8. Let Hook advance when the stage is complete.
-   - When done_when is fully true / gate is satisfied, do not hand-push
-     `loop-harness runtime transition`. The next PreToolUse auto-commits
-     at most one allowlisted Transition.
+   - When the original `done_when` and domain gate are satisfied, let the
+     existing consumer and graph transition path report or apply the legal
+     advance. Do not hand-push `loop-harness runtime transition`.
 
 9. Loop.
-   - Re-read Hook packet (or `ready` if checklist unclear) and recompute.
+   - Re-read Hook progress context (or `ready` if the checklist is unclear) and recompute.
      Continue until a real stop condition.
 ```
 
@@ -127,20 +145,23 @@ DRIVE()
 Claude Code Agent Teams allow the same subagent to be woken repeatedly. The
 Driver therefore treats dispatch as a scheduling barrier, not as a passive
 wait. Once the main session delegates an assignment, the most-forward missing
-work is that Agent's plan checkpoint until the plan is recorded — then the
-Worker executes continuously in the same turn (no second approval gate in
-the default `plan_checkpoint` mode).
+work is the original role's professional plan answer or checkpoint. Use a
+generic PLAN_REPORT only when that role contract requires it (for example, S6
+Builders); ordinary S5/S7/S8 assignments use their exact domain questionnaire,
+and S9's PlanReport is itself the professional checkpoint. After the original
+consumer accepts that answer, the Worker continues without a second approval in
+the default `plan_checkpoint` mode.
 
 Apply this barrier before self-executing any stage work:
 
 | Agent lifecycle fact | Driver next action |
 |:---|:---|
-| assignment dispatched but no plan checkpoint | load `agent-dispatch`; the Worker sends PLAN_REPORT via SendMessage (`message_type=plan_report`) — the PostToolUse(SendMessage) observer records the checkpoint; the first product write is blocked until then |
-| PLAN_REPORT sent and aligned | stay silent — the Worker continues executing in the same turn; never reply with a "go ahead" approval |
+| assignment dispatched but no required checkpoint | follow the role contract: ask for a generic PLAN_REPORT only when required; otherwise the Worker fills and saves the exact domain questionnaire, which the original consumer projects |
+| required PLAN_REPORT sent and aligned | stay silent — the Worker continues executing in the same turn; never reply with a "go ahead" approval |
 | PLAN_REPORT drifted (scope/oracle/dependency) | send one CORRECTION to the same Agent; it continues the current assignment |
-| plan recorded, no Result yet | the Worker keeps executing; TeammateIdle/SubagentStop before the Result is blocked (exit 2) by the Hook |
-| Result registered (`reported`) | the Agent may idle; consume the Result — never let an idle teammate self-claim the next task |
-| Agent blocked with a valid blocker | idle is allowed; consume the blocker and repair the condition |
+| plan recorded, no Result yet | the Worker keeps executing; Stop/idle context reminds that same owner to save or report the missing Result and its exact delivery path |
+| Result registered (`reported`) | the Agent may idle; follow the original receiver or integration action without asking for a duplicate delivery — never let an idle teammate self-claim the next task |
+| Agent blocked with a valid blocker | idle is allowed; follow the original blocker owner/action and repair the condition |
 | Agent unrecoverable | re-dispatch a replacement from the shared Assignment + plan checkpoint; never create a second runtime truth |
 
 Rules:
@@ -151,8 +172,10 @@ Rules:
 - The main session must not implement, verify, or report the delegated
   responsibility while its Agent holds the assignment. To take the work back,
   first revoke the assignment or record an explicit reassignment.
-- A missing PLAN_REPORT is not a Human Gateway. Re-wake the Agent, collect
-  the plan, then continue DRIVE.
+- A missing required plan answer is not a Human Gateway. Re-wake the Agent and
+  follow the role's exact questionnaire or required PLAN_REPORT path, then
+  continue DRIVE. Do not request a duplicate generic PLAN_REPORT for a domain
+  questionnaire responsibility.
 - `plan_approval_required` is reserved for high-risk destructive work; only
   that mode waits for an explicit approval before mutation.
 
@@ -202,6 +225,65 @@ it matches `docs/control/agent-protocol.md`.
 `primary_skill` is the only method-naming field. Legacy `method` is rejected.
 Unknown Skill IDs are rejected.
 
+For a packet-enabled Runtime in `planning.design`, the Hook automatically
+prepares Main's S2 design questionnaire and gives its exact view and answer paths. Complete the architecture using `specification-planning`, then fill
+only the issued answer's explicit conclusion and architecture path. A successful
+Main save uses the original planning evidence consumer and original design gate.
+Use `stage-answer receipt --agent Main --packet <packet_id>` for the original
+receipt and `stage-answer recover --agent Main` for a pending system followup.
+Keep the original human amendment for unknown UI impact and the later independent
+review responsibilities. A design receipt does not authorize ending the project.
+
+For packet-enabled Main at `planning.contracts`, use the current S3 answer
+delivered by the Hook. It provides the exact view and answer paths, along with
+known or candidate output paths and templates. Do not submit it while the
+cursor is still `planning.design`, or copy S2's `architecture_path` or UI
+impact into it. Fill only the existing answer fields: `conclusion=pass`, the
+actual index path, all applicable contract paths for the bound REQ, and an
+explicit applicability decision and rationale for FE, BE and SYNC. A
+`required` area needs its contract; `not_applicable` needs a reason grounded in
+the REQ and registered S2 design. One answer covers one bound REQ index and
+its complete contract set. Historical and other REQ documents do not need to
+be repeated and cannot fill coverage for this REQ.
+
+Issuance freezes the locked REQ, registered S2 design inputs and conditional
+sources those inputs reference. It does not use the S3 index or contracts as
+their own issuance prerequisite. S3-created shared models and examples are
+outputs. On save, the original shared-model checker finds their full dependency
+closure and records it in the existing evidence subjects; an already frozen S2
+model remains unchanged. For outputs declared `git_tree`, first commit completed professional files to
+the bound development branch named by the Hook. S3 outputs can change in this
+entry. Save the supplied answer once; correct an unreceived answer at its original path.
+No manual issue/consume or parallel evidence envelope is needed. Progress feedback gives
+the exact answer path, concrete missing work and next action. Receipt/recovery
+commands are for diagnosing or resuming an explicitly pending system followup.
+
+The original consumer and gate run the contract/source checks and PTR-PLAN-02
+registers the current locked contract set when its full gate passes. A Main
+`pass` is not a gate result. Run `contracts check` or `scenario bridge` only to
+diagnose a specific reported failure; do not repeat checks already run by the
+consumer or gate. REQ or breaking decisions stay on their original human
+gateway, and S5's independent review remains separate. Same-content replay
+returns the original receipt; different content conflicts. The command/Hook/
+receipt/recovery mechanism has directed verification; live model consumption
+remains separate.
+
+In `planning.tasks`, use the Hook's exact view and answer paths, current REQ
+index path, TASK candidate paths and templates, frozen upstream inputs, bound
+Git branch, missing items, and next action. Main decides the TASK IDs and
+professional breakdown, completes the TASK/index outputs, marks TASK document
+statuses `complete` or `cancelled`, and commits Git-sourced outputs to the named
+branch. Keep the supplied REQ/S3 source closure frozen; do not replace a missing
+or stale registered source with a live workspace file. Fill the existing
+answer's `conclusion`, `index_path`, and complete `task_paths` once, then save
+it. The original consumer performs `tasks check`,
+projects planning evidence, and continues through its gate and `TR-002`. Use
+check output only for a specific diagnostic or professional judgment; do not
+add manual checks, envelopes, issue/consume, or recovery to the normal path.
+TASK document statuses remain separate from the shared work states. A pending
+followup continues through the original system path without resubmitting the
+answer. Explicit packet-off legacy Runtime flows retain their legacy procedure.
+
 ## Outputs
 
 A single turn of DRIVE produces one of:
@@ -228,194 +310,90 @@ Stop immediately and surface to the human if **any** of:
 - Business semantics cannot be derived from any upstream baseline →
   `unrecoverable_business_decision` Gateway.
 - An external permission the main session cannot obtain is required, and
-  every other work item is complete → `missing_external_permission` Gateway.
-- A Hook HS-* `block` decision arrives (`HOOK_LOCKED_ARTIFACT_WRITE`) and
-  the required new generation needs human amendment authority → form the
-  matching Gateway; the human is the only path forward. A
-  `HOOK_SQUASH_MERGE` block is not a Gateway — replace it with a normal
-  merge and continue.
+  every other required responsibility has a current `done` attempt, or its
+  original cancellation route confirms no replacement is required →
+  `missing_external_permission` Gateway.
+- The original workflow reaches a real human decision boundary, such as a
+  required REQ amendment or release approval → form the matching Gateway.
+  Hook reminders do not create that boundary or make a tool-permission
+  decision.
 
-A Gateway package must contain: type, completed work, the single fact the
-main session cannot resolve, impact scope, recommended decision, and the
-stage to resume from after the human acts.
+A Gateway package must contain: type, `completed work` (a concise evidence list
+of work already accepted or otherwise available, not a responsibility status),
+the single fact the main session cannot resolve, impact scope, recommended
+decision, and the stage to resume from after the human acts.
 
 ## Non-stop conditions (do not stop here)
 
 The following are **not** stop conditions:
 
-- Missing evidence (produce it; the Quality Gate `not_ready` missing list
-  names it).
-- A Quality Gate `not_ready` outcome (the original tool already proceeded;
-  drive forward by producing the missing work and let the next Hook
-  re-evaluate — no tool denial, no human Gateway).
-- A Quality `unknown` outcome with a stable `LOOP_*` code (follow the
-  code's recovery once and continue).
+- Missing evidence (produce the named work and let the original stage gate
+  evaluate it).
+- A missing item in Hook progress context (produce the work and follow the
+  original stage gate; the reminder is not a tool-permission decision).
+- An unclear or stale projection (use its original Runtime recovery path).
 - A failing test (route through `bug-resolution`).
-- A finished TASK or subagent (continue DRIVE at step 9).
+- A `done` responsibility attempt (continue DRIVE at step 9; this does not
+  make its stage or another owner's responsibility `done`).
 - Several compliant technical implementations (autonomous decision).
 - A `MISSING_DELIVERABLE` projection (the named missing work is the action).
-- A Recovery Packet from any other concern that used to be a Hook rule
-  (activation, scope, Team, UI prototype, clean round, subagent report,
-  teammate idle staleness): these flow as forward scheduling guidance, not
-  as PreToolUse denials.
+- A reminder about activation, scope, Team, UI prototype, clean round,
+  subagent report, or teammate idle staleness: use it as forward scheduling
+  guidance and follow the relevant original assignment or stage gate.
 - A `reader-bias verify-loop` — the imperative read/verify/recover/re-load
   steps (this Skill §"Procedure" DRIVE() steps 1–5; loop-template.md
   §Wake-up steps 1–6) are run reflexively even though prior-turn context
-  already names Hook/`ready` `missing[]` + its `primary_skill`. When the bound REQ,
+  already names the Hook reminder / `ready` diagnostics and its `primary_skill`. When the bound REQ,
   current stage, and next action are already established in this
   conversation history, **skip straight to DRIVE() step 6 (Execute the
   action)** — do not re-run the load sequence as a precondition gate.
   State-fresh execution is the default; the load sequence is the
   state-unknown fallback.
 
-## Hook Decision Processing (REQ-039 three-layer model)
+## Hook Context Processing
 
-Hook decisions arrive after every PreToolUse (and on the lifecycle events
-listed below). They are inputs to DRIVE; they do **not** advance the Main
-Spine on their own. The Driver reads the `quality_gate.status` and
-`safety.decision` fields and dispatches by effect:
+Hook events provide graph engineering context: they listen for progress,
+remind the responsible owner of the current questionnaire and next work, and
+report the graph's stage flow. PreToolUse does not authenticate the caller,
+grant path-specific tool access, or deny ordinary tool calls. Its context is
+not a professional acceptance or a substitute for the original stage gate.
 
-| Family | Classification | Examples | Driver path |
-|:---|:---|:---|:---|
-| Quality Gate (forward scheduling) | `quality_gate.not_ready` (or `satisfied` / `advanced` / `unknown`) | missing contract traceability, missing clean-round evidence, missing UI prototype | read Recovery Packet; original tool already proceeded; produce the named missing work and let next PreToolUse re-evaluate |
-| Safety (minimal policy) | `safety.block` | exact-path locked artifact write, squash merge | block current tool; surface rework / new-version / normal-merge path; no retry loop |
-| Lifecycle write | `transition_committed` / `transition_rejected` | S2→S3 advance, CAS retry | refresh Milestone if committed; on `transition_rejected` follow the stable `LOOP_*` error code |
-
-There is no longer a recoverable `deny` family, no `warn` family, no
-`HW-*` / `HA-*` taxonomy. Concerns that used to be Hook rules now flow as
-follows:
-
-| Removed concern | Where it lives now |
+| Hook context | Driver action |
 |:---|:---|
-| Agent plan checkpoint / dispatch | `agent-dispatch` Skill + Assignment lifecycle events |
-| Scope / permission expansion | Activation envelope revision, never a PreToolUse block |
-| Team required for subagent | `team-planning` Skill + SubagentStart guidance |
-| Policy tamper / self-evolution | Capability-controlled assignment, not a runtime rule |
-| UI prototype / clean round | Quality Gate preconditions, surfaced as `missing[]` |
-| Subagent report incomplete / teammate idle stale | SubagentStop / TeammateIdle guidance |
-| Runtime integrity | `LOOP_RUNTIME_INVALID` recovery code, no tool block |
+| Current questionnaire or exact answer path | Read the published requirements, fill the named answer, and save it through the existing answer path. Do not search Runtime or infer a path. |
+| Missing item or unsatisfied original gate | Produce the named work and evidence; let the original domain consumer and gate decide acceptance. |
+| Accepted answer with system followup pending | Do not submit the answer again; continue the original recovery/followup path. |
+| Stop/idle reminder for this owner's incomplete responsibility | Finish or report that responsibility, using its delivered answer/result path. Other owners' missing work does not reopen a completed responsibility. |
+| Stale or unreadable Runtime context | Follow the original Runtime recovery or human gateway when the source authority is genuinely unrecoverable. |
 
-Activation, scope, Team, UI prototype, clean round, subagent report and idle
-staleness are **not** permission gates any more; they are forward scheduling
-guidance surfaced via the Quality Gate, Transition Guard or Recovery
-Packet. Quality Gate `not_ready` permits the original tool action and lists
-the missing work the Agent should produce next; only a final Safety `block` or
-`deny` (locked-artifact write, squash merge, or protected-release command) may
-reject a tool call.
+Saving an answer still runs the original domain consumer, evidence and binding
+checks, and Writer/CAS. Only those original consumers produce acceptance facts;
+the Hook reminder itself does not register evidence, approve a professional
+judgment, or advance a stage. Stage transitions continue through the existing
+graph and transition path after their original prerequisites hold.
 
-This Skill describes how to process a Hook decision. It does **not** call
-Hook policy, write runtime, or set `runtime.lifecycle.state` — those are
-Hook and Harness responsibilities respectively. The Hook Adapter is
-stateless: `allow` permits the action, Quality `not_ready` permits the action
-and surfaces the missing list, and final Safety `block`/`deny` decisions cover
-locked-artifact writes, squash merges, and protected-release commands.
-`docs/control/hook-policy.json` defines the minimal Safety rule set; the
-surrounding policy shape is owned by BUG-039-01 and is no longer describing
-activation / scope / quality gates.
-
-### Decision type → Driver action
-
-| Hook outcome | PreToolUse protocol payload | Driver action | Retry? | Surfaces? |
-|:---|:---|:---|:---|:---|
-| `allow` | (no override) | continue DRIVE normally | n/a | n/a |
-| Quality `not_ready` | `permissionDecision="allow"` + `quality_gate.missing[]` | read Recovery Packet missing list, drive forward, re-evaluate on next Hook | n/a | no |
-| Quality `satisfied` / `advanced` | `permissionDecision="allow"` + transition result | continue DRIVE; refresh Milestone if `advanced` | n/a | no |
-| Quality `unknown` | `permissionDecision="allow"` + recovery code | follow the stable `LOOP_*` error code once, then continue | per code | no |
-| Safety `block`/`deny` (locked artifact, squash merge, protected release) | `permissionDecision="deny"` + `permissionDecisionReason` | do **not** retry in a loop; produce a new generation / amendment / normal-merge path, or stop at the human release boundary | **no** | yes — rework or documented Human Gateway |
-
-### Recovery Packet processing path
-
-For each Quality Gate `not_ready` the Hook emits a Recovery Packet that the
-Agent consumes as a human-readable plan. The original tool action has
-already proceeded; nothing is in a denial state.
-
-1. Read `quality_gate.gate_id`, `quality_gate.missing[]`, and
-   `quality_gate.candidate_transition`. The Agent treats the missing list
-   as the next forward work, not as a blocker.
-2. Confirm `safety.decision=allow` in the same packet. Quality Gate outcomes
-   are not tool permissions; ordinary Write / Edit / Bash / Task / Agent
-   calls continue even when `not_ready` is returned.
-3. Drive forward: execute the next tool calls that produce each missing
-   item. The Quality Gate re-evaluates on the next PreToolUse using the
-   stable `fingerprint`; no extra CLI invocation is required.
-4. When `transition_committed` arrives (e.g. design → contracts), refresh
-   the local view of `quality_gate.next_cursor` and continue DRIVE.
-5. If `transition_rejected` arrives, follow the stable `LOOP_*` error code
-   guidance (e.g. `LOOP_CAS_STALE` → one immediate re-read; `LOOP_GATE_UNKNOWN`
-   → wait for next event). Never retry blindly.
-6. A repeated `not_ready` for the same `fingerprint` is a no-op
-   (idempotency), not a Human Gateway.
-
-Activation / scope / Team / UI prototype / clean round / subagent report /
-teammate idle concerns are **not** part of this packet. They live in the
-`agent-dispatch` Skill, the team-manifest envelope, the
-SubagentStart / TeammateIdle Guidance, or the stage's `done_when` predicate
-— never as a Quality Gate denial. The Driver pulls them forward as normal
-scheduling work, not as a tool block.
-
-Safety `block`/`deny` decisions do not enter this recovery loop. The tool that was
-blocked must be replaced with the new-generation, amendment, or normal-merge
-equivalent. A protected-release command must stop at the human release
-boundary; it is never executed by the Harness. The Driver surfaces the
-rework path or hands off to the documented Human Gateway package when the path
-requires human authority.
-
-### HS-* processing path
-
-For each HS-* decision:
-
-1. Read `rule_id` and `reason`. Record in `.claude/hook-decisions.jsonl`
-   correlation context.
-2. **Do not retry the same call.** The Adapter has already denied the tool
-   call at the protocol layer. Read the rule's own `human_required` and
-   `retry` fields rather than assuming — `HOOK_LOCKED_ARTIFACT_WRITE` is
-   `human_required=true`, `retry="never"`, while `HOOK_SQUASH_MERGE`
-   is `human_required=false`, `retry="rerun after recovery validation"`.
-3. Take the rule's recovery path:
-   - `HOOK_LOCKED_ARTIFACT_WRITE` → write a new generation under the
-     canonical root for its kind: `docs/requirements/` for `req`,
-     `docs/dev/contracts/` for `contract`, `docs/dev/tasks/` for `task` or a
-     dispatch plan, `docs/architecture/` for architecture documents,
-     `docs/design/` for design/UI baselines, or `docs/design/prototypes/` for
-     UI prototypes, followed by `versions/{REQ-ID}/g{N+1}/{canonical-file-name}`.
-     Unknown kinds require the formal rework path. If changing the locked
-     baseline needs human amendment authority, form a `req_amendment` Gateway.
-   - `HOOK_SQUASH_MERGE` → re-issue as a normal merge without `--squash`.
-     No Gateway.
-4. A Gateway package, when one is required, must contain: type, completed
-   work, the single fact the main session cannot resolve (the locked
-   artifact needs an amendment the Agent cannot authorize), impact scope,
-   recommended decision, and the stage to resume from after the human acts.
-
-Protected-release operations (`git push <remote> master|main`, `gh pr merge`,
-`gh release create`, and the other commands matched by
-`docs/control/protected-commands.json`) receive a PreToolUse Hook
-`permissionDecision="deny"`. The S11 release-ready Gateway and human approval
-remain the authorization workflow; the Harness does not perform merge,
-publication, deployment, or formal release side effects.
+The Driver does not perform merge, publication, deployment, or formal release
+side effects. A real release or REQ amendment still requires its original human
+decision and domain gate; a Hook event does not enforce those boundaries by
+per-tool denial.
 
 ### What this Skill does NOT do
 
-- It does **not** call Hook policy.
-- It does **not** invoke `loop-harness` commands to "request" Hook decisions
-  or trigger TR-xxx.
+- It does **not** decide tool permissions or invoke policy checks.
 - It does **not** modify `.claude/loop-state.json` directly — the Harness
   transition engine is the sole writer.
-- It does **not** retry a Safety `block`/`deny`; severity comes from the Safety
-  decision itself, not retry count.
-- It does **not** treat Quality `not_ready` as a Human Gateway; the Agent
-  produces the missing work forward and lets the next Hook re-evaluate.
-- It does **not** block ordinary tool calls on activation / scope / Team /
-  UI prototype / clean round concerns; those flow as forward scheduling
-  guidance, not as PreToolUse denials.
+- It does **not** treat a Hook reminder or saved questionnaire as professional
+  acceptance; only the original consumer and stage gate record those facts.
+- It does **not** bypass actual human decisions, original domain validation,
+  or required evidence by taking a different tool path.
 
 ## Non-Goals
 
 ## Exit Conditions
 
 - The current turn produced and verified the next required deliverable, or
-  left evidence that lets the next PreToolUse auto-commit a legal stage
-  advance, then recomputed the next action.
+  left it saved for the original consumer/gate to evaluate; then recomputed
+  the next action from current progress context.
 - Automation reached a documented Human Gateway or a recoverable pause
   checkpoint.
 
@@ -444,28 +422,30 @@ Before creating any entity, check the Runtime for an existing match.
 
 ## User-visible progress
 
-The recovery packet is a scheduling checkpoint, not a work report. At the
+Hook progress context is a scheduling reminder, not a work report. At the
 start of work, after a meaningful deliverable, on a blocker or change of
 approach, and approximately every 60 seconds during sustained work, tell the
-user briefly what has completed, what action is underway, and what comes
-next. Use the user's language. Do not narrate every tool call or expose
+user briefly what deliverable or evidence is now accepted, what action is
+underway, and what comes next. Use the user's language. Do not narrate every
+tool call or expose
 internal reasoning. Report only observed results: a revision increment, an
 intended action, or a repeated Hook message is not evidence of progress.
 
 Hook `systemMessage` is a user notice; model recovery instructions belong in
 `hookSpecificOutput.additionalContext` for supported events. Full recovery
 context is retained at session/agent start and stage transitions. Ordinary
-PreToolUse calls provide the current gate conflicts, missing work, and a
-compact checkpoint. Repeated user notices may be suppressed within one
-session/agent, but safety denials and model context must never be suppressed.
-A Worker plan checkpoint requiring no approval does not silence progress
-reports to the user.
+PreToolUse calls provide the current owner responsibilities, exact questionnaire
+path, missing work, and a compact checkpoint. Keep the exact path intact when
+summarizing. Repeated user notices may be suppressed within one session/agent,
+but model context and a Stop reminder for that owner's own missing Result must
+remain available. A Worker plan checkpoint requiring no approval does not
+silence progress reports to the user.
 
 ## Technical barriers and progress
 
-A Worker blocked from its next action does not automatically mean the human must decide. Resolve missing task ownership, dependency mistakes, overlapping writes and reviewer independence through existing planning/assignment paths before escalating. Stop unsafe writes, not all unrelated work. An explicit human-boundary command still requires its actual authorization; advisory autonomy never manufactures human_decision evidence.
+A Worker missing its next action does not automatically mean the human must decide. Resolve missing task ownership, dependency mistakes, overlapping writes and reviewer independence through existing planning/assignment paths before escalating. If a change requires amendment or another human decision, follow that original route; ordinary tools remain available while work is prepared. Advisory guidance never manufactures `human_decision` evidence.
 
-When a command response or Hook already supplies a current next_action and the relevant artifact identity, execute it without another full status/read cycle. Refresh on restart, conflicting external updates, stale CAS, missing context or a contradictory checkpoint. Progress is a completed deliverable, resolved assertion or new discriminating evidence, not Runtime revision churn, file timestamps or tool count. Repeated unchanged failures require diagnosis; normal long-running checks remain legitimate. Use the dispatch Skill's bounded waiting and evidence reuse rules.
+When a command response or Hook already supplies a current next_action and the relevant artifact identity, execute it without another full status/read cycle. Refresh on restart, conflicting external updates, stale CAS, missing context or a contradictory checkpoint. Progress evidence is an accepted deliverable, resolved assertion or new discriminating evidence, not Runtime revision churn, file timestamps or tool count. Repeated unchanged failures require diagnosis; normal long-running checks remain legitimate. Use the dispatch Skill's bounded waiting and evidence reuse rules.
 
 ## Routine repair authority
 

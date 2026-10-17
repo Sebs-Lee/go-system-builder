@@ -1,0 +1,471 @@
+package workpacket
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"reflect"
+	"regexp"
+	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/identity"
+	"github.com/entroforge/go-system-builder/internal/schema"
+)
+
+const reviewResultTemplateID = "s7-review-result-v1"
+
+var (
+	reviewResultIDRE = regexp.MustCompile(`^review-result-[A-Za-z0-9._-]+$`)
+	reviewClaimIDRE  = regexp.MustCompile(`^claim-[A-Za-z0-9._-]+$`)
+	reviewPlanIDRE   = regexp.MustCompile(`^review-plan-[A-Za-z0-9._-]+$`)
+	reviewAssignIDRE = regexp.MustCompile(`^assignment-[A-Za-z0-9._-]+$`)
+)
+
+// ReviewResultBinding is the closed, machine supplied S7 issuance identity.
+// The workpacket package deliberately has no dependency on review's Plan or
+// Result types; the original review writer derives this value from its pinned
+// Plan and registered Assignment.
+type ReviewResultBinding struct {
+	RuntimeID                  string   `json:"runtime_id"`
+	BaselineGeneration         int      `json:"baseline_generation"`
+	ReviewPlanID               string   `json:"review_plan_id"`
+	ReviewPlanRef              string   `json:"review_plan_ref"`
+	ReviewPlanSHA256           string   `json:"review_plan_sha256"`
+	ReviewPlanRevision         int      `json:"review_plan_revision"`
+	ReviewRound                int      `json:"review_round"`
+	AssignmentID               string   `json:"assignment_id"`
+	AssignmentSHA256           string   `json:"assignment_sha256"`
+	OwnerAgentID               string   `json:"owner_agent_id"`
+	ClaimIDs                   []string `json:"claim_ids"`
+	SubjectDigest              string   `json:"subject_digest"`
+	VerificationArtifactDigest *string  `json:"verification_artifact_digest"`
+}
+
+// ReviewResultInputs copies only the already frozen questions and subject
+// set. RawMessage retains their complete original JSON shape without importing
+// the S7 review domain package into this neutral projection package.
+type ReviewResultInputs struct {
+	Claims         json.RawMessage `json:"claims"`
+	FrozenSubjects json.RawMessage `json:"frozen_subjects"`
+}
+
+func (inputs *ReviewResultInputs) UnmarshalJSON(data []byte) error {
+	if err := ValidateUniqueJSON(data); err != nil {
+		return err
+	}
+	type wire ReviewResultInputs
+	var decoded wire
+	if err := decodeOneStrictJSON(data, &decoded); err != nil {
+		return err
+	}
+	claims, err := canonicalJSON(decoded.Claims)
+	if err != nil {
+		return fmt.Errorf("S7 packet Claims: %w", err)
+	}
+	subjects, err := canonicalJSON(decoded.FrozenSubjects)
+	if err != nil {
+		return fmt.Errorf("S7 packet frozen subjects: %w", err)
+	}
+	*inputs = ReviewResultInputs{Claims: claims, FrozenSubjects: subjects}
+	return nil
+}
+
+type ReviewResultDraft struct {
+	Title       string              `json:"title"`
+	Instruction string              `json:"instruction"`
+	Read        []ReadItem          `json:"read"`
+	Questions   map[string]Question `json:"questions"`
+	Answer      json.RawMessage     `json:"answer"`
+}
+
+func (draft *ReviewResultDraft) UnmarshalJSON(data []byte) error {
+	if err := ValidateUniqueJSON(data); err != nil {
+		return err
+	}
+	type wire ReviewResultDraft
+	var decoded wire
+	if err := decodeOneStrictJSON(data, &decoded); err != nil {
+		return err
+	}
+	answer, err := canonicalJSON(decoded.Answer)
+	if err != nil {
+		return fmt.Errorf("S7 packet professional draft answer: %w", err)
+	}
+	decoded.Answer = answer
+	*draft = ReviewResultDraft(decoded)
+	return nil
+}
+
+// ReviewResultPacket is an immutable, neutral S7 authoring projection.
+// ResultID and IssuanceEventID are derived from ID and are intentionally not
+// inputs to the packet identity hash.
+type ReviewResultPacket struct {
+	ID              string              `json:"packet_id"`
+	TemplateID      string              `json:"template_id"`
+	TemplateSHA     string              `json:"template_sha256"`
+	Binding         ReviewResultBinding `json:"binding"`
+	Inputs          ReviewResultInputs  `json:"inputs"`
+	ResultID        string              `json:"result_id"`
+	IssuanceEventID string              `json:"issuance_event_id"`
+	ViewPath        string              `json:"view_path"`
+	AnswerPath      string              `json:"answer_path"`
+	Draft           ReviewResultDraft   `json:"draft"`
+}
+
+// BuildReviewResult constructs the stable S7 questionnaire from a trusted
+// current Plan/Assignment projection. It validates the supplied Claim IDs
+// against the frozen question JSON and derives all identifiers and paths.
+func BuildReviewResult(binding ReviewResultBinding, inputs ReviewResultInputs) (ReviewResultPacket, error) {
+	binding = cloneReviewResultBinding(binding)
+	if err := validateReviewResultBinding(binding); err != nil {
+		return ReviewResultPacket{}, err
+	}
+	canonicalInputs, claimMethods, err := canonicalReviewResultInputs(binding, inputs)
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	templateBytes, err := schema.ReadAsset("stage-form-s7-template.json")
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	var template struct {
+		SchemaVersion string              `json:"schema_version"`
+		Stage         string              `json:"stage"`
+		Adapter       string              `json:"adapter"`
+		Title         string              `json:"title"`
+		Instruction   string              `json:"instruction"`
+		Questions     map[string]Question `json:"questions"`
+	}
+	if err := decodeOneJSON(templateBytes, &template); err != nil || template.SchemaVersion != "1.0.0" || template.Stage != "S7" || template.Adapter != "review_result" || template.Title == "" || template.Instruction == "" || len(template.Questions) != 8 {
+		return ReviewResultPacket{}, fmt.Errorf("unregistered S7 ReviewResult template")
+	}
+	templateSHA := Digest(templateBytes)
+	identityData, err := json.Marshal(struct {
+		Binding     ReviewResultBinding `json:"binding"`
+		Inputs      ReviewResultInputs  `json:"inputs"`
+		TemplateSHA string              `json:"template_sha256"`
+	}{binding, canonicalInputs, templateSHA})
+	if err != nil {
+		return ReviewResultPacket{}, fmt.Errorf("encode S7 packet identity: %w", err)
+	}
+	packetHash := Digest(identityData)
+	packetID := "packet-" + packetHash
+	base := fmt.Sprintf("%s/g%d/S7/r%d/%s/%s", binding.RuntimeID, binding.BaselineGeneration, binding.ReviewRound, binding.AssignmentID, packetID)
+	answer := makeReviewResultDraftAnswer(binding.ClaimIDs, claimMethods)
+	if binding.VerificationArtifactDigest != nil {
+		answer["verification_artifact_digest"] = *binding.VerificationArtifactDigest
+	}
+	answerBytes, err := json.Marshal(answer)
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	canonicalAnswer, err := canonicalJSON(answerBytes)
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	read := make([]ReadItem, 0)
+	var subjects []reviewPacketSubject
+	if err := json.Unmarshal(canonicalInputs.FrozenSubjects, &subjects); err != nil {
+		return ReviewResultPacket{}, fmt.Errorf("decode S7 frozen subjects: %w", err)
+	}
+	for _, subject := range subjects {
+		read = append(read, ReadItem{Path: subject.Path, Purpose: "Use this source frozen by the current ReviewPlan while answering the assigned Claims."})
+	}
+	packet := ReviewResultPacket{
+		ID: packetID, TemplateID: reviewResultTemplateID, TemplateSHA: templateSHA,
+		Binding: binding, Inputs: canonicalInputs,
+		ResultID:        "review-result-" + packetHash,
+		IssuanceEventID: "evt-review-result-packet-" + packetID,
+		ViewPath:        ".claude/work-packets/" + base + ".json",
+		AnswerPath:      ".claude/submissions/" + base + "/" + binding.OwnerAgentID + "/answer.json",
+		Draft:           ReviewResultDraft{Title: template.Title, Instruction: template.Instruction, Read: read, Questions: template.Questions, Answer: canonicalAnswer},
+	}
+	if !reviewResultIDRE.MatchString(packet.ResultID) {
+		return ReviewResultPacket{}, fmt.Errorf("derived ReviewResult ID is invalid")
+	}
+	packetBytes, err := json.Marshal(packet)
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("review-result-work-packet.schema.json", packetBytes); err != nil {
+		return ReviewResultPacket{}, fmt.Errorf("generated S7 ReviewResult packet violates its registered schema: %w", err)
+	}
+	return packet, nil
+}
+
+// RebuildReviewResult reconstructs every machine-controlled field from the
+// embedded template and frozen packet inputs. Consumers compare the returned
+// packet with the durable row to reject edited issue views.
+func RebuildReviewResult(old ReviewResultPacket) (ReviewResultPacket, error) {
+	return BuildReviewResult(old.Binding, old.Inputs)
+}
+
+// ReviewResultPacketDigest returns the canonical SHA-256 of the complete
+// packet, including derived IDs, paths, and the generated draft.
+func ReviewResultPacketDigest(packet ReviewResultPacket) (string, error) {
+	rebuilt, err := RebuildReviewResult(packet)
+	if err != nil {
+		return "", err
+	}
+	if !reflect.DeepEqual(packet, rebuilt) {
+		return "", fmt.Errorf("S7 ReviewResult packet differs from its canonical rebuild")
+	}
+	data, err := json.Marshal(rebuilt)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := canonicalJSON(data)
+	if err != nil {
+		return "", err
+	}
+	return Digest(canonical), nil
+}
+
+// ValidateReviewResultAnswer validates a complete authoring file, preserving
+// the immutable machine questionnaire and returning only its canonical
+// professional answer object. Domain-specific evidence and Finding checks
+// remain with review.SubmitResult.
+func ValidateReviewResultAnswer(packet ReviewResultPacket, data []byte) (json.RawMessage, []FieldError) {
+	issue := func(pointer, expected, observed string) (json.RawMessage, []FieldError) {
+		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，只填写 answer 中的专业判断与观察。"}}
+	}
+	if len(data) > 20<<20 {
+		return issue("/", "JSON <= 20 MiB", "oversized")
+	}
+	if err := ValidateUniqueJSON(data); err != nil {
+		return issue("/", "unique JSON keys", err.Error())
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s7.schema.json", data); err != nil {
+		return issue("/", "registered closed S7 ReviewResult answer", err.Error())
+	}
+	var draft ReviewResultDraft
+	if err := decodeOneStrictJSON(data, &draft); err != nil {
+		return issue("/", "one closed S7 ReviewResult questionnaire", err.Error())
+	}
+	expected, err := RebuildReviewResult(packet)
+	if err != nil || !reflect.DeepEqual(packet, expected) {
+		return issue("/", "canonical issued S7 packet", "packet identity differs")
+	}
+	answer := draft.Answer
+	draft.Answer = expected.Draft.Answer
+	if !reflect.DeepEqual(draft, expected.Draft) {
+		return issue("/", "unchanged issued machine fields", "questionnaire or binding was edited")
+	}
+	canonicalAnswer, err := canonicalJSON(answer)
+	if err != nil {
+		return issue("/answer", "one JSON answer object", err.Error())
+	}
+	if pointer, expected, observed := validateCompleteReviewResultAnswer(packet.Binding, canonicalAnswer); pointer != "" {
+		return issue(pointer, expected, observed)
+	}
+	return json.RawMessage(canonicalAnswer), nil
+}
+
+func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte) (pointer, expected, observed string) {
+	var answer struct {
+		ClaimResults []struct {
+			ClaimID    string  `json:"claim_id"`
+			Conclusion *string `json:"conclusion"`
+			Observed   string  `json:"observed"`
+		} `json:"claim_results"`
+		BlockedClaims []struct {
+			ClaimID string `json:"claim_id"`
+		} `json:"blocked_claims"`
+		VerificationArtifactDigest *string `json:"verification_artifact_digest"`
+		Verdict                    *string `json:"verdict"`
+	}
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return "/answer", "valid professional fields", err.Error()
+	}
+	want := make(map[string]bool, len(binding.ClaimIDs))
+	for _, id := range binding.ClaimIDs {
+		want[id] = true
+	}
+	seen := map[string]bool{}
+	for i, claim := range answer.ClaimResults {
+		if !want[claim.ClaimID] || seen[claim.ClaimID] {
+			return fmt.Sprintf("/answer/claim_results/%d/claim_id", i), "one assigned Claim ID", claim.ClaimID
+		}
+		seen[claim.ClaimID] = true
+		if claim.Conclusion == nil {
+			return fmt.Sprintf("/answer/claim_results/%d/conclusion", i), "explicit pass or fail conclusion", "unanswered"
+		}
+		if strings.TrimSpace(claim.Observed) == "" {
+			return fmt.Sprintf("/answer/claim_results/%d/observed", i), "actual observation", "empty"
+		}
+	}
+	for i, blocked := range answer.BlockedClaims {
+		if !want[blocked.ClaimID] || seen[blocked.ClaimID] {
+			return fmt.Sprintf("/answer/blocked_claims/%d/claim_id", i), "one assigned Claim ID not otherwise answered", blocked.ClaimID
+		}
+		seen[blocked.ClaimID] = true
+	}
+	for _, id := range binding.ClaimIDs {
+		if !seen[id] {
+			return "/answer/claim_results", "each frozen Claim answered exactly once", "missing " + id
+		}
+	}
+	if answer.Verdict == nil {
+		return "/answer/verdict", "explicit professional Result verdict", "unanswered"
+	}
+	if binding.VerificationArtifactDigest != nil && (answer.VerificationArtifactDigest == nil || *answer.VerificationArtifactDigest != *binding.VerificationArtifactDigest) {
+		return "/answer/verification_artifact_digest", "digest matching the issued ReviewPlan binding", "missing or different"
+	}
+	return "", "", ""
+}
+
+func makeReviewResultDraftAnswer(claimIDs []string, methods map[string]string) map[string]any {
+	claimResults := make([]any, 0, len(claimIDs))
+	for _, id := range claimIDs {
+		claimResults = append(claimResults, map[string]any{
+			"claim_id": id, "conclusion": nil, "method": methods[id], "observed": "", "evidence_refs": []string{},
+		})
+	}
+	return map[string]any{
+		"claim_results":                claimResults,
+		"blocked_claims":               []any{},
+		"checks":                       []any{},
+		"findings":                     []any{},
+		"deviations":                   []string{},
+		"site_lost":                    []any{},
+		"verification_artifact_digest": nil,
+		"verdict":                      nil,
+	}
+}
+
+type reviewPacketClaim struct {
+	ClaimID string `json:"claim_id"`
+	Method  string `json:"method"`
+}
+
+type reviewPacketSubject struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Kind   string `json:"kind,omitempty"`
+}
+
+func validateReviewResultBinding(binding ReviewResultBinding) error {
+	if !safeComponent(binding.RuntimeID) || binding.BaselineGeneration < 0 ||
+		!validReviewPlanID(binding.ReviewPlanID) || !safeRelative(binding.ReviewPlanRef) || binding.ReviewPlanRef == "." ||
+		!digestPattern.MatchString(binding.ReviewPlanSHA256) || binding.ReviewPlanRevision < 1 || binding.ReviewRound < 1 ||
+		!validReviewAssignmentID(binding.AssignmentID) || !digestPattern.MatchString(binding.AssignmentSHA256) ||
+		!safeComponent(binding.OwnerAgentID) || !digestPattern.MatchString(binding.SubjectDigest) || len(binding.ClaimIDs) == 0 || len(binding.ClaimIDs) > 256 {
+		return fmt.Errorf("S7 ReviewResult requires a complete pinned Plan and Assignment binding")
+	}
+	if err := identity.ValidateAgentID(binding.OwnerAgentID); err != nil {
+		return fmt.Errorf("S7 ReviewResult owner: %w", err)
+	}
+	if binding.VerificationArtifactDigest != nil && !digestPattern.MatchString(*binding.VerificationArtifactDigest) {
+		return fmt.Errorf("S7 verification artifact digest is invalid")
+	}
+	seen := map[string]bool{}
+	for _, id := range binding.ClaimIDs {
+		if !reviewClaimIDRE.MatchString(id) || seen[id] {
+			return fmt.Errorf("S7 ReviewResult Claim IDs must be valid, unique, and ordered from the Assignment")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+func canonicalReviewResultInputs(binding ReviewResultBinding, inputs ReviewResultInputs) (ReviewResultInputs, map[string]string, error) {
+	claimsJSON, err := canonicalJSON(inputs.Claims)
+	if err != nil || len(claimsJSON) > 4<<20 {
+		return ReviewResultInputs{}, nil, fmt.Errorf("S7 Claim input must be valid JSON no larger than 4 MiB")
+	}
+	subjectsJSON, err := canonicalJSON(inputs.FrozenSubjects)
+	if err != nil || len(subjectsJSON) > 8<<20 {
+		return ReviewResultInputs{}, nil, fmt.Errorf("S7 frozen subjects must be valid JSON no larger than 8 MiB")
+	}
+	var claims []reviewPacketClaim
+	if err := decodeOneJSON(claimsJSON, &claims); err != nil || len(claims) != len(binding.ClaimIDs) {
+		return ReviewResultInputs{}, nil, fmt.Errorf("S7 frozen Claims must exactly match the Assignment Claim set")
+	}
+	methods := make(map[string]string, len(claims))
+	for i, claim := range claims {
+		if claim.ClaimID != binding.ClaimIDs[i] || !reviewClaimIDRE.MatchString(claim.ClaimID) || strings.TrimSpace(claim.Method) == "" {
+			return ReviewResultInputs{}, nil, fmt.Errorf("S7 frozen Claim order/identity differs from the Assignment at index %d", i)
+		}
+		methods[claim.ClaimID] = claim.Method
+	}
+	var subjects []reviewPacketSubject
+	if err := decodeOneJSON(subjectsJSON, &subjects); err != nil || len(subjects) == 0 || len(subjects) > 16384 {
+		return ReviewResultInputs{}, nil, fmt.Errorf("S7 frozen subject set must be a bounded non-empty array")
+	}
+	seen := map[string]bool{}
+	for _, subject := range subjects {
+		key := subject.Path + "\x00" + subject.Kind
+		if !safeRelative(subject.Path) || subject.Path == "." || !digestPattern.MatchString(subject.SHA256) || seen[key] {
+			return ReviewResultInputs{}, nil, fmt.Errorf("S7 frozen subject identity is invalid or duplicated")
+		}
+		seen[key] = true
+	}
+	return ReviewResultInputs{Claims: json.RawMessage(claimsJSON), FrozenSubjects: json.RawMessage(subjectsJSON)}, methods, nil
+}
+
+func cloneReviewResultBinding(binding ReviewResultBinding) ReviewResultBinding {
+	binding.ClaimIDs = append([]string(nil), binding.ClaimIDs...)
+	if binding.VerificationArtifactDigest != nil {
+		copyDigest := *binding.VerificationArtifactDigest
+		binding.VerificationArtifactDigest = &copyDigest
+	}
+	return binding
+}
+
+func validReviewPlanID(value string) bool {
+	return reviewPlanIDRE.MatchString(value)
+}
+
+func validReviewAssignmentID(value string) bool {
+	return reviewAssignIDRE.MatchString(value)
+}
+
+func canonicalJSON(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty JSON")
+	}
+	if err := ValidateUniqueJSON(data); err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, fmt.Errorf("trailing JSON value")
+		}
+		return nil, err
+	}
+	return json.Marshal(value)
+}
+
+func decodeOneJSON(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected one JSON value")
+	}
+	return nil
+}
+
+func decodeOneStrictJSON(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected one JSON value")
+	}
+	return nil
+}

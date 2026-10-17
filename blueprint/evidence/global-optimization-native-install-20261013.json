@@ -1,0 +1,46 @@
+{
+  "package_sha256": "39fb372d030463bc928347dd2f44a70a743a997e8f9f36208edffa1cf0f5bc45",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "package_files": 205,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "installed_receipt_files_verified": 207,
+      "doctor": true,
+      "validate_all": true,
+      "installed_release_graph": true,
+      "docs": true,
+      "s0_session_start_wire": true,
+      "no_s5_authority_error": true,
+      "no_issued_or_received_work": true,
+      "old_actual_write_refused": true,
+      "pair_unchanged": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "installed_receipt_files_verified": 207,
+      "doctor": true,
+      "validate_all": true,
+      "installed_release_graph": true,
+      "docs": true,
+      "s0_session_start_wire": true,
+      "no_s5_authority_error": true,
+      "no_issued_or_received_work": true,
+      "old_actual_write_refused": true,
+      "pair_unchanged": true
+    }
+  ],
+  "claude_version": "2.1.278",
+  "claude_logged_in": false,
+  "real_claude_delivery": "not_executed",
+  "scope": "native installation, format compatibility and synthetic official S0 Hook wire; no real Claude professional review",
+  "legacy_source_revision": "85ea968",
+  "release_version": "v0.0.0-optimization-local",
+  "platform": "linux/amd64",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-optimization-install-asqxxusa",
+  "temporary_artifacts_may_expire": true
+}

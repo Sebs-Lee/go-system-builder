@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -49,6 +50,27 @@ func runS7ManifestDraft(root, assignmentID, out string, stdout io.Writer) int {
 	for _, note := range notes {
 		fmt.Fprintf(stdout, "note: %s\n", note)
 	}
-	fmt.Fprintf(stdout, "next: replace every TODO(planner) marker — especially `agent_id` with the real platform Agent identity — then dispatch with `runtime register-workgroup --manifest %s --task-id <TASK> --task <path>`; registration rejects authoring placeholders\n", out)
+	fmt.Fprintln(stdout, "next: Main chooses agent_id (Reviewer dispatch name string), platform_team_id (logical dispatch group label string) and professional responsibility choices; no opaque platform identity lookup is required. registration rejects authoring placeholders. validation is draft preparation metadata, not evidence of a professional PASS.")
+	if out == "" {
+		fmt.Fprintln(stdout, "preparation gap: save the manifest with --out before selecting a registration command.")
+		return 0
+	}
+	rootAbs, rootErr := filepath.Abs(root)
+	manifestAbs, manifestErr := filepath.Abs(out)
+	if rootErr != nil || manifestErr != nil {
+		fmt.Fprintln(stdout, "preparation gap: cannot resolve the actual root or saved manifest path.")
+		return 0
+	}
+	candidates := 0
+	for _, doc := range draft.Documents {
+		if !strings.HasPrefix(doc.ID, "TASK-") || doc.Path == "" {
+			continue
+		}
+		candidates++
+		fmt.Fprintf(stdout, "Main TASK choice %s (%s), after completing the draft: %s runtime register-workgroup --root %s --manifest %s --task-id %s --task %s\n", doc.ID, doc.Path, s7CaptureShellQuote(filepath.Join(rootAbs, ".claude/bin/loop-harness")), s7CaptureShellQuote(rootAbs), s7CaptureShellQuote(manifestAbs), s7CaptureShellQuote(doc.ID), s7CaptureShellQuote(doc.Path))
+	}
+	if candidates == 0 {
+		fmt.Fprintln(stdout, "preparation gap: no current-generation registered TASK document with an ID/path; Main must restore the TASK source before registration.")
+	}
 	return 0
 }

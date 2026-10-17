@@ -1,0 +1,220 @@
+{
+  "evidence_id": "s9-disposable-release-install-20261014",
+  "generated_at_utc": "2026-10-14",
+  "purpose": "Local disposable release/install validation only; no publish, tag, commit, or current-project install.",
+  "source_snapshot": {
+    "repository": "/home/sebs/go-system-builder",
+    "release_version_label": "s9-issued-plan-report-review",
+    "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+    "source_dirty": true,
+    "included_uncommitted_changes": [
+      "Linux-owned-check permission observation helper split into Linux implementation and non-Linux unavailable stub; Linux behavior unchanged.",
+      "Removed source-only blueprint evidence links from docs/workspace-integration.md and skills/agent-dispatch/SKILL.md; clarified those records stay in the source repository."
+    ],
+    "artifact_sha256": "8d867908cd3bd2ccf4472bc8bcfc42a57e5fcdac0279605e2f87c2b13514269e",
+    "note": "The tarball hash identifies the exact built artifact; source_revision alone does not identify the dirty working-tree inputs."
+  },
+  "release_manifest": {
+    "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review/release-manifest.json",
+    "sha256": "522d2806faed72a26fe1d766146867ab5565386d5caa69f846a8aaaf16656bcc",
+    "release_version": "s9-issued-plan-report-review",
+    "files": 206,
+    "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+    "source_dirty": true,
+    "platform_acceptance": "not_attested_by_packaging",
+    "claude_reference_version": "2.1.276"
+  },
+  "temporary_paths": {
+    "task_temp_root": "/home/sebs/.cache/gsb-adapter-work-mp771m5c",
+    "failed_cross_platform_attempt": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-01",
+    "failed_release_graph_attempt": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-02",
+    "successful_run_root": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03",
+    "tarball": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz",
+    "extracted_release_root": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review",
+    "installed_project_root": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project",
+    "retained": true
+  },
+  "environment": {
+    "TMPDIR": "/home/sebs/.cache/gsb-adapter-work-mp771m5c",
+    "GOCACHE": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/eval-build-cache",
+    "GOPROXY": "off",
+    "GOMAXPROCS": "2"
+  },
+  "commands": [
+    {
+      "stage": "adapter_targeted_race",
+      "argv": [
+        "go",
+        "test",
+        "-race",
+        "./internal/submission",
+        "./internal/cli",
+        "./internal/hookctx",
+        "./internal/policy",
+        "-run",
+        "^(TestSavedRepairPlanReportHookRejectsUnissuedPathWithoutRuntimeWrite|TestStageAnswerTerminalConsumeCannotTrustAgentFlagForS9|TestS9RepairAssignmentUsesPointerOwnerAndExactRegisteredManifestTuple|TestLoadFullBindsS9AssignmentScopeFromPlanReport|TestRepairPlanReportWriteRequiresExactCurrentTrustedGrant|TestRepairPlanReportWriteNeedsPlatformIdentityAndPreExecutionPhase|TestRepairPlanReportWriteRejectsSymlinkedPacketPath)$",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-preinstall-adapter-race-20261014.log",
+      "command_sidecar": "blueprint/evidence/logs/s9-disposable-preinstall-adapter-race-command-20261014.txt",
+      "limitation": "internal/submission had no matching tests in this filter and was compiled; behavior is covered by the separate original Hook chain evidence."
+    },
+    {
+      "stage": "workpacket_four_contract_race",
+      "argv": [
+        "go",
+        "test",
+        "-race",
+        "./internal/workpacket",
+        "-run",
+        "^(TestBuildRepairPlanReportIsStableAndSchemaValid|TestValidateRepairPlanReportAnswerKeepsOnlyProfessionalFields|TestBuildRepairPlanReportRejectsCrossSourceDrift|TestRepairPlanReportInputRawSourcesAreCanonicalized)$",
+        "-count=1"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-preinstall-workpacket-race-20261014.log"
+    },
+    {
+      "stage": "targeted_vet",
+      "argv": [
+        "go",
+        "vet",
+        "./internal/workpacket",
+        "./internal/submission",
+        "./internal/cli",
+        "./internal/hookctx",
+        "./internal/policy",
+        "./internal/investigation",
+        "./internal/repair"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-preinstall-vet-20261014.log"
+    },
+    {
+      "stage": "first_build_attempt",
+      "argv": [
+        "bash",
+        "packaging/build-release.sh",
+        "s9-issued-plan-report-review",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-01/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz"
+      ],
+      "exit_code": 1,
+      "log": "blueprint/evidence/logs/s9-disposable-build-failed-cross-platform-20261014.log",
+      "failure": "Darwin arm64 cross-build found Linux-only permission observation helpers referenced by check_owned.go."
+    },
+    {
+      "stage": "second_build_attempt",
+      "argv": [
+        "bash",
+        "packaging/build-release.sh",
+        "s9-issued-plan-report-review",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-02/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz"
+      ],
+      "exit_code": 1,
+      "log": "blueprint/evidence/logs/s9-disposable-build-release-graph-failed-20261014.log",
+      "failure": "Cross-platform binaries built, then staged release graph rejected seven references from shipped docs to unshipped blueprint assets."
+    },
+    {
+      "stage": "staged_release_graph_preflight_after_doc_fix",
+      "argv": [
+        "go",
+        "run",
+        "./cmd/loop-harness",
+        "release-graph",
+        "validate",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/stage/vibe-coding-loop-template-s9-issued-plan-report-review"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-staged-release-graph-preflight-20261014.log"
+    },
+    {
+      "stage": "successful_build_release",
+      "argv": [
+        "bash",
+        "packaging/build-release.sh",
+        "s9-issued-plan-report-review",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-build-release-passed-20261014.log",
+      "result": "Five target binaries built; staged release graph passed; manifest created and verified; tarball retained."
+    },
+    {
+      "stage": "extract_and_manifest_verify",
+      "argv": [
+        "tar",
+        "-xzf",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/dist/vibe-coding-loop-template-s9-issued-plan-report-review.tar.gz",
+        "-C",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract"
+      ],
+      "followup_argv": [
+        "python3",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review/tools/release-manifest.py",
+        "verify",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-manifest-verify-passed-20261014.log"
+    },
+    {
+      "stage": "install_packet",
+      "argv": [
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review/.claude/bin/loop-harness",
+        "install",
+        "--source",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/extract/vibe-coding-loop-template-s9-issued-plan-report-review",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project",
+        "--packet"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-install-packet-passed-20261014.log"
+    },
+    {
+      "stage": "installed_release_graph",
+      "argv": [
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project/.claude/bin/loop-harness",
+        "release-graph",
+        "validate",
+        "--installed",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-installed-validation-passed-20261014.log"
+    },
+    {
+      "stage": "installed_doctor",
+      "argv": [
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project/.claude/bin/loop-harness",
+        "doctor",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-installed-validation-passed-20261014.log"
+    },
+    {
+      "stage": "installed_validate_all",
+      "argv": [
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project/.claude/bin/loop-harness",
+        "validate",
+        "--all",
+        "--root",
+        "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-issued-plan-report-disposable-20261014-03/installed/project"
+      ],
+      "exit_code": 0,
+      "log": "blueprint/evidence/logs/s9-disposable-installed-validation-passed-20261014.log"
+    }
+  ],
+  "scope_and_limits": [
+    "Install target is a newly created disposable directory under task TMP; the current project was not installed or modified by install.",
+    "No publish, git tag, git commit, or real-project installation was performed.",
+    "Packaging cross-compiled the release matrix but manifest explicitly records platform_acceptance=not_attested_by_packaging; no actual macOS or Windows runtime was exercised.",
+    "The --packet install flag enables the documented S5 saved-answer consumer; it is not proof of a complete S9 repair-result or worker execution chain.",
+    "Real-model complete chains remain 0/9 and core mechanism coverage remains 4/9; disposable installation does not change those counts."
+  ]
+}

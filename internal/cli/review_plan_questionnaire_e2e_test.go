@@ -1,0 +1,103 @@
+package cli_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/entroforge/go-system-builder/internal/cli"
+)
+
+func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *testing.T) {
+	root := worktreeProjectRoot(t)
+	path := filepath.Join(root, ".claude/submissions/loop-REQ-WORKTREE/g1/S7/r1/review-plan.json")
+	context := entryQuestionnaireHook(t, root, "PreToolUse", path)
+	if !strings.Contains(context, path) || strings.Contains(context, "s7 draft --out plan.json") {
+		t.Fatalf("Main did not receive exact automatic plan questionnaire: %s", context)
+	}
+	draft, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryQuestionnaireHook(t, root, "PreToolUse", path)
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(draft, after) {
+		t.Fatal("repeat observation overwrote professional plan draft")
+	}
+	// Professional answers are deterministic test data; this is not a model review.
+	authored := minimalReviewPlan(t, t.TempDir(), "review-plan-questionnaire-save")
+	data, err := os.ReadFile(authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := entryQuestionnaireHook(t, root, "PostToolUse", path)
+	if !strings.Contains(result, "review-plan-questionnaire-save") || !strings.Contains(result, path) {
+		t.Fatalf("save did not return original registration/path: %s", result)
+	}
+	statePath := filepath.Join(root, ".claude/loop-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(before, &state); err != nil {
+		t.Fatal(err)
+	}
+	ptr, _ := state["review"].(map[string]any)["plan"].(map[string]any)
+	if ptr == nil || ptr["plan_id"] != "review-plan-questionnaire-save" {
+		t.Fatalf("original plan was not registered: %s", before)
+	}
+	replay := entryQuestionnaireHook(t, root, "PostToolUse", path)
+	if !strings.Contains(replay, "already received") {
+		t.Fatalf("duplicate was not original receipt replay: %s", replay)
+	}
+	after, err = os.ReadFile(statePath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("replay changed Runtime: %v", err)
+	}
+	data = bytes.Replace(data, []byte("REQ covered"), []byte("changed professional answer"), 1)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	conflict := entryQuestionnaireHook(t, root, "PostToolUse", path)
+	if !strings.Contains(conflict, "named revision/rework") {
+		t.Fatalf("changed registered plan was silently accepted: %s", conflict)
+	}
+	after, _ = os.ReadFile(statePath)
+	if !bytes.Equal(before, after) {
+		t.Fatal("changed plan rewrote accepted Runtime")
+	}
+}
+
+func TestMainReviewPlanQuestionnaireStopDoesNotPrepareAndInvalidSaveReturnsFeedback(t *testing.T) {
+	root := worktreeProjectRoot(t)
+	path := filepath.Join(root, ".claude/submissions/loop-REQ-WORKTREE/g1/S7/r1/review-plan.json")
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "Stop", "cwd": root})
+	var out, errout bytes.Buffer
+	code := cli.Run([]string{"hook", "--root", root, "--event", "Stop"}, bytes.NewReader(body), &out, &errout)
+	if code != 0 && code != 2 {
+		t.Fatalf("unexpected Stop code %d: %s", code, &errout)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Stop created a plan questionnaire: %v", err)
+	}
+	entryQuestionnaireHook(t, root, "PreToolUse", path)
+	before, err := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := entryQuestionnaireHook(t, root, "PostToolUse", path)
+	if !strings.Contains(result, "original validation feedback") || !strings.Contains(result, path) {
+		t.Fatalf("invalid draft did not return original correction feedback: %s", result)
+	}
+	after, _ := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("invalid draft changed Runtime")
+	}
+}

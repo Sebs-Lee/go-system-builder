@@ -1,0 +1,134 @@
+{
+  "package_sha256": "e1b67ea7e73a4e56ff55dba1c01d95d42289e456f5435f85b016e95051b38ffb",
+  "source_revision": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+  "source_dirty": true,
+  "release_version": "v0.0.0-optimization-context-local",
+  "platform": "linux/amd64",
+  "five_platform_cross_build": true,
+  "results": [
+    {
+      "packet": false,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    },
+    {
+      "packet": true,
+      "schema": "1.2.0",
+      "checks": {
+        "doctor": true,
+        "validate_all": true,
+        "release_graph": true,
+        "docs": true,
+        "native_shadow_projection_and_installed_sources": true,
+        "role_context_guidance_assets": true,
+        "all_eight_role_frontmatters_equal_original": true
+      },
+      "recover_help_checkpoint": true,
+      "empty_indices": true
+    }
+  ],
+  "scope": "native fresh installation, original recover help and readback projection from explicit source-example test fixtures, validated by the packaged embedded Schema, with exact installed Skill hashes; no registered business task or real model session is claimed; original S5 Worker flow tested separately through production CLI",
+  "real_claude_delivery": "not_executed",
+  "not_a_publication": true,
+  "local_artifact_directory": "/tmp/gsb-context-native-pr7ybpbq",
+  "temporary_artifacts_may_expire": true,
+  "verification": {
+    "worker_new_flow": {
+      "command": "GOPROXY=off go test ./internal/cli -run ^TestWorker -count=1",
+      "passed": true,
+      "seconds": 22.853
+    },
+    "worker_replacement_additional_boundaries": {
+      "command": "GOPROXY=off go test ./internal/cli -run ^TestWorkerReplacement -count=1",
+      "passed": true,
+      "seconds": 8.398
+    },
+    "worker_new_flow_race": {
+      "command": "GOPROXY=off go test -race ./internal/cli -run ^TestWorker -count=1",
+      "passed": true,
+      "seconds": 110.313
+    },
+    "workspace": {
+      "command": "GOPROXY=off go test ./internal/workspace -skip ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "passed": true,
+      "seconds": 12.045,
+      "excluded_test_recorded_separately": true
+    },
+    "host_isolation": {
+      "command": "GOPROXY=off go test ./internal/workspace -run ^TestIsolatedCheckCannotWriteMainOrSourceWorker$ -count=1",
+      "passed": false,
+      "seconds": 0.257,
+      "reason": "bwrap: setting up uid map: Permission denied",
+      "isolation_not_relaxed": true
+    },
+    "core_race": {
+      "command": "GOPROXY=off go test -race ./internal/agentcontext ./internal/team ./internal/hook ./internal/assignment ./internal/catalog ./internal/hookctx",
+      "passed": true,
+      "assignment_seconds": 55.931,
+      "cache_used_for_some_packages": true
+    },
+    "domain_regression": {
+      "command": "GOPROXY=off go test ./internal/runtime ./internal/recovery ./internal/schema ./internal/workpacket ./internal/submission ./internal/controller ./internal/transition ./internal/policy -count=1",
+      "passed": true,
+      "runtime_seconds": 55.219
+    },
+    "vet": {
+      "passed": true,
+      "scope": [
+        "agentcontext",
+        "team",
+        "hook",
+        "assignment",
+        "catalog",
+        "hookctx",
+        "workspace",
+        "cli"
+      ]
+    },
+    "complete_cli": {
+      "command": "GOPROXY=off go test ./internal/cli -count=1",
+      "passed": true,
+      "seconds": 341.765
+    },
+    "final_compatibility": {
+      "command": "GOPROXY=off go test ./internal/semantic ./internal/releasegraph ./internal/qualitygate -count=1",
+      "passed": true,
+      "seconds": {
+        "semantic": 2.633,
+        "releasegraph": 0.131,
+        "qualitygate": 0.393
+      }
+    },
+    "git_diff_check": {
+      "passed": true
+    }
+  },
+  "remaining": [
+    "G01 enabled profile and generated minimal role frontmatter",
+    "Real native/teammate/workspace Skill or Read consumption and token/effective-operation baseline",
+    "Other G01-G08 and named domain adapter slices in original goal"
+  ],
+  "temporary_log_files": [
+    "/tmp/gsb-context-worker-test.log",
+    "/tmp/gsb-context-replace-test.log",
+    "/tmp/gsb-context-worker-race.log",
+    "/tmp/gsb-context-workspace.log",
+    "/tmp/gsb-context-host-isolation.log",
+    "/tmp/gsb-context-core-race.log",
+    "/tmp/gsb-context-domain-regression.log",
+    "/tmp/gsb-context-cli-full.log",
+    "/tmp/gsb-context-build.log",
+    "/tmp/gsb-context-final-compatibility.log"
+  ],
+  "release_manifest_files": 205
+}

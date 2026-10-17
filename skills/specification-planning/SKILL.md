@@ -20,7 +20,7 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 | Existing design | `docs/design/**` | reuse and conflict detection |
 | Design Foundation | `docs/design/DESIGN.md` **§0 Next-agent card first**, then `design-language.md` and the Surface row if needed | inherit interaction/visual constraints when UI impact is `changed`; do not invent brand from a library hex; Foundation does not replace architecture |
 | Derivation template | `docs/design/derivation/DERIVATION-template.md` | write `docs/design/derivation/REQ-<id>.md` before expanding HTML |
-| Module current truth | `docs/design/prototypes/<module>/{index.html, stories.md, flows.md, scenario-model.json, cross-matrix.json, cases.json, scenario-coverage.json, fixture-contract.json, *.html}` | current module package and prototype gate input |
+| Module current truth | UI path: `docs/design/prototypes/<module>/{index.html, stories.md, flows.md, scenario-model.json, cross-matrix.json, cases.json, scenario-coverage.json, fixture-contract.json, *.html}`; service-only path in the same directory: `scenario-model.json`, `fixture-contract.json`, `cross-matrix.json`, `stories.md`, `flows.md`, generated `cases.json` and `scenario-coverage.json` | current module behavior package; HTML/PATH/browser spec are required only for applicable browser cases |
 | Rules | `docs/rules/*.md` | naming, security, api-design, state-machine, design-foundation constraints |
 | Loop Definition | `docs/control/loop-definition.json` | planning exit transition and executable guards |
 
@@ -29,11 +29,20 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 **Step 0 — route by UI impact before doing anything else**: read the bound
 REQ's top `UI impact` field. `unknown` → stop, resolve it in the REQ's §D
 first (the `ui_impact_resolved` guard blocks PTR-PLAN-01). `none` → skip
-steps 0.5 and 3–7 (Foundation derivation and the UI/scenario package) but
-still complete architecture plus ADR (step 1) and the architecture close
-in steps 8–9 before contracts (step 10). `changed` → run the full flow
-below. Do not treat `none` as “no design”: locked ARCHITECTURE remains
-required.
+Foundation derivation and UI assets (page HTML, `index.html`, PATH, and browser
+specs). If any AC targets an FR, still run the behavior steps and build/update
+the module's 7-file service package: `scenario-model.json`,
+`fixture-contract.json`, `cross-matrix.json`, `stories.md`, `flows.md`, and the
+generated `cases.json` and `scenario-coverage.json`. Use an API caller/worker as
+the story role, an F-NNN operation flow without PATH, and
+`browser_required:false` on each service branch. Only when all ACs have an
+endorsed NFR or §A4 target and no module behavior changed may the scenario
+package work be skipped. Also update the same package when existing service
+behavior truth changes; if the bound REQ has no FR to source that change,
+resolve it through REQ amendment before locking the package. `changed` → run
+the full UI and behavior flow below.
+Do not treat `none` as “no design”: locked ARCHITECTURE remains required, and
+`none` never removes an FR-targeted CASE.
 
 **Step 0.5 — consume Project Design Foundation (`changed` only)**: read
 `docs/design/DESIGN.md` **§0 Next-agent card** first, then the current `SUR-*` diff
@@ -80,8 +89,10 @@ win.
    sign-off package.
 2. Land facts partitions from the architecture vocabulary.
 
-**Track user (REQ §A → stories):**
-3. Write stories (S-NNN citing REQ-id) from the REQ's §A intent only.
+**Track user (REQ §A → behavior-role stories):**
+3. Write stories (S-NNN citing REQ-id) from the REQ's §A intent only. For a
+   service-only package, express the API caller/worker's intent without
+   inventing a screen or UI journey.
    When evolving an existing module, read its complete current package
    first — new stories must not duplicate or contradict existing S-NNN.
    Stories seed behavior completeness; they do not depend on the
@@ -113,10 +124,12 @@ win.
 6. After branches settle, write `fixture-contract.json` (synthetic data +
    cleanup) — data needs are branch-certain by now.
 
-**Convergence 2 (walkable):**
-7. Write flows (F-NNN/PATH-*) and prototype pages (4-field header) as the
-   convergence of stories' journeys and branches' behavior;
-   `browser_required` branches bind their PATH here.
+**Convergence 2 (operational flow):**
+7. Write an F-NNN operation flow for every behavior path. Service-only
+   branches use that flow without PATH, HTML, or Playwright and set
+   `browser_required:false`. UI branches that require browser verification
+   bind a PATH here and include the applicable prototype pages (4-field
+   header); `browser_required:true` requires at least one PATH.
 
 **Depth self-review, then close:**
 8. Before closing, attack your own package in three roles — implementer:
@@ -127,59 +140,125 @@ win.
    expected_state, recovery)"; maintainer: "which rule will clash with
    module evolution?" Record the conclusion as one paragraph under a
    `## Depth Self-Review` heading in the ADR package.
-9. Close: `.claude/bin/loop-harness scenario generate --module <module>
-   --root .` then `scenario validate --module <module> --root .` — ratio
-   gates, reference existence, byte-frozen outputs, cross-matrix
-   references, and the full AC bridge (every AC reaches a CASE or carries
-   an endorsed N/A: a declared NFR id or an explicit §A4 negative-space
+9. When a module behavior package is required, close it with
+   `.claude/bin/loop-harness scenario generate --module <module> --root .`
+   then `scenario validate --module <module> --root .`; this validates the
+   source package and generated outputs. Run `scenario bridge --root .` for
+   the REQ-side AC check. The bridge requires every AC to reach a CASE or
+   carry an endorsed N/A: a declared NFR id or an explicit §A4 negative-space
    pointer — §A4 is the REQ's "明确不做" table; free text is rejected as a
-   silent removal from the verification denominator). Then close the
-   architecture side: flip `ARCHITECTURE-<id>.md`'s top `状态` to `locked`
-   and register the JSON design envelope per the Planning Evidence
-   Envelopes section below (kind=planning_design, responsibility=
-   Architect — you, the main session owning the design; PTR-PLAN-01
-   consumes both).
+   silent removal from the verification denominator. If no module behavior
+   package is needed because all ACs have endorsed N/A targets, run the
+   bridge and omit only the package commands. Close the architecture side by
+   flipping `ARCHITECTURE-<id>.md`'s top `状态` to `locked`, then close S2
+   through the packet-enabled or packet-off legacy path in the
+   Planning Gate Reception section below. The original design judgment and
+   PTR-PLAN-01 gate remain authoritative.
 
 **S3/S4 steps:**
-10. Converge the shared data model and SYNC protocol first, then derive FE/BE responsibilities,
-    from the four templates under `docs/dev/contracts/` (CONTRACTS / BE / FE /
-    SYNC). Each must link to the REQ source ref and the module
-    current-truth package. The CONTRACTS index 需求覆盖矩阵 is the clause
-    universe — one `{id} §{n}` cell per clause, and each `§n` must match
-    the clause number the target contract itself declares in any of its
-    「本合同条款」 columns. On finalization set each contract's top status line
-    （模板中的「状态」行）to `locked` (PTR-PLAN-02 registers only locked contracts),
-    register the planning_contract envelope (Planning Evidence Envelopes
-    section), and run `.claude/bin/loop-harness contracts check --root .`
-    — token references, clause cells, and fingerprint columns are
-    machine-checked there and again at PTR-PLAN-02.
+10. For S3, converge the shared data model and SYNC protocol first, then derive
+    the applicable FE/BE responsibilities from the four templates under
+    `docs/dev/contracts/` (CONTRACTS / BE / FE / SYNC). Each contract traces to
+    the bound REQ and applicable current-truth inputs. The CONTRACTS index
+    coverage matrix is for this REQ's clause universe — one `{id} §{n}` cell
+    per clause, matching the clause number declared by the target contract.
+    S3 freezes only the locked REQ, registered S2 design, and conditional
+    sources they reference; it does not use its own not-yet-authored CONTRACTS
+    index as an issuance prerequisite. The Hook supplies the exact answer path
+    and known or candidate output paths/templates. Create one index and the
+    complete applicable contract set for the bound REQ. S3-created shared
+    models/examples are outputs: saving the supplied answer runs the original
+    shared-model checker, which discovers their dependencies and records them
+    in the existing evidence subjects. Do not change an already frozen S2
+    model. Set finalized contracts to `locked`, fill the existing professional
+    answer. The original consumer reads the declared source view: commit Git-sourced professional outputs to
+    the exact development branch named by the Hook before saving that answer.
+    S3 outputs can change during the current entry; REQ/S2 inputs remain frozen.
+    Save the answer once. The gate evaluates the full current set; PTR-PLAN-02 performs the original
+    registration. Do not hand-create evidence, copy machine metadata, or run
+    the same checks as ordinary steps. Run `contracts check` or `scenario
+    bridge` only to diagnose a specific reported failure. See [S3](../../docs/control/agent-protocol.md#s3)
+    for the current packet workflow; packet-off legacy handling is below.
 11. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
     Contract (§7 four assert lines), and obeys single-responsibility.
     Never hand-copy fingerprints or versions — runtime documents[] owns
     them; §2 keeps read order only.
-    **拆分纪律（builder 视角）**：一句话说不成交付物、或出现"以及/然后"→ 拆；FE+BE+SYNC 不混进同一任务；只有实际依赖共享实现产物的下游任务，才声明对应 foundation TASK 依赖；单独生成或复用既有模型的任务可以并行，不把每个 REQ 的 schema 引用都强制串成地基任务。**compact 警示：尽量避免 subagent 中途 compact——builder 丢任务信息是灾难性表现**。宁可多拆一个任务，也不要让 builder 读着读着上下文被压缩；每个任务的 §2 清单只引用它真正需要的条款切片，不是整份文档。规模直觉锚：必读合计 ~30KB / 触碰 ~8 文件 / 改动 ~400 行——超了先想想能不能拆。
-12. Run `loop-harness tasks check` before requesting `TR-002`: batch
-    completeness, clause coverage against the index, DAG acyclicity, and
-    closing contracts are machine-checked there — and it prints per-task
-    reference loads (~KB, whole-file basis; clause slicing is not
-    accounted; manifest rows naming a directory — the module package,
-    rules dirs — count as 0 KB: self-estimate their real weight). Hold
-    the numbers against step 11's ~30KB anchor: a task far over → split
-    it now, don't wait for S5 to catch it. Then flip each TASK's top
-    Status line to `complete`, register the planning_task envelope
-    (Planning Evidence Envelopes section — the gate also requires it;
-    missing `evidence:planning_task_record`), and request `TR-002`
-    (its `planning_complete` + `tasks_checked` guards re-run the same
-    checks) only when the self-check is green.
+    **拆分纪律（builder 视角）**：用一句话给出交付目标，按独立验收、责任和真实变更耦合拆分；只有实际依赖共享实现产物的下游任务才声明 foundation TASK 依赖。每个任务的 §2 清单引用必要条款切片，并标明 required/conditional/optional 与条件。结合共享读集、同文件写入、依赖和执行中的 compact/返工观察判断粒度；字节数、文件数或一次 compact 不能自动决定拆分。调整已批准批次时走原规划/审查/失效路径，并保留合同覆盖与可执行依赖。
+    When indexing existing engineering choices, use the empty
+    `docs/rules/project-conventions-template.json` to author the optional
+    `docs/rules/project-conventions.json`. Reference the exact locked Rule or
+    originally registered locked architecture/decision, its source section,
+    hash/version, explicit path scope and exceptions. The default text must
+    exist in that source section; do not invent a new business decision in an
+    index. Examples are references to actual implementation/tests. New decisions
+    still need the original architecture/change-control path before indexing.
+12. For S4, complete the TASK batch and current REQ index at the exact paths and
+    templates supplied by the Hook. Mark each TASK document `complete` or
+    `cancelled`; these document values do not change a work responsibility's
+    status. Commit declared Git-sourced outputs to the Hook-named branch, fill
+    the existing S4 answer, and save it once. The original consumer runs
+    `tasks check`, projects planning evidence, and evaluates the existing gate
+    and `TR-002`; do not run those checks, create an evidence envelope, or
+    recover Runtime state as ordinary authoring steps. Existing `tasks check`
+    and `tasks check --json` output remains available for a specific diagnosis
+    or professional review of granularity and source-backed advisories. Read
+    concrete observations against the actual responsibility; byte counts are
+    not token measurements or split thresholds. Unresolved assertions still
+    require a professional oracle, and the analysis never executes them.
+    `behavior_examples` only projects CASE IDs explicitly named in that TASK's
+    Manifest Clauses against its current `cases.json`. It validates the original
+    scenario source package and preserves inputs, oracle, fixture and source
+    hashes; Mode and unknown conditions remain visible. Resolve `unresolved`
+    questions through the original contract/design responsibility. A source
+    example is not a product test result or approval of a new requirement.
+    Inspect `task_conventions` with its source mode: use only proved
+    `declared_default` entries and their exceptions; resolve candidate, stale,
+    conflicting or migrating entries through the original owner. S4 authoring
+    has no automatic document-registration proof. Absent/no matching registry
+    permits ordinary authorized engineering choices, and never changes the
+    original TASK coverage, gates or permission.
 13. If document verification returns `document_fix_required` (`TR-004`),
     repair the affected documents. Re-open an architecture or UI decision
     only when verification evidence shows that the decision itself is
     invalid; otherwise keep rework bounded to the flagged contract or TASK.
 
-## Planning Evidence Envelopes（S2/S3/S4 收口登记——三个阶段同款，一个居所）
+## Planning Gate Reception（S2/S3/S4）
 
-每个 planning gate（design/contracts/tasks）在磁盘事实之外还要求一条** JSON 信封证据**（登记成 markdown 报告 gate 读不出 `conclusion`，会报 `evidence:<id>:schema`）。骨架（三个 kind 通用，`{...}` 处按阶段替换）：
+The original planning judgment and quality gate stay authoritative. In a
+packet-enabled Runtime, the Hook automatically prepares the current S2/S3/S4
+Main questionnaire and gives the exact view and answer paths. Read that view,
+complete the professional work, fill only its answer fields, and save the exact
+answer file. The normal Write/Edit Hook passes it to the original Main consumer,
+which validates the answer and registers the original planning evidence through
+the existing Writer and stage gate.
+
+Progress reminders include the actual answer path, remaining work, and next
+action. A missing view is restored without replacing an existing answer. Do not
+run issue/consume as part of normal work, guess a submissions directory, or
+create a second evidence envelope for the same questionnaire. If preparation
+fails, use the reported system diagnostic; professional completion still depends
+on the original gate.
+
+For S4, the Hook also supplies the current REQ index path, TASK candidate paths
+and templates, frozen source inputs, and the bound Git branch. Main decides the
+task breakdown and professional contents, commits the declared outputs to that
+branch, fills the existing answer once, and lets the original consumer perform
+the checks and `TR-002` registration. Do not manually repeat `tasks check` or
+recover a received answer; follow the precise missing items and next action in
+the Hook feedback. `complete/cancelled` apply to TASK documents, not the shared
+work-responsibility states.
+
+The manual envelope path below is only for packet-off legacy Runtime flows
+that have no current typed S2/S3/S4 Main packet. Do not use it to bypass or
+substitute for an issued packet.
+
+### Packet-off legacy evidence envelope
+
+Each legacy planning gate (design/contracts/tasks) requires its original
+JSON evidence envelope in addition to disk facts. Registering a Markdown report
+does not provide `conclusion` and fails with `evidence:<id>:schema`. Use the
+matching kind and responsibility in the template:
 
 ```json
 {
@@ -196,22 +275,32 @@ win.
 }
 ```
 
-`subject_refs` 留空即合法（planning 门不要求钉指纹——磁盘 Status 是事实载体）；`review_round` 不写。落盘为 `docs/reports/planning/{id}.json` 后登记：
+此 legacy 模板可将 `subject_refs` 留空，且不写 `review_round`。将文件保存为
+`docs/reports/planning/{id}.json`；仅在 packet mode 关闭且不存在当前 typed packet
+时注册：
 
 ```text
 .claude/bin/loop-harness runtime evidence add --id planning-design-pass   --kind planning_design --path docs/reports/planning/planning-design-pass.json   --produced-by <你的 agent id> --responsibility Architect
 ```
 
-（S3/S4 同款换 `--kind planning_contract --responsibility "Contract Planner"` / `--kind planning_task --responsibility "Task Planner"`，id 对应 `planning-contracts-pass` / `planning-tasks-pass`。）**重签规则**：同 ID 会被拒（invalid 条目也占 ID）——返工第二轮起用 `-r2` 后缀新 ID（`planning-design-pass-r2`）。missing token 对照：`evidence:planning_design_record` / `evidence:planning_contract_record` / `evidence:planning_task_record` = 该阶段信封未登记或不合格；`evidence:<id>:schema` = 信封字段与登记不互证（多为 path 指向了 markdown 或 conclusion 拼错）。
+For S3/S4 substitute `--kind planning_contract --responsibility "Contract Planner"`
+or `--kind planning_task --responsibility "Task Planner"`, with IDs
+`planning-contracts-pass` or `planning-tasks-pass`. Reusing an ID is rejected,
+including an invalid prior entry; use an `-r2` suffix for a later legacy attempt.
+The missing tokens remain `evidence:planning_design_record`,
+`evidence:planning_contract_record`, and `evidence:planning_task_record`.
+`evidence:<id>:schema` means the envelope fields and registration do not match.
 
 ## Outputs
 - Architecture and ADR records (with the depth self-review paragraph and
   the endorsed-N/A list) under `docs/design/`.
 - Design Derivation Note at `docs/design/derivation/REQ-<id>.md` when UI
   impact is `changed`.
-- Locked current module UI/scenario package (when UI impact or behavior is
-  changed) with fingerprints for the scenario package (nine files incl.
-  cross-matrix.json), HTML prototype, stories, flows, and module spec.
+- Locked current module package when needed: a nine-file UI package when
+  UI changes, or a seven-file service behavior package when an FR-targeted
+  AC has no UI impact. The service package has no HTML, PATH, or browser spec;
+  its CASEs remain in the S2→S7 denominator. Module packages are current truth,
+  not per-REQ copies.
 - FE/BE/SYNC contracts with REQ and design traceability.
 - TASK batch with Closing Contracts and single-responsibility assignments.
 - Current planning evidence required by `TR-002`.
@@ -226,7 +315,7 @@ Stop immediately and surface to the human if any of:
 - A design decision conflicts with an immutable rule and cannot be resolved without REQ clarification.
 - A story challenges the architecture in a way that changes the ADR direction (escalate to the human gate).
 - An AC cannot reach a CASE and has no endorseable N/A (category + pointer) — surface the criterion, do not free-text it away.
-- User story, user flow, and prototype contradict each other in a way that changes product semantics.
+- A behavior-role story, operation flow, and applicable prototype contradict each other in a way that changes product semantics.
 - A contract cannot trace to a REQ clause.
 
 ## Non-Goals
@@ -243,9 +332,14 @@ within those phases; they do not each require a runtime transition.
 `TR-002 planning_ready` is the only planning exit and evaluates the
 current planning package (registered contracts + the complete TASK batch). `TR-004
 document_fix_required` returns failed documents to planning for
-evidence-bounded rework. The TASK lifecycle remains `candidate ->
-reviewed -> locked -> in_progress -> review -> done`; contracts and TASKs
-must trace back to the locked REQ. Invalid or guard-failing events do not
+evidence-bounded rework. Runtime 1.3 stores the shared five-state responsibility
+status on its Agent and TASK work-state fields. Legacy Runtime 1.1/1.2 TASK
+lifecycle values (`candidate -> reviewed -> locked -> in_progress -> review ->
+done`) remain only in their original compatibility format and are not rewritten
+in place. TASK document `Status: complete` means only that the planning artifact
+is finished. Agents follow the current Runtime/Hook projection and never author
+a generic status. Contracts and TASKs must trace back to the locked REQ. Invalid
+or guard-failing events do not
 change state, execute no side effect, and record a rejected event.
 Idempotency uses CAS revision checks; one committed transition per runtime
 revision.

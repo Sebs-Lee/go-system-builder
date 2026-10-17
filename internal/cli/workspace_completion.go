@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -24,12 +25,34 @@ func completeExecutionState(root string, state map[string]any, id string) (bool,
 	if !ok {
 		return false, fmt.Errorf("completion execution is not registered: %s", id)
 	}
-	cp, found, err := integration.DefaultCheckpointStore().Load(integration.CheckpointPath(root, e.RuntimeID, e.BaselineGeneration, id))
+	cp, found, err := integration.DefaultCheckpointStore().Load(workspaceExecutionCheckpointPath(root, e))
 	if err != nil {
 		return false, err
 	}
 	if !found || cp.State != integration.StateComplete || cp.AssignmentID != id || cp.BaselineGeneration != e.BaselineGeneration || cp.WorktreePath != e.Path || cp.SourceBranch != e.Branch || cp.TargetBranch != e.TargetBranch || cp.MergeCommit == "" || cp.TestedHead == "" {
 		return false, fmt.Errorf("execution completion requires its complete integration checkpoint: %s", id)
+	}
+	if e.AssignmentRecord != nil {
+		records, err := assignmentrecord.RecordsFromState(state)
+		if err != nil {
+			return false, err
+		}
+		record, exists, err := assignmentrecord.FindRecordRevision(records, *e.AssignmentRecord)
+		if err != nil || !exists {
+			return false, fmt.Errorf("execution completion lacks its original Record: %v", err)
+		}
+		sha, err := record.Digest()
+		if err != nil || sha != e.AssignmentRecordSHA256 {
+			return false, fmt.Errorf("execution completion Record digest differs")
+		}
+		if cp.CanonicalMainFacts == nil {
+			return false, fmt.Errorf("canonical execution completion requires its own Main facts")
+		}
+		if err := integration.ValidateCheckpointRecordBinding(cp, record); err != nil {
+			return false, err
+		}
+	} else if cp.CanonicalMainFacts != nil || cp.AssignmentRecord != nil || cp.AssignmentRecordSHA256 != "" {
+		return false, fmt.Errorf("legacy execution cannot complete from canonical checkpoint facts")
 	}
 	if e.Status == "complete" {
 		return false, nil

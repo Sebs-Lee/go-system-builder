@@ -3,14 +3,14 @@
 > Status: draft
 > Reading policy: linked-v1
 > Dispatch policy: waves-v1
-> （draft=still writing；complete=the document is finished——required across the whole batch at TR-002, says nothing about implementation（那是 S6 的事）；cancelled=out of the batch, its §3 clause declarations drop out of coverage so any gap resurfaces）
+> （document status: draft=still writing；complete=the planning document is finished and eligible for its original gate——required across the whole batch at TR-002, says nothing about implementation；cancelled=out of the batch, its §3 clause declarations drop out of coverage so any gap resurfaces. Responsibility progress uses the separate five-state model in `docs/rules/state-machine.md`; do not infer implementation `done` from this line.）
 > Version: v1.0.0
 > Source REQ refs: REQ-{id} / none
 > Module current truth: `docs/design/prototypes/{module}/` / N/A
 > Primary contract: {FE/BE/SYNC-id}
 > Closing Contract: TASK-{id}#closing-contract
 > Runtime ref: `{runtime-id}`
-> Execution: runtime owns assignment, owner, completion and integration; do not fill them into this frozen TASK.
+> Execution: runtime owns assignment, owner, responsibility status and integration; do not fill them into this frozen TASK.
 
 ## 1. Objective
 
@@ -69,8 +69,9 @@ module regression sweep.
 | allowed command classes | test / lint / build / read-only |
 | output paths | `{implementation/test/report paths}` |
 
-Dynamic permission is the intersection of Agent Definition, manifest, this
-scope, activation, runtime state, and Hook policy.
+This scope records the planned dispatch and integration-check boundaries for
+the TASK. Hook events observe progress and provide reminders; they do not
+authorize or deny individual tool calls by identity, path, or scope.
 
 ## 5. Selected Skills
 
@@ -81,14 +82,30 @@ scope, activation, runtime state, and Hook policy.
 
 ## 6. Outputs And Evidence
 
+### 6.1 This TASK's assigned deliverables
+
+Keep only outputs owned by this TASK's dispatched responsibility. A Builder
+produces implementation, its scoped tests and its completion report; each
+independent reviewer receives a separate original assignment.
+
 | Output | Path | Acceptance |
 |:---|:---|:---|
 | implementation | `{path}` | {contract assertion} |
 | tests | `{path}` | {behavior/failure coverage} |
 | completion report | `{agent-message-path}` | schema-valid |
-| delivery evidence | `docs/reports/review/REV-{id}.md` | assigned dimension result |
-| QA evidence | `docs/reports/qa/QA-{id}.md` | assigned dimension result |
-| E2E evidence | `docs/reports/e2e/E2E-{id}.md` | real-browser flow result |
+
+### 6.2 Subsequent consumption and independent verification
+
+These responsibilities retain their original gates and required coverage.
+They are not additional Builder outputs or permission to author another role's
+evidence. Runtime owns the actual assignment and receipt references.
+
+| Responsibility / consumer | Evidence or action | Acceptance |
+|:---|:---|:---|
+| Main / integration | bound development branch and integration receipt | original required checks pass after integration |
+| Delivery Verifier | `docs/reports/review/REV-{id}.md` | assigned dimension result |
+| QA | `docs/reports/qa/QA-{id}.md` | assigned dimension result |
+| E2E | `docs/reports/e2e/E2E-{id}.md` | real-browser flow result |
 
 ## 7. Closing Contract
 

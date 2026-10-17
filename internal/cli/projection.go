@@ -35,7 +35,7 @@ var projectionContracts = map[string]stageContract{
 	"S3":                 {"complete the development contract set", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/"}, []string{"locked_contract_set"}, []string{"at least one contract set is locked and traces to the REQ"}},
 	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"complete_task_batch"}, []string{"at least one TASK is complete and every contract clause has TASK coverage"}},
 	"S5":                 {"independently verify and atomically lock the specification chain", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"joint_document_pass"}, []string{"document-verification responsibilities pass with current fingerprints"}},
-	"S6":                 {"implement the locked TASK batch", []string{"bound REQ", "locked contracts", "locked TASKs", "docs/control/agent-protocol.md#s6"}, []string{"builder_completion_reports", "verified_integration_checkpoints"}, []string{"every TASK in the TR-003 batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint (register results via `runtime task-complete`; no team manifest is required)"}},
+	"S6":                 {"implement the locked TASK batch", []string{"bound REQ", "locked contracts", "locked TASKs", "docs/control/agent-protocol.md#s6"}, []string{"builder_completion_reports", "verified_integration_checkpoints"}, []string{"every TASK in the TR-003 batch has a Builder Result with passing checks and no unapproved scope deviations, saved at the exact Result path supplied by the listener for the original Result consumer; Main verifies the required integration checkpoints"}},
 	"S7":                 {"complete one current full verification round", []string{"bound REQ", "locked specification chain", "Builder evidence", "docs/control/agent-protocol.md#s7"}, []string{"review_plan"}, []string{"every required Claim of the registered ReviewPlan has a consumed pass Result; findings seal into the ObservationBatch (TR-008), otherwise the machine CleanRound closes the round (TR-009)"}},
 	"S8":                 {"turn the sealed ObservationBatch into evidence-backed InvestigationCase dispositions", []string{"sealed ObservationBatch", "locked specification chain", "implementation"}, []string{"investigation_case", "causal_model_or_route"}, []string{"every Finding is covered by a Case route and every s9_repair Case has an approved RepairContract"}},
 	"S9":                 {"execute approved RepairContracts and target-reverify them", []string{"approved RepairContract", "locked specification chain", "implementation"}, []string{"targeted_reverification"}, []string{"repair evidence is current and the Contract assertions pass"}},
@@ -63,19 +63,20 @@ type statusProjection struct {
 }
 
 type nextProjection struct {
-	Stage         string   `json:"stage"`
-	ProtocolRef   string   `json:"protocol_ref"`
-	Objective     string   `json:"objective"`
-	Action        string   `json:"action"`
-	Read          []string `json:"read"`
-	PrimarySkill  string   `json:"primary_skill"`
-	Missing       []string `json:"missing"`
-	DoneWhen      []string `json:"done_when"`
-	Then          string   `json:"then"`
-	HumanRequired bool     `json:"human_required"`
-	ChangeID      string   `json:"change_id,omitempty"`
-	WorkItemID    string   `json:"work_item_id,omitempty"`
-	CheckIDs      []string `json:"check_ids,omitempty"`
+	Stage         string            `json:"stage"`
+	ProtocolRef   string            `json:"protocol_ref"`
+	Objective     string            `json:"objective"`
+	Action        string            `json:"action"`
+	Read          []string          `json:"read"`
+	PrimarySkill  string            `json:"primary_skill"`
+	Missing       []string          `json:"missing"`
+	DoneWhen      []string          `json:"done_when"`
+	Then          string            `json:"then"`
+	HumanRequired bool              `json:"human_required"`
+	ChangeID      string            `json:"change_id,omitempty"`
+	WorkItemID    string            `json:"work_item_id,omitempty"`
+	CheckIDs      []string          `json:"check_ids,omitempty"`
+	mainPlanning  *mainPlanningNext `json:"-"`
 }
 
 func buildStatusProjection(state map[string]any, stage, lifecycle string, phase any, root string) statusProjection {
@@ -94,13 +95,20 @@ func buildStatusProjection(state map[string]any, stage, lifecycle string, phase 
 	return projection
 }
 
-func buildNextProjection(state map[string]any, stage, skill, action, root string) nextProjection {
+func buildNextProjection(state map[string]any, stage, skill, action, root string, mainViewer ...bool) nextProjection {
 	contract := contractFor(stage, state, root)
 	projection := nextProjection{
 		Stage: stage, ProtocolRef: protocolReference(stage), Objective: contract.Objective,
 		Action: action, Read: resolveBoundREQRead(contract.Read, state), PrimarySkill: skill,
 		Missing: contract.Missing, DoneWhen: contract.DoneWhen, Then: "recompute",
 		HumanRequired: stage == "S11" || stage == "paused" || stage == "aborted",
+	}
+	showMainPlanning := len(mainViewer) == 0 || mainViewer[0]
+	if showMainPlanning {
+		if planning := mainPlanningNextForState(state, stage); planning != nil {
+			projection.Action = planning.Action
+			projection.mainPlanning = planning
+		}
 	}
 	if record, ok := projectedChange(state); ok {
 		next := change.NextStep(record)
@@ -130,7 +138,7 @@ func projectedChange(state map[string]any) (change.Record, bool) {
 func changeOpenItems(record change.Record) []string {
 	items := make([]string, 0)
 	for _, work := range record.WorkItems {
-		if work.Status == "open" || work.Status == "active" || work.Status == "blocked" {
+		if work.Status == "pending" || work.Status == "open" || work.Status == "active" || work.Status == "blocked" {
 			items = append(items, work.ID+": "+work.Text)
 		}
 	}
@@ -162,13 +170,13 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 	contract.DoneWhen = cloneStrings(contract.DoneWhen)
 	switch stage {
 	case "S2":
-		if hasMarkdownArtifact(root, projectlayout.Architecture, "ARCHITECTURE-*.md", "") {
-			contract.Missing = []string{"contract_set"}
-			if boundREQHasUIImpact(state) {
-				complete, _ := hasCompleteUIDesignPackageForREQ(root, boundREQPathFromState(state))
-				if !complete {
-					contract.Missing = []string{"ui_design_package"}
-				}
+		// Keep the projection scoped to S2. An architecture artifact on disk
+		// does not prove that the current design was accepted, and it cannot
+		// imply the S3 contract set or S4 task batch.
+		if boundREQHasUIImpact(state) {
+			complete, _ := hasCompleteUIDesignPackageForREQ(root, boundREQPathFromState(state))
+			if !complete {
+				contract.Missing = appendUnique(contract.Missing, "ui_design_package")
 			}
 		}
 	case "S3":
@@ -323,13 +331,43 @@ func resolveBoundREQRead(read []string, state map[string]any) []string {
 			reqPath = path
 		}
 	}
-	result := append([]string(nil), read...)
-	for i := range result {
-		if result[i] == "bound REQ" {
-			result[i] = reqPath
+	result := make([]string, 0, len(read))
+	for _, ref := range read {
+		if ref == "bound REQ" {
+			result = append(result, reqPath)
+			continue
 		}
+		kind := map[string]string{"locked contracts": "contract", "locked TASKs": "task"}[ref]
+		if kind != "" {
+			if paths := currentLockedReadPaths(state, kind); len(paths) > 0 {
+				result = append(result, paths...)
+				continue
+			}
+		}
+		result = append(result, ref)
 	}
 	return result
+}
+
+// Read categories are diagnostic projections of original document rows. They
+// grant no source authority and never infer registration from directory files.
+func currentLockedReadPaths(state map[string]any, kind string) []string {
+	baseline, _ := state["baseline"].(map[string]any)
+	generation := tolerantInt(baseline["generation"])
+	rows, _ := state["documents"].([]any)
+	seen := map[string]bool{}
+	var paths []string
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		path, _ := row["path"].(string)
+		if row["kind"] != kind || row["status"] != "locked" || tolerantInt(row["generation"]) != generation || path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func protocolReference(stage string) string {

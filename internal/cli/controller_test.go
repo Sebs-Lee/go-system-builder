@@ -70,7 +70,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.PrimarySkill != "team-planning" {
 		t.Fatalf("unexpected primary skill: %q", guidance.PrimarySkill)
 	}
-	if !strings.Contains(guidance.Action, "review-result submit") {
+	if !strings.Contains(guidance.Action, "questionnaire") || !strings.Contains(guidance.Action, "exact path") || strings.Contains(guidance.Action, "review-result submit") {
 		t.Fatalf("unexpected next action: %q", guidance.Action)
 	}
 	if !strings.Contains(guidance.Instruction, "docs/control/agent-protocol.md#s7") {
@@ -78,6 +78,56 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	}
 	if !strings.Contains(guidance.Instruction, loopManualRef) {
 		t.Fatalf("instruction must contain manual ref: %q", guidance.Instruction)
+	}
+}
+
+func TestBuildGuidanceS9UsesOriginalQuestionnairesAndLifecycle(t *testing.T) {
+	cases := []struct {
+		name   string
+		phase  string
+		status string
+		want   string
+	}{
+		{name: "approved contract prepares session", phase: "repair_readback", want: "next writable Main Hook"},
+		{name: "planning uses PlanReport answer", phase: "planning", status: "planning", want: "PlanReport questionnaire"},
+		{name: "reproduction follows saved reports", phase: "reproducing", status: "reproducing", want: "original consumer"},
+		{name: "repair result records completion", phase: "fixing", status: "repairing", want: "RepairResult questionnaire"},
+		{name: "impact uses supplied form", phase: "targeted_reverification", status: "impact_reconciliation", want: "ChangeImpact questionnaire"},
+		{name: "independent targeted result", phase: "targeted_reverification", status: "targeted_reverification", want: "TargetedReverification questionnaire"},
+		{name: "handoff has no author form", phase: "ready_for_full_review", status: "ready_for_full_review", want: "no author-filled Handoff form"},
+		{name: "fresh S7 follows original seed", phase: "ready_for_full_review", status: "closed", want: "fresh S7 round"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := map[string]any{
+				"runtime_id": "loop-REQ-S9-guidance",
+				"revision":   1,
+				"lifecycle":  map[string]any{"state": "bug_resolution", "phase": tc.phase},
+				"review": map[string]any{
+					"investigation": map[string]any{"case_id": "case-s9", "status": "contract_approved"},
+				},
+			}
+			if tc.status != "" {
+				state["review"].(map[string]any)["repair"] = map[string]any{
+					"status": tc.status, "session_id": "session-s9", "next_action": "recorded recovery action",
+				}
+			}
+			guidance := buildGuidance(t.TempDir(), state, "SessionStart", policy.Input{})
+			combined := guidance.Action + "\n" + strings.Join(guidance.Automation, "\n")
+			if !strings.Contains(combined, tc.want) {
+				t.Fatalf("S9 guidance lacks %q: %s", tc.want, combined)
+			}
+			for _, stale := range []string{
+				"runtime repair session open", "runtime repair dispatch", "runtime repair execution begin",
+				"runtime repair status", "runtime review-plan --file", "--check-location",
+				"compute session-wide Changeset and commit ChangeImpact", "create and commit the complete RepairHandoff",
+				"genuine completion_report",
+			} {
+				if strings.Contains(combined, stale) {
+					t.Fatalf("S9 guidance still requires duplicate command %q: %s", stale, combined)
+				}
+			}
+		})
 	}
 }
 
@@ -97,8 +147,8 @@ func TestPlanCheckpointSubagentStartDoesNotWaitForSecondTurn(t *testing.T) {
 		t.Fatalf("plan_checkpoint agent must not wait for a second approval turn: %#v", guidance)
 	}
 	joined := strings.Join(guidance.Automation, " ") + " " + guidance.Action
-	if !strings.Contains(joined, "PLAN_REPORT") || !strings.Contains(joined, "continue") {
-		t.Fatalf("guidance must route PLAN_REPORT directly into continuous execution: %q", joined)
+	if !strings.Contains(joined, "fill and save") || !strings.Contains(joined, "continue") || strings.Contains(joined, "SendMessage") {
+		t.Fatalf("guidance must route the supplied plan directly into continuous execution: %q", joined)
 	}
 	if strings.Contains(strings.ToLower(joined), "phase-two activation") || strings.Contains(strings.ToLower(joined), "wait for phase-two") {
 		t.Fatalf("plan_checkpoint guidance still contains the retired approval wait: %q", joined)
@@ -198,17 +248,17 @@ func TestBuildGuidanceSchedulesDelegationAndWorktreeIntegration(t *testing.T) {
 		ToolInput: map[string]any{"subagent_type": "backend-builder"},
 		Runtime:   policy.RuntimeContext{Agent: &policy.AgentContext{State: "activated"}},
 	})
-	if len(started.Questions) < 3 {
+	if len(started.Questions) != 2 {
 		t.Fatalf("SubagentStart must ask delegation preflight questions, got %#v", started.Questions)
 	}
 	preflight := buildGuidance(fix.root, state, "PreToolUse", policy.Input{
 		ToolName:  "Agent",
 		ToolInput: map[string]any{"subagent_type": "backend-builder"},
 	})
-	if len(preflight.Questions) < 3 || !strings.Contains(strings.Join(preflight.Automation, " "), "worktree") {
+	if len(preflight.Questions) != 2 || !strings.Contains(strings.Join(preflight.Automation, " "), "worktree") {
 		t.Fatalf("Agent/Task PreToolUse must carry the same delegation preflight, got %#v", preflight)
 	}
-	for _, expected := range []string{"Agent Team", "predefined", "worktree"} {
+	for _, expected := range []string{"professional work", "source and answer paths"} {
 		if !strings.Contains(strings.ToLower(strings.Join(started.Questions, " ")), strings.ToLower(expected)) {
 			t.Fatalf("SubagentStart questions must mention %q, got %#v", expected, started.Questions)
 		}
@@ -1120,7 +1170,7 @@ func TestHandleTeammateIdleResumesSameTeammate(t *testing.T) {
 			AssignmentID: "assignment-039-04",
 			TaskID:       "TASK-039-04",
 			OwnerAgentID: "agent-039-04",
-			State:        "in_progress",
+			State:        "active",
 			WorktreePath: filepath.Join(fix.root, "worktree-039-04"),
 			Branch:       "codex/req-039-controller-cycle",
 			TargetBranch: "develop",
@@ -1164,7 +1214,7 @@ func TestHandleTeammateIdleDemandsCompletionReport(t *testing.T) {
 			AssignmentID: "assignment-039-04",
 			TaskID:       "TASK-039-04",
 			OwnerAgentID: "agent-039-04",
-			State:        "complete",
+			State:        "done",
 			WorktreePath: filepath.Join(fix.root, "worktree-039-04"),
 			Branch:       "codex/req-039-controller-cycle",
 			TargetBranch: "develop",
@@ -1244,7 +1294,7 @@ func TestHandleTeammateIdleAllocatesNextLegalTask(t *testing.T) {
 				AssignmentID:  "assignment-039-04",
 				TaskID:        "TASK-039-04",
 				OwnerAgentID:  "agent-039-04",
-				State:         "complete",
+				State:         "done",
 				ReportStatus:  "completion_report",
 				CompletionRef: ".claude/evidence/loop-REQ-039/g1/assignments/assignment-039-04/completion.json",
 				WorktreePath:  filepath.Join(fix.root, "worktree-039-04"),
@@ -1295,7 +1345,7 @@ func TestHandleTeammateIdleClosesOutTeamWhenNoTasksRemain(t *testing.T) {
 				AssignmentID:  "assignment-039-04",
 				TaskID:        "TASK-039-04",
 				OwnerAgentID:  "agent-039-04",
-				State:         "complete",
+				State:         "done",
 				ReportStatus:  "completion_report",
 				CompletionRef: ".claude/evidence/loop-REQ-039/g1/assignments/assignment-039-04/completion.json",
 				WorktreePath:  filepath.Join(fix.root, "worktree-039-04"),
@@ -1334,7 +1384,7 @@ func TestHandleTeammateIdleNeverSpawnsReplacement(t *testing.T) {
 			AssignmentID: "assignment-039-04",
 			TaskID:       "TASK-039-04",
 			OwnerAgentID: "agent-039-04",
-			State:        "in_progress",
+			State:        "active",
 		}},
 	}
 	guidance, _, err := HandleTeammateIdleForController(fix.root, snapshot, loaded, "TeammateIdle", policy.Input{AgentID: "agent-039-04"})
@@ -1390,7 +1440,7 @@ func TestHandleSubagentStopPreservesWorktreeOnNotReadyInspection(t *testing.T) {
 			AssignmentID: "assignment-039-06",
 			TaskID:       "TASK-039-06",
 			OwnerAgentID: "agent-missing-but-with-bogus-worktree",
-			State:        "complete",
+			State:        "done",
 			WorktreePath: "/path/that/does/not/exist",
 			Branch:       "codex/req-039-bogus",
 			TargetBranch: "develop",
@@ -1489,7 +1539,7 @@ func TestHandleSubagentStopAdvancesIntegrationOnReadyInspection(t *testing.T) {
 			AssignmentID: "assignment-039-06",
 			TaskID:       "TASK-039-06",
 			OwnerAgentID: "agent-039-06",
-			State:        "complete",
+			State:        "done",
 			WorktreePath: wtPath,
 			Branch:       "codex/req-039-bogus",
 			TargetBranch: "develop",
@@ -1744,7 +1794,7 @@ func TestPostMergeModeChecksCandidateThroughController(t *testing.T) {
 			AssignmentID:         "assignment-039-06",
 			TaskID:               "TASK-039-06",
 			OwnerAgentID:         "agent-039-06",
-			State:                "complete",
+			State:                "done",
 			WorktreePath:         wtPath,
 			Branch:               "codex/req-039-bogus",
 			TargetBranch:         "develop",

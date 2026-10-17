@@ -8,6 +8,26 @@
 
 ## 1. 第一层：S1 的立意与目标
 
+### 真实宿主入口补充契约（2026-10-15）
+
+S1 文档、REQ 发现提示与 Hook Next 必须展示完整的绑定参数：
+`loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>`。
+两个分支参数都无默认值。提示尚不能从已声明项目事实确定取值时保留明确占位符，
+不能静默代填 `main`、当前分支或远端；占位符命令不是已具备执行条件的命令。
+真实 approver 仍来自本次锁定/绑定授权，不能以 Git user.name 代替。
+
+绑定读取开发分支已提交树中的 REQ；工作目录只有 locked 文件但尚未提交时，
+下一动作是按项目约定将该 REQ 提交到所选开发分支。项目的本地 Git 身份、
+开发分支与发布目标是环境事实；例行配置/本地分支命名本身不是新增人闸，
+但不能借此推送、发布或改变已批准需求。缺引用/未提交文件的失败应指出具体对象，
+不把裸 `git rev-parse: exit status 128` 当成可操作的恢复说明。
+
+S1 没有自动通过型答卷：`req next` / `req list` 把实际候选 REQ 路径和完整
+`req bind` 命令直接呈给主会话；唯一候选可预填路径，多候选仍由人选择。
+真人提供本次批准人、开发分支和发布目的地并明确授权后，原 `req bind` 执行
+TR-001。不要让 Agent 猜这些值，也不手动 `stage-answer issue/consume`；回执
+本身给出绑定事实与 S2 下一步。Hook 只投影 graph 提醒，不拦截工具或路径。
+
 ### 1.1 为什么需要 S1
 
 S0 产出的 locked REQ 只证明“这份需求语义已经被人锁定”。它还没有回答运行时必须知道的四个问题：
@@ -93,7 +113,7 @@ S1 只有四项顺序任务。前三项决定“能不能授权”，第四项�
 | 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
 |:--|:--|:--|:--|
 | T1 发现候选并预检 | 哪份 locked REQ 可绑定；是否存在歧义；runtime 是否允许首次绑定 | 缺失时自动 init；扫描候选；检查元数据、当前 runtime、控制面漂移；多候选时停下交人选择 | 唯一可提交的 REQ 路径，或带下一步的明确拒绝 |
-| T2 确认最小人类授权 | 人是否明确同意以该 REQ 启动这次生命周期；审计记名是什么 | 人直接执行，或明确指令主会话代跑；提供 `--approved-by`、`--dev-branch` 与 `--release-upstream`；通过工具权限确认保留人在场边界 | 针对“绑定这个对象”的单次授权意图与记名 |
+| T2 确认最小人类授权 | 人是否明确同意以该 REQ 启动这次生命周期；审计记名是什么 | 人直接执行，或明确指令主会话代跑；缺失时向人收集 `--approved-by`、`--dev-branch` 与 `--release-upstream` 的实际值；不从 Git 身份推断审批人 | 针对“绑定这个对象”的单次授权意图与记名 |
 | T3 TR-001 原子绑定 | 能否把候选、授权和状态起点作为一笔事务写入 | 重算 SHA；验证 guard/evidence；执行 bind 与 authorization action；由 Writer 在锁内完成 pending marker + journal 原子落盘并分配 revision | 唯一 `bound_req`、authorization、generation=1、首条 journal |
 | T4 核对回执与状态投影 | 人和后续系统能否得到同一个权威答案 | 读取命令回执；确认 event/cursor/generation/指纹；后续 hook 每次重读 runtime | 可见回执 + `planning.design` 权威投影，交给 S2 |
 
@@ -120,7 +140,7 @@ flowchart TD
     ACTIVE -->|否| ROUTE["按意图选择<br/>pause + amend / unbind / rollover"]
     ACTIVE -->|是| DRIFT{"definition / policy<br/>控制面无漂移？"}
     DRIFT -->|否| RECOVER["按报错诊断<br/>doctor / validate / reconcile"]
-    DRIFT -->|是| HUMAN["人显式授权<br/>approved-by + 权限确认"]
+    DRIFT -->|是| HUMAN["真人对明确对象作绑定授权<br/>approved-by + 明确分支目标"]
 
     HUMAN --> APPLY["TR-001<br/>重算 SHA + guard + evidence + actions"]
     APPLY --> COMMIT{"状态、journal<br/>原子提交成功？"}
@@ -158,9 +178,9 @@ flowchart TD
 | 维度 | 设计 |
 |:--|:--|
 | 授权手势 | 人直接执行 `req bind --approved-by <身份>`，或明确指令主会话代跑指定 REQ |
-| 最小输入 | `--approved-by` 必填；`--req` 仅在多候选或人要覆盖自动选择时披露；`--json` 只服务机器消费者 |
+| 最小输入 | `--approved-by`、`--dev-branch`、`--release-upstream` 均取本次真人授权/明确选择；`--req` 在多候选或人覆盖自动选择时提供；`--json` 只服务机器消费者 |
 | 人机分工 | agent 可解释候选、生成完整命令并代笔；没有人的显式指令时，不主动执行人闸命令 |
-| 在场确认 | 主会话代跑时，以工具权限提示承接最终确认；对话手势、权限确认、journal 记名分别承担意图、在场和审计 |
+| 人闸 | 主会话只按真人明确授权代跑绑定；Hook 不提供逐工具权限确认或拦截，也不以 `git user.name` 补造审批人 |
 | 信任边界 | `--approved-by` 是仓库内自我声明，不是密码学身份认证；当前威胁模型是防 agent 无授权越界，而不是防人冒充另一人 |
 | 完成产出 | 对当前候选的一次明确绑定授权和可落盘的审批人 |
 
@@ -264,7 +284,7 @@ stateDiagram-v2
 ### 5.4 重叠、缺口与关键取舍
 
 - **自动发现与人类选择不重叠**：唯一候选没有选择成本，多候选才触发人闸；
-- **对话手势、权限确认和 journal 不重复**：分别证明意图、人在场和持久审计；
+- **人类明确授权与 journal 不重复**：前者决定是否启动指定 REQ，后者持久记录提交事实；
 - **runtime、命令回执和 hook 投影不形成多权威**：runtime 是事实源，后两者只是面向不同消费者的投影；
 - **CLI 快检与 engine 复核是必要覆盖**：前者尽早给人话错误，后者防止检查到登记之间的来源 commit 或授权对象变化；
 - **不增设绑定广播或 `/goal`**：hook 每次重读已足够；持续驱动器与一次性人在场授权语义不一致；

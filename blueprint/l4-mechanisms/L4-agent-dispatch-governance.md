@@ -204,7 +204,7 @@ Main Agent 按以下顺序判断：
 | 需要计划中间回执、持续执行、直接纠偏，且必须 worktree 隔离 | 可寻址自定义 Sub-agent + 调用级 `isolation: worktree` |
 | 需要计划中间回执、持续执行、直接纠偏，且可按只读/路径分区 | Agent Team teammate |
 | 多责任共享 Task DAG、需要团队消息 | Agent Team |
-| 高风险且需要 lead 原生批准计划 | Agent Team teammate + Plan mode |
+| 高风险且需要平台原生 Plan gate | Agent Team teammate + Plan mode |
 | 需要独立审查/背书 | 不同 teammate 或不同 Sub-agent |
 | 高频来回、上下文不可拆 | Main Agent 自执行 |
 
@@ -218,7 +218,7 @@ Agent Teams 打开时，`name`、fork 和调用级 `isolation` 会影响 Agent �
 |:--|:--|:--|
 | one_shot | Worker 完成全部责任后一次返回结果 | 自包含研究、轻量检查、无需中间治理 |
 | plan_checkpoint | Worker 先发送计划回执，不等批准，继续执行并最终交卷 | 默认 Builder、Verifier、QA、调查和修复任务 |
-| plan_approval_required | Worker 进入原生 Plan mode，lead 批准后才能实施 | 高风险、难回滚、scope 尚需确认的任务 |
+| plan_approval_required | Worker 进入原生 Plan mode，平台原生 Plan gate 通过后才能实施；是否需要 lead/人操作由 pin 的平台版本和模式决定 | 高风险、难回滚、scope 尚需确认的任务 |
 
 不得再用“所有 specialized Agent 都走硬两阶段”作为统一规则。
 
@@ -311,17 +311,18 @@ Stage、generation、依赖、优先级、文档指纹、Closing Contract、Requ
 
 纯文字澄清、顺序调整或不改变授权边界的纠偏可以使用 SendMessage，不必制造 revision。
 
-### 5.4 两条正交状态线
+### 5.4 统一工作状态与计划凭据
 
-Assignment 主状态只表达责任是否向消费闭合：
+Assignment 的责任状态只使用 [状态机核心篇 §0.1](L4-state-transition-core.md#unified-work-state)
+的 pending/active/blocked/done/cancelled。旧设计中的
+`draft → ready → dispatched → running → result_submitted → consumed` 不再是一台
+需要独立维护的主状态机：这些名称仅描述已存在的草稿、派发、运行、提交和消费事实。
+ready 不另写状态，result_submitted 不能直接证明 done，consumed 须指明原消费者
+及消费对象。替换由原新 attempt/撤销事实表达，不新增 replaced 工作状态。
 
-```text
-draft -> ready -> dispatched -> running -> result_submitted -> consumed
-                     |             |             |
-                     +----------> blocked <------+--> cancelled / replaced
-```
-
-计划状态是正交属性，不再膨胀成 reading/approved/activated/working 等第二套主生命周期：
+计划的提交、漂移和批准由原 PLAN/approval 凭据验证，不另存计划状态或重复投影，
+也不将其扩为 reading/approved/activated/working 工作状态。下列只说明兼容凭据结果，
+不构成另一条需要 Agent 操作的生命周期：
 
 ```text
 not_required
@@ -333,7 +334,10 @@ missing -> approval_pending -> approved
 - `plan_checkpoint`：reported 即满足首写屏障；drifted 只阻止首次写入或触发纠偏；
 - `plan_approval_required`：approved 才满足写入屏障；
 - 平台的 running/idle/stopped 是活会话事实，不回写成 Assignment 的同名伪状态；
-- Team task 只有在 Result 被 stage consumer 接受后才由 Main/scheduler 标 completed，从而让原生依赖解锁与 `consumed` 对齐。
+- 平台 Team task 的 completed 是宿主字段，由 Main/scheduler 在原依赖消费条件
+  满足后更新；不直接代表五态中的本人 done，也不把宿主字段名传播成另一套内部枚举。
+- Worker 交付、Main 集成和阶段收口按不同责任分别投影；一个 Assignment 含多个
+  checkpoint 时，当前动作必须明确是哪项责任，不把 PLAN 已接收当成修复已完成。
 
 ### 5.5 Canonical Result
 
@@ -349,7 +353,9 @@ missing -> approval_pending -> approved
 | deviations / residual_risks | 暴露计划与实际差异及剩余不确定性 |
 | handoff | 下一消费者需要执行的一个明确动作 |
 
-Worker 提交 Result 不等于完成：Main/Stage consumer 验证、集成或吸收成功后才写 `consumed`。失败和阻塞也必须产出 Result/Blocker 引用，不能靠最后一条聊天猜测现场。
+Worker 仅写出 Result 文件不证明完成；原消费者验证交付及本人 required checks 后
+才可将本人责任投影 done。Main 的集成/阶段吸收另有原消费事实与责任，依赖解锁仍须
+满足其原条件。失败和阻塞也必须产出 Result/Blocker 引用，不能靠最后一条聊天猜测现场。
 
 ## 6. 调度模型：复用 TASK DAG，分离覆盖承诺与物理容量
 
@@ -506,19 +512,20 @@ Stop only for a real blocker, an authority/scope conflict, or completion.
 sequenceDiagram
     participant Main as Lead
     participant Worker as Teammate in Plan mode
+    participant Platform as Claude Code native Plan gate
+    participant Host as Host adapter
     participant Runtime as Assignment Runtime
 
     Main->>Worker: dispatch approval_required assignment
     Worker->>Worker: read-only investigation and plan
-    Worker->>Main: plan approval request
-    Main->>Runtime: validate assignment revision and risk criteria
-    alt approved
-        Main-->>Worker: plan approval response
-        Runtime->>Runtime: plan.status=approved
+    Worker->>Platform: native plan approval request
+    Platform->>Host: native decision observation, when exposed by this platform version
+    Host->>Runtime: consume observation; validate current Record and exact plan
+    alt native gate approved
+        Runtime->>Runtime: append bound platform receipt; plan.status=approved
         Worker->>Worker: exit Plan mode and execute
-    else rejected
-        Main-->>Worker: rejection + concrete correction
-        Runtime->>Runtime: plan.status=rejected
+    else native gate rejected
+        Runtime->>Runtime: append bound rejection receipt; plan.status=rejected
         Worker->>Worker: remain in Plan mode and revise
     end
 ```
@@ -528,17 +535,72 @@ sequenceDiagram
 | 维度 | plan_checkpoint | plan_approval_required |
 |:--|:--|:--|
 | 计划作用 | 早期观测 | 执行授权 |
-| 发送后 | 立即继续 | 等待 lead 批准 |
+| 发送后 | 立即继续 | 等待平台原生 gate 结果 |
 | 写入屏障 | 只要求计划已发送 | 要求计划已 approved |
-| Main Agent 正常动作 | 静默 | approve/reject |
+| Main Agent 正常动作 | 静默 | 消费实际原生 gate 结果；需要时纠偏，不自行伪造批准 |
 | 适用成本 | 低 | 高，但由高风险定价 |
+
+`plan_approval_required` 这一名称只说明平台原生 Plan gate 是执行前置条件；平台可能
+自动推进该 gate，也可能要求 lead 操作，具体依赖 pin 的平台版本和模式。无论哪种情况，
+Runtime 都只记录实际观察到的平台结果；平台自动通过不是人类审批。
 
 ### 8.3 禁止伪造批准
 
 - teammate 或其他 Agent 的消息不能充当用户权限批准；
-- Main Agent 只能在 assignment 授权边界内批准计划；
+- Main Agent 的自然语言回复只能纠偏，不能自行成为平台批准 receipt 或人类决定；
 - REQ 变化和外部不可派生授权仍交人；
 - approval 绑定 assignment revision，revision 变化后自动失效。
+
+### 8.4 原生 Plan gate 的来源与 Record 绑定
+
+`PLAN_APPROVAL_REQUEST` 是 Worker 提交的计划请求，不是批准。`plan_approval_required`
+的权威来源必须是 Claude Code/Agent Teams 原生协议产生、由 Host adapter 直接观察的
+批准或拒绝事件；普通 SendMessage 文本、Worker 自写文件、CLI `--approved-by`、
+Runtime `Actor`、session ID 或手工填写的 evidence ref 都不能伪造该事件。平台事件若
+没有稳定的原生 request/event identity、来源身份和对应计划内容，Harness 不得生成
+“已批准”记录。
+
+平台 Plan gate 与 human approval 是不同事实。平台行为随版本和会话模式核实；若原生
+teammate plan request 在该版本/模式下由平台自动放行、没有 lead review 或人类提示，
+receipt 只能表示 `platform_plan_gate=passed`，不能表示 `human_approved`。需要真正
+人类签字的路径必须捕获平台提供的、可验证的显式人类决定事件；当前 Runtime 没有把
+普通 CLI 字段或对话文本变成该信号的能力。适配器不能观察到可信来源时，canonical
+高风险 Assignment 保持 `approval_pending` 且所有写入被拒绝。
+
+对 canonical Assignment，Writer 消费的原生 Plan gate receipt 至少绑定：
+
+- namespace 与身份：`runtime_id`、`baseline_generation`、`assignment_id`、当前
+  `assignment_revision`、当前 `Assignment RecordReference + SHA256`；
+- 新版本的精确计划：当前 PLAN_REPORT ref/SHA、平台原生 approval request/event ID
+  与该平台事件所批准的计划摘要；
+- 平台观察上下文：由注册/Host adapter 核实的 Team、teammate/worker 会话身份，
+  原生事件中的 decision、source kind 和平台版本。`human_decision` 另需平台实际
+  认证的人类决策来源，不能由上述平台 gate 字段推导。
+
+Host adapter 只把原生观察交给既有 Runtime Writer；它不单独改 assignment、activation
+或 lifecycle。Writer 在同一 CAS mutation 中重算当前 Record 和 PLAN ref/SHA、检查
+dispatch mode 与身份完全相符，再 append immutable receipt 并更新正交的 plan status。
+重复同一平台 event ID 只返回原 receipt；异 event/异绑定冲突拒绝。拒绝结果保持在
+Plan mode 并等待 Worker 改计划；计划字节变化、Record revision 变化、owner 或
+namespace 变化都令旧 receipt 不再满足当前写屏障。首次 PreToolUse 及后续写入都要
+检查当前 Record/PLAN 与该 receipt 的完整绑定；原生平台的只读 Plan 限制仍须保留，
+Runtime receipt 不可代替平台本身的权限控制。
+
+现有 legacy `understanding_approved` 不能给 canonical revision 供证：
+`internal/assignment/lifecycle.go` 只要求 Agent 从 `understanding_submitted` 转移，
+输入仍是 Worker 的 `readback_response`，Runtime mutation 的 Actor 固定为
+`orchestrator`；`internal/agentauth/activation.go` 的 hash chain 只验证 Worker readback
+字节 SHA 和 `message_id`。activation schema 中的 `approval_evidence_id` 不是 Writer
+消费的批准源。不能把该旧状态、CLI `approved-by`/Actor/session 或 Worker-authored
+evidence 回填成新 Record 的批准。
+
+最小可落地顺序：先针对仓库声明的 Claude Code 版本验证 Host 能否取得并关联原生 Plan
+decision、具体 request/计划内容和实际 source identity；其后接一个只接受该 Host
+observation 的适配器与原 Runtime Writer receipt 消费路径，再把首写 Hook 接到精确
+Record/PLAN receipt 校验。若该版本只提供平台自动 gate，则仅接入平台 gate receipt，
+需要人签字的 assignment 继续 fail closed，等待独立、可验证的人类决定来源。接线前
+只开放 `plan_checkpoint` canonical revision；高风险 Assignment 可停在只读规划阶段，
+不得用 legacy activation 或手工证据开启写入。
 
 ## 9. 等待、消息和执行连续性的精确语义
 
@@ -585,7 +647,7 @@ Plan mode 属于 approval_required Worker，不属于 lead 的普通等待状态
 | 同步最终结果 | 实际 foreground Sub-agent；Agent 调用本身阻塞 | 再造一层轮询 |
 | 并行最终结果 | background Sub-agent；等待 completion notification | 读 transcript 猜完成、因 UI row 消失而重派 |
 | 计划 + 最终结果，计划不需批准 | 可寻址 Sub-agent 或 teammate；PLAN_REPORT 用 SendMessage，Main 继续调度，最终结果走 completion/COMPLETION | 把计划当 final、收到计划后再发“可以开始” |
-| 必须批准计划后执行 | teammate Plan mode；等待自动送达的 PLAN_APPROVAL_REQUEST | 用普通文本假装 approval protocol |
+| 必须经过原生 Plan gate 后执行 | teammate Plan mode；等待原生 PLAN_APPROVAL_REQUEST 和平台 gate 结果 | 用普通文本假装 approval protocol |
 | 已误停 Sub-agent 的第二次授意 | SendMessage 到原 agent ID/name，自动恢复后台执行 | 再次 Agent 调用创建新上下文 |
 
 因此不存在一个通用的“主会话等待模式”。foreground 的调用本身就是等待；background completion 和 teammate message 都由平台投递。调度 Skill 要做的是保持 assignment 未收口、继续处理其他 Ready 工作，并在没有本地工作时等待平台通知，而不是轮询、结束总任务或让 Worker 先 idle。
@@ -598,7 +660,7 @@ Plan mode 属于 approval_required Worker，不属于 lead 的普通等待状态
 |:--|:--|:--|
 | PLAN_REPORT | Worker → Main | 否 |
 | PLAN_APPROVAL_REQUEST | Worker → Main | 是，停在 Plan mode |
-| PLAN_APPROVAL_RESPONSE | Main → Worker | 否，批准后继续 |
+| PLAN_APPROVAL_RESPONSE | 原生平台/Lead session → Worker | 否，只有平台原生 gate 结果通过才继续 |
 | CORRECTION | Main → Worker | 否 |
 | BLOCKER | Worker → Main | 取决于是否仍有可做工作 |
 | PROGRESS | Worker → Main | 否，默认不强制 |
@@ -671,6 +733,13 @@ exit 2 的 stderr 必须是给 teammate 的一条具体下一步，不能只输�
 派发与交付消费 [L4 Worktree](L4-worktree-governance.md) 的唯一生命周期。主会话从 REQ 开发绑定解析创建基线，确保上游正式产出已提交；运行 evidence 按声明交接，不复制整个控制面。Assignment 记录 source commit 与接收目标。
 
 子会话提交成果并报告，主会话在项目根目录合并、联合验证、接收和清理。SubagentStop 不运行完整测试/长合并，不要求已停止的子会话再次 stop 才完成清理；隔离中的子会话不承担根目录 merge。未回收与积压只产生给主会话的软提醒，不增加调度 stop/idle 矩阵的 block 条目。
+
+独立启动的已登记 Worker 顶层会话同样按本人矩阵处理普通 Stop：原
+session/root 登记解析 owner，再校验当前 execution、精确 CWD 和 Bootstrap；
+本人 PLAN_REPORT/Result 缺失继续原阻断，结果已记录或原合法结束事实成立则返回。
+此路径不运行 Main 的 Stop 队列或全局控制循环，不因待集成或同事未交重新催本人。
+报告存在仅代表 delivery_recorded；required checks、领域接收、原返工与人闸仍由
+原消费者决定。旧 blocked/终态兼容允许结束不伪装成有效证据。
 
 ### 10.5 指引应埋在哪里
 
@@ -1013,4 +1082,91 @@ SubagentStop/TeammateIdle 不用普通 systemMessage 冒充父会话投递；异
 
 加载选择由一个版本化profile生产：核心∪原责任必需∪已确认技术栈∪Assignment登记技能。SelectedContextSkills与原授权SkillRefs分离，不能以减载改变activation命令能力或触发未知技能默认授权。teammate/native/workspace共用选择；workspace没有Skill工具时用已有Read消费安装固定路径与digest，ready资产不覆写。
 
+### 18.1 G01 首个实施切片：shadow 与实际资料送达
+
+首版 profile 集中原角色 legacy 列表、建议 core 与 responsibility 必需集合。`shadow` 记录候选加载集合、来源/理由与实际安装路径/digest，不改变 legacy 加载、角色 frontmatter、manifest SkillRefs 或 activation。项目技术栈未形成已批准机器来源时，只消费已登记 Assignment SkillRefs，不从 project.yaml 空模板或自然语言猜技术栈。legacy 列表及 mandatory skills 只有一个生产者；缺失安装文件不能回落工厂同名文件。
+
+新 1.2 workspace prepare 从原 Runtime 注册 Agent/Team 和冻结 manifest 生成 Assignment context，绑定 owner/assignment/runtime/代数/execution generation、原技能、职责、读写/输出/检查/收尾和安装 Skill digest。作为原 Execution.inputs 的一项冻结来源复制进 `.claude/inputs/assignment-context.json`，由 BootstrapReceipt 验证；不新增第二派发表，也不修改已有 ready/legacy preparing 资产。重试复用同一冻结 context；来源不同拒绝。Bootstrap 交付原内嵌 agent-message Schema，Worker 无需访问工厂 Go 源码。
+
+冻结资料包含已绑定 committed tree 的共享 REQ/设计/合同，以及所属 TASK 与原登记 depends_on 的依赖闭包；原 agent-protocol 与 docs/rules 一同交付。读取次序先 TASK、合同，再 REQ/架构/设计、规则；不从本地未提交文档生成正式来源。显式 execution replacement 保留原 profile、派发与资料摘要，只重绑新 execution generation，旧资料及作者字节保留；S5 replacement 仅限原已注册、尚未接收的 document_review，禁止更换产品 check runner。来源/lease/接收限制和原人工边界继续成立，不能借 replacement 升级 profile。
+
+plan_checkpoint 作业同时给原 PLAN_REPORT 的填写支架：机器填真实身份、manifest revision=1、时间与派发路径，专业 objective/steps/assertion_checks 等保留未答。草稿不符合正式 plan Schema，begin 仍走原校验/激活；支架不铸造专业计划、批准或 working 状态。可编辑 plan.json 不进入只读 BootstrapReceipt，也不覆盖既有作者字节；完整 schema、问题与填写说明在冻结 context。S5 的 planned_paths 使用原消费者授予的独占答卷路径，产品写域保持空。
+
+shadow 只能证明选择和送达候选，不证明宿主实际加载或 token 改善。teammate 输出同一 shadow selection；native context 引导读取真实 manifest/技能，workspace 用已有 Read 读取固定 context/Skill 路径，allowedTools 不新增 Skill。后续通过权限等价/资料读取/宿主案例后，再启用首个 Builder profile 和生成最小 frontmatter；本切片不提前宣称 G01 全部完成。
+
+### 18.2 G01 native/teammate 的共同资料投影
+
+新1.2 的已注册 owner 可取得共同 Assignment 资料视图：实际 Runtime/基线、Agent/Team/manifest、职责、原 SkillRefs、scope/checks/done、已绑定 committed 文档及原安装协议/规则、同一 shadow selection 和真实机器身份的未答计划支架。视图同时注明实际 source_root/agent_state；已 working 沿用原接受计划，不再要求重交。计划字段/问题/读取排序由共同生产者提供，不能三入口各写一份。native/teammate 阅读原权威根的完整文件路径，workspace 阅读原 Bootstrap 固定的副本；路径坐标不同不能混成同一物理来源。
+
+native 仅向平台唯一已识别 owner 投递；teammate launch 只有输入 manifest 精确匹配当前注册 Runtime/Agent/Team/Assignment 才附共同视图。示例/未注册 launch 保持明确的候选投影，不生成“已注册”资料或授写权。旧1.1 不追加注册资料入口。源资料/身份不完整、漂移或 symlink 给 Main 具体来源，不宣称 ready，也不从其他 owner、工厂 Skill 或不同 manifest 回落。
+
+共同资料 JSON 是内容寻址的只读派发投影，由实际来源再次校验后独占发布，给 path/hash；不是第二 Runtime、激活或领域完成来源。shadow 投影可随当前原来源重新生成；这不等于 enabled profile 的执行版本迁移。已有 workspace execution 始终走其原 Inputs/Bootstrap 路径，禁止 native 资料作为独立执行的 Main 回落。正式 enabled rollout 前仍需落实 native/teammate 的固定执行版本和实际宿主消费验收。
+
+plan_checkpoint 在原可写专业证据路径给机器填写的未答草稿，专业判断由 owner 填写；草稿不纳入只读来源，不覆盖已存在作者字节。approval/one_shot 不生成可激活的计划草稿。正式 PLAN_REPORT 仍走原 SendMessage(plan_ref)/agent-begin；S5 原题、答卷、责任回执及当前进入身份继续由具名消费者判定。schema 以实际嵌入版本、独占 path/hash 提供，不要求目标项目访问工厂源码。
+
+native 最终 lifecycle 只给完整资料入口与 hash/原模式，并消费原800 rune预算；详细内容在视图内。若 S5 资料视图已含本人 packet/answer，避免在 wire 重复长路径挤掉 next。完成回执优先于新计划提示，未知身份不发行视图。以上投影不新增 Write/Skill/Bash 权限，不代答、代签或改变原门。
+
 接收优先建议从原Board与integration checkpoint派生，不建立第二队列。reported不释放依赖，capacity未知不猜slot；默认仅建议integrate_first，显式反压只限制新派发预算、不删除required set。注册继续在原Writer内重验owner/DAG/scope冲突，真实集成及检查保持。
+
+### 18.3 G01 固定 native/teammate 执行资料与首个 Builder 生成路径
+
+原 Main 通过 `runtime assignment-context prepare --agent-id <actual-owner>` 将已验证的共同资料引用登记到原1.2 Agent.context_binding，含固定 path/SHA、context generation 与原 profile version/hash/mode。原 Writer/CAS/journal 保持唯一提交者；资料发布与专业草稿仍独占、不覆盖，失败不登记 ready/激活。旧1.1拒绝此新写入；未准备的 shadow 仍可投影，已准备者 lifecycle/readback 必须消费固定来源，不能重算到新版 profile。Agent工作状态、计划/激活/完成仍以当前原 Runtime 为准，资料中的 agent_state 仅表示准备时捕获值。
+
+绑定后每次送达校验原 Runtime/基线/owner/Assignment/Team/mode、原 manifest、来源摘要、固定 Schema与当前S5题干；源丢失/漂移/绑定损坏直接给原恢复路径，不回落新投影。已有独立 execution 继续原 Inputs/Bootstrap，不创建 native绑定。当前接收和退役优先于资料提示。原 Main prepare 重试同代数是幂等；禁止通过通用刷新替换既有 profile。
+
+S5具名修订允许显式 `--replace-generation <old>`：仅当前实际新packet的 previous_submission_key 精确指向已接收旧packet，且owner/assignment/runtime/基线/进入身份保持。新 context代数保留原 profile/Skill来源/Schema和角色源；只允许原修订链决定的文档/卷/答案变化。已过阶段、旧代数、没有原接收前驱、来源版本变化拒绝。旧引用与作者字节保留，不用临时文件存在证明修订。
+
+首个 Builder profile 的生成器只修改原 backend-builder frontmatter 的 skills 为共同profile核心集合；name/model/tools/disallowedTools/permissionMode及正文权限/责任保持，原 manifest/activation SkillRefs 不由减载集合替代。生成结果、来源/hash和profile/hash一起固定后才能进入新的execution；已有ready/preparing不覆盖。新增enabled执行入口仅用于已合法准备的新Builder，默认继续shadow，真实宿主未执行不得宣称消费/token收益。实现生成器和生成验收不是启用完成；原生/teammate实际role装配与首个workspace启用继续按同一契约接线。
+
+固定 context_binding 也触发原 complete-pair checkpoint；RR-A文档重建不得丢失该索引。checkpoint复核固定资料字节、Schema、role/Skill源及原CONTEXT-PREPARE journal的owner/generation/ref-key。合法S5文档修订可能让旧资料投递过时，恢复保留该事实并提示原换代，不能因此重算profile或伪称ready。
+
+首个角色生成器由 `runtime assignment-context render-role` 返回实际来源与生成字节，明确enabled=false；候选生成不等于真正execution的enabled profile。已有角色/安装回执不覆写，下一实施切片沿原新execution准备/Bootstrap接入生成结果。
+
+### 18.4 G01 首个 workspace Builder enabled profile
+
+新1.2 S6 backend-builder execution.prepare 可显式 `--context-profile backend-core`；默认shadow。只有首次合法新execution接受选择，其他角色/阶段/旧1.1拒绝enabled选择。已准备实例省略选择复用原profile，显式不同选择拒绝；原replacement只重绑execution代数并保留固定profile/生成源，不用replacement升级角色。
+
+prepare从实际原角色生成core前置列表，仅skills块变化；生成字节的source/target/hash、原角色source/hash、核心集合及profile信息进入原冻结context和Execution.inputs。Bootstrap在新Worker目标角色路径安装这份固定字节并纳入原Receipt，其余角色/Skill资产仍完整安装，Main资产/安装回执不变。缺源、symlink、生成字节冲突或旧Worker资产不同拒绝，不覆写已有ready/preparing。
+
+原manifest/activation SkillRefs仍是权限来源，name/model/tools/disallowedTools/permissionMode与正文不变；selected额外技能保持固定安装路径/摘要，由原Read入口消费。workspace.allowedTools不新增Skill。launch仅使用原登记角色名和固定Worker目标，提示说明enabled只控制加载，原计划/人闸/实际检查/commit/report/integrate不改。
+
+验收从原S5基线经真实双PASS到S6，再注册实际Builder并走prepare/原begin/原commit/原report/原集成；比较Main角色/激活字节与有效权限，Worker实际core前置4项、额外来源可读，重试/replace固定，漂移拒绝，实际子进程argv/CWD/角色文件符合冻结数据。fixture/fake宿主只能证明装配和读路径；真实Claude消费及token对照未执行不得计为通过。enabled是显式新执行装配，不是自动全项目迁移或G01整体完成。
+## G06 原看板的接收建议（2026-10-14）
+
+`dispatch.AdviseReception` 纯投影原 Board 与 pendingIntegration，按直接
+consumer 数、TASK ID、Assignment ID 排序。CLI `s6 status --advice` 与原
+Main checkpoint guidance 使用同一投影；普通工具、Worker Stop/Idle 不增加
+扫描或门。Board 与 pending 的 Runtime 身份、generation、revision 必须
+一致；建议不成为可提交授权，原注册/集成事务仍复核。
+
+原 pending 追加 TASK ID 和 checkpoint 引用；不新增队列。失败恢复保留
+原重试 argv，专业纠正理由作为问题，不能把占位符当作可执行命令。
+容量须显式声明，`--max-unreceived-results` 仅限制建议，原 Board.next
+保持。未接收与 verified 待 ack 占建议上限，cleanup 单列。暂无 Runtime
+持久阈值、自动 spawn、滞回或进程存活证明，后续按 G06 设计逐项落实。
+
+## G06 原 Writer 内的持久反压（2026-10-14）
+
+配置只在新 Runtime 的 init/install 明确选择并冻结。原 Runtime 可选
+ dispatch_pressure 仅记录 Runtime ID/generation/paused，作为迟滞状态；不是
+第二队列。原接收投影搬入 integration.Pending，HookContext.FromSnapshot
+消费 Writer 持有的状态，禁止在同一事务拼接另一个 Runtime 版本。
+
+原 Builder 报告与 Agent ACK 事务维护迟滞，原 workgroup 注册仅对 building
+的 Builder 暂缓；原依赖/owner/冲突校验继续复核。ACK 的报告摘要沿原
+Runtime evidence 登记来源生成，旧 ACK 不释放新报告；未确认或失配结果仍
+计接收积压，匹配 ACK 后 cleanup 单列。只读建议不落迟滞，不改阈值。
+原只读作业授权校验抽至 agentauth 复用，保留 assignment 接口及相同链验证。
+
+## G06 只读 OS 锁观测（2026-10-14）
+
+filelock.Probe 只打开已有普通锁文件，非阻塞探测并释放，不创建或修改文件；
+前后复核同一 inode，替换/链接/权限问题给 unknown。integration.ObserveWorkspace
+复用原 LockWorkspace 的规范化 checkout；对不同证据根仍应观察实际 Git 根。
+闭合 observation Schema 不含可信 actor/PID，authorizes 恒 false。
+
+Main 原 checkpoint 和显式 s6 advice 接线；busy 原资源时观察动作优先，
+原 pending 与可派建议保持。普通工具/Stop/Idle 不增加门。观察与执行之间
+允许变化，实际锁、原 Writer、Main required 检查与 fresh S7 继续负责执行。
+真实子进程死亡后的释放以及真实 Main Go 检查的并发拒绝必须验收，不能
+用单个 checkpoint 状态或预设运行记录替代。

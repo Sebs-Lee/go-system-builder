@@ -70,7 +70,7 @@ func TestManualS7RecoveryGuidanceNamesRepairFactsAndTypedEvidence(t *testing.T) 
 		"coverage_inventory",
 		"e2e_assets",
 		"capture step --finding <id> --claim <id>",
-		"rejected command includes the missing facts, repair action, next command",
+		"explicitly named legacy/recovery command rejects an artifact",
 		"runtime s7-budget-decision",
 	} {
 		if !strings.Contains(manual, want) {
@@ -79,28 +79,57 @@ func TestManualS7RecoveryGuidanceNamesRepairFactsAndTypedEvidence(t *testing.T) 
 	}
 }
 
-func TestManualS10GuidanceNamesManifestAndClosedLoop(t *testing.T) {
-	manual := transition.RenderManual(&transition.LoopDefinition{
-		Transitions: []transition.TransitionSpec{
-			{ID: "TR-009", From: "verification", To: "acceptance", RequiredEvidence: []string{"clean_round_record"}},
-			{ID: "TR-015", From: "acceptance", To: "release_audit", RequiredEvidence: []string{"acceptance_record", "clean_round_record"}},
-			{ID: "TR-017", From: "release_audit", To: "awaiting_human_release", RequiredEvidence: []string{"release_audit_record", "acceptance_record", "clean_round_record"}},
-			{ID: "TR-018", From: "release_audit", To: "paused", RequiredEvidence: []string{"release_audit_record", "pause_record"}},
-		},
-	}, transition.ManualOptions{})
+func TestManualQuestionnairePathIsTheNormalS6S7S9Flow(t *testing.T) {
+	manual := transition.RenderManual(&transition.LoopDefinition{}, transition.ManualOptions{})
 
 	for _, want := range []string{
-		"loop-harness s10 manifest validate",
-		"audit_manifest_path",
-		"audit_manifest_sha256",
-		"counterevidence",
-		"explicit `requirement`, `contract`, and `changed_path` rows",
-		"all eight audit areas",
-		"--outcome blocked",
+		"docs/examples/s6-builder/README.md",
+		"runtime workspace prepare --root <authority-root> --assignment <id> --agent <owner>",
+		"exact PLAN and Result paths",
+		"runtime workspace launch",
+		"Do not run `runtime task-complete`",
+		"exact Hook-supplied ReviewPlan path",
+		"Do not run `runtime review-result submit`",
+		"one independent TargetedReverification per approved Contract",
+		"no author-filled Handoff is needed",
+	} {
+		if !strings.Contains(manual, want) {
+			t.Fatalf("normal questionnaire path must contain %q, got:\n%s", want, manual)
+		}
+	}
+
+	for _, stale := range []string{
+		"Use the returned begin/commit/report/check commands",
+		"team launch --manifest <path> --request-template <template>",
+		"runtime review-plan --file <plan.json>",
+		"send the generic PLAN_REPORT and submit the S9 domain PlanReport",
+	} {
+		if strings.Contains(manual, stale) {
+			t.Fatalf("manual still advertises a duplicate normal-path step %q", stale)
+		}
+	}
+}
+
+func TestManualS10GuidanceNamesManifestAndClosedLoop(t *testing.T) {
+	manual := transition.RenderManual(&transition.LoopDefinition{}, transition.ManualOptions{})
+
+	for _, want := range []string{
+		"exact acceptance or release-audit manifest answer path",
+		"coverage/counterevidence row once",
+		"eight audit-area rows",
+		"original consumer validates the saved manifest and derives its envelope and metrics",
+		"Do not hand-run manifest validate/render",
+		"zero UNKNOWN",
 		"S8 → S9 → a fresh complete S7",
+		"runtime human-decision",
 	} {
 		if !strings.Contains(manual, want) {
 			t.Fatalf("S10 manual guidance must contain %q, got:\n%s", want, manual)
+		}
+	}
+	for _, stale := range []string{"audit_manifest_path", "audit_manifest_sha256", "loop-harness s10 manifest validate"} {
+		if strings.Contains(manual, stale) {
+			t.Fatalf("normal S10 guidance must not ask the author to copy or submit %q", stale)
 		}
 	}
 }

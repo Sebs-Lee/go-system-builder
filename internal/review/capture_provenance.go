@@ -8,22 +8,27 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 )
 
-// CapturedFrozenSubject is the content observed at one side of a capture
-// window.  An empty SHA256 means that the subject was missing or unreadable
-// from the execution checkout.
+// CapturedFrozenSubject records the content or presence observed at one side
+// of a capture window. Canonical deleted subjects must be absent at both
+// boundaries and are authorized by ProductBaseline's Git preimage proof.
 type CapturedFrozenSubject struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+	Status string `json:"status,omitempty"` // present | missing | unreadable
 }
 
 // CaptureProvenance is optional so old hand-authored CaptureStep JSON remains
@@ -44,13 +49,16 @@ type CaptureProvenance struct {
 	EndFrozenSubjects           []CapturedFrozenSubject `json:"end_frozen_subjects,omitempty"`
 	StartUndeclaredProductDrift []string                `json:"start_undeclared_product_drift,omitempty"`
 	EndUndeclaredProductDrift   []string                `json:"end_undeclared_product_drift,omitempty"`
+	ProductBaseline             *buildsurface.Snapshot  `json:"product_baseline,omitempty"`
 	DiagnosticOnly              bool                    `json:"diagnostic_only,omitempty"`
 	DiagnosticReason            string                  `json:"diagnostic_reason,omitempty"`
 
 	// Runtime-only fields used while the command is executing. They are never
 	// serialized into the capture buffer.
-	subjectRoot string
-	subjects    []FrozenSubject
+	subjectRoot   string
+	authorityRoot string
+	runtimeState  map[string]any
+	subjects      []FrozenSubject
 }
 
 // BeginCaptureProvenance snapshots the plan subjects immediately before the
@@ -63,6 +71,8 @@ func BeginCaptureProvenance(root string, state map[string]any, assignmentID, exe
 		StartedAt:     started.UTC().Format(time.RFC3339Nano),
 	}
 	p.subjectRoot = captureSubjectRoot(root, executionRoot)
+	p.authorityRoot = canonicalCapturePath(root)
+	p.runtimeState = state
 	p.ExecutionRepositoryRoot = p.subjectRoot
 	p.StartCommit = captureGitCommit(p.subjectRoot)
 
@@ -84,9 +94,26 @@ func BeginCaptureProvenance(root string, state map[string]any, assignmentID, exe
 	p.ReviewRound = plan.ReviewRound
 	p.ReviewPlanRevision = ptr.Revision
 	p.subjects = append([]FrozenSubject(nil), plan.FrozenSubjects...)
+	if plan.ProductBaseline != nil {
+		baselineCopy := *plan.ProductBaseline
+		baselineCopy.Tasks = append([]buildsurface.Task(nil), plan.ProductBaseline.Tasks...)
+		baselineCopy.Contributions = append([]buildsurface.Contribution(nil), plan.ProductBaseline.Contributions...)
+		baselineCopy.Paths = append([]buildsurface.Path(nil), plan.ProductBaseline.Paths...)
+		p.ProductBaseline = &baselineCopy
+		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+			p.markDiagnosticOnly("canonical product baseline is unavailable: " + err.Error())
+		}
+		if p.StartCommit == "" || p.StartCommit != plan.ProductBaseline.FinalCommit {
+			p.markDiagnosticOnly(fmt.Sprintf("capture checkout starts at commit %q; canonical ReviewPlan requires %q", p.StartCommit, plan.ProductBaseline.FinalCommit))
+		}
+	} else if buildsurface.HasCanonical(state) {
+		p.markDiagnosticOnly("canonical S6 generation has no pinned product baseline in the ReviewPlan")
+	}
 	p.StartFrozenSubjects = captureSubjectDigests(p.subjectRoot, p.subjects)
-	if drift, driftErr := detectUndeclaredProductDrift(p.subjectRoot, plan); driftErr == nil {
+	if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot); driftErr == nil {
 		p.StartUndeclaredProductDrift = drift
+	} else if p.ProductBaseline != nil || errors.Is(driftErr, errResultPacketDriftProof) {
+		p.markDiagnosticOnly("capture start drift cannot be checked: " + driftErr.Error())
 	}
 	return p
 }
@@ -100,17 +127,40 @@ func (p *CaptureProvenance) Finish(ended time.Time) {
 	}
 	p.EndedAt = ended.UTC().Format(time.RFC3339Nano)
 	p.EndCommit = captureGitCommit(p.subjectRoot)
+	if p.ProductBaseline != nil {
+		if p.EndCommit == "" || p.EndCommit != p.ProductBaseline.FinalCommit {
+			p.markDiagnosticOnly(fmt.Sprintf("capture checkout ends at commit %q; canonical ReviewPlan requires %q", p.EndCommit, p.ProductBaseline.FinalCommit))
+		}
+		plan := &Plan{ProductBaseline: p.ProductBaseline, FrozenSubjects: append([]FrozenSubject(nil), p.subjects...)}
+		if err := verifyProductBaselineDeclaration(p.authorityRoot, p.runtimeState, plan); err != nil {
+			p.markDiagnosticOnly("canonical product baseline changed during capture: " + err.Error())
+		}
+	}
 	if len(p.subjects) > 0 {
 		p.EndFrozenSubjects = captureSubjectDigests(p.subjectRoot, p.subjects)
 	}
 	if len(p.subjects) > 0 {
-		plan := &Plan{FrozenSubjects: append([]FrozenSubject(nil), p.subjects...)}
-		if drift, driftErr := detectUndeclaredProductDrift(p.subjectRoot, plan); driftErr == nil {
+		plan := &Plan{ProductBaseline: p.ProductBaseline, FrozenSubjects: append([]FrozenSubject(nil), p.subjects...)}
+		if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot); driftErr == nil {
 			p.EndUndeclaredProductDrift = drift
+		} else if p.ProductBaseline != nil || errors.Is(driftErr, errResultPacketDriftProof) {
+			p.markDiagnosticOnly("capture end drift cannot be checked: " + driftErr.Error())
 		}
 	}
 	p.subjectRoot = ""
+	p.authorityRoot = ""
+	p.runtimeState = nil
 	p.subjects = nil
+}
+
+func (p *CaptureProvenance) markDiagnosticOnly(reason string) {
+	if p == nil {
+		return
+	}
+	p.DiagnosticOnly = true
+	if p.DiagnosticReason == "" {
+		p.DiagnosticReason = reason
+	}
 }
 
 func captureAssignmentInPlan(plan *Plan, assignmentID string) bool {
@@ -185,11 +235,26 @@ func captureSubjectDigests(root string, subjects []FrozenSubject) []CapturedFroz
 	for _, subject := range subjects {
 		captured := CapturedFrozenSubject{Path: filepath.ToSlash(subject.Path)}
 		path, err := captureContainedPath(root, subject.Path)
-		if err == nil {
-			if data, readErr := os.ReadFile(path); readErr == nil {
-				sum := sha256.Sum256(data)
-				captured.SHA256 = hex.EncodeToString(sum[:])
+		if err != nil {
+			captured.Status = "unreadable"
+			out = append(out, captured)
+			continue
+		}
+		if _, statErr := os.Lstat(path); statErr != nil {
+			if os.IsNotExist(statErr) {
+				captured.Status = "missing"
+			} else {
+				captured.Status = "unreadable"
 			}
+			out = append(out, captured)
+			continue
+		}
+		captured.Status = "present"
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			sum := sha256.Sum256(data)
+			captured.SHA256 = hex.EncodeToString(sum[:])
+		} else {
+			captured.Status = "unreadable"
 		}
 		out = append(out, captured)
 	}
@@ -305,7 +370,7 @@ func captureProvenanceForKey(steps []CaptureStep, key string) []*CaptureProvenan
 	return out
 }
 
-func validateOneCaptureProvenance(plan *Plan, assignmentID string, assignmentRevision int, provenance *CaptureProvenance) error {
+func validateOneCaptureProvenance(root string, state map[string]any, plan *Plan, assignmentID string, assignmentRevision int, provenance *CaptureProvenance) error {
 	if provenance == nil {
 		return fmt.Errorf("capture evidence has no execution provenance")
 	}
@@ -321,30 +386,80 @@ func validateOneCaptureProvenance(plan *Plan, assignmentID string, assignmentRev
 	if provenance.ExecutionRoot == "" || provenance.ExecutionRepositoryRoot == "" || provenance.EndedAt == "" {
 		return fmt.Errorf("capture provenance is incomplete (execution root or end snapshot missing)")
 	}
+	canonicalBaseline := plan.ProductBaseline != nil || buildsurface.HasCanonical(state)
+	if canonicalBaseline {
+		if plan.ProductBaseline == nil {
+			return fmt.Errorf("canonical S6 ReviewPlan has no product baseline for capture provenance")
+		}
+		if provenance.ProductBaseline == nil || !reflect.DeepEqual(*provenance.ProductBaseline, *plan.ProductBaseline) {
+			return fmt.Errorf("capture provenance does not carry the pinned ReviewPlan product baseline")
+		}
+		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+			return fmt.Errorf("pinned product baseline cannot be reverified at ReviewResult submit: %w", err)
+		}
+		if provenance.StartCommit == "" || provenance.StartCommit != plan.ProductBaseline.FinalCommit || provenance.EndCommit == "" || provenance.EndCommit != plan.ProductBaseline.FinalCommit {
+			return fmt.Errorf("capture checkout commits must both equal pinned product baseline final commit %s (start=%q end=%q)", plan.ProductBaseline.FinalCommit, provenance.StartCommit, provenance.EndCommit)
+		}
+	} else if provenance.ProductBaseline != nil {
+		return fmt.Errorf("capture provenance carries a canonical product baseline but the ReviewPlan is historical")
+	}
 	if _, err := os.Stat(provenance.ExecutionRoot); err != nil {
 		return fmt.Errorf("capture execution root %s is unavailable: %w", provenance.ExecutionRoot, err)
 	}
-	if provenance.StartCommit != "" && provenance.EndCommit != "" && provenance.StartCommit != provenance.EndCommit {
+	if !canonicalBaseline && provenance.StartCommit != "" && provenance.EndCommit != "" && provenance.StartCommit != provenance.EndCommit {
 		return fmt.Errorf("capture execution commit changed during command (%s -> %s)", provenance.StartCommit, provenance.EndCommit)
 	}
 	if len(provenance.StartUndeclaredProductDrift) > 0 || len(provenance.EndUndeclaredProductDrift) > 0 {
 		return fmt.Errorf("capture execution checkout has undeclared product drift (start=%s end=%s)", strings.Join(provenance.StartUndeclaredProductDrift, ","), strings.Join(provenance.EndUndeclaredProductDrift, ","))
 	}
-	start := make(map[string]string, len(provenance.StartFrozenSubjects))
-	end := make(map[string]string, len(provenance.EndFrozenSubjects))
+	start := make(map[string]CapturedFrozenSubject, len(provenance.StartFrozenSubjects))
+	end := make(map[string]CapturedFrozenSubject, len(provenance.EndFrozenSubjects))
 	for _, subject := range provenance.StartFrozenSubjects {
-		start[filepath.ToSlash(subject.Path)] = subject.SHA256
+		path := filepath.ToSlash(subject.Path)
+		if path == "" {
+			return fmt.Errorf("capture start frozen subject has an empty path")
+		}
+		if _, duplicate := start[path]; duplicate {
+			return fmt.Errorf("capture start frozen subjects repeat %s", path)
+		}
+		start[path] = subject
 	}
 	for _, subject := range provenance.EndFrozenSubjects {
-		end[filepath.ToSlash(subject.Path)] = subject.SHA256
+		path := filepath.ToSlash(subject.Path)
+		if path == "" {
+			return fmt.Errorf("capture end frozen subject has an empty path")
+		}
+		if _, duplicate := end[path]; duplicate {
+			return fmt.Errorf("capture end frozen subjects repeat %s", path)
+		}
+		end[path] = subject
+	}
+	if canonicalBaseline && (len(start) != len(plan.FrozenSubjects) || len(end) != len(plan.FrozenSubjects)) {
+		return fmt.Errorf("canonical capture provenance must contain the exact frozen subject set at both command boundaries")
 	}
 	for _, expected := range plan.FrozenSubjects {
 		path := filepath.ToSlash(expected.Path)
-		if start[path] == "" || start[path] != expected.SHA256 {
-			return fmt.Errorf("capture frozen subject %s start hash %s does not match ReviewPlan baseline %s", path, start[path], expected.SHA256)
+		if canonicalBaseline && expected.Kind == "deleted" {
+			startSubject, startOK := start[path]
+			endSubject, endOK := end[path]
+			if !startOK || !endOK {
+				return fmt.Errorf("capture deleted subject %s is missing its start or end presence record", path)
+			}
+			if startSubject.Status != "missing" || endSubject.Status != "missing" || startSubject.SHA256 != "" || endSubject.SHA256 != "" {
+				return fmt.Errorf("capture deleted subject %s must remain absent at both command boundaries", path)
+			}
+			continue
 		}
-		if end[path] == "" || end[path] != expected.SHA256 {
-			return fmt.Errorf("capture frozen subject %s end hash %s does not match ReviewPlan baseline %s", path, end[path], expected.SHA256)
+		startSubject, startOK := start[path]
+		endSubject, endOK := end[path]
+		if canonicalBaseline && (!startOK || !endOK || startSubject.Status != "present" || endSubject.Status != "present") {
+			return fmt.Errorf("capture frozen subject %s must be readable at both command boundaries", path)
+		}
+		if !startOK || startSubject.SHA256 == "" || startSubject.SHA256 != expected.SHA256 {
+			return fmt.Errorf("capture frozen subject %s start hash %s does not match ReviewPlan baseline %s", path, startSubject.SHA256, expected.SHA256)
+		}
+		if !endOK || endSubject.SHA256 == "" || endSubject.SHA256 != expected.SHA256 {
+			return fmt.Errorf("capture frozen subject %s end hash %s does not match ReviewPlan baseline %s", path, endSubject.SHA256, expected.SHA256)
 		}
 	}
 	return nil
@@ -353,7 +468,7 @@ func validateOneCaptureProvenance(plan *Plan, assignmentID string, assignmentRev
 // validateCapturePassProvenance checks only command-output evidence attached
 // to PASS claims/checks. Failure findings may intentionally use dirty or
 // partial diagnostics; unrelated capture steps do not block a claim.
-func validateCapturePassProvenance(plan *Plan, assignment *PlanAssignment, result *Result, steps []CaptureStep) error {
+func validateCapturePassProvenance(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result, steps []CaptureStep) error {
 	checkRefs := func(claimID string, refs []string) error {
 		for _, ref := range refs {
 			if !isAutomaticCaptureRef(ref) {
@@ -386,7 +501,7 @@ func validateCapturePassProvenance(plan *Plan, assignment *PlanAssignment, resul
 				}
 			}
 			for _, provenance := range provenances {
-				if err := validateOneCaptureProvenance(plan, assignment.AssignmentID, result.AssignmentRevision, provenance); err != nil {
+				if err := validateOneCaptureProvenance(root, state, plan, assignment.AssignmentID, result.AssignmentRevision, provenance); err != nil {
 					return fmt.Errorf("capture provenance for PASS evidence %q: %w", ref, err)
 				}
 			}

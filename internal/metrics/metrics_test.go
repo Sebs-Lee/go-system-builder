@@ -304,7 +304,7 @@ func TestTrackedFamilyBudget(t *testing.T) {
 			families++
 		}
 	}
-	if families > 16 {
-		t.Fatalf("metrics snapshot tracks %d loop_* families, budget is 16:\n%s", families, raw)
+	if families > 18 {
+		t.Fatalf("metrics snapshot tracks %d loop_* families, budget is 18:\n%s", families, raw)
 	}
 }

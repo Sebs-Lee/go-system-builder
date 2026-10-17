@@ -95,3 +95,25 @@ func TestDispatchFreezeProjectsExistingArtifactLocks(t *testing.T) {
 		}
 	}
 }
+
+func TestPacketTR002RegistrationRequiresCurrentS4Followup(t *testing.T) {
+	root := t.TempDir()
+	state := map[string]any{
+		"schema_version": "1.2.0",
+		"configuration":  map[string]any{"optimization": map[string]any{"packet": true}},
+		"baseline":       map[string]any{"generation": 1},
+		"documents":      []any{},
+	}
+	ctx := &ActionContext{
+		Root: root, Spec: TransitionSpec{ID: "TR-002"},
+		Request: &Request{Actor: "hook_controller", Files: fileview.Disk{Root: root}},
+	}
+	for _, action := range []ActionFn{actionRegisterLockedContracts, actionRegisterPlanningTasks} {
+		if _, err := action(state, ctx); err == nil || !strings.Contains(err.Error(), "current accepted S4 planning_task followup") {
+			t.Fatalf("packet-mode TR-002 action accepted a missing S4 followup: %v", err)
+		}
+	}
+	if len(state["documents"].([]any)) != 0 {
+		t.Fatalf("rejected TR-002 registration mutated documents: %#v", state["documents"])
+	}
+}

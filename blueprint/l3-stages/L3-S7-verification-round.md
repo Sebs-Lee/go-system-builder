@@ -10,6 +10,243 @@
 
 > **Revision 口径**：Runtime `revision` 是 Writer 内部提交序号；ReviewPlan、Assignment 和 verification artifact 的版本由各自工具生成。S7 只提交 Claim、Result、Finding、digest 和 `next` 等业务事实，不要求 Reviewer/Main Agent 读取、计算或复制 Runtime revision。目标命令边界统一见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)；§13 的旧 CAS 文案仅为历史实现记录。
 
+## 0. 当前减负后的 S7 交付契约（2026-10-16）
+
+本节服从 [全局设计 §0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-15优先于旧方案)，优先于本文旧 canonical 接续及历史实现记录。以下是当前目标契约，未完成的接线不能写成已实现能力。最小正常链为：Main ReviewPlan 填写一次并保存 → 原消费者登记并按原 Assignment 派发 → Reviewer 专业问卷填写一次并保存 → 原 Result consumer → 本人 done，整轮依原图路由。
+
+Main 仍按原 ReviewPlan 冻结 Claims、subjects、independence、Assignment 和 wave；这份 domain ReviewPlan 是 S7 的计划事实。审查/调查 Assignment 不另交 generic PLAN_REPORT、读回或 activation；Reviewer 直接接收当前专业问卷。当前问卷路径的 packet issuance/Stop-Idle 已移除 generic PLAN/activation 前置，原 Assignment/owner、ReviewPlan、packet 与结果 consumer 检查仍保留；不得由系统伪造“已读”“已计划”或专业检查事实。
+
+SessionStart 若在本事件经原事务进入 packet S7、Main 尚未登记 ReviewPlan，交接只展示准确问卷路径：已有卷直接读取，缺卷明确由首次工具 Pre 自动准备，Main 不手工 issue 或 retry。首次 Pre 仍走原完整 DraftPlan 准备与保存消费者，避免同一次交接串联两条完整业务链。
+
+Main 的初始 ReviewPlan 也走一次填写与保存：S7 进入 verification 后，listener 从当前 Runtime 的 generation/round 投影准确的 `.claude/submissions/<runtime>/gN/S7/rN/review-plan.json` 路径；原 `DraftPlanForRoot` 提供机器已有的 source、baseline 与元数据，Main 补齐真实专业 Claims、assertions/oracles/methods、assignments 和 required coverage 后保存该文件。PostToolUse 调原 `review-plan` consumer 完成校验与注册；相同已登记内容重复保存只反馈既有结果，不重复写入。已登记计划的实质修改继续走原受控 revision/rework。正常流程不再要求 Main 手工另跑 `s7 draft --out` 再投递同一份计划，也不增加 generic PLAN_REPORT；Reviewer 的独立专业问卷和判断保持不变。
+
+系统随 Main/Reviewer 责任给出当前目标、必要资料和工序、逐题明确要求、答案形状及必要示例、准确问卷路径和真实缺项。Main 选择真实人员、专业分工和独立性；系统已知的身份绑定、哈希、任务信息、登记参数及 validation 时间戳自动带出，缺失时报告系统准备缺口，不让作者猜路径、命令参数或手工拼 manifest。作者不重复提交 PLAN_REPORT、COMPLETION 或手工 issue/consume。
+
+Reviewer 的 PreToolUse 图监听投影准确 packet view 与 `answer.json` 绝对路径。问卷已经带当前 frozen Claims/subjects 和答案骨架；Reviewer 只需填写逐 Claim 的专业结论、观察结果、finding/encounter/evidence refs，以及实际无法取得的 `capture_gaps`。成功保存精确 answer 后，PostToolUse Hook 调原 `SaveReviewResultFrom`→`review.SubmitResult`：原 consumer 校验当前 packet/owner/Claim/digest/readiness，固化可用 capture buffer，登记 Findings 并按原状态生成 ObservationBatch 或 CleanRound。正常工作不运行 `runtime review-result submit`，也不手工登记 Finding、ObservationBatch 或 CleanRound。
+
+Finding 的 `visible_impact` 位于 Finding 顶层；副作用写入 `encounter.side_effects` 字符串数组，不在 Finding 顶层添加 `side_effects`。
+
+Finding 的 encounter 仍需保全真实执行现场。原 buffer 路径可由既有 receipt API 从 `runtime_id/generation/assignment_id` 得出：`.claude/evidence/<runtime_id>/g<generation>/captures/<assignment_id>/steps.jsonl`；执行型命令使用原 `loop-harness capture exec --assignment <packet 中的 assignment_id> -- <command>`，直接观察动作使用原 `loop-harness capture step`。保存由原 consumer 读取同一 buffer，不需要作者再找目录、传 `--captures` 或提交第二份 capture 文档。系统应随当前责任给出该 buffer 的实际绝对路径和已填当前 Assignment 参数的可用 capture 命令；尚未投影时明确报告系统接线缺口，不要求作者自行推导。既有 buffer 由原 consumer 使用，不另交日志、capture 文档或采集协议。无法自动记录的必需现场应写入问卷 encounter 或具体 `capture_gaps`，不能把缺失当 PASS，也不能为补字段重复危险操作。
+
+ReviewResult 被原 consumer 接收只结束该 Reviewer 的责任。Stage done 仍要求原 required Claim set 都有 exact disposition、Finding readiness 符合原条件、独立性/冻结基线仍有效，最后由原 consumer seal ObservationBatch 或生成 CleanRound；人工暂停/审批与 S8/S10 原人闸不由 Hook 或保存替代。PreToolUse 是图监听提醒，不按身份、工具、权限、路径或 scope 拦截，也不将 ACL 搬到其他入口。普通监听只读原当前事实和必要变化，不在普通 Read/Write 或无关工具事件重跑 baseline、receipt、Git 全链；新问卷发行仅在原 Writer/CAS 事务内完整校验一次基线，前置加载不重复验证；跨 S6→S7 入口的完整 Main batch 证明保留原 gate 与 Writer/CAS 校验，事务前不重复完整证明，其余请求检查保持；已发行问卷的补发布保留原基线、发行证据与当前资格检查；首次准备与真实保存的必要验证沿原准备入口和消费者执行，不新增缓存协议、状态或报告。本人责任仅使用 pending / active / blocked / done / cancelled；Claim disposition、原计划有效性及消费回执仍为原领域事实。原 Plan 已标 stale 时，提醒优先给 Main 原基线/原 Plan 恢复责任、准确路径及已有反馈，不继续催 queued E2E 或旧答卷；原 revive/revise 及消费者检查保持，不自动恢复或做工具权限拦截。普通 Finding 保全现场后继续当前 required Claims 中安全可执行的检查；critical、baseline stale 或真实 blocker 才停止受影响执行，真实人工暂停沿原图处理。没有实际 req_change_required/release_blocked verdict，不把相应人闸列为当前缺项。
+
+历史有界验收（2026-10-16）：R48 真实原生 Main（`e631dab3-ef5f-445d-b8f5-5cca39120eb4`）完成 backend Clean 路径：7 名独立 Reviewer 均有原消费者 receipt 且本人 done，8 个 required Claims pass，E2E 为计划 N/A；原消费者生成 `.claude/evidence/loop-REQ-001/g1/review/clean-round-r1.json`，原 `hook_controller` 以同一 native request ID 提交 `evt-tr-009-r104`（revision 103→104），经 TR-009 进入 S10，未开展 S10 专业工作。进程退出 0、无 runner timeout、耗时 705.923 秒；原始流仍保留 11 次内部 Hook 8 秒超时，不代表全程顺畅。
+
+R49 最后减法为单缺口 owner 准备、普通观察不重放已接收问卷、可选未知 actor 静默及三项待选字段格式说明；`r49-s7-final-targeted-retry-3` 的 review 5、cli 8、integration 3 共 16 项独立 Go 全通过，与旧 26 项重叠、不累计。after-r49 宿主包已构建。真实 native 准备首段 `r49-s7-native-preparation` 只生成 draft 后提前停止，不能算 7 份问卷；该段 process 0、无 runner timeout、246.511 秒，但跨 S6→S7 的 SessionStart:startup 有一次内部 8 秒超时，后续 Pre 正常恢复。纠正范围后的 `r49-s7-native-preparation-register`（同前段 resume，SID `e9de43e1-f634-4ca3-9466-302b4c50e66b`）进程退出 0、无 runner timeout、耗时 254.837 秒；原 `register-workgroup` 登记 7 个分工，Runtime 有 7 个实际 S7 ReviewResult packets，14 个 view/answer 文件均存在且 JSON 读取成功。该续段无内部 Hook 8 秒超时，但有一次原 4 秒 preparation defer（`s7-r1-qa-design-boundary: context deadline exceeded`），随后普通 Pre 自动恢复至 7/7。R49 未启动专业 Reviewer、未填专业答案，仅验证最终包登记准备，不新增专业结论或整轮结果，不与 R48 合称同一次 fresh full chain。
+
+该历史快照的 done 仅涵盖上述 backend Clean 路线及登记/问卷准备验收。R49 冷启动及准备 defer、R50 首次 SessionStart 在 TR-006 已提交后仍超时的失败证据均保留；这些遗留的本轮收尾结果见下述 2026-10-17 记录，不能将旧 pending 继续作为最新状态。不代表所有 S7 分支、browser、全阶段或多平台验收，S8/S10 专业工作未开展。旧失败证据 tag `R46`（context 漂移误判）、`R47`（写卷未接收）、`r49-s7-final-targeted-1` 保留。
+
+**当前遗留收尾（2026-10-17）**：S7 本轮有界工作已收尾，后续审查 S8；不代表全局优化完成。详细测试、原事务、native 分段与包记录见[收尾证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r52-s7-closeout-final.json)。
+
+- R51 两段同 SID 的真实冷入口/准备验证均 process 0、无外层超时（411.817 秒、116.554 秒）。原 `hook_controller` 提交 TR-006 `evt-tr-006-r77`（76→77）；Main Plan 原登记，7 packets/14 JSON 可读，7 verdict/8 Claim conclusion 均为 null，仅准备、没有新增专业整轮。
+- R50 browser bug-v4 的 3 个独立职责均原 accepted/done，真实浏览器 2 PASS/1 FAIL 并验证安全恢复；原 ObservationBatch 经 TR-008 `evt-tr-008-r12`（11→12）进入 S8。clean-v2 的 3 个独立职责均原 accepted/done，真实浏览器 3/3 PASS（6.8 秒），原 CleanRound 经 TR-009 `evt-tr-009-r12`（11→12）进入 S10。这两条是 synthetic S7 入口，不是 canonical S6→browser 全链。
+- 六段共 466 条直接 Hook responses 无内部 deadline 或 4 秒 preparation defer。clean 首段触及外层 720 秒截止，随后 resume 同一 E2E 完成；bug 首段误加的静态全 PASS 编排约束已纠正为原 disposition 条件，没有修改 wave 规则。
+
+43 项不同定向测试的最新结果 PASS（32 项核心 + 11 项原预算/人闸、冷启动 digest 与回归资产漂移边界），默认 skip 的 exporter 不计，旧测试批次不累加；原 closeout-evidence.json 保留为核心 32 项快照。[after-r52 宿主包](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/packages/vibe-coding-loop-template-unified-state-after-r52-20261017)构建退出 0；R52 仅字段层级提示及对应一个断言，生产 Go 源码相对 R51 零变化，不能称 R52 重新跑过完整 fresh chain。R52 的新 Claude 零设计背景只读冻结包 role/模板，四字段路径与 side_effects 类型均理解正确，确认无需猜层级（[读取实测](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r52-s7-field-clarity-reader.process.json)，退出 0）；这不新增专业整轮验收。R46/R47/R49/R50 的失败现场及测试失败记录保留。S8/S10 专业工作未开展；done 只指上述 backend Clean、冷入口/准备和合成 browser 两出口范围，非所有分支、全平台或全阶段验收。
+
+## canonical S6 → fresh S7 接续切片（2026-10-14）
+
+**接续的停止/空闲接收契约：** S7 ReviewAssignment 的普通 completion_report
+仅是通知，不能作为 canonical ReviewResult 已消费的依据。原 Stop/Idle 必须从
+同一原 Runtime snapshot 读取当前 Plan、round/generation、Assignment/owner、
+consumed 状态与 result_ref，再核对 valid review_result ledger 和实际 envelope
+路径/摘要及坐标，才投影本人已交付、允许结束。原 queued、真实 blocker、
+site-lost、暂停按原规则保留；非 S7 一次性派发仍沿原规则，S7 即使使用
+one_shot 也须真实消费 ReviewResult。已在原 review.assignments 绑定的 owner
+若 manifest/context 缺失不能被降级为未知身份而放行；仅未知身份或 Runtime
+不可读保留原 fail-open。S7 blocker 只取原 Runtime blocked/blocker_ref 及其
+有效 artifact，不以 manifest 的 blocked 文本代替；不得要求 Reviewer 代等全局门。
+该补强已接入原 Stop/Idle 与 Controller 提示，定向机制验证见
+[全局实施记录 §7.45](../GLOBAL-OPTIMIZATION-DESIGN.md#745-s7-reviewer-停止依据与原消费者回执切片2026-10-14)；
+不计入以下产品基线切片的验收，也不代表专业答卷保存 adapter 已完成。
+
+canonical S6 的 changed surface 现在从原 TR-003 Main 起点和最终 pinned Main
+commit 重建，不读取作者在薄 `completion_report` 中声明的 `changed_paths`，也不把
+缺字段当作空变化。原 Register Writer 持久化 generation 的 pinned start receipt；
+`controlproof` 用原 journal receipt 验证它。共享 `mainreceipt` 验证当前/历史
+Assignment 的原 Result、版本化 Main checkpoint、完整 runner/tool 收据与真实 Git
+merge/diff；`buildsurface.Read` 再按精确 TASK 和经原修订发行链证明的贡献汇总
+start..final 的产品路径，包括删除。旧版本的 checks、ACK 或 verified 不会转成当前
+版本的通过凭据。
+
+`buildsurface.ReadRegistered` 将重建的 TASK/产品路径投影与原 pinned typed
+ReviewPlan 的完整 `frozen_subjects` 核对；`review.DraftPlanForRoot` 可据此形成完整
+机器来源。它不代替 Planner 写专业 Claims，也不代表 S7 的完整 Claim/Assignment/
+ReviewResult、Reviewer 独立性、Finding 和 fresh-round 消费链都已接完。S10 显式
+`affected_paths=all` 选择全量审查范围；canonical product baseline 仍须逐项对账完整
+`changed_path` 分母，缺少任何覆盖行或来源仍不可验证。它不能省略 changed-path
+coverage，也不能以 all 绕过原 completion/Record 与 Main contribution 验证。
+
+canonical S9 的 TR-012 也已接到该来源：在发布 seed 前、以及原 Writer 改状态前，
+都重新验证同一 post-repair baseline，再从普通 S7 draft 保留完整 TASK/路径覆盖、DV
+和六项 QA 骨架；专业 assertion、oracle、method 保留为 `PLANNER-REFINE`，不得由
+seed 自行判定 E2E 适用性。定向桥接测试验证 seed 内容与 TR-012 后续 fresh S7 cursor，
+但完整 canonical S9→Planner refine→fresh S7 round 尚未验收。TR-006 的
+`builder_report_record` 兼容目录只有候选作用；原 Engine 仅在实际 `completion_report`
+引用属于 `buildsurface.Read` 验证的当前 Main 贡献时接受，不能用报告声明替代来源或
+跳过收尾条件。
+
+本轮是部分验证：TR-003 receipt、Main receipt/Git 来源、ReviewPlan/S10 分母、
+canonical surface 和 S9 seed bridge 的定向测试已通过（[TR-003](../evidence/logs/s7-main-start-transition-race-20261014.log)、
+[Main receipt](../evidence/logs/s7-mainreceipt-race-20261014.log)、
+[canonical surface normal](../evidence/logs/s7-canonical-surface-targeted-20261014.log)、
+[canonical surface race, 66.376s](../evidence/logs/s7-canonical-surface-race-20261014.log)、
+[S7/S10 consumers](../evidence/logs/s7-s10-canonical-product-consumers-race-20261014.log)、
+[S9 bridge targeted test](../evidence/logs/s9-fresh-s7-bridge-workflow-targeted-20261014.log)）。core
+mechanism 仍记录 4/9，real-model complete chains 仍为 0/9。native/workspace 全链、
+完整 canonical S9 fresh round、安装/平台覆盖和真实模型/宿主验收
+仍待完成；typed S7 adapter 的后续机制进展见本页发行接线进展及全局§7.47。
+
+### 共同产品基线与删除来源（TR-003 持久契约）
+
+现有 bound_req.workspace.bound_commit 是 REQ 绑定时的 commit，workspace
+BaseCommit 是单 Assignment 准备时的 commit；两者都不是 generation 的 S6
+共同开工基线。原 TR-003 Writer 已在同一事务持久化实际 pinned
+`fileview.View.Commit` 和提交前 Verify 的 start receipt；canonical S7 只读入口用
+原 journal 证明消费它。因此不能由当前 HEAD、reflog、时间戳或最早 checkpoint
+猜一个共同起点。
+
+1.2 的原 TR-003 `register_execution_batch` Writer 在同一事务捕获实际传入的
+pinned `*fileview.View`。DTO 位于 `baseline.s6_main_starts`，每个 generation
+最多一条、只追加且列表最多 128 条；容量耗尽时拒绝，不淘汰历史。每条
+`s6-main-start-v1` 必须包含：`contract`、`runtime_id`、`baseline_generation`、
+规范化绝对路径 `project_root`、规范化无 `refs/heads/` 前缀的
+`development_branch`、View 的 `start_commit`、`transition_event_id`、
+`transition_after_revision`、`transition_sequence`、按 `task_id/path` 排序的
+`task_set`（逐项含 `task_id`、`path`、原登记 `version` 和 `sha256`）、
+`task_set_sha256`、`receipt_sha256`。TASK 集合只取 TR-003 实际锁定的精确
+current-generation complete TASK 文档。两个摘要都由规范化 JSON 计算；
+`receipt_sha256` 覆盖该条记录除自身摘要字段外的全部字段。
+
+原 `register_execution_batch` journal action result 的 detail 必须包含精确
+`s6_main_start_sha256=<receipt_sha256>`，将 DTO 绑定到唯一成功的原 TR-003
+commit receipt。Action 使用事务的 `View.Commit/Ref/Root`，核验 branch/root 与
+正式 Runtime 绑定相符；不重新解析 HEAD。捕获还绑定 locked-before revision、
+after revision、journal sequence 和实际 mutation event ID。原 `View.Verify` 与
+Runtime Writer commit 边界保证被检查的 pinned view 在提交前仍有效。
+
+同 generation 再锁定时复验并保留第一次记录与起点，不替换 start commit 或原
+TASK 快照；新 generation 的首次 TR-003 只追加新记录。若当代 journal 已存在
+成功 TR-003，但对应 DTO 缺失、摘要不符或原 event 不可读，必须 fail closed；
+不能在重锁时从当前 HEAD 补写。检查完整 journal rotation segments；state 自述的
+event tuple 不作为原提交证明。`ValidateCheckpointIndices` 验证已存在记录，
+但不要求旧 Runtime 一定有此新字段。canonical S7 入口必须显式读取并验证当前
+generation 的原记录；缺少历史起点时标记 unverifiable，不能由
+`bound_commit`、assignment `BaseCommit`、reflog 或时间戳推测。
+
+原 `task_set` 绑定第一次 TR-003 时的精确任务身份和源指纹，供历史审计使用；
+它不替代 S7 当前 generation 的 exact TASK 分母，也不要求后续正式 TASK 来源
+修订的 SHA 永远等于首次值。当前首个实现切片只支持 TASK 来源未变的
+Assignment revision，因此入口必须逐项核对首次 TaskSet 与当前锁定 TASK。
+增加、删减或改变 TASK 身份/版本/摘要均拒绝并要求 formal relock proof；未来
+须接原 TR-007→S4/TR-002→S5 双审→TR-003 的新锁定回执读取，才可更新分母，
+仍保留首次产品 start commit。
+
+S7 在入口固定实际最终 Main commit，核验原精确 TASK 分母、全部当前/历史
+Main 合并依据及其对最终 commit 的可达性，以 pinned start..final 的真实 Git
+name-status（含删除、禁 rename folding）求完整产品变化面。已存在路径按最终
+blob/实际来源冻结；删除路径按基线或明确原 merge 前像的 blob/SHA 和真实删除
+事件冻结为 deleted subject，不能因当前文件缺失而静默删掉 Claim。未被登记
+checkpoint 解释的 Main 产品变化仍属于完整变化面并明确诊断。
+
+缺共同起点的历史 generation 保持 unverifiable；逐 Assignment/revision 的
+已验证 MainFacts 并集仅证明这些任务的贡献，不称整代完整变化面。新的基线与删除
+DTO、原 Schema、ReviewPlan 注册/漂移校验和 S10 共享读取已接到同一来源；原完整
+required Claims 和 Reviewer 独立性不得缩减。机器来源闭合不等于 S7 专业验证规划、
+发现、结果消费和 clean-round 路径全部完成。
+
+读取分层沿用原权威：ReviewPlan pointer 的只读 DTO/extractor 移至依赖中性
+reviewmeta，review 保留原 API，plancheckpoint 读取同一投影。由此 S7 可以复用
+原 PLAN/activation 校验，而无需复制或放宽写前计划规则。Main facts 的独立
+只读验证层不依赖 review/plancheckpoint/Runtime Writer；当前 Owner/PLAN 与
+原发行 journal 仍由调用方从原 Runtime 验证，不由 checkpoint 自述补造。
+
+原 TR-006 的 `builder_report_record` 兼容 catalog 只声明候选 kind，不证明阶段
+完成。原 Engine 已在该 slot 对 `completion_report` 做严格条件接收：canonical
+Result 必须是 CompleteTask 原 Writer 已登记的当前 Result，并由 `buildsurface.Read`
+证明其当前 Record、本人闭合、共同起点、精确 TASK 集和完整 Main 事实；条件缺失
+仍拒绝。不会为进入 S7 另造一份 builder_report，也不放宽 legacy
+`completion_report` 的资格。
+
+### S7 typed ReviewResult 答卷接线契约（2026-10-14，首个 Writer receipt 切片历史记录）
+
+> 下文保留首片契约与当时未实施项；当前状态见本节末的发行接线进展及全局设计§7.47。
+
+当前 `review.Result` 与阶段答卷 scaffold 是不同层：前者仍是 S7 原 `review.SubmitResult`
+消费并持久化的 Canonical ReviewResult；后者只是从已发行 Assignment 生成、供 Reviewer
+填写的输入视图。现有 S6 `agentcontext.ResultTemplate` 和通用 `stage-answer.json` 不得
+被当作 S7 wire，也不得新增平行 Result Writer。
+
+**当前实现边界。** 原 `review.SubmitResult` 已有首个回执切片，但仅在 Runtime
+`schema_version=1.2.0` 且启用 packet mode 时生效。现有显式提交入口仍接收原
+`review.Result` JSON；`result_id` 是稳定 submission key。原 Writer 保存完整
+`submitted_answer`、capture 合并后的 `effective_answer`，并对专业答案字段分别计算规范摘要，在 Assignment 被消费的同一
+Runtime CAS 中登记包含 Plan/round/Assignment/owner/subject tuple、Result ref/SHA 与原事件
+坐标的 `result_receipt`。精确重放会核对当前和原 pinned Plan、Result/Finding 字节、Evidence
+索引及原 journal 事件；同 key 同答卷只返回原接收，不再读取可变 capture buffer 或写入
+Runtime，同 key 异答卷冲突。具名修订保留未变 Assignment 的原接收；受影响 Assignment 清除
+当前 receipt 并保留历史 Result。原 pending recovery 和有引用检查、字节摘要保护的暂存清理仍由
+原 Writer/Runtime 边界处理。
+
+这只是原 Writer 的回执基础：当前还没有从受信派发记录发行 S7 typed 答卷，也没有把精确
+authoring path 的保存 Hook 接到 `SubmitResult`。因此不能称为 Reviewer 的完整答卷/平台接收链。
+Writer 的 Claim-owner 转移失效、20 MiB regular-file 输入预算与 pending-safe 清理已通过最终定向验证；详见全局设计§7.46。
+
+发卷时必须从当前 Runtime 的 pinned `ReviewPlan`/plan digest、review round、baseline
+generation、Assignment revision、已注册并实际派发的 Agent、该 Assignment 的精确 Claim
+集合、当前 `subject_digest` 派生不可编辑的机器绑定。接收时重新解析这些原权威并逐项
+核对；owner 取可信 session/Assignment 绑定，不取答案 JSON、文件名、CLI 参数或“唯一
+等待者”。Plan/owner/代数/Revision/Claim/subject 任一变化都拒绝旧卷，不能重算机器字段
+来覆盖旧答卷。发卷记录还要固定唯一 authoring path；保存 hook 只可用真实成功写入的
+`file_path` 定位该发行记录，并核对调用者是登记 owner、路径在其发行范围内且无 symlink
+替换。
+
+Reviewer 只填写专业判断：逐 Claim 的结论、方法、实际观察和 evidence refs，必要的
+blocked Claim、Finding/encounter、deviation/site-lost，以及本人明确的 Result-level
+`verdict`。不可从 checks 全绿、capture 存在、Claim 计数或缺失 Finding 自动合成专业
+`pass`；作者填写的 checks 或 path/ref/SHA 也不等于捕获到的实际执行事实。提交沿原
+`SubmitResult` 对 PLAN、exact Claim coverage、producer 独立性、evidence/capture 和 Finding
+要求重新校验；专业内容不完整或当前机器绑定过期时不得消费。
+
+首个实现顺序的 Writer receipt 部分已落地：在原 `SubmitResult` Writer 内固定稳定 submission
+key、专业答案字段摘要和可恢复 receipt。下一步发行上述 S7 typed scaffold；之后将精确路径的
+保存 hook 接到原 Writer，并验证原 Gate/Controller。Writer 在登记 Result evidence/index、
+消费 Assignment、更新 Claim disposition、写入 Finding 和执行已有 CleanRound/ObservationBatch
+路由的同一 CAS 内登记 digest/receipt；不可另建 queue、sidecar Writer 或第二份完成状态。
+immutable artifact bytes 继续沿原 staged-write/cleanup 边界处理。receipt 至少足以重建原接受
+状态及 Result ID/ref/SHA、answer digest、Assignment 与 Plan tuple；Result ID 由首次发行或
+接收固定，不能在重放时重选。同 key 且完整 answer digest 相同的重放返回原不可变 receipt，
+零 Runtime 写入；同 key 不同 digest 冲突。CAS 前失败按原暂存 artifact 清理；CAS 结果不明
+时先读原 state/journal 和 durable Result，已提交则恢复同一 receipt，未提交才按原 Writer
+恢复规则清理/重试。重放不得再次创建 Finding、消费 Claim、生成 CleanRound/ObservationBatch
+或追加事件。
+
+原 Gate 仍由原 `SubmitResult` 消费逻辑求值；单个 Reviewer 的 accepted/work_complete
+回执只报告本人已交付及其下一步，不要求等待整轮所有 Assignment 或全局门通过。此处
+是封闭目标契约；receipt 幂等仅有前述 v1.2 packet-mode Writer 基础，typed S7 scaffold、trusted
+issuance 和保存 Hook 仍未实现。
+
+### S7 发行与原接收链当前进展（2026-10-14）
+
+按 L4 stage-form §13.7.1，原 Runtime `work_packets` 已登记
+`s7-review-result-v1`，Main 只从原 pinned Plan 与实际派发 Assignment 发卷；
+queued 行不发卷，重复发行保留作者字节。成功 Write/Edit/MultiEdit 的真实
+精确路径经受信宿主 actor、原 PLAN/working 与来源校验后，专业答案进入原
+`SubmitResult`，同 CAS 留完整答卷与原回执；不新增 Result Writer 或完成表。
+终端 `--agent` 不构成 S7 代交身份，已发行卷的该 consume 入口拒绝。
+
+回执绑定 packet/digest/execution_root 全套 tuple。独立 Worker 保存须验原
+execution/session，E2E artifact 摘要从实际 Worker workspace 读取，原封轮、
+CleanRound Gate 和直接 TR-009 同源复验；未声明独立 execution 的 Main 流程
+保留。实际保存重放仍读取当前作者字节并比较摘要；缺作者文件只能走只读
+receipt 查询。原 Writer 在 pending 前检查最终 checkpoint state/journal 预算。
+
+真实临时 Git 的定向机制链已通过原注册/PLAN、发行、CLI PostToolUse 保存、
+原接收与责任回执、修改答案冲突及零写重放、原 CleanRound 和 TR-009 Gate/Apply。
+专业答案是机制夹具；独立 Worker 完整 capture 链、真实平台 agent_id/session
+与模型专业判断尚未验收。最终同链 race **276.138s** 通过，保留先前超时失败；来源快照由全局设计§7.47的证据记录；
+本轮不提高全局核心完整链 **4/9** 或真实模型链 **0/9**。
+
 ## 0. 阅读方式与一句话结论
 
 S7 不应继续被实现成“Delivery、QA、E2E 三段人工串行，再由 Agent 手工拼聚合 PASS”的流程。目标形态是：
@@ -656,64 +893,38 @@ Harness 可以机械校验 flow fingerprint、CASE/PATH coverage、step-to-evide
 
 | 工作类型 | 默认拓扑 | 原因 |
 |:--|:--|:--|
-| DV focus Assignments（1..N） | 多个 Agent Team teammates + `plan_checkpoint` | 按 traceability/conformance/completeness 分工，共享 frozen baseline 和 coverage matrix |
-| QA focus Assignments（1..N） | 多个 Agent Team teammates + `plan_checkpoint` | 按 design/logic/maintainability/tests/专项分工，与 DV 并行 |
-| E2E flow Assignments（1..N） | 多个 teammate 或自定义 Sub-agent + `plan_checkpoint` | 按 persona/flow/state/negative/recovery/environment 分工；数量由 coverage matrix 决定，不设上限 |
+| DV focus Assignments（1..N） | 多个 Agent Team teammates | 按 traceability/conformance/completeness 分工，共享 frozen baseline 和 coverage matrix |
+| QA focus Assignments（1..N） | 多个 Agent Team teammates | 按 design/logic/maintainability/tests/专项分工，与 DV 并行 |
+| E2E flow Assignments（1..N） | 多个 teammate 或自定义 Sub-agent | 按 persona/flow/state/negative/recovery/environment 分工；数量由 coverage matrix 决定，不设上限 |
 | E2E cold-start spec/fixture/evidence 独立写面 | 多个调用级 worktree isolation 自定义 Sub-agent 优先 | 让不同 flow packs 并行走实；冲突写面加锁，控制面仍共享，不把全部 authoring 压给一人 |
 | 高风险破坏性测试、生产式数据操作 | `plan_approval_required` | 在真正风险边界使用原生 Plan approval |
 
-不要因为当前平台有 Agent Team 就按 checklist 机械一项一 Agent，也不要因为调度方便就固定只派一个 DV、一个 QA、一个 E2E。Agent 数量由 focus/flow graph、上下文边界、Skills、独立 oracle、认知负载和隔离需求决定，没有质量政策上限。coverage matrix 用来发现漏派、过载和真正重复派发；平台容量只决定哪些先 running、哪些 queued。
+不要因为当前平台有 Agent Team 就按 checklist 机械一项一 Agent，也不要因为调度方便就固定只派一个 DV、一个 QA、一个 E2E。Agent 数量由 focus/flow graph、上下文边界、Skills、独立 oracle、认知负载和隔离需求决定，没有质量政策上限。coverage matrix 用来发现漏派、过载和真正重复派发；平台容量只决定哪些责任先 active、哪些保持 pending；排队是调度事实，不新增责任状态。
 
-### 7.2 默认计划回执
+### 7.2 一次专业问卷交付
 
-所有执行型 S7 Assignment 默认使用 L4 `plan_checkpoint`：
+普通 Reviewer 直接读取原 ReviewPlan/Assignment、当前 Claims 及资料，完成专业检查，填写系统提供的逐题答案形状并保存准确问卷路径。原消费者接收后结束本人责任，不另交 generic PLAN_REPORT、COMPLETION、readback 或 activation，也不等待 Main 静默批准。
 
-1. Worker 读取 Assignment、Claims 和指向的 authoritative documents；
-2. 通过 SendMessage 发送 PLAN_REPORT，至少包含 objective、claim coverage、planned paths、review methods、checks、dependencies、risks/blockers；
-3. PLAN_REPORT 不是 final response；发送后立即继续；
-4. Main 对齐时保持沉默；scope、oracle、检查或依赖偏移时才发送 CORRECTION；
-5. Worker 最终提交 ReviewResult，然后发送 COMPLETION；
-6. Main/round consumer 成功消费 Result 后才把 Assignment 标 consumed。
-
-S7 不再维护 readback approval 和 activation 的第二轮开工许可。高风险任务通过 L4 的 `plan_approval_required` 升级，而不是让所有正常审查都等待批准。
+Main 的 ReviewPlan 同样只填写并保存一次。系统装配已知登记元数据和派发参数；Main 保留真实人员选择、专业分工、覆盖和独立性判断。高风险操作若显式 `plan_approval_required`，保留原人闸，不扩展到普通审查。
 
 ### 7.3 Main Agent 的 S7 调度循环
 
-```text
-S7_DISPATCH_LOOP()
-1. Read ReviewPlan, frozen baseline, Assignments and consumed Results.
-2. Revalidate baseline digest; if drifted, mark round stale and stop dispatch.
-3. Recompute applicable Claims, DV/QA/E2E coverage views, DAG, resource locks and Ready Set. The static/E2E/discovery views are projections of one Claim set, not separate state machines.
-4. Detect E2E cold_start/regression_available/N/A; generate enough bounded E2E flow Assignments before execution.
-5. Dispatch every independent ready Assignment allowed by real dependencies/resource locks/platform slots; queue overflow without deleting or merging coverage.
-6. Keep behavior E2E dependency-locked until static Claims have exact disposition; run E2E preflight/spec isolation setup in parallel.
-7. Consume PLAN_REPORT:
-   - mechanical scope/check/dependency validation;
-   - semantic claim/oracle judgment;
-   - reject overloaded generic DV/QA/E2E plans and split the Assignment;
-   - silence if aligned, CORRECTION/revision if drifted.
-8. Consume ReviewResult transactionally.
-9. On finding verdict, freeze current encounter timeline/evidence window; require last-good/wall/first-bad or explicit safe capture gaps.
-10. Mark cannot-clean and open/update ObservationBatch; prohibit repair, but continue all ordinary safe required discovery Assignments.
-11. For critical findings, preserve already-produced safe evidence and seal immediately.
-12. After every Result, recompute coverage; only a concrete `source_ref + affected_surface` may trigger the one permitted ReviewPlan revision.
-13. Once static Claims have exact disposition, unlock all safe ready E2E/required specialty Assignments even when cannot_clean.
-14. On pause verdict, create the authoritative checkpoint and stop all new dispatch.
-15. Seal ordinary ObservationBatch only when the final required Claim set has exact disposition and `unobserved_claim_ids` is empty.
-16. When every applicable claim is consumed without findings, compute and persist CleanRound.
-17. Mark Team tasks completed only after Result/round consumption.
-```
+1. 读取原当前 ReviewPlan、Assignment、Claim disposition、结果回执、波次和真实 blocker；监听不重复重建 baseline/receipt/Git 全链。
+2. 初始计划未登记时，系统提供准确 ReviewPlan 问卷路径和机器来源；Main 完成真实 Claims、assertions/oracles/methods、分工和 required coverage 后保存，由原消费者校验登记。
+3. Main 按原依赖、独立性、资源互斥和平台可用槽选择真实 Reviewer；系统带出已知派发字段和准确专业问卷路径。无槽位的责任保持 pending，不删减 coverage。
+4. 静态 Claims 尚未 exact disposition 时保持行为 E2E 的原依赖；允许独立的 preflight/spec 准备并行，不替代行为 PASS。
+5. Reviewer 保存专业问卷，由原 Result consumer 校验、固化已有 capture、登记 Result/Finding 并更新原事实；Main 不重复消费同一答案。
+6. 普通 Finding 先保全现场，原 consumer 标记 cannot_clean；继续当前 required Claims 中安全可执行的检查。只有具体 source_ref + affected_surface 才走原受控 ReviewPlan revision，不启动无来源漫游或修复。
+7. critical 保留安全证据后沿原路立即收口；baseline stale 或真实 blocker 停止受影响执行。只有真实 req_change_required/release_blocked verdict 才建立相应原人工 checkpoint。
+8. 原消费者接收即将该 Reviewer 本人责任置 done，不要求等待全轮；普通 ObservationBatch 仍须最终 required Claim set exact disposition 且无 unobserved Claims，clean round 仍由原消费者计算 CleanRound，整轮沿原 S8/S10 或人工暂停路由。
 
 ### 7.4 idle、stop 和失联
 
-复用 L4 决策矩阵：
-
-- 没有 PLAN_REPORT 就 idle/stop：Hook 要求先发计划并继续；
-- 只有计划没有 ReviewResult：阻止把计划当交卷；
-- Result 已提交等待消费：允许 idle，不自动领取下一个 Claim；
-- Main 纠偏后：同一 Agent 继续当前 Assignment；
-- 会话已正常结束但可恢复：resume 原 Agent；
-- Agent 被取消/killed 且不可恢复：从共享 Assignment、plan checkpoint 和 evidence refs 重派 replacement，不创建第二份运行态真相。
+- 未交卷时，监听给出本人的准确问卷路径、真实缺项和下一动作，不要求补 generic PLAN_REPORT、COMPLETION、readback 或 activation。
+- 已保存但尚未被原消费者接收时，显示原反馈或真实等待项，不把保存动作当 done，也不让作者重复投递。
+- 本人结果已被原消费者接收时，本人 done，可结束或等待其他责任；不要求代等全局 stage 出口。
+- 真实 blocker 沿原 blocked/恢复路径处理；平台排队保持 pending，显式 plan_approval_required 仍等待原人闸。
+- 会话可恢复时 resume 原 Agent；不可恢复时从原 ReviewPlan/Assignment、专业答案及 evidence refs 重派，原责任按事实保留或 cancelled，不创建第二套运行态真相。
 
 ## 8. 指引必须埋在 Agent 的必经之路
 
@@ -725,25 +936,24 @@ S7_DISPATCH_LOOP()
 | ReviewPlan schema | target、assertion、oracle、method、focus key、Claim coverage view、可选 verification artifacts、`dispatch_capacity_policy=coverage_complete`、evidence、N/A 来源 | 计划生成/变更时结构校验；禁止 Reviewer/token 上限字段裁剪 required coverage，也禁止无 source 的递归扩张 |
 | Coverage matrix | required DV/QA focus 与 E2E persona/flow/surface → Claims → Assignment → oracle；检测漏派、单 Agent 过载和重复泛审 | 自动投影，不新增 roster 文档 |
 | Assignment generator | frozen product digest、verification-artifact revision、claim/focus/flow IDs、non-overlap boundary、scope、checks、Skills、resource locks、dispatch mode、context-load estimate | 派发前必须生成；过载就拆分，Prompt 只是投影 |
-| Agent Definition | Lens、最大工具和产品代码禁止写入边界 | 长期稳定角色能力 |
-| Spawn prompt | 最小读序、专业 focus/flow pack、non-overlap boundary、Claims、pattern-fit 或 E2E oracle、cold-start 写面、PLAN_REPORT 后继续、Result 提交命令 | Worker 第一轮必然收到 |
-| PostToolUse(SendMessage) | 记录 PLAN_REPORT/BLOCKER/COMPLETION | 消息必经路径 |
-| 首次写入型 PreToolUse | 缺 plan、revision 过期、approval 缺失时拒绝；通过后不重复提醒 | 开工必经路径 |
-| Reviewer 的 Write/Edit/Bash PreToolUse | 产品代码/locked 规格越界 hard deny；只允许 verification workspace 内的 evidence、E2E spec/fixture 和授权命令 | 每次 mutation 必经路径；自动更新 artifact revision，不改 product digest |
+| Agent Definition | Lens、专业责任、独立审查要求和必要资料 | 说明角色能力，不建立工具、身份或 scope ACL |
+| Spawn/责任上下文 | 最小读序、专业 focus/flow pack、non-overlap boundary、当前 Claims/oracle、逐题要求/答案形状/示例、准确 ReviewResult view/answer 与 capture buffer 路径、已填参数的 capture 命令 | ReviewPlan/Assignment 是原计划事实；不再要求 Reviewer 另交 generic PLAN_REPORT |
+| PreToolUse 图监听 | 读取原当前事实，给准确问卷路径、真实缺项和下一步；路径无法解析时报系统准备缺口 | 监听提醒，不鉴权；普通工具事件不重跑 baseline/receipt/Git 全链 |
+| PostToolUse(SendMessage) | 只记录确有消费者的消息观察；不再把 Reviewer PLAN_REPORT 作为当前 Result 的前置事实 | 消息通知不替代 ReviewResult，也不是附加正常手续 |
+| Reviewer 的 Write/Edit/Bash | Agent 定义说明专业责任/写面；ReviewPlan、independence 与原 Result consumer 按真实登记求值 | Hook 不做工具级身份/路径/scope hard deny；不能声称路径越界已被 PreToolUse 阻止 |
 | 浏览器/测试/CLI/trace wrapper | 自动记录 material action、checkpoint、sanitized input、时间戳、network/console/state refs | 执行动作自然产生 capture buffer，不要求 Agent 另写日志 |
 | fail observer/PostToolUse | 冻结失败前后 evidence window，提示标注 last-good/wall/first-bad | 撞墙当下保全易失现场；不启动修复 |
 | ReviewResult/Finding scaffold | 逐 Claim conclusion、observed、encounter summary、failure boundary、evidence binding、capture gaps | 只要求人补机器无法判断的语义 |
-| `runtime review-result submit` | schema、身份、scope、fingerprint、coverage、encounter/investigation readiness、verdict 校验 | Result/Finding 进入控制面的唯一入口 |
-| TeammateIdle/SubagentStop | 计划不能当交卷，缺 Result 不能结束 | Worker 停止前必经路径 |
+| 成功保存已发行 `answer.json` | 原 PostToolUse 调 `SaveReviewResultFrom`→`review.SubmitResult`，完成 schema、当前 packet/owner/Claim/digest、coverage、encounter/readiness、verdict 校验 | 结果进入控制面的唯一正常入口；不让 Reviewer 手工跑 submit/consume |
+| TeammateIdle/SubagentStop | 检查当前 ReviewResult receipt、真实 blocker 或 queued 状态 | 已接收问卷可结束本人责任；未接收时提醒准确 answer path，不要求补 generic PLAN |
 | Round consumer | 自动聚合、finding/pause 路由、Claim coverage 求差与 CleanRound 计算 | 普通 Finding 继续发现；不接受人工 aggregate PASS |
-| SessionStart/PreCompact | 当前 round、running/queued/blocked Assignments、未消费 Result、Claim coverage 缺口和唯一下一步 | 跨会话恢复；平台容量不足不丢 queued coverage |
+| SessionStart/PreCompact | 当前 round、本人 pending/active/blocked/done/cancelled、原消费回执、准确问卷路径和真实 Claim 缺口 | 只读原事实恢复；平台容量不足不丢 coverage，不将未触发人闸列为缺项 |
 
 错误反馈必须只给当前缺失事实和一个下一动作，例如：
 
 ```text
-REVIEW RESULT REJECTED: claim QA-UNIT-TEST has no observed result or evidence_refs.
-Next: update review-result-17.json for QA-UNIT-TEST, then rerun
-loop-harness runtime review-result submit --assignment-id assignment-qa-fund --result ...
+REVIEW RESULT NEEDS MORE: claim QA-UNIT-TEST has no observed result or evidence_refs.
+问卷：<系统解析出的本责任 answer.json 绝对路径>；补齐 QA-UNIT-TEST 的 observed 或 evidence_refs 后保存。
 ```
 
 不能把整份 S7 或 `agent-protocol.md` 注入每次 Hook。
@@ -1257,7 +1467,7 @@ S7 的主闭环已经落到当前实现；本表只记录仍影响行为的差�
 | E2E workspace | workspace 仅允许 `cold_start`；`regression_available` 不得创建写面，也必须有 required E2E Claim；声明的 E2E asset 在注册/修订时校验 path containment、可读性和 SHA-256；E2E Result 与 result artifact 均保留 `verification_artifact_digest`；Planner 从 CASE→Playwright spec 文本映射生成最小 `e2e_assets`，任一 required CASE 缺映射即回退 `cold_start` | 产品侧浏览器/console/network wrapper、selector 与 environment 的更细粒度 fingerprint 仍由产品接入；当前自动投影不猜测这些字段 |
 | Finding / evidence | Result submit 原子写入 immutable Finding/ObservationBatch；required evidence 采用 typed refs，`path:`/indexed evidence 会校验存在性与指纹；capture buffer 使用严格 JSONL 和多 Finding 的 `finding_id`/`claim_id` 关联，普通 Finding 继续要求 failure boundary | 浏览器/runner 的产品侧 console/network 注入 wrapper 仍由产品接入 |
 | S7→S8 handoff | ObservationBatch 保留 exact Finding set、coverage、routes、readiness；`drained_assignment_ids[]` 包含触发 seal 的当前 Assignment，避免 S8 丢失最后一份 Result | S8 的 ingest/Case/hypothesis/result/route/Contract 主链与 Investigator Assignment lifecycle bridge 已可执行；单 Runtime 多 Case 协调和只读聚合仍不是现有权威，见 [L3-S8 当前事实](L3-S8-finding-investigation.md#13-当前实现差距与迁移清单) 与 [L4 跨 L3 消费地图](../l4-mechanisms/L4-runtime-control-plane.md#14-跨-l3-消费地图) |
-| 工具必经路径 | plan_checkpoint 连续执行、idle/stop 控制、reviewer product-write hard deny、结构化 gate diagnostics、结果消费和机器 CleanRound 已由 Hook/submit/consumer 接管；`s7 status` 直接显示 round budget、blocked ref 和恢复动词 | 命令面拆分（review-plan register/revise、dispatch-assignment）和真实平台 doctor 仍是低复杂度后续项 |
+| 工具必经路径 | idle/stop 控制、结构化 gate diagnostics、ReviewResult 原 consumer 和机器 CleanRound 已接线；PreToolUse 提供 graph 提醒，不拦截产品写工具；`s7 status` 直接显示 round budget、blocked ref 和恢复动词 | S7 当前 packet issuance/Stop-Idle 对 generic PLAN/activation 的依赖仍待移除；capture buffer 的准确路径/用法尚未随答卷提示；命令面拆分和真实平台 doctor 也待后续 |
 
 ### 13.1.A S7→S8→S9 接口审计（2026-08-26）
 
@@ -1354,9 +1564,8 @@ S7 的交付边界是“可调查的观察事实”，不是根因结论：
 | QA 只提交 lint/coverage/test-pass | Result 不满足 design/boundary、logic、maintainability 等 required Claims |
 | 合并不同 role Lens | Assignment validator 拒绝 |
 | Reviewer 与原 Builder 相同 | independence gate 拒绝派发/消费 |
-| PLAN_REPORT 前首次 evidence/spec mutation | PreToolUse 阻止并指导发送计划后继续 |
-| PLAN_REPORT 对齐 | Worker 连续执行，Main 不发送批准消息 |
-| Reviewer 尝试写产品代码 | PreToolUse hard deny，给授权 evidence 路径 |
+| S7 Reviewer 未写 generic PLAN_REPORT | PreToolUse 仍给出原 ReviewPlan 和准确 Result 路径，不阻止观察或专业检查 |
+| Reviewer 尝试写产品代码/locked 规格 | Hook 不拦工具；保留职责说明与原领域/Result gate 检查，错误答案不能通过当前 ReviewResult/Plan 校验 |
 | Result 漏 Claim、错 revision、错 digest | submit 原子失败，无部分状态 |
 | Result 有 finding | Result 与 immutable Finding 同事务写入；ObservationBatch seal 后，TR-008 handoff 携带 Finding exact set |
 | 首个普通 static finding 出现 | 先冻结 inspection encounter 并标 cannot-clean；完成剩余静态 Claims 后仍执行可安全的 E2E Claims，最终统一 seal |
@@ -1442,9 +1651,9 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 - 只有 E2E cold start 启用 verification-artifact revision/digest，并与 frozen product baseline 分离；已有验证资产不创建额外控制面，cold-start authoring 不自废整轮，已消费 Result 的 artifact 变化可精确失效和重跑；
 - QA baseline 覆盖 design/boundary、pattern/idiom fit、logic/state/error、maintainability/readability、testability/oracle 和 debt/operability；
 - pattern-fit 同时识别模式缺失、错配和过度工程，不使用模式数量/关键词作为 gate；
-- 默认 PLAN_REPORT 后连续执行，不再依赖两轮开工许可；
-- PostToolUse 能捕获计划，首次 mutation 能机械检查计划；
-- Reviewer 产品写域有真实 hard deny；
+- Reviewer 直接完成原 ReviewPlan 派生的专业工作，不另交 generic PLAN_REPORT/readback/activation；
+- PreToolUse 只投影当前问卷路径/缺项，不做工具级权限、身份或 scope 拦截；
+- ReviewResult 仍由原 packet/Assignment/frozen Claim consumer 校验，独立性与必要的人闸不变；
 - 每个 Assignment 只提交一份 Canonical ReviewResult；
 - phase/lens/round PASS 全部由 Result 计算，无人工 aggregate；
 - finding、pause 和 Result 在同一事务闭合，不丢 canonical entity；
@@ -1499,8 +1708,8 @@ S7 目标机制只有在以下条件全部成立时才算落地：
 28. 旧轮 evidence 仍在索引就让新轮失败，或用旧 ID 满足新轮；CleanRound 只读 exact current set；
 29. 只更新本文件却不改 Hook/Schema/CLI，就宣称机制已强制；§13 明确列出实现差距。
 
-30. 把 `PLAN_REPORT` 的 message_type 当成事实；PostToolUse 只有在 plan_ref/plan_path 指向当前 Assignment、通过 agent-message schema 校验且完成来源绑定时，才会写入 `plan_reported_ref`：S7 校验当前 ReviewPlan revision，S6/S8/S9 校验 fingerprinted workgroup manifest，非 S7 通用 checkpoint 的 `assignment_revision` 固定为 `1`；缺 ref 或错绑定只产生观察提示，不清除首写屏障。
-31. 在运行时检查点不可读时让变更型 PreToolUse 继续执行；控制器无法确认写入边界时，Write/Edit/Bash 等变更型工具 fail-closed，恢复运行时后再重试。
+30. 把 `PLAN_REPORT` 的 message_type 当成 S7 专业计划；S7 的计划权威是 ReviewPlan/Assignment，Reviewer 不需要 generic PLAN_REPORT。S6/S9 的 checkpoint 只可从真实作者答案经原消费者绑定，不得由 Hook 伪造计划或读文件事实。
+31. 把 Hook 当工具权限门；PreToolUse 不可读 Runtime 时只报当前问卷/系统上下文不可用和责任方，不许可或拒绝 Write/Edit/Bash。原领域保存消费者和 gate 继续按其语义拒绝不完整或不合法的专业答案。
 
 ### 16.2 阅读预算
 

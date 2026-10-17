@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/docscope"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/projectconventions"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/sharedmodel"
 	"os"
@@ -27,30 +28,37 @@ var (
 )
 
 type TaskCheckResult struct {
-	Tasks          int      `json:"tasks"`
-	Cancelled      int      `json:"cancelled"`
-	ClausesTotal   int      `json:"clauses_total"`
-	ClausesCovered int      `json:"clauses_covered"`
-	Problems       []string `json:"problems,omitempty"`
+	ConventionsResolverVersion string                          `json:"conventions_resolver_version,omitempty"`
+	TaskConventions            []projectconventions.Projection `json:"task_conventions,omitempty"`
+	Tasks                      int                             `json:"tasks"`
+	Cancelled                  int                             `json:"cancelled"`
+	ClausesTotal               int                             `json:"clauses_total"`
+	ClausesCovered             int                             `json:"clauses_covered"`
+	Problems                   []string                        `json:"problems,omitempty"`
 	// ReferenceLoads are informational per-task context-budget figures
 	// (required-reading bytes + write-path count) for the S5 executability
 	// reviewer — deliberately NOT problems: avoiding subagent compact is a
 	// prompt-and-review concern, not a hard gate (L3-S5 v4.4.1).
-	ReferenceLoads []string `json:"reference_loads,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
+	ReferenceLoads            []string                  `json:"reference_loads,omitempty"`
+	Warnings                  []string                  `json:"warnings,omitempty"`
+	ContextAnalysisVersion    string                    `json:"context_analysis_version,omitempty"`
+	TaskContexts              []TaskContextSummary      `json:"task_contexts,omitempty"`
+	GranularityAdvice         []TaskGranularityAdvisory `json:"granularity_advice,omitempty"`
+	BehaviorProjectionVersion string                    `json:"behavior_projection_version,omitempty"`
+	BehaviorExamples          []TaskBehaviorProjection  `json:"behavior_examples,omitempty"`
 }
 
 type taskDocument struct {
-	id            string
-	rel           string
-	status        string
-	contract      string
-	hasClose      bool
-	clauses       []string // expanded "{contract} §{n}"
-	deps          []string
-	problems      []string // parse-level problems surfaced by TasksCheck
-	manifestPaths []string
-	writePaths    []string
+	id         string
+	rel        string
+	status     string
+	contract   string
+	hasClose   bool
+	clauses    []string // expanded "{contract} §{n}"
+	deps       []string
+	problems   []string // parse-level problems surfaced by TasksCheck
+	writePaths []string
+	content    string
 }
 
 // TasksCheck is S4's exit-side reconciliation. It runs as the tasks_checked
@@ -241,26 +249,21 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 
 	result.ClausesTotal = len(universe)
 	result.ClausesCovered = len(covered)
-	// Informational context-budget figures for the S5 reviewer (no
-	// thresholds — the compact-avoidance warning lives in the split prompt
-	// and the review checklist, not as a machine gate).
-	for _, task := range tasks {
-		if task.status == "cancelled" {
-			continue
-		}
-		readBytes := 0
-		for _, p := range task.manifestPaths {
-			clean := filepath.Clean(p)
-			if clean == "" || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
-				continue
-			}
-			if data, err := files.ReadFile(filepath.Join(root, clean)); err == nil {
-				readBytes += len(data)
+	result.ContextAnalysisVersion = TaskContextAnalysisVersion
+	result.TaskContexts = analyzeTaskContexts(root, files, tasks)
+	result.GranularityAdvice = AnalyzeTaskGranularity(result.TaskContexts)
+	result.BehaviorProjectionVersion = TaskBehaviorProjectionVersion
+	result.BehaviorExamples = ProjectTaskBehavior(root, files, result.TaskContexts)
+	result.ConventionsResolverVersion = projectconventions.Version
+	result.TaskConventions = ProjectTaskConventions(root, files, result.TaskContexts, nil)
+	for _, context := range result.TaskContexts {
+		unresolved := 0
+		for _, ref := range context.Reading {
+			if ref.Status != "readable" || ref.Reason != "" {
+				unresolved++
 			}
 		}
-		result.ReferenceLoads = append(result.ReferenceLoads,
-			fmt.Sprintf("%s: required reading ~%dKB, write paths %d (reference only — avoid subagent compact; split or trim if it feels too big)",
-				task.id, readBytes/1024, len(task.writePaths)))
+		result.ReferenceLoads = append(result.ReferenceLoads, fmt.Sprintf("%s: required reading ~%dKB, legacy unspecified ~%dKB, unique analyzed total ~%dKB, write paths %d, unresolved inputs %d (reference only; bytes are not tokens or an automatic split threshold)", context.TaskID, context.BytesByMode["required"]/1024, context.BytesByMode["legacy_unspecified"]/1024, context.TotalUniqueBytes/1024, len(context.Writes), unresolved))
 	}
 	return result, nil
 }
@@ -328,6 +331,7 @@ func loadTaskDocumentsWithFiles(root string, files fileview.Reader) ([]*taskDocu
 		content := string(data)
 		task := &taskDocument{
 			id:       id,
+			content:  content,
 			rel:      "docs/dev/tasks/" + name,
 			hasClose: strings.Contains(content, "Closing Contract") && strings.Contains(content, "assert "),
 		}
@@ -345,14 +349,6 @@ func loadTaskDocumentsWithFiles(root string, files fileview.Reader) ([]*taskDocu
 			}
 		}
 		task.problems = append(task.problems, sharedmodel.Reading(root, task.rel, content, files)...)
-		for _, row := range sectionTable(content, "Document Manifest") {
-			if len(row) >= 4 {
-				p := sharedmodel.ReadingPath(root, task.rel, row[3])
-				if p != "" && p != "{path}" && !strings.HasPrefix(p, ":--") && p != "Path" {
-					task.manifestPaths = append(task.manifestPaths, p)
-				}
-			}
-		}
 		for _, row := range sectionTable(content, "Scope") {
 			if len(row) >= 2 && strings.Contains(strings.ToLower(row[0]), "write") {
 				for _, cell := range strings.Split(row[1], ",") {

@@ -1,11 +1,17 @@
 package repair
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 func CreateChangeImpact(root string, request ChangeImpactRequest) (ChangeImpact, ArtifactRef, error) {
@@ -61,7 +67,14 @@ func CreateChangeImpact(root string, request ChangeImpactRequest) (ChangeImpact,
 	if impact.EscalationLevel == "" {
 		impact.EscalationLevel = "assignment"
 	}
-	ref, err := writeImmutable(root, filepath.Join(artifactRoot, "change-impact", request.ImpactID+".json"), "review-evidence.schema.json", impact)
+	path := filepath.Join(artifactRoot, "change-impact", request.ImpactID+".json")
+	var ref ArtifactRef
+	var err error
+	if request.AnalyzedAt.IsZero() {
+		ref, err = writeImmutable(root, path, "review-evidence.schema.json", impact)
+	} else {
+		ref, err = writeImmutableOrIdenticalReplay(root, path, "review-evidence.schema.json", impact)
+	}
 	return impact, ref, err
 }
 
@@ -77,6 +90,27 @@ func ValidateChangeImpact(root string, ref ArtifactRef) (ChangeImpact, error) {
 }
 
 func CreateTargetedReverification(root string, request TargetedReverificationRequest) (TargetedReverification, ArtifactRef, error) {
+	return createTargetedReverification(root, request, filepath.Join(artifactRoot, "reverification", request.ReverificationID+".json"), !request.PerformedAt.IsZero())
+}
+
+// CreateTargetedReverificationForResume writes another immutable attempt for
+// the same logical reverification obligation after its recorded blocker was
+// resolved. The resume timestamp selects the storage path; it is not added to
+// the artifact schema or the required-ID set.
+func CreateTargetedReverificationForResume(root string, request TargetedReverificationRequest, blockerResolvedAt time.Time) (TargetedReverification, ArtifactRef, error) {
+	if blockerResolvedAt.IsZero() {
+		return TargetedReverification{}, ArtifactRef{}, errors.New("resumed targeted reverification requires the recorded blocker_resolved_at timestamp")
+	}
+	if request.PerformedAt.IsZero() {
+		request.PerformedAt = blockerResolvedAt
+	}
+	resumeKey := blockerResolvedAt.UTC().Format("20060102T150405.000000000Z")
+	name := fmt.Sprintf("%s-resume-%s.json", request.ReverificationID, resumeKey)
+	relative := filepath.Join(artifactRoot, "reverification", name)
+	return createTargetedReverification(root, request, relative, true)
+}
+
+func createTargetedReverification(root string, request TargetedReverificationRequest, relativePath string, allowIdenticalReplay bool) (TargetedReverification, ArtifactRef, error) {
 	// repairOwnerAssignmentPrefix is the manifest-form alias prefix a repair
 	// owner would use to disguise itself as its own independent verifier.
 	const repairOwnerAssignmentPrefix = "assignment-s9-"
@@ -132,8 +166,36 @@ func CreateTargetedReverification(root string, request TargetedReverificationReq
 			reverification.FailureClass = "fail_same_cause"
 		}
 	}
-	ref, err := writeImmutable(root, filepath.Join(artifactRoot, "reverification", request.ReverificationID+".json"), "review-evidence.schema.json", reverification)
+	var ref ArtifactRef
+	var err error
+	if allowIdenticalReplay {
+		ref, err = writeImmutableOrIdenticalReplay(root, relativePath, "review-evidence.schema.json", reverification)
+	} else {
+		ref, err = writeImmutable(root, relativePath, "review-evidence.schema.json", reverification)
+	}
 	return reverification, ref, err
+}
+
+func writeImmutableOrIdenticalReplay(root, relativePath, schemaName string, document any) (ArtifactRef, error) {
+	ref, err := writeImmutable(root, relativePath, schemaName, document)
+	if err == nil {
+		return ref, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return ArtifactRef{}, err
+	}
+	want, encodeErr := canonicalJSON(document)
+	if encodeErr != nil {
+		return ArtifactRef{}, encodeErr
+	}
+	existing, readErr := workpacket.ReadFile(root, filepath.ToSlash(relativePath), 20<<20)
+	if readErr != nil || !bytes.Equal(existing, want) {
+		return ArtifactRef{}, err
+	}
+	if schemaErr := schema.NewEmbeddedValidator().ValidateBytes(schemaName, existing); schemaErr != nil {
+		return ArtifactRef{}, err
+	}
+	return fileRef(filepath.ToSlash(relativePath), existing), nil
 }
 
 func ValidateTargetedReverification(root string, ref ArtifactRef) (TargetedReverification, error) {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,35 @@ func resolveAssetPath(root, kind, name, leaf string) string {
 		segments = append(segments, leaf)
 	}
 	return filepath.Join(segments...)
+}
+
+// ReadSkillAsset chooses one asset authority for the entire project. Missing
+// installed files never fall back to a factory file with the same name.
+func ReadSkillAsset(root, name string) ([]byte, string, error) {
+	known := false
+	for _, spec := range Skills {
+		if spec.Name == name {
+			known = true
+			break
+		}
+	}
+	if !known {
+		return nil, "", fmt.Errorf("unknown Skill %s", name)
+	}
+	if err := validateAssetAuthority(root); err != nil {
+		return nil, "", err
+	}
+	path := resolveAssetPath(root, "skills", name, "SKILL.md")
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return nil, "", err
+	}
+	rel = filepath.ToSlash(rel)
+	data, err := workpacket.ReadFile(root, rel, 1<<20)
+	if err != nil {
+		return nil, rel, fmt.Errorf("read Skill %s: %w", name, err)
+	}
+	return data, rel, nil
 }
 
 func ValidateSkills(root string) error {
@@ -231,4 +261,31 @@ func splitFrontmatter(content string) (map[string]string, string, error) {
 		}
 	}
 	return values, parts[1], scanner.Err()
+}
+
+// ReadAgentAsset uses the same single asset authority as Skill delivery.
+func ReadAgentAsset(root, role string) ([]byte, string, error) {
+	known := false
+	for _, name := range agentRoles {
+		if name == role {
+			known = true
+		}
+	}
+	if !known {
+		return nil, "", fmt.Errorf("unknown Agent role %s", role)
+	}
+	if err := validateAssetAuthority(root); err != nil {
+		return nil, "", err
+	}
+	path := resolveAssetPath(root, "agents", role+".md", "")
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return nil, "", err
+	}
+	rel = filepath.ToSlash(rel)
+	data, err := workpacket.ReadFile(root, rel, 1<<20)
+	if err != nil {
+		return nil, rel, fmt.Errorf("read Agent role %s: %w", role, err)
+	}
+	return data, rel, nil
 }

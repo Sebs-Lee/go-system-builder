@@ -2,15 +2,21 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
+	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // ---------------------------------------------------------------------------
@@ -151,6 +157,25 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 	if plan == nil {
 		return fmt.Errorf("frozen subject verification requires a plan")
 	}
+	if buildsurface.HasCanonical(state) {
+		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+			return err
+		}
+		if err := verifyCanonicalFrozenSubjectFiles(root, plan); err != nil {
+			return err
+		}
+		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root)
+		if err != nil {
+			return fmt.Errorf("canonical frozen baseline drift scan: %w", err)
+		}
+		if len(drift) > 0 {
+			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; revert or include them in a newly authorized review round", strings.Join(drift, ", "))
+		}
+		return nil
+	}
+	if plan.ProductBaseline != nil {
+		return fmt.Errorf("ReviewPlan declares a canonical product baseline but Runtime has no canonical S6 Assignment registry")
+	}
 	for _, subject := range plan.FrozenSubjects {
 		if strings.TrimSpace(subject.Path) == "" {
 			return fmt.Errorf("frozen subject has an empty path")
@@ -183,7 +208,11 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 		}
 	}
 	if root != "" {
-		if drift, err := detectUndeclaredProductDrift(root, plan); err == nil && len(drift) > 0 {
+		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root)
+		if errors.Is(err, errResultPacketDriftProof) {
+			return err
+		}
+		if err == nil && len(drift) > 0 {
 			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; add them to frozen_subjects or revert the change (RC-03 dual-source: declared set ∪ git diff baseline)", strings.Join(drift, ", "))
 		}
 	}
@@ -261,32 +290,70 @@ func deletionCorroborated(root string, state map[string]any, plan *Plan, subject
 // Non-git repositories (e.g., TempDir fixtures) degrade gracefully: no extra
 // drift is reported when git is unavailable.
 func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
+	return detectUndeclaredProductDriftWithState(root, plan, nil, root)
+}
+
+var errResultPacketDriftProof = errors.New("S7 issued control artifact source cannot be verified")
+
+func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string) ([]string, error) {
+	controlPaths := map[string]bool{}
+	// Existing packet records name the exact question/answer files from all
+	// stages, including earlier rounds. Sibling files are not implied by them.
+	entities, _ := state["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		for _, key := range []string{"view_path", "answer_path"} {
+			path, _ := row[key].(string)
+			if strings.HasPrefix(path, ".claude/submissions/") && workpacket.CheckPath(root, path) == nil {
+				controlPaths[path] = true
+			}
+		}
+	}
+	if typedResultReceiptsEnabled(state) {
+		packets, err := loopruntime.ReviewResultPackets(state)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
+		}
+		for _, p := range packets {
+			if err := loopruntime.VerifyReviewResultPacketIssue(authorityRoot, state, p); err != nil {
+				return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
+			}
+			for _, path := range []string{p.ViewPath, p.AnswerPath} {
+				if err := workpacket.CheckPath(root, path); err != nil {
+					return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
+				}
+				controlPaths[path] = true
+			}
+		}
+	}
 	scope := pathscope.New(root)
 	frozen := make(map[string]bool, len(plan.FrozenSubjects))
 	for _, subject := range plan.FrozenSubjects {
-		frozen[normalizeSurface(subject.Path)] = true
+		frozen[normalizeGitStatusPath(subject.Path)] = true
 	}
-	output, err := exec.Command("git", "-C", root, "status", "--porcelain", "--no-renames").CombinedOutput()
+	output, err := exec.Command("git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
 	if err != nil {
 		return nil, err
 	}
 	var drift []string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, entry := range strings.Split(string(output), "\x00") {
+		if entry == "" {
 			continue
 		}
-		// Porcelain format: XY<space>path[ -> orig] — with --no-renames the
-		// path is always the last field.
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		// NUL mode keeps spaces, tabs, quotes and newlines inside the path.
+		// With --no-renames porcelain v1 emits `XY path` for each entry.
+		if len(entry) < 4 || entry[2] != ' ' {
+			return nil, fmt.Errorf("invalid NUL-delimited Git status entry")
+		}
+		rel := normalizeGitStatusPath(entry[3:])
+		if rel == "" {
+			return nil, fmt.Errorf("Git status contains an unsafe product path")
+		}
+		if frozen[rel] {
 			continue
 		}
-		rawPath := fields[len(fields)-1]
-		// Handle quoted paths (core.quotepath) by trimming quotes.
-		rawPath = strings.Trim(rawPath, "\"'")
-		rel := normalizeSurface(filepath.ToSlash(rawPath))
-		if rel == "" || frozen[rel] {
+		if controlPaths[rel] {
 			continue
 		}
 		if scope.Excludes(rel) || isAllowedDriftSurface(rel) {
@@ -296,6 +363,17 @@ func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
 	}
 	sort.Strings(drift)
 	return drift, nil
+}
+
+// normalizeGitStatusPath canonicalizes separators and dot segments without
+// trimming whitespace, which may be part of a legitimate Git path.
+func normalizeGitStatusPath(value string) string {
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = filepath.ToSlash(filepath.Clean(value))
+	if value == "." || value == ".." || strings.HasPrefix(value, "../") || filepath.IsAbs(value) {
+		return ""
+	}
+	return value
 }
 
 func isAllowedDriftSurface(rel string) bool {
@@ -330,6 +408,9 @@ func isAllowedDriftSurface(rel string) bool {
 }
 
 func isControlPlaneDriftPath(rel string) bool {
+	if worktreeReminderPath.MatchString(rel) || mainReviewPlanAuthoringPath.MatchString(rel) || assignmentDispatchContextPath.MatchString(rel) {
+		return true
+	}
 	// .claude/glm.json is a tracked but constantly-rewritten local model
 	// config (model switching rewrites it); pinning or drift-flagging it
 	// stales every round on an unrelated local toggle.
@@ -349,7 +430,7 @@ func isControlPlaneDriftPath(rel string) bool {
 	if strings.HasPrefix(rel, ".claude/") && (strings.HasSuffix(rel, ".lock") || strings.HasSuffix(rel, ".lock.process")) {
 		return true
 	}
-	for _, prefix := range []string{".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/"} {
+	for _, prefix := range []string{".claude/review/", ".claude/evidence/", ".claude/workgroups/", ".claude/plans/", ".claude/bin/", ".claude/runtime-checkpoints/"} {
 		if rel == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(rel, prefix) {
 			return true
 		}
@@ -357,10 +438,23 @@ func isControlPlaneDriftPath(rel string) bool {
 	return false
 }
 
+// Matches the original workspace.DispatchContextSource output, not its directory.
+var assignmentDispatchContextPath = regexp.MustCompile(`^\.claude/assignment-context/[a-f0-9]{64}/g[1-9][0-9]*/[A-Za-z0-9][A-Za-z0-9._-]*-e[1-9][0-9]*\.json$`)
+
+var worktreeReminderPath = regexp.MustCompile(`^\.claude/worktree-reminders/[0-9a-f]{64}\.txt$`)
+var mainReviewPlanAuthoringPath = regexp.MustCompile(`^\.claude/submissions/[A-Za-z0-9._-]+/g[1-9][0-9]*/S7/r[1-9][0-9]*/review-plan\.json$`)
+
 // verifyResultArtifactDigest binds an E2E result to the workspace digest it
 // actually ran against (L3-S7 §3.5): results from a workspace that has since
 // drifted are stale, not submittable.
 func verifyResultArtifactDigest(root string, plan *Plan, ptr *PlanPointer, result *Result, lens string) error {
+	return verifyResultArtifactDigestAt(root, plan, ptr, result, lens)
+}
+
+// verifyResultArtifactDigestAt is the packet-backed variant: authority and
+// the pinned plan remain in Main, while the mutable cold-start workspace may
+// live in the Assignment's registered execution checkout.
+func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPointer, result *Result, lens string) error {
 	if lens != "e2e" {
 		return nil
 	}
@@ -370,7 +464,7 @@ func verifyResultArtifactDigest(root string, plan *Plan, ptr *PlanPointer, resul
 		}
 		return nil
 	}
-	digest, err := WorkspaceDigest(root, ptr.VerificationArtifactWorkspace)
+	digest, err := WorkspaceDigest(workspaceRoot, ptr.VerificationArtifactWorkspace)
 	if err != nil {
 		return err
 	}
@@ -439,24 +533,99 @@ func verifyRegressionAssetFingerprints(root string, plan *Plan) error {
 // against disk. If all of them still match, the consumed evidence is
 // byte-valid (the aggregate moved only through later artifact revisions)
 // and the assignment passes; any missing or changed anchor fails closed.
-func verifySealedArtifactDigests(root string, ptr *PlanPointer, assignments map[string]any) error {
+func verifySealedArtifactDigests(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string) error {
+	return verifySealedArtifactDigestsWithMode(root, ptr, assignments, state, candidateAssignmentID, candidateExecutionRoot, true)
+}
+
+// VerifySealedArtifactDigests rechecks accepted packet-backed E2E Result
+// receipts against their currently registered execution checkouts. It is
+// shared by the quality gate and TR-009's direct transition guard. Legacy
+// Result rows keep their original close-time validation path.
+func VerifySealedArtifactDigests(root string, state map[string]any, ptr *PlanPointer, assignments map[string]any) error {
+	if state == nil || ptr == nil {
+		return errors.New("typed S7 sealed artifact verification requires the accepted Runtime and current Plan")
+	}
+	currentPtr := PlanPointerFromState(state)
+	if currentPtr == nil || *currentPtr != *ptr {
+		return errors.New("typed S7 sealed artifact verification received a non-current Plan projection")
+	}
+	// The projection argument is retained for source compatibility, but the
+	// accepted Runtime is the authority for which E2E rows the gate must check.
+	// Ignoring caller-supplied projections prevents an empty/stale projection
+	// from suppressing a packet-backed row.
+	reviewState, _ := state["review"].(map[string]any)
+	currentAssignments, _ := reviewState["assignments"].(map[string]any)
+	if currentAssignments == nil {
+		return errors.New("typed S7 sealed artifact verification has no current Assignment registry")
+	}
+	return verifySealedArtifactDigestsWithMode(root, ptr, currentAssignments, state, "", "", false)
+}
+
+func HasPacketBoundE2EReceipts(state map[string]any) bool {
+	reviewState, _ := state["review"].(map[string]any)
+	assignments, _ := reviewState["assignments"].(map[string]any)
+	for _, raw := range assignments {
+		row, _ := raw.(map[string]any)
+		if row == nil || row["lens"] != "e2e" || workstate.ReviewAssignmentActivity(row) != "consumed" {
+			continue
+		}
+		receipt, _ := row["result_receipt"].(map[string]any)
+		if receipt != nil && stringField(receipt["packet_id"]) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string, includeLegacy bool) error {
 	if ptr.VerificationArtifactWorkspace == "" {
 		return nil
 	}
-	current, err := WorkspaceDigest(root, ptr.VerificationArtifactWorkspace)
-	if err != nil {
-		return err
-	}
 	for id, raw := range assignments {
 		row, _ := raw.(map[string]any)
-		if row == nil || row["lens"] != "e2e" || row["status"] != "consumed" {
+		if row == nil || row["lens"] != "e2e" || workstate.ReviewAssignmentActivity(row) != "consumed" {
 			continue
+		}
+		artifactRoot := root
+		packetBound := false
+		if id == candidateAssignmentID {
+			if candidateExecutionRoot == "" {
+				return fmt.Errorf("assignment %s has no authenticated execution root for seal-time verification", id)
+			}
+			artifactRoot = candidateExecutionRoot
+			packetBound = true
+		} else {
+			receipt, _ := row["result_receipt"].(map[string]any)
+			packetID := stringField(receipt["packet_id"])
+			if packetID != "" {
+				packetBound = true
+				if state == nil {
+					return fmt.Errorf("assignment %s packet receipt has no Runtime source for verification", id)
+				}
+				accepted, found, err := IssuedResultReceipt(root, state, packetID, stringField(row["agent_id"]))
+				if err != nil {
+					return fmt.Errorf("assignment %s original packet receipt: %w", id, err)
+				}
+				if !found || accepted.ExecutionRoot == "" {
+					return fmt.Errorf("assignment %s has no accepted execution-root receipt", id)
+				}
+				artifactRoot = accepted.ExecutionRoot
+			} else if !includeLegacy {
+				continue
+			}
+		}
+		if packetBound && !includeLegacy && state == nil {
+			return fmt.Errorf("assignment %s packet receipt has no Runtime source for verification", id)
+		}
+		current, err := WorkspaceDigest(artifactRoot, ptr.VerificationArtifactWorkspace)
+		if err != nil {
+			return fmt.Errorf("assignment %s execution workspace digest: %w", id, err)
 		}
 		bound, _ := row["artifact_digest"].(string)
 		if bound == "" || bound == current {
 			continue
 		}
-		if err := verifyResultWorkspaceAnchors(root, ptr.VerificationArtifactWorkspace, id, row); err != nil {
+		if err := verifyResultWorkspaceAnchors(root, artifactRoot, ptr.VerificationArtifactWorkspace, id, row); err != nil {
 			return fmt.Errorf("assignment %s consumed a result against workspace digest %s, but the workspace now digests to %s; the round is stale (L3-S7 §10.3): %w", id, bound, current, err)
 		}
 	}
@@ -468,12 +637,12 @@ func verifySealedArtifactDigests(root string, ptr *PlanPointer, assignments map[
 // result pinned. It returns nil only when at least one anchor was verified
 // and none drifted; results that pinned no workspace anchor cannot be
 // re-verified and fail closed.
-func verifyResultWorkspaceAnchors(root, workspaceRel, assignmentID string, row map[string]any) error {
+func verifyResultWorkspaceAnchors(root, executionRoot, workspaceRel, assignmentID string, row map[string]any) error {
 	resultRel, _ := row["result_ref"].(string)
 	if resultRel == "" {
 		return fmt.Errorf("consumed row has no result_ref; its workspace anchors cannot be re-verified")
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(resultRel)))
+	data, err := workpacket.ReadFile(root, resultRel, resultReceiptReadLimit)
 	if err != nil {
 		return fmt.Errorf("read consumed result %s: %w", resultRel, err)
 	}
@@ -488,7 +657,10 @@ func verifyResultWorkspaceAnchors(root, workspaceRel, assignmentID string, row m
 	if err := json.Unmarshal(data, &result); err != nil {
 		return fmt.Errorf("decode consumed result %s: %w", resultRel, err)
 	}
-	workspaceAbs := filepath.Clean(filepath.Join(root, filepath.FromSlash(workspaceRel)))
+	workspaceAbs, err := repositoryContainedPath(executionRoot, workspaceRel)
+	if err != nil {
+		return fmt.Errorf("resolve registered execution workspace: %w", err)
+	}
 	check := func(ref string) error {
 		if !strings.HasPrefix(ref, "path:") {
 			return nil
@@ -499,7 +671,7 @@ func verifyResultWorkspaceAnchors(root, workspaceRel, assignmentID string, row m
 			return nil
 		}
 		rel := filepath.Clean(filepath.FromSlash(refPath[:shaIdx]))
-		abs := filepath.Clean(filepath.Join(root, rel))
+		abs := filepath.Clean(filepath.Join(executionRoot, rel))
 		if !strings.HasPrefix(abs, workspaceAbs+string(filepath.Separator)) && abs != workspaceAbs {
 			return nil // anchored outside the workspace: not ours to re-verify
 		}
@@ -549,8 +721,10 @@ func projectedAssignments(state map[string]any, currentAssignment *PlanAssignmen
 	if result.VerificationArtifactDigest != nil {
 		digest = *result.VerificationArtifactDigest
 	}
+	runtimeID := stringField(state["runtime_id"])
+	resultRef := filepath.ToSlash(filepath.Join(".claude", "evidence", runtimeID, fmt.Sprintf("g%d", baselineGeneration(state)), "reviews", result.ProducerAgentID, result.ResultID+".json"))
 	out[currentAssignment.AssignmentID] = map[string]any{
-		"lens": currentAssignment.Lens, "status": "consumed",
+		"lens": currentAssignment.Lens, "status": "consumed", "result_ref": resultRef,
 		"agent_id": result.ProducerAgentID, "artifact_digest": digest,
 	}
 	return out

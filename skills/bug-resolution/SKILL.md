@@ -57,7 +57,18 @@ An incomplete but safe S7 batch enters S8 with explicit `capture_gaps`; do not s
 1. **Ingest and bind.** Create or resume one `InvestigationCase` from the exact Finding set, ObservationBatch hash, and baseline. Reject changed or ambiguous input. Do not create a BUG at this point.
 2. **Group reversibly.** Group by a shared candidate mechanism and compatible repair boundary, never merely by file, symptom wording, or agent ownership. Record the grouping rationale. Split or merge by Case revision while preserving prior hashes and the exact Finding coverage.
 3. **Form competing hypotheses.** Each hypothesis must state the invariant or authority it may violate, the evidence that would support/refute it, and a discriminator. Do not write a root cause as an untested conclusion.
-4. **Dispatch independent questions.** Assign sub agents by evidence question, not one agent per Finding. Allocate a unique `assignment-*` id, register it on the Hypothesis, then run `runtime investigation dispatch` so the id is bound to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. The worker reports generic `PLAN_REPORT` and then continues; a second approval round is not required. Workers submit evidence and `HypothesisResult` only, using the same bound Assignment id.
+4. **Dispatch independent questions.** Assign sub agents by evidence question, not one agent per Finding. Allocate a unique `assignment-*` id, register it on the Hypothesis, then run `runtime investigation dispatch` so the id is bound to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. On ordinary `plan_checkpoint`, the Investigator fills the Hook's exact professional HypothesisResult questionnaire and saves it; do not ask for a duplicate generic `PLAN_REPORT`. An explicit `plan_approval_required` assignment still waits for its original approval. Workers submit evidence and `HypothesisResult` only, using the same bound Assignment id.
+   In packet mode, the Hook automatically prepares each eligible registered
+   question and supplies its exact view and answer paths. The Investigator
+   fills only the professional result fields and saves with Write/Edit/
+   MultiEdit; the original Case consumer generates the receipt and updates
+   Case facts. No professional result is prefilled. New hypothesis content
+   receives machine IDs and still awaits Main dispatch. Exact retry compares
+   saved bytes; changed answers conflict. Do not manually issue/consume or
+   submit direct result flags on this normal path.
+   Terminal `consume --agent` and legacy result flags cannot bypass an issued
+   question. A received personal Assignment does not approve the Case route
+   or RepairContract.
 5. **Build the causal model.** The supported model must connect `trigger -> violated invariant -> faulty mechanism -> propagation -> symptoms`, and must state blast radius and detection gap. Every source Finding is explained, explicitly split, linked as duplicate, or routed as unresolved; unexplained Findings cannot be hidden in prose.
 6. **Choose exactly one route per Case.** Use only:
    - `s9_repair` — implementation, contract, test, tooling, configuration, database, dependency, or environment repair is required;
@@ -69,7 +80,7 @@ An incomplete but safe S7 batch enters S8 with explicit `capture_gaps`; do not s
 7. **Create and approve the RepairContract.** For `s9_repair`, bind the exact Finding set, violated invariant, causal model, repair scope, forbidden scope, compatibility/migration/rollback expectations, symptom assertions, root-invariant assertion, detection-gap assertion, and stop/escalation conditions. Main performs the technical review; authority is either explicit human approval or a current bounded-repair delegation (docs/bounded-repair-autonomy.md). Architect review is conditional on a cross-module, source-of-truth, or contract-boundary change.
    When neither a pinned project repair policy nor a valid bounded grant applies, first register a `human_decision` evidence artifact scoped to `s8_contract_approval:<runtime_id>` and record the exact draft SHA-256 in that decision artifact. The approval handoff is then the CAS command `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>`. It must succeed before S9 work begins; it writes the approved Contract hash, creates the next immutable Case revision, and advances to `bug_resolution.repair_readback`.
 8. **Project and hand off.** Only after approval, generate the canonical BUG compatibility projection and the S9 work package idempotently from the Case and RepairContract. S9 reads the approved Contract hash and does not rediscover the root cause. A projection failure must not roll back the approved investigation; retry the projection from the same Case/Contract revision.
-   The executable S9 path is: `runtime repair session open` → `runtime repair plan compile` → **the generic `agent-message` PLAN_REPORT checkpoint, when the worker is platform-dispatched** → **`runtime repair plan-report submit` (one domain report per repair Assignment, must include a failing red pre-fix check; product writes stay denied)** → **`runtime repair execution begin` (the only verb that releases implementation writes)** → `runtime repair result submit` (changed_artifacts must exactly match the session diff; status vocabulary added/deleted/modified) → `runtime repair changeset compute` → `runtime repair impact create/commit` (invalidates affected historical PASS evidence in the same transaction) → independent `runtime repair targeted create/commit` (verifier must differ from the repair Builder) → `runtime repair handoff create/commit` (fires TR-012, bumps the round, writes the S7 seed). Copyable `--file` shapes for the domain artifacts are in [`docs/examples/s7-s9/`](../../docs/examples/s7-s9/). The generic PLAN_REPORT is an Agent-lifecycle checkpoint; it does not replace the S9 domain `repair-plan-report`, and the domain file must not be passed as `SendMessage(plan_ref=...)`. Consume the returned Controller checkpoint/next_action when available. Read `runtime repair status` after recovery, conflicting updates or when the response lacks the current next action; do not poll it after every unrelated shell/read command. A non-pass RepairResult or scope deviation routes back to S8 and cannot be advanced by hand-editing the pointer. For a non-`blocked` targeted failure, run `runtime investigation route --case-id <case> --route investigate_more --reason "targeted reverification requires causal reassessment" --reassessment-evidence <targeted-path>`; this creates a new revision of the same Case, preserves the original Finding set and failure hash, clears the superseded Contract pointer, and retires the old `review.repair` pointer. A `blocked` targeted result first resolves the blocker, runs `runtime repair targeted resume --actor <actor> --reason <resolution>`, and submits a new independent reverification; it is not causal evidence yet.
+   The legacy unissued file-based S9 CLI route is a compatibility/diagnostic path, not the normal packet-enabled Builder procedure. It can retain the original Session/Plan/Assignment, execution barrier, result, Changeset, Impact, independent Targeted and Handoff commands. In the packet-enabled normal path, the Hook supplies the PlanReport and RepairResult exact answer paths; the Builder saves only those professional answers and the original consumers/adapter update lifecycle facts. Do not submit a separate generic PLAN_REPORT or generic completion_report, manually issue/consume a questionnaire, or run the execution-begin command after the graph has advanced automatically. Main still performs candidate integration, required checks, one independent Targeted result per approved Contract, and Handoff gates. If the questionnaire path is absent, report a Main/system preparation gap instead of guessing or falling back to the legacy CLI.
 
 ## Blocking and Recovery
 
@@ -139,3 +150,41 @@ Trace every promised slot family through the real production entry and transacti
 ## Optional bounded repair delegation
 
 When a project repair policy was explicitly pinned at REQ bind, or an explicit current human grant exists, follow docs/bounded-repair-autonomy.md: register repair_contract_review using the Driver identity and pass --delegation-evidence-id to contract approve. Do not label this technical review human_decision or sign as the user. Use `binding-policy:<pinned-sha>` for the pinned-policy authority reference. If neither authority exists, the existing human approval path remains required. Budget, expiry, exact scope and semantic review remain mandatory; ordinary recoverable technical problems are handled by the Driver before requesting any missing authority.
+
+## Issued S9 PlanReport adapter
+
+For a registered repair Builder, the Hook supplies the PlanReport view and
+answer paths. On ordinary `plan_checkpoint`, fill only the professional
+`answer.plan`, `answer.red_checks`, and `answer.proposed_paths`, then save. The
+original PlanReport consumer validates Session/Plan/Assignment facts and the
+existing adapter projects that same answer onto the lifecycle checkpoint; do
+not send an additional generic PLAN_REPORT. The receipt records that this
+planning responsibility was accepted, not that implementation is complete.
+After every required Assignment report is accepted, the original graph/listener
+advances to implementation. Do not manually run `runtime repair execution begin`
+on the normal path. Explicit `plan_approval_required` keeps its original
+approval. An exact answer replay
+returns the original fact; changed answers conflict. Missing answer paths are
+a Main/system preparation gap, not a reason to fall back to manual issue/consume.
+
+## Issued S9 RepairResult after implementation
+
+When the original S9 graph reaches `fixing`, the Hook prepares the
+post-execution RepairResult questionnaire and gives its exact view and
+`answer_path`.
+The Builder fills only the professional verdict, before-fix results, unit
+results, detection-gap evidence, scope deviations, risks, migration and
+rollback fields, then saves through the platform PostToolUse Hook. Do not
+author machine changed-path or check facts, infer responsibility `done` from green checks,
+or use terminal `stage-answer consume --agent` for an issued answer.
+
+The original RepairResult consumer validates the professional answer; the
+original candidate Writer checks actual changed paths and required checks and
+projects that same answer onto the completion record. The existing
+`work_complete=true` field projects only the Builder's current responsibility
+to `done`; Main still performs the original
+workspace integration, all required Main checks and final RepairResult
+Writer. Keep the Worker source until that path completes. The pre-execution
+PlanReport receipt remains `work_complete=false`; it does not replace the
+post-execution answer. When no typed Result packet was issued, preserve the
+existing `repair-result.json` and `s9_delivery_command` workflow.

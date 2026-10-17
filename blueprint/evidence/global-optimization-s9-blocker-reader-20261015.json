@@ -1,0 +1,1501 @@
+{
+  "schema_version": "1.0.0",
+  "kind": "global_optimization_s9_blocker_reader_evidence",
+  "created_at": "2026-10-15T00:17:22.209613+00:00",
+  "status": "HISTORICAL_READER_AND_MESSAGE_EVIDENCE_SHAPES_SCOPED_PASS_NOT_TYPED_BLOCKER_ACCEPTANCE",
+  "core_mechanism_chains_verified": {
+    "completed": 4,
+    "total": 9
+  },
+  "real_model_complete_chains_verified": {
+    "completed": 0,
+    "total": 9
+  },
+  "changes": [
+    "Fixed the L4 unique committed-key contract before coding it. Historical blocker reader reconstructs exact registered packet/issue, full original rotated journal, content-addressed artifact/message, evidence row and original AGENT-LIFECYCLE acceptance coordinates without consulting current Agent labels, Worker checkout or fresh sources.",
+    "Current evidence invalidation metadata cannot erase historical acceptance. The reader grants no current Stop, completion or write authority. Candidate-only packets are absent, not conflicts; resolution evidence sharing packet scope is ignored; blocker artifact directory wrong-kind/duplicates/orphans and exact duplicate committed keys are refused.",
+    "Extended the original closed agent-message schema with optional top-level s9_blocker/s9_resolution, retaining legacy string body and original lifecycle message types. These schemas establish shapes only, not host identity or capability.",
+    "Registered pipeline-owned blocker/resolution evidence kinds in v1.2, excluded them from imports/gate slots, and refused generic RecordEvidence before artifact/Runtime reads. Resolution uses the actual L4 blocker-messages shared directory.",
+    "Added an explicit readonly blocked PLAN/activation authorizer that reuses the original validator on the real blocked state without cloning state or granting Stop/resolve authority.",
+    "Improved shared mechanical S9 Runtime fixture to use original agent-message-compatible numeric TASK-901. The symbolic old TASK ID failed original schema; no schema relaxation was made."
+  ],
+  "commands": [
+    {
+      "name": "schema-catalog-normal",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/schema",
+        "./internal/evidence",
+        "-run",
+        "^(TestS9Blocker.*|TestS9LifecycleEvidence.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-schema-catalog-normal-20261015.log",
+      "started_at": "2026-10-15T00:05:47.586764+00:00",
+      "finished_at": "2026-10-15T00:06:16.607139+00:00",
+      "duration_seconds": 29.02,
+      "exit_code": 0
+    },
+    {
+      "name": "schema-catalog-normal-r2",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/schema",
+        "./internal/evidence",
+        "-run",
+        "^(TestS9Blocker.*|TestS9LifecycleEvidence.*|TestS9PipelineOwnedEvidence.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-schema-catalog-normal-r2-20261015.log",
+      "started_at": "2026-10-15T00:06:20.799299+00:00",
+      "finished_at": "2026-10-15T00:06:22.806924+00:00",
+      "duration_seconds": 2.008,
+      "exit_code": 0
+    },
+    {
+      "name": "schema-catalog-race",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "-race",
+        "./internal/schema",
+        "./internal/evidence",
+        "-run",
+        "^(TestS9Blocker.*|TestS9LifecycleEvidence.*|TestS9PipelineOwnedEvidence.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-schema-catalog-race-20261015.log",
+      "started_at": "2026-10-15T00:06:47.071864+00:00",
+      "finished_at": "2026-10-15T00:07:35.539888+00:00",
+      "duration_seconds": 48.468,
+      "exit_code": 0
+    },
+    {
+      "name": "auth-normal",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/agentauth",
+        "-run",
+        "^TestValidateBlockedPlanAuthorization.*$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-auth-normal-20261015.log",
+      "started_at": "2026-10-15T00:08:17.064405+00:00",
+      "finished_at": "2026-10-15T00:08:27.894413+00:00",
+      "duration_seconds": 10.83,
+      "exit_code": 0
+    },
+    {
+      "name": "auth-race",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "-race",
+        "./internal/agentauth",
+        "-run",
+        "^TestValidateBlockedPlanAuthorization.*$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-auth-race-20261015.log",
+      "started_at": "2026-10-15T00:08:35.504803+00:00",
+      "finished_at": "2026-10-15T00:08:52.777367+00:00",
+      "duration_seconds": 17.273,
+      "exit_code": 0
+    },
+    {
+      "name": "reader-normal",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-reader-normal-20261015.log",
+      "started_at": "2026-10-15T00:10:35.755170+00:00",
+      "finished_at": "2026-10-15T00:10:36.648142+00:00",
+      "duration_seconds": 0.893,
+      "exit_code": 1
+    },
+    {
+      "name": "reader-normal-r2",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-reader-normal-r2-20261015.log",
+      "started_at": "2026-10-15T00:10:40.941733+00:00",
+      "finished_at": "2026-10-15T00:11:01.310849+00:00",
+      "duration_seconds": 20.369,
+      "exit_code": 1
+    },
+    {
+      "name": "reader-normal-r3",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-reader-normal-r3-20261015.log",
+      "started_at": "2026-10-15T00:11:47.068663+00:00",
+      "finished_at": "2026-10-15T00:12:05.887369+00:00",
+      "duration_seconds": 18.819,
+      "exit_code": 0
+    },
+    {
+      "name": "reader-race",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "-race",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResultBlocker.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-reader-race-20261015.log",
+      "started_at": "2026-10-15T00:12:45.277517+00:00",
+      "finished_at": "2026-10-15T00:13:28.907614+00:00",
+      "duration_seconds": 43.63,
+      "exit_code": 0
+    },
+    {
+      "name": "runtime-final-normal",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResult.*|TestRepairPlanReport.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-runtime-final-normal-20261015.log",
+      "started_at": "2026-10-15T00:13:54.427282+00:00",
+      "finished_at": "2026-10-15T00:14:17.357796+00:00",
+      "duration_seconds": 22.931,
+      "exit_code": 0
+    },
+    {
+      "name": "runtime-final-race",
+      "command": [
+        "go",
+        "test",
+        "-p=1",
+        "-race",
+        "./internal/runtime",
+        "-run",
+        "^(TestRepairResult.*|TestRepairPlanReport.*|TestVerifiedRepairResultBlocker.*|TestRecordEvidenceRejectsPipelineOwnedRepairKinds.*)$",
+        "-count=1",
+        "-timeout=10m",
+        "-v"
+      ],
+      "log": "blueprint/evidence/logs/s9-blocker-runtime-final-race-20261015.log",
+      "started_at": "2026-10-15T00:14:24.503364+00:00",
+      "finished_at": "2026-10-15T00:15:44.391706+00:00",
+      "duration_seconds": 79.888,
+      "exit_code": 0
+    }
+  ],
+  "command_metadata": [
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-schema-catalog-normal-20261015.json",
+      "sha256": "1ed297321d00b276c5a5f35b2e30c8c1dc841014cd579317cc3fc2d9cd838550",
+      "bytes": 488
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-schema-catalog-normal-r2-20261015.json",
+      "sha256": "217fe9ff9b6341ad4bc18da84648ae72a8c7f1a9f8de1ff1206d7c692c53cd15",
+      "bytes": 524
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-schema-catalog-race-20261015.json",
+      "sha256": "d3d6d43848bc6a7963302763125d399cf89aba259ba4927510fa1456c189cb82",
+      "bytes": 528
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-auth-normal-20261015.json",
+      "sha256": "f444f1a0a079cd064e0223cad1a9c0d41a835893d057beaf21c38e7d42605f21",
+      "bytes": 439
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-auth-race-20261015.json",
+      "sha256": "ec19177a67c4c5c93ad5101b9d3c73c37036562c8c268e0cd18f2da501e5ffc1",
+      "bytes": 449
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-reader-normal-20261015.json",
+      "sha256": "3b339339a5dc2c22d726271ce6186f4562cc986418ad73056eb3f31b83d54a1f",
+      "bytes": 516
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-reader-normal-r2-20261015.json",
+      "sha256": "924bbb847b800f17a234f99e59871180a256e9619bdd969153b2487c4baefd75",
+      "bytes": 523
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-reader-normal-r3-20261015.json",
+      "sha256": "e15bfc180a3238826d75a4b080197e2b63f8f21e2d4f650219c8ff8dad36f72f",
+      "bytes": 523
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-reader-race-20261015.json",
+      "sha256": "abe78d61d8559b79f69ec075ad940dc7cf53dd7d0db73ce65324c8dbe2984838",
+      "bytes": 525
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-runtime-final-normal-20261015.json",
+      "sha256": "752e7e03dfcdbeae122e4ee1145305182517607bd7baff2edd9d41b388254617",
+      "bytes": 547
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-blocker-runtime-final-race-20261015.json",
+      "sha256": "1b0bea5d1696060870a82916c1a5b588a1a442ddf5102d3942a6bc50410d2e13",
+      "bytes": 556
+    }
+  ],
+  "logs": [
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-schema-catalog-normal-20261015.log",
+      "sha256": "940852e39770a15b1b54318ded4d10fcbe52f64695603ceee191a546646a08d6",
+      "bytes": 10245,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "schema-catalog-normal",
+      "top_level_passes": [
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaAcceptsLegacyAndTypedShapes",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsSubtypeMixing",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsIncompleteUnknownAndForgedFields",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsBadDigestPathAndDecision",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestS9LifecycleEvidenceKindsAreRegisteredButPipelineOwned",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-schema-catalog-normal-r2-20261015.log",
+      "sha256": "d2ccb8a1a5b30996a1d7bf1879ee38ca4c70e0b68de1eb8ae8cd92a0429d6766",
+      "bytes": 17095,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "schema-catalog-normal-r2",
+      "top_level_passes": [
+        {
+          "name": "TestS9PipelineOwnedEvidenceRowsAcceptAllHistoricalStatuses",
+          "duration_seconds": 0.19
+        },
+        {
+          "name": "TestS9PipelineOwnedEvidenceRowsRejectOutOfContractShape",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestS9PipelineOwnedEvidenceKindsAreV12OnlyAndOrdinaryEvidenceStaysCompatible",
+          "duration_seconds": 0.05
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaAcceptsLegacyAndTypedShapes",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsSubtypeMixing",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsIncompleteUnknownAndForgedFields",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsBadDigestPathAndDecision",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestS9LifecycleEvidenceKindsAreRegisteredButPipelineOwned",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-schema-catalog-race-20261015.log",
+      "sha256": "c2f9a446e53597724dd09a1ff07d2ef0bc64176749fcd21089d471eaf9f4d1af",
+      "bytes": 17104,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "schema-catalog-race",
+      "top_level_passes": [
+        {
+          "name": "TestS9PipelineOwnedEvidenceRowsAcceptAllHistoricalStatuses",
+          "duration_seconds": 1.11
+        },
+        {
+          "name": "TestS9PipelineOwnedEvidenceRowsRejectOutOfContractShape",
+          "duration_seconds": 0.23
+        },
+        {
+          "name": "TestS9PipelineOwnedEvidenceKindsAreV12OnlyAndOrdinaryEvidenceStaysCompatible",
+          "duration_seconds": 0.22
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaAcceptsLegacyAndTypedShapes",
+          "duration_seconds": 0.12
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsSubtypeMixing",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsIncompleteUnknownAndForgedFields",
+          "duration_seconds": 0.09
+        },
+        {
+          "name": "TestS9BlockerLifecycleMessageSchemaRejectsBadDigestPathAndDecision",
+          "duration_seconds": 0.06
+        },
+        {
+          "name": "TestS9LifecycleEvidenceKindsAreRegisteredButPipelineOwned",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-auth-normal-20261015.log",
+      "sha256": "e7cbc5e1ea95c99379c66858af0a586797e451fe0ce5ca9ef564d0e8b320dc58",
+      "bytes": 2651,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "auth-normal",
+      "top_level_passes": [
+        {
+          "name": "TestValidateBlockedPlanAuthorizationRequiresOriginalPlanActivation",
+          "duration_seconds": 0.06
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-auth-race-20261015.log",
+      "sha256": "c41a54f9d7859373f3397db3b5e8df03d1e023e6dd800ddb9f4a761dce8e2b6e",
+      "bytes": 2666,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "auth-race",
+      "top_level_passes": [
+        {
+          "name": "TestValidateBlockedPlanAuthorizationRequiresOriginalPlanActivation",
+          "duration_seconds": 0.36
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-reader-normal-20261015.log",
+      "sha256": "ea5713e6cfc6f6c77141890f5159eca51aac9ef6cee7b6f6fdbe72c79fa7edc2",
+      "bytes": 1259,
+      "status": "FAIL",
+      "exit_code": 1,
+      "command_ref": "reader-normal",
+      "top_level_passes": []
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-reader-normal-r2-20261015.log",
+      "sha256": "cb10e7bb571091ce10d97a564312cb9ac3e741e3b772c9db89673155dd6a6ced",
+      "bytes": 13402,
+      "status": "FAIL",
+      "exit_code": 1,
+      "command_ref": "reader-normal-r2",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+          "duration_seconds": 0.2
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket",
+          "duration_seconds": 0.11
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+          "duration_seconds": 0.74
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+          "duration_seconds": 0.21
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-reader-normal-r3-20261015.log",
+      "sha256": "2550795221d850cc4816dfd989fee0bc66d61ddcd194fffba343b70d21658069",
+      "bytes": 11682,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "reader-normal-r3",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+          "duration_seconds": 0.19
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket",
+          "duration_seconds": 0.11
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptHistoricalAndReadOnly",
+          "duration_seconds": 0.26
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReadsOriginalJournalRotation",
+          "duration_seconds": 0.13
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+          "duration_seconds": 0.74
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+          "duration_seconds": 0.25
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptIgnoresNonCommittedSameKey",
+          "duration_seconds": 0.12
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-reader-race-20261015.log",
+      "sha256": "2b442ae6a96db347b70be61db4eb715db6aa7e0a1862eca968702a470318d47c",
+      "bytes": 11690,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "reader-race",
+      "top_level_passes": [
+        {
+          "name": "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+          "duration_seconds": 0.97
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+          "duration_seconds": 0.28
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+          "duration_seconds": 0.27
+        },
+        {
+          "name": "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket",
+          "duration_seconds": 0.98
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptHistoricalAndReadOnly",
+          "duration_seconds": 1.67
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReadsOriginalJournalRotation",
+          "duration_seconds": 1.23
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+          "duration_seconds": 7.31
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+          "duration_seconds": 2.26
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptIgnoresNonCommittedSameKey",
+          "duration_seconds": 1.15
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.04
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.07
+        },
+        {
+          "name": "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+          "duration_seconds": 0.01
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-runtime-final-normal-20261015.log",
+      "sha256": "9b19440c9c585eedc935a29594f3cfe41928863afc58f4a8e94036e58ff4056b",
+      "bytes": 29060,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "runtime-final-normal",
+      "top_level_passes": [
+        {
+          "name": "TestRepairPlanReportReceiptAndCheckpointValidateOriginalAcceptedReport",
+          "duration_seconds": 0.19
+        },
+        {
+          "name": "TestRepairPlanReportReceiptIndentRoundTripCanonicalizesFullAnswerAndRejectsDuplicateKeys",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestRepairPlanReportReceiptRejectsAnswerSourceIndexAndEventDrift",
+          "duration_seconds": 0.59
+        },
+        {
+          "name": "TestRepairPlanReportPacketIssueSourceClosureAndCheckpointFiltering",
+          "duration_seconds": 0.08
+        },
+        {
+          "name": "TestRepairPlanReportPacketLookupRejectsDuplicateAndDisabledContract",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairPlanReportPacketRejectsRegisteredSourceAndPhaseDrift",
+          "duration_seconds": 0.23
+        },
+        {
+          "name": "TestRepairPlanReportPacketRejectsOriginalApprovalAndRegistrationEventTampering",
+          "duration_seconds": 0.26
+        },
+        {
+          "name": "TestRepairPlanReportCheckpointRejectsOrphanIssuanceEvent",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairPlanReportFixtureUsesGenerationTwoAndExactReportPaths",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+          "duration_seconds": 0.09
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket",
+          "duration_seconds": 0.1
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptHistoricalAndReadOnly",
+          "duration_seconds": 0.2
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReadsOriginalJournalRotation",
+          "duration_seconds": 0.12
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+          "duration_seconds": 0.74
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+          "duration_seconds": 0.23
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptIgnoresNonCommittedSameKey",
+          "duration_seconds": 0.13
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultPacketSourcesAndCheckpointFiltering",
+          "duration_seconds": 0.24
+        },
+        {
+          "name": "TestRepairResultCurrentRejectsExecutionSourceAndAttemptDrift",
+          "duration_seconds": 0.24
+        },
+        {
+          "name": "TestRepairResultCheckpointRejectsOrphanTypedIssue",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultCandidateReceiptChecksOriginalEventAndPointer",
+          "duration_seconds": 0.95
+        },
+        {
+          "name": "TestRepairResultCompletionReportRequiresOriginalAcceptance",
+          "duration_seconds": 0.61
+        },
+        {
+          "name": "TestRepairResultHistoricalCandidateRetainsFrozenCompletion",
+          "duration_seconds": 0.16
+        },
+        {
+          "name": "TestRepairResultProfilesBindOriginalReportCommandAndLocation",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultRawFactsRoundTripCanonicalizesWithoutDrift",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultMainFactsProjectionIsStableAcrossCanonicalRoundTrip",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+          "duration_seconds": 0.0
+        }
+      ]
+    },
+    {
+      "path": "blueprint/evidence/logs/s9-blocker-runtime-final-race-20261015.log",
+      "sha256": "a98588605785442aa1c79d96e9c2958d4e600a83ee6feb03d3fa752cde121efe",
+      "bytes": 29075,
+      "status": "PASS",
+      "exit_code": 0,
+      "command_ref": "runtime-final-race",
+      "top_level_passes": [
+        {
+          "name": "TestRepairPlanReportReceiptAndCheckpointValidateOriginalAcceptedReport",
+          "duration_seconds": 1.67
+        },
+        {
+          "name": "TestRepairPlanReportReceiptIndentRoundTripCanonicalizesFullAnswerAndRejectsDuplicateKeys",
+          "duration_seconds": 0.18
+        },
+        {
+          "name": "TestRepairPlanReportReceiptRejectsAnswerSourceIndexAndEventDrift",
+          "duration_seconds": 6.66
+        },
+        {
+          "name": "TestRepairPlanReportPacketIssueSourceClosureAndCheckpointFiltering",
+          "duration_seconds": 0.79
+        },
+        {
+          "name": "TestRepairPlanReportPacketLookupRejectsDuplicateAndDisabledContract",
+          "duration_seconds": 0.29
+        },
+        {
+          "name": "TestRepairPlanReportPacketRejectsRegisteredSourceAndPhaseDrift",
+          "duration_seconds": 2.04
+        },
+        {
+          "name": "TestRepairPlanReportPacketRejectsOriginalApprovalAndRegistrationEventTampering",
+          "duration_seconds": 2.67
+        },
+        {
+          "name": "TestRepairPlanReportCheckpointRejectsOrphanIssuanceEvent",
+          "duration_seconds": 0.09
+        },
+        {
+          "name": "TestRepairPlanReportFixtureUsesGenerationTwoAndExactReportPaths",
+          "duration_seconds": 0.06
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+          "duration_seconds": 0.66
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+          "duration_seconds": 0.34
+        },
+        {
+          "name": "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+          "duration_seconds": 0.27
+        },
+        {
+          "name": "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket",
+          "duration_seconds": 0.95
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptHistoricalAndReadOnly",
+          "duration_seconds": 1.67
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptReadsOriginalJournalRotation",
+          "duration_seconds": 1.25
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+          "duration_seconds": 7.49
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+          "duration_seconds": 2.29
+        },
+        {
+          "name": "TestVerifiedRepairResultBlockerReceiptIgnoresNonCommittedSameKey",
+          "duration_seconds": 1.23
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+          "duration_seconds": 0.05
+        },
+        {
+          "name": "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+          "duration_seconds": 0.03
+        },
+        {
+          "name": "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+          "duration_seconds": 0.02
+        },
+        {
+          "name": "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+          "duration_seconds": 0.07
+        },
+        {
+          "name": "TestRepairResultPacketSourcesAndCheckpointFiltering",
+          "duration_seconds": 2.44
+        },
+        {
+          "name": "TestRepairResultCurrentRejectsExecutionSourceAndAttemptDrift",
+          "duration_seconds": 1.94
+        },
+        {
+          "name": "TestRepairResultCheckpointRejectsOrphanTypedIssue",
+          "duration_seconds": 0.29
+        },
+        {
+          "name": "TestRepairResultCandidateReceiptChecksOriginalEventAndPointer",
+          "duration_seconds": 8.82
+        },
+        {
+          "name": "TestRepairResultCompletionReportRequiresOriginalAcceptance",
+          "duration_seconds": 5.46
+        },
+        {
+          "name": "TestRepairResultHistoricalCandidateRetainsFrozenCompletion",
+          "duration_seconds": 1.64
+        },
+        {
+          "name": "TestRepairResultProfilesBindOriginalReportCommandAndLocation",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultRawFactsRoundTripCanonicalizesWithoutDrift",
+          "duration_seconds": 0.01
+        },
+        {
+          "name": "TestRepairResultMainFactsProjectionIsStableAcrossCanonicalRoundTrip",
+          "duration_seconds": 0.0
+        },
+        {
+          "name": "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+          "duration_seconds": 0.01
+        }
+      ]
+    }
+  ],
+  "log_counts": {
+    "PASS": 9,
+    "FAIL": 2
+  },
+  "unique_passing_top_level_tests": [
+    "TestRecordEvidenceRejectsPipelineOwnedRepairKindsBeforeArtifactRead",
+    "TestRepairPlanReportCheckpointRejectsOrphanIssuanceEvent",
+    "TestRepairPlanReportFixtureUsesGenerationTwoAndExactReportPaths",
+    "TestRepairPlanReportPacketIssueSourceClosureAndCheckpointFiltering",
+    "TestRepairPlanReportPacketLookupRejectsDuplicateAndDisabledContract",
+    "TestRepairPlanReportPacketRejectsOriginalApprovalAndRegistrationEventTampering",
+    "TestRepairPlanReportPacketRejectsRegisteredSourceAndPhaseDrift",
+    "TestRepairPlanReportReceiptAndCheckpointValidateOriginalAcceptedReport",
+    "TestRepairPlanReportReceiptIndentRoundTripCanonicalizesFullAnswerAndRejectsDuplicateKeys",
+    "TestRepairPlanReportReceiptRejectsAnswerSourceIndexAndEventDrift",
+    "TestRepairResultBlockerAbsenceIsNotCandidateConflict",
+    "TestRepairResultBlockerAllowsOnlyFrozenCanonicalOrManifestAssignmentSpelling",
+    "TestRepairResultBlockerArtifactBindsCanonicalAnswerSHA",
+    "TestRepairResultBlockerArtifactCanonicalizesFullAnswerAndRejectsUnknowns",
+    "TestRepairResultBlockerEvidenceDirectoryCatchesWrongKind",
+    "TestRepairResultBlockerEvidenceIgnoresSiblingResolutionRow",
+    "TestRepairResultBlockerEvidenceRequiresExactUniqueScope",
+    "TestRepairResultBlockerReceiptIsReadOnlyProjection",
+    "TestRepairResultBlockerSchemaAcceptsBothExecutionSlotSpellings",
+    "TestRepairResultBlockerSchemaRequiresCompleteNonpassAnswer",
+    "TestRepairResultCandidateReceiptChecksOriginalEventAndPointer",
+    "TestRepairResultCheckpointRejectsOrphanTypedIssue",
+    "TestRepairResultCompletionReportRequiresOriginalAcceptance",
+    "TestRepairResultCurrentRejectsExecutionSourceAndAttemptDrift",
+    "TestRepairResultHistoricalCandidateRetainsFrozenCompletion",
+    "TestRepairResultMainFactsProjectionIsStableAcrossCanonicalRoundTrip",
+    "TestRepairResultPacketSourcesAndCheckpointFiltering",
+    "TestRepairResultProfilesBindOriginalReportCommandAndLocation",
+    "TestRepairResultRawFactsRoundTripCanonicalizesWithoutDrift",
+    "TestS9BlockerLifecycleMessageSchemaAcceptsLegacyAndTypedShapes",
+    "TestS9BlockerLifecycleMessageSchemaRejectsBadDigestPathAndDecision",
+    "TestS9BlockerLifecycleMessageSchemaRejectsIncompleteUnknownAndForgedFields",
+    "TestS9BlockerLifecycleMessageSchemaRejectsSubtypeMixing",
+    "TestS9LifecycleEvidenceKindsAreRegisteredButPipelineOwned",
+    "TestS9PipelineOwnedEvidenceKindsAreV12OnlyAndOrdinaryEvidenceStaysCompatible",
+    "TestS9PipelineOwnedEvidenceRowsAcceptAllHistoricalStatuses",
+    "TestS9PipelineOwnedEvidenceRowsRejectOutOfContractShape",
+    "TestValidateBlockedPlanAuthorizationRequiresOriginalPlanActivation",
+    "TestVerifiedRepairResultBlockerReceiptHistoricalAndReadOnly",
+    "TestVerifiedRepairResultBlockerReceiptIgnoresNonCommittedSameKey",
+    "TestVerifiedRepairResultBlockerReceiptReadsOriginalJournalRotation",
+    "TestVerifiedRepairResultBlockerReceiptRejectsDuplicateCommittedIdempotencyKeys",
+    "TestVerifiedRepairResultBlockerReceiptRejectsTamperingAndOrphans",
+    "TestVerifiedRepairResultBlockerReceiptReturnsAbsentForCandidateOnlyPacket"
+  ],
+  "validation_notes": [
+    "First reader command was a compile failure from a renamed fixture return type; complete failed log preserved.",
+    "Second reader command failed actual positive cases because the reused symbolic TASK ID violated the unchanged original lifecycle-message schema; full log preserved. Corrected fixture then passed all selected positives and negatives.",
+    "Initial race command was launched just before adding a stronger current-evidence-invalidation assertion to a test. Its PASS is retained but final broader Runtime normal/race commands validate the frozen strengthened test source.",
+    "First schema command omitted the newly named PipelineOwned schema tests from its regex. Corrected normal-r2 and race commands include them explicitly.",
+    "Broader final Runtime normal/race commands also rerun prior PlanReport/RepairResult source/checkpoint/model tests affected by the shared fixture correction."
+  ],
+  "previous_frozen_foundation_evidence": {
+    "path": "blueprint/evidence/global-optimization-s9-blocker-foundation-20261014.json",
+    "sha256": "c54cf9a3043299598975ed99fec9eb134efe007e3d79fb7a881de023c502aece",
+    "bytes": 28225
+  },
+  "previous_frozen_shared_receipt_evidence": {
+    "path": "blueprint/evidence/global-optimization-shared-submission-receipt-20261014.json",
+    "sha256": "7e6acc21cff726e4c2258341fcf18c9105f8b896f3d689b1b6441ddf765898c2",
+    "bytes": 31253
+  },
+  "previous_log_integrity": "All five foundation and eight shared receipt log digests checked unchanged.",
+  "protected_previous_package_checks": [
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-repair-result-disposable-20261014-01/dist/vibe-coding-loop-template-s9-issued-repair-result-review.tar.gz",
+      "sha256": "d4235a8c80381a5698418adec8471c730504868bf8298a71bed6f4e3a2f241d1",
+      "bytes": 34206493,
+      "expected_sha256": "d4235a8c80381a5698418adec8471c730504868bf8298a71bed6f4e3a2f241d1"
+    },
+    {
+      "path": "blueprint/evidence/global-optimization-s9-repair-result-disposable-install-20261014.json",
+      "sha256": "6206a64814bafc3111378617b5591b77ecb9cdabc604f3ee84a5fcba0aceb24d",
+      "bytes": 13848,
+      "expected_sha256": "6206a64814bafc3111378617b5591b77ecb9cdabc604f3ee84a5fcba0aceb24d"
+    },
+    {
+      "path": "/home/sebs/.cache/gsb-adapter-work-mp771m5c/s9-repair-result-disposable-20261014-01/run-metadata.json",
+      "sha256": "4b92539ed754aee3af382ee8ca6c1744901debe96897c36a1d1aa2f95c54ef41",
+      "bytes": 10642,
+      "expected_sha256": "4b92539ed754aee3af382ee8ca6c1744901debe96897c36a1d1aa2f95c54ef41"
+    }
+  ],
+  "source_snapshot": {
+    "head": "ed61728e7bfd417dd86dd5d91b4bcae94ca8b742",
+    "dirty": true,
+    "scope": "Selected current foundation/reader/schema/authorizer/source-fixture/contracts/shipped-doc sources only. Concurrent new repair capability and assignment lifecycle guard files are excluded and not validated by this evidence. Earlier selected source snapshots remain historical, never refreshed. No original typed blocker producer is attested.",
+    "files": [
+      {
+        "path": "agents/backend-builder.md",
+        "sha256": "6d0ee78a9543169fe4b2b9b4bea3dd3ccbaf830e417b1b7eba9ab372f5ad3494",
+        "bytes": 10012
+      },
+      {
+        "path": "agents/frontend-builder.md",
+        "sha256": "cfb27d50ecbd33132a9da835c5d9ec3c2657f028faf88866988c14debf87a6ae",
+        "bytes": 7912
+      },
+      {
+        "path": "agents/test-builder.md",
+        "sha256": "b7f6ead9d6d52013b9e62cfa5bafc2a72c33fa32fd13a0b71b92f2295791d22c",
+        "bytes": 8281
+      },
+      {
+        "path": "blueprint/GLOBAL-OPTIMIZATION-DESIGN.md",
+        "sha256": "145ae82dc8c0210009572e24b1c19cae8b6b7ebac5166000a05f1bbee6a9ff4f",
+        "bytes": 199562
+      },
+      {
+        "path": "blueprint/l3-stages/L3-S9-repair.md",
+        "sha256": "fd901d3b5db9fe5b7d4a66f682ff167b5c4a0d77e3f1eadee96876b8b5f126b8",
+        "bytes": 88752
+      },
+      {
+        "path": "blueprint/l4-mechanisms/L4-stage-form.md",
+        "sha256": "9e7c27f691071869eb64ae12e7bb0d3aa8ec4ff8375995be6c6c4d7afb80eec8",
+        "bytes": 106080
+      },
+      {
+        "path": "docs/workspace-integration.md",
+        "sha256": "026136bac43d1bce6b3ee38fdc3a0d605db73ec9cb5c3e4188c16d61ba29ade3",
+        "bytes": 62940
+      },
+      {
+        "path": "internal/agentauth/blocked_test.go",
+        "sha256": "e498e8fc6ac338b86d190070a90aea0c956b782b7854ee4d8d8256e55bff9fda",
+        "bytes": 7693
+      },
+      {
+        "path": "internal/agentauth/working.go",
+        "sha256": "b02d6eb608b7dd52e4cf19733e5e9af9fa07881f9bfb8d4966674f9e15e96ffe",
+        "bytes": 3846
+      },
+      {
+        "path": "internal/assignment/completion.go",
+        "sha256": "9f49d7ea981a09e8e6b66b192a3e38894a299bc3b96f86c23ac0dbdbcc536c67",
+        "bytes": 17417
+      },
+      {
+        "path": "internal/assignment/lifecycle.go",
+        "sha256": "f4a1b806196beafd87cd3b38c36e422f427fdbf21c6deb64fb82326515dc146f",
+        "bytes": 20149
+      },
+      {
+        "path": "internal/assignment/lifecycle_generation_test.go",
+        "sha256": "f2ea676a61bbd4a01666f515c62b184c5145dac1417cb086ed368e9c7c5afa40",
+        "bytes": 2857
+      },
+      {
+        "path": "internal/cli/controller.go",
+        "sha256": "a137a0b19280253954af089b2e27b763ba9f9e64f23f056779327a9f10a9f44e",
+        "bytes": 109670
+      },
+      {
+        "path": "internal/cli/repair_command.go",
+        "sha256": "10765bbc40cdb526756604b1ff139a1fc8bf04a816520b1f7342f17354e7bd48",
+        "bytes": 61784
+      },
+      {
+        "path": "internal/cli/repair_command_agent_definition_test.go",
+        "sha256": "9edcb410c7f2d0c2af73bb11f5805d9b76765ccb5856b05388a69cf681305990",
+        "bytes": 3109
+      },
+      {
+        "path": "internal/cli/repair_dispatch_test.go",
+        "sha256": "bf4aef223bbce31bdf41043421102a097af941c332e262d7b3bf37cb703905ca",
+        "bytes": 7439
+      },
+      {
+        "path": "internal/cli/repair_status_test.go",
+        "sha256": "f79f5146a5119a2d63296487c87987a765d3e300e9f3889503977e63920b5d33",
+        "bytes": 3416
+      },
+      {
+        "path": "internal/cli/stage_answer.go",
+        "sha256": "050d968f42ee2c2a49893d612ad3ed384638af45d1a35f46f1e1245eddb1c2f1",
+        "bytes": 77395
+      },
+      {
+        "path": "internal/cli/stage_answer_e2e_test.go",
+        "sha256": "91bc5bf4cbbe73ca289ab6a83fa4a69a3a147d34b7fa7a42c86d3f483a2f290f",
+        "bytes": 27820
+      },
+      {
+        "path": "internal/cli/stage_answer_receipt_readonly_test.go",
+        "sha256": "c428c4ab9c9c936d40b9465cf22d31b39ec5487cfdcc6ec1f2dec14cb78bb8b5",
+        "bytes": 1791
+      },
+      {
+        "path": "internal/cli/workspace_command.go",
+        "sha256": "1df0f7a2f983bea8acd6bc383f523cb9e9f74925af190dad1348723a7a3c2bea",
+        "bytes": 18499
+      },
+      {
+        "path": "internal/cli/workspace_delivery.go",
+        "sha256": "1aea03d98c674bd7e2d08d7a2bf9041ba0d977593430ca233703d055f45e5e51",
+        "bytes": 22277
+      },
+      {
+        "path": "internal/cli/workspace_delivery_matcher_test.go",
+        "sha256": "3531e2777ace294c2e3f2f6f3472049eaf2c5d775dcfea73dc3183416f4b2d04",
+        "bytes": 7826
+      },
+      {
+        "path": "internal/cli/workspace_pending.go",
+        "sha256": "4a45172a77026311cf4a23a5fbc835abbba958eb72ba5e00b8f49f5ba1fa2ae0",
+        "bytes": 1164
+      },
+      {
+        "path": "internal/cli/workspace_rework.go",
+        "sha256": "e9dc49166f20467cee6a025abea6f026c68ed64d086c962d4879a7e015b25e4a",
+        "bytes": 8051
+      },
+      {
+        "path": "internal/controlproof/journal.go",
+        "sha256": "255705f7562c72a7aa777d636f2e06c9ba23a94f88034d4a2d8e2928d31d8e14",
+        "bytes": 8505
+      },
+      {
+        "path": "internal/controlproof/s6_main_baseline.go",
+        "sha256": "a39f02573c2ccbad787475e5d16bcaebc31f09d76adbf349cc8566b87151a510",
+        "bytes": 7580
+      },
+      {
+        "path": "internal/evidence/catalog.go",
+        "sha256": "e20986840452fdbd71218bbc81495fc2702963c3f763dbd1f9f6277c8171e3e3",
+        "bytes": 16805
+      },
+      {
+        "path": "internal/evidence/catalog_test.go",
+        "sha256": "ab75df86075346b36b1b4c432bd224f0ccd55344f1c1c8eb0ff8f7c8ba0b6d8b",
+        "bytes": 4798
+      },
+      {
+        "path": "internal/hook/repair_result.go",
+        "sha256": "211848d9e5d7d1b077887c9ce318c92fc813935744b1034f608a17843f6b2b5c",
+        "bytes": 5743
+      },
+      {
+        "path": "internal/hookctx/loader.go",
+        "sha256": "a4706f33ce37ac4efc586a8a239b1d27d1fc390b4a37e5565c07fdcc82451b9e",
+        "bytes": 89027
+      },
+      {
+        "path": "internal/hookctx/loader_s9_assignment_internal_test.go",
+        "sha256": "35ada1bce7219e38a7411caa1627bc257f028b1696a82039d4d7df373d4b1e1d",
+        "bytes": 2745
+      },
+      {
+        "path": "internal/integration/s7_issued_result_external_test.go",
+        "sha256": "9ba82d0c14bbdb3721b4b782604242c2f8e2599986e73f12db9b13922829c65a",
+        "bytes": 34549
+      },
+      {
+        "path": "internal/investigation/hypothesis_result_registration_test.go",
+        "sha256": "37760f83fef5f6bab5cfe1939aa649756421f36348b7b3368584e77fa6286bfd",
+        "bytes": 37955
+      },
+      {
+        "path": "internal/investigation/repair_plan_report_hook_test.go",
+        "sha256": "2b94ecdec8c9e306921818e607fed60dd2862a0b86b8a1b16d2b3a454f949182",
+        "bytes": 33355
+      },
+      {
+        "path": "internal/investigation/repair_result_candidate_recovery_test.go",
+        "sha256": "256a73a7f6b5136ceae003c9b93ad0330daaf8d9d5c4c59567c59cb14a9b49fa",
+        "bytes": 15933
+      },
+      {
+        "path": "internal/investigation/repair_result_final_retry_test.go",
+        "sha256": "27f69d3dd83a7546e8432d806eb72231f9d753bd7427edb3dabbdc10a5e5e5dd",
+        "bytes": 22294
+      },
+      {
+        "path": "internal/investigation/repair_result_hook_test.go",
+        "sha256": "7e7349c6c294ebdea4957a7c4399946476b3c88dac9f33479325864177952db3",
+        "bytes": 40066
+      },
+      {
+        "path": "internal/investigation/repair_result_recovery_test.go",
+        "sha256": "1933ada51418d4e8df8ece598a268bd5960b877e3550921af2cf13130c07924f",
+        "bytes": 27318
+      },
+      {
+        "path": "internal/investigation/repair_result_worker_host_gate_test.go",
+        "sha256": "605a1df6808597be440a0689dad9e35bc12a2f349cf32483f8ab53500ed41bd1",
+        "bytes": 10390
+      },
+      {
+        "path": "internal/policy/work_packet.go",
+        "sha256": "60b586ccf64d78b03713a19518c0075f29909adb23f2369fe9bfe9201652257a",
+        "bytes": 7872
+      },
+      {
+        "path": "internal/repair/issued_repair_result.go",
+        "sha256": "2c32cf62e3f251c133f2d8a9360fd7577e16e32bd7d18830202950ec8359a3f6",
+        "bytes": 91550
+      },
+      {
+        "path": "internal/repair/issued_repair_result_attempt_test.go",
+        "sha256": "d19a1fbb10092d4e3ec47d1a0d733767dc07c729455285624788fb28d371b1a9",
+        "bytes": 11444
+      },
+      {
+        "path": "internal/repair/model.go",
+        "sha256": "aea4a337a477ed20140581ff6b0b2f82b4ee1fcb65fc9d55fbc8667c404276d9",
+        "bytes": 20282
+      },
+      {
+        "path": "internal/repair/result.go",
+        "sha256": "26a30c80e03bc999bab552fc055cb2954e1359a414a1f10075a5538db2c98d72",
+        "bytes": 11268
+      },
+      {
+        "path": "internal/repair/runtime.go",
+        "sha256": "638958af2f56799325a02a63a99a66a2baa95a55dda9cdefdbc82b3a7a639ee3",
+        "bytes": 116951
+      },
+      {
+        "path": "internal/repair/workspace_delivery.go",
+        "sha256": "a638c4da91fa38e73e08a513c0be58a9f9f9078a5bc65ae851655e8ca4117f24",
+        "bytes": 13781
+      },
+      {
+        "path": "internal/runtime/checkpoint_indices.go",
+        "sha256": "a1646affa4ebdf9301364c95984a1c79561210544e3b2b1c8337746e427d9606",
+        "bytes": 9541
+      },
+      {
+        "path": "internal/runtime/evidence.go",
+        "sha256": "062f0882ad6a3fa84c12063d64f03bb0c43e4cb44636f7a257e47855e01b8d67",
+        "bytes": 17200
+      },
+      {
+        "path": "internal/runtime/evidence_pipeline_owned_test.go",
+        "sha256": "8a9c7c83390dbe2f806b3d302961faee423c336753ff8542060de17503570b78",
+        "bytes": 2899
+      },
+      {
+        "path": "internal/runtime/repair_plan_report_packet.go",
+        "sha256": "f4540106f33ef289f7305f9e3c8c723b751a0e9e89214af3fb7cae55a1cc764f",
+        "bytes": 24795
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_checkpoint.go",
+        "sha256": "06b2afb14f3646a99ab7f6aa3290baa1fc65fe97e196de89bc19e340e05ae62f",
+        "bytes": 22916
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_checkpoint_test.go",
+        "sha256": "cd931bfab44fd381f404d6cb708f1d1474007bc7c55150a901a48bd0266c790b",
+        "bytes": 6483
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_reader_test.go",
+        "sha256": "a75a9aa29f510a33b7dff155ffeedd48af163726ff103c098802451deb67522b",
+        "bytes": 17921
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_types.go",
+        "sha256": "a0b631929303cc148d320683f461064c542eb31cb174364a4c6a30170eb630c3",
+        "bytes": 6649
+      },
+      {
+        "path": "internal/runtime/repair_result_blocker_types_test.go",
+        "sha256": "89888e785660737966cdec28cd54c462b5b54fe29a4bdfa1d61392e843919297",
+        "bytes": 12811
+      },
+      {
+        "path": "internal/runtime/repair_result_checkpoint.go",
+        "sha256": "384b3d090688b21bdc41d23917dd22375d511072716f0e3e6d655e5374a1b428",
+        "bytes": 32368
+      },
+      {
+        "path": "internal/runtime/repair_result_completion.go",
+        "sha256": "873e2df3492b7b99c3f065f48303af6aa224f1bd352c0a783719d3f8f39e8e2e",
+        "bytes": 7503
+      },
+      {
+        "path": "internal/runtime/repair_result_packet.go",
+        "sha256": "a8bc1efe86f0b8016bfa232ca88d67129ec2c28b4f6c6c07c22f8d6388b9972c",
+        "bytes": 21989
+      },
+      {
+        "path": "internal/runtime/repair_result_packet_test.go",
+        "sha256": "62cbb1f5fb1856de7ad8ab243bd585098729cb9e9cae4d9727d324900c9c0441",
+        "bytes": 20755
+      },
+      {
+        "path": "internal/runtime/repair_result_profiles.go",
+        "sha256": "d21b32bbc06ce285f5f59b5ea4495a2b1b25271a6f8f93785359de323ee14223",
+        "bytes": 2475
+      },
+      {
+        "path": "internal/runtime/repair_result_profiles_test.go",
+        "sha256": "7da4cd08970e5c73583ef6bb7aa138c79e37c4489f7bfa39846e95a5cda52a46",
+        "bytes": 1976
+      },
+      {
+        "path": "internal/runtime/repair_result_types.go",
+        "sha256": "9f9822e0e64539ba09f4a0e71d2912de2f4627ecc1037a037bed580f2cd95758",
+        "bytes": 7972
+      },
+      {
+        "path": "internal/runtime/repair_result_types_test.go",
+        "sha256": "64099120e36d2977f6a684cd2ca12a45a1e8d9e3329dc4c107f03ba53a1ac0e4",
+        "bytes": 11132
+      },
+      {
+        "path": "internal/schema/assets/agent-message.schema.json",
+        "sha256": "b96053d78f37feb1eb575cab382ba4ea7063c25b29b3340397d25f7c4dd8bffc",
+        "bytes": 39970
+      },
+      {
+        "path": "internal/schema/assets/loop-state-v1.2.schema.json",
+        "sha256": "f373ab18bf429e9780a2eb231cbdf0c3e05d340fca8d6f675cb2cf3fec2b8d2f",
+        "bytes": 191595
+      },
+      {
+        "path": "internal/schema/assets/repair-result-blocker.schema.json",
+        "sha256": "e38ad3f8a7e06bedc7e35fd0b56ca541e03395529d08a16f32e2e46b3db7d4b7",
+        "bytes": 2626
+      },
+      {
+        "path": "internal/schema/assets/repair-result-candidate-provenance.schema.json",
+        "sha256": "fb3352363399889c577c40ce9dd20038120a455bc87c9c586a7f9bf24944eceb",
+        "bytes": 4028
+      },
+      {
+        "path": "internal/schema/assets/repair-result-receipt.schema.json",
+        "sha256": "cb9fa163be10ec78a76f61f2bdce0d6e5ba90f37d47fca39bc3c94ac5e5cf3bb",
+        "bytes": 4398
+      },
+      {
+        "path": "internal/schema/assets/repair-result-work-packet.schema.json",
+        "sha256": "a4d73b6dca873a8ae3227a4b32a2c7c15304dd810d946570b66085ffe332a5d2",
+        "bytes": 6164
+      },
+      {
+        "path": "internal/schema/assets/repair-result.schema.json",
+        "sha256": "43453d8378b8a27c7d83b9e69ced2698be146b8ca7e3efbf468cee72e150a37f",
+        "bytes": 4501
+      },
+      {
+        "path": "internal/schema/assets/repair-workspace-candidate.schema.json",
+        "sha256": "d873f3627ad3ebf6c7ddc5bad24a69de3d6bac2571096ba484dc4d7a9c8bc75e",
+        "bytes": 1308
+      },
+      {
+        "path": "internal/schema/assets/stage-answer-s9-result.schema.json",
+        "sha256": "90fad61987ceffeb2c920ff183052f966e0d06191b99a0f0a0403aa5ee5e38d3",
+        "bytes": 4675
+      },
+      {
+        "path": "internal/schema/assets/stage-form-s9-result-template.json",
+        "sha256": "13d82a193152a53324754fae9796ce6d9eaa4f99f1e02d9f64710e3db5a95f6e",
+        "bytes": 3655
+      },
+      {
+        "path": "internal/schema/assets/submission-receipt.schema.json",
+        "sha256": "074baacfc53a3d7ec4434cb44e868a4bb04755ec16cff8bfcd0aa28e1c01809f",
+        "bytes": 11350
+      },
+      {
+        "path": "internal/schema/s9_blocker_evidence_test.go",
+        "sha256": "72f84c127f4496e76f4d4d804aa36f40b857eeafe6992dd0087f39183b88f357",
+        "bytes": 6485
+      },
+      {
+        "path": "internal/schema/s9_blocker_message_test.go",
+        "sha256": "74c1c98471383b1cf9b088c825cbd4cf3df34f83ebe54f37f3ffa304524bcc8c",
+        "bytes": 10150
+      },
+      {
+        "path": "internal/schema/submission_receipt_test.go",
+        "sha256": "a9fafb8796ec1756fb1d0d5481f94be47c57c690ffa71b48d47427f2c1fb67a2",
+        "bytes": 11162
+      },
+      {
+        "path": "internal/submission/receipt.go",
+        "sha256": "c3350d815420c9cd877c4e92686bcfdb434855c652a4c46d6b25589150657929",
+        "bytes": 14871
+      },
+      {
+        "path": "internal/submission/repair_result.go",
+        "sha256": "70b709a6ea609059a421e7ddcf42b775264d8f74a8c0e238d0f276d172d1a447",
+        "bytes": 19635
+      },
+      {
+        "path": "internal/submission/service.go",
+        "sha256": "480133ae37b107327580256cc6e09805ccbb1606badb9447e1f48deee1a5d266",
+        "bytes": 10709
+      },
+      {
+        "path": "internal/workpacket/repair_result.go",
+        "sha256": "0b3be7ab1d1848f109d54672af54e98c4580e8f23405f2b4b9c827728bcd54e2",
+        "bytes": 31955
+      },
+      {
+        "path": "internal/workpacket/repair_result_test.go",
+        "sha256": "6678e42da3af473d1f8f5132eab99c18dfb344b876c58977f25f1a136448dc52",
+        "bytes": 16001
+      },
+      {
+        "path": "skills/agent-dispatch/SKILL.md",
+        "sha256": "980c9e2579fe232e88370986adbeec786237120c0054af70770d5d887129cb2c",
+        "bytes": 32191
+      },
+      {
+        "path": "skills/bug-resolution/SKILL.md",
+        "sha256": "192e1f315082712dede0bf8d9a06b18382e3b7d7e92a961ec5ad0068c07dc261",
+        "bytes": 18843
+      }
+    ]
+  },
+  "limits_and_remaining": [
+    "Reader positive fixtures are mechanically assembled, not original capability-writer acceptance. No new public nonpass producer, host Hook save, typed lifecycle CAS guard, Main resolution, Stop or Resume is validated here.",
+    "Shared receipt retains its seven implemented statuses; blocker_recorded remains designed, not enabled by this evidence.",
+    "Next: opaque repair-owned capability, original same-CAS Agent pointer/evidence/journal wiring, all-history generic bypass guard, actual Worker Hook and typed blocker responsibility, then Main resolution/Resume.",
+    "Machine-stale operational-owner and completed-but-ineligible extra reception require their own contracts.",
+    "No live model, supported sandbox Worker product pass/fail matrix, native Main topology, real macOS/Windows execution, new package/disposable install or current-project installation.",
+    "Later typed Impact/Targeted/Handoff/fresh S7, per-unit attribution/indexed checks, remaining global cards and platforms remain. No commit/tag/push/publish."
+  ],
+  "goal": "active"
+}

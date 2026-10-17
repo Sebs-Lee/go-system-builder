@@ -12,6 +12,7 @@
   "properties": {
     "schema_version": {"const": "1.0.0"},
     "manifest_type": {"enum": ["acceptance", "release_audit"]},
+    "outcome": {"enum": ["pass", "review_required", "approved", "approved_with_risk", "blocked"]},
     "runtime_id": {"type": "string", "minLength": 1},
     "baseline_generation": {"type": "integer", "minimum": 1},
     "review_round": {"type": "integer", "minimum": 1},
@@ -154,6 +155,32 @@
           "metrics": {
             "required": ["audit_area_coverage"]
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "manifest_type": {"const": "acceptance"}
+        },
+        "required": ["manifest_type"]
+      },
+      "then": {
+        "properties": {
+          "outcome": {"enum": ["pass", "review_required"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "manifest_type": {"const": "release_audit"}
+        },
+        "required": ["manifest_type"]
+      },
+      "then": {
+        "properties": {
+          "outcome": {"enum": ["approved", "approved_with_risk", "blocked"]}
         }
       }
     }

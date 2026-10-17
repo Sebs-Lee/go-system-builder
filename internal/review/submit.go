@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,8 @@ import (
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // SubmitRequest drives `runtime review-result submit`.
@@ -26,6 +29,12 @@ type SubmitRequest struct {
 	// empty encounter timeline absorb the buffered steps (L3-S7 §3.6).
 	CaptureDir string
 	OccurredAt time.Time
+	// Issued adapters supply frozen projected bytes and the exact registered
+	// packet owner/source through private fields; Result JSON cannot manufacture them.
+	resultData       []byte
+	issuedPacket     *workpacket.ReviewResultPacket
+	packetOwner      string
+	issuedSourceRoot string
 }
 
 // SubmitResult is the single entry point for a Canonical ReviewResult
@@ -39,6 +48,10 @@ func SubmitResult(
 	snapshot, err := submitResult(root, statePath, journalPath, request)
 	var siteLostBlocked *SiteLostBlockedError
 	switch {
+	case errors.Is(err, errExactResultReplay):
+		// A verified replay is a read-only acknowledgement of the original
+		// acceptance. Do not count the same durable event twice.
+		return snapshot, nil
 	case err == nil:
 		_ = metrics.RecordS7ResultSubmit(root, "accepted")
 	case errors.Is(err, loopruntime.ErrStaleRevision):
@@ -71,7 +84,11 @@ func submitResult(
 	if request.AssignmentID == "" || request.ResultPath == "" {
 		return loopruntime.Snapshot{}, fmt.Errorf("--assignment-id and --result are required")
 	}
-	data, err := os.ReadFile(request.ResultPath)
+	data := request.resultData
+	var err error
+	if data == nil {
+		data, err = readReviewResultInput(request.ResultPath)
+	}
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read ReviewResult: %w", err)
 	}
@@ -92,6 +109,45 @@ func submitResult(
 	}
 	if result.AssignmentID != request.AssignmentID {
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult assignment_id %s does not match --assignment-id %s", result.AssignmentID, request.AssignmentID)
+	}
+	// v1.2 packet-mode Results have a durable idempotency receipt. Recover a
+	// pending Runtime operation before considering artifact publication, then
+	// recognize a fully proven replay before reading the mutable capture buffer
+	// or applying the caller's now-stale ExpectedRevision.
+	var earlyState map[string]any
+	var earlySnapshot loopruntime.Snapshot
+	var earlyStateErr error
+	if stateData, readErr := os.ReadFile(statePath); readErr != nil {
+		earlyStateErr = readErr
+	} else if err := json.Unmarshal(stateData, &earlyState); err != nil {
+		earlyStateErr = fmt.Errorf("decode runtime: %w", err)
+	}
+	receiptMode := earlyStateErr == nil && typedResultReceiptsEnabled(earlyState)
+	var answerSHA string
+	if receiptMode {
+		if err := workpacket.ValidateUniqueJSON(data); err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult JSON: %w", err)
+		}
+		answerSHA, err = professionalAnswerDigest(data, request.issuedPacket != nil)
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+		store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+		earlySnapshot, err = store.Snapshot()
+		if err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("recover/read Runtime before typed ReviewResult: %w", err)
+		}
+		earlyState = earlySnapshot.State
+		row := resultPacketAssignmentRow(earlyState, result.AssignmentID)
+		isReplay := workstate.ReviewAssignmentActivity(row) == "consumed" || workstate.ReviewAssignmentActivity(row) == "result_submitted"
+		if err := validateIssuedResultRequest(root, earlyState, request, &result, isReplay); err != nil {
+			return earlySnapshot, err
+		}
+		if replayed, replayErr := replayAcceptedResult(root, earlyState, &result, answerSHA); replayErr != nil {
+			return earlySnapshot, replayErr
+		} else if replayed {
+			return earlySnapshot, errExactResultReplay
+		}
 	}
 	// Capture-buffer merge: findings whose encounter timeline is empty absorb
 	// the buffered steps; reviewer-written timelines are never rewritten. A
@@ -121,13 +177,17 @@ func submitResult(
 		captureSteps = steps
 	}
 
-	stateData, err := os.ReadFile(statePath)
-	if err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
-	}
 	var current map[string]any
-	if err := json.Unmarshal(stateData, &current); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+	if receiptMode {
+		current = earlyState
+	} else {
+		stateData, err := os.ReadFile(statePath)
+		if err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
+		}
+		if err := json.Unmarshal(stateData, &current); err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+		}
 	}
 	// Reject a stale caller before producing any review artifacts. The CAS
 	// remains authoritative for races, but this early check prevents the
@@ -191,7 +251,7 @@ func submitResult(
 	if err := validateClaimResultSet(assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateCapturePassProvenance(plan, assignment, &result, captureSteps); err != nil {
+	if err := validateCapturePassProvenance(root, current, plan, assignment, &result, captureSteps); err != nil {
 		return loopruntime.Snapshot{}, s7GateError(
 			"S7_CAPTURE_PROVENANCE",
 			"PASS evidence is not bound to the ReviewPlan execution window",
@@ -203,7 +263,11 @@ func submitResult(
 	if err := validateClaimEvidenceRequirements(plan, assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateResultEvidenceReferences(root, current, &result); err != nil {
+	artifactRoot := root
+	if request.issuedPacket != nil && request.issuedSourceRoot != "" {
+		artifactRoot = request.issuedSourceRoot
+	}
+	if err := validateResultEvidenceReferences(root, current, &result, artifactRoot); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateVerdictConsistency(&result); err != nil {
@@ -227,7 +291,7 @@ func submitResult(
 	if err := validateProducerIndependence(current, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := verifyResultArtifactDigest(root, plan, ptr, &result, assignment.Lens); err != nil {
+	if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens); err != nil {
 		// A digest mismatch is a recoverable authoring state, not round
 		// drift: the workspace itself is intact and the seal-time
 		// verification (verifySealedArtifactDigests) independently guards
@@ -246,27 +310,42 @@ func submitResult(
 	}
 	lens := assignment.Lens
 	responsibility := LensToResponsibility(lens)
+	var effectiveAnswer []byte
+	var effectiveAnswerSHA string
+	var receipt *ResultReceipt
+	if receiptMode {
+		effectiveAnswer, effectiveAnswerSHA, err = marshalEffectiveResult(result, request.issuedPacket != nil)
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+	}
 
 	// Persist artifacts before the CAS (same pattern as the S6 Builder
 	// Result): bytes on disk are what the evidence index fingerprints.
 	artifactRels := []string{}
+	artifactSHAs := map[string]string{}
 	casAttempted := false
-	cleanupArtifacts := func() {
+	cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	cleanupArtifacts := func() []string {
+		latest, snapshotErr := cleanupStore.Snapshot()
+		if snapshotErr != nil {
+			return append([]string(nil), artifactRels...)
+		}
+		var retained []string
 		for _, rel := range artifactRels {
-			if path, err := repositoryContainedPath(root, rel); err == nil {
-				_ = os.Remove(path)
+			removed, cleanupErr := removeStagedArtifactIfUnreferenced(cleanupStore, latest.State, latest.Revision, rel, artifactSHAs[rel])
+			if cleanupErr != nil || !removed {
+				retained = append(retained, rel)
 			}
 		}
+		return retained
 	}
-	// Validation/build failures happen before the state CAS and must not leave
-	// evidence that the runtime never indexed. A stale CAS is the one race we
-	// can identify safely after attempting the write, so it receives the same
-	// cleanup. For an unknown CAS error keep the immutable bytes: the writer
-	// may have committed state before returning the error and deleting them
-	// would make the evidence index unverifiable.
+	// Cleanup for both typed and legacy Runtime shapes uses the Store's lock and
+	// checks pending markers, exact state revision, references, and staged-byte
+	// digest. The receipt mode changes only the persisted envelope shape.
 	defer func() {
 		if !casAttempted {
-			cleanupArtifacts()
+			_ = cleanupArtifacts()
 		}
 	}()
 	resultRel := filepath.ToSlash(filepath.Join(
@@ -295,6 +374,21 @@ func submitResult(
 		"verdict":                      result.Verdict,
 		"created_at":                   occurredAt.UTC().Format(time.RFC3339Nano),
 	}
+	if receiptMode {
+		resultEnvelope["submitted_answer"] = json.RawMessage(append([]byte(nil), data...))
+		resultEnvelope["answer_sha256"] = answerSHA
+		resultEnvelope["effective_answer"] = json.RawMessage(append([]byte(nil), effectiveAnswer...))
+		resultEnvelope["effective_answer_sha256"] = effectiveAnswerSHA
+		if request.issuedPacket != nil {
+			packetSHA, err := workpacket.ReviewResultPacketDigest(*request.issuedPacket)
+			if err != nil {
+				return loopruntime.Snapshot{}, err
+			}
+			resultEnvelope["packet_id"] = request.issuedPacket.ID
+			resultEnvelope["packet_sha256"] = packetSHA
+			resultEnvelope["execution_root"] = request.issuedSourceRoot
+		}
+	}
 	resultBytes, err := marshalArtifact(resultEnvelope)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("encode review result envelope: %w", err)
@@ -304,6 +398,14 @@ func submitResult(
 	}
 	artifactRels = append(artifactRels, resultRel)
 	resultSHA := sha256Of(resultBytes)
+	artifactSHAs[resultRel] = resultSHA
+	if receiptMode {
+		receiptValue, receiptErr := newResultReceipt(root, current, plan, ptr, assignment, &result, answerSHA, effectiveAnswerSHA, resultRel, resultSHA, request.issuedPacket, request.issuedSourceRoot)
+		if receiptErr != nil {
+			return loopruntime.Snapshot{}, receiptErr
+		}
+		receipt = &receiptValue
+	}
 
 	findingArtifacts := make([]findingArtifact, 0, len(result.Findings))
 	for _, finding := range result.Findings {
@@ -318,7 +420,9 @@ func submitResult(
 			return loopruntime.Snapshot{}, err
 		}
 		artifactRels = append(artifactRels, rel)
-		findingArtifacts = append(findingArtifacts, findingArtifact{finding: finding, rel: rel, sha: sha256Of(bytes)})
+		findingSHA := sha256Of(bytes)
+		artifactSHAs[rel] = findingSHA
+		findingArtifacts = append(findingArtifacts, findingArtifact{finding: finding, rel: rel, sha: findingSHA})
 	}
 
 	// The round consumer runs in the same transaction: project the final
@@ -342,7 +446,11 @@ func submitResult(
 	cleanNow := complete && !sealNow && len(RoundFindings(current)) == 0 && len(result.Findings) == 0
 
 	if (sealNow || cleanNow) && ptr.VerificationArtifactWorkspace != "" {
-		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result)); err != nil {
+		sealRoot := root
+		if request.issuedPacket != nil && request.issuedSourceRoot != "" {
+			sealRoot = request.issuedSourceRoot
+		}
+		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result), current, assignment.AssignmentID, sealRoot); err != nil {
 			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
 		}
 	}
@@ -367,6 +475,7 @@ func submitResult(
 		}
 		artifactRels = append(artifactRels, batchRel)
 		batchSHA = sha256Of(batchBytes)
+		artifactSHAs[batchRel] = batchSHA
 	}
 	if cleanNow {
 		cleanRel = filepath.ToSlash(filepath.Join(
@@ -382,27 +491,58 @@ func submitResult(
 		}
 		artifactRels = append(artifactRels, cleanRel)
 		cleanSHA = sha256Of(cleanBytes)
+		artifactSHAs[cleanRel] = cleanSHA
 	}
 
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
 	resultRepoPath := repositoryPath(root, request.ResultPath)
+	eventID := fmt.Sprintf("evt-review-result-%s-r%d", result.ResultID, commitRevision+1)
+	idempotencyKey := fmt.Sprintf("runtime:review-result:%s:%d", result.ResultID, commitRevision)
+	if receipt != nil {
+		eventID = receipt.EventID
+		idempotencyKey = receipt.IdempotencyKey
+	}
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
 	casAttempted = true
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
-		EventID:        fmt.Sprintf("evt-review-result-%s-r%d", result.ResultID, commitRevision+1),
-		TransitionID:   "REVIEW-RESULT",
-		Event:          "review_result_submitted",
-		Actor:          "orchestrator",
-		IdempotencyKey: fmt.Sprintf("runtime:review-result:%s:%d", result.ResultID, commitRevision),
-		RuntimeID:      runtimeID,
-		From:           cursor,
-		To:             cursor,
-		EvidenceIDs:    append([]string{result.ResultID}, findingIDs(result.Findings)...),
+		EventID:            eventID,
+		TransitionID:       "REVIEW-RESULT",
+		Event:              "review_result_submitted",
+		Actor:              "orchestrator",
+		IdempotencyKey:     idempotencyKey,
+		RuntimeID:          runtimeID,
+		BaselineGeneration: generation,
+		From:               cursor,
+		To:                 cursor,
+		EvidenceIDs:        append([]string{result.ResultID}, findingIDs(result.Findings)...),
 		Message: fmt.Sprintf("Consumed Canonical ReviewResult %s for assignment %s (verdict %s)",
 			result.ResultID, result.AssignmentID, result.Verdict),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
+			if err := validateIssuedResultRequest(root, state, request, &result, false, plan); err != nil {
+				return err
+			}
+			if receipt != nil {
+				if err := verifyTypedSubmissionStillCurrent(root, state, plan, ptr, assignment, &result); err != nil {
+					return err
+				}
+				receipt.AcceptedAfterRevision = intField(state["revision"]) + 1
+				journal, _ := state["journal"].(map[string]any)
+				receipt.AcceptedSequence = intField(journal["last_sequence"]) + 1
+			}
+			if err := verifyFrozenSubjects(root, plan, state); err != nil {
+				return fmt.Errorf("canonical product baseline changed before ReviewResult commit: %w", err)
+			}
+			if request.issuedPacket != nil {
+				artifactRoot := root
+				if request.issuedSourceRoot != "" {
+					artifactRoot = request.issuedSourceRoot
+				}
+				if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens); err != nil {
+					return err
+				}
+			}
 			// RC-10 observability: per-phase durations of the submit CAS
 			// transaction (loop_s7_submit_phase_ms{phase}). Best-effort — the
 			// `_ =` discard mirrors recordRoundMetrics and never fails the
@@ -411,6 +551,11 @@ func submitResult(
 			applyStart := time.Now()
 			if err := applyResultConsumption(state, plan, assignment, &result, resultRel, resultSHA, responsibility, generation, round, occurredAt); err != nil {
 				return err
+			}
+			if receipt != nil {
+				if err := setAssignmentResultReceipt(state, assignment.AssignmentID, *receipt); err != nil {
+					return err
+				}
 			}
 			_ = metrics.RecordS7SubmitPhase(root, "result_consumption", time.Since(applyStart).Milliseconds())
 			findingsStart := time.Now()
@@ -476,22 +621,9 @@ func submitResult(
 		},
 	})
 	if err != nil {
-		if errors.Is(err, loopruntime.ErrStaleRevision) {
-			cleanupArtifacts()
-			return snapshot, err
-		}
-		// An Apply-time rejection (e.g. reviewer Agent not in working state)
-		// fails the CAS without committing. When the persisted revision is
-		// still the caller's expected revision the transaction definitively
-		// did not land, so the staged artifacts are orphans that would block
-		// the corrected resubmit with "file exists" — remove them. Only an
-		// advanced or unreadable revision keeps the bytes (the commit may
-		// have landed before the error surfaced).
-		if after, readErr := os.ReadFile(statePath); readErr == nil {
-			var post map[string]any
-			if json.Unmarshal(after, &post) == nil && intField(post["revision"]) == commitRevision {
-				cleanupArtifacts()
-			}
+		retained := cleanupArtifacts()
+		if len(retained) > 0 {
+			return snapshot, fmt.Errorf("%w; staged ReviewResult artifacts were retained because lock-protected cleanup could not prove they were unreferenced: %s", err, strings.Join(retained, ", "))
 		}
 		return snapshot, err
 	}
@@ -642,36 +774,40 @@ func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, r
 // Evidence row. Bare refs remain symbolic/external refs for compatibility
 // with browser traces and platform-provided evidence IDs; the explicit path
 // prefix is the low-complexity contract that makes local evidence auditable.
-func validateResultEvidenceReferences(root string, state map[string]any, result *Result) error {
+func validateResultEvidenceReferences(root string, state map[string]any, result *Result, pathRoots ...string) error {
 	for _, claimResult := range result.ClaimResults {
-		if err := validateEvidenceRefs(root, state, claimResult.EvidenceRefs, fmt.Sprintf("claim %s", claimResult.ClaimID)); err != nil {
+		if err := validateEvidenceRefs(root, state, claimResult.EvidenceRefs, fmt.Sprintf("claim %s", claimResult.ClaimID), pathRoots...); err != nil {
 			return err
 		}
 	}
 	for _, check := range result.Checks {
-		if err := validateEvidenceRefs(root, state, check.EvidenceRefs, fmt.Sprintf("check %s", check.Name)); err != nil {
+		if err := validateEvidenceRefs(root, state, check.EvidenceRefs, fmt.Sprintf("check %s", check.Name), pathRoots...); err != nil {
 			return err
 		}
 	}
 	for _, finding := range result.Findings {
-		if err := validateEvidenceRefs(root, state, finding.EvidenceRefs, fmt.Sprintf("finding %s", finding.FindingID)); err != nil {
+		if err := validateEvidenceRefs(root, state, finding.EvidenceRefs, fmt.Sprintf("finding %s", finding.FindingID), pathRoots...); err != nil {
 			return err
 		}
 		for _, step := range finding.Encounter.Timeline {
-			if err := validateEvidenceRefs(root, state, step.EvidenceRefs, fmt.Sprintf("finding %s timeline step %d", finding.FindingID, step.Sequence)); err != nil {
+			if err := validateEvidenceRefs(root, state, step.EvidenceRefs, fmt.Sprintf("finding %s timeline step %d", finding.FindingID, step.Sequence), pathRoots...); err != nil {
 				return err
 			}
 		}
 	}
 	for _, blocked := range result.BlockedClaims {
-		if err := validateEvidenceRefs(root, state, blocked.EvidenceRefs, fmt.Sprintf("blocked claim %s", blocked.ClaimID)); err != nil {
+		if err := validateEvidenceRefs(root, state, blocked.EvidenceRefs, fmt.Sprintf("blocked claim %s", blocked.ClaimID), pathRoots...); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateEvidenceRefs(root string, state map[string]any, refs []string, owner string) error {
+func validateEvidenceRefs(root string, state map[string]any, refs []string, owner string, pathRoots ...string) error {
+	pathRoot := root
+	if len(pathRoots) > 0 && pathRoots[0] != "" {
+		pathRoot = pathRoots[0]
+	}
 	indexed := map[string]map[string]any{}
 	if evidence, ok := state["evidence"].([]any); ok {
 		for _, raw := range evidence {
@@ -721,7 +857,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 			if rel == "" {
 				return fmt.Errorf("%s contains an empty evidence reference path", owner)
 			}
-			path, err := repositoryContainedPath(root, rel)
+			path, err := repositoryContainedPath(pathRoot, rel)
 			if err != nil {
 				return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
 			}
@@ -1077,7 +1213,7 @@ func applyResultConsumption(
 	if row == nil {
 		return fmt.Errorf("assignment %s is not registered in the runtime projection; dispatch it via `runtime register-workgroup` first", assignment.AssignmentID)
 	}
-	status, _ := row["status"].(string)
+	status := workstate.ReviewAssignmentActivity(row)
 	if status == "result_submitted" || status == "consumed" {
 		return fmt.Errorf("assignment %s already has a consumed ReviewResult; one Assignment submits exactly one Result (L3-S7 §3.5)", assignment.AssignmentID)
 	}
@@ -1134,7 +1270,9 @@ func applyResultConsumption(
 	if err := applyBlockedDispositions(claims, result); err != nil {
 		return err
 	}
-	row["status"] = "consumed"
+	if err := workstate.RecordReviewAssignmentActivity(state, row, "consumed", "review_result_submitted"); err != nil {
+		return err
+	}
 	row["result_ref"] = resultRel
 	if result.VerificationArtifactDigest != nil && *result.VerificationArtifactDigest != "" {
 		row["artifact_digest"] = *result.VerificationArtifactDigest
@@ -1234,11 +1372,16 @@ func applyFindings(
 	return nil
 }
 
-// advanceReviewerAgent moves the reviewer working -> reported, mirroring the
-// completion_reported lifecycle event (entity_lifecycles.agent). Kept local
-// so review stays a leaf package (transition -> verification -> review must
-// not cycle).
+// advanceReviewerAgent records the accepted ReviewResult as the reviewer's
+// delivery event. The original Assignment receipt is the authority; a
+// separate generic PLAN checkpoint is not required for a ReviewAssignment.
 func advanceReviewerAgent(state map[string]any, result *Result, resultRepoPath string, occurredAt time.Time) error {
+	reviewMap, _ := state["review"].(map[string]any)
+	assignments, _ := reviewMap["assignments"].(map[string]any)
+	assignment, _ := assignments[result.AssignmentID].(map[string]any)
+	if assignment == nil || assignment["agent_id"] != result.ProducerAgentID || workstate.ReviewAssignmentActivity(assignment) != "consumed" {
+		return fmt.Errorf("ReviewResult %s has no matching consumed Reviewer Assignment", result.ResultID)
+	}
 	entities, _ := state["entities"].(map[string]any)
 	agents, _ := entities["agents"].([]any)
 	for _, raw := range agents {
@@ -1246,14 +1389,16 @@ func advanceReviewerAgent(state map[string]any, result *Result, resultRepoPath s
 		if agent["id"] != result.ProducerAgentID {
 			continue
 		}
-		currentState, _ := agent["state"].(string)
+		currentState := workstate.AgentActivity(agent)
 		if currentState == "reported" || currentState == "done" {
 			return nil
 		}
-		if currentState != "working" {
-			return fmt.Errorf("reviewer Agent %s is %s; a ReviewResult requires working state. On the plan_checkpoint path the PostToolUse(SendMessage) auto-chain advances reading -> understanding_submitted -> activated -> working automatically when PLAN_REPORT carries plan_ref pointing at the plan file; if the auto-chain did not fire (Worker omitted plan_ref, hook failed, or this is a plan_approval_required assignment), recover with `runtime agent-begin --agent-id %s --plan <plan-report.json>` and resubmit", result.ProducerAgentID, currentState, result.ProducerAgentID)
+		if !workstate.AgentStarted(stringField(agent["state"])) || currentState == "stopped" || currentState == "cancelled" || currentState == "queued" {
+			return fmt.Errorf("reviewer Agent %s is not an active owner of the consumed ReviewResult Assignment", result.ProducerAgentID)
 		}
-		agent["state"] = "reported"
+		if err := workstate.RecordAgentActivity(state, agent, "reported", "completion_reported"); err != nil {
+			return err
+		}
 		agent["blocker_resolved_ref"] = nil
 		if resultRepoPath != "" {
 			agent["completion_reported_ref"] = resultRepoPath
@@ -1357,14 +1502,16 @@ func releaseQueuedReviewAssignments(state map[string]any) error {
 	sort.Strings(ids)
 	for _, id := range ids {
 		row, _ := assignments[id].(map[string]any)
-		if row == nil || row["status"] != "planned" || stringField(row["queue_reason"]) == "" {
+		if row == nil || workstate.ReviewAssignmentActivity(row) != "planned" || stringField(row["queue_reason"]) == "" {
 			continue
 		}
 		agentID := stringField(row["queued_agent_id"])
 		if agentID == "" || reviewAssignmentLockConflict(id, row, assignments) {
 			continue
 		}
-		row["status"] = "dispatched"
+		if err := workstate.RecordReviewAssignmentActivity(state, row, "dispatched", "review_result_submitted"); err != nil {
+			return err
+		}
 		row["agent_id"] = agentID
 		row["queued_agent_id"] = nil
 		row["queue_reason"] = nil
@@ -1377,21 +1524,23 @@ func releaseQueuedReviewAssignments(state map[string]any) error {
 				claimRow["disposition"] = "running"
 			}
 		}
-		wakeQueuedReviewAgent(state, agentID)
+		if err := wakeQueuedReviewAgent(state, agentID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func wakeQueuedReviewAgent(state map[string]any, agentID string) {
+func wakeQueuedReviewAgent(state map[string]any, agentID string) error {
 	entities, _ := state["entities"].(map[string]any)
 	agents, _ := entities["agents"].([]any)
 	for _, raw := range agents {
 		agent, _ := raw.(map[string]any)
-		if agent != nil && agent["id"] == agentID && agent["state"] == "queued" {
-			agent["state"] = "reading"
-			return
+		if agent != nil && agent["id"] == agentID && workstate.AgentActivity(agent) == "queued" {
+			return workstate.RecordAgentActivity(state, agent, "reading", "reviewer_dispatched")
 		}
 	}
+	return nil
 }
 
 func reviewAssignmentLockConflict(candidateID string, candidate map[string]any, assignments map[string]any) bool {
@@ -1417,7 +1566,7 @@ func reviewAssignmentLockConflict(candidateID string, candidate map[string]any, 
 }
 
 func reviewAssignmentLockHeld(row map[string]any) bool {
-	switch stringField(row["status"]) {
+	switch workstate.ReviewAssignmentActivity(row) {
 	case "dispatched":
 		return row["result_ref"] == nil
 	case "result_submitted":
@@ -1806,7 +1955,7 @@ func drainedAssignments(state map[string]any, currentAssignmentID string) []any 
 	sort.Strings(ids)
 	for _, id := range ids {
 		row, _ := assignments[id].(map[string]any)
-		if row != nil && row["status"] == "consumed" {
+		if row != nil && workstate.ReviewAssignmentActivity(row) == "consumed" {
 			out = append(out, id)
 		}
 	}
@@ -1953,6 +2102,42 @@ func stateDocuments(state map[string]any) []any {
 // artifact IO
 // ---------------------------------------------------------------------------
 
+const reviewResultInputLimit int64 = 20 << 20
+
+// readReviewResultInput accepts explicit paths from Main or worker worktrees,
+// but bounds both memory use and parsing work. The opened file is checked (not
+// just the pre-open path) so a non-regular target cannot be treated as an
+// answer file.
+func readReviewResultInput(path string) ([]byte, error) {
+	pathInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("ReviewResult input must be a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("ReviewResult input must be a regular file")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, reviewResultInputLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > reviewResultInputLimit {
+		return nil, fmt.Errorf("ReviewResult input exceeds the %d-byte limit", reviewResultInputLimit)
+	}
+	return data, nil
+}
+
 func marshalArtifact(value any) ([]byte, error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -1981,9 +2166,15 @@ func writeArtifact(root, rel string, data []byte) error {
 		_ = os.Remove(abs)
 		return fmt.Errorf("write %s: %w", rel, err)
 	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync %s: %w", rel, err)
+	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(abs)
 		return fmt.Errorf("close %s: %w", rel, err)
+	}
+	if err := loopruntime.SyncDirectory(filepath.Dir(abs)); err != nil {
+		return fmt.Errorf("sync artifact directory for %s: %w", rel, err)
 	}
 	return nil
 }

@@ -19,7 +19,7 @@ func TestRuntimeRepairDispatchBindsBuilderToAssignment(t *testing.T) {
 	root := req039fixtures.FreshRoot(t)
 	writeDispatchFile(t, root, "docs/control/agent-protocol.md", "# protocol\n")
 	writeDispatchFile(t, root, "agents/backend-builder.md", "# backend builder\n")
-	writeDispatchFile(t, root, ".claude/agents/test-builder.md", "# test builder\n")
+	writeDispatchFile(t, root, "agents/test-builder.md", "# test builder\n")
 
 	contractBytes := []byte(`{
   "schema_version":"1.0.0","repair_contract_id":"repair-contract-dispatch","case_id":"investigation-case-dispatch","revision":1,"status":"approved",
@@ -81,6 +81,18 @@ func TestRuntimeRepairDispatchBindsBuilderToAssignment(t *testing.T) {
 	if response["assignment_id"] != plan.Assignments[0].AssignmentID || response["agent_id"] != "builder-dispatch-1" {
 		t.Fatalf("dispatch response = %#v", response)
 	}
+	manifestBytes, err := os.ReadFile(filepath.Join(root, response["manifest_path"].(string)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dispatchedManifest map[string]any
+	if err := json.Unmarshal(manifestBytes, &dispatchedManifest); err != nil {
+		t.Fatal(err)
+	}
+	dispatchedAssignment := dispatchedManifest["assignments"].([]any)[0].(map[string]any)
+	if dispatchedAssignment["agent_definition_ref"] != "agents/backend-builder.md" {
+		t.Fatalf("Builder manifest did not retain the resolved factory Agent definition: %#v", dispatchedAssignment)
+	}
 	updated := req039fixtures.ReadState(t, root)
 	updatedReview := updated["review"].(map[string]any)
 	updatedRepair := updatedReview["repair"].(map[string]any)
@@ -111,7 +123,7 @@ func TestRuntimeRepairDispatchBindsBuilderToAssignment(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &verification); err != nil {
 		t.Fatal(err)
 	}
-	manifestBytes, err := os.ReadFile(filepath.Join(root, verification["manifest_path"].(string)))
+	manifestBytes, err = os.ReadFile(filepath.Join(root, verification["manifest_path"].(string)))
 	if err != nil {
 		t.Fatal(err)
 	}

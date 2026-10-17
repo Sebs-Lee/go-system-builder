@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "stage": "S9",
+  "adapter": "repair_result",
+  "title": "S09 修复结果 · RepairResult",
+  "instruction": "只填写 answer 中的专业结论、逐断言观察、逐单元实施结果与资料引用。BeforeFixChecks、Checks、实际变更路径和摘要、身份、状态与时间由原系统读取并复验。不要把计划检查中的 fail 文本当作逐断言的观察，不要推断业务 PASS。",
+  "questions": {
+    "verdict": {
+      "question": "对本次修复给出专业结论。completed 仅说明本人按 Assignment 完成实施和自检；blocked、contract_conflict、stale 必须如实保留。全绿检查不会替你作答。",
+      "choices": ["completed", "blocked", "contract_conflict", "stale"],
+      "example": {"path": "answer.verdict", "expected": "按实际专业结论选择一个值", "observed": "依据全绿测试自动填写 completed"}
+    },
+    "before_fix_results": {
+      "question": "对题干列出的每一个精确 assertion_id，记录你实际观察到的 red 条件及支持该观察的资料引用。PlanReport 中某条命令 fail 不能代替逐断言观察。",
+      "example": {"path": "answer.before_fix_results/0/observed_red", "expected": "非空的逐断言实际观察", "observed": "复制 PlanReport 命令和 fail 字样"}
+    },
+    "unit_results": {
+      "question": "对每个冻结 unit_id 记录实施状态、具体实现摘要、支持资料和恢复的不变量引用。不得增加、删除或改写 unit_id。",
+      "choices": ["pass", "fail", "blocked"],
+      "example": {"path": "answer.unit_results/0/implementation_summary", "expected": "非空且针对该单元的专业实现摘要", "observed": "只写已修改代码"}
+    },
+    "detection_gap_artifacts": {
+      "question": "列出与检测缺口有关的资料引用；没有相关资料时明确填写空数组。此字段不声明文件摘要或验证权限。",
+      "example": {"path": "answer.detection_gap_artifacts", "expected": "资料引用数组", "observed": "在引用中附加自报 SHA"}
+    },
+    "evidence_refs": {
+      "question": "列出支持本专业结论的资料引用。引用是定位线索，原消费者仍核验来源和内容。",
+      "example": {"path": "answer.evidence_refs", "expected": "支持结论的资料引用数组", "observed": "把引用形式当成系统已验证"}
+    },
+    "scope_deviations": {
+      "question": "列出实施时识别到的范围偏差；没有偏差时明确填写空数组。范围偏差不能由作者自行批准。",
+      "example": {"path": "answer.scope_deviations", "expected": "偏差说明数组", "observed": "将越界实施描述为已获授权"}
+    },
+    "residual_risks": {
+      "question": "列出仍存在的残余风险；没有已知风险时明确填写空数组。",
+      "example": {"path": "answer.residual_risks", "expected": "风险说明数组", "observed": "因测试通过而省略未验证风险"}
+    },
+    "migration_ref": {
+      "question": "提供兼容迁移资料引用；Contract 不要求迁移时明确填写空字符串。原 Contract 的迁移要求仍由原消费者检查。",
+      "example": {"path": "answer.migration_ref", "expected": "迁移资料引用或显式空字符串", "observed": "自报迁移已执行即视为验证通过"}
+    },
+    "rollback_ref": {
+      "question": "提供回滚资料引用；Contract 不要求回滚资料时明确填写空字符串。",
+      "example": {"path": "answer.rollback_ref", "expected": "回滚资料引用或显式空字符串", "observed": "把回滚计划等同于回滚能力已验证"}
+    }
+  }
+}

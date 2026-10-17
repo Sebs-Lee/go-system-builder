@@ -54,6 +54,39 @@ Runtime/journal and immutable evidence remain authority.
 
 ## Worker capability contract
 
+### Fresh worktree inheritance during bootstrap (2026-10-15)
+
+A normal installed project may commit its launcher and project settings. Its
+new Git worktree inherits those files before the Worker bootstrap installs its
+registered native executable and minimal Hook settings. Those inherited bytes
+are not evidence of Worker edits. During an execution's original `preparing`
+bootstrap only, with no published bootstrap receipt/digest, the installer may
+replace the inherited launcher, settings, or explicitly frozen generated-role
+target when the existing regular file is byte-identical to that path in the
+execution's exact `base_commit` and has no staged/unstaged modification. Use raw
+Git blob bytes, not whitespace-trimmed command output. Source proof unavailable,
+untracked contents, symlinks, changed bytes or an already-published receipt keep
+the original preserve-and-refuse behavior. Never delete inherited files merely
+to evade that check.
+
+The installed Worker bytes remain the existing generated/bootstrap assets and
+are hashed into the original receipt, published last. Retry accepts already
+correct bytes but never restores a base copy over a changed bootstrapped asset.
+No Main permissions, Runtime, journal or credentials are copied by this rule;
+Main and Worker identity, scope, frozen inputs and original PLAN remain intact.
+Tests must include a Git-tracked installed launcher/settings, the equivalent
+changed/untracked/symlink cases, and a retry after receipt publication.
+
+### S5 document review execution
+
+The opt-in v1.2 packet path also uses the original prepare/launch registry for a read-only document reviewer. `purpose=document_review`, `work_packet_id` and `stage_entry` bind the current S5 dispatch to one independent root and execution generation. No product write scope, product commit/delivery or executable check is granted. The receipt-covered `.claude/inputs/work-packet.json` contains the immutable packet and execution view; the view's exact `authoring_path` names the Worker-local editable answer. Original plan/activation and domain gates still apply. Preparing this execution revokes shared Main authoring; failed preparation never falls back to Main. Receipt or original-stage retirement ends the worker's responsibility; a process exit alone does not. See [stage form §13](L4-stage-form.md) for reception and recovery authority.
+
+### Host-protected paths and editable Worker drafts (2026-10-15)
+
+Claude Code's `dontAsk` host policy denies writes under protected `.claude/` paths, even when PreToolUse returns an exact allow. Do not change the global host mode, ask the Worker to use Bash for file writes, or weaken the application Hook. New execution-local authoring drafts use only the exact files `.loop-submissions/plan.json`, `.loop-submissions/stage-answer.json`, `.loop-submissions/completion.json`, `.loop-submissions/commit.json`, and `.loop-submissions/repair-result.json`; issued Main packets, Runtime state, journals, receipts, evidence and frozen inputs remain under their existing `.claude/` authority paths.
+
+The original receipt-bound frozen assignment context/view records each exact authoring path and its digest. New contexts name the `.loop-submissions/` files. An old frozen context with no `plan_path`, or an old packet view naming `.claude/submissions/stage-answer.json`, keeps that recorded legacy path; recovery must not inspect the workspace to guess a newer path or fall back based on which file exists. Readers and save consumers accept only the exact legacy or new fixed path authorized by the same original context/view. This is a transport-path change only: it adds no product write scope, Runtime field, registry, packet, permission bypass, or change to Main's canonical authoring/evidence paths.
+
 `runtime workspace observe --view cwd|status|diff|staged|log` is a fixed capability.
 It resolves the registered Worker, validates owner/generation/bootstrap/inputs,
 uses fixed Git argv, disables external diff/textconv, pager, fsmonitor and lazy
@@ -128,3 +161,64 @@ Global G07 precedes G05: profiles declare approved command, runner/location, tim
 Receipt v2 binds actual subject, profile, runner, environment/fixtures, responsibility and integrity to original domain records. Reuse defaults to never; only confirmed deterministic checks with identical complete closure and the same responsibility may reference an existing accepted PASS. Unknown closure, drift, interruption, a new hypothesis, independent review, post-integration and fresh requirements rerun. Do not mint a new PASS, change ready Worker assets, weaken isolation or bypass Main integration/fresh S7.
 
 Typed environment/process/timeout/resource/IO failures carry concrete owner, log and retry condition. Exit failure alone is not a product assertion failure. G05/G07 acceptance includes concurrency, recovery, alias/relocation, real Linux isolation and explicit unsupported-platform/Main paths.
+
+## S5 named revision execution contract (2026-10-13)
+
+A received review can be revised only by Main against its exact submission key and reason in the unchanged S5 origin. Issuance suspends old evidence qualification atomically with the new immutable packet. Main holds the original Git scheduling lock and old launch lease; a running child prevents retirement. Retain the old execution as retired history without changing its files. The successor requires an independent source until a fresh higher execution generation is prepared and bootstrapped. Do not reuse the old root or fall back to Main authoring. Original plan/activation authority remains bounded to the unchanged responsibility and frozen inputs; the new answer is a new professional review. See L4-stage-form §13.3 for reception, deduplication and receipt semantics.
+
+## 检查入口预检与真实故障范围
+
+原 Main 模式不再直接把环境当 ready：prepare/launch 在发布/会话预留前核验
+实际 shell 与简单字面检查命令的工具入口。复杂 shell 保留 legacy，明确
+unverified；入口可用不证明依赖、配置、fixture 或服务就绪。旧命令没有完整
+CheckProfile/environment 闭包，不能据此启用缓存或省略必需合并检查。
+
+原 ObservationCommands 提供固定 `check-capabilities` 只读入口，同样校验
+owner/assignment/路径/Bootstrap。Worker 预检沿原 Bubblewrap/seccomp 路径，
+不可用时给原环境责任动作，不切换 ready runner 或放宽隔离。真实失败回执
+附 code/category/owner/恢复条件/receipt/log，process_exit 不等于产品断言
+失败；取消/超时/诊断 I/O 保留原候选和 checkpoint。具体契约见 G07 §7。
+
+## 显式 CheckProfile 的冻结身份
+
+新 manifest Assignment 可选 profile，与原 required_checks 的索引/命令严格
+一致；新执行固定 location、1–300秒timeout、环境政策和来源摘要。profile
+不会创建第二检查列表或改变激活/写入权限。旧 ready execution 不补字段，
+原 replace/adopt/rebind 持同一冻结 profile。
+
+实际执行捕获完整受测树/runner/白名单环境/依赖/fixture观测与原责任绑定；
+内容变化、取消/超时、诊断失败不能通过。v2日志摘要/完整性用于恢复/核验，
+不是批准或可信缓存凭据。当前复用不启用，Main必需检查和独立fresh S7仍运行。
+
+## 工具事实登记与 shadow 适用性
+
+原 runner 原子发布后将实际生成字节摘要交给进程内接收器，Worker 由原
+Writer/CAS 复核 current owner/execution/profile 后登记，Main 由原 integration
+checkpoint CAS 保留原工具事实。checkpoint 恢复核验 Worker 登记与原 journal
+的关系，不从回执文件补接收。每 Execution 至多64引用，过期引用只导致重跑。
+
+`check-reuse` 属原固定 ObservationCommands/Hook 消费契约，只读输出 run 和
+原因。首版 shadow 不省略检查；未知权限/隔离条件不能启用。原必需 Main、
+独立责任、新假设和 fresh 优先要求重跑。原 rebind 可移动 evidence 坐标，保留
+原 bytes/digest/checkout，不能由搬迁刷新成新检查或获得跨 checkout 复用资格。
+
+新 permissions 事实与 digest 来自原实际隔离预检，包含 Bubblewrap、shell
+及 loader/shared libraries 字节摘要、原 seccomp/argv policy、kernel/identity、
+Main/common/Worker/cwd 坐标和原 scope/inputs/Bootstrap authority。观察与执行
+共享原参数和 filter 生产者。旧回执缺字段、摘要不一致、不可用及事实变化均
+不能命中；不接受调用者 PermissionKnown 布尔值代替来源核验。
+
+whole_tree 不能闭合可读 host root 的 arbitrary shell 输入，首版 shadow 仅
+接受受测树内 `true/false/test -f/test -s` 静态语法。只读观察与实际检查采用
+同一临时副本算法和归一化模式；继承环境与未证明的命令闭包继续重跑。
+
+原 profile 可选 reuse_mode=shadow/enabled，缺省 shadow；enabled 只允许原
+Worker 的闭合静态子集和完整 declared_only/none/whole_tree 政策。模式属于
+原冻结 digest，旧 shadow 回执不升级。实际 RunCheck 在校验当前副本和权限后
+返回原已接收引用；不新造 PASS。Main 必需检查、独立职责及 S9/fresh 保持。
+
+同责任/profile/源树进程锁覆盖原执行及 Writer 接收，原 Main integration 锁
+仍保留。竞争请求返回有界 run 引用，取得锁后重读原 Runtime/owner/execution/
+S9 authority。run.json 只有 waiting/running/finished/interrupted 诊断，不作为
+接收或存活证明；check-running 只读至多64项。进程死亡后保留 interrupted
+记录，再核验原工具回执或重跑，不能从诊断推断 PASS 或给新权限。
