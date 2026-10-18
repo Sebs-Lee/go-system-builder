@@ -54,10 +54,13 @@ for the compatibility boundary.
 
 **For a dispatched Worker:** read your registered Assignment and its frozen
 inputs. Apply the quality checks to your declared scope, assertions and required
-coverage. Commit source changes through the original adapter before submitting
-the Result. Record concrete unknowns with their evidence, impact and original
-responsible consumer; a risk that blocks your own acceptance requires the
-original BLOCKER path. Register your own Result before ending execution.
+coverage. Outside S9, commit source changes through the original adapter before
+submitting the Result. In S9, use ordinary `git add` and `git commit` for actual
+source changes, then save the supplied RepairResult answer; no-change tests need
+no new commit. S9 requires no extra commit form or generic completion report.
+Main owns its real integration and necessary checks. Record concrete unknowns
+with their evidence, impact and original responsible consumer; a risk that blocks
+your own acceptance requires the original BLOCKER path. Register your own Result before ending execution.
 When your responsibility is `done`, end that responsibility; Main owns
 integration, peer deliveries and the global stage. A report's existence alone
 does not prove completion. Follow an explicit original rework assignment if
@@ -78,6 +81,7 @@ Main's integration requirements.
 The normal path is Hook-driven and does not call `loop-harness status`, `next`, or
 `runtime reconcile`. Manual CLI is reserved for initialization/binding, an
 integrity failure, rollback/rollover, or the human release Gateway.
+Main also runs normal workspace prepare, integration and checks using the exact Hook-supplied commands; S9 original prepare supplies the Result questionnaire, listening does not perform workspace startup, and authors still do not manually issue/consume.
 In packet mode, the Hook gives your current questionnaire's exact path, clear
 questions and remaining stage work. Fill the professional answers and actual
 artifact paths there, then save. The listener prepares missing questionnaires
@@ -171,7 +175,7 @@ the Milestone instead of relying on conversation memory.
   | `runtime pause` / `runtime resume` / `req amend` / `req unbind` / `runtime rollover` / `runtime human-decision` | only when the human supplies the complete command line verbatim (including `--approved-by`) | the human's own typed/approved command — never infer the approver name from context |
   "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization, and `req bind --approved-by <same human>` is the second confirmation. When in doubt, hand the command up and wait.
 - `/loop` only delivers the Layer 2 prompt. REQ binding is `loop-harness req bind`; the two are independent lifetimes.
-- Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. S6 Builders retain their professional PLAN_REPORT. S9 Builders use the original PlanReport and RepairResult questionnaires; saving the PlanReport projects the existing checkpoint/AgentBegin flow, and saving the RepairResult updates its original completion projection. Do not add generic PLAN or completion submissions. Any `plan_approval_required` assignment waits for its original approval and activation.
+- Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. S6 Builders retain their professional PLAN_REPORT. S9 Builders personally save PlanReport before work and RepairResult after work, directly recording professional facts without a generic PLAN/AgentBegin/activation/completion acceptance prerequisite; actual checks and explicit user decisions remain required work. Do not add generic PLAN or completion submissions. Outside S9, any `plan_approval_required` assignment retains its original approval and activation.
 - Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for its required checkpoint or result; it does not take over or project that responsibility to `done` unless the assignment is revoked or reassigned.
 - Blocking findings enter the canonical BUG cycle. Targeted re-verification never produces a clean round.
 - S10 is an anti-shortcut acceptance and release audit. It requires a finite
@@ -415,19 +419,18 @@ generate from them. Do not create a per-REQ model copy or an extra registry.
 
 After the approved RepairContract, original Session/RepairPlan and Builder
 dispatch, use the Hook's exact PlanReport view and answer paths. Fill and save
-only the professional plan, red pre-fix checks and proposed paths. The original
-PlanReport consumer validates the answer and projects the existing
-plan-checkpoint/AgentBegin flow; do not send another generic PLAN_REPORT or
-reconstruct a packet path or command.
+only the professional plan, actual pre-fix checks or blockers and proposed paths.
+Saving directly records these pre-execution facts and advances the current work
+when reports are ready; do not send another generic PLAN_REPORT or reconstruct
+a packet path or command.
 
 Once the original S9 graph reaches `fixing`, implement only the approved repair
 scope. Use the Hook's exact RepairResult view and answer paths to report the
 professional verdict, frozen assertion results, unit results, evidence, scope,
-risk, migration and rollback. Saving invokes the original RepairResult
-consumer to validate the professional answer and the original candidate
-consumer to check actual changed paths, Git state and required checks, then
-project this same professional result onto the existing completion record. Do
-not send a separate generic completion report or infer completion from green checks. Main retains
-the original candidate integration, required Main/Git checks, configured human
-decisions, independent targeted verification and fresh complete S7 round.
+risk, migration and rollback. Saving directly records this professional result.
+Run actual required checks; actual source changes use Git delivery and Main
+integration, while no-change testing requires no new commit. Do not send a separate
+generic completion report or infer completion from green checks. Main retains
+actual integration when needed, required Main checks, explicit human decisions,
+independent targeted verification and the fresh complete S7 round.
 Never guess paths or run manual `stage-answer issue/consume` commands.

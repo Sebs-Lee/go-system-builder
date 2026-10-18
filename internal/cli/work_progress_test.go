@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,34 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
+
+func TestProgressPacketS9SkipsLegacyCoverageWithoutCache(t *testing.T) {
+	f := newS9ListenerFixture(t, true)
+	f.state["bound_req"] = map[string]any{"id": "REQ-s9-progress"}
+	for _, phase := range []string{"repair_readback", "planning", "reproducing", "fixing", "targeted_reverification", "ready_for_full_review"} {
+		mapFieldCLI(f.state, "lifecycle")["phase"] = phase
+		facts, execution, err := projectWorkProgress(f.root, policy.Input{AgentID: "native-platform-id", SessionID: "s9-progress", CWD: f.worker}, runtime.Snapshot{State: f.state})
+		if err != nil || facts.Known || facts.Owner != "" || facts.Binding != "" || facts.Complete || len(facts.Sources) != 0 || execution != nil {
+			t.Fatalf("%s entered legacy actor/packet coverage or inferred completion: %+v %+v %v", phase, facts, execution, err)
+		}
+	}
+	mapFieldCLI(f.state, "lifecycle")["phase"] = "fixing"
+	f.write(t)
+	before := repairDispatchRuntimeBytes(t, f.root)
+	for _, owner := range []string{"Main", f.packet.binding.OwnerAgentID, "native-platform-id"} {
+		for _, tool := range []string{"Read", "Bash", "Write"} {
+			request := policy.Input{Event: "PostToolUse", ToolName: tool, AgentID: owner, SessionID: "s9-progress", CWD: f.root, ToolInput: map[string]any{"file_path": filepath.Join(f.root, ".claude/loop-state.json")}}
+			var diagnostic bytes.Buffer
+			if notice := observeWorkProgress(f.root, request, &diagnostic); notice != nil || diagnostic.Len() != 0 {
+				t.Fatalf("%s %s emitted legacy S9 coverage noise: notice=%+v stderr=%s", owner, tool, notice, diagnostic.String())
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".claude/hook-notices/work-progress")); !os.IsNotExist(err) {
+		t.Fatalf("unknown S9 telemetry created a progress cache: %v", err)
+	}
+	repairDispatchAssertUnchanged(t, f.root, before)
+}
 
 func TestProgressProjectionIgnoresRevisionClockAndControlBytes(t *testing.T) {
 	root := initFormatRoot(t)

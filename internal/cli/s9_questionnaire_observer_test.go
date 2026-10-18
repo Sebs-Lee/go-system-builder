@@ -1,0 +1,484 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/entroforge/go-system-builder/internal/policy"
+	"github.com/entroforge/go-system-builder/internal/repair"
+	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/submission"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
+)
+
+func s9Observe(t *testing.T, root, tool string, owners ...string) (bool, string) {
+	t.Helper()
+	var out, diagnostic bytes.Buffer
+	owner := "Main"
+	if len(owners) != 0 {
+		owner = owners[0]
+	}
+	handled, code := runObservedQuestionnaireSaves(root, policy.Input{Event: "PostToolUse", ToolName: tool, CWD: root, AgentID: owner}, &out, &diagnostic)
+	if code != 0 {
+		t.Fatalf("observer exit=%d output=%s diagnostic=%s", code, out.String(), diagnostic.String())
+	}
+	return handled, out.String()
+}
+
+func TestS9ObserverDispatchSavesOriginalChoicesWithoutPassivePreparation(t *testing.T) {
+	root, snapshot, plan, path := repairDispatchFixture(t)
+	stageRepairDispatchContext(root, policy.Input{Event: "PreToolUse"}, snapshot)
+	stageRepairVerifierDispatchContext(root, policy.Input{Event: "PreToolUse"}, snapshot)
+	before := repairDispatchRuntimeBytes(t, root)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("untouched Main choices were consumed: %s", out)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+	rows := []repairDispatchChoice{{AssignmentID: plan.Assignments[0].AssignmentID, RoleFamily: "backend-builder", CheckLocation: "worker"}}
+	writeRepairLeadJSON(t, path, rows)
+	if handled, out := s9Observe(t, root, "Bash"); !handled || !strings.Contains(out, "Registered Builder") {
+		t.Fatalf("script division did not reach original dispatch: %s", out)
+	}
+	registered := repairDispatchSnapshot(t, root)
+	if len(mapFieldCLI(mapFieldCLI(registered.State, "workspace"), "executions")) != 0 {
+		t.Fatal("passive dispatch attempted workspace preparation")
+	}
+	before = repairDispatchRuntimeBytes(t, root)
+	if handled, out := s9Observe(t, root, "mcp__example__save"); handled || out != "" {
+		t.Fatalf("registered division retried queued/missing execution: %s", out)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+	verifierPath := repairVerifierDispatchPaths(root, registered.State)[0]
+	writeRepairLeadJSON(t, verifierPath, []repairVerifierDispatchChoice{{AssignmentID: rows[0].AssignmentID, IndependentVerification: true}})
+	if handled, out := s9Observe(t, root, "mcp__example__save"); !handled || !strings.Contains(out, "Registered independent verifier") {
+		t.Fatalf("MCP choice did not reach original verifier dispatch: %s", out)
+	}
+	before = repairDispatchRuntimeBytes(t, root)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("unchanged registered verifier was resubmitted: %s", out)
+	}
+	rows[0].RoleFamily = "test-builder"
+	writeRepairLeadJSON(t, path, rows)
+	if handled, out := s9Observe(t, root, "Bash"); !handled || !strings.Contains(out, "conflict") {
+		t.Fatalf("changed registered role bypassed original conflict: %s", out)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+}
+
+func TestS9ObserverAcceptedProfessionalAnswerSkipsGenericFollowupProof(t *testing.T) {
+	for _, kind := range []string{"plan", "candidate", "result"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newS9ListenerFixture(t, kind != "plan")
+			answer := map[string]any{"plan": "real fixture professional text"}
+			path := resolveRootPath(f.worker, f.packet.answer)
+			writeRepairLeadJSON(t, path, map[string]any{"title": "machine", "answer": answer})
+			receipt := map[string]any{"packet_id": f.packet.id, "owner_agent_id": f.packet.binding.OwnerAgentID, "execution_root": f.worker, "submitted_answer": answer, "completion_report_ref": ".claude/completion.json"}
+			pointer := repairPointerCLI(f.state)
+			switch kind {
+			case "plan":
+				pointer["plan_report_refs"] = []any{f.artifact(t, ".claude/plan-accepted.json", map[string]any{"receipt": receipt})}
+			case "result":
+				pointer["result_refs"] = []any{f.artifact(t, ".claude/result-accepted.json", map[string]any{"receipt": map[string]any{"provenance": receipt}})}
+			case "candidate":
+				ref := f.artifact(t, ".claude/candidate-accepted.json", map[string]any{"provenance": receipt})
+				_, execution, _ := s9ListenerResultSource(f.root, f.state, f.packet)
+				execution["delivery_ref"], execution["delivery_sha256"] = ref["path"], ref["sha256"]
+			}
+			q := observedQuestionnaire{path: path, s9Kind: "packet", s9Packet: &f.packet}
+			data, _ := os.ReadFile(path)
+			f.write(t)
+			before := repairDispatchRuntimeBytes(t, f.root)
+			if !s9ObservedQuestionnaireUnchanged(f.root, f.state, q, data) {
+				t.Fatal("same accepted professional answer required generic lifecycle proof")
+			}
+			if handled, out := s9Observe(t, f.root, "Bash", f.packet.binding.OwnerAgentID); handled || out != "" {
+				t.Fatalf("accepted answer reran original save/receipt: %s", out)
+			}
+			repairDispatchAssertUnchanged(t, f.root, before)
+			answer["plan"] = "changed professional judgment"
+			writeRepairLeadJSON(t, path, map[string]any{"answer": answer})
+			if handled, out := s9Observe(t, f.root, "mcp__example__save", f.packet.binding.OwnerAgentID); !handled || !strings.Contains(out, "S9 SUBMISSION RECEIPT") {
+				t.Fatalf("changed answer did not reach original consumer feedback: %s", out)
+			}
+			repairDispatchAssertUnchanged(t, f.root, before)
+		})
+	}
+}
+
+func TestS9ObserverLeadReplayUsesImmutableProfessionalProjection(t *testing.T) {
+	root, snapshot, plan, _ := repairDispatchFixture(t)
+	state := snapshot.State
+	pointer := repairPointerCLI(state)
+	assignment := plan.Assignments[0].AssignmentID
+	verification := repair.VerificationAssignmentID(assignment)
+	pointer["assignment_owners"] = map[string]any{assignment: "builder", verification: "verifier"}
+	mapFieldCLI(state, "entities")["agents"] = []any{map[string]any{"id": "builder", "role": "backend-builder"}, map[string]any{"id": "verifier", "role": "test-builder"}}
+	impact := repair.ChangeImpactRequest{ImpactID: "impact-observer", RuntimeID: stringValue(state["runtime_id"]), ReqID: "REQ-039", BaselineGeneration: 1,
+		SourceCaseIDs: []string{stringValue(pointer["case_id"])}, ChangeTypes: []string{"implementation"}, ChangedArtifacts: []repair.ArtifactRef{{ID: "changed-one", Path: "internal/api/one.go", SHA256: strings.Repeat("a", 64)}},
+		Decisions: []repair.ImpactDecision{{SourceID: "changed-one", TargetID: "root-1", Relation: "invalidates", RuleID: "IM-ROOT", Decision: "reverify", Scope: []string{"internal/api/one.go"}, Rationale: "actual impact", RecoveryEvidence: []string{"test://green"}}}, RequiredReverificationIDs: []string{"reverify-observer"}, AnalyzedBy: "Main"}
+	_, impactRef, err := repair.CreateChangeImpact(root, impact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pointer["impact_ref"], pointer["impact_sha256"], pointer["status"] = impactRef.Path, impactRef.SHA256, "targeted_reverification"
+	pointer["required_reverification_ids"] = []any{"reverify-observer"}
+	impactPath, _ := repairLeadQuestionnairePath(root, state, "change-impact.json")
+	if err := os.MkdirAll(filepath.Dir(impactPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeRepairLeadJSON(t, impactPath, impact)
+	targeted := repair.TargetedReverificationRequest{ReverificationID: "reverify-observer", RuntimeID: stringValue(state["runtime_id"]), CaseID: stringValue(pointer["case_id"]), BaselineGeneration: 1, OriginalAssignmentID: assignment, PerformingAssignmentID: verification, ImpactID: impact.ImpactID,
+		ContinuityReason: "test://independent: original fixture evidence", AssertionResults: []repair.AssertionResult{{AssertionID: "root-1", Result: "pass", EvidenceRefs: []string{"test://green"}}}, ScopeCompliance: "pass", Result: "pass"}
+	_, targetedRef, err := repair.CreateTargetedReverification(root, targeted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pointer["targeted_reverification_artifacts"] = []any{map[string]any{"path": targetedRef.Path, "sha256": targetedRef.SHA256}}
+	pointer["status"] = "ready_for_full_review"
+	mapFieldCLI(state, "lifecycle")["phase"] = "ready_for_full_review"
+	targetPath, _ := repairTargetedQuestionnairePath(root, state, verification)
+	targeted.PerformingAssignmentID = "machine-metadata-is-not-author-content"
+	writeRepairLeadJSON(t, targetPath, targeted)
+	putInitMap(t, filepath.Join(root, ".claude/loop-state.json"), state)
+	before := repairDispatchRuntimeBytes(t, root)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("same indexed professional answers reran full consumers: %s", out)
+	}
+	impact.Decisions[0].Rationale = "changed impact judgment"
+	writeRepairLeadJSON(t, impactPath, impact)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("ordinary event resubmitted a historical Impact: %s", out)
+	}
+	var out, diagnostic bytes.Buffer
+	located := policy.Input{Event: "PostToolUse", ToolName: "mcp__example__save", AgentID: "native-platform-id", CWD: root, ToolResponse: map[string]any{"file_path": impactPath}}
+	if handled, _ := receiveSavedQuestionnaire(root, located, &out, &diagnostic); !handled || !strings.Contains(out.String(), "replay conflict") {
+		t.Fatalf("located script/MCP Impact save missed its original consumer: %s %s", out.String(), diagnostic.String())
+	}
+	impact.Decisions[0].Rationale = "actual impact"
+	writeRepairLeadJSON(t, impactPath, impact)
+	targeted.ContinuityReason = "test://new: changed independent observation"
+	writeRepairLeadJSON(t, targetPath, targeted)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("ordinary event resubmitted a historical Targeted answer: %s", out)
+	}
+	out.Reset()
+	located.ToolResponse["file_path"] = targetPath
+	if handled, _ := receiveSavedQuestionnaire(root, located, &out, &diagnostic); !handled || !strings.Contains(out.String(), "replay conflict") {
+		t.Fatalf("located script/MCP Targeted save missed its original consumer: %s %s", out.String(), diagnostic.String())
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+}
+
+func TestS9ObserverResolutionDiscoveryUsesPureRegisteredPath(t *testing.T) {
+	f := newS9ListenerFixture(t, true)
+	path, err := workpacket.RepairResultResolutionAuthoringPath(workpacket.RepairResultPacket{AnswerPath: f.packet.answer, Binding: *f.packet.result})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := resolveRootPath(f.root, path)
+	repairPointerCLI(f.state)["status"] = "blocked"
+	f.state["evidence"] = []any{map[string]any{"kind": "repair_result_blocker", "baseline_generation": 1, "scope_refs": []any{f.packet.id}}}
+	found := false
+	for _, q := range s9ObservableQuestionnaires(f.root, f.state, policy.Input{AgentID: "Main"}) {
+		if q.path == full && q.s9Kind == "resolution" {
+			found = true
+			if !s9ObservedQuestionnaireUnchanged(f.root, f.state, q, []byte(`{"body":"","s9_resolution":{"decision":"retry","rationale":"","evidence_refs":[]}}`)) || s9ObservedQuestionnaireUnchanged(f.root, f.state, q, []byte(`{"body":"real resolution","s9_resolution":{"rationale":"actual recovery"}}`)) {
+				t.Fatal("resolution professional-empty filter hid an authored decision")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no exact resolution path without domain/source checks: %s", full)
+	}
+}
+
+func TestS9ObserverPassiveProbeStaysWithCurrentPhaseAndResponsibility(t *testing.T) {
+	f := newS9ListenerFixture(t, true)
+	entities := mapFieldCLI(f.state, "entities")
+	encoded, _ := json.Marshal(f.row)
+	var sibling map[string]any
+	if err := json.Unmarshal(encoded, &sibling); err != nil {
+		t.Fatal(err)
+	}
+	sibling["packet_id"] = "packet-sibling"
+	sibling["answer_path"], sibling["view_path"] = ".claude/sibling-answer.json", ".claude/sibling-view.json"
+	sources := mapFieldCLI(mapFieldCLI(sibling, "binding"), "sources")
+	sources["owner_agent_id"], sources["repair_assignment_id"], sources["manifest_assignment_id"] = "builder-sibling", "repair-assignment-sibling", "assignment-s9-sibling"
+	execution := mapFieldCLI(mapFieldCLI(sibling, "inputs"), "execution")
+	execution["agent_id"], execution["assignment_id"], execution["worktree_path"] = "builder-sibling", "assignment-s9-sibling", t.TempDir()
+	projected, err := runtime.ProjectRepairResultExecution(execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapFieldCLI(sibling, "binding")["execution_sha256"] = workpacket.Digest(projected)
+	mapFieldCLI(mapFieldCLI(f.state, "workspace"), "executions")["assignment-s9-sibling"] = execution
+	mapFieldCLI(repairPointerCLI(f.state), "assignment_owners")["repair-assignment-sibling"] = "builder-sibling"
+	entities["agents"] = append(entities["agents"].([]any), map[string]any{"id": "builder-sibling"})
+	entities["work_packets"] = append(entities["work_packets"].([]any), map[string]any{
+		"packet_id": "historical-plan", "template_id": "s9-plan-report-v1", "answer_path": "historical-plan.json", "view_path": "historical-plan-view.json", "binding": mapFieldCLI(f.row["binding"].(map[string]any), "sources"),
+	}, sibling)
+	for _, scenario := range []struct {
+		request policy.Input
+		count   int
+	}{
+		{policy.Input{AgentID: f.packet.binding.OwnerAgentID}, 1},
+		{policy.Input{AgentID: "Main", CWD: f.root}, 0},
+		{policy.Input{AgentID: "native-platform-id", AgentType: "backend-builder", CWD: f.worker}, 1},
+		{policy.Input{AgentID: "native-platform-id", AgentType: "backend-builder", CWD: f.root}, 2},
+		{policy.Input{AgentType: "backend-builder", CWD: f.root}, 2},
+	} {
+		questions := s9ObservableQuestionnaires(f.root, f.state, scenario.request)
+		packets := 0
+		for _, q := range questions {
+			if q.s9Kind != "packet" {
+				continue
+			}
+			packets++
+			if q.s9Packet.result == nil || scenario.count == 1 && q.path != resolveRootPath(f.worker, f.packet.answer) {
+				t.Fatalf("passive event probed another phase or escaped its located checkout: %+v", q)
+			}
+		}
+		if packets != scenario.count {
+			t.Fatalf("current phase/checkout did not locate the expected candidates: %+v count=%d questions=%+v", scenario.request, scenario.count, questions)
+		}
+	}
+}
+
+func TestS9ObserverUnknownNativeScriptSaveFindsChangedCurrentPlan(t *testing.T) {
+	root, plan, _, _, path := repairExecutionPlanningFixture(t)
+	writeRepairLeadFile(t, root, ".claude/agents/test-builder.md", "# Test Builder\n")
+	var rows []repairDispatchChoice
+	for _, assignment := range plan.Assignments {
+		role := "backend-builder"
+		if len(rows) == 0 {
+			role = "test-builder"
+		}
+		rows = append(rows, repairDispatchChoice{AssignmentID: assignment.AssignmentID, RoleFamily: role})
+	}
+	if err := writeRepairLeadDraft(path, rows); err != nil {
+		t.Fatal(err)
+	}
+	repairDispatchSave(t, root, path, rows)
+	current := repairDispatchSnapshot(t, root)
+	packets, err := runtime.CurrentRepairPlanReportPackets(root, current.State, "")
+	if err != nil || len(packets) != 2 {
+		t.Fatalf("current original Plan questions: %+v %v", packets, err)
+	}
+	if packets[0].Binding.RepairAssignmentID != rows[0].AssignmentID {
+		packets[0], packets[1] = packets[1], packets[0]
+	}
+	foundTestBuilder := false
+	for _, agent := range objectSliceAny(mapFieldCLI(current.State, "entities")["agents"]) {
+		if agent["id"] == packets[0].Binding.OwnerAgentID && agent["role"] == "test-builder" {
+			foundTestBuilder = true
+		}
+	}
+	if !foundTestBuilder {
+		t.Fatal("no-change Plan author is not the registered test-builder")
+	}
+	request := policy.Input{Event: "PostToolUse", ToolName: "Bash", AgentID: "native-platform-id", AgentType: "test-builder", CWD: root}
+	var out, diagnostic bytes.Buffer
+	before := repairDispatchRuntimeBytes(t, root)
+	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); handled || out.Len() != 0 {
+		t.Fatalf("unknown native event consumed untouched issued drafts: %s %s", out.String(), diagnostic.String())
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+	packet := packets[0]
+	draft := packet.Draft
+	draft.Answer, _ = json.Marshal(workpacket.RepairPlanReportProfessionalAnswer{
+		Plan: "perform the assigned no-change tests and record actual assertion observations", ProposedPaths: []string{},
+		RedChecks: []workpacket.RepairPlanReportCheck{{Name: "actual precheck", Command: "go test ./internal/api", Result: "pass", EvidenceRefs: []string{".claude/evidence/red.log"}}},
+	})
+	answerPath := resolveRootPath(root, packet.AnswerPath)
+	writeRepairLeadJSON(t, answerPath, draft) // Models a script's actual file save; no host file_path is invented.
+	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); !handled || !strings.Contains(out.String(), "S9 SUBMISSION RECEIPT") {
+		t.Fatalf("normal native script save required a matching platform ID or Write event: %s %s", out.String(), diagnostic.String())
+	}
+	after := repairDispatchSnapshot(t, root)
+	refs := repairArtifactRefs(repairPointerCLI(after.State), "plan_report_refs", "plan_report_ref", "plan_report_sha256")
+	if len(refs) != 1 {
+		t.Fatalf("script save did not consume only the changed current answer: %+v", refs)
+	}
+	report, err := repair.ValidatePlanReport(root, refs[0])
+	if err != nil || report.ProposedPaths == nil || len(report.ProposedPaths) != 0 || report.Receipt == nil {
+		t.Fatalf("first no-change test Plan was not preserved in original report: %+v %v", report, err)
+	}
+	var acceptedAnswer workpacket.RepairPlanReportProfessionalAnswer
+	if err := json.Unmarshal(report.Receipt.SubmittedAnswer, &acceptedAnswer); err != nil || acceptedAnswer.ProposedPaths == nil || len(acceptedAnswer.ProposedPaths) != 0 {
+		t.Fatalf("original Plan receipt did not preserve proposed_paths=[]: %s %v", report.Receipt.SubmittedAnswer, err)
+	}
+	out.Reset()
+	diagnostic.Reset()
+	before = repairDispatchRuntimeBytes(t, root)
+	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); handled || out.Len() != 0 {
+		t.Fatalf("same professional answer was resent on an unrelated tool: %s %s", out.String(), diagnostic.String())
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+	if request.AgentID != "native-platform-id" || len(request.ToolInput) != 0 {
+		t.Fatal("passive routing rewrote the real native event identity/input")
+	}
+	if mapFieldCLI(after.State, "lifecycle")["phase"] != "fixing" {
+		t.Fatal("first Plan did not start normal work")
+	}
+	second := packets[1]
+	reminder, handled := s9PacketQuestionnaireLifecycleContext(root, policy.Input{Event: "PreToolUse", AgentID: second.Binding.OwnerAgentID, CWD: root}, after)
+	if !handled || !strings.Contains(reminder, resolveRootPath(root, second.AnswerPath)) || !strings.Contains(reminder, "Fill only") {
+		t.Fatalf("sibling implementation hid pending Plan: %s", reminder)
+	}
+	var secondScope []string
+	for _, assignment := range plan.Assignments {
+		if assignment.AssignmentID == second.Binding.RepairAssignmentID {
+			secondScope = assignment.Scope
+		}
+	}
+	secondDraft := second.Draft
+	secondDraft.Answer, _ = json.Marshal(workpacket.RepairPlanReportProfessionalAnswer{Plan: "record this Builder's actual plan after sibling startup", ProposedPaths: secondScope, RedChecks: []workpacket.RepairPlanReportCheck{{Name: "actual precheck", Command: "go test ./internal/api", Result: "pass", EvidenceRefs: []string{".claude/evidence/check.log"}}}})
+	writeRepairLeadJSON(t, resolveRootPath(root, second.AnswerPath), secondDraft)
+	out.Reset()
+	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); !handled || !strings.Contains(out.String(), "S9 SUBMISSION RECEIPT") {
+		t.Fatalf("late script Plan not saved: %s %s", out.String(), diagnostic.String())
+	}
+	final := repairDispatchSnapshot(t, root)
+	if mapFieldCLI(final.State, "lifecycle")["phase"] != "fixing" || repairPointerCLI(final.State)["status"] != "repairing" {
+		t.Fatal("late Plan regressed implementation")
+	}
+	journal, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(journal), `"transition_id":"PTR-BUG-11"`) != 1 {
+		t.Fatalf("normal startup repeated: %s", journal)
+	}
+	before = repairDispatchRuntimeBytes(t, root)
+	out.Reset()
+	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); handled {
+		t.Fatalf("late Plan replay repeated work: %s", out.String())
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+
+	service, err := submission.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := service.SaveRepairPlanReportFrom(context.Background(), second.Binding.OwnerAgentID, resolveRootPath(root, second.AnswerPath), root, nil)
+	if err != nil || !replay.Accepted || replay.ConsumerPending {
+		t.Fatalf("late Plan direct replay lost acceptance: %+v %v", replay, err)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+
+}
+
+func TestS9ObserverMainScriptDivisionUsesOriginalQueueAndSave(t *testing.T) {
+	root, plan, _, _, path := repairExecutionPlanningFixture(t)
+	rows := make([]repairDispatchChoice, 0, len(plan.Assignments))
+	for _, assignment := range plan.Assignments {
+		rows = append(rows, repairDispatchChoice{AssignmentID: assignment.AssignmentID, RoleFamily: "backend-builder"})
+	}
+	repairDispatchSave(t, root, path, rows)
+	current := repairDispatchSnapshot(t, root)
+	packets, err := runtime.CurrentRepairPlanReportPackets(root, current.State, "")
+	if err != nil || len(packets) != len(rows) {
+		t.Fatalf("normal original Plan questions: %+v %v", packets, err)
+	}
+	service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl")}
+	for _, packet := range packets {
+		draft := packet.Draft
+		draft.Answer, _ = json.Marshal(workpacket.RepairPlanReportProfessionalAnswer{
+			Plan:          "synthetic fixture plan for the assigned dependency and original queue",
+			ProposedPaths: []string{},
+			RedChecks:     []workpacket.RepairPlanReportCheck{{Name: "synthetic fixture precheck", Command: "test -f internal/api/one.go", Result: "pass", EvidenceRefs: []string{"test://fixture-precheck"}}},
+		})
+		answerPath := resolveRootPath(root, packet.AnswerPath)
+		writeRepairLeadJSON(t, answerPath, draft)
+		receipt, err := service.SaveRepairPlanReportFrom(context.Background(), packet.Binding.OwnerAgentID, answerPath, root, nil)
+		if err != nil || !receipt.Accepted {
+			t.Fatalf("normal original Plan save: %+v %v", receipt, err)
+		}
+	}
+	for i := range rows {
+		rows[i].CheckLocation = "main"
+	}
+	writeRepairLeadJSON(t, path, rows)
+	beforeSave := repairDispatchRuntimeBytes(t, root)
+	if handled, out := s9Observe(t, root, "Bash"); handled || out != "" {
+		t.Fatalf("registered script selection must not probe the preparation queue: %s", out)
+	}
+	selected := repairDispatchSnapshot(t, root)
+	context := stageRepairExecutionPrepareContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main"}, selected)
+	if !strings.Contains(context, "runtime workspace bind --root") || !strings.Contains(context, "runtime workspace prepare --root") || !strings.Contains(context, "--check-location") {
+		t.Fatalf("read-only context omitted the saved choice's startup commands: %s", context)
+	}
+	repairDispatchAssertUnchanged(t, root, beforeSave)
+	if selected.State["workspace"] != nil {
+		t.Fatal("saving a location prepared a workspace inside the Hook")
+	}
+	owners := stringMapCLI(repairPointerCLI(selected.State)["assignment_owners"])
+	var startupOut, startupErr bytes.Buffer
+	if code := runRuntimeWorkspace([]string{"bind", "--root", root}, &startupOut, &startupErr); code != 0 {
+		t.Fatalf("normal Main bind: %s %s", startupOut.String(), startupErr.String())
+	}
+	startupOut.Reset()
+	startupErr.Reset()
+	manifestID, _ := repairExecutionForChoice(selected.State, rows[0])
+	if code := runRuntimeWorkspace([]string{"prepare", "--root", root, "--assignment", manifestID, "--agent", owners[rows[0].AssignmentID], "--check-location", "main"}, &startupOut, &startupErr); code != 0 {
+		t.Fatalf("normal Main prepare: %s %s", startupOut.String(), startupErr.String())
+	}
+	prepared := repairDispatchSnapshot(t, root)
+	packetsAfter, err := runtime.RepairResultPackets(prepared.State)
+	if err != nil || len(packetsAfter) != 1 {
+		t.Fatalf("normal prepare must publish the ready owner's Result: packets=%d err=%v", len(packetsAfter), err)
+	}
+	_, execution := repairExecutionForChoice(prepared.State, rows[0])
+	for _, path := range []string{packetsAfter[0].ViewPath, packetsAfter[0].AnswerPath} {
+		if _, err := os.Stat(filepath.Join(stringValue(execution["worktree_path"]), filepath.FromSlash(path))); err != nil {
+			t.Fatalf("normal startup omitted the actual Result path: %v", err)
+		}
+	}
+	if _, first := repairExecutionForChoice(prepared.State, rows[0]); first["status"] != "ready" {
+		t.Fatalf("first original ready slot was not prepared: %+v", first)
+	}
+	if _, second := repairExecutionForChoice(prepared.State, rows[1]); len(second) != 0 {
+		t.Fatalf("queued sibling was prepared before the original predecessor Result: %+v", second)
+	}
+	before := repairDispatchRuntimeBytes(t, root)
+	for _, tool := range []string{"Bash", "mcp__example__save"} {
+		if handled, out := s9Observe(t, root, tool); handled || out != "" {
+			t.Fatalf("unchanged ready/queued choice retried prepare: %s", out)
+		}
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+	// Releasing the dependent responsibility after a real Main Final belongs to
+	// the existing integration test and fresh installed model run. This observer
+	// test covers initial preparation, queued work and unchanged save replays.
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		t.Fatalf("original professional division answer was lost: %v", err)
+	}
+}
+
+func TestS9ObserverLocatedMainDivisionSaveDoesNotRequireCallerIdentity(t *testing.T) {
+	root, snapshot, plan, builderPath := repairDispatchFixture(t)
+	stageRepairVerifierDispatchContext(root, policy.Input{AgentID: "Main", Event: "PreToolUse"}, snapshot)
+	writeRepairLeadJSON(t, builderPath, []repairDispatchChoice{{AssignmentID: plan.Assignments[0].AssignmentID, RoleFamily: "backend-builder"}})
+	var out, diagnostic bytes.Buffer
+	request := policy.Input{Event: "PostToolUse", ToolName: "mcp__example__save", AgentID: "native-platform-id", CWD: root, ToolResponse: map[string]any{"file_path": builderPath}}
+	if handled, _ := receiveSavedQuestionnaire(root, request, &out, &diagnostic); !handled || !strings.Contains(out.String(), "Registered Builder") {
+		t.Fatalf("located Main division was gated by platform caller identity: %s %s", out.String(), diagnostic.String())
+	}
+	registered := repairDispatchSnapshot(t, root)
+	if registered.State["workspace"] != nil {
+		t.Fatal("located division save prepared a workspace")
+	}
+	verifierPath := repairVerifierDispatchPaths(root, registered.State)[0]
+	writeRepairLeadJSON(t, verifierPath, []repairVerifierDispatchChoice{{AssignmentID: plan.Assignments[0].AssignmentID, IndependentVerification: true}})
+	request.ToolResponse["file_path"] = verifierPath
+	out.Reset()
+	if handled, _ := receiveSavedQuestionnaire(root, request, &out, &diagnostic); !handled || !strings.Contains(out.String(), "Registered independent verifier") {
+		t.Fatalf("located Main verifier division was gated by platform caller identity: %s %s", out.String(), diagnostic.String())
+	}
+}

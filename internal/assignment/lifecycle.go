@@ -288,13 +288,16 @@ func AdvanceAgentWithContext(ctx context.Context, root, statePath, journalPath s
 		}
 	}
 
-	// Load catalog (with agent entity_lifecycles.transitions) and resolve the
-	// (from, event) -> to pair.
-	catalog, err := transition.LoadCatalog(root)
-	if err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("load catalog: %w", err)
+	// Typed professional blockers record the current active responsibility
+	// directly. Generic lifecycle calls still resolve their catalog transition.
+	var agentTransitions agentEntityTransitionsResolver
+	if blockerCapability == nil {
+		catalog, err := transition.LoadCatalog(root)
+		if err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("load catalog: %w", err)
+		}
+		agentTransitions = agentEntityTransitions(catalog)
 	}
-	agentTransitions := agentEntityTransitions(catalog)
 
 	mutation := loopruntime.Mutation{
 		EventID:            fmt.Sprintf("evt-agent-%s-%s-r%d", request.AgentID, request.Event, commitRevision+1),
@@ -378,6 +381,9 @@ func AdvanceAgentWithContext(ctx context.Context, root, statePath, journalPath s
 				}
 				currentState := projection.Activity
 				resolvedTo, found := agentTransitions.resolve(currentState, request.Event)
+				if blockerCapability != nil && projection.Status == workstate.Active {
+					resolvedTo, found = "blocked", true
+				}
 				if !found {
 					return fmt.Errorf(
 						"Agent event %s is not legal from state %s (canonical Agent states: spawned, reading, understanding_submitted, understanding_approved, activated, working, reported, done, blocked, stopped)",
@@ -521,7 +527,11 @@ func applyAgentEventParams(root string, agent map[string]any, schemaVersion stri
 			return fmt.Errorf("completion_acknowledged requires reported state")
 		}
 	case "work_blocked":
-		if currentState != "working" {
+		if request.IssuedRepairResultBlocker != nil {
+			if projection.Status != workstate.Active {
+				return fmt.Errorf("S9 professional blocker requires an active responsibility")
+			}
+		} else if currentState != "working" {
 			return fmt.Errorf("work_blocked requires working state")
 		}
 	case "blocker_resolved":

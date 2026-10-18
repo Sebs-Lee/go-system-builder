@@ -89,7 +89,9 @@ func runWorkspaceRecovery(args []string, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 		a.WritePaths = authority.Assignment.Scope
-		a.RequiredChecks = authority.Checks
+		if len(a.RequiredChecks) == 0 {
+			fmt.Fprintln(stderr, "S9 Main checks remain pending: Main must select and execute necessary checks during integration; preparing this Worker does not mark checks passed")
+		}
 	} else if lifecycle["state"] == "document_verification" && verb == "replace" {
 		old, ok := b.Execution(*id, workspace.RuntimeID(snap.State), workspace.Generation(snap.State))
 		if !ok || old.AgentID != *owner || old.Purpose != workspace.DocumentReviewPurpose {

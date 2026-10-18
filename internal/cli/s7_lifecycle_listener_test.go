@@ -77,7 +77,7 @@ func TestS7LifecycleListenerProjectsPathsWithoutCompletingResponsibility(t *test
 					t.Fatal(err)
 				}
 				request := policy.Input{Event: event, CWD: root}
-				result, observed := s7GraphControlForHook(root, request)
+				result, observed := graphControlForHook(root, request)
 				if observed != (status == "running") {
 					t.Fatalf("%s handoff selection=%v", status, observed)
 				}

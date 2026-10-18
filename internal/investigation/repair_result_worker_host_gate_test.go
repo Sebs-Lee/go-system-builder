@@ -59,7 +59,7 @@ func TestS9WorkerPrepareFailsClosedWhenOriginalIsolationProbeIsUnavailable(t *te
 		t.Fatal("original Main workspace bind failed")
 	}
 
-	// Use the same source authority, frozen Report command/profile and original
+	// Use the original source association, explicitly configured fixture check and
 	// PreflightChecks API as workspace prepare. The probe has no Runtime/Git
 	// side effect; when this host supports isolation, this denial-only fixture
 	// is explicitly skipped rather than claimed as Worker-success coverage.
@@ -72,11 +72,12 @@ func TestS9WorkerPrepareFailsClosedWhenOriginalIsolationProbeIsUnavailable(t *te
 	if err != nil {
 		t.Fatalf("resolve original S9 Worker authority: %v", err)
 	}
-	profiles, err := runtime.RepairResultCheckProfiles(authority.ReportRef.SHA256, authority.Checks, "worker")
+	checks := []string{"test -d internal/api"} // Actual fixture execution configuration, independent of prechecks.
+	profiles, err := runtime.RepairResultCheckProfiles(authority.ReportRef.SHA256, checks, "worker")
 	if err != nil {
-		t.Fatalf("derive original PlanReport Worker profiles: %v", err)
+		t.Fatalf("prepare explicitly configured fixture Worker profiles: %v", err)
 	}
-	probeExecution := workspace.Execution{CheckLocation: "worker", Checks: authority.Checks, CheckProfiles: profiles}
+	probeExecution := workspace.Execution{CheckLocation: "worker", Checks: checks, CheckProfiles: profiles}
 	probeErr := registry.PreflightChecks(context.Background(), probeExecution, fixture.root)
 	if probeErr == nil {
 		t.Skip("the original Worker isolation probe passes on this host; this denial-only test does not claim the positive Worker matrix")
@@ -136,7 +137,7 @@ func TestS9WorkerPrepareFailsClosedWhenOriginalIsolationProbeIsUnavailable(t *te
 	}
 	inputs = append(inputs, authority.Inputs...)
 	planned, err := registry.Plan(context.Background(), bound.State, owner.manifestAssignmentID, owner.agentID,
-		authority.Assignment.Scope, authority.Checks, inputs)
+		authority.Assignment.Scope, checks, inputs)
 	if err != nil {
 		t.Fatalf("construct side-effect-free original S9 prepare plan: %v", err)
 	}

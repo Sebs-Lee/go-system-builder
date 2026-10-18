@@ -6,9 +6,41 @@
 >
 > 设计状态：本文以目标机制为主；§13 单列当前实现差距。当前代码已落地 ObservationBatch ingest、InvestigationCase revision、Hypothesis/Result、真实 Investigator dispatch、route、canonical duplicate link、`investigate_more` 重入、S9 定向失败的同 Case causal reassessment、RepairContract approve 和 S9 指针推进；单 Runtime 多 Case 协调仍不是本轮目标。v0.7 起增加“复杂度预算”：任何新字段、状态或工具都必须直接减少信息丢失、错误路由或重复调查，否则只保留为计算视图或文档提示。
 
-> **Revision 口径**：Case/Contract revision 是工具生成的对象版本，Runtime `revision` 是 Writer 内部提交序号；二者都不是 Investigator/Main Agent 的手工编号任务。S8 只提交 Case ID/hash、Finding exact set、Hypothesis/Result、Contract draft hash 和路由意图，Writer/API 负责版本与提交协调。统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
+> **Revision 口径**：Case/Contract revision 是工具生成的对象版本，Runtime `revision` 是 Writer 内部提交序号；二者都不是 Investigator/Main Agent 的手工编号任务。系统从原权威带出 Case ID/hash、Finding exact set、Assignment 和当前 revision；作者只填专业内容、证据引用和路由意图。批准绑定审阅后的最终 Contract 真实字节与 hash，Writer/API 负责版本与提交协调。统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
 
-## 本轮阶段答卷优化（2026-10-14，机制链已验证）
+## 当前最小工作流契约（2026-10-17）
+
+本节按 [GLOBAL §0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-15优先于旧方案)
+固定工作流、角色和题形。listener/Main 已接入当前问卷与原消费者；作者按提供的准确路径填写专业内容并保存。
+实现与验收证据统一见 [S8 机制审查](../global-optimization/S8-MECHANISM-REVIEW.md)，最终候选、完整 S8 和全平台验收按各自实际证据判定。
+下文的底层 CLI、文件形状与历史机制链是消费者/兼容资料，不是正常作者需要复现的登记顺序。
+
+| 原工序 | 作者填写与执行 | 系统展示与消费 |
+| --- | --- | --- |
+| Intake 与分组 | Main 阅读 sealed Batch、immutable Findings、现场边界及 capture gaps，填写接收/分组理由 | 提供实际资料路径和原 Case；从原权威带出 exact Finding set、baseline、hash、版本与已有绑定 |
+| 竞争假设与真实派发 | Main 提出 invariant、support/refute 条件、discriminator、来源、停止条件，分派专业调查 | 复用原 Hypothesis register/Assignment dispatch，生成已有格式的 ID 与绑定，提供准确资料/答卷路径 |
+| 假设调查 | Investigator 执行本人 discriminator，填写实际方法、观察、证据、专业判断、解释/未解释 Findings 与必要的新问题 | 只保存现有 `answer`，原 HypothesisResult 消费者写入 Case；不重复交 generic PLAN/结果报告 |
+| 因果与 route | Main 汇总竞争解释，填写因果闭环、blast radius、detection gap 和原 route 理由 | 按当前工序渐进展示原专业字段，保存调用原 Case/route 消费者；不另拆三个 JSON 或拼登记命令 |
+| Contract 与真实批准 | Main 完成修复不变量、完整范围、兼容/迁移/回滚、断言和停止条件；原授权主体审阅最终稿 | 审阅前投影当前机器字段与准确稿件路径；取得有效原授权后才调用原 approve 事务，绑定最终真实字节 |
+| 出口 | Main 填写当前路由所需专业判断、处理真实人决策 | 满足原条件后调用原 consume/交接，按原 graph 进入 S9、S2、fresh S7 或保持调查/等待 |
+
+Main 负责真正的专业分派，并通过原平台能力启动/恢复注册的 Investigator；
+Hook 只监听、提醒与流转，不替代平台 spawn，不伪造启动成功，不代作因果判断或批准。
+Main 与 Investigator 的正常路径均不手动 issue/consume，不抄身份/hash/revision，不将相同专业内容
+另交第二份 PLAN、总结、消息或手工登记信封。Main 已填内容复用到原 Case/route/Contract 所需位置。
+每次进入、恢复、保存反馈和收尾均保留本责任问卷准确路径；未生成则指出具体准备缺口与 Main/系统处理方，
+不能让作者搜 Runtime、猜路径或退回底层 CLI。缺卷、来源无法解析或接收异常时，由 Main/系统沿原流程恢复具体准备问题。
+
+专业完整性保留：immutable Findings/边界、可证伪竞争假设、真实判别证据与未解释项、
+因果闭环、blast radius/detection gap、修复不变量、完整范围和原断言均不删减。
+普通 `plan_checkpoint` 不另交 generic PLAN；显式 `plan_approval_required` 仍等待原审批。
+保存不构成真实批准；原 Contract 授权、REQ 人闸、Writer/CAS、来源完整性、幂等及恢复继续执行。
+已获批准的最终稿不得在审批后自动补改元数据；内容或绑定变化必须重新走原审阅/授权条件。
+个人责任完成与整个 S8 出口分别判断；工作五态保持 `pending/active/blocked/done/cancelled`，
+Case 状态与 `supported/refuted/inconclusive` 等领域事实不另充当一套工作状态。
+不新增主协议、状态机、缓存、独立发行/typed 主回执或跨领域总控制器。
+
+## 历史机制夹具（2026-10-14，非本轮真实模型验收）
 
 已先在 [L4 stage-form §13.8](../l4-mechanisms/L4-stage-form.md#s8-hypothesis-result-adapter)
 固定 S8 typed HypothesisResult 契约：原 Case/Hypothesis 加真实注册的
@@ -45,12 +77,12 @@ Intake 目录同步在 Unix 使用目录 fsync；Windows 只验证目录，断�
 仍不保证。
 
 证据与来源快照列于 [S8 机制证据](../evidence/global-optimization-s8-issued-hypothesis-result-20261014.json)。
-当前未完成独立 Investigator 的真实平台 prepare/launch、supported-host/安装矩阵、
-真实模型专业判断及完整端到端产品验收。Global 核心完整链仍为 4/9，真实模型
-完整链仍为 0/9。开始中的 S9 PlanReport 工作及与之共享的 Runtime、workpacket、
-schema 文件不由本节 S8 用例背书。
+该历史记录未完成独立 Investigator 的真实平台 prepare/launch、supported-host/安装矩阵、
+真实模型专业判断及完整端到端产品验收。当时 Global 核心完整链 4/9、真实模型完整链 0/9
+仅是历史快照，不表示当前候选状态。同期 S9 PlanReport 工作及共享的 Runtime、workpacket、
+schema 文件不由本节 S8 用例背书，本轮切片 A 也不新增测试或模型验收证据。
 
-### 当前履职答卷与接收路径（2026-10-15）
+### 履职答卷与接收路径历史快照（2026-10-15）
 
 每个 Investigator 只提交一份专业 HypothesisResult：判别方法、现场/来源证据、
 supported/refuted/inconclusive、解释与未解释 Finding。当前派发直接给出已发行
@@ -295,7 +327,7 @@ HypothesisResult：
 | `result` | `supported / refuted / inconclusive` |
 | `explains_finding_ids[]` | 能解释哪些表象 |
 | `does_not_explain[]` | 残余事实 |
-| `new_hypotheses[]` | 新线索；必须在写入同一 Case 对象版本时就带唯一 `assignment-*`、invariant、support/refute outcomes 和 source Finding subset，之后才可派发 |
+| `new_hypotheses[]` | 新线索；普通问卷作者只填 statement、invariant、discriminator、support/refute outcomes、source Finding subset 和 evidence refs。原消费者生成 Hypothesis/Assignment 身份，写入同一 Case 对象版本后等待 Main 真实派发；唯一 `assignment-*` 是内部/旧兼容 payload 要求，不是作者填写任务 |
 
 Agent final text 不是 HypothesisResult；产品代码 diff 更不是调查证据。
 
@@ -692,7 +724,7 @@ S8 的必经链只有一条：
 `sealed ObservationBatch → ingest → Case revision → hypothesis/result → route → approved RepairContract`
 
 - `runtime investigation status` 是当前 Case 的恢复入口；它展示 Case 对象版本/hash、未解释 Findings、假设和下一动作。`status --all` 只能帮助人工发现目录中的其他 Case，不能写入指针、不能决定 mixed route，也不能替代 CaseSet coordinator。
-- 假设按独立证据问题派发，而不是按 Finding 数量机械派发。`runtime investigation dispatch` 将 Hypothesis 的 `assignment_id` 接到现有 workgroup/Task/Agent lifecycle，并预置通用 `plan_checkpoint` activation；显式传入的 Assignment 必须与 Hypothesis 登记值一致；Agent 进程本身由 Claude/Agent Team 平台启动，Runtime 不假装已经 spawn。HypothesisResult 产生的 `new_hypotheses[]` 也必须已经完整可派发，不能先写入一个没有 Assignment 的半成品。
+- 假设按独立证据问题派发，而不是按 Finding 数量机械派发。原 `runtime investigation dispatch` 将 Hypothesis 的 `assignment_id` 接到现有 workgroup/Task/Agent lifecycle，并预置通用 `plan_checkpoint` activation；显式传入的 Assignment 必须与 Hypothesis 登记值一致。Main 通过 Claude/Agent Team 平台真正启动进程，Runtime/Hook 不假装已经 spawn。普通问卷 `new_hypotheses[]` 只含完整专业问题和来源，由原消费者自动生成身份并登记，随后等待 Main 派发；原内部/旧兼容 payload 的 Assignment 完整性要求不交给问卷作者。
 - 普通 `plan_checkpoint` Investigator 直接完成 Hook 给出的 HypothesisResult 问卷，不另交通用 `PLAN_REPORT`；显式 `plan_approval_required` 仍走其原审批。HypothesisResult 保存后由原 Case consumer 写入结果，Case route 与 RepairContract 审批仍是后续独立步骤。旧 generic-checkpoint 兼容路径不属于普通新流程。
 - `route` 是持久化的诊断决定，不是自动推进所有生命周期的万能 Transition；`contract approve` 的 S9 路由在同一 CAS 中推进到 S9，`investigation consume` 接走 S2、duplicate 和 no-change 路由，REQ 变更仍停在人闸。普通 `investigate_more` 只有在新增 Hypothesis/Result 后才能在新的 Case revision 中显式重路由；S9 targeted failure 使用带精确证据 hash 的 `--reassessment-evidence` 作为例外入口，先清除旧 Contract 指针并退休旧 `review.repair` 指针，再继续调查；duplicate 的 canonical Case path+SHA 已持久化。
 - 不添加 CaseSet、独立 Failure Episode 或第二份 root-cause report，除非出现明确消费者、恢复动词和回归测试；当前单 active Case 限制应被 status/Controller 明示，而不是靠新增控制面掩盖。

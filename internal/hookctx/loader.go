@@ -819,39 +819,60 @@ func FromSnapshot(root, agentID string, snapshot runtime.Snapshot) (*LoadedConte
 			}
 		}
 	}
-	// A packet-enabled S9 execution remains the Builder's responsibility until
-	// the original candidate receipt and owner-owned checks prove completion.
-	// Only an exact current issued answer on its registered Worker checkout is
-	// writable; the Main checkout is never a fallback authoring root.
-	if context.PacketMode && agentID != "" && context.Agent != nil &&
-		context.Agent.ID == agentID && context.Agent.RepairAssignmentID != "" &&
-		s9RepairResultFreshWriteStage(snapshot.State) {
-		issued, issueErr := s9RepairResultPacketAttemptPresent(snapshot.State, context.Agent.RepairAssignmentID, state.RuntimeID, loaded.BaselineGeneration, context.CurrentReviewRound)
-		if issued || issueErr != nil {
-			// Even a stale issued attempt keeps this exact responsibility on the
-			// typed preservation path. A corrupt packet index also fails closed.
-			context.Agent.RepairResultAssignment = true
+	// S9 responsibility is read-only current work information, independent
+	// of caller authorization or source proofs. Only the fresh stage exposes
+	// an unreceived answer; later phases retain the delivered responsibility.
+	if context.PacketMode && agentID != "" && context.Agent != nil && context.Agent.ID == agentID {
+		life, _ := snapshot.State["lifecycle"].(map[string]any)
+		review, _ := snapshot.State["review"].(map[string]any)
+		pointer, _ := review["repair"].(map[string]any)
+		owners, _ := pointer["assignment_owners"].(map[string]any)
+		assignmentID := ""
+		for id, owner := range owners {
+			if owner != agentID {
+				continue
+			}
+			if assignmentID != "" {
+				assignmentID = ""
+				break
+			}
+			assignmentID = id
 		}
-		if context.Agent.RepairResultAssignment && (agentauth.ValidateReportedPlanAuthorization(root, snapshot.State, agentID) == nil ||
-			agentauth.ValidateWorkingAuthorization(root, snapshot.State, agentID) == nil) {
-			if packets, packetErr := runtime.CurrentRepairResultPackets(root, snapshot.State, agentID); packetErr == nil {
-				for _, packet := range packets {
-					binding := packet.Binding.Sources
-					if binding.OwnerAgentID != agentID || binding.RepairAssignmentID != context.Agent.RepairAssignmentID ||
-						binding.RuntimeID != state.RuntimeID || binding.BaselineGeneration != loaded.BaselineGeneration ||
-						binding.ReviewRound != context.CurrentReviewRound || packet.AnswerPath == "" {
-						continue
+		if life["state"] == "bug_resolution" && assignmentID != "" {
+			// Only a resolved blocker retains its Result responsibility while
+			// Main prepares a successor. A Plan-only owner is not yet Result work.
+			if context.Agent.BlockerResolvedRef != "" {
+				context.Agent.RepairAssignmentID = assignmentID
+				context.Agent.RepairResultAssignment = true
+			}
+			raw, _ := json.Marshal(snapshot.State["workspace"])
+			var registry workspace.ExecutionRegistry
+			if json.Unmarshal(raw, &registry) == nil {
+				if packets, err := runtime.CurrentRepairResultPackets(root, snapshot.State, agentID); err == nil {
+					for _, packet := range packets {
+						b := packet.Binding.Sources
+						if b.OwnerAgentID != agentID || b.RepairAssignmentID != assignmentID ||
+							b.RuntimeID != state.RuntimeID || b.BaselineGeneration != loaded.BaselineGeneration ||
+							b.SessionID != pointer["session_id"] || b.PlanRef != pointer["plan_ref"] {
+							continue
+						}
+						execution, ok := registry.Executions[b.ManifestAssignmentID]
+						if !ok {
+							execution, ok = registry.Executions[b.RepairAssignmentID]
+						}
+						var original workspace.Execution
+						if !ok || json.Unmarshal(packet.Inputs.Execution, &original) != nil ||
+							execution.AgentID != agentID || execution.RuntimeID != b.RuntimeID || execution.BaselineGeneration != b.BaselineGeneration ||
+							execution.AssignmentID != original.AssignmentID || execution.Generation != original.Generation ||
+							execution.Path != original.Path || execution.ReworkRef != packet.Binding.ReworkRef {
+							continue
+						}
+						context.Agent.RepairAssignmentID = assignmentID
+						context.Agent.RepairResultAssignment = true
+						if s9RepairResultFreshWriteStage(snapshot.State) && execution.DeliveryRef == "" && packet.AnswerPath != "" {
+							context.RepairResultAnswerPaths = append(context.RepairResultAnswerPaths, packet.AnswerPath)
+						}
 					}
-					stored, found, findErr := runtime.FindRepairResultPacket(snapshot.State, packet.ID)
-					if findErr != nil || !found || !reflect.DeepEqual(stored, packet) ||
-						runtime.VerifyRepairResultPacketIssue(root, snapshot.State, packet) != nil ||
-						runtime.VerifyRepairResultPacketCurrent(root, snapshot.State, packet) != nil {
-						continue
-					}
-					if _, accepted, receiptErr := runtime.VerifiedRepairResultCandidateReceipt(root, snapshot.State, packet.ID, agentID); receiptErr != nil || accepted {
-						continue
-					}
-					context.RepairResultAnswerPaths = append(context.RepairResultAnswerPaths, packet.AnswerPath)
 				}
 			}
 		}

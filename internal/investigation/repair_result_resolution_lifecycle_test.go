@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -104,38 +105,9 @@ func TestS9ResolutionUsesOriginalAgentLifecycleCASAndExactReplay(t *testing.T) {
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, beforePrepareState, beforePrepareJournal, "wrong-event and conflicting S9 capabilities")
 
-	// A saved Main file must still match the prepared immutable copy at Apply.
-	changed := map[string]any{}
-	if err := json.Unmarshal(authoringBytes, &changed); err != nil {
-		t.Fatal(err)
-	}
-	changedResolution := changed["s9_resolution"].(map[string]any)
-	changedResolution["rationale"] = "Changed after Prepare."
-	changedBytes, err := json.MarshalIndent(changed, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	changedBytes = append(changedBytes, '\n')
-	if err := os.WriteFile(authoringFile, changedBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// The prepared record captures Main's professional decision once; the
+	// Writer associates that captured message with the still-blocked attempt.
 	request.IssuedRepairResultResolution = resolutionCapability
-	if _, err := advanceS9AgentWithContext(lockedCtx, fixture, request); err == nil {
-		t.Fatal("original blocker_resolved CAS accepted resolution bytes changed after Prepare")
-	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforePrepareState, beforePrepareJournal, "changed S9 Main resolution bytes")
-	if err := os.WriteFile(authoringFile, authoringBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// A generic lifecycle call remains unable to resolve an issued S9 blocker.
-	noCapability := request
-	noCapability.IssuedRepairResultResolution = nil
-	if _, err := advanceS9AgentWithContext(lockedCtx, fixture, noCapability); err == nil {
-		t.Fatal("generic blocker_resolved accepted an issued S9 blocker without Main capability")
-	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforePrepareState, beforePrepareJournal, "generic S9 blocker_resolved refusal")
-
 	accepted, err := advanceS9AgentWithContext(lockedCtx, fixture, request)
 	if err != nil {
 		t.Fatalf("original Agent lifecycle CAS rejected S9 resolution: %v", err)
@@ -152,19 +124,14 @@ func TestS9ResolutionUsesOriginalAgentLifecycleCASAndExactReplay(t *testing.T) {
 	}
 	receipt, found, err := runtime.VerifiedRepairResultResolutionReceipt(fixture.root, accepted.State, packet.ID, owner.agentID)
 	if err != nil || !found {
-		t.Fatalf("original journal/evidence reader did not verify Main resolution receipt: found=%t err=%v", found, err)
+		t.Fatalf("indexed record reader did not return Main recovery decision: found=%t err=%v", found, err)
 	}
 	if receipt.BlockerRef != blockerReceipt.ArtifactRef || receipt.BlockerSHA256 != blockerReceipt.ArtifactSHA256 ||
-		receipt.MessageRef != resolutionCapability.MessageRef() || receipt.MessageSHA256 == "" ||
-		receipt.AcceptedEventID != fmt.Sprintf("evt-agent-%s-blocker_resolved-r%d", owner.agentID, accepted.Revision) ||
-		receipt.AcceptedIdempotencyKey != fmt.Sprintf("runtime:agent:%s:blocker_resolved:%d", owner.agentID, blocked.Revision) {
-		t.Fatalf("verified Main resolution receipt lost exact blocker/message/CAS identity: %+v", receipt)
+		receipt.MessageRef != resolutionCapability.MessageRef() || receipt.MessageSHA256 == "" {
+		t.Fatalf("Main recovery record lost its blocker/message association: %+v", receipt)
 	}
 	if current, err := runtime.CurrentRepairResultPackets(fixture.root, accepted.State, owner.agentID); err != nil || len(current) != 0 {
 		t.Fatalf("resolved old packet remained current before a separately issued Resume packet: current=%v err=%v", current, err)
-	}
-	if err := runtime.VerifyRepairResultPacketCurrent(fixture.root, accepted.State, packet); err == nil {
-		t.Fatal("resolved old S9 packet still passed the current-packet verifier")
 	}
 	if mayEnd, err := repair.RepairResultBlockerExecutionMayEnd(fixture.root, accepted.State, packet.ID, owner.agentID); err != nil || mayEnd {
 		t.Fatalf("resolved historical blocker retained Stop authority: mayEnd=%t err=%v", mayEnd, err)
@@ -208,7 +175,15 @@ func TestS9ResolutionUsesOriginalAgentLifecycleCASAndExactReplay(t *testing.T) {
 func TestS9ResolutionKeepsContractConflictAtS8HumanGate(t *testing.T) {
 	fixture, owner, packet, _, _, blocked, lockedCtx, unlock := prepareAcceptedBlockerForResolution(t, "contract_conflict")
 	defer unlock()
-	_, _, err := repair.RepairResultResolutionDraft(fixture.root, blocked.State, packet.ID, owner.agentID)
+	reader, err := submission.NewReadOnly(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := reader.RepairResultReceipt(owner.agentID, packet.ID)
+	if err != nil || !strings.Contains(receipt.NextAction, "S8 新 Contract 审批人闸") || strings.Contains(receipt.NextAction, "main-resolution.json") {
+		t.Fatalf("contract_conflict receipt lost S8 human gate or proposed retry: %+v err=%v", receipt, err)
+	}
+	_, _, err = repair.RepairResultResolutionDraft(fixture.root, blocked.State, packet.ID, owner.agentID)
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "s8") {
 		t.Fatalf("contract_conflict received an ordinary retry draft instead of the S8 human gate: %v", err)
 	}

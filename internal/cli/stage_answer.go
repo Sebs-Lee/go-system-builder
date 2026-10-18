@@ -591,21 +591,14 @@ func isS9RepairResultPath(path string) bool {
 }
 
 func saveRepairResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
-	service, err := submission.New(root)
-	if err != nil {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S9")
-	}
-	packet, sourceRoot, found, err := service.RepairResultSourceForPath(path)
-	if err != nil {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S9")
-	}
-	if !found {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: "S9 RepairResult answer path has no current registered Worker issuance"}, "S9")
-	}
-	owner := packet.Binding.Sources.OwnerAgentID
 	ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
 	defer cancel()
-	receipt, saveErr := service.SaveRepairResultFrom(ctx, owner, path, sourceRoot, nil)
+	service := &submission.Service{
+		Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"),
+		JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"),
+		Validator:   semantic.RuntimeCandidateValidator{},
+	}
+	receipt, saveErr := service.SaveRepairResultFrom(ctx, "", path, "", nil)
 	if saveErr != nil {
 		fmt.Fprintf(stderr, "S9 RepairResult not accepted: %v\n", saveErr)
 		if receipt.Error == "" {
@@ -616,21 +609,14 @@ func saveRepairResultHook(root string, request policy.Input, path string, stdout
 }
 
 func saveRepairPlanReportHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
-	service, err := submission.New(root)
-	if err != nil {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S9")
-	}
-	packet, sourceRoot, found, err := service.RepairPlanReportSourceForPath(path)
-	if err != nil {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S9")
-	}
-	if !found {
-		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: "S9 answer path has no current registered issuance"}, "S9")
-	}
-	owner := packet.Binding.OwnerAgentID
 	ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
 	defer cancel()
-	receipt, saveErr := service.SaveRepairPlanReportFrom(ctx, owner, path, sourceRoot, nil)
+	service := &submission.Service{
+		Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"),
+		JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"),
+		Validator:   semantic.RuntimeCandidateValidator{},
+	}
+	receipt, saveErr := service.SaveRepairPlanReportFrom(ctx, "", path, "", nil)
 	if saveErr != nil {
 		fmt.Fprintf(stderr, "S9 PlanReport not accepted: %v\n", saveErr)
 		if receipt.Error == "" {
@@ -1367,130 +1353,11 @@ func s6AcceptedResultProgress(root string, snapshot runtime.Snapshot, q s6Builde
 }
 
 func stageRepairPlanReportLifecycleContext(ctx context.Context, root string, request policy.Input, service *submission.Service, snapshot runtime.Snapshot, owner string) string {
-	mainSession := owner == "" || owner == "Main"
-	ownerFilter := owner
-	if mainSession {
-		ownerFilter = ""
-	}
-	var packets []workpacket.RepairPlanReportPacket
-	var err error
-	if mainSession && (request.Event == "SessionStart" || request.Event == "PreCompact" || request.Event == "PreToolUse") {
-		packets, err = service.IssueRepairPlanReports(ctx, "")
-		if err == nil {
-			if latest, loadErr := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot(); loadErr == nil {
-				snapshot = latest
-			} else {
-				err = loadErr
-			}
-		}
-	} else {
-		packets, err = runtime.CurrentRepairPlanReportPackets(root, snapshot.State, ownerFilter)
-	}
-	if err != nil {
-		return "S9 PlanReport questionnaire preparation is unavailable; Main must restore the original repair dispatch: " + err.Error()
-	}
-	if len(packets) == 0 {
-		return "S9 has no current eligible PlanReport questionnaire for this responsibility. Main must restore the original RepairPlan/dispatch and PLAN checkpoint; do not guess a path or issue command."
-	}
-	var b strings.Builder
-	for _, packet := range packets {
-		view := filepath.Join(root, filepath.FromSlash(packet.ViewPath))
-		answer := filepath.Join(root, filepath.FromSlash(packet.AnswerPath))
-		fmt.Fprintf(&b, "S9 Builder %s assignment=%s: questionnaire %s; read %s. ", packet.Binding.OwnerAgentID, packet.Binding.RepairAssignmentID, answer, view)
-		if err := runtime.VerifyRepairPlanReportPacketIssue(root, snapshot.State, packet); err != nil {
-			fmt.Fprintf(&b, "Main must restore the current questionnaire record: %v\n", err)
-			continue
-		}
-		if receipt, accepted, err := runtime.VerifiedRepairPlanReportReceipt(root, snapshot.State, packet.ID, packet.Binding.OwnerAgentID); err != nil {
-			fmt.Fprintf(&b, "Main must inspect the original receipt: %v\n", err)
-		} else if accepted && receipt.PacketID == packet.ID && !receipt.WorkComplete {
-			b.WriteString("PlanReport already accepted; do not submit again. Main must collect the remaining Assignment reports and run the original repair execution begin.\n")
-		} else if err := runtime.VerifyRepairPlanReportCurrent(root, snapshot.State, packet); err != nil {
-			fmt.Fprintf(&b, "Main must inspect the current Plan/Assignment: %v\n", err)
-		} else {
-			b.WriteString("Fill only the professional PlanReport answer and save this exact file. Main begins repair execution after all required reports are accepted.\n")
-		}
-	}
-	return strings.TrimSpace(b.String())
+	return s9PlanQuestionnaireContext(ctx, root, request, service, snapshot, owner)
 }
 
 func stageHypothesisResultLifecycleContext(ctx context.Context, root string, request policy.Input, service *submission.Service, snapshot runtime.Snapshot, owner string) string {
-	mainSession := owner == "" || owner == "Main"
-	if mainSession {
-		if request.Event != "SessionStart" && request.Event != "PreCompact" && request.Event != "PreToolUse" {
-			return ""
-		}
-		if request.CWD == "" {
-			return "S8 issuance requires the platform's Main project-root cwd."
-		}
-		cwd, err := workspace.Canonical(request.CWD)
-		mainRoot, rootErr := workspace.Canonical(root)
-		if err != nil || rootErr != nil || cwd != mainRoot {
-			return "S8 issuance is available only from the registered Main project root."
-		}
-		packets, err := service.IssueHypothesisResults(ctx, "")
-		if err != nil {
-			return "S8 Main HypothesisResult issuance deferred: " + err.Error()
-		}
-		if len(packets) == 0 {
-			return "S8 Main: no registered Investigator has a new current questionnaire. Restore the original Case, manifest, TASK, and dispatch facts; the next Main Hook prepares the exact questionnaire. Do not manually issue a packet."
-		}
-		var b strings.Builder
-		fmt.Fprintln(&b, "S8 Main issued only current registered Investigator questions; professional result fields remain unanswered until each Investigator saves its exact answer.")
-		for _, packet := range packets {
-			view, answer, err := hypothesisResultLifecyclePaths(ctx, root, snapshot.State, packet, request.CWD, request.SessionID)
-			if err != nil {
-				fmt.Fprintf(&b, "S8 %s/%s: packet is registered, but its source is not ready: %s\n", packet.Binding.OwnerAgentID, packet.Binding.AssignmentID, err)
-				continue
-			}
-			fmt.Fprintf(&b, "S8 Investigator %s assignment=%s: read %s; fill the professional HypothesisResult answer in %s and save it through the original Case consumer.\n", packet.Binding.OwnerAgentID, packet.Binding.AssignmentID, view, answer)
-		}
-		return strings.TrimSpace(b.String())
-	}
-
-	loaded, err := hookctx.FromSnapshot(root, owner, snapshot)
-	if err != nil || loaded == nil || loaded.PolicyContext.Agent == nil || loaded.PolicyContext.Agent.ID != owner {
-		return ""
-	}
-	assignmentID := loaded.PolicyContext.Agent.AssignmentID
-	registeredInvestigator := false
-	for _, assignment := range loaded.Assignments {
-		if assignment.OwnerAgentID == owner && assignment.AssignmentID == assignmentID && assignment.RoleFamily == "investigator" {
-			registeredInvestigator = true
-			break
-		}
-	}
-	if !registeredInvestigator || assignmentID == "" {
-		return ""
-	}
-	packets, err := runtime.CurrentHypothesisResultPackets(root, snapshot.State, owner)
-	if err != nil {
-		return "S8 HypothesisResult lookup deferred to Main: " + err.Error()
-	}
-	var packet *workpacket.HypothesisResultPacket
-	for i := range packets {
-		if packets[i].Binding.AssignmentID == assignmentID && packets[i].Binding.OwnerAgentID == owner {
-			copyPacket := packets[i]
-			packet = &copyPacket
-			break
-		}
-	}
-	if packet == nil {
-		return fmt.Sprintf("S8 Investigator assignment=%s has no current issued question. Main must restore the original Case/manifest/TASK dispatch so the listener can prepare the questionnaire; do not guess its path.", assignmentID)
-	}
-	if err := runtime.VerifyHypothesisResultPacketIssue(root, snapshot.State, *packet); err != nil {
-		return "S8 packet evidence is not current; Main must inspect the original Case/dispatch issuance: " + err.Error()
-	}
-	if receipt, accepted, err := runtime.VerifiedHypothesisResultReceipt(root, snapshot.State, packet.ID, owner); err != nil {
-		return "S8 accepted receipt needs Main review: " + err.Error()
-	} else if accepted && receipt.PacketID == packet.ID && receipt.OwnerAgentID == owner {
-		return "S8 work_complete=true: the original InvestigationCase consumer recorded your exact HypothesisResult receipt. Main owns the next route and approval step; you can end this responsibility."
-	}
-	view, answer, err := hypothesisResultLifecyclePaths(ctx, root, snapshot.State, *packet, request.CWD, request.SessionID)
-	if err != nil {
-		return "S8 HypothesisResult source is unavailable; Main must restore the registered Investigator execution: " + err.Error()
-	}
-	return fmt.Sprintf("S8 Investigator assignment=%s: read the exact issued question %s, fill the professional result in %s, and save it. Keep the original Case route and Finding scope unchanged.", assignmentID, view, answer)
+	return s8HypothesisQuestionnaireContext(ctx, root, request, service, snapshot, owner)
 }
 
 func hypothesisResultLifecyclePaths(ctx context.Context, root string, state map[string]any, packet workpacket.HypothesisResultPacket, cwd, sessionID string) (string, string, error) {

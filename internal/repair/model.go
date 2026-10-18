@@ -420,7 +420,7 @@ type TargetedReverification struct {
 	ContinuityReason       string            `json:"continuity_reason"`
 	ImpactID               string            `json:"impact_id"`
 	AssertionResults       []AssertionResult `json:"assertion_results"`
-	ScopeCompliance        string            `json:"scope_compliance"`
+	ScopeCompliance        string            `json:"scope_compliance,omitempty"`
 	Result                 string            `json:"result"`
 	FailureClass           string            `json:"failure_class,omitempty"`
 	PerformedAt            string            `json:"performed_at"`

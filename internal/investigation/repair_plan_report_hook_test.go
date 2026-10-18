@@ -181,35 +181,22 @@ func TestS9RepairPlanReportSavedFromReadingRunsOriginalPlanCheckpoint(t *testing
 		t.Fatalf("original S9 consumer did not accept the reading-stage professional answer: %+v", receipt)
 	}
 	after := currentS9Snapshot(t, fixture)
-	if after.Revision <= before.Revision || !s9AgentWorking(after.State, packet.Binding.OwnerAgentID) {
-		t.Fatalf("saving one professional answer did not run original PLAN/AgentBegin: revision %d->%d working=%t", before.Revision, after.Revision, s9AgentWorking(after.State, packet.Binding.OwnerAgentID))
+	if after.Revision != before.Revision+1 {
+		t.Fatalf("professional PlanReport should record one domain fact: revision %d->%d", before.Revision, after.Revision)
 	}
-	row := s9AgentRow(after.State, packet.Binding.OwnerAgentID)
-	planRef, _ := row["plan_reported_ref"].(string)
-	readbackRef, _ := row["readback_ref"].(string)
-	if planRef == "" || planRef != readbackRef {
-		t.Fatalf("original PLAN checkpoint refs are not joined from the questionnaire: agent=%v", row)
+	beforeRow, _ := json.Marshal(s9AgentRow(before.State, packet.Binding.OwnerAgentID))
+	afterRow, _ := json.Marshal(s9AgentRow(after.State, packet.Binding.OwnerAgentID))
+	if !bytes.Equal(beforeRow, afterRow) {
+		t.Fatalf("professional PlanReport changed a generic Agent lifecycle: before=%s after=%s", beforeRow, afterRow)
 	}
-	checkpointBytes, err := os.ReadFile(filepath.Join(fixture.root, filepath.FromSlash(planRef)))
-	if err != nil {
-		t.Fatalf("read original auto-projected PLAN checkpoint %s: %v", planRef, err)
-	}
-	var checkpoint struct {
-		Objective       string   `json:"objective"`
-		PlannedPaths    []string `json:"planned_paths"`
-		AssertionChecks []struct {
-			Assertion string `json:"assertion"`
-			Oracle    string `json:"oracle"`
-		} `json:"assertion_checks"`
-	}
-	if err := json.Unmarshal(checkpointBytes, &checkpoint); err != nil ||
-		checkpoint.Objective != "inspect the approved boundary and record the pre-fix check" ||
-		len(checkpoint.PlannedPaths) != 1 || checkpoint.PlannedPaths[0] != "internal/api/payload.go" ||
-		len(checkpoint.AssertionChecks) != 1 || checkpoint.AssertionChecks[0].Assertion != "pre-fix contract check" || checkpoint.AssertionChecks[0].Oracle != "go test ./internal/api -run TestPayloadContract" {
-		t.Fatalf("PLAN checkpoint was not projected from all exact professional answer fields: checkpoint=%+v err=%v", checkpoint, err)
+	journal := string(mustRead(t, fixture.journalPath))
+	for _, generic := range []string{"msg-s9-plan-", packet.Binding.OwnerAgentID + "-activation_sent", packet.Binding.OwnerAgentID + "-work_started"} {
+		if strings.Contains(journal, generic) {
+			t.Fatalf("professional PlanReport generated generic PLAN/AgentBegin proof: %s", generic)
+		}
 	}
 	if _, found, err := repair.IssuedRepairPlanReportReceipt(fixture.root, after.State, packet.ID, packet.Binding.OwnerAgentID); err != nil || !found {
-		t.Fatalf("original S9 professional receipt missing after automatic PLAN: found=%t err=%v", found, err)
+		t.Fatalf("original S9 professional receipt missing after direct recording: found=%t err=%v", found, err)
 	}
 	stateBeforeReplay, journalBeforeReplay := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
 	replay := runS9PostToolUse(t, fixture, "different-hook-agent", filepath.Join(fixture.root, "different-cwd"), answerPath)
@@ -671,8 +658,18 @@ func assertS9ProductWriteObserved(t *testing.T, fixture *intakeFixture, owner s9
 	if envelope.HookSpecificOutput.PermissionDecision == "deny" {
 		t.Fatalf("S9 listener denied an observed tool: %s", out.String())
 	}
+	packets, err := runtime.RepairPlanReportPackets(currentS9State(t, fixture))
+	if err != nil {
+		t.Fatalf("read registered S9 questionnaire path: %v", err)
+	}
+	answerPath := ""
+	for _, packet := range packets {
+		if packet.Binding.OwnerAgentID == owner.agentID && packet.Binding.RepairAssignmentID == owner.assignmentID {
+			answerPath = filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath))
+		}
+	}
 	context := envelope.HookSpecificOutput.AdditionalContext
-	if !strings.Contains(context, "questionnaire "+fixture.root) || !strings.Contains(context, "repair execution begin") || strings.Contains(context, "runtime stage-answer issue") {
+	if answerPath == "" || !strings.Contains(context, "questionnaire "+answerPath) || !strings.Contains(context, "The original PlanReport is recorded as accepted; waiting for Main's remaining reports and original execution-begin consumer.") || strings.Contains(context, "runtime stage-answer issue") {
 		t.Fatalf("S9 reminder omitted the exact questionnaire path or original next duty: %s", context)
 	}
 }

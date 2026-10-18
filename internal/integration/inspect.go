@@ -48,7 +48,8 @@ type InspectConfig struct {
 //
 //   - completion report exists and parses
 //   - worktree tree is clean
-//   - source branch has commits beyond the merge base
+//   - source branch has commits beyond the merge base, or a professional
+//     delivery records work that required no source changes
 //   - target branch exists
 //   - required checks pass (when configured)
 //   - the source/target diff does not touch any locked artifact
@@ -120,6 +121,12 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 		// canonical scope and locks but does not treat worker-side checks as
 		// Main receipts or a completion verdict.
 		cfg.RequiredChecks = nil
+	}
+
+	// Domain delivery retains declared scope as professional context, without
+	// forwarding the generic S6 path ACL into Main integration.
+	if cfg.ValidateDelivery != nil && canonical == nil {
+		out.EffectiveWritePaths = nil
 	}
 
 	// 1. Completion report. We don't schema-validate here — that gate is
@@ -221,7 +228,7 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	if err != nil {
 		return out, fmt.Errorf("count commits: %w", err)
 	}
-	if count == 0 {
+	if count == 0 && (cfg.ValidateDelivery == nil || canonical != nil) {
 		addBlocker(ErrMissingCommits.Error())
 		return out, nil
 	}
@@ -250,10 +257,11 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	//     assignment without WritePaths declares no scope, so the audit
 	//     is skipped rather than fabricated — the gap is visible in the
 	//     manifest, not hidden here. Out-of-scope files block the
-	//     integration and preserve the worktree.
+	//     integration and preserve the worktree. Domain delivery records the
+	//     deviation for Main judgment while retaining the actual diff.
 	if len(req.Assignment.WritePaths) > 0 {
 		out.OutOfScopeDiff = outsideWriteScope(changedFiles, req.Assignment.WritePaths)
-		if len(out.OutOfScopeDiff) > 0 {
+		if len(out.OutOfScopeDiff) > 0 && (cfg.ValidateDelivery == nil || canonical != nil) {
 			addBlocker(fmt.Sprintf("%s: %s", ErrScopeViolation.Error(), strings.Join(out.OutOfScopeDiff, ", ")))
 			return out, nil
 		}

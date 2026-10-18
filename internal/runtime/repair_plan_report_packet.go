@@ -42,21 +42,14 @@ func RepairPlanReportPackets(state map[string]any) ([]workpacket.RepairPlanRepor
 		if err != nil {
 			return nil, err
 		}
-		if err := schema.NewEmbeddedValidator().ValidateBytes("repair-plan-report-work-packet.schema.json", data); err != nil {
-			return nil, fmt.Errorf("S9 packet %s schema: %w", id, err)
-		}
 		var p workpacket.RepairPlanReportPacket
 		if err := json.Unmarshal(data, &p); err != nil {
 			return nil, err
 		}
-		rebuilt, err := workpacket.RebuildRepairPlanReport(p)
-		if err != nil || !reflect.DeepEqual(p, rebuilt) || p.ID != id {
-			return nil, fmt.Errorf("S9 packet %s differs from its canonical rebuild", id)
+		if p.ID != id {
+			return nil, fmt.Errorf("S9 Plan packet identity differs from its registry entry")
 		}
 		packets = append(packets, p)
-	}
-	if len(packets) > 0 && !PacketEnabled(state) {
-		return nil, fmt.Errorf("S9 packets require the explicit v1.2 packet contract")
 	}
 	sort.Slice(packets, func(i, j int) bool { return packets[i].ID < packets[j].ID })
 	return packets, nil
@@ -66,16 +59,38 @@ func FindRepairPlanReportPacket(state map[string]any, id string) (workpacket.Rep
 	if id == "" {
 		return workpacket.RepairPlanReportPacket{}, false, fmt.Errorf("S9 packet ID is required")
 	}
-	packets, err := RepairPlanReportPackets(state)
+	entities, _ := state["entities"].(map[string]any)
+	raw := entities["work_packets"]
+	if raw == nil {
+		return workpacket.RepairPlanReportPacket{}, false, nil
+	}
+	rows, ok := raw.([]any)
+	if !ok {
+		return workpacket.RepairPlanReportPacket{}, false, fmt.Errorf("Runtime work_packets is not an array")
+	}
+	var selected map[string]any
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["packet_id"] != id {
+			continue
+		}
+		if selected != nil {
+			return workpacket.RepairPlanReportPacket{}, false, fmt.Errorf("duplicate Runtime packet identity %s", id)
+		}
+		selected = row
+	}
+	if selected == nil || selected["template_id"] != repairPlanReportPacketTemplateID {
+		return workpacket.RepairPlanReportPacket{}, false, nil
+	}
+	data, err := json.Marshal(selected)
 	if err != nil {
 		return workpacket.RepairPlanReportPacket{}, false, err
 	}
-	for _, p := range packets {
-		if p.ID == id {
-			return p, true, nil
-		}
+	var packet workpacket.RepairPlanReportPacket
+	if err := json.Unmarshal(data, &packet); err != nil {
+		return workpacket.RepairPlanReportPacket{}, false, err
 	}
-	return workpacket.RepairPlanReportPacket{}, false, nil
+	return packet, true, nil
 }
 
 // CurrentRepairPlanReportPackets selects current responsibilities, not write grants.
@@ -88,12 +103,15 @@ func CurrentRepairPlanReportPackets(root string, state map[string]any, owner str
 	pointer, _ := review["repair"].(map[string]any)
 	baseline, _ := state["baseline"].(map[string]any)
 	gen, _ := integerField(baseline, "generation")
-	round, _ := integerField(review, "round")
 	selected := []workpacket.RepairPlanReportPacket{}
 	seen := map[string]bool{}
 	for _, p := range all {
 		b := p.Binding
-		if (owner != "" && b.OwnerAgentID != owner) || b.RuntimeID != state["runtime_id"] || b.BaselineGeneration != gen || b.ReviewRound != round || pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 {
+		if (owner != "" && b.OwnerAgentID != owner) || b.RuntimeID != state["runtime_id"] || b.BaselineGeneration != gen || pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef {
+			continue
+		}
+		owners, _ := pointer["assignment_owners"].(map[string]any)
+		if owners[b.RepairAssignmentID] != b.OwnerAgentID {
 			continue
 		}
 		slot := b.RepairAssignmentID
@@ -335,7 +353,7 @@ func VerifyRepairPlanReportCurrent(root string, state map[string]any, p workpack
 	cp, _ := review["investigation"].(map[string]any)
 	base, _ := state["baseline"].(map[string]any)
 	life, _ := state["lifecycle"].(map[string]any)
-	if !PacketEnabled(state) || state["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(base["generation"], b.BaselineGeneration) || !hypothesisJSONEqual(review["round"], b.ReviewRound) || life["state"] != "bug_resolution" || (life["phase"] != "planning" && life["phase"] != "reproducing") || (pointer["status"] != "planning" && pointer["status"] != "reproducing") || pointer["session_id"] != b.SessionID || pointer["path"] != b.SessionRef || pointer["sha256"] != b.SessionSHA256 || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 || pointer["contract_ref"] != b.ContractRef || pointer["contract_sha256"] != b.ContractSHA256 || pointer["case_id"] != b.CaseID || cp["case_id"] != b.CaseID || cp["path"] != b.CaseRef || cp["sha256"] != b.CaseSHA256 || cp["status"] != "contract_approved" {
+	if !PacketEnabled(state) || state["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(base["generation"], b.BaselineGeneration) || !hypothesisJSONEqual(review["round"], b.ReviewRound) || life["state"] != "bug_resolution" || (life["phase"] != "planning" && life["phase"] != "reproducing" && life["phase"] != "fixing") || (pointer["status"] != "planning" && pointer["status"] != "reproducing" && pointer["status"] != "repairing") || pointer["session_id"] != b.SessionID || pointer["path"] != b.SessionRef || pointer["sha256"] != b.SessionSHA256 || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 || pointer["contract_ref"] != b.ContractRef || pointer["contract_sha256"] != b.ContractSHA256 || pointer["case_id"] != b.CaseID || cp["case_id"] != b.CaseID || cp["path"] != b.CaseRef || cp["sha256"] != b.CaseSHA256 || cp["status"] != "contract_approved" {
 		return fmt.Errorf("S9 fresh source/phase authority changed; recover by named dispatch")
 	}
 	owners, _ := pointer["assignment_owners"].(map[string]any)

@@ -260,7 +260,7 @@ func TestValidateRepairResultAnswerPreservesNineProfessionalFields(t *testing.T)
 	}
 }
 
-func TestValidateRepairResultAnswerRejectsSlotAndEnvelopeDrift(t *testing.T) {
+func TestValidateRepairResultAnswerRejectsInvalidProfessionalFields(t *testing.T) {
 	binding, inputs := repairResultTestFixture(t)
 	packet, err := BuildRepairResult(binding, inputs)
 	if err != nil {
@@ -277,9 +277,10 @@ func TestValidateRepairResultAnswerRejectsSlotAndEnvelopeDrift(t *testing.T) {
 		"wrong unit": func(a map[string]any) {
 			a["unit_results"] = []any{map[string]any{"unit_id": "unit-other", "status": "pass", "evidence_refs": []string{"test://unit"}, "implementation_summary": "implemented", "restored_invariant_refs": []string{}}}
 		},
-		"empty summary":          func(a map[string]any) { a["unit_results"].([]any)[0].(map[string]any)["implementation_summary"] = " " },
-		"invented machine field": func(a map[string]any) { a["checks"] = []any{} },
-		"null evidence array":    func(a map[string]any) { a["evidence_refs"] = nil },
+		"empty summary":              func(a map[string]any) { a["unit_results"].([]any)[0].(map[string]any)["implementation_summary"] = " " },
+		"invented machine field":     func(a map[string]any) { a["checks"] = []any{} },
+		"null evidence array":        func(a map[string]any) { a["evidence_refs"] = nil },
+		"missing professional field": func(a map[string]any) { delete(a, "migration_ref") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			answer := repairResultCompleteAnswer()
@@ -291,13 +292,18 @@ func TestValidateRepairResultAnswerRejectsSlotAndEnvelopeDrift(t *testing.T) {
 	}
 
 	complete := repairResultFilledAnswerFile(t, packet, repairResultCompleteAnswer())
-	var envelope map[string]any
-	if err := json.Unmarshal(complete, &envelope); err != nil {
-		t.Fatal(err)
+	want, fields := ValidateRepairResultAnswer(packet, complete)
+	if len(fields) != 0 {
+		t.Fatalf("complete professional answer rejected: %#v", fields)
 	}
-	envelope["instruction"] = "edited machine prompt"
-	if _, fields := ValidateRepairResultAnswer(packet, mustJSON(t, envelope)); len(fields) == 0 || fields[0].Pointer != "/" {
-		t.Fatalf("edited machine prompt was accepted: %#v", fields)
+	for _, metadata := range []map[string]any{
+		{"answer": repairResultCompleteAnswer()},
+		{"answer": repairResultCompleteAnswer(), "title": nil, "instruction": "edited prompt", "read": "changed", "questions": map[string]any{"verdict": map[string]any{"example": map[string]any{"note": "expected omitted"}}}},
+	} {
+		got, fields := ValidateRepairResultAnswer(packet, mustJSON(t, metadata))
+		if len(fields) != 0 || string(got) != string(want) {
+			t.Fatalf("display metadata changed professional acceptance: fields=%#v answer=%s", fields, got)
+		}
 	}
 	if _, fields := ValidateRepairResultAnswer(packet, append(complete, []byte(` {"answer":{}}`)...)); len(fields) == 0 {
 		t.Fatal("second top-level JSON value was accepted")

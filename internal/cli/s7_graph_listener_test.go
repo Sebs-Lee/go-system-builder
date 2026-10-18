@@ -45,7 +45,7 @@ func TestS7GraphListenerLeavesDomainHandoffsToController(t *testing.T) {
 			if err := os.WriteFile(statePath, before, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			result, observed := s7GraphControlForHook(root, policy.Input{Event: "PreToolUse", ToolName: "Read", AgentID: "reviewer"})
+			result, observed := graphControlForHook(root, policy.Input{Event: "PreToolUse", ToolName: "Read", AgentID: "reviewer"})
 			if observed != (status == "running") {
 				t.Fatalf("status %s: ordinary observation=%v; domain handoffs must fall through to the original Controller", status, observed)
 			}

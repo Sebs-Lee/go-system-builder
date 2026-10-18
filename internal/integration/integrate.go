@@ -534,7 +534,8 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	}
 
 	// Step 2: perform the merge (unless durable record shows it already
-	// happened). We always use a plain `--no-ff` merge; never squash.
+	// happened). Changed deliveries use a plain `--no-ff` merge; never squash.
+	// No-change deliveries retain the current target without a merge operation.
 	// REQ-039 §13.6 forbids automatic merge when the integration tree
 	// has uncommitted changes — we check the integration tree here too
 	// so a dirty target branch is preserved instead of merged into.
@@ -597,9 +598,15 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 				return preserveAfterCAS(ctx, store, checkpointPath, current, next, resolveErr, ErrMissingCompletion)
 			}
 		}
-		mergeCommit, err := performMerge(ctx, gitRoot, req.Inspection.SourceHead)
-		if err != nil {
-			return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrMergeConflict)
+		// A professional no-change delivery still requires Main checks, but
+		// has nothing to merge. Retain the actual Main HEAD in the existing
+		// checkpoint coordinates instead of manufacturing a source commit.
+		mergeCommit := target
+		if canonical != nil || sourceHead != req.Inspection.MergeBase || len(actualPaths) != 0 {
+			mergeCommit, err = performMerge(ctx, gitRoot, req.Inspection.SourceHead)
+			if err != nil {
+				return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrMergeConflict)
+			}
 		}
 		next.MergeCommit = mergeCommit
 		if next.CanonicalMainFacts != nil {

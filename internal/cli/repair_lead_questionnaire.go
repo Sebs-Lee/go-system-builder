@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,14 +28,12 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 	if !mainQuestionnaireViewer(request) && request.EffectiveAgentID() == "" {
 		return ""
 	}
-	phase, phaseErr := currentRepairLeadPhase(root, snapshot.State)
+	phase, phaseErr := observedRepairLeadPhase(root, snapshot.State)
 	if phaseErr != nil {
-		return "S9 current TargetedReverification obligations cannot be resolved: " + phaseErr.Error()
+		return "S9 current TargetedReverification obligations cannot be resolved: " + phaseErr.Error() + repairLeadExistingQuestionnaires(root, snapshot.State)
 	}
 	owner := request.EffectiveAgentID()
 	main := owner == "" || owner == "Main"
-	prepare := repairLeadPreparationEvent(request.Event)
-	readOnly := repairLeadReadOnlyEvent(request.Event)
 
 	switch phase {
 	case "repair_readback":
@@ -42,26 +41,16 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			return ""
 		}
 		state := snapshot.State
-		if prepare {
-			var err error
-			state, err = prepareRepairReadback(root, state)
-			if err != nil {
-				return "S9 approved Contract readback could not prepare the original RepairSession/RepairPlan: " + err.Error()
-			}
-		}
 		pointer := repairPointerCLI(state)
 		contract := repair.ContractRef{Path: stringValue(pointer["contract_ref"]), SHA256: stringValue(pointer["contract_sha256"])}
 		session := repair.ArtifactRef{Path: stringValue(pointer["path"]), SHA256: stringValue(pointer["sha256"])}
 		plan := repair.ArtifactRef{Path: stringValue(pointer["plan_ref"]), SHA256: stringValue(pointer["plan_sha256"])}
 		if contract.Path == "" || session.Path == "" || plan.Path == "" {
-			return "S9 repair_readback is missing a current approved Contract, RepairSession, or RepairPlan reference. Restore the original investigation/S9 source; no path was guessed."
+			return "S9 repair_readback is missing a current approved Contract, RepairSession, or RepairPlan reference. Use the normal startup commands: " + repairReadbackStartupCommands(root, state) + "."
 		}
 		contractPath, _ := absoluteQuestionnairePath(root, contract.Path)
 		sessionPath, _ := absoluteQuestionnairePath(root, session.Path)
 		planPath, _ := absoluteQuestionnairePath(root, plan.Path)
-		if readOnly {
-			return fmt.Sprintf("S9 repair_readback is read-only: approved Contract %s; current RepairSession %s; current RepairPlan %s. Stop/Idle did not create or change any artifact.", contractPath, sessionPath, planPath)
-		}
 		return fmt.Sprintf("S9 repair_readback: review the approved Contract at %s, current RepairSession at %s, and Contract-derived RepairPlan at %s. Session/Plan were produced by their original Runtime APIs; the current RepairAssignments and their exact Builder PlanReport/RepairResult questions are delivered by the original listeners. Main owns dispatch and integration; do not hand-author another plan.", contractPath, sessionPath, planPath)
 
 	case "impact_reconciliation":
@@ -72,36 +61,28 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 		if err != nil {
 			return "S9 ChangeImpact questionnaire path is unavailable from current Runtime: " + err.Error()
 		}
-		if prepare {
-			if _, err := prepareRepairImpactQuestionnaire(root, snapshot.State); err != nil {
-				return fmt.Sprintf("S9 ChangeImpact questionnaire could not be prepared at %s: %v", path, err)
-			}
+		if questionnaireMissing(path) {
+			return "S9 ChangeImpact questionnaire is not prepared at " + path + "; Main/system must prepare the original request when this responsibility starts."
 		}
-		if readOnly {
-			if questionnaireMissing(path) {
-				return "S9 ChangeImpact questionnaire is not prepared at " + path + "; this Stop/Idle event is read-only. The next SessionStart or PreToolUse prepares the original request DTO."
-			}
-			return "S9 ChangeImpact answer: " + path + ". This Stop/Idle event is read-only; the existing request DTO remains available for Main to complete and save."
-		}
-		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the exact Session diff, and the Contract-level reverification ID are supplied from the original sources. Complete the professional change types, per-change disposition/rationale, and evidence disposition, then save this exact request. The original CreateChangeImpact and CommitChangeImpact consumers run on save."
+		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the accepted Final batch changes, and the Contract-level reverification ID are supplied from the original sources. Complete the professional change types, per-change disposition/rationale, and evidence disposition, then save this exact request. The original CreateChangeImpact and CommitChangeImpact consumers run on save." + repairLeadPreviousQuestionnaires(path) + repairLeadAnswerHelp(root, snapshot.State, false)
 
 	case "targeted_reverification":
 		pointer := repairPointerCLI(snapshot.State)
 		blockedResume := stringValue(pointer["status"]) == "blocked" && stringValue(pointer["failure_route"]) == "blocked"
-		selections, selectionErr := repairTargetedSelections(root, snapshot.State)
+		selections, selectionErr := repairObservedTargetedSelections(root, snapshot.State)
 		if selectionErr != nil {
-			return "S9 independent TargetedReverification source is unavailable: " + selectionErr.Error()
+			return "S9 independent TargetedReverification source is unavailable: " + selectionErr.Error() + repairLeadExistingQuestionnaires(root, snapshot.State)
 		}
-		missing, missingErr := repairMissingTargetedIDs(root, repairPointerCLI(snapshot.State))
+		missing, missingErr := repairObservedMissingTargetedIDs(root, repairPointerCLI(snapshot.State))
 		if missingErr != nil {
-			return "S9 independent TargetedReverification obligations are unavailable: " + missingErr.Error()
+			return "S9 independent TargetedReverification obligations are unavailable: " + missingErr.Error() + repairLeadExistingQuestionnaires(root, snapshot.State)
 		}
 		if main {
 			if len(selections) == 0 {
 				return "S9 targeted_reverification has no current independently dispatched verifier in Runtime assignment_owners. Main must resolve the original repair dispatch; no verifier identity or answer path was guessed."
 			}
 			if err := repairTargetedRequestMappingError(selections, missing); err != nil {
-				return "S9 targeted_reverification has no current mapping from the ChangeImpact's required IDs to the dispatched verifier assignments: " + err.Error() + ". Main must reconcile the original ChangeImpact/dispatch source; no answer path was guessed."
+				return "S9 targeted_reverification has no current independently assigned verifier: " + err.Error() + ". Main must select and actually notify the independent verifier using the existing verifier division answer."
 			}
 			var b strings.Builder
 			for _, selection := range repairTargetedOutstandingSelections(selections, missing) {
@@ -110,27 +91,18 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s has no resolvable answer path: %v\n", selection.verifierOwner, selection.performingAssignmentID, pathErr)
 					continue
 				}
-				if prepare {
-					if _, _, err := prepareRepairTargetedQuestionnaire(root, snapshot.State, selection); err != nil {
-						fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s questionnaire preparation failed at %s: %v\n", selection.verifierOwner, selection.performingAssignmentID, path, err)
-						continue
-					}
-				}
-				if readOnly && questionnaireMissing(path) {
-					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: TargetedReverificationRequest is not prepared at %s; Stop/Idle is read-only. The verifier's next SessionStart or PreToolUse prepares it.\n", selection.verifierOwner, selection.performingAssignmentID, path)
+				if questionnaireMissing(path) {
+					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: TargetedReverificationRequest is not prepared at %s; Main/system must prepare this original request when the verifier responsibility starts.\n", selection.verifierOwner, selection.performingAssignmentID, path)
 					continue
 				}
-				readOnlyNote := ""
-				if readOnly {
-					readOnlyNote = " Stop/Idle is read-only."
-				}
+				readOnlyNote := repairLeadPreviousQuestionnaires(path)
 				if blockedResume {
-					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual continuity basis and replay result. The original Resume/Create/Commit flow runs on save; Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
+					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason. The original Resume/Create/Commit flow runs on save; Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
 				} else {
 					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: fill and save its TargetedReverificationRequest at %s; Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
 				}
 			}
-			return strings.TrimSpace(b.String())
+			return strings.TrimSpace(b.String()) + repairLeadAnswerHelp(root, snapshot.State, true)
 		}
 		for _, selection := range repairTargetedOutstandingSelections(selections, missing) {
 			if selection.verifierOwner != owner {
@@ -143,22 +115,14 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			if err != nil {
 				return fmt.Sprintf("S9 independent verifier %s assignment=%s has no resolvable answer path: %v", owner, selection.performingAssignmentID, err)
 			}
-			if prepare {
-				if _, _, err := prepareRepairTargetedQuestionnaire(root, snapshot.State, selection); err != nil {
-					return fmt.Sprintf("S9 TargetedReverification questionnaire preparation failed at %s: %v", path, err)
-				}
+			if questionnaireMissing(path) {
+				return "S9 independent TargetedReverification answer is not prepared at " + path + "; Main/system must prepare this original request when the verifier responsibility starts."
 			}
-			if readOnly && questionnaireMissing(path) {
-				return "S9 independent TargetedReverification answer is not prepared at " + path + "; Stop/Idle is read-only. The next verifier SessionStart or PreToolUse prepares this original request DTO."
-			}
-			readOnlyNote := ""
-			if readOnly {
-				readOnlyNote = " This Stop/Idle event is read-only."
-			}
+			readOnlyNote := repairLeadPreviousQuestionnaires(path)
 			if blockedResume {
-				return fmt.Sprintf("S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual continuity basis and replay result, and save. The original Resume/Create/Commit flow runs on save; Main does not author the independent result.%s", owner, selection.performingAssignmentID, path, readOnlyNote)
+				return fmt.Sprintf("S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason, and save. The original Resume/Create/Commit flow runs on save; Main does not author the independent result.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
 			}
-			return fmt.Sprintf("S9 independent verifier %s assignment=%s: record the actual assertion results, scope compliance, continuity evidence, verdict, and failure class in %s, then save. The request is bound to the dispatched repair and verifier assignments; the original TargetedReverification consumer checks the independent work.%s", owner, selection.performingAssignmentID, path, readOnlyNote)
+			return fmt.Sprintf("S9 independent verifier %s assignment=%s: record the actual assertion observations, results, evidence, verdict, and any non-pass reason in %s, then save. The request is bound to the dispatched repair and verifier assignments; the original TargetedReverification consumer checks the independent work.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
 		}
 		return ""
 
@@ -166,25 +130,128 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 		if !main {
 			return ""
 		}
-		if readOnly {
-			return "S9 has no remaining professional Main answer. Stop/Idle is read-only; the next Main SessionStart or PreToolUse will pass the current S9 references through the original Changeset/Handoff Runtime consumers and report the committed Handoff and S7 seed paths."
-		}
-		if !prepare {
-			return "S9 has no remaining professional Main answer. The next Main SessionStart or PreToolUse will pass the current S9 references through the original Changeset/Handoff Runtime consumers and report the committed Handoff and S7 seed paths."
-		}
-		handoffRef, handedOff, err := completeRepairHandoff(root)
-		if err != nil {
-			return "S9 automatic RepairHandoff could not complete through the original Runtime consumer: " + err.Error()
-		}
-		handoffPath, _ := absoluteQuestionnairePath(root, handoffRef.Path)
-		seedRef := repairPointerCLI(handedOff.State)["review_plan_seed_ref"]
-		seedPath, pathErr := absoluteQuestionnairePath(root, stringValue(seedRef))
-		if pathErr != nil {
-			return fmt.Sprintf("S9 RepairHandoff committed at %s. Runtime did not expose its S7 seed path: %v", handoffPath, pathErr)
-		}
-		return fmt.Sprintf("S9 RepairHandoff was committed through the original Runtime consumer at %s; the next complete S7 round is seeded from %s. No professional Main answer or human approval was inferred.", handoffPath, seedPath)
+		return "S9 has no remaining professional Main answer. Current responsibility completion must record the original Handoff and fresh S7 seed; this reminder only reads current facts."
 	}
 	return ""
+}
+
+// Help is a read-only projection of the existing DTO/source files, never an
+// answer template with professional conclusions or another submission envelope.
+func repairLeadAnswerHelp(root string, state map[string]any, targeted bool) string {
+	var b strings.Builder
+	pointer := repairPointerCLI(state)
+	b.WriteString("\nFill professional fields only; system supplies machine bindings, IDs, times and known artifacts. Examples show shape, not executed evidence or a suggested verdict.\n")
+	if targeted {
+		b.WriteString(`Targeted fields: assertion_results=[{"assertion_id":"<supplied slot>","result":"blocked","evidence_refs":["logs/actual-blocker.txt"]}]; result=pass|fail|blocked|scope_changed. Record actual observations and evidence for every necessary supplied Contract assertion; identify each unfinished observation or blocker honestly. failure_class for a non-pass result is fail_same_cause|fail_new_cause|blocked|scope_changed|stale; keep it empty for pass. Assertion result choices are pass|fail|blocked. continuity_reason and scope_compliance are optional legacy metadata, not additional required reports. Select only actual results and real evidence locations; no unsupported PASS or fabricated observation.`)
+	} else {
+		b.WriteString(`Impact fields: change_types=[requirement|design|contract|task|implementation|test|configuration|database|dependency|documentation_only]; escalation_level=assignment|workgroup|review_round|baseline; invalidated_evidence_ids, superseded_evidence_ids and retained_evidence_ids are references to actual evidence (or []). decisions is an array of complete objects. source_id identifies the actual change/source being analyzed (such as the supplied Case or changed artifact); target_id identifies its affected consumer, assertion or evidence; relation describes that dependency, not the disposition. decision is invalidate|supersede|retain|reverify. rule_id must match IM-[A-Z0-9-]+; responsibility_id is supplied by the system or null. Example shape: {"source_id":"<actual source>","target_id":"<actual affected target>","relation":"invalidates","rule_id":"IM-DEPENDENCY","decision":"reverify","responsibility_id":null,"scope":["<actual changed path>"],"rationale":"<actual dependency and disposition basis>","recovery_evidence":["test://actual-run"]}. Do not copy placeholders or invent evidence. Use an IM- rule label for the actual dependency judgment; it needs no extra registration. Cite real evidence from the supplied sources.`)
+	}
+	b.WriteString("\nActual source/evidence candidates (read their contents; a path alone is not proof):\n")
+	seen := map[string]bool{}
+	show := func(label, ref string) string {
+		if ref == "" || seen[ref] {
+			return ""
+		}
+		seen[ref] = true
+		path, err := absoluteQuestionnairePath(root, ref)
+		if err != nil {
+			fmt.Fprintf(&b, "%s: source preparation gap for %q: %v\n", label, ref, err)
+			return ""
+		}
+		fmt.Fprintf(&b, "%s: %s\n", label, path)
+		return path
+	}
+	for _, key := range []string{"path", "plan_ref", "contract_ref", "impact_ref", "result_ref"} {
+		show(key, stringValue(pointer[key]))
+	}
+	if targeted {
+		data, err := os.ReadFile(resolveRootPath(root, stringValue(pointer["contract_ref"])))
+		var contract map[string]json.RawMessage
+		if err == nil && json.Unmarshal(data, &contract) == nil {
+			for _, group := range []struct{ key, prefix string }{{"symptom_assertions", "symptom"}, {"root_invariant_assertions", "root"}, {"detection_gap_assertions", "gap"}} {
+				var questions []json.RawMessage
+				if json.Unmarshal(contract[group.key], &questions) != nil {
+					continue
+				}
+				for i, question := range questions {
+					fmt.Fprintf(&b, "Required observation %s-%d: %s. Record its actual result and evidence location; report anything not performed.\n", group.prefix, i+1, string(question))
+				}
+			}
+		}
+	}
+	boundReq := mapFieldCLI(state, "bound_req")
+	show("locked REQ", stringValue(boundReq["path"]))
+	if evidence, ok := state["evidence"].([]any); ok {
+		for _, raw := range evidence {
+			if row, ok := raw.(map[string]any); ok {
+				fmt.Fprintf(&b, "Registered evidence ID candidate: %s (status=%s)\n", stringValue(row["id"]), stringValue(row["status"]))
+				show("Registered evidence source", stringValue(row["path"]))
+			}
+		}
+	}
+	for _, ref := range repairArtifactRefs(pointer, "result_refs", "result_ref", "result_sha256") {
+		// The candidate paths are already displayed above; these are the actual
+		// evidence anchors retained by the original Result, not new registrations.
+		path, err := absoluteQuestionnairePath(root, ref.Path)
+		if err != nil {
+			continue
+		}
+		show("RepairResult evidence source", ref.Path)
+		var value any
+		if err := repairLeadIndexedSource(root, ref, &value); err != nil {
+			fmt.Fprintf(&b, "Evidence source preparation gap at %s: %v\n", path, err)
+			continue
+		}
+		repairLeadEvidenceHelp(root, &b, value)
+	}
+	contractPath, err := absoluteQuestionnairePath(root, stringValue(pointer["contract_ref"]))
+	if err != nil {
+		return b.String()
+	}
+	var contract map[string]json.RawMessage
+	if err := repairLeadIndexedSource(root, repair.ArtifactRef{Path: stringValue(pointer["contract_ref"]), SHA256: stringValue(pointer["contract_sha256"])}, &contract); err != nil {
+		fmt.Fprintf(&b, "Contract assertion preparation gap at %s: %v\n", contractPath, err)
+		return b.String()
+	}
+	for _, group := range []struct{ field, prefix string }{{"symptom_assertions", "symptom"}, {"root_invariant_assertions", "root"}, {"detection_gap_assertions", "gap"}} {
+		var assertions []json.RawMessage
+		if err := json.Unmarshal(contract[group.field], &assertions); err != nil {
+			fmt.Fprintf(&b, "Contract %s#/%s preparation gap: %v\n", contractPath, group.field, err)
+			continue
+		}
+		for index, assertion := range assertions {
+			fmt.Fprintf(&b, "%s-%d: %s#/%s/%d = %s\n", group.prefix, index+1, contractPath, group.field, index, assertion)
+		}
+	}
+	return b.String()
+}
+
+func repairLeadEvidenceHelp(root string, b *strings.Builder, value any) {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if key == "evidence_refs" {
+				if refs, ok := child.([]any); ok {
+					for _, ref := range refs {
+						if text, ok := ref.(string); ok && text != "" {
+							if !strings.Contains(text, "://") {
+								if path, err := absoluteQuestionnairePath(root, text); err == nil {
+									text = path
+								}
+							}
+							fmt.Fprintf(b, "Recorded evidence candidate: %s\n", text)
+						}
+					}
+				}
+			} else {
+				repairLeadEvidenceHelp(root, b, child)
+			}
+		}
+	case []any:
+		for _, child := range value {
+			repairLeadEvidenceHelp(root, b, child)
+		}
+	}
 }
 
 // repairLeadQuestionnairePaths returns only the deterministic paths for the
@@ -195,7 +262,7 @@ func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
 	if stringValue(lifecycle["state"]) != "bug_resolution" {
 		return nil
 	}
-	phase, err := currentRepairLeadPhase(root, state)
+	phase, err := observedRepairLeadPhase(root, state)
 	if err != nil {
 		return nil
 	}
@@ -206,11 +273,11 @@ func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
 			paths = append(paths, path)
 		}
 	case "targeted_reverification":
-		selections, err := repairTargetedSelections(root, state)
+		selections, err := repairObservedTargetedSelections(root, state)
 		if err != nil {
 			return nil
 		}
-		missing, err := repairMissingTargetedIDs(root, repairPointerCLI(state))
+		missing, err := repairObservedMissingTargetedIDs(root, repairPointerCLI(state))
 		if err != nil || repairTargetedRequestMappingError(selections, missing) != nil {
 			return nil
 		}
@@ -224,65 +291,80 @@ func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
 }
 
 func currentRepairLeadPhase(root string, state map[string]any) (string, error) {
+	return repairLeadPhase(root, state, repairMissingTargetedIDs)
+}
+
+func observedRepairLeadPhase(root string, state map[string]any) (string, error) {
+	return repairLeadPhase(root, state, repairObservedMissingTargetedIDs)
+}
+
+func repairLeadPhase(root string, state map[string]any, missingIDs func(string, map[string]any) ([]string, error)) (string, error) {
 	pointer := repairPointerCLI(state)
 	switch stringValue(pointer["status"]) {
-	case "impact_reconciliation":
+	case "impact_reconciliation", "targeted_reverification", "ready_for_full_review":
 		return stringValue(pointer["status"]), nil
-	case "targeted_reverification":
-		missing, err := repairMissingTargetedIDs(root, pointer)
-		if err != nil {
-			return "", err
-		}
-		if len(missing) == 0 {
-			return "", fmt.Errorf("Runtime status is targeted_reverification but no required reverification remains; preserve the original Runtime source for reconciliation")
-		}
-		return "targeted_reverification", nil
 	case "blocked":
-		if stringValue(pointer["failure_route"]) != "blocked" {
-			return "", nil
-		}
-		missing, err := repairMissingTargetedIDs(root, pointer)
-		if err != nil {
-			return "", err
-		}
-		if len(missing) == 0 {
-			return "", fmt.Errorf("Runtime status is blocked but no required TargetedReverification remains; preserve the original Runtime source for reconciliation")
-		}
-		return "targeted_reverification", nil
-	case "ready_for_full_review":
-		missing, err := repairMissingTargetedIDs(root, pointer)
-		if err != nil {
-			return "", err
-		}
-		if len(missing) > 0 {
+		if pointer["failure_route"] == "blocked" {
 			return "targeted_reverification", nil
 		}
-		return "ready_for_full_review", nil
 	}
-	if stringValue(mapFieldCLI(state, "lifecycle")["phase"]) == "repair_readback" {
+	if lifecycle := mapFieldCLI(state, "lifecycle"); lifecycle["phase"] == "repair_readback" {
 		return "repair_readback", nil
 	}
 	return "", nil
 }
 
 func repairMissingTargetedIDs(root string, pointer map[string]any) ([]string, error) {
-	committed := map[string]bool{}
-	for _, ref := range repairArtifactRefs(pointer, "targeted_reverification_artifacts", "", "") {
-		value, err := repair.ValidateTargetedReverification(root, ref)
-		if err != nil {
-			return nil, fmt.Errorf("read current TargetedReverification %s: %w", ref.Path, err)
-		}
-		if value.Result == "pass" && value.ScopeCompliance == "pass" {
-			committed[value.ReverificationID] = true
+	return repairTargetedMissingIDs(root, pointer, true)
+}
+
+func repairObservedMissingTargetedIDs(root string, pointer map[string]any) ([]string, error) {
+	return repairTargetedMissingIDs(root, pointer, false)
+}
+
+func repairTargetedMissingIDs(root string, pointer map[string]any, verify bool) ([]string, error) {
+	// Existing IDs are display data; completion is the recorded domain phase.
+	return stringSliceAny(pointer["required_reverification_ids"]), nil
+}
+
+// Read the actual object already named by the current index, without replaying
+// source hashes or historical qualification.
+func repairLeadIndexedSource(root string, ref repair.ArtifactRef, value any) error {
+	path, err := absoluteQuestionnairePath(root, ref.Path)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, value)
+}
+
+func repairLeadPreviousQuestionnaires(path string) string {
+	paths, _ := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(path)), "*", filepath.Base(path)))
+	var previous []string
+	for _, candidate := range paths {
+		if candidate != path {
+			previous = append(previous, candidate)
 		}
 	}
-	missing := []string{}
-	for _, id := range stringSliceAny(pointer["required_reverification_ids"]) {
-		if !committed[id] {
-			missing = append(missing, id)
-		}
+	if len(previous) == 0 {
+		return ""
 	}
-	return missing, nil
+	return " Source binding changed; previous questionnaires remain at " + strings.Join(previous, ", ") + ". Do not continue under those old bindings; use the exact current path."
+}
+
+func repairLeadExistingQuestionnaires(root string, state map[string]any) string {
+	path, err := repairLeadQuestionnairePath(root, state, "change-impact.json")
+	if err != nil {
+		return "; Main/system must restore the missing source before an exact answer path can be resolved"
+	}
+	paths, _ := filepath.Glob(filepath.Join(filepath.Dir(filepath.Dir(path)), "*", "*.json"))
+	if len(paths) == 0 {
+		return "; no questionnaire exists under the current source; Main/system owns preparation"
+	}
+	return "; preserve existing questionnaires at " + strings.Join(paths, ", ") + "; do not continue under a changed source binding"
 }
 
 func repairLeadPreparationEvent(event string) bool {
@@ -293,10 +375,56 @@ func repairLeadReadOnlyEvent(event string) bool {
 	return event == "Stop" || event == "SubagentStop" || event == "TeammateIdle" || event == "Idle"
 }
 
-func prepareRepairReadback(root string, state map[string]any) (map[string]any, error) {
+// prepareRepairEntry is called after the actual S8 approval transaction.
+func prepareRepairEntry(root, statePath, journalPath string, state map[string]any) (map[string]any, error) {
+	if stringValue(repairPointerCLI(state)["plan_ref"]) == "" {
+		prepared, err := prepareRepairReadback(root, statePath, journalPath, state)
+		if err != nil {
+			return nil, err
+		}
+		state = prepared
+	}
+	plan, err := repairDispatchPlan(root, state)
+	if err != nil {
+		return nil, err
+	}
+	builders := make([]repairDispatchChoice, 0, len(plan.Assignments))
+	verifiers := make([]repairVerifierDispatchChoice, 0, len(plan.Assignments))
+	for _, assignment := range plan.Assignments {
+		builders = append(builders, repairDispatchChoice{AssignmentID: assignment.AssignmentID})
+		verifiers = append(verifiers, repairVerifierDispatchChoice{AssignmentID: assignment.AssignmentID})
+	}
+	for name, draft := range map[string]any{"builder-dispatch.json": builders, "independent-verifier-dispatch.json": verifiers} {
+		path, err := repairLeadQuestionnairePath(root, state, name)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeRepairLeadDraft(path, draft); err != nil {
+			return nil, err
+		}
+	}
+	return state, nil
+}
+
+func repairReadbackStartupCommands(root string, state map[string]any) string {
+	runtimeID, generation, contract, err := repairReadbackContractSource(root, state)
+	if err != nil {
+		return "loop-harness runtime repair status --root " + s7CaptureShellQuote(root) + " (current approved Contract unavailable: " + err.Error() + ")"
+	}
+	suffix, err := repairReadbackIDSuffix(runtimeID, generation, contract.CaseID, contract.ContractID, contract.Ref)
+	if err != nil {
+		return err.Error()
+	}
+	commands := []string{}
+	if stringValue(repairPointerCLI(state)["path"]) == "" {
+		commands = append(commands, "loop-harness runtime repair session open --root "+s7CaptureShellQuote(root)+" --session-id repair-session-"+suffix+" --created-by Main --actor Main")
+	}
+	commands = append(commands, "loop-harness runtime repair plan compile --root "+s7CaptureShellQuote(root)+" --plan-id repair-plan-"+suffix+" --created-by Main --actor Main")
+	return strings.Join(commands, "; then ")
+}
+
+func prepareRepairReadback(root, statePath, journalPath string, state map[string]any) (map[string]any, error) {
 	pointer := repairPointerCLI(state)
-	statePath := filepath.Join(root, ".claude", "loop-state.json")
-	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	runtimeID, generation, contract, err := repairReadbackContractSource(root, state)
 	if err != nil {
 		return nil, err
@@ -382,10 +510,9 @@ func repairReadbackIDSuffix(runtimeID string, generation int, caseID, contractID
 func repairLeadQuestionnairePath(root string, state map[string]any, name string) (string, error) {
 	runtimeID := strings.TrimSpace(stringValue(state["runtime_id"]))
 	generation := integerValue(mapFieldCLI(state, "baseline")["generation"])
-	round := integerValue(mapFieldCLI(state, "review")["round"])
 	segment := dispatchSlug(runtimeID)
-	if segment == "" || generation < 1 || round < 1 || name == "" {
-		return "", fmt.Errorf("current Runtime id, baseline generation, review round, or questionnaire name is missing")
+	if segment == "" || generation < 1 || name == "" {
+		return "", fmt.Errorf("current Runtime id, baseline generation or questionnaire name is missing")
 	}
 	pointer := repairPointerCLI(state)
 	source := []string{
@@ -396,7 +523,7 @@ func repairLeadQuestionnairePath(root string, state map[string]any, name string)
 		return "", fmt.Errorf("current approved Case, RepairSession, and RepairPlan source are required to identify the S9 questionnaire")
 	}
 	sourceDigest := sha256.Sum256([]byte(strings.Join(source, "\x00")))
-	path := filepath.Join(root, ".claude", "submissions", "s9", segment, fmt.Sprintf("g%d", generation), fmt.Sprintf("r%d", round), hex.EncodeToString(sourceDigest[:]), name)
+	path := filepath.Join(root, ".claude", "submissions", "s9", segment, fmt.Sprintf("g%d", generation), hex.EncodeToString(sourceDigest[:]), name)
 	return filepath.Abs(path)
 }
 
@@ -414,17 +541,13 @@ func prepareRepairImpactQuestionnaire(root string, state map[string]any) (string
 		return "", err
 	}
 	pointer := repairPointerCLI(state)
-	sessionRef, err := repairPointerRef(pointer, "path", "sha256", "current RepairSession")
-	if err != nil {
-		return "", err
+	sessionID := stringValue(pointer["session_id"])
+	if sessionID == "" {
+		return "", fmt.Errorf("current repair responsibility has no Session")
 	}
-	session, err := repair.ValidateRepairSession(root, sessionRef)
+	changeset, err := repair.CurrentRepairResultChangeset(root, state)
 	if err != nil {
-		return "", fmt.Errorf("read current RepairSession: %w", err)
-	}
-	changed, err := repair.ComputeSessionChangeset(root, session)
-	if err != nil {
-		return "", fmt.Errorf("derive exact current Session diff: %w", err)
+		return "", fmt.Errorf("read accepted Final Result changeset: %w", err)
 	}
 	boundReq := mapFieldCLI(state, "bound_req")
 	caseID := stringValue(pointer["case_id"])
@@ -436,10 +559,10 @@ func prepareRepairImpactQuestionnaire(root string, state map[string]any) (string
 		return "", err
 	}
 	request := repair.ChangeImpactRequest{
-		ImpactID:  "impact-" + dispatchSlug(session.SessionID),
+		ImpactID:  "impact-" + dispatchSlug(sessionID),
 		RuntimeID: stringValue(state["runtime_id"]), ReqID: stringValue(boundReq["id"]),
 		BaselineGeneration: integerValue(mapFieldCLI(state, "baseline")["generation"]),
-		SourceCaseIDs:      []string{caseID}, ChangeTypes: []string{}, ChangedArtifacts: changed,
+		SourceCaseIDs:      []string{caseID}, ChangeTypes: []string{}, ChangedArtifacts: changeset.Artifacts,
 		Decisions: []repair.ImpactDecision{}, EscalationLevel: "assignment",
 		InvalidatedEvidenceIDs: []string{}, SupersededEvidenceIDs: []string{}, RetainedEvidenceIDs: []string{},
 		RequiredReverificationIDs: reverificationIDs, AnalyzedBy: "Main",
@@ -466,29 +589,27 @@ func repairImpactReverificationIDs(state map[string]any) ([]string, error) {
 }
 
 func repairTargetedSelections(root string, state map[string]any) ([]repairTargetedSelection, error) {
+	return repairTargetedSelectionsFrom(root, state, true)
+}
+
+func repairObservedTargetedSelections(root string, state map[string]any) ([]repairTargetedSelection, error) {
+	return repairTargetedSelectionsFrom(root, state, false)
+}
+
+func repairTargetedSelectionsFrom(root string, state map[string]any, verify bool) ([]repairTargetedSelection, error) {
 	pointer := repairPointerCLI(state)
-	planRef, err := repairPointerRef(pointer, "plan_ref", "plan_sha256", "current RepairPlan")
-	if err != nil {
-		return nil, err
+	planRef := repair.ArtifactRef{Path: stringValue(pointer["plan_ref"])}
+	var plan repair.RepairPlan
+	if err := repairLeadIndexedSource(root, planRef, &plan); err != nil {
+		return nil, fmt.Errorf("read current Plan: %w", err)
 	}
-	plan, err := repair.ValidateRepairPlan(root, planRef)
-	if err != nil {
-		return nil, fmt.Errorf("read current RepairPlan: %w", err)
-	}
-	impactRef, err := repairPointerRef(pointer, "impact_ref", "impact_sha256", "current ChangeImpact")
-	if err != nil {
-		return nil, err
-	}
-	impact, err := repair.ValidateChangeImpact(root, impactRef)
-	if err != nil {
-		return nil, fmt.Errorf("read current ChangeImpact: %w", err)
+	impactRef := repair.ArtifactRef{Path: stringValue(pointer["impact_ref"])}
+	var impact repair.ChangeImpact
+	if err := repairLeadIndexedSource(root, impactRef, &impact); err != nil {
+		return nil, fmt.Errorf("read current Impact: %w", err)
 	}
 	owners := stringMapCLI(pointer["assignment_owners"])
 	selections := []repairTargetedSelection{}
-	obligationIDs := impact.RequiredReverificationIDs
-	if len(obligationIDs) != 1 {
-		return nil, fmt.Errorf("current ChangeImpact has %d required reverification IDs; the original S9 contract flow maps one Contract obligation to one dispatched verifier", len(obligationIDs))
-	}
 	for _, assignment := range plan.Assignments {
 		originalOwner := owners[assignment.AssignmentID]
 		performingID := repair.VerificationAssignmentID(assignment.AssignmentID)
@@ -509,62 +630,24 @@ func repairTargetedSelections(root string, state map[string]any) ([]repairTarget
 
 func repairTargetedRequestMappingError(selections []repairTargetedSelection, missing []string) error {
 	if len(selections) == 0 {
-		return fmt.Errorf("current Runtime has no independently dispatched verifier assignment for the Contract")
-	}
-	if len(selections) != 1 {
-		return fmt.Errorf("one Contract obligation maps to %d independently dispatched verifier assignments; preserve the original dispatch source and resolve the ambiguity", len(selections))
-	}
-	if len(missing) == 0 {
-		return fmt.Errorf("Runtime has no outstanding required reverification ID")
-	}
-	if len(missing) != 1 {
-		return fmt.Errorf("current ChangeImpact has %d outstanding IDs but the original Contract flow supports one TargetedReverification; preserve the ChangeImpact source for reconciliation", len(missing))
-	}
-	selection := selections[0]
-	if selection.repairOwner == "" || selection.verifierOwner == "" {
-		return fmt.Errorf("required ID %s maps to RepairPlan assignment %s, but its original owner or independent verifier is not registered in Runtime assignment_owners", missing[0], selection.originalAssignmentID)
-	}
-	if selection.verifierOwner == selection.repairOwner {
-		return fmt.Errorf("required ID %s maps to assignment %s whose verifier owner is the repair owner; preserve the original independent-dispatch source", missing[0], selection.originalAssignmentID)
+		return fmt.Errorf("Main must select and actually notify an independent verifier in the supplied verifier division questionnaire")
 	}
 	return nil
 }
 
 func repairTargetedOutstandingSelections(selections []repairTargetedSelection, missing []string) []repairTargetedSelection {
-	if len(selections) != 1 || len(missing) != 1 {
-		return nil
-	}
 	return selections
 }
 
 func repairTargetedIDForSelection(selection repairTargetedSelection, selections []repairTargetedSelection, missing []string) (string, error) {
-	if len(missing) == 1 && len(selections) == 1 && selections[0].originalAssignmentID == selection.originalAssignmentID {
-		return missing[0], nil
-	}
-	return "", fmt.Errorf("assignment %s has no unique outstanding ChangeImpact obligation", selection.originalAssignmentID)
+	// Each existing verification responsibility owns its own report artifact.
+	digest := sha256.Sum256([]byte(selection.impact.ImpactID + "\x00" + selection.performingAssignmentID))
+	return "reverify-" + hex.EncodeToString(digest[:]), nil
 }
 
 func prepareRepairTargetedQuestionnaire(root string, state map[string]any, selection repairTargetedSelection) (string, repair.TargetedReverificationRequest, error) {
 	path, err := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID)
 	if err != nil {
-		return "", repair.TargetedReverificationRequest{}, err
-	}
-	selections, err := repairTargetedSelections(root, state)
-	if err != nil {
-		return "", repair.TargetedReverificationRequest{}, err
-	}
-	missing, err := repairMissingTargetedIDs(root, repairPointerCLI(state))
-	if err != nil {
-		return "", repair.TargetedReverificationRequest{}, err
-	}
-	if err := repairTargetedRequestMappingError(selections, missing); err != nil {
-		return "", repair.TargetedReverificationRequest{}, err
-	}
-	planRef, err := repairPointerRef(repairPointerCLI(state), "plan_ref", "plan_sha256", "current RepairPlan")
-	if err != nil {
-		return "", repair.TargetedReverificationRequest{}, err
-	}
-	if _, err := repair.ValidateRepairPlan(root, planRef); err != nil {
 		return "", repair.TargetedReverificationRequest{}, err
 	}
 	assertions, err := repairContractAssertionResults(root, repairPointerCLI(state))
@@ -574,7 +657,7 @@ func prepareRepairTargetedQuestionnaire(root string, state map[string]any, selec
 	if len(assertions) == 0 {
 		return "", repair.TargetedReverificationRequest{}, fmt.Errorf("current approved Contract has no assertion surface")
 	}
-	reverificationID, err := repairTargetedIDForSelection(selection, selections, missing)
+	reverificationID, err := repairTargetedIDForSelection(selection, nil, nil)
 	if err != nil {
 		return "", repair.TargetedReverificationRequest{}, err
 	}
@@ -585,22 +668,24 @@ func prepareRepairTargetedQuestionnaire(root string, state map[string]any, selec
 		OriginalAssignmentID: selection.originalAssignmentID, PerformingAssignmentID: selection.performingAssignmentID,
 		ImpactID: selection.impact.ImpactID, AssertionResults: assertions,
 	}
-	if err := writeRepairLeadDraft(path, request); err != nil {
+	draftBytes, err := json.Marshal(request)
+	if err != nil {
+		return "", repair.TargetedReverificationRequest{}, err
+	}
+	var draft map[string]any
+	if err := json.Unmarshal(draftBytes, &draft); err != nil {
+		return "", repair.TargetedReverificationRequest{}, err
+	}
+	delete(draft, "continuity_reason")
+	delete(draft, "scope_compliance")
+	if err := writeRepairLeadDraft(path, draft); err != nil {
 		return "", repair.TargetedReverificationRequest{}, err
 	}
 	return path, request, nil
 }
 
 func repairContractAssertionResults(root string, pointer map[string]any) ([]repair.AssertionResult, error) {
-	contractRef, err := repairPointerRef(pointer, "contract_ref", "contract_sha256", "current approved Contract")
-	if err != nil {
-		return nil, err
-	}
-	contract, err := repair.ValidateApprovedContractRef(root, repair.ContractRef{Path: contractRef.Path, SHA256: contractRef.SHA256})
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(contract.Ref.Path)))
+	data, err := os.ReadFile(resolveRootPath(root, stringValue(pointer["contract_ref"])))
 	if err != nil {
 		return nil, err
 	}
@@ -628,7 +713,11 @@ func repairContractAssertionResults(root string, pointer map[string]any) ([]repa
 func repairHandoffRequestFromRuntime(root string, state map[string]any) (repair.HandoffRequest, error) {
 	pointer := repairPointerCLI(state)
 	ref := func(pathKey, shaKey, label string) (repair.ArtifactRef, error) {
-		return repairPointerRef(pointer, pathKey, shaKey, label)
+		ref := repair.ArtifactRef{Path: stringValue(pointer[pathKey]), SHA256: stringValue(pointer[shaKey])}
+		if ref.Path == "" {
+			return ref, fmt.Errorf("%s has no recorded path", label)
+		}
+		return ref, nil
 	}
 	session, err := ref("path", "sha256", "current RepairSession")
 	if err != nil {
@@ -654,13 +743,9 @@ func repairHandoffRequestFromRuntime(root string, state map[string]any) (repair.
 	if len(results) == 0 {
 		return repair.HandoffRequest{}, fmt.Errorf("current Runtime has no committed TargetedReverification artifact")
 	}
-	sessionDocument, err := repair.ValidateRepairSession(root, session)
+	changeset, err := repair.CurrentRepairResultChangeset(root, state)
 	if err != nil {
-		return repair.HandoffRequest{}, fmt.Errorf("read current RepairSession: %w", err)
-	}
-	changeset, err := repair.ComputeSessionChangesetRecord(root, sessionDocument)
-	if err != nil {
-		return repair.HandoffRequest{}, fmt.Errorf("derive current Session Changeset: %w", err)
+		return repair.HandoffRequest{}, fmt.Errorf("read accepted Final Result Changeset: %w", err)
 	}
 	changesetRef, err := persistRepairChangeset(root, changeset)
 	if err != nil {
@@ -687,8 +772,9 @@ func persistRepairChangeset(root string, changeset repair.Changeset) (repair.Art
 	if readErr != nil {
 		return repair.ArtifactRef{}, err
 	}
-	existing, validateErr := repair.ValidateChangeset(root, existingRef)
-	if validateErr != nil || existing.Digest != changeset.Digest || existing.SessionID != changeset.SessionID {
+	data, readErr := os.ReadFile(resolveRootPath(root, existingRef.Path))
+	var existing repair.Changeset
+	if readErr != nil || json.Unmarshal(data, &existing) != nil || existing.Digest != changeset.Digest || existing.SessionID != changeset.SessionID {
 		return repair.ArtifactRef{}, err
 	}
 	return existingRef, nil
@@ -703,24 +789,16 @@ func completeRepairHandoff(root string) (repair.ArtifactRef, runtime.Snapshot, e
 	}
 	pointer := repairPointerCLI(snapshot.State)
 	if registered := stringValue(pointer["handoff_ref"]); registered != "" {
-		ref, err := repairPointerRef(pointer, "handoff_ref", "handoff_sha256", "registered RepairHandoff")
-		if err != nil {
-			return repair.ArtifactRef{}, snapshot, err
-		}
-		if _, err := repair.ValidateRepairHandoff(root, ref); err != nil {
-			return repair.ArtifactRef{}, snapshot, fmt.Errorf("read registered RepairHandoff: %w", err)
+		ref := repair.ArtifactRef{Path: registered, SHA256: stringValue(pointer["handoff_sha256"])}
+		data, readErr := os.ReadFile(resolveRootPath(root, registered))
+		var handoff repair.RepairHandoff
+		if readErr != nil || json.Unmarshal(data, &handoff) != nil {
+			return repair.ArtifactRef{}, snapshot, fmt.Errorf("read recorded Handoff: %v", readErr)
 		}
 		return ref, snapshot, nil
 	}
 	if stringValue(pointer["status"]) != "ready_for_full_review" {
 		return repair.ArtifactRef{}, snapshot, fmt.Errorf("current repair pointer status is %q, want ready_for_full_review", stringValue(pointer["status"]))
-	}
-	missing, err := repairMissingTargetedIDs(root, pointer)
-	if err != nil {
-		return repair.ArtifactRef{}, snapshot, err
-	}
-	if len(missing) > 0 {
-		return repair.ArtifactRef{}, snapshot, fmt.Errorf("Runtime still has outstanding TargetedReverification IDs: %s", strings.Join(missing, ", "))
 	}
 	request, err := repairHandoffRequestFromRuntime(root, snapshot.State)
 	if err != nil {
@@ -736,9 +814,12 @@ func completeRepairHandoff(root string) (repair.ArtifactRef, runtime.Snapshot, e
 		if err != nil {
 			return repair.ArtifactRef{}, snapshot, err
 		}
-		handoff, err = repair.ValidateRepairHandoff(root, ref)
-		if err != nil {
-			return repair.ArtifactRef{}, snapshot, fmt.Errorf("read previously created RepairHandoff: %w", err)
+		data, readErr := os.ReadFile(resolveRootPath(root, ref.Path))
+		if readErr != nil {
+			return repair.ArtifactRef{}, snapshot, readErr
+		}
+		if err := json.Unmarshal(data, &handoff); err != nil {
+			return repair.ArtifactRef{}, snapshot, err
 		}
 	}
 	if handoff.HandoffID != request.HandoffID {
@@ -800,6 +881,11 @@ func runSavedRepairLeadQuestionnaire(root string, request policy.Input, stdout, 
 	pointer := repairPointerCLI(snapshot.State)
 	if expected, pathErr := repairLeadQuestionnairePath(root, snapshot.State, "change-impact.json"); pathErr == nil && samePath(path, expected) {
 		if stringValue(pointer["impact_ref"]) != "" {
+			ref := repair.ArtifactRef{Path: stringValue(pointer["impact_ref"]), SHA256: stringValue(pointer["impact_sha256"])}
+			err := repairLeadImpactReplay(root, path, ref)
+			if err != nil {
+				return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact replay conflict: "+err.Error()+"; preserve the registered artifact and use the original Main recovery. Runtime was not changed.")
+			}
 			return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact at "+stringValue(pointer["impact_ref"])+" is already registered. Replay did not write Runtime or register it again; wait for the independent verifier.")
 		}
 		if stringValue(pointer["status"]) == "impact_reconciliation" {
@@ -813,11 +899,13 @@ func runSavedRepairLeadQuestionnaire(root string, request policy.Input, stdout, 
 				continue
 			}
 			if registered, ok := registeredTargetedForSelection(root, pointer, selection); ok {
+				if err := repairLeadTargetedReplay(root, path, registered); err != nil {
+					return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification replay conflict: "+err.Error()+"; preserve the registered artifact and use the original recovery. Runtime was not changed.")
+				}
 				return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification artifact "+registered.Path+" is already registered. Replay did not write Runtime again.")
 			}
 			phase, phaseErr := currentRepairLeadPhase(root, snapshot.State)
-			missing, missingErr := repairMissingTargetedIDs(root, pointer)
-			if phaseErr != nil || phase != "targeted_reverification" || missingErr != nil || repairTargetedRequestMappingError(selections, missing) != nil {
+			if phaseErr != nil || phase != "targeted_reverification" {
 				return false, 0
 			}
 			return saveRepairTargetedQuestionnaire(root, snapshot, path, selection, stdout)
@@ -826,10 +914,90 @@ func runSavedRepairLeadQuestionnaire(root string, request policy.Input, stdout, 
 	return false, 0
 }
 
+// Compare only author-owned content against the original immutable artifact.
+// IDs, source bindings, timestamps and computed diff remain machine-owned.
+func repairLeadImpactReplay(root, path string, ref repair.ArtifactRef) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var answer repair.ChangeImpactRequest
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return err
+	}
+	registeredBytes, err := os.ReadFile(resolveRootPath(root, ref.Path))
+	if err != nil {
+		return err
+	}
+	var registered repair.ChangeImpact
+	if err := json.Unmarshal(registeredBytes, &registered); err != nil {
+		return err
+	}
+	professional := func(types []string, decisions []repair.ImpactDecision, escalation string, invalid, superseded, retained []string) any {
+		if escalation == "" {
+			escalation = "assignment" // Original CreateChangeImpact default.
+		}
+		return []any{repairLeadStringSet(types), decisions, escalation, repairLeadStringSet(invalid), repairLeadStringSet(superseded), repairLeadStringSet(retained)}
+	}
+	return repairLeadCompareProfessional(
+		professional(answer.ChangeTypes, answer.Decisions, answer.EscalationLevel, answer.InvalidatedEvidenceIDs, answer.SupersededEvidenceIDs, answer.RetainedEvidenceIDs),
+		professional(registered.ChangeTypes, registered.Decisions, registered.EscalationLevel, registered.InvalidatedEvidenceIDs, registered.SupersededEvidenceIDs, registered.RetainedEvidenceIDs))
+}
+
+func repairLeadTargetedReplay(root, path string, ref repair.ArtifactRef) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var answer repair.TargetedReverificationRequest
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return err
+	}
+	var registered repair.TargetedReverification
+	err = repairLeadIndexedSource(root, ref, &registered)
+	if err != nil {
+		return err
+	}
+	return repairLeadCompareProfessional(
+		[]any{answer.ContinuityReason, answer.AssertionResults, answer.ScopeCompliance, answer.Result, answer.FailureClass},
+		[]any{registered.ContinuityReason, registered.AssertionResults, registered.ScopeCompliance, registered.Result, registered.FailureClass})
+}
+
+func repairLeadCompareProfessional(answer, registered any) error {
+	left, err := json.Marshal(answer)
+	if err != nil {
+		return err
+	}
+	right, err := json.Marshal(registered)
+	if err != nil {
+		return err
+	}
+	if string(left) != string(right) {
+		return errors.New("saved professional content differs from the accepted content")
+	}
+	return nil
+}
+
+func repairLeadStringSet(values []string) []string {
+	set := map[string]bool{}
+	for _, value := range values {
+		if value != "" {
+			set[value] = true
+		}
+	}
+	result := make([]string, 0, len(set))
+	for value := range set {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func registeredTargetedForSelection(root string, pointer map[string]any, selection repairTargetedSelection) (repair.ArtifactRef, bool) {
 	for _, ref := range repairArtifactRefs(pointer, "targeted_reverification_artifacts", "", "") {
-		value, err := repair.ValidateTargetedReverification(root, ref)
-		if err == nil && value.Result == "pass" && value.ScopeCompliance == "pass" && value.ImpactID == selection.impact.ImpactID && value.OriginalAssignmentID == selection.originalAssignmentID && value.PerformingAssignmentID == selection.performingAssignmentID {
+		var value repair.TargetedReverification
+		err := repairLeadIndexedSource(root, ref, &value)
+		if err == nil && value.Result == "pass" && value.ImpactID == selection.impact.ImpactID && value.OriginalAssignmentID == selection.originalAssignmentID && value.PerformingAssignmentID == selection.performingAssignmentID {
 			return ref, true
 		}
 	}
@@ -849,30 +1017,26 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer at "+path+" is incomplete: record actual change types and a professional disposition/rationale for each changed surface before saving again.")
 	}
 	pointer := repairPointerCLI(snapshot.State)
-	sessionRef, err := repairPointerRef(pointer, "path", "sha256", "current RepairSession")
-	if err != nil {
-		return true, repairLeadFeedback(stdout, path, err.Error())
+	sessionID := stringValue(pointer["session_id"])
+	if sessionID == "" {
+		return true, repairLeadFeedback(stdout, path, "current repair responsibility has no Session")
 	}
-	session, err := repair.ValidateRepairSession(root, sessionRef)
+	changeset, err := repair.CurrentRepairResultChangeset(root, snapshot.State)
 	if err != nil {
-		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer could not read the current Session: "+err.Error())
-	}
-	changed, err := repair.ComputeSessionChangeset(root, session)
-	if err != nil {
-		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer could not derive the current Session diff: "+err.Error())
+		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer could not read the accepted Final Result changeset: "+err.Error())
 	}
 	reverificationIDs, err := repairImpactReverificationIDs(snapshot.State)
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer could not derive the Contract reverification obligation from the current RepairSession: "+err.Error())
 	}
 	boundReq := mapFieldCLI(snapshot.State, "bound_req")
-	answer.ImpactID = "impact-" + dispatchSlug(session.SessionID)
+	answer.ImpactID = "impact-" + dispatchSlug(sessionID)
 	answer.RuntimeID = stringValue(snapshot.State["runtime_id"])
 	answer.ReqID = stringValue(boundReq["id"])
 	answer.BaselineGeneration = integerValue(mapFieldCLI(snapshot.State, "baseline")["generation"])
 	answer.SourceBugIDs = []string{}
 	answer.SourceCaseIDs = []string{stringValue(pointer["case_id"])}
-	answer.ChangedArtifacts = changed
+	answer.ChangedArtifacts = changeset.Artifacts
 	if len(answer.RequiredReverificationIDs) == 0 {
 		answer.RequiredReverificationIDs = reverificationIDs
 	}
@@ -887,14 +1051,33 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact request at %s did not create the original artifact: %v", path, err))
 	}
-	_, err = repair.CommitChangeImpact(root, filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl"), repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: -1, Actor: "Main"}, Impact: ref})
+	committed, err := repair.CommitChangeImpact(root, filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl"), repair.CommitImpactRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: -1, Actor: "Main"}, Impact: ref})
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact artifact %s was created but the original Runtime consumer did not commit it: %v. Preserve this immutable artifact and follow the named repair source.", ref.Path, err))
 	}
-	return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact at %s was committed through the original Runtime Writer. The independent verifier owns its separate TargetedReverification answer.", ref.Path))
+	selections, err := repairTargetedSelections(root, committed.State)
+	if err != nil {
+		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact committed. Current independent verifier responsibility: "+err.Error())
+	}
+	var next strings.Builder
+	if len(selections) == 0 {
+		for _, division := range repairVerifierDispatchPaths(root, committed.State) {
+			next.WriteString(" Main must select an independent verifier in " + division + ".")
+		}
+	}
+	for _, selection := range selections {
+		answerPath, _, err := prepareRepairTargetedQuestionnaire(root, committed.State, selection)
+		if err != nil {
+			return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact committed; independent Targeted questionnaire preparation: "+err.Error())
+		}
+		next.WriteString(" Independent verifier " + selection.verifierOwner + " must complete and save " + answerPath + ".")
+	}
+	return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact at %s was committed through the original Runtime Writer.%s", ref.Path, next.String()))
 }
 
 func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, stdout io.Writer) (bool, int) {
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s could not be read: %v", path, err))
@@ -907,16 +1090,14 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 	blockedResume := stringValue(pointer["status"]) == "blocked" && stringValue(pointer["failure_route"]) == "blocked"
 	if blockedResume && answer.Result == "blocked" {
 		if registered, ok := registeredBlockedTargetedForSelection(root, pointer, selection); ok {
-			return true, repairLeadFeedback(stdout, path, "S9 environmental blocker is already recorded by "+registered.Path+". Resolve it, then update the same TargetedReverification questionnaire with the actual continuity basis and replay result; Runtime was not changed.")
+			if err := repairLeadTargetedReplay(root, path, registered); err != nil {
+				return true, repairLeadFeedback(stdout, path, "Targeted same-attempt replay conflict: "+err.Error())
+			}
+			return true, repairLeadFeedback(stdout, path, "S9 environmental blocker is already recorded by "+registered.Path+". Resolve it, then update the same TargetedReverification questionnaire with the actual assertion observations, results, evidence and any unfinished-work reason; Runtime was not changed.")
 		}
 	}
-	if strings.TrimSpace(answer.ContinuityReason) == "" || strings.TrimSpace(answer.ScopeCompliance) == "" || strings.TrimSpace(answer.Result) == "" {
-		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification answer at "+path+" must record the actual evidence-anchored continuity reason, scope result, and independent verdict before save.")
-	}
-	for _, assertion := range answer.AssertionResults {
-		if strings.TrimSpace(assertion.Result) == "" || len(assertion.EvidenceRefs) == 0 {
-			return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s is missing the actual result/evidence for assertion %s.", path, assertion.AssertionID))
-		}
+	if strings.TrimSpace(answer.Result) == "" {
+		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification answer at "+path+" must record the actual independent verdict and assertion observations before save.")
 	}
 	answer.RuntimeID = stringValue(snapshot.State["runtime_id"])
 	answer.CaseID = stringValue(pointer["case_id"])
@@ -925,24 +1106,14 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 	answer.OriginalAssignmentID = selection.originalAssignmentID
 	answer.PerformingAssignmentID = selection.performingAssignmentID
 	answer.ImpactID = selection.impact.ImpactID
-	selections, selectionErr := repairTargetedSelections(root, snapshot.State)
-	if selectionErr != nil {
-		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification source could not be refreshed: "+selectionErr.Error())
-	}
-	missing, missingErr := repairMissingTargetedIDs(root, repairPointerCLI(snapshot.State))
-	if missingErr != nil {
-		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification obligation could not be refreshed: "+missingErr.Error())
-	}
-	if mappingErr := repairTargetedRequestMappingError(selections, missing); mappingErr != nil {
-		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification at %s was not submitted: %v. Main must reconcile the original Impact/dispatch source; this verifier must not guess which obligation to claim.", path, mappingErr))
-	}
-	answer.ReverificationID, err = repairTargetedIDForSelection(selection, selections, missing)
+	answer.ReverificationID, err = repairTargetedIDForSelection(selection, nil, nil)
 	if err != nil {
-		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification at %s was not submitted: %v. Preserve the original ChangeImpact/Plan source.", path, err))
+		return true, repairLeadFeedback(stdout, path, err.Error())
 	}
 	if blockedResume {
 		if blockedRef, ok := registeredBlockedTargetedForSelection(root, pointer, selection); ok {
-			blockedValue, validateErr := repair.ValidateTargetedReverification(root, blockedRef)
+			var blockedValue repair.TargetedReverification
+			validateErr := repairLeadIndexedSource(root, blockedRef, &blockedValue)
 			if validateErr == nil {
 				blockedAt, parseErr := time.Parse(time.RFC3339Nano, blockedValue.PerformedAt)
 				if parseErr == nil && (answer.PerformedAt.IsZero() || answer.PerformedAt.Equal(blockedAt)) {
@@ -957,8 +1128,6 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 	if err := persistRepairLeadQuestionnaire(path, answer); err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s could not persist its original DTO: %v", path, err))
 	}
-	statePath := filepath.Join(root, ".claude", "loop-state.json")
-	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	currentSnapshot := snapshot
 	currentPointer := repairPointerCLI(currentSnapshot.State)
 	if blockedResume {
@@ -987,17 +1156,31 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 	if createErr != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification request at %s did not create the original artifact: %v", path, createErr))
 	}
-	_, err = repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner}, Reverification: ref})
+	committed, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner}, Reverification: ref})
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 independent TargetedReverification %s at %s was created but original Runtime consumer did not commit it: %v. Preserve its immutable source and follow the specific consumer feedback.", value.ReverificationID, ref.Path, err))
 	}
-	return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 independent TargetedReverification %s at %s was committed through the original Runtime Writer.", value.ReverificationID, ref.Path))
+	message := fmt.Sprintf("S9 independent TargetedReverification %s at %s was committed through the original Runtime Writer.", value.ReverificationID, ref.Path)
+	if stringValue(repairPointerCLI(committed.State)["status"]) == "ready_for_full_review" {
+		handoffRef, handedOff, err := completeRepairHandoff(root)
+		if err != nil {
+			return true, repairLeadFeedback(stdout, path, message+" Original Handoff remains incomplete: "+err.Error())
+		}
+		handoffPath := resolveRootPath(root, handoffRef.Path)
+		seedRef := stringValue(repairPointerCLI(handedOff.State)["review_plan_seed_ref"])
+		if seedRef == "" {
+			return true, repairLeadFeedback(stdout, path, message+" Handoff recorded at "+handoffPath+"; current Runtime is missing its fresh S7 seed reference.")
+		}
+		message += " Handoff recorded at " + handoffPath + "; fresh S7 seed: " + resolveRootPath(root, seedRef) + "."
+	}
+	return true, repairLeadFeedback(stdout, path, message)
 }
 
 func registeredBlockedTargetedForSelection(root string, pointer map[string]any, selection repairTargetedSelection) (repair.ArtifactRef, bool) {
 	var latest repair.ArtifactRef
 	for _, ref := range repairArtifactRefs(pointer, "targeted_reverification_artifacts", "", "") {
-		value, err := repair.ValidateTargetedReverification(root, ref)
+		var value repair.TargetedReverification
+		err := repairLeadIndexedSource(root, ref, &value)
 		if err == nil && value.Result == "blocked" && value.FailureClass == "blocked" && value.ImpactID == selection.impact.ImpactID && value.OriginalAssignmentID == selection.originalAssignmentID && value.PerformingAssignmentID == selection.performingAssignmentID {
 			latest = ref
 		}

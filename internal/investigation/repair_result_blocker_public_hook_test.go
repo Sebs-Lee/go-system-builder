@@ -15,13 +15,19 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // This exercises the public S9 PostToolUse receiver and Stop projection for a
 // complete typed non-pass answer. The authored answer and mismatched Hook
 // metadata are mechanical fixture facts; this is not a model or live-host acceptance.
 func TestS9RepairResultBlockerPublicHookReceiptAndStop(t *testing.T) {
-	fixture, owner, packet, execution, workerRoot, answerBytes, issued := prepareWorkingS9RepairResultPacket(t)
+	fixture, owner, packet, execution, workerRoot, answerBytes, issued := prepareS9RepairResultPacketWithPlanActivity(t, false)
+	projection, err := workstate.AgentProjection(agentLifecycleRow(issued.State, owner.agentID), fmt.Sprint(issued.State["schema_version"]))
+	if err != nil || projection.Status != workstate.Active || projection.Activity == "working" {
+		t.Fatalf("normal S9 blocker author must be active without generic Begin: projection=%+v err=%v", projection, err)
+	}
+	t.Log("normal Plan save and workspace prepare supplied Result; active author has no generic working prerequisite")
 
 	// All original non-pass verdicts remain complete professional answers. The
 	// receiver below accepts only the blocked answer without rewriting its verdict.
@@ -71,6 +77,31 @@ func TestS9RepairResultBlockerPublicHookReceiptAndStop(t *testing.T) {
 	}
 
 	acceptedState, acceptedJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
+	resolutionRef, err := workpacket.RepairResultResolutionAuthoringPath(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolutionPath := filepath.Join(fixture.root, filepath.FromSlash(resolutionRef))
+	if !strings.Contains(accepted.NextAction, resolutionPath) {
+		t.Fatalf("accepted blocker omitted exact Main resolution: %+v", accepted)
+	}
+	// Re-entering through the public read-only receipt retains the same
+	// path without republishing a missing draft or accepting anything again.
+	if err := os.Remove(resolutionPath); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := submission.NewReadOnly(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentReceipt, err := reader.RepairResultReceipt(owner.agentID, packet.ID)
+	if err != nil || !strings.Contains(currentReceipt.NextAction, resolutionPath) || len(currentReceipt.WaitingOn) != 1 || currentReceipt.WaitingOn[0].Ref != resolutionPath {
+		t.Fatalf("receipt re-entry lost Main resolution: %+v err=%v", currentReceipt, err)
+	}
+	if _, err := os.Stat(resolutionPath); !os.IsNotExist(err) {
+		t.Fatalf("receipt projection published a draft: %v", err)
+	}
+	assertS9RuntimeBytesUnchanged(t, fixture, acceptedState, acceptedJournal, "blocker receipt pure path projection")
 	_, replayedJSON := runS9RepairResultPostToolUseWithRaw(t, fixture.root, owner.agentID, workerRoot, execution.PlatformSessionID, packet.AnswerPath)
 	if !bytes.Equal(acceptedJSON, replayedJSON) {
 		t.Fatalf("exact public S9 blocker replay changed its original receipt:\nfirst: %s\nreplay: %s", acceptedJSON, replayedJSON)
@@ -96,6 +127,10 @@ func TestS9RepairResultBlockerPublicHookReceiptAndStop(t *testing.T) {
 		t.Fatalf("changed S9 blocker answer replay was not refused: %s", changedJSON)
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, acceptedState, acceptedJournal, "changed S9 blocker answer replay")
+	historical, err := reader.RepairResultReceipt(owner.agentID, packet.ID)
+	if err != nil || !historical.Accepted || historical.WorkComplete || !strings.Contains(historical.NextAction, "历史接收") || strings.Contains(historical.NextAction, "本次执行可结束") {
+		t.Fatalf("historical blocker receipt claimed current completion: %+v err=%v", historical, err)
+	}
 	if decision, handled := hook.StopIdleDecision(fixture.root, policy.Input{
 		Event: "SubagentStop", AgentID: owner.agentID, CWD: workerRoot, SessionID: execution.PlatformSessionID,
 	}); !handled || decision.Decision != "deny" {

@@ -197,9 +197,6 @@
         ]
       },
       "then": {
-        "required": [
-          "submission_key"
-        ],
         "properties": {
           "packet_id": {
             "minLength": 1
@@ -632,7 +629,6 @@
         "required": [
           "accepted",
           "work_complete",
-          "submission_key",
           "domain_refs",
           "consumer_owner",
           "consumer_pending",
@@ -700,7 +696,6 @@
         "required": [
           "accepted",
           "work_complete",
-          "submission_key",
           "domain_refs",
           "consumer_owner",
           "consumer_pending",

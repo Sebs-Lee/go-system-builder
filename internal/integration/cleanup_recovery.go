@@ -200,8 +200,9 @@ func deferCleanup(store *CheckpointStore, path string, current, next Checkpoint,
 	return Result{Checkpoint: written}, fmt.Errorf("%w: %v", ErrCleanupPending, cause)
 }
 
-// Recover scope only from a recorded, two-parent non-squash merge still in
-// the target history. This does not restore PASS: callers rerun the checks.
+// Recover scope from the recorded target/source facts. Changed deliveries
+// retain their two-parent merge; no-change deliveries retain the existing Main
+// HEAD. This does not restore PASS: callers rerun the checks.
 func RecoveryBaseForCheckpoint(ctx context.Context, root string, cp Checkpoint) (string, error) {
 	if cp.MergeCommit == "" || cp.SourceHead == "" || cp.TargetBranch == "" {
 		return "", fmt.Errorf("merged recovery requires recorded merge/source/target")
@@ -212,6 +213,18 @@ func RecoveryBaseForCheckpoint(ctx context.Context, root string, cp Checkpoint) 
 	}
 	if _, err = defaultRunner.Run(ctx, root, "merge-base", "--is-ancestor", cp.MergeCommit, target); err != nil {
 		return "", fmt.Errorf("recorded merge is not in target history: %w", err)
+	}
+	// A no-change professional delivery records the existing target HEAD,
+	// not a two-parent merge. Its original source/base range must be empty;
+	// canonical revision recovery continues through its existing merge path.
+	if cp.CanonicalMainFacts == nil && cp.SourceHead == cp.MergeBase && cp.MergeCommit == cp.TargetHead && cp.ChangedPathsSHA256 != "" && len(cp.ChangedPaths) == 0 {
+		paths, sha, err := canonicalGitChangedPaths(ctx, root, cp.MergeBase, cp.SourceHead)
+		if err != nil {
+			return "", err
+		}
+		if len(paths) == 0 && sha == cp.ChangedPathsSHA256 {
+			return cp.MergeBase, nil
+		}
 	}
 	out, err := defaultRunner.Run(ctx, root, "rev-list", "--parents", "-n", "1", cp.MergeCommit)
 	if err != nil {

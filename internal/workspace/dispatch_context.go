@@ -239,7 +239,11 @@ func (b *ExecutionRegistry) freezeDispatchContext(e Execution, d Dispatch, p *wo
 	if err := conventions.ValidateInputs(e.Inputs); err != nil {
 		return e, err
 	}
-	domainQuestionnaire := domainQuestionnaireOwnsProgress(e, d)
+	_, s9, err := b.s9AuthoringState()
+	if err != nil {
+		return e, err
+	}
+	domainQuestionnaire := s9 || domainQuestionnaireOwnsProgress(e, d)
 	c := DispatchContext{CheckProfiles: e.CheckProfiles, WorkerChecks: copyWorkerChecks(e.WorkerChecks), Conventions: conventions, Version: "1.0.0", RuntimeID: e.RuntimeID, BaselineGeneration: e.BaselineGeneration, ExecutionGeneration: e.Generation, Dispatch: d, ProductWritePaths: append([]string{}, e.WritePaths...), RequiredChecks: append([]string{}, e.Checks...), FrozenInputs: inputs, Selection: selection}
 	if !domainQuestionnaire && (d.DispatchMode == "plan_checkpoint" || d.DispatchMode == "plan_approval_required") {
 		c.PlanPath = PlanDraftPath
@@ -278,12 +282,17 @@ func (b *ExecutionRegistry) freezeDispatchContext(e Execution, d Dispatch, p *wo
 		c.AnswerPath = AnswerDraftPath
 		c.Instruction += " For S5, Read work_packet_ref and its authority-relative subjects below .claude/inputs. Fill only answer.conclusion/findings at the exact answer_path and save it; Main owns peer work, control followup and human decisions. An ordinary plan_checkpoint review has no separate generic PLAN_REPORT or activation step. An explicit plan_approval_required assignment still waits for its original approval."
 	}
+	if s9 {
+		c.Instruction = "Read the current S9 professional questionnaire and supplied actual sources. Personally save PlanReport before work and RepairResult after implementation or no-change testing. Main supplies missing preparation and receives actual Git/check results; no generic plan, activation or completion proof is required."
+	}
 	contextAt := time.Now().UTC().Format(time.RFC3339Nano)
 	planned := append([]string{}, e.WritePaths...)
 	if p != nil {
 		planned = []string{p.AnswerPath}
 	}
-	c.PlanDraft, c.PlanQuestions = workerPlanDraft(e, d, e.RuntimeID, contextAt, planned)
+	if !s9 {
+		c.PlanDraft, c.PlanQuestions = workerPlanDraft(e, d, e.RuntimeID, contextAt, planned)
+	}
 	c.ResultDraft, c.ResultQuestions = agentcontext.ResultTemplate(d, e.RuntimeID, contextAt)
 	if c.ResultDraft != nil {
 		c.ResultPath = ResultDraftPath

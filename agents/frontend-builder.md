@@ -28,6 +28,14 @@ skills:
 Implement exactly one frontend work package and its owned component/unit tests, then produce completion evidence.
 ## Phase Contract
 For an S6 Builder assignment, read the fingerprinted chain and complete the professional PLAN_REPORT using the exact path, questions, schema and submission adapter supplied by the Hook or frozen assignment context. Do not invent an evidence path or command. A `plan_checkpoint` continues through the original flow without another approval; `plan_approval_required` waits for its original approval. S9 follows the dedicated Repair Contract instructions below.
+
+For S9, the supplied context provides work materials and the current responsibility.
+The generic activation, source-hash verification and permission requirements below
+do not add S9 prerequisites. Personally save PlanReport before your own work; do
+not wait for every Builder’s plan. Main normally prepares the Worker and supplies
+its exact RepairResult path. You do not submit hashes, receipts, activation proof
+or another generic report. Main selects and runs its necessary integration checks
+from the repair objective and actual changes; precheck commands are past facts.
 ## Skill Contract
 When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify the source hash and follow its `source_root`, `input_read_order`, installed Skill paths, `agent_state`, plan questions and full Schema. Shadow context grants no permissions. A prepared view captures historical `agent_state`; use the live Runtime and current responsibility projection for activation and work status. If already active, keep the original accepted plan/activation; do not submit another plan just because an unanswered scaffold is present. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
 When a frozen `.claude/inputs/assignment-context.json` is supplied, read its registered responsibility, source paths, fingerprints and original dispatch mode. Its `context_selection` states the fixed loading mode. In shadow mode keep legacy loading; in enabled mode keep the fixed generated role and Read its selected extra installed Skill sources. Original manifest/activation permissions remain authoritative. Read installed Skill files through their supplied paths when Skill invocation is unavailable. Complete professional plan fields yourself using `plan_questions` and the supplied Schema; an unanswered draft cannot activate you. Existing ready assets remain fixed.
@@ -56,66 +64,54 @@ Do not refresh an existing binding or substitute another root for missing input.
 
 ## S9 Repair Contract
 
-Dispatch is `runtime repair dispatch --assignment-id <assignment> --agent-id <agent>
-[--role-family <family>] [--agent-definition <path>]` (defaults: backend-builder +
-`agents/backend-builder.md`; the file must exist — dispatch derives your capability
-set from it).
+Main chooses actual specialized Builders and independent verification work from
+the approved Contract and RepairPlan, then performs real native spawn/resume.
+The system supplies each person's exact view/answer paths and current-step brief;
+Main carries them into the native task without authoring or saving Worker answers.
+A missing path is a specific Main/system preparation gap, not a command to guess.
 
-When dispatched against an approved RepairContract (not an S6 TASK), follow the
-original S9 phase order and domain consumers. PreToolUse provides graph progress
-and the current questionnaire path; it does not deny product tools by identity,
-permission, path, or scope.
-
-S9 uses its original professional PlanReport as the sole pre-execution plan
-answer. The Hook supplies its exact view and answer paths. Fill and save the
-professional PlanReport; the original consumer validates it and projects the
-existing plan-checkpoint/AgentBegin flow. Do not send a separate generic
-PLAN_REPORT, manually issue or consume an answer, or reconstruct a path or
-command.
-
-The domain PlanReport must include at least one failing red pre-fix check and
-keep plan/reproduction evidence under `.claude/review/repair/`,
-`.claude/evidence/`, or `docs/reports/`. The original consumer accepts one report
-per RepairAssignment. After every required report is accepted, the original
-graph/listener advances to `fixing`; do not manually run
-`runtime repair execution begin` on the normal path. During implementation, stay within the
-approved RepairPlan and report any newly required path through the original
-S8/S9 recovery route. S9 pre-execution Worker prepare/launch is not available in
-this adapter; a declared independent execution cannot fall back to the Main
-checkout.
+At the Main root, personally record the implementation plan and real prechecks in
+PlanReport before your own implementation or assigned tests. Once your PlanReport
+is recorded, Main normally prepares your Worker and supplies the exact current
+RepairResult path; you do not wait for all Builders to submit plans. Use that
+Worker for implementation and self-checks. Preparation occurs when the work starts,
+not on the next ordinary PreToolUse. Product scope does not
+exclude your explicitly supplied questionnaire/evidence paths. Hook reminders
+observe duties and missing work; they impose no identity, tool or path ACL.
 
 ## S9 pre-execution PlanReport
 
-After original RepairAssignment dispatch, use the S9 questionnaire path and
-required questions shown by the Hook. Save
-only its professional `answer.plan`, `answer.red_checks`, and
-`answer.proposed_paths` fields. Preserve the machine question and supplied
-source binding. Do not run `stage-answer issue/consume` or use `runtime repair
-plan-report submit` on the normal path. If the exact paths are absent, route the
-problem to Main/system maintenance; do not infer them from `runtime repair
-status`.
+Save only `answer.plan`, `answer.red_checks` and `answer.proposed_paths` at your
+exact questionnaire path. Record the actual plan, intended paths and real precheck
+results as pass, fail or blocked, including commands actually used and the reason
+for any unfinished check. A blocked attempt is not an executed failure, and a
+passing precheck does not require an invented red result. Cite real logs or other
+existing evidence; no URI prefix or additional evidence report is required. These
+commands describe past work and do not freeze Main’s future check commands.
 
-PlanReport acceptance remains the pre-execution milestone. The original S9
-barrier advances only after every required Assignment report is accepted. The
-original RepairResult consumer, Main integration, independent targeted
-verification and fresh S7 round retain their existing domain checks.
+Saving records this professional pre-execution fact. It does not require a
+second generic PLAN, AgentBegin, activation or work_started proof. Do not manually
+issue/consume questions or run execution-begin. Main arranges actual dependencies,
+normal workspace preparation and any explicit user decision. Ordinary tools and
+Hook reminders do not prepare workspaces or run checks.
 
 ## S9 RepairResult after implementation
 
-After implementation, use the Hook's exact RepairResult view and `answer_path`;
-do not derive a path from an Assignment ID. Fill only the professional answer
-fields: verdict, one `before_fix_results` row per frozen assertion, one
-`unit_results` row per assigned unit, and evidence, scope, risk, migration, and
-rollback. Save this single professional result; do not submit a separate generic
-completion report. Do not copy machine check output into an assertion or infer
-responsibility completion from green checks.
+Implement and self-check, or complete the assigned no-change tests, then personally
+save the exact RepairResult answer. Fill the supplied verdict, assertion observations,
+unit results, evidence, scope deviations, risks and applicable migration/rollback
+fields from actual work. Existing task/Git/check data comes from the system;
+checks alone do not supply your professional judgment. No migration need means no
+forced pair of references or new report merely because Contract text is nonempty.
 
-Save the exact answer with the normal Write/Edit/MultiEdit tool. The original
-RepairResult consumer validates the professional answer; the original
-candidate consumer checks actual changed artifacts, Git state, evidence, scope
-and required checks, then projects the same RepairResult onto the existing
-completion record. Do not run `stage-answer issue/consume` or use
-`runtime repair result submit` on the normal path; these remain
-compatibility/recovery interfaces. Main still integrates the preserved
-candidate, runs required Main checks and honors existing human decisions. A
-blocked or incomplete result follows the named original recovery path.
+PlanReport and RepairResult are the two different professional facts before and
+after work. Do not send an extra generic completion report or wait for its proof.
+No-change tests report their real results without a new commit; actual changes use
+real Git delivery and Main integration/checks. At the normal integrate step, Main
+selects necessary checks from the repair objective and actual changes, using the
+repeatable --check-command parameter for actual commands when needed. Main runs
+them and records the real results; missing checks remain unfinished and cannot
+produce final PASS. No Main check configuration is required before your Worker
+can start. Preserve the Worker until Main has received it. Independent Targeted
+verification and the fresh S7 round remain separate actual work. Record blockers and incomplete work honestly at the supplied
+current path; ordinary saves may use an editor, script or extension tool.

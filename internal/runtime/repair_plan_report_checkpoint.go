@@ -315,7 +315,7 @@ func verifyRepairPlanReportReceipt(root string, state map[string]any, p workpack
 	from, _ := e["from"].(map[string]any)
 	to, _ := e["to"].(map[string]any)
 	refs, _ := checkpointStringSlice(e["evidence_ids"])
-	if be != nil || ae != nil || after != before+1 || after != r.AcceptedAfterRuntimeRevision || se != nil || seq != r.AcceptedSequence || ge != nil || gen != b.BaselineGeneration || e["event"] != "transition_committed" || e["outcome"] != "committed" || e["transition_id"] != "PTR-BUG-10" || e["idempotency_key"] != r.AcceptedIdempotencyKey || e["runtime_id"] != b.RuntimeID || actor["id"] != b.OwnerAgentID || actor["type"] != "agent" || len(refs) != 1 || refs[0] != path || from["state"] != "bug_resolution" || (from["phase"] != "planning" && from["phase"] != "reproducing") || to["state"] != "bug_resolution" || to["phase"] != "reproducing" {
+	if be != nil || ae != nil || after != before+1 || after != r.AcceptedAfterRuntimeRevision || se != nil || seq != r.AcceptedSequence || ge != nil || gen != b.BaselineGeneration || e["event"] != "transition_committed" || e["outcome"] != "committed" || e["transition_id"] != "PTR-BUG-10" || e["idempotency_key"] != r.AcceptedIdempotencyKey || e["runtime_id"] != b.RuntimeID || actor["id"] != b.OwnerAgentID || actor["type"] != "agent" || len(refs) != 1 || refs[0] != path || from["state"] != "bug_resolution" || (from["phase"] != "planning" && from["phase"] != "reproducing" && from["phase"] != "fixing") || to["state"] != "bug_resolution" || (to["phase"] != "reproducing" && to["phase"] != "fixing") {
 		return fmt.Errorf("S9 original acceptance event tuple differs")
 	}
 	issuedAt, err := time.Parse(time.RFC3339Nano, stringValue(j.Events[ii]["occurred_at"]))

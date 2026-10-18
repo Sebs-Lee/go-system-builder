@@ -139,14 +139,14 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 					if err != nil {
 						return fmt.Errorf("revalidate S9 accepted PlanReport before freezing check profiles: %w", err)
 					}
-					if authority.ReportRef != s9ProfileReportRef || !reflect.DeepEqual(authority.Checks, s9ProfileCommands) {
-						return fmt.Errorf("S9 accepted PlanReport ref/commands changed before profile freeze")
+					if authority.ReportRef != s9ProfileReportRef {
+						return fmt.Errorf("S9 accepted PlanReport changed before profile freeze")
 					}
 					execution, exists := binding.Executions[*id]
 					if !exists || execution.CheckLocation != s9ProfileLocation {
 						return fmt.Errorf("S9 original check location changed before profile freeze")
 					}
-					profiles, err := runtime.RepairResultCheckProfiles(authority.ReportRef.SHA256, authority.Checks, s9ProfileLocation)
+					profiles, err := runtime.RepairResultCheckProfiles(authority.ReportRef.SHA256, s9ProfileCommands, s9ProfileLocation)
 					if err != nil || !reflect.DeepEqual(profiles, execution.CheckProfiles) {
 						return fmt.Errorf("S9 deterministic profile projection changed before freeze: %v", err)
 					}
@@ -226,35 +226,31 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 		assignment.WritePaths = authority.Assignment.Scope
-		assignment.RequiredChecks = authority.Checks
+		if len(assignment.RequiredChecks) == 0 {
+			fmt.Fprintln(stderr, "S9 Main checks remain pending: Main must select and execute necessary checks during integration; preparing this Worker does not mark checks passed")
+		}
 		inputs = append(inputs, authority.Inputs...)
 		s9ProfileReportRef = authority.ReportRef
-		s9ProfileCommands = append([]string(nil), authority.Checks...)
+		s9ProfileCommands = append([]string(nil), assignment.RequiredChecks...)
 	}
 
 	if *contextProfile == "backend-core" && (!workstate.SupportsAssignments(snap.State["schema_version"]) || lifecycle["state"] != "building" || assignment.RoleFamily != "backend-builder") {
 		return fail(fmt.Errorf("backend-core requires a new original 1.2 S6 backend Builder"))
 	}
 	_, priorExecution := binding.Executions[*id]
-	if lifecycle["state"] == "bug_resolution" && runtime.PacketEnabled(snap.State) {
-		if priorExecution {
-			prior := binding.Executions[*id]
-			if len(prior.CheckProfiles) == 0 {
-				return fail(fmt.Errorf("this existing S9 execution has no frozen check profiles; preserve it and use the original workspace replace route rather than adding authority in place"))
-			}
-		} else if len(assignment.CheckProfiles) == 0 {
-			if *checkLocation != "main" && *checkLocation != "worker" {
-				return fail(fmt.Errorf("new packet-backed S9 Worker prepare must explicitly choose --check-location main or worker"))
-			}
-			profiles, profileErr := runtime.RepairResultCheckProfiles(s9ProfileReportRef.SHA256, s9ProfileCommands, *checkLocation)
-			if profileErr != nil {
-				return fail(profileErr)
-			}
-			assignment.CheckProfiles = profiles
-			s9ProfileLocation = *checkLocation
-			s9GeneratedProfiles = true
+	if lifecycle["state"] == "bug_resolution" && runtime.PacketEnabled(snap.State) && !priorExecution && len(assignment.RequiredChecks) > 0 && len(assignment.CheckProfiles) == 0 {
+		if *checkLocation != "main" && *checkLocation != "worker" {
+			return fail(fmt.Errorf("new packet-backed S9 Worker prepare must explicitly choose --check-location main or worker"))
 		}
+		profiles, profileErr := runtime.RepairResultCheckProfiles(s9ProfileReportRef.SHA256, s9ProfileCommands, *checkLocation)
+		if profileErr != nil {
+			return fail(profileErr)
+		}
+		assignment.CheckProfiles = profiles
+		s9ProfileLocation = *checkLocation
+		s9GeneratedProfiles = true
 	}
+
 	newContext := workstate.SupportsAssignments(snap.State["schema_version"]) && !priorExecution
 	if priorExecution && *contextProfile != "" {
 		prior := binding.Executions[*id]
@@ -407,6 +403,67 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 			e.CheckLocation = *checkLocation
 		}
 	}
+	// Real workspace readiness supplies the next professional question once.
+	// Ordinary tool observation never enters this preparation path.
+	resultViewPath, resultAnswerPath := "", ""
+	publishS9Result := func(execution workspace.Execution) error {
+		if lifecycle["state"] != "bug_resolution" || !runtime.PacketEnabled(snap.State) {
+			return nil
+		}
+		packets, err := s9ListenerQuestionnaires(snap.State, *agent, true)
+		if err != nil {
+			return err
+		}
+		supplied := false
+		for _, packet := range packets {
+			if packet.binding.ManifestAssignmentID != *id {
+				continue
+			}
+			resultViewPath, resultAnswerPath = resolveRootPath(execution.Path, packet.view), resolveRootPath(execution.Path, packet.answer)
+			fmt.Fprintf(stderr, "S9 RepairResult view: %s; answer: %s; fill and save this exact professional answer.\n", resultViewPath, resultAnswerPath)
+			supplied = true
+		}
+		if supplied {
+			return nil
+		}
+		service, err := submission.New(mainRoot)
+		if err != nil {
+			return err
+		}
+		issued, err := service.IssueRepairResults(ctx, *agent)
+		if err != nil {
+			return fmt.Errorf("Worker is ready; Main/system must finish RepairResult preparation: %w", err)
+		}
+		for _, packet := range issued {
+			if packet.Binding.Sources.ManifestAssignmentID != *id {
+				continue
+			}
+			resultViewPath, resultAnswerPath = resolveRootPath(execution.Path, packet.ViewPath), resolveRootPath(execution.Path, packet.AnswerPath)
+			fmt.Fprintf(stderr, "S9 RepairResult view: %s; answer: %s; fill and save this exact professional answer.\n", resultViewPath, resultAnswerPath)
+			supplied = true
+		}
+		if !supplied {
+			return fmt.Errorf("Worker is ready but its RepairResult questionnaire is not prepared for Assignment %s; Main/system owns this preparation gap", *id)
+		}
+		return nil
+	}
+	writePrepared := func(execution workspace.Execution) error {
+		if lifecycle["state"] == "bug_resolution" {
+			contextRef := ""
+			if workspace.HasDispatchContext(execution) {
+				contextRef = resolveRootPath(execution.Path, workspace.DispatchContextPath)
+			}
+			return json.NewEncoder(stdout).Encode(map[string]any{
+				"execution":              execution,
+				"assignment_context_ref": contextRef,
+				"frozen_input_root":      resolveRootPath(execution.Path, ".claude/inputs"),
+				"view_path":              resultViewPath,
+				"answer_path":            resultAnswerPath,
+				"next_action":            "Implement or test the assigned repair in this actual work location and perform real self-checks. For actual source changes, use ordinary git add and git commit in this Worker; no-change tests require no new commit. Then fill and save the supplied RepairResult answer. No extra commit form or generic completion report is required. Main owns real integration and necessary checks.",
+			})
+		}
+		return writePreparedExecution(stdout, execution, binding, lifecycle["state"] == "building" && (assignment.RoleFamily == "backend-builder" || assignment.RoleFamily == "frontend-builder" || assignment.RoleFamily == "test-builder"))
+	}
 	source := mainRoot
 	if e.Status == "ready" {
 		source = e.Path
@@ -421,7 +478,10 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 		if err = binding.ValidateBootstrap(e); err != nil {
 			return fail(err)
 		}
-		if err = writePreparedExecution(stdout, e, binding, lifecycle["state"] == "building" && (assignment.RoleFamily == "backend-builder" || assignment.RoleFamily == "frontend-builder" || assignment.RoleFamily == "test-builder")); err != nil {
+		if err = publishS9Result(e); err != nil {
+			return fail(err)
+		}
+		if err = writePrepared(e); err != nil {
 			return fail(err)
 		}
 		return 0
@@ -452,7 +512,10 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 	if err = persist("ready"); err != nil {
 		return fail(err)
 	}
-	if err = writePreparedExecution(stdout, e, binding, lifecycle["state"] == "building" && (assignment.RoleFamily == "backend-builder" || assignment.RoleFamily == "frontend-builder" || assignment.RoleFamily == "test-builder")); err != nil {
+	if err = publishS9Result(e); err != nil {
+		return fail(err)
+	}
+	if err = writePrepared(e); err != nil {
 		return fail(err)
 	}
 	return 0

@@ -6,79 +6,100 @@
 >
 > 调查基线：2026-10-13 的仓库代码、协议和模板；初次调查交付为设计及可行性审查。后续实施先固定L层，再修改文档/代码；Hook 权限拦截按用户最新 §0 决策取消。
 
-## 0. 收缩后的实施决策（2026-10-15，优先于旧方案）
+## 0. 收缩后的实施决策（2026-10-18，优先于旧方案）
 
-### 为什么引入 Hook
+### 目标与唯一当前规范
 
-Hook 承接 graph engineering 的监听、提醒与流转：让 Agent 按图完成工序，避免
-草草收尾、跳步或遗漏。优化解决的是“Agent 不知道要交什么、如何交，实际交付与
-预期不一致”。应把预期提前给清楚，并持续说明距离下一 stage 还差什么。
+Hook 帮助 Agent 按图完成工序：提前说清本人责任、资料、专业问题、答案形状、准确问卷路径和真实缺项。正常流转为 **展示要求和问卷 → 本人执行并填写 → 保存记录事实 → 提醒真实缺项或推进**。
 
-取消 Hook 对身份、工具权限和操作范围的拦截；不搬到另一个入口延续。
-本节是目标契约；首个监听/问卷切片已按此实施，验收范围见当前接续入口。
-下文冲突部分仅作旧实现与历史记录，不代表全部代码和宿主链已完成迁移。
+当前规范仅以本节及 [L3-S9 当前规则](l3-stages/L3-S9-repair.md#当前最小工作流2026-10-17重新固定减负设计)为准；具体逐入口职责见该规则与 [S9 机制审查](global-optimization/S9-MECHANISM-REVIEW.md)。下文含 §7 的旧门槛与历史实现不构成保留授权；文档固定契约不表示生产和宿主链已完成迁移。
 
-正常流转：**展示阶段要求和问卷 → Agent 执行并填写 → 保存 → 更新 graph 事实 → 提示缺项或进入下一 stage**。
+### 作者做专业工作，系统带出已知事实
 
-### 一份问卷把预期说清楚
+问卷复用本人当前任务与已有 Draft，只问专业判断、实际结果、证据位置和未完成原因，给出必要材料、问题与明确槽位。Plan/Result 作者 view 不附完整 packet/inputs 镜像。JSON 可继续使用，但不要求作者抄身份、hash、revision、发行事件、登记数量或手工信封，不另交相同内容的总结，不手动 issue/consume。
 
-问卷就是履职报告的填写形式，复用当前阶段/任务要求。开始工作时直接给出：
+必要断言由系统提供完整问题和槽位，独立复验者真实执行所有必要断言并报告实际观察。断言 ID、数量及注册证明不另作作者的资格门；缺真实观察须明确提醒，不推进完成。
 
-1. 当前 stage、本人责任和本阶段目标。
-2. 必须完成的工序及所需资料。
-3. 每道问题的明确要求、答案形状及必要示例。
-4. 需要引用哪些实际产物或检查结果。
-5. 问卷的准确路径和“填写后保存”这一交付方式。
+旧兼容元数据 `continuity_reason` 与 `scope_compliance` 可选；未填不拒收、不制造 scope fail，也不作为 Handoff 条件，不得为换取接收而编造 pass 或解释。全部必要断言的真实观察、结果、实际证据及未完成原因仍须如实记录，缺真实结果不推进。
 
-Agent 填专业判断、结果、产物路径和具体未完成原因。系统已知的任务信息和检查
-结果自动带出，不再让 Agent 抄身份、哈希、事件或登记元数据。JSON 可以继续作为
-问卷载体；作者不另交相同内容的总结、消息和手工信封，不手动 issue/consume。
+### Hook 读事实，保存只记录一次
 
-### Hook 的工作
+Pre、Stop 与普通重复监听只读当前责任、已有答案和工作事实，给准确路径、普通操作命令及具体缺项，不全扫描或重跑业务。Main 在正常责任开始时通过普通工具完成 workspace bind/prepare；原 prepare 提供真实工作位置和 Result 卷。分工或位置选择保存只反馈系统已知参数的准确原命令，不在 Hook 中创建工作区、clone、Bootstrap、运行自检或完成 Main 集成。ready 但缺卷须用同一原 prepare 收尾，不另发准备卷或手动 issue。
 
-| 时机 | 行为 |
-| --- | --- |
-| 进入/恢复责任 | 给当前问卷位置、必要工序和当前缺项。 |
-| 观察到相关产物/结果变化 | 更新或读取既有 graph 事实；缺项变化时给简短提醒，不逐工具鉴权。 |
-| 保存问卷 | 将答案交给原领域消费者，按已有阶段条件求值；反馈未完成工序，或按原 graph 流转。 |
-| 准备收尾 | 提醒仍遗漏的本人责任；本人已交付而等待其他责任时，说明等待项。 |
+保存仅做：**准确定位当前问卷与责任 → 一次必要专业结构校验 → 一次原 Writer 原子幂等记录 → 按真实缺项反馈或推进**。支持普通编辑、脚本和 MCP 保存。并发、同答重放、真实内容冲突、必要存储结构和 CAS 均留在内部原 Writer 边界，不由每层反复 Snapshot、packet schema/Rebuild、journal 发行核验、hash 或 source 证明来重演。
 
-每条进度反馈都带本责任当前问卷的准确路径，路径不被摘要/预算裁掉；未生成时明确
-报告生成缺口及系统处理方，不用通用目录或 Runtime 入口让作者自行查找。
-提醒直接说“问卷：<实际 answer 路径>；距离 S7 还差 TASK-002 和 Main 集成检查”或
-“问卷：<实际 answer 路径>；第 3 项缺检查结果”，不只给内部 missing token，也不让 Agent 猜命令、文件和登记顺序。
+Writer 必要存储结构只服务本次记录的可读性、当前责任关联和并发原子一致性，不能借“校验整个 Runtime”逐卷重建或重验所有历史业务对象与来源链。一次逻辑提交可含必要的多次物理 I/O，不要求存储算法只调用一次 Write。兼容或诊断入口不得成为正常接收依赖；真实损坏走既有存储维护，不在每次保存前预防性运行整条 proof。
 
-### 流转边界与实现约束
+身份/权限、scope ACL、发行、来源 hash/receipt/coverage、Bootstrap、lineage 等资格从正常接收整体删除，不能搬到 consumer、helper 或 Handoff。“领域完整性”“原条件”“保持原门”不能作为兜底保留理由。读取已接收事实只投影当前责任和实际进度，不重新证明历史接收合法。
 
-问卷问题和下一阶段缺项共用既有 graph/阶段契约；不新增一套工序或验收要求。
-专业判断由原责任承担，已有检查/独立审查/人闸依原图执行；Hook 不另行重复审查。
-个人交付完成与整个 stage 出口分别按各自要求判断。五态保持
-pending / active / blocked / done / cancelled。
+### 真实完成责任与推进边界
 
-复用原消费者、Writer/CAS、幂等和恢复。相关变化只更新必要事实，普通 Read/Write
-不跑完整业务链；重复保存不重复推进。长检查、合并继续由原责任执行，Hook 反馈
-它们的进展和缺项。
+S9 消费 S8 已批准 Contract，不重新审批或增加 readback/启动许可。保留真实必要用户决策；删除 generic PLAN/Begin/activation/work_started/completion 授权链。本人 Plan 在本人实施前记录，不等待全员计划；Main 安排真实依赖。工作状态只用 `pending/active/blocked/done/cancelled`。
 
-S7 的进入、恢复与收尾提醒同样只读原 graph 和当前问卷路径，不为提醒运行通用恢复、
-整轮候选求值或重复回执核验；本人能否收尾仍按原履职事实判断，已形成的阶段交接仍走原流转。
-S7 Plan 登记的完整基线检查由原登记事务内执行一次，预检不重复；专业覆盖、原回归资产检查、
-登记资格及 Writer/CAS 校验保留，共享阶段交接入口仍使用其原检查。
+作者在真实工作区实施或测试并自检，普通 Git 记录实际源码改动；无改动测试不造 diff/commit，无迁移不造引用。前检如实记录 pass/fail/blocked，命令只表示已做工作，不冻结为 Main 未来命令。Main 按实际目标和改动完成真实 Git 集成、必要检查及输出记录；未做的检查不能记 PASS。
 
-停止独立 typed ChangeImpact 与 Bootstrap 归档协议，隔离代码不合入。不为每个
-阶段再新增独立发行、回执、lineage 或来源镜像。S0–S11 都按同一原则重新梳理和测试，
-包括 S6 交付与 Main 集成、S9 后半段及真实人类决定；解决系统产物阻塞原流转的问题。
+Plan/Result 的 fail、blocked、范围偏差可如实记录，不因 scope ACL 拒收。接收成功不等于修复或 stage 完成；缺少真实结果时给出具体剩余责任，不推进。系统从已接收 Final Result 批次按原 last-wins 直接带出实际变更清单，供 Impact 与自动 Handoff 共用；删除 Impact/Handoff 的 exact 集合拒收及物理目录/缓存重扫来源证明，不只把两套来源对齐到通过。Main 填专业影响判断，不手改机器清单。
 
-候选代码中，全新 install/init 默认进入问卷流程，不再要求作者猜开启开关；显式
-旧模式、已有 Runtime 和中断初始化仍保留其原模式。此默认值调整不代表候选已发布
-或真实全阶段验收通过。原始输入均由系统提供准确路径；脚本与扩展工具保存答案
-也要被监听，不限定作者必须使用某一种编辑工具。
+完整工序：Main 明确批准目标与分工 → 本人 Plan → 实施或测试、自检及本人 Result → 必要 Main 集成与真实检查 → 专业 Impact → 未参与对应实现与合并的独立复验者真实复验全部必要断言 → 正常图完成后自动交接 fresh S7。Handoff 无额外答卷或来源资格层。
 
-验收看零设计背景的 Agent 能否直接知道做什么、交什么、填哪里和还差什么，以及
-是否减少猜测、重复交付和漏工序；真实阶段流转与检查结果仍如实记录。
+不新增模型、作者可见 API、字段/格式、缓存、协议、后台队列、状态层、重试或预算方案。验收看真实工作能否完成、缺项能否准确反馈；Hook exit0、机械 PASS 或历史上游不能替代真实 S9/独立 Targeted/fresh S7 验收。
 
-## 当前接续入口（2026-10-17）
+## 当前接续入口（2026-10-18）
 
-当前 Linux amd64 宿主评估包为 **after-r52**（[包目录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/packages/vibe-coding-loop-template-unified-state-after-r52-20261017)，[收尾证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r52-s7-closeout-final.json)）。S7 本轮限定范围已收尾：backend Clean、真实冷入口/7问卷准备，以及 synthetic S7 browser 的 Finding/Clean 两出口；下一项审查 **S8**，尚未开展 S8/S10 专业工作。最新 43 项不同定向测试 PASS（32 核心 + 11 原边界），六段 466 条直接 Hook 响应无内部 deadline/4 秒准备 defer；clean 的外层 720 秒截止后恢复完成等限制保留在证据中。R52 仅字段层级提示和一个断言，生产 Go 相对 R51 无变化，不称 R52 新完整链通过，也不标全局目标完成。
+**本轮 S9 减负设计、实现与限定回归已完成；r79 包的真实 S9 专业链已交接 fresh S7，r80 末片另有局部核查。** r86/r79 单次 CLI、无人工续接，exit0、非 external timeout，**1624.111264s（27.0685min）**；实际 Runtime **rev31、repair.closed、verification/running**。两本人 Plan、两 candidate/Final、Main 真实 Git 集成与两次10/10检查、专业 Impact、未参与实现/合并的独立者五项真实观察、自动 Handoff 及 round2 seed 均已记录。见[进程](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r86-native-main.process.json)、[实际报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r86-bike-r79-installed/.claude/evidence/s9-validation-report.md)、[独立终态审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r86-terminal-audit.md)与[收口证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/s9-closure-summary.md)。**fresh S7 仅入口，Delivery/QA仍pending、clean_round=null，不是S7 PASS；上游S7/S8及审批是明确synthetic fixture，不冒充真人履职或授权。**
+
+r85/r78也完成同一S9专业链，但四段自然结束、三次人工续接，累计 **1706.755652s**；原独立作者纠正旧元数据后才接收，见[终态审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r85-terminal-audit.md)。r86仍触发旧continuity提示，由独立作者本人补后接收；不是零机制困惑，也未验证后续metadata缺省行为。两轮流程/续接不同，耗时不能作控制性能对比。r79反馈片通过[两原例机械验证](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/validation-r10-summary.json)；r80旧Targeted元数据可选片通过[原lead全尾机械例](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/validation-r11-summary.json)及[独立Claude局部安装/原例/代码核查](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r80-claude-audit.md)（[Root复核](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/r80-audit-root-review.md)）：安装1.40132s、原例PASS2.16s/wall2.21612s。**r80没有另跑完整原生S9，不把r79模型证据继承为r80全链PASS**，也不新增同版全矩阵资格。所有包仅linux/amd64评估；历史失败与未知性能边界保留。
+
+### 历史证据界线
+
+以下保留各轮原记录及其当时待办，不表示当前运行仍将执行或已通过；旧“最新/待运行/下一次”均仅对应当时快照。代码规范仅以 §0 与链接的 L3 当前规则为准。未删除任何原失败、耗时、包或其他阶段证据。
+
+来源统一小片已冻结并通过限定机械验证：r82 原 lead 完整 case PASS（test 4.10s / 包 4.152s / wall 55.536s），原 last-wins 与 stable Changeset identity 两例 PASS（包 0.066s / wall 55.795s），见[原始日志目录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/r82-impact-typed-source-s7_oq7wa)。case 使用明确 synthetic 专业数据，不是 native PASS。after-r75 host-only 构建 exit 0、55.109531s（[清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r75-source-inventory.json)）；本记录晚于锁定快照。r81 已有真实前半两 Final；下一次在 fresh 同 bike 用真实代码、tests、Git 和原 consumer 建立明确标注合成作者的机械前缀至 Impact，仅由 Claude 验证修复尾链，不冒称单轮全新 native 前半闭环。
+
+r81 限定验证已通过：五个既有例全 PASS（包 **13.226s** / wall **37.070s**，[原始日志](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/r81-hook-prepare-split-e9p3j6ki/test.log)）。保存到 workspace 的嵌套准备及 observer 队列遍历已删除；保存/监听给准确命令，Main 普通工具执行原 prepare，原 prepare 负责实际工作区和 Result 卷。覆盖包括 typed normal observer 的显式启动发卷及两个明确 legacy workspace-only 例，不等于完整 S9/fresh S7 通过；后者待全新 r81 真实运行，也未认定 r74 晚 Result 超时根因已解决。after-r74 host-only 构建 exit 0、24.247160s（[清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r74-source-inventory.json)）；本工作树验收记录晚于该锁定快照，r80 失败证据保留。
+
+
+r80 / after-r73 真实运行已在 **331.010s** 停止，首次 Edit 保存触原 8s Hook timeout，**revision 18 / 0 Result**，实际工作区 ready 但 Result 卷未发；见[最终报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r80-bike-fixed-r73-main-final.json)与[耗时分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r80-bottlenecks-and-timing.md)。该保存/startup边界修正及限定验证见上文，未称原超时已解决。
+
+最新 r79 / after-r72 真实 bike 运行在 **662.697s** 停止，**0 Result，未闭环**：脚本保存已填写的 `check_location` 未被 observer 接到，作者用 Edit 重存后才 prepare，这是实际机制失败；见[耗时与阻塞分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r79-bottlenecks-and-timing.md)及[真实最终报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r79-bike-fixed-r72-main-final.json)。observer 修复复用既有 Plan、Result、execution 和原队列纯函数；三个原例最新 PASS（包 12.504s / wall 237.680s），仅覆盖首次脚本 prepare、依赖 queued 及未变重放零写，见[原始日志](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/r80-observer-real-plan-awbs2p7c/test.log)。两个首轮 fixture 失败及删除不合法 legacy 后半段的覆盖边界见[记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r80-observer-fixture-boundary-adjustment.md)；真实 Final 后释放和完整 S9 在 r80 仍未验证，不宣称原超时已解决。after-r73 已完成 host-only 构建（201.801s，[源码清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r73-source-inventory.json)）；本次工作树文档晚于该锁定快照，仅补验收记录。下文保留此前分析和验证历史。
+
+2026-10-18 分析补充：r75 只读 status 基线 **1.624s**（[分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r75-readonly-timing-analysis.md)）；r76 在首责任 Final 后，第二个无改动责任经原生 observer 保存 **2.616s**（[分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r76-two-responsibility-save-analysis.md)）；r77 同 case CPU 样本 **2.60s**、profile 窗口 **3.03s**，ValidateBytes 累计 **38.08%**、RepairResultPackets **29.23%**、Compile **18.46%**，Compile 已含在 schema 调用内，禁止相加（[分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r77-save-cpu-analysis.md)）。这些样本未确定或修复原 r74 超时根因；生产和 r74 现场未改，S9 仍缺 Impact、独立 Targeted 和 fresh S7。
+
+用户已授权实施以下两个既定 §0 小片；冻结源码的三个原定向机械测试通过（runtime 包 0.860s / repair 0.075s / integration 20.948s）。同新源外部单次诊断在首责任 Final 后，以第二个无改动责任、Bash observer 和原生 8s 入口保存通过：2.216615717s、accepted=true，一次 revision 23→24，HEAD 不变、无新 commit；见[原始验证报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r78-frozen-mechanical-and-native-observer.md)。这不是严格 before/after 收益证明，不代表 r74 根因已解决或真实模型 S9 PASS；该轮 after-r72 后续真实验证结果见上文 r79。不增加设计、状态、缓存或预算，保留专业必填、当前责任关联、一次原子幂等记录和真实 Main 检查：
+
+- 普通 RepairResult reader 移除逐包 schema 与 Rebuild；Find 只选唯一目标登记行并解码该卷。
+- 候选 Accept 删除重复 Issue/bootstrap/权限回调准入及写后 Snapshot/Verified，直接使用原 Writer 已返回的结果反馈；以下旧证据继续作为各自历史边界。
+
+最新 after-r71 的 r74 bike 真实运行已停止：两段累计 **1222.613s**，均 exit 143、非外部 timeout；原轮因 timer 空闲停止，cont1 出现真实 Hook 超时。已接收 **2 Plan（test 为 `[]`）**，backend 的真实 candidate、Final、Main Git 集成和检查通过；test candidate 最终在 **revision 26** 存在，但没有成功接收回执。首个超时早于该 candidate journal 时间，不能据此确定后置投影就是根因。**Impact 0 / Targeted 0 / 未到 fresh S7**，不标 S9 完成；见[最新真实报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r74-bike-fixed-r71-main-final.json)。以下保留此前包与工作树验证历史。
+
+after-r70 的真实 bike 运行 r72 已到 **2 Plan / 1 candidate**；Main 已实际 merge 并执行成功的 unittest 检查，但最终 Result 接收因相对/绝对路径混算被拒，先报 checkpoint path escaped，绝对 root 重试后报 Main check record escaped。不能将其写成“未发生合并”，也未完成 S9、独立 Targeted 或 fresh S7。见[真实运行报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r72-bike-fixed-r70-main-final.json)。
+
+同包 settings 运行 r73 已将候选写入 Runtime **revision 23**，随后保存回执超时；候选写入不等于最终 Result 或闭环通过，见[原始阻塞报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r73-cont2-main-blocker.json)。
+
+工作树已精简 Plan/Result 作者 view 为现有 Draft 专业问卷及准确 Main 材料路径，修正 Main 相对路径读取，并删除候选成功后的重复投影。两原定向机械测试通过：**integration 25.034s / attempt projection 0.086s**；首次 integration 因新增断言将合法材料目录当文件读取而失败，仅修测试断言后原例重跑通过，原失败与 attempt 结果见[首次报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r74-final-original-tests-20261017T122709154602Z.json)，最终 integration 见[重跑报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r74-integration-directory-assertion-20261017T122836175999Z.json)。这是工作树机械验证；已安装 after-r70 和真实现场未替换，after-r71 正在建包，尚无真实闭环 PASS，不标 S9 完成。
+
+以下为此前入口实测与机械验证历史，不能替代上述最新同源验收边界：
+
+历史 after-r69 已运行并停止：两名作者首交 **2 Plan（含真实 `[]`）/2 ready**；backend 使用普通 Git 提交并做真实 self-check，test 如实报告 blocked。两个专业 Result 已写入，但 PostToolUse 出现 internal budget timeout，停止时 **0 candidate/0 final Result**；运行 486.672s，exit 143。见[原始阻塞报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r69-s9-reduction-real-main-blocker.json)。没有完成真实 S9、Targeted 或 fresh S7，尚未证实超时的唯一根因。
+
+r70 独立 Claude 自建离线 bike seed，约 94s，真实测试 **10 项中 9 pass/1 fail**，Git clean。r67/r69 双 clone 使用同 payload、同 prompt，Main 默认预算 900s；实际两组均约 210s 因分工 Post 超时停止：各 **owners 2/backend 问卷 1/test 卷未发/专业 Plan 0/native 0/Result 0**。见[双组原始对比报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r70-bike-paired-real-comparison-final.json)。这只定位共同入口阻塞，不能宣布新旧优劣。
+
+本轮已删除 blocked 保存与准确路径定位的重复 source/proof，以及 Result Hook 的 generic 工厂和双重定位；保留当前责任、真实 Git、专业答案和原 Writer 记录。两原合源机械单例曾 **PASS：blocked 49.80s/integration 46.21s/包 96.280s**，见[原始日志](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/logs/r71-final-ge_l7n04.log)；该运行早于最新 Result frontend 小片，不能称作当前最终同源验收。其后已删除 dispatch generic 工厂与 Plan issuer 重复完整 proof，并构建 after-r70；后续真实结果及未测修正以上文为准。
+
+以下保留前轮失败与机械验证历史，陈述仅对应各自当时源码：
+
+after-r68 真实运行 329.364s 后由 Root 停止（exit 143）：诚实 test Plan 的 `proposed_paths: []` 被 receipt `submitted_answer` 残留 `minItems: 1` 拒收，作者被迫改填 owned scope 重交。停止时为 **2 Plan / 0 ready / 0 Result**；这不算正常 Plan 首交通过，也未通过 S9/fresh S7，见[真实阻塞记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r68-s9-reduction-real-main-blocker.json)。r68 原公开 integration 单例机械 **PASS，24.982s**，见[集成证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r68-public-integration-evidence.json)；该结果不替代真实运行验收。
+
+本片已删除 receipt 的拟改路径非空约束；原公开 CLI Hook 单例由真实派发 test-builder 首交 `[]`，确认原 report 与 receipt 都保持空数组，**PASS，15.270s**，见[原始日志](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/logs/r69-nochange-plan-public-hook-20261017T112024887503Z.log)。同期源码已删除 candidate/final 强制至少 fail/blocked 及 final 对范围偏差一概拒收的门槛，保留真实结果和必要 Main checks；当时这部分 domain/public 复测尚待，after-r69 尚未装包实测；后续当前结果以上文为准。无新设计、协议或字段，不标全阶段 PASS。
+
+历史 after-r66 为 **built_not_run**。after-r67 真实 Claude 到两名本人 PlanReport、两个 ready Worker，RepairResult 接收数 **0**；普通 `commit_command` 仍要求旧提交表单，另有专业 answer 被外层 UI 的 `example.expected`/题干相等门槛拒收。Root 在 529.291s 主动停止（exit 143，非超时），未通过 S9/fresh S7，见[真实阻塞记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r67-s9-reduction-real-main-blocker.json)。
+
+本轮源码已删除正常 S9 commit 表单指引，Plan/Result 直接提取 `answer` 并校验原专业字段，忽略外层展示字段；无新协议或字段。三个 validator 直接测试 PASS（0.327s），launch 定向 PASS（3.555s），CLI 编译通过（0.039s）；其后的 r68 结果与当前待验范围见上文，不标全阶段 PASS。
+
+历史 after-r64 已构建且限定机械选择 9/9 PASS，真实模型到两份本人 PlanReport 与两个 ready Worker、Result 接收数 0；coverage/staging/workspace deadline 后停止，未计 S9/fresh S7 通过。详情及保留历史见 [S9 审查 §6](global-optimization/S9-MECHANISM-REVIEW.md#6-当前删减范围与证据边界2026-10-17真实完整链待验)。
+S8 已收尾的限定范围与证据继续以下文为准。
+
+当前宿主评估包为 **after-r56，Linux amd64 host-only**（[源码与包清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r56-source-inventory.json)，包 SHA256 `0c07c4711afe916d56807e3e936078a36777a6f3f910dbf5e48863b58ba17576`）。S8 本轮 A/B/C/D1 减负切片及限定验证已收尾：59 项不同顶层定向测试 PASS、0 fail、0 skip（154.619 秒）；真实 Main→一名 native Investigator 本人 supported 保存→原 Case/route 接收→Contract 无授权等待，专业修稿后以明确标注的外部仿真人决策调用原批准事务，最终 Runtime rev11/Case r5 `contract_approved` 到 S9 planning 入口即停。三段模型均 exit 0、未 timeout，101 条直接 Hook 响应均 exit 0，选定内部 deadline/defer 与专业 schema/route 拒收为 0；[最终证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r56-s8-closeout-final.json)及[审查与范围说明](global-optimization/S8-MECHANISM-REVIEW.md)统一记录实际边界。上游 synthetic setup 借历史真实 Finding，不是新 S7 通过；human simulation 不是真实用户授权。三原 schema 单验 PASS，借用产品缺 scenario-model 的全项目 validate 失败及旧失败保留；未开展 S9 专业执行、全平台或全分支真实模型验证，不标全局目标完成。
 
 用户要求已扩展为 S0–S11 全部阶段重新梳理、减负与测试；执行顺序和逐阶段状态见
 [全阶段重新验收清单](global-optimization/STAGE-REDUCTION-REVALIDATION.md)。旧 4/9 保留为历史证据，

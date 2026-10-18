@@ -3,20 +3,20 @@
   "stage": "S9",
   "adapter": "repair_plan_report",
   "title": "S09 修复计划 · PlanReport",
-  "instruction": "只填写 answer 中的 plan、red_checks 和 proposed_paths。依据本卷冻结的批准 Contract、Session、RepairPlan、原 Assignment 和 TASK，说明开始写入前的实施计划与实际红检查。证据锚点的形式不证明命令已执行。不要填写 ID、断言清单、审批、状态、时间或产物摘要。",
+  "instruction": "只填写 answer 中的 plan、red_checks 和 proposed_paths，然后保存本卷给出的准确 answer 路径。依据本卷的批准 Contract、计划和本人责任，说明实施前计划与真实前检结果或阻塞；不另交 generic PLAN 或激活报告，不手动 issue/consume。证据引用形式不证明命令已执行；示例仅说明 JSON 形状，须换成本人实际计划、命令、路径和证据。不要抄身份、hash、revision、审批、状态或时间；缺卷/来源缺失归 Main/系统准备，不退 legacy 猜命令。",
   "questions": {
     "plan": {
       "question": "说明本 Assignment 开始写入前的具体实施计划、依赖顺序和关键边界。计划不可代替后续实际实施与复验。",
-      "example": {"path": "answer.plan", "expected": "按本 Assignment 的 unit、依赖与资源锁说明有限步骤", "observed": "只写‘修复问题’"}
+      "example": {"path": "answer.plan", "expected": "\"先复核本卷 root 断言，按依赖修复所属 unit，补检测缺口测试并运行原必要检查；发现 scope 不足返回原恢复流程。\"", "observed": "只写‘修复问题’"}
     },
     "red_checks": {
-      "question": "列出开始修复前实际复核或重现的检查，记录名称、命令、结果和原 execution anchor。至少一项必须 fail 或 blocked；anchor 形式不表示系统已执行验证。",
+      "question": "填写对象数组，每项包含 name、command、result、evidence_refs（字符串数组）。command 记录本人实际做过的前检或尝试；result 按真实结果填写 pass、fail 或 blocked，不强制造 red。前检命令记录过去的工作，不冻结为 Main 后续检查命令；Main 按修复目标与实际改动选择并执行必要检查。证据可填实际日志路径或已有引用，不要求 URI 前缀；没有执行条件时如实记录尝试、缺失条件与现有证据，不冒充已执行或 fail，不另造 blocker 字段。",
       "choices": ["fail", "pass", "blocked"],
-      "example": {"path": "answer.red_checks/0/evidence_refs", "expected": "至少一个原 test://、runtime:// 等 execution anchor", "observed": "只有未注册的自然语言说明"}
+      "example": {"path": "answer.red_checks", "expected": "[{\"name\":\"空白名称反例\",\"command\":\"python3 -m unittest tests.test_blank_name\",\"result\":\"fail\",\"evidence_refs\":[\"test://pre-fix-log\"]}]", "observed": "只有命令/结论，缺 name、result 或实际 evidence_refs；未执行却填 fail"}
     },
     "proposed_paths": {
-      "question": "列出计划修改的安全相对路径。每条路径必须同时属于原 RepairAssignment 与批准的 prospective scope，并在 forbidden scope 之外。",
-      "example": {"path": "answer.proposed_paths/0", "expected": "仅本 Assignment 实际负责的产品路径", "observed": "列入另一个 Assignment 或 forbidden 路径"}
+      "question": "列出本责任计划修改的相对路径；无产品改动时填写空数组。依据专业责任与批准范围制定计划，范围不足交 Main 判断；产品范围不排除系统明确给出的本人问卷或证据路径。",
+      "example": {"path": "answer.proposed_paths", "expected": "[] 表示无产品改动；[\"server.py\",\"tests/test_blank_name.py\"] 表示实际拟改路径", "observed": "缺少数组；拟改范围不足或有偏差时应记录实际情况，交 Main 专业判断"}
     }
   }
 }

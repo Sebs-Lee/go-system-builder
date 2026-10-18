@@ -593,11 +593,11 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "reproducing":
 			return "S9", "bug-resolution", "complete each dispatched Builder's exact supplied PlanReport questionnaire and save it for the original consumer; follow the updated Hook checkpoint when the required reports are accepted"
 		case "fixing":
-			return "S9", "bug-resolution", "complete the dispatched Contract work and actual required checks; fill and save each exact RepairResult questionnaire supplied by the listener. The original consumer records completion; Main retains the original `runtime task-integrate` flow and real acceptance checks"
+			return "S9", "bug-resolution", "complete the dispatched Contract work and actual required checks; fill and save each exact RepairResult questionnaire supplied by the listener. The original consumer records completion; Main uses the current listener/status command for typed `runtime workspace integrate`, with its actual root, assignment and owner, and selects real necessary checks through --check-command; do not substitute generic task-integrate"
 		case "targeted_reverification":
 			return "S9", "bug-resolution", "the registered independent verifier fills and saves the exact TargetedReverification questionnaire path supplied by the listener; the original consumer checks the Contract assertions, and Main retains the original integration and Handoff work"
 		case "ready_for_full_review":
-			return "S9", "bug-resolution", "S9 has no author-filled Handoff form; the next writable Main Hook passes current references through the original Handoff consumer and supplies the S7 seed path for a fresh full round"
+			return "S9", "bug-resolution", "S9 has no author-filled Handoff form; completing the necessary professional work through its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. Follow any recorded actual missing work; do not wait for another Hook"
 		}
 		return "S9", "bug-resolution", "continue from the current S9 Hook checkpoint; follow its supplied questionnaire paths and recorded recovery action"
 	case "acceptance", "release_audit":
@@ -2986,12 +2986,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Event == "PostToolUseFailure" || request.Event == "ConfigChange" {
 		return runNativeObserverHook(root, request, stdout, stderr, evaluationStarted)
 	}
-	controlResult, s7GraphObserved := s7GraphControlForHook(root, request)
-	if s7GraphObserved {
+	controlResult, graphObserved := graphControlForHook(root, request)
+	if graphObserved {
 		request.Runtime = controllerRuntimeContext(controlResult.Snapshot.State, root, request.Runtime)
 		request.Runtime.PacketMode = true
+		request.Runtime.Workspace, _ = workspace.Decode(controlResult.Snapshot.State)
 	}
-	if request.Event != "PreToolUse" && !s7GraphObserved {
+	if request.Event != "PreToolUse" && !graphObserved {
 		context, err := hookctx.Load(root, request.AgentID)
 		if err != nil {
 			// Let the graph cycle report unavailable progress without blocking
@@ -3037,12 +3038,12 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	}
 
 	if !mainStopBlocked {
-		// Ordinary S7 tools observe current graph work. Committed handoff
-		// facts and other stages retain the original transition cycle.
-		if !s7GraphObserved {
+		// Ordinary professional tools observe current graph work. S7 handoff
+		// facts retain the original transition cycle; S8 routes use their Case consumers.
+		if !graphObserved {
 			controlResult, s6ObservationReused = s6ObservedControlForHook(root, request)
 		}
-		if !s6ObservationReused && !s7GraphObserved {
+		if !s6ObservationReused && !graphObserved {
 			controlResult = runControlCycleForHook(root, request)
 		}
 		decision = projectControlDecision(controlResult)
@@ -3056,11 +3057,11 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			}
 		}
 
-		if !s6ObservationReused && !s7GraphObserved {
+		if !s6ObservationReused && !graphObserved {
 			refreshGuidanceFromController(root, &request, &decision, controlResult)
 		}
 	}
-	if s7GraphObserved && (request.Event == "Stop" || hook.IsStopIdleEvent(request.Event)) {
+	if graphObserved && (request.Event == "Stop" || hook.IsStopIdleEvent(request.Event)) {
 		decision.AdditionalContext = stageAnswerContext
 	}
 	if request.Event == "PreToolUse" || request.Event == "SessionStart" || request.Event == "SubagentStart" || request.Event == "PreCompact" {
@@ -3092,8 +3093,8 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		if stageAnswerContext != "" && !s6ObservationReused {
 			if latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); err == nil {
 				var guidance policy.Guidance
-				if s7GraphObserved {
-					guidance = s7GraphGuidance(root, latest.State, request)
+				if graphObserved {
+					guidance = graphGuidance(root, latest.State, request)
 				} else {
 					guidance = BuildGuidanceForState(root, latest.State, request.Event, request)
 				}
@@ -3108,14 +3109,14 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// fail-open and leaves the full Guidance packet as the source of truth.
 	if request.Event == "SessionStart" || request.Event == "SubagentStart" {
 		var assignments []hookctx.AssignmentContext
-		if owner := request.EffectiveAgentID(); !s7GraphObserved && owner != "" && owner != "Main" {
+		if owner := request.EffectiveAgentID(); !graphObserved && owner != "" && owner != "Main" {
 			if loaded, err := hookctx.LoadFull(root, request.AgentID); err == nil && loaded != nil {
 				assignments = loaded.Assignments
 			}
 		}
 		delivery := stageAnswerContext
-		if context := assignmentContextLifecycle(root, request, assignments); context != "" {
-			delivery = context
+		if delivery == "" {
+			delivery = assignmentContextLifecycle(root, request, assignments)
 		}
 		decision.AdditionalContext = hook.BuildLifecycleAdditionalContext(request.Event, request, decision, assignments, delivery)
 	}
@@ -3176,7 +3177,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// quality_gate so an external auditor and the Agent see the same
 	// status (BUG-039-03 §4.1).
 	envelopeWithQualityGate := any(envelope)
-	if request.Event == "PreToolUse" && !s7GraphObserved {
+	if request.Event == "PreToolUse" && !graphObserved {
 		envelopeWithQualityGate = envelopeWithQualityGateMap(envelope, controlResult)
 	}
 	if !renderHook {
@@ -3251,12 +3252,12 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	var output []byte
 	var code int
 	var err error
-	if s7GraphObserved {
+	if graphObserved {
 		context := decision.AdditionalContext
 		if decision.Guidance != nil {
 			context += "\n" + formatGuidanceInstruction(*decision.Guidance)
 			if len(decision.Guidance.Missing) > 0 {
-				context += "\nCurrent review work remaining: " + strings.Join(decision.Guidance.Missing, ", ")
+				context += "\nCurrent work remaining: " + strings.Join(decision.Guidance.Missing, ", ")
 			}
 		}
 		if request.Event == "Stop" || hook.IsStopIdleEvent(request.Event) {

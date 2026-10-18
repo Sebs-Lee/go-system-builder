@@ -78,7 +78,15 @@ func Pending(root string, loaded *hookctx.LoadedContext) ([]PendingIntegration, 
 				continue
 			}
 		}
-		if !found && (a.CompletionRef == "" || a.WorktreePath == "") {
+		typedCandidate := false
+		if loaded.PolicyContext.CurrentState == "bug_resolution" {
+			if b := loaded.PolicyContext.Workspace; b != nil {
+				if e, ok := b.Execution(a.AssignmentID, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration); ok {
+					typedCandidate = e.DeliveryRef != ""
+				}
+			}
+		}
+		if !found && !typedCandidate && (a.CompletionRef == "" || a.WorktreePath == "") {
 			continue
 		}
 		state := cp.State
@@ -90,6 +98,10 @@ func Pending(root string, loaded *hookctx.LoadedContext) ([]PendingIntegration, 
 			if e, ok := b.Execution(a.AssignmentID, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration); ok && e.DeliveryRef != "" {
 				row.Command = []string{"loop-harness", "runtime", "workspace", "integrate", "--root", root, "--assignment", a.AssignmentID, "--agent", a.OwnerAgentID}
 			}
+		}
+
+		if typedCandidate && !found {
+			row.Failure = "Main integration and checks pending; choose each actual necessary Main check with repeatable --check-command."
 		}
 
 		if found && (cp.State == StatePreserved || cp.State == StateBlocked) {

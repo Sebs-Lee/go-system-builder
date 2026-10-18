@@ -54,14 +54,27 @@ An incomplete but safe S7 batch enters S8 with explicit `capture_gaps`; do not s
 
 ## Procedure
 
-1. **Ingest and bind.** Create or resume one `InvestigationCase` from the exact Finding set, ObservationBatch hash, and baseline. Reject changed or ambiguous input. Do not create a BUG at this point.
+The normal authoring contract follows L3-S8's 2026-10-17 minimum workflow.
+Main sees the current professional questions in the original order: intake/grouping,
+competing hypotheses and real dispatch, causal model/route, then Contract content
+and genuine approval. Known IDs, hashes, revisions and source bindings come from
+the system. Main and Investigator save their professional answers once; neither
+manually issues/consumes, splits the same content into three route JSON files,
+or assembles duplicate registration commands/reports. The listener supplies the
+exact current questionnaire paths; fill the professional content and save for
+the original consumers. A missing questionnaire or unresolved source is a
+specific Main/system preparation gap to recover through the original flow.
+Implementation and acceptance evidence are tracked in the S8 mechanism review;
+final candidate, full S8 and platform acceptance depend on their recorded scope.
+
+1. **Ingest and bind.** Main reads the sealed Batch and immutable Findings and supplies the intake/grouping rationale. The system binds or resumes the original `InvestigationCase` using the exact Finding set, ObservationBatch hash and baseline. Reject changed or ambiguous input. Do not create a BUG at this point.
 2. **Group reversibly.** Group by a shared candidate mechanism and compatible repair boundary, never merely by file, symptom wording, or agent ownership. Record the grouping rationale. Split or merge by Case revision while preserving prior hashes and the exact Finding coverage.
 3. **Form competing hypotheses.** Each hypothesis must state the invariant or authority it may violate, the evidence that would support/refute it, and a discriminator. Do not write a root cause as an untested conclusion.
-4. **Dispatch independent questions.** Assign sub agents by evidence question, not one agent per Finding. Allocate a unique `assignment-*` id, register it on the Hypothesis, then run `runtime investigation dispatch` so the id is bound to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. On ordinary `plan_checkpoint`, the Investigator fills the Hook's exact professional HypothesisResult questionnaire and saves it; do not ask for a duplicate generic `PLAN_REPORT`. An explicit `plan_approval_required` assignment still waits for its original approval. Workers submit evidence and `HypothesisResult` only, using the same bound Assignment id.
+4. **Dispatch independent questions.** Main assigns investigators by evidence question, not one agent per Finding, and performs the real platform spawn/resume. The system reuses original Hypothesis registration and `runtime investigation dispatch` consumers to generate/bind the unique Assignment to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. These bindings are not questionnaire author fields. On ordinary `plan_checkpoint`, the Investigator fills the Hook's exact professional HypothesisResult questionnaire and saves it; do not ask for a duplicate generic `PLAN_REPORT`. An explicit `plan_approval_required` assignment still waits for its original approval. Workers fill only the existing professional `answer`; Hook listening does not perform or pretend to complete the platform spawn.
    In packet mode, the Hook automatically prepares each eligible registered
    question and supplies its exact view and answer paths. The Investigator
-   fills only the professional result fields and saves with Write/Edit/
-   MultiEdit; the original Case consumer generates the receipt and updates
+   fills only the professional result fields and saves the exact file through
+   a supported editor, script or extension tool; the original Case consumer generates the receipt and updates
    Case facts. No professional result is prefilled. New hypothesis content
    receives machine IDs and still awaits Main dispatch. Exact retry compares
    saved bytes; changed answers conflict. Do not manually issue/consume or
@@ -78,13 +91,22 @@ An incomplete but safe S7 batch enters S8 with explicit `capture_gaps`; do not s
    - `investigate_more` — evidence or discrimination is insufficient;
    - `duplicate` — follow an existing canonical Case/Contract.
 7. **Create and approve the RepairContract.** For `s9_repair`, bind the exact Finding set, violated invariant, causal model, repair scope, forbidden scope, compatibility/migration/rollback expectations, symptom assertions, root-invariant assertion, detection-gap assertion, and stop/escalation conditions. Main performs the technical review; authority is either explicit human approval or a current bounded-repair delegation (docs/bounded-repair-autonomy.md). Architect review is conditional on a cross-module, source-of-truth, or contract-boundary change.
-   When neither a pinned project repair policy nor a valid bounded grant applies, first register a `human_decision` evidence artifact scoped to `s8_contract_approval:<runtime_id>` and record the exact draft SHA-256 in that decision artifact. The approval handoff is then the CAS command `runtime investigation contract approve --case-id <case> --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>`. It must succeed before S9 work begins; it writes the approved Contract hash, creates the next immutable Case revision, and advances to `bug_resolution.repair_readback`.
-8. **Project and hand off.** Only after approval, generate the canonical BUG compatibility projection and the S9 work package idempotently from the Case and RepairContract. S9 reads the approved Contract hash and does not rediscover the root cause. A projection failure must not roll back the approved investigation; retry the projection from the same Case/Contract revision.
+   Before the real review, the system projects current Case revision, exact Finding set and other known machine fields into the final draft and supplies its actual path. Approval binds those final real bytes; do not auto-edit the approved draft afterward. When neither a pinned project repair policy nor a valid bounded grant applies, Main obtains a genuine human decision and the system records the original `human_decision` evidence scoped to `s8_contract_approval:<runtime_id>` with the final draft hash. Saving professional content does not approve it. Only after valid original authority exists may the system call the original `runtime investigation contract approve` CAS transaction; it must succeed before S9 begins and retains the approved Contract hash and immutable Case revision.
+8. **Project and hand off.** Main supplies the current route's professional judgment and handles genuine human decisions. When the original route conditions and authority are met, the system calls the original consume/handoff; Main does not manually consume it. Only after approval, generate the canonical BUG compatibility projection and the S9 work package idempotently from the Case and RepairContract. S9 reads the approved Contract hash and does not rediscover the root cause. A projection failure must not roll back the approved investigation; retry the projection from the same Case/Contract revision.
    The legacy unissued file-based S9 CLI route is a compatibility/diagnostic path, not the normal packet-enabled Builder procedure. It can retain the original Session/Plan/Assignment, execution barrier, result, Changeset, Impact, independent Targeted and Handoff commands. In the packet-enabled normal path, the Hook supplies the PlanReport and RepairResult exact answer paths; the Builder saves only those professional answers and the original consumers/adapter update lifecycle facts. Do not submit a separate generic PLAN_REPORT or generic completion_report, manually issue/consume a questionnaire, or run the execution-begin command after the graph has advanced automatically. Main still performs candidate integration, required checks, one independent Targeted result per approved Contract, and Handoff gates. If the questionnaire path is absent, report a Main/system preparation gap instead of guessing or falling back to the legacy CLI.
 
 ## Blocking and Recovery
 
-Every blocked result must expose all four fields:
+For an issued S8 answer, a blocked discriminator uses `result="inconclusive"`.
+Use existing `answer.method` for actual attempts and unexecuted steps, and
+`answer.observed` for observed facts, the concrete blocker, missing material and
+Main's next action. Keep genuine evidence/boundary references; do not invent
+execution, add blocker fields or deliver a second report. If mandatory source
+material is unavailable, identify a Main/system preparation gap. Main retains
+route decisions and the original consumers retain their completeness checks.
+
+The following is the descriptive legacy/recovery message format, not additional
+fields or a second deliverable for the normal issued S8 questionnaire:
 
 ```text
 BLOCKED: <short reason>
@@ -98,12 +120,12 @@ Use these recovery rules:
 - **Unsealed or changed Finding set:** stop before Case creation; return to S7 to seal or re-export the exact batch, then verify the batch hash.
 - **Missing discriminator:** append a `FindingSupplement` for the named discriminator; if it is unsafe or unavailable, route `investigate_more` instead of repeating the symptom.
 - **Original finder unavailable:** resume from the saved Case/checkpoint with an authorized replacement investigator; do not discard the Case or require a fresh reproduction.
-- **Case revision conflict:** reload the latest Case, preserve its source Finding exact set, and submit a new revision; never overwrite a newer revision.
+- **Case revision conflict:** Main/system reloads the original current Case and preserves its source Finding exact set through the existing CAS recovery; authors do not calculate a new revision or overwrite a newer one.
 - **Unexplained Finding or unsupported causal edge:** keep the Case open, add a targeted hypothesis assignment, and verify that every source ID is covered before Contract approval.
 - **RepairContract incomplete:** revise the Case/Contract and run the completeness check again; do not create a BUG or dispatch S9.
 - **Route requires specification or requirement change:** set the corresponding route, preserve evidence and causal work, and hand off to S2 or the human decision point.
 - **S9 projection or dispatch failure after approval:** retry the idempotent projection using the approved Contract hash; do not create a second Case or alter the approved Contract.
-- **S9 targeted failure:** read the failed TargetedReverification from `runtime repair status`. For `fail_same_cause`, `fail_new_cause`, `scope_changed`, or `stale`, use the exact `investigation route ... --reassessment-evidence <targeted-path>` action shown by `next_action`; it is the same Case's causal reassessment revision, not a new BUG or an S9 retry loop. For `blocked`, resolve the environment/authority blocker, run `runtime repair targeted resume --actor <actor> --reason <resolution>`, and submit a new independent targeted result first; this path does not create causal evidence.
+- **S9 targeted failure:** preserve the failed original artifact and follow the precise current questionnaire/recovery feedback. Non-blocked failures return the same Case for original causal reassessment, not a new BUG or an S9 retry loop. A blocked verifier records actual evidence; after the blocker is resolved, the original Resume/Create/Commit consumers handle the new independent result. The explicit status/route/targeted-resume CLI commands remain legacy/recovery references, not another normal author submission. Missing normal paths belong to Main/system preparation; do not guess or fabricate PASS.
 
 ## Outputs
 
@@ -153,38 +175,93 @@ When a project repair policy was explicitly pinned at REQ bind, or an explicit c
 
 ## Issued S9 PlanReport adapter
 
-For a registered repair Builder, the Hook supplies the PlanReport view and
-answer paths. On ordinary `plan_checkpoint`, fill only the professional
-`answer.plan`, `answer.red_checks`, and `answer.proposed_paths`, then save. The
-original PlanReport consumer validates Session/Plan/Assignment facts and the
-existing adapter projects that same answer onto the lifecycle checkpoint; do
-not send an additional generic PLAN_REPORT. The receipt records that this
-planning responsibility was accepted, not that implementation is complete.
-After every required Assignment report is accepted, the original graph/listener
-advances to implementation. Do not manually run `runtime repair execution begin`
-on the normal path. Explicit `plan_approval_required` keeps its original
-approval. An exact answer replay
-returns the original fact; changed answers conflict. Missing answer paths are
-a Main/system preparation gap, not a reason to fall back to manual issue/consume.
+Main reads the approved Contract and RepairPlan, selects actual specialized
+Builders and independent verification work, and performs real native spawn/resume.
+The system supplies exact personal view/answer paths and the current-step brief;
+Main carries these into the native task without authoring or saving Worker answers.
+The same division questionnaire supplies `check_location` (`main` or `worker`);
+saving it records the choice and supplies the exact original startup commands.
+Main runs bind/prepare through a normal tool; original prepare supplies the actual
+Worker and Result paths. Saving and passive listening do not prepare workspaces.
+
+At the Main root, the Builder personally saves the pre-execution PlanReport:
+`answer.plan`, real `answer.red_checks` and `answer.proposed_paths`. Record each
+check as `{name,command,result,evidence_refs}`, recording the actual attempted
+command and honest `fail/pass/blocked` result. The command records past work;
+it does not freeze Main's later check commands or impose another author format. Real log paths
+and existing references are valid evidence; no URI prefix is required. Describe
+actual attempts and missing conditions without inventing execution or red evidence.
+
+Saving records the person’s Plan and work-start graph fact in one logical Writer
+submission; internal atomicity/CAS may involve several physical I/O operations.
+There is no generic PLAN, AgentBegin, activation or work_started permission. Main arranges each Builder's work after that person's PlanReport, using the
+normal preparation action to supply the real Worker root and current Result path.
+There is no requirement to wait for every Builder's PlanReport before anyone works. Main owns missing paths/environment preparation and any explicit user
+decision. Product scope does not exclude supplied personal questionnaires/evidence.
+Do not manually issue/consume or add an activation report; report concrete gaps at
+the exact current path rather than guessing commands or switching to legacy mode.
 
 ## Issued S9 RepairResult after implementation
 
-When the original S9 graph reaches `fixing`, the Hook prepares the
-post-execution RepairResult questionnaire and gives its exact view and
-`answer_path`.
-The Builder fills only the professional verdict, before-fix results, unit
-results, detection-gap evidence, scope deviations, risks, migration and
-rollback fields, then saves through the platform PostToolUse Hook. Do not
-author machine changed-path or check facts, infer responsibility `done` from green checks,
-or use terminal `stage-answer consume --agent` for an issued answer.
+At the supplied Worker root, implement and self-check, or complete assigned
+no-change tests, then personally save the exact RepairResult answer. Fill the
+professional verdict, actual assertion observations, unit results, evidence,
+scope deviations, risks and applicable migration/rollback fields. Known machine
+and Git/check facts come from the system; green checks do not replace judgment.
+No-change testing requires no new commit. Existing Contract or Git references may
+support actual migration/rollback needs; nonempty “No migration” text does not
+force two references or another report.
 
-The original RepairResult consumer validates the professional answer; the
-original candidate Writer checks actual changed paths and required checks and
-projects that same answer onto the completion record. The existing
-`work_complete=true` field projects only the Builder's current responsibility
-to `done`; Main still performs the original
-workspace integration, all required Main checks and final RepairResult
-Writer. Keep the Worker source until that path completes. The pre-execution
-PlanReport receipt remains `work_complete=false`; it does not replace the
-post-execution answer. When no typed Result packet was issued, preserve the
-existing `repair-result.json` and `s9_delivery_command` workflow.
+PlanReport and RepairResult record the two different professional steps before
+and after work. Result saving records that work directly, not a second generic
+completion prerequisite. Actual changes still require real Git delivery, Main
+integration and necessary Main checks; retain the Worker until Main receives it.
+Main uses the supplied `runtime workspace integrate --root <Main-root> --assignment <execution-assignment-id> --agent <owner-agent-id> --check-command '<actual necessary Main check command>'`; root/assignment/owner come from the current execution, while Main selects actual necessary checks (repeat `--check-command` for multiple checks). This typed S9 path records real integration and Final; do not substitute generic `runtime task-integrate`.
+No-change results still receive real required checks. Save through any supported
+editor, script or extension tool; do not send a separate completion report or
+copy identities, hashes, revisions or check receipts into professional answers.
+
+## S9 impact, independent verification and handoff
+
+Actual Contract approval prepares the original Session/Plan and Main division
+drafts. Explicit session startup followed by plan compile also prepares those
+existing division drafts. Ordinary tools only read current responsibilities and
+paths; they do not perform this preparation. After real Main integration, the
+system prepares ChangeImpact only when the current repair facts reach that step;
+otherwise it reports the actual remaining assignment work.
+
+Main saves the exact ChangeImpact questionnaire with professional change types,
+per-change decisions/rationale and evidence dispositions; system-known diff and
+bindings come from accepted Final batch facts, merged with the existing last-wins
+rule. No physical Session rescan, exact-set, freshness, registered-evidence or hash
+proof qualifies this judgment. Actual file/output paths are valid evidence. Use the
+professional field shapes/enums in that questionnaire,
+including `decision` in `invalidate/supersede/retain/reverify`.
+Successful Impact saving prepares the existing Targeted questionnaire for the
+actually assigned independent verifier. If no verifier is selected yet, use Main's
+current independent verifier division path; saving that selection at the
+targeted step prepares that person's answer.
+Main actually spawns/notifies the independent verifier. The questionnaire supplies
+all necessary Contract assertion text and system slots; the verifier performs the
+real observations and saves
+`continuity_reason`, `assertion_results` (`assertion_id,result,evidence_refs`),
+`scope_compliance`, `result` and the applicable `failure_class` at the exact path.
+Assertion results are `pass/fail/blocked`; scope is `pass/fail`; overall result is
+`pass/fail/blocked/scope_changed`. Use actual evidence, not the Builder's conclusion;
+the verifier must not have implemented or merged the work being verified. Every
+required assertion needs an actual result; specific missing observations prevent
+advancement. Extra observations and ID spelling/count/aliases, owner pools, issue
+chains or evidence registration are not report qualifications. Honest fail/blocked
+reports can be recorded without pretending that unfinished checks passed.
+
+For blockers, save actual attempts/gaps and use the accurate current resolution
+question. Do not fabricate PASS or manually issue a successor answer. The system
+records the existing Handoff directly after the final successful Targeted save
+and reports its actual artifact and fresh S7 seed paths; there is no new Handoff
+form or next ordinary tool preparation step. Main then continues fresh S7 responsibility.
+These source changes have limited mechanical coverage; a new real S9 through
+fresh S7 model run has not passed.
+Hook listening adds no tool/identity/scope ACL; actual checks, independence,
+actual pending user decisions under their existing authorization and the original
+Writer’s atomicity/CAS/idempotency remain. Candidate, Main integration and Final
+are distinct real steps; removing duplicate proof does not remove integration.

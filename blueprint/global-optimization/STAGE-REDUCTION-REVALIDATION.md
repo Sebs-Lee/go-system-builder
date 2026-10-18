@@ -142,10 +142,12 @@ after-r23，原始模型日志和旧答卷保留。本地回归报告为
 | S5 文档验证 | done | done | done | done | r128定向48项、相关四包102项通过；after-r32真实独立双PASS/原TR-003进S6，六次新旧答卷重放零写入，tasks check/validate/doctor全过；未开展S6 |
 | S6 构建 | done | done | done | done | R40 真实 Builder 专业履职；R45 机械前置与真实 checks/Git/ACK/清理，两真实 Main probe 无 deadline/UNKNOWN，正确展示已知失败，唯一 TR-006 进入 S7 且准确问卷可读；未填 S7。R42–R44 和作者窄测失败保留，范围见 S6 审查 |
 | S7 验证轮 | done | done | done | done | 仅本轮限定范围：R48 backend Clean；R51 真冷 TR-006/Main Plan 原登记/7问卷准备；R50 synthetic browser bug-v4 原3职责接收→ObservationBatch/TR-008进S8，clean-v2 原3职责接收→CleanRound/TR-009进S10。六段466条直接Hook响应无内部deadline/4秒defer；clean外层720秒截止后同E2E恢复完成、bug编排误约束纠正及旧失败均保留。最新43项不同定向测试PASS（32核心+11原边界）（skip exporter不计）；after-r52构建0，生产Go相对R51无变更，非R52新完整链。未做S8/S10专业工作、非全分支/全平台/全阶段；[详细证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r52-s7-closeout-final.json) |
-| S8 调查 | done | active | active | pending | Worker 保存样本已改为真实绝对路径；原 Case 接收待复跑，保留假说、证据和路由 |
-| S9 修复 | done | active | active | pending | PlanReport/Result 不重复交卷、原 Main 集成、自动继任问卷及完整 Targeted 阻塞恢复→Handoff 定向回归已通过；等合并整包回归 |
+| S8 调查 | done | done | done | done | 仅本轮限定范围：A/B/C/D1 已落地；after-r56 59 项不同顶层定向测试 PASS、0 fail/skip（154.619秒）。真实 Main→一名 native Investigator 本人 supported→原 Case/route 接收→Contract 无授权等待，专业修稿后外部显式仿真人决策经原批准事务到 S9 planning 即停；Runtime rev11/Case r5 contract_approved，无 S9 专业执行。101 条直接 Hook 均 exit0，选定内部 deadline/defer、专业 schema/route 拒收为0。synthetic 上游非新 S7 通过，仿真人决策非真实用户授权；三 schema 单验 PASS，全项目缺 scenario-model 仍失败；非全平台/全分支模型验收。[收尾证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r56-s8-closeout-final.json)、[范围说明](S8-MECHANISM-REVIEW.md) |
+| S9 修复 | done | done | done | done | 限定本轮：r86/r79单次CLI无人工续接，1624.111264s/exit0/非超时，rev31 repair.closed→freshS7 round2；本人2Plan/2Final、Main真实集成/检查、Impact、独立5项观察、Handoff已接收。r85/r78亦闭环但3次人工续接、累计1706.755652s，非性能对照。r86旧continuity门曾触发、由本人补后接收；r80移除此门仅经原lead全尾机械例及独立install/原case/代码核查，不冒充r80全链nativePASS；synthetic上游非真人S7/S8，freshS7非S7PASS，无新同版全矩阵资格。[范围与证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/s9-closure-summary.md) |
 | S10 验收 | done | active | active | pending | 原 RecordEvidence、派生 metrics/审计汇总及完整 S10→S11 权威链通过定向回归 |
 | S11 发布闸 | done | active | active | pending | 真实 S10 前置链、准确申请/证据路径及 Agent 自批不推进测试通过 |
+
+S9 当前依据仅为 [review 顶部职责/迁移表及最新证据](S9-MECHANISM-REVIEW.md)；下文旧 S9 r号记录与当时安排为历史，不是当前设计或下一轮执行计划。真实必要断言未复验须具体提醒且不推进；删除ID拼写/严格数量/extra项与注册义务证明，不取消独立复验。
 
 `done` 的设计列表示已完成本轮最小工作流梳理，不代表代码或宿主验收通过。
 回归列仍为 `active` 的阶段仅有部分定向用例通过，不能算本阶段完整验收。

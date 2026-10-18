@@ -42,7 +42,8 @@ func TestS9MainResolutionPublicHookRetiresOldAttempt(t *testing.T) {
 	if resolution["rationale"] != "" {
 		t.Fatalf("Main must author the recovery rationale, got %v", resolution["rationale"])
 	}
-	resolution["rationale"] = "External dependency restored; preserve the old attempt and request a new verified Resume."
+	resolution["rationale"] = "External dependency restored; preserve the old report and continue the repair."
+	// Main fills only the recovery judgment; body is supplied by the system.
 	data, err := json.MarshalIndent(draft, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -89,8 +90,11 @@ func TestS9MainResolutionPublicHookRetiresOldAttempt(t *testing.T) {
 		resolved.ConsumerOwner != "main" || !resolved.ConsumerPending {
 		t.Fatalf("Main resolution was not separately received: %s", raw)
 	}
-	if !strings.Contains(resolved.NextAction, "SessionStart") || !strings.Contains(resolved.NextAction, "PreToolUse") || strings.Contains(resolved.NextAction, "stage-answer issue") {
-		t.Fatalf("Main resolution receipt still asks for manual packet issuance: %q", resolved.NextAction)
+	if !strings.Contains(resolved.NextAction, "runtime workspace prepare") || strings.Contains(resolved.NextAction, "监听器会准备") || strings.Contains(resolved.NextAction, "stage-answer issue") {
+		t.Fatalf("Main recovery feedback must name normal prepare, without passive preparation or manual issuance: %q", resolved.NextAction)
+	}
+	if body, _ := draft["body"].(string); body != "" {
+		t.Fatal("rationale-only fixture unexpectedly authored a duplicate body")
 	}
 	current := currentS9Snapshot(t, fixture)
 	if _, found, err := runtime.VerifiedRepairResultResolutionReceipt(fixture.root, current.State, packet.ID, owner.agentID); err != nil || !found {
@@ -107,16 +111,8 @@ func TestS9MainResolutionPublicHookRetiresOldAttempt(t *testing.T) {
 		t.Fatalf("resolved owner context unavailable: %v", err)
 	}
 	agent := workerContext.PolicyContext.Agent
-	if !agent.RepairResultResumePending || len(agent.RepairAllowedWritePaths) != 0 || len(workerContext.PolicyContext.RepairResultAnswerPaths) != 0 {
-		t.Fatalf("old scope survived resolution: agent=%+v answers=%v", agent, workerContext.PolicyContext.RepairResultAnswerPaths)
-	}
-	for _, target := range []string{packet.AnswerPath, "internal/api/payload.go"} {
-		input := policy.Input{Event: "PreToolUse", ToolName: "Write", AgentID: owner.agentID, CWD: workerRoot,
-			SessionID: execution.PlatformSessionID, Runtime: workerContext.PolicyContext,
-			ToolInput: map[string]any{"file_path": filepath.Join(workerRoot, filepath.FromSlash(target))}}
-		if decision, denied := policy.EvaluateAgentScoped(input); !denied || decision.Decision != "deny" {
-			t.Fatalf("resolved Worker retained old write permission for %s: %+v", target, decision)
-		}
+	if !agent.RepairResultResumePending || len(workerContext.PolicyContext.RepairResultAnswerPaths) != 0 {
+		t.Fatalf("resolved responsibility lost its pending reminder or exposed a retired questionnaire: agent=%+v answers=%v", agent, workerContext.PolicyContext.RepairResultAnswerPaths)
 	}
 	var active *hookctx.AssignmentContext
 	for i := range workerContext.Assignments {

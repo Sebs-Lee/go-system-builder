@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,9 +10,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/checkexec"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/repair"
@@ -30,11 +29,23 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	root := fs.String("root", ".", "Main or registered Worker root")
 	id := fs.String("assignment", "", "registered assignment")
 	agent := fs.String("agent", "", "registered owner")
+	var checkCommands stringListFlag
+	fs.Var(&checkCommands, "check-command", "integrate: necessary Main check command; repeat for multiple checks")
 	retry := fs.Bool("retry-preserved", false, "retry the same immutable candidate after resolving its recorded failure")
 	if err := parseWorkspaceFlags(fs, args[1:]); err != nil {
 		return 2
 	}
 	fail := func(err error) int { fmt.Fprintln(stderr, err); return 1 }
+	if verb == "integrate" {
+		absoluteRoot, err := filepath.Abs(*root)
+		if err != nil {
+			return fail(err)
+		}
+		*root = absoluteRoot
+	}
+	if verb != "integrate" && len(checkCommands) > 0 {
+		return fail(fmt.Errorf("check-command is an integrate-only Main work parameter"))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	ctx, release, err := integration.LockWorkspace(ctx, *root)
@@ -48,15 +59,28 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	b, err := workspace.Decode(snap.State)
-	if err != nil {
-		return fail(err)
+	var b *workspace.ExecutionRegistry
+	if verb == "integrate" {
+		data, err := json.Marshal(snap.State["workspace"])
+		if err != nil {
+			return fail(err)
+		}
+		if err := json.Unmarshal(data, &b); err != nil {
+			return fail(err)
+		}
+	} else {
+		b, err = workspace.Decode(snap.State)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	if b == nil {
 		return fail(fmt.Errorf("bind Main first"))
 	}
-	if err = b.Validate(ctx, *root); err != nil {
-		return fail(err)
+	if verb != "integrate" {
+		if err := b.Validate(ctx, *root); err != nil {
+			return fail(err)
+		}
 	}
 	e, ok := b.Execution(*id, workspace.RuntimeID(snap.State), workspace.Generation(snap.State))
 	if !ok || e.AgentID != *agent || (e.Status != "ready" && !(verb == "integrate" && e.Status == "complete")) {
@@ -65,19 +89,22 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if e.Purpose == workspace.DocumentReviewPurpose {
 		return fail(fmt.Errorf("S5 document review has no product delivery/integration; use the answer receipt"))
 	}
-	loaded, err := hookctx.LoadFull(*root, e.AgentID)
-	if err != nil {
-		return fail(err)
-	}
+	var loaded *hookctx.LoadedContext
 	var a *hookctx.AssignmentContext
-	for i := range loaded.Assignments {
-		if loaded.Assignments[i].AssignmentID == e.AssignmentID && loaded.Assignments[i].OwnerAgentID == e.AgentID {
-			a = &loaded.Assignments[i]
-			break
+	if verb != "integrate" {
+		loaded, err = hookctx.LoadFull(*root, e.AgentID)
+		if err != nil {
+			return fail(err)
 		}
-	}
-	if a == nil {
-		return fail(fmt.Errorf("delivery assignment is no longer registered"))
+		for i := range loaded.Assignments {
+			if loaded.Assignments[i].AssignmentID == e.AssignmentID && loaded.Assignments[i].OwnerAgentID == e.AgentID {
+				a = &loaded.Assignments[i]
+				break
+			}
+		}
+		if a == nil {
+			return fail(fmt.Errorf("delivery assignment is no longer registered"))
+		}
 	}
 	if verb == "deliver" {
 		if loaded.PolicyContext.Agent == nil || loaded.PolicyContext.Agent.LifecycleActivity() != "reported" {
@@ -128,8 +155,12 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		return fail(err)
 	}
 	ref := repair.ArtifactRef{Path: e.DeliveryRef, SHA256: e.DeliverySHA256}
-	candidate, err := repair.ReadWorkspaceCandidate(*root, ref)
+	data, err := workpacket.ReadFile(*root, ref.Path, 20<<20)
 	if err != nil {
+		return fail(err)
+	}
+	var candidate repair.WorkspaceCandidate
+	if err := json.Unmarshal(data, &candidate); err != nil {
 		return fail(err)
 	}
 	if candidate.RuntimeID != e.RuntimeID || candidate.BaselineGeneration != e.BaselineGeneration || candidate.ExecutionGeneration != e.Generation || candidate.AssignmentID != e.AssignmentID || candidate.BaseCommit != e.BaseCommit {
@@ -143,26 +174,28 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	if !registered {
-		if _, err = repair.ValidateWorkspaceCandidate(*root, snap.State, e, ref); err != nil {
+	if !typedResult {
+		loaded, err = hookctx.LoadFull(*root, e.AgentID)
+		if err != nil {
 			return fail(err)
 		}
-	}
-	if typedResult && !registered {
-		if err := runtime.VerifyRepairResultPacketCurrent(*root, snap.State, typedPacket); err != nil {
-			return fail(err)
+		for i := range loaded.Assignments {
+			if loaded.Assignments[i].AssignmentID == e.AssignmentID && loaded.Assignments[i].OwnerAgentID == e.AgentID {
+				a = &loaded.Assignments[i]
+				break
+			}
 		}
-		accepted, acceptedOK, acceptedErr := runtime.VerifiedRepairResultCandidateReceipt(*root, snap.State, typedPacket.ID, e.AgentID)
-		if acceptedErr != nil || !acceptedOK || accepted.CandidateRef != e.DeliveryRef || accepted.CandidateSHA256 != e.DeliverySHA256 {
-			return fail(fmt.Errorf("typed S9 candidate lacks its exact original delivery receipt: %v", acceptedErr))
+		if a == nil {
+			return fail(fmt.Errorf("legacy delivery assignment is unavailable"))
 		}
-		complete, completeErr := repair.RepairResultWorkCompleteWithContext(ctx, *root, snap.State, typedPacket.ID, e.AgentID)
-		if completeErr != nil {
-			return fail(fmt.Errorf("typed S9 candidate owner/check proof is unavailable; preserve the candidate: %w", completeErr))
+		if !registered {
+			if _, err := repair.ValidateWorkspaceCandidate(*root, snap.State, e, ref); err != nil {
+				return fail(err)
+			}
 		}
-		if !complete {
-			return fail(fmt.Errorf("typed S9 candidate is retained, but its professional answer or current owner-owned checks are incomplete; preserve the Worker and do not merge"))
-		}
+	} else {
+		a = &hookctx.AssignmentContext{AssignmentID: e.AssignmentID, OwnerAgentID: e.AgentID,
+			TaskID: typedPacket.Binding.Sources.TaskID, WorktreePath: e.Path, Branch: e.Branch, TargetBranch: e.TargetBranch}
 	}
 	cpPath := workspaceExecutionCheckpointPath(*root, e)
 	cp, found, err := integration.DefaultCheckpointStore().Load(cpPath)
@@ -176,13 +209,6 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		return fail(fmt.Errorf("registered candidate result has no integration checkpoint"))
 	}
 	if registered && typedResult {
-		// A typed S9 Result freezes the Main facts from the checkpoint that was
-		// originally verified. Validate that receipt before any recovery call
-		// can change the checkpoint's verification facts.
-		verified, receiptFound, verifyErr := runtime.VerifiedRepairResultReceipt(*root, snap.State, typedPacket.ID, e.AgentID)
-		if verifyErr != nil || !receiptFound || verified.ResultRef != resultRef.Path || verified.ResultID != typedPacket.ResultID {
-			return fail(fmt.Errorf("registered S9 Result does not have its exact original candidate/Main checkpoint receipt: %v", verifyErr))
-		}
 		if cp.State == integration.StateVerified {
 			targetHead, headErr := workspace.Git(ctx, *root, "rev-parse", cp.TargetBranch)
 			if headErr != nil {
@@ -193,11 +219,24 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	config := integration.IntegrateConfig{Root: *root, GitRoot: *root, RuntimeID: e.RuntimeID, RequiredChecks: e.Checks, CheckRunner: integration.ProfileCheckRunner(e.CheckProfiles, checkexec.Binding{RuntimeID: e.RuntimeID, Generation: e.BaselineGeneration, AssignmentID: e.AssignmentID, Owner: e.AgentID, ExecutionGeneration: e.Generation, Responsibility: "main_required_integration"})}
+	mainCommands, err := workspaceMainCheckCommands(e.Checks, checkCommands, cp)
+	if err != nil {
+		return fail(err)
+	}
+	// Main selects its actual checks here. The Worker execution remains the
+	// original work definition; these commands are not frozen from prechecks.
+	mainExecution := e
+	mainExecution.Checks = mainCommands
+	if found && (cp.State == integration.StateVerified || cp.State == integration.StateAcknowledged || cp.State == integration.StateCleanupPending || cp.State == integration.StateComplete) {
+		if _, err := verifiedDomainChecks(*root, mainExecution, cp); err != nil {
+			return fail(fmt.Errorf("selected Main checks have not passed at the checkpoint tested HEAD: %w", err))
+		}
+	}
+	config := integration.IntegrateConfig{Root: *root, GitRoot: *root, RuntimeID: e.RuntimeID, RequiredChecks: mainCommands, CheckRunner: integration.CommandCheckRunner}
 	var inspected integration.Inspection
 	if found && (cp.State == integration.StateReady || cp.State == integration.StateMerged || cp.State == integration.StateVerified || cp.State == integration.StateAcknowledged || cp.State == integration.StateCleanupPending || cp.State == integration.StateComplete) {
 		inspected = integration.InspectionFromCheckpoint(cp)
-		if !(registered && typedResult) {
+		if !typedResult {
 			inspected, err = integration.RefreshCompletionBinding(*root, e.RuntimeID, a.CompletionRef, inspected)
 			if err != nil {
 				return fail(err)
@@ -207,21 +246,28 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		if err = b.CleanInputs(ctx); err != nil {
 			return fail(err)
 		}
-		if err = b.ValidateExecution(ctx, e, false); err != nil {
-			return fail(err)
+		if !typedResult {
+			if err = b.ValidateExecution(ctx, e, false); err != nil {
+				return fail(err)
+			}
 		}
 		a.WorktreePath, a.Branch, a.TargetBranch = e.Path, e.Branch, e.TargetBranch
-		a.WritePaths = e.WritePaths
 		locked := []string{}
-		for _, v := range loaded.PolicyContext.LockedArtifacts {
-			locked = append(locked, v.Path)
+		if !typedResult {
+			a.WritePaths = e.WritePaths
+			for _, v := range loaded.PolicyContext.LockedArtifacts {
+				locked = append(locked, v.Path)
+			}
 		}
 		inspectCfg := integration.InspectConfig{LockedArtifacts: locked, ValidateDelivery: func(ctx context.Context, in integration.Inspection) error {
 			if in.SourceHead != candidate.SourceHead {
 				return fmt.Errorf("candidate source commit changed")
 			}
-			_, err := repair.ValidateWorkspaceCandidate(*root, snap.State, e, ref)
-			return err
+			if !typedResult {
+				_, err := repair.ValidateWorkspaceCandidate(*root, snap.State, e, ref)
+				return err
+			}
+			return nil
 		}}
 		if found && cp.MergeCommit != "" {
 			inspectCfg.RecoveryBase, err = integration.RecoveryBaseForCheckpoint(ctx, *root, cp)
@@ -251,7 +297,7 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return fail(err)
 		}
-		candidate.Proposal.Checks, err = verifiedDomainChecks(*root, e, cp)
+		candidate.Proposal.Checks, err = verifiedDomainChecks(*root, mainExecution, cp)
 		if err != nil {
 			return fail(err)
 		}
@@ -277,13 +323,9 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		if result.Result != "pass" {
 			return fail(fmt.Errorf("domain result %s is %s; preserve Worker and follow the recorded repair recovery route", result.ResultID, result.Result))
 		}
-	} else if typedResult {
-		verified, found, verifyErr := runtime.VerifiedRepairResultReceipt(*root, snap.State, typedPacket.ID, e.AgentID)
-		if verifyErr != nil || !found || verified.ResultRef != resultRef.Path || verified.ResultID != typedPacket.ResultID {
-			return fail(fmt.Errorf("registered S9 Result does not have its exact original candidate/Main checkpoint receipt: %v", verifyErr))
-		}
 	}
-	if a.CompletionAckRef == "" {
+
+	if !typedResult && a.CompletionAckRef == "" {
 		for _, other := range b.Executions {
 			if other.AgentID != e.AgentID || other.AssignmentID == e.AssignmentID || other.DeliveryRef == "" || other.RuntimeID != e.RuntimeID || other.BaselineGeneration != e.BaselineGeneration {
 				continue
@@ -311,129 +353,74 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	return encodeJSON(stdout, map[string]any{"checkpoint": finished.Checkpoint, "result_ref": resultRef, "revision": snap.Revision, "next": "continue independent targeted verification and a fresh S7; human release remains required"})
+	snap, err = writer.Snapshot()
+	if err != nil {
+		return fail(err)
+	}
+	pointer := repairPointerCLI(snap.State)
+	next := stringValue(pointer["next_action"])
+	if next == "" {
+		next = "Main integration recorded; current repair status: " + stringValue(pointer["status"]) + ". Continue the remaining repair or test work and Main checks."
+	}
+	if stringValue(pointer["status"]) == "impact_reconciliation" {
+		impactPath, err := prepareRepairImpactQuestionnaire(*root, snap.State)
+		if err != nil {
+			return fail(fmt.Errorf("Main integration recorded; ChangeImpact preparation: %w", err))
+		}
+		next = "Main must complete and save ChangeImpact at " + impactPath + "."
+		fmt.Fprintln(stderr, next)
+	}
+	return encodeJSON(stdout, map[string]any{"checkpoint": finished.Checkpoint, "result_ref": resultRef, "revision": snap.Revision, "next": next})
 }
 
 // currentRepairResultPacketForDelivery identifies an issued typed S9 packet
 // from immutable candidate provenance. If no provenance exists, any issued
 // packet for this Assignment still prevents fallback to the legacy Writer.
 func currentRepairResultPacketForDelivery(root string, state map[string]any, execution workspace.Execution, candidate repair.WorkspaceCandidate) (workpacket.RepairResultPacket, bool, error) {
-	packets, err := runtime.RepairResultPackets(state)
-	if err != nil {
-		return workpacket.RepairResultPacket{}, false, err
-	}
-	if candidate.Provenance != nil {
-		packet, found, err := runtime.FindRepairResultPacket(state, candidate.Provenance.PacketID)
-		if err != nil || !found {
-			return workpacket.RepairResultPacket{}, false, fmt.Errorf("candidate references an unregistered S9 packet: %v", err)
-		}
-		packetSHA, digestErr := workpacket.RepairResultPacketDigest(packet)
-		if digestErr != nil {
-			return workpacket.RepairResultPacket{}, false, digestErr
-		}
-		matches, matchErr := repairResultPacketMatchesExecution(packet, execution)
-		if matchErr != nil {
-			return workpacket.RepairResultPacket{}, false, matchErr
-		}
-		if !matches || !repairResultCandidateMatchesPacketExecution(candidate, packet, execution, packetSHA) {
-			return workpacket.RepairResultPacket{}, false, fmt.Errorf("candidate typed S9 packet differs from the exact registered execution")
-		}
-		if err := runtime.VerifyRepairResultPacketIssue(root, state, packet); err != nil {
-			return workpacket.RepairResultPacket{}, false, err
-		}
-		return packet, true, nil
-	}
-	var selected *workpacket.RepairResultPacket
-	for _, packet := range packets {
-		binding := packet.Binding.Sources
-		if binding.SessionID != candidate.SessionID || binding.PlanID != candidate.PlanID || binding.ContractSHA256 != candidate.ContractSHA256 {
-			continue
-		}
-		matches, matchErr := repairResultPacketMatchesExecution(packet, execution)
-		if matchErr != nil {
-			return workpacket.RepairResultPacket{}, false, matchErr
-		}
-		if !matches {
-			continue
-		}
-		if selected != nil {
-			return workpacket.RepairResultPacket{}, false, fmt.Errorf("multiple typed S9 packets bind this execution")
-		}
-		copyPacket := packet
-		selected = &copyPacket
-	}
-	if selected == nil {
+	if candidate.Provenance == nil {
 		return workpacket.RepairResultPacket{}, false, nil
 	}
-	return workpacket.RepairResultPacket{}, false, fmt.Errorf("issued S9 packet requires its exact typed candidate provenance; legacy Result submission is refused")
+	packet, found, err := runtime.FindRepairResultPacket(state, candidate.Provenance.PacketID)
+	if err != nil || !found {
+		return workpacket.RepairResultPacket{}, false, fmt.Errorf("current candidate packet is unavailable: %v", err)
+	}
+	b := packet.Binding.Sources
+	pointer := repairPointerCLI(state)
+	if !repairResultCandidateMatchesPacketExecution(candidate, packet, execution, "") ||
+		pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef ||
+		candidate.Proposal.AssignmentID != b.RepairAssignmentID ||
+		stringMapCLI(pointer["assignment_owners"])[b.RepairAssignmentID] != execution.AgentID {
+		return packet, false, fmt.Errorf("candidate does not correspond to the current execution attempt")
+	}
+	return packet, true, nil
 }
 
-// repairResultPacketMatchesExecution first locates packets by the canonical
-// or manifest Assignment identity, then proves that the frozen Execution is
-// the exact registered workspace.Execution definition. The Assignment alias
-// is not authority by itself; the frozen identity and definition digest must
-// both agree with the registered execution.
+// Match only the recorded execution attempt. Source mirrors and packet digests
+// are not qualifications for normal Main integration.
 func repairResultPacketMatchesExecution(packet workpacket.RepairResultPacket, execution workspace.Execution) (bool, error) {
-	binding := packet.Binding.Sources
-	if binding.OwnerAgentID != execution.AgentID || binding.RuntimeID != execution.RuntimeID ||
-		binding.BaselineGeneration != execution.BaselineGeneration ||
-		(execution.AssignmentID != binding.ManifestAssignmentID && execution.AssignmentID != binding.RepairAssignmentID) {
+	b := packet.Binding.Sources
+	if b.OwnerAgentID != execution.AgentID || b.RuntimeID != execution.RuntimeID || b.BaselineGeneration != execution.BaselineGeneration {
 		return false, nil
 	}
-	var frozen struct {
-		AssignmentID        string `json:"assignment_id"`
-		RuntimeID           string `json:"runtime_id"`
-		BaselineGeneration  int    `json:"baseline_generation"`
-		ExecutionGeneration int    `json:"execution_generation"`
-		AgentID             string `json:"agent_id"`
+	var attempt struct {
+		AssignmentID string `json:"assignment_id"`
+		Generation   int    `json:"execution_generation"`
+		Path         string `json:"worktree_path"`
 	}
-	if len(packet.Inputs.Execution) == 0 || json.Unmarshal(packet.Inputs.Execution, &frozen) != nil {
-		return true, fmt.Errorf("typed S9 packet has no valid frozen registered execution")
+	if err := json.Unmarshal(packet.Inputs.Execution, &attempt); err != nil {
+		return false, err
 	}
-	if frozen.AssignmentID != execution.AssignmentID || frozen.RuntimeID != execution.RuntimeID ||
-		frozen.BaselineGeneration != execution.BaselineGeneration || frozen.ExecutionGeneration != execution.Generation ||
-		frozen.AgentID != execution.AgentID {
-		return true, fmt.Errorf("typed S9 packet frozen execution identity differs from the exact registered execution")
-	}
-	encoded, err := json.Marshal(execution)
-	if err != nil {
-		return true, err
-	}
-	var current map[string]any
-	if err := json.Unmarshal(encoded, &current); err != nil {
-		return true, err
-	}
-	projection, err := runtime.ProjectRepairResultExecution(current)
-	if err != nil {
-		return true, err
-	}
-	if workpacket.Digest(projection) != packet.Binding.ExecutionSHA256 || !bytes.Equal(projection, bytes.TrimSpace(packet.Inputs.Execution)) {
-		return true, fmt.Errorf("typed S9 packet frozen execution definition differs from the exact registered execution")
-	}
-	return true, nil
+	return attempt.AssignmentID == execution.AssignmentID && attempt.Generation == execution.Generation && filepath.Clean(attempt.Path) == filepath.Clean(execution.Path), nil
 }
 
 func repairResultCandidateMatchesPacketExecution(candidate repair.WorkspaceCandidate, packet workpacket.RepairResultPacket, execution workspace.Execution, packetSHA string) bool {
-	provenance := candidate.Provenance
-	if provenance == nil {
-		return false
-	}
-	binding := packet.Binding
-	sources := binding.Sources
-	return candidate.RuntimeID == execution.RuntimeID && candidate.BaselineGeneration == execution.BaselineGeneration &&
+	matches, err := repairResultPacketMatchesExecution(packet, execution)
+	return err == nil && matches && candidate.Provenance != nil && candidate.Provenance.PacketID == packet.ID &&
+		candidate.RuntimeID == execution.RuntimeID && candidate.BaselineGeneration == execution.BaselineGeneration &&
 		candidate.ExecutionGeneration == execution.Generation && candidate.AssignmentID == execution.AssignmentID &&
 		candidate.BaseCommit == execution.BaseCommit && candidate.SourceHead != "" &&
-		candidate.SessionID == sources.SessionID && candidate.PlanID == sources.PlanID && candidate.ContractSHA256 == sources.ContractSHA256 &&
-		candidate.Proposal.ResultID == packet.ResultID && candidate.Proposal.AssignmentID == sources.RepairAssignmentID && candidate.Proposal.ProducerAgentID == execution.AgentID &&
-		provenance.Contract == "s9-repair-result-candidate-v1" && provenance.PacketID == packet.ID &&
-		provenance.PacketSHA256 == packetSHA && provenance.IssuanceEventID == packet.IssuanceEventID &&
-		provenance.OwnerAgentID == execution.AgentID && provenance.RuntimeID == execution.RuntimeID &&
-		provenance.BaselineGeneration == execution.BaselineGeneration && provenance.ReviewRound == sources.ReviewRound &&
-		provenance.ExecutionAssignmentID == execution.AssignmentID && provenance.ExecutionGeneration == execution.Generation &&
-		provenance.ExecutionSHA256 == binding.ExecutionSHA256 && provenance.ExecutionRoot == execution.Path &&
-		provenance.SourceHead == candidate.SourceHead && provenance.BaseCommit == execution.BaseCommit &&
-		provenance.PlanReportRef == binding.PlanReportRef && provenance.PlanReportSHA256 == binding.PlanReportSHA256 &&
-		provenance.ReworkRef == binding.ReworkRef && provenance.ReworkSHA256 == binding.ReworkSHA256
+		candidate.SessionID == packet.Binding.Sources.SessionID && candidate.PlanID == packet.Binding.Sources.PlanID &&
+		candidate.Proposal.ResultID == packet.ResultID && candidate.Proposal.ProducerAgentID == execution.AgentID
 }
 
 func repairResultMainProof(root string, execution workspace.Execution, checkpoint integration.Checkpoint) (runtime.RepairResultMainProof, error) {
@@ -461,4 +448,50 @@ func repairResultMainProof(root string, execution workspace.Execution, checkpoin
 		VerifiedFacts:       facts,
 		VerifiedFactsSHA256: hex.EncodeToString(factsHash[:]),
 	}, nil
+}
+
+// workspaceMainCheckCommands selects this Main operation's commands. Existing
+// checkpoint records allow a completed operation to be inspected again without
+// asking Main to re-enter commands it already executed.
+func workspaceMainCheckCommands(configured, selected []string, cp integration.Checkpoint) ([]string, error) {
+	commands := configured
+	if len(selected) > 0 {
+		commands = selected
+	}
+	if len(commands) == 0 && (cp.State == integration.StateVerified || cp.State == integration.StateAcknowledged || cp.State == integration.StateCleanupPending || cp.State == integration.StateComplete) {
+		for _, path := range cp.CheckReceipts {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			var receipt struct {
+				Command string `json:"command"`
+				Status  string `json:"status"`
+				Before  string `json:"head_before"`
+				After   string `json:"head_after"`
+				Exit    int    `json:"exit_code"`
+			}
+			if err := json.Unmarshal(data, &receipt); err != nil {
+				return nil, err
+			}
+			if receipt.Status == "pass" && receipt.Exit == 0 && receipt.Before == cp.TestedHead && receipt.After == cp.TestedHead {
+				commands = append(commands, receipt.Command)
+			}
+		}
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, command := range commands {
+		if strings.TrimSpace(command) == "" || strings.HasPrefix(strings.TrimSpace(command), "locked:") {
+			continue
+		}
+		if !seen[command] {
+			out = append(out, command)
+			seen[command] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("S9 Main checks remain pending: select necessary checks with --check-command during integration; no final PASS is recorded")
+	}
+	return out, nil
 }

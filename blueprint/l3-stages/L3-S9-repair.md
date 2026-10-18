@@ -1,12 +1,85 @@
 # L3-S9 — 根因修复与可信度重建（Root-Cause Remediation）
 
-> 层：第三层 ｜ Macro-stage：S7 Discovery → S8 Diagnosis → **S9 Remediation** ｜ 上游：S8 approved RepairContract ｜ 下游：S7 新完整验证轮、S8 重新调查、S2 specification rework 或 paused
+> 层：第三层 ｜ Macro-stage：S7 Discovery → S8 Diagnosis → **S9 Remediation** ｜ 上游：S8 approved RepairContract ｜ 下游：S7 新完整验证轮、S8 重新调查、S2 specification rework 或等待真实决策的 blocked
 >
-> 横切机制：[L4 Agent 调度与治理](../l4-mechanisms/L4-agent-dispatch-governance.md)。L4 负责 Assignment、PLAN_REPORT、连续执行、Hook、idle/stop、恢复和拓扑选择；本文只定义 S9 特有的 RepairContract 消费、根因修复、ChangeImpact、定向复验与 S7 回环。
+> 横切机制：[L4 Agent 调度与治理](../l4-mechanisms/L4-agent-dispatch-governance.md)。S9 只沿用 L4 的通用分工与五态规则，不恢复 generic PLAN/Begin/completion 链；本文只定义 S9 特有的 RepairContract 消费、根因修复、ChangeImpact、定向复验与 S7 回环。
 >
-> 设计状态：本文以目标机制为主；§13 单列当前实现差距。已落地的 S9 artifact/domain 校验、不可变 RepairSession/RepairPlan/RepairAssignment/PlanReport/RepairResult、Changeset、ChangeImpact、独立 TargetedReverification、Targeted failure → S8 causal reassessment 回流、RepairHandoff、Runtime CAS、批次聚合和 CLI 串联仍属原领域能力。**迁移前 S9 专属 PreToolUse 身份/路径/首写拦截只是历史实现事实，不是目标契约；本次文档更新不表示代码已迁移。**§13 仍记录高级 ownership/WIP 编译、完整多 Contract batch 和旧证据全量失效账本等差距；S9→S7 seed 规则见 §14.C。
+> 设计与实现分开：本页当前规范固定工序职责和明确接收边界；具体迁移清单、最新实测与未通过范围见 [S9 机制审查](../global-optimization/S9-MECHANISM-REVIEW.md)。§13、§14 和审计附录均为历史证据，不是保留旧门槛的依据。
 
-> 历史快照说明：以下 §7.52–§7.54 引用保留各自记录时的状态。之后 non-pass 接收、Main resolution 与 Resume lineage 已合入当前 Root 并通过各自定向机械回归；最新范围和剩余缺口见本页“当前优化实施状态”及 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。这些结果仍不计入 S9 真实完整阶段验收。
+<a id="当前最小工作流2026-10-17重新固定减负设计"></a>
+
+## 当前最小工作流（2026-10-18）
+
+目的：避免跳步和遗漏，让作者直接知道做什么、填什么、准确路径和还差什么。
+本节替换此前冲突的当前段；以下历史实现与快照不是当前设计。
+S9 的 changed_artifacts 与自动 Handoff Changeset 统一取已接收 Final Result 批次记录的实际 changed artifacts，沿原 last-wins 规则归并；不重新 WalkDir 物理 Session 目录或缓存求第二套来源证明。系统带出已知变更集，Main 只填写专业影响判断，不要求作者删除机器字段；删除 Impact/Handoff 的 exact 集合拒收与物理 diff 重做接收准入，不增加 pyc 黑名单、状态、格式或 API，真实测试、Main 集成及独立 Targeted 保留。
+S9 分工/工作位置保存只记录选择并反馈现有原 CLI 的准确 workspace bind/prepare 命令，由 Main 在普通工具中执行正常 startup；保存 Hook 不嵌套创建工作区、物化 Bootstrap 或发行 Result。原 prepare 自带 Result 发卷和准确路径；已有 ready execution 但缺 Result 卷时，仍由 Main 运行同一原 prepare 完成 startup，不手工 issue。只有实际工作区与 Result 卷均就绪才可按该位置开工，保存成功不等于 ready。Pre 和重复监听只读；不增加后台、缓存、状态、预算或第三份问卷。
+面向作者的 Plan/Result view 复用已有 Draft 专业问卷及 read 材料指针；完整 packet 和整份 inputs 镜像留在系统内部，不增加格式、字段或 schema。
+
+| 工序 | 真实责任与记录 |
+| --- | --- |
+| Main 阅读批准 Contract 与分工 | 阅读 S8 已批准 Contract，明确修复目标、全部必要断言、分工与真实工作位置，安排真实启动和业务依赖。 |
+| Builder 实施前 | 做计划与实际前检，保存本人 PlanReport；正常先于本人实施，不要求所有人先交 Plan 才能有人工作。 |
+| Builder 实施后 | 修复或完成测试、自检，保存本人 RepairResult，记录实际结果、证据位置和未完成原因。 |
+| Main 集成与检查 | 有实际改动时真实集成并做必要检查；检查按修复目标与实际改动确定并真实执行。 |
+| Main 影响判断 | 用 ChangeImpact 判断影响及旧证据处置。 |
+| 独立复验 | 未参与对应实现、合并的 verifier 用 Targeted 独立复验全部必要断言，记录真实结果。 |
+| fresh S7 | 实际责任完成，如有待履行的真实用户决策则履行后自动交接；无额外 Handoff 答卷。 |
+
+Main 不重新审批 S8 Contract，不另设 readback 交卷或启动许可，只保留现流程真实需要的用户决策。
+Main/系统在责任开始或工序切换做一次正常准备，给清晰现入口、结果和准确卷，在原工作位置提供下一卷；无第三份准备问卷。
+删除普通 Pre 触 Begin/缺卷 issue、observer 串队列/workspace prepare 的依赖；创建工作区、clone 不放每次 Pre。Hook 不承担调度、测试执行或工作区恢复。
+监听只读当前已记录的阶段、责任和答案，提供必要资料、准确路径和具体缺项；
+真正保存时记录该答案一次，更新现有工作事实并按阶段条件推进。
+复用现有保存监听，支持实际编辑和脚本，不设计新保存协议、缓存或 payload 解析器。
+普通工具不重跑业务、重复准备、全扫描或求来源 hash/回执/coverage 证明。
+并发和重保存由系统内部处理，不让作者理解 pending/staging 或重交已接收答案。
+工作状态只有 `pending/active/blocked/done/cancelled`。
+
+### 删除的旧门槛
+
+- 删除身份、权限、scope ACL 和来源 hash/receipt/coverage 证明的额外准入，包括 `scopeAllows`、packet/source proof 多层重验，不搬到 consumer 保留。
+- 删除 `generic PLAN → AgentBegin → activation → work_started → completion` 泛授权及完成证明链；Plan/Result 只是前后工作记录。
+- 删除证据 URI 前缀、无需迁移却强制双 refs、测试责任强制造 diff/commit、为形式强迫制造 red 等门槛。真实前检如实记 `pass/fail/blocked`。
+- 保留真实测试、独立复验、明确用户审批及一次正确记录；一致性只确保答案准确记录到当前责任，原子性/幂等内部处理。故障优先删依赖，不新增重试、ID 映射或补偿层。
+
+### 异常、重保存与内部边界
+
+接收只做一次必要专业结构检查，并把准确答卷路径关联到当前责任与 attempt。“一次记录”指一次逻辑提交包含本报告及应有 graph 更新，不限制内部物理 I/O 次数。Candidate、Main 真实集成、Final 是不同实际工序，不能按重复报告删掉真实集成。机器 ID、hash、时间、变更集合由系统带出，不反向要求作者证明。原 Writer 内部保留原子性、CAS、幂等和并发处理；相同答案不重复记录，内容冲突说明具体位置，不要求作者重建状态。历史回执只解释既有接收，不作为当前责任的启动许可。
+
+报告 fail、blocked 或偏差可记录；缺实际工序则提示缺项及责任人，不推进。只有明确的真实用户决策沿原授权办理，不扩成泛 Plan 许可。Plan 先于本人实施是履职要求；遗漏由 Hook 提醒，不按工具拦写。已经跳步则如实记录偏差，不伪造先前时间或补来源证明。
+
+### 题形边界
+
+问卷只问专业判断、实际结果、证据位置和未完成原因；已知任务、ID、diff、命令执行事实等系统带出。
+JSON 可以继续，题形须明确；不能因为旧 schema 有十个字段就要求作者全抄，本轮不新定格式、字段或 schema。
+PlanReport 的前检 command 记录已经做过的工作，不自动冻结为 Main 未来执行命令；
+解除 `RedChecks.Command → delivery Checks` 绑定，Main 必要检查按目标和实际改动决定，不迁就旧 runner 增加作者格式条件。
+fail/blocked/有偏差的报告可记录；记录成功不等于修复完成，阶段完成按实际未完成工序判断。
+无代码改动的测试结果有效，无需造 diff/commit；无需迁移就无需造双 refs。
+Targeted 题干给出全部必要断言原文，真实遗漏反馈要明确，不能让作者猜 ID 或机制。
+
+验收先完成一个真实正常 S9 到 fresh S7，再验证必要的真实 blocked 提醒和普通工具/同答不重复执行。
+不为旧门槛扩大矩阵；验收看作者是否仍需猜机制、补协议、重复交卷，以及普通 Hook 是否重准备。
+Hook exit 0 或机械测试数量不能单独证明减负完成；最新证据与未通过范围见 [S9 审查当前验证边界](../global-optimization/S9-MECHANISM-REVIEW.md#s9-current-validation)。
+
+## 历史实施快照索引（以下保留各记录时口径）
+
+以下实验、实现与待测措辞均为记录当时状态，不是当前设计或当前待办。最新验收仅见 [S9 审查当前验证边界](../global-optimization/S9-MECHANISM-REVIEW.md#s9-current-validation)。
+
+来源统一小片已冻结并通过限定机械验证：r82 原 lead 完整 case PASS（test 4.10s / 包 4.152s / wall 55.536s），原 last-wins 与 stable Changeset identity 两例 PASS（包 0.066s / wall 55.795s），见[原始日志目录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/r82-impact-typed-source-s7_oq7wa)。case 使用明确 synthetic 专业数据，不是 native PASS。after-r75 host-only 构建 exit 0、55.109531s（[清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r75-source-inventory.json)）；本记录晚于锁定快照。r81 已有真实前半两 Final；下一次在 fresh 同 bike 用真实代码、tests、Git 和原 consumer 建立明确标注合成作者的机械前缀至 Impact，仅由 Claude 验证修复尾链，不冒称单轮全新 native 前半闭环。
+
+r81 限定验证已通过：五个既有例全 PASS（包 **13.226s** / wall **37.070s**，[原始日志](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/r81-hook-prepare-split-e9p3j6ki/test.log)）。保存到 workspace 的嵌套准备及 observer 队列遍历已删除；保存/监听给准确命令，Main 普通工具执行原 prepare，原 prepare 负责实际工作区和 Result 卷。覆盖包括 typed normal observer 的显式启动发卷及两个明确 legacy workspace-only 例，不等于完整 S9/fresh S7 通过；后者待全新 r81 真实运行，也未认定 r74 晚 Result 超时根因已解决。after-r74 host-only 构建 exit 0、24.247160s（[清单](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/after-r74-source-inventory.json)）；本工作树验收记录晚于该锁定快照，r80 失败证据保留。
+
+
+r80 / after-r73 真实运行已在 **331.010s** 停止，首次 Edit 保存触原 8s Hook timeout，**revision 18 / 0 Result**，实际工作区 ready 但 Result 卷未发；见[最终报告](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r80-bike-fixed-r73-main-final.json)与[耗时分析](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r80-bottlenecks-and-timing.md)。该保存/startup边界修正及限定验证见上文，未称原超时已解决。
+
+
+
+本轮已落限定源码删减：专业 PlanReport 接收真实 pass/fail/blocked 并移除拟改路径 ACL 与重复来源准入；普通 S9 lead/verifier 提醒只读；真实批准、显式启动和保存/集成出口接续当前下一工序；分工/位置保存仅给 Main 原 bind/prepare 命令，workspace 与 Result 由正常 prepare 完成；最后一份 Targeted 成功后自动调用原 Handoff。工作树原公开 integration 单例已通过（46.840s，日志与中间失败见审查 §6）；r65 真实 Main 只读运行 24.89s 后因 Root 已知同版 bug 主动停止，不算 Claude 复现或 PASS，r66 待实测，尚无本轮真实 S9/fresh S7 验收。
+
+
+> 历史快照说明：以下 §7.52–§7.54 引用保留各自记录时的状态。之后 non-pass 接收、Main resolution 与 Resume lineage 的当时范围见 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。这些结果仍不计入 S9 真实完整阶段验收；本轮契约与待返工范围以上文和 S9 审查为准。
 >
 > 下一实施契约当时固定于 [L4 stage-form §13.10](../l4-mechanisms/L4-stage-form.md#s9-repair-result-adapter)：typed candidate 本人接收、Main 实际检查与最终原 Result 已经原正向链验证；最终回执重放、候选并发及 candidate/Result sealed-pending 原恢复已验证，独立五目标包与临时安装已通过，更多检查拓扑与真实平台待验收，非 pass/后续 typed consumers 仍待接线；不计入全局完整链。
 
@@ -20,7 +93,7 @@
 
 > **Revision 口径**：S9 消费 approved Contract 的 ID/hash、RepairAssignment、实际 diff 和 targeted assertion；Contract/Assignment 对象版本由工具生成，Runtime `revision` 由 Writer 内部记录。Builder/Repair Lead 不手工计算或复制这些 revision。当前代码中的 CAS/显式 revision 是迁移中的内部实现约束，不是正常 Agent 操作步骤。统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
 
-## 当前优化实施状态（2026-10-15）
+## 历史优化实施状态（2026-10-15，非本轮验收）
 
 本节下方引用的 §7.52–§7.54 是各自记录时的历史快照；Resume 当前状态以本节更新和
 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)为准。
@@ -53,7 +126,7 @@ Builder Result 已接收，但 Root 正串行执行 Main checks/integration，TA
 当前状态见[全局接续记录](../evidence/global-optimization-continuation-20261015.md)
 和 [GLOBAL §7.61](../GLOBAL-OPTIMIZATION-DESIGN.md#s6-current-r41)。
 
-### 当前单份答卷与原消费者（2026-10-15）
+### 历史单份答卷与原消费者快照（2026-10-15）
 
 每个 Assignment 的专业工作只有两次有顺序的交付：执行前一份领域 `RepairPlanReport`
 （计划、红/blocked 前检和拟改路径），执行后一份 `RepairResult`（实际结果、证据和
@@ -110,15 +183,13 @@ stale-staging：[normal](../evidence/logs/s9-stale-staging-sibling-retry-normal-
 
 ## 输入与交付来源
 
-本阶段消费 [L3 共用来源契约](L3-README.md#阶段输入来源与交付契约)与 [L4 Worktree](../l4-mechanisms/L4-worktree-governance.md)。派发 Builder 前，S7–S8 的正式报告、BUG、代码与测试依赖必须已提交到 REQ 开发主分支；新 worktree 从该分支最新明确 commit 创建，不会继承主会话未提交文件。
+Main 从已批准 Contract 获取目标、资料、依赖与必要断言，向作者给出可读取的实际路径。Main 通过普通工具完成 workspace startup；实际工作区与 Result 卷均就绪后才安排工作。Git、实现、测试和 Main 集成由实际责任人执行，不藏在保存或普通 Pre 中。
 
-声明不入 Git 的 InvestigationCase、RepairContract 等运行证据从权威根目录读取或按依赖清单提供只读副本；控制根与执行根分开记录。不能仅因上游有 evidence 就让未提交正式文档获得阶段资格。
-
-子分支提交后由主会话合并回根目录开发主分支，完成联合校验、证据绑定同步、接收与清理。ChangeImpact 的最终集合以声明的合并后树为准。运行 evidence 汇总后的 sha 变化按控制面 §4.4 自动同步；被测代码基线变更仍适用原有失效/复验规则。
+运行证据可从 Main 实际路径读取；引用实际文件或命令输出即可，不要求 URI 前缀、注册 ID 或 hash 来换取报告接收。Impact/Handoff 的已知变更集取已接收 Final 批次，沿原 last-wins 归并，不再扫描物理 Session 目录。
 
 ## 0. 一句话结论与阶段关系
 
-> **S9 不接收“发现了什么问题”的自由文本，也不重新猜根因；它只消费 S8 已批准且带对象版本/hash 的 RepairContract，把其中的架构修复意图转成可执行 Assignment，完成 Minimum Complete Root-Cause Repair，按真实 diff 重算影响、独立复验全部断言，然后回到 S7 开启一轮全新的完整审查。**
+> **S9 消费 S8 已批准的修复意图，安排实际修复、测试与 Main 集成检查；新发现或偏差如实报告，由 Main 判断必要回流。影响判断依据已接收 Final 批次的已知实际变更，不物理复扫；独立者实际复验全部必要断言，责任完成后交接 fresh S7 完整审查。**
 
 ```mermaid
 flowchart LR
@@ -129,7 +200,7 @@ flowchart LR
     TR --> NEW["S7 new full round<br/>system confidence"]
     S9 -->|"causal model or scope invalid"| S8
     S9 -->|"specification wrong"| S2["S2 rework"]
-    S9 -->|"REQ change / external decision"| P["paused"]
+    S9 -->|"REQ change / external decision"| P["blocked: pending actual decision"]
 ```
 
 S7、S8、S9 合在一起才完成一次缺陷闭环：
@@ -158,31 +229,31 @@ S7、S8、S9 合在一起才完成一次缺陷闭环：
 
 | 项目 | 定义 |
 |:--|:--|
-| 输入 | approved RepairContract revision/hash；CausalModel ref；source Findings exact set；before-fix evidence；repair-unit DAG；scope/assertions；current authority/baseline；original finder/verifier route |
+| 输入 | S8 已批准目标、原因与资料；任务分工和真实依赖；必要断言；实际代码、测试和工作位置 |
 | 要搞清楚 | 如何在不改变 root-cause intent 的前提下实施完整修复；哪些 repair units 可并行；真实 diff 影响哪些 artifact/evidence；谁独立复验哪些断言；何时必须退回上游 |
-| 核心工作 | 验证 Contract DoR → 生成 RepairPlan/Assignments → 先红后绿 → 执行完整根因修复 → ChangeImpact reconciliation → TargetedReverification → 新 S7 round |
+| 核心工作 | 读取已批准目标 → 分工与正常 startup → 如实前检 → 执行完整根因修复 → ChangeImpact reconciliation → TargetedReverification → 新 S7 round |
 | 最小工程权威 | 一份 approved RepairContract；一份 RepairPlan；每个 Assignment 一份 RepairResult；一份真实 diff 驱动的 ChangeImpact；每个 Contract 一份 TargetedReverification；一份 RepairHandoff |
-| 目标完成 | 所有 repair units 已消费；全部 symptom/root/detection assertions 通过；实际 diff 与 scope/impact 对齐；历史 evidence 已正确 invalid/supersede/retain；没有未决 Case；已创建新 S7 full-review round |
+| 目标完成 | 实际修复/测试、Main 集成检查和专业影响判断完成；独立者对全部必要断言有实际通过结果；如有待履行的真实用户决策则已完成；一次记录交接并创建 fresh S7 入口 |
 | 不代表 | 定向复验 PASS 不代表 CleanRound；局部测试绿不代表根因被消除；一条修复报告不代表整批 RepairContracts 完成 |
 
 ### 1.3 S9 负责与不负责
 
 S9 负责：
 
-- 校验并锁定 S8 批准的 RepairContract revision/hash；
+- 读取 S8 已批准的修复目标，不另设审批或来源证明；
 - 将 `repair_units[]` 编译成有依赖、有 scope、有验证目标的 RepairPlan/Assignments；
-- 在实现前重放 source Findings 和 root-invariant assertion，保存可审计的 red evidence；
+- 在本人实施前做必要真实前检，如实记录 pass/fail/blocked；
 - 实施 Minimum Complete Root-Cause Repair；
 - 增加 detection-gap tests/oracles；
-- 依据实际 committed diff 形成 ChangeImpact，并使旧证据正确失效或被替代；
-- 由未参与修复实现的责任人完成定向复验；
+- 系统带出已接收 Final 变更事实，Main 判断影响及旧依据是否仍适用；
+- 由未参与对应实现或合并的责任人完成定向复验；
 - 生成 RepairHandoff，并只回到新的 S7 完整轮。
 
 S9 不负责：
 
 - 从 Findings 重新推导另一套 root cause；
 - 在 RepairContract 未批准时先写代码“试试看”；
-- 擅自把 prospective scope 扩到新的 authority/requirement；
+- 不说明实际偏差或隐瞒批准目标与正确行为的变化；
 - 发现 Contract 错误后边修边修改因果模型；
 - 用 UI fallback、异常吞噬、测试放宽等 symptom patch 代替根因修复；
 - 用 targeted PASS 跳过 S7 Delivery/QA/E2E；
@@ -190,48 +261,26 @@ S9 不负责：
 
 ### 1.4 不可退让的不变量
 
-1. **RepairContract 是唯一修复授权**：每次 Assignment 和写操作都必须可追溯到 approved contract revision/hash 与 repair unit。
-2. **根因不在 S9 重定义**：实现发现 CausalModel 错、scope 不足或 assertions 自相矛盾时，停止并返回 S8；不能静默改 Contract。
-3. **完整修复优先于最小 diff**：允许的最小单位是恢复不变量的最小一致变更集，不是文件数或行数最少。
-4. **先红后绿**：若 source symptom/root assertion 在修复前无法失败，Contract 的可证伪性不足，必须回 S8；不能继续盲修。
-5. **实际 diff 是影响权威**：ChangeImpact 必须从整个 repair changeset 计算，不从某次工具调用、Builder 自报或 prospective paths 猜测。
-6. **Builder 不自我关闭**：Builder 提交 RepairResult；独立 verifier 提交 TargetedReverification；Main 只按结构化事实裁决。
-7. **定向 PASS 不是 CleanRound**：S9 成功只能创建 S7 新轮入口，不能直接进入 S10 或发布。
-8. **旧证据不替新实现背书**：受实际改动影响的历史 PASS 必须 invalidated/superseded，下一轮只消费 current baseline 的 fresh evidence。
+1. 按 S8 已批准目标修复；计划、偏差和未完成原因可以记录，不以 scope ACL 拒绝真实报告。
+2. 发现诊断或正确行为矛盾时说明事实，由 Main 安排回 S8/S2 或明确用户决策，不让作者猜新根因。
+3. Plan 正常先于本人实施，不等待全部人的 Plan；不恢复 generic Begin、activation 或 completion 许可。
+4. 前检如实 pass/fail/blocked，不强制造红；无改动测试无需造 diff 或 commit。
+5. 有改动由 Main 真实集成并执行必要检查，系统把已接收 Final 的实际变更带入 Impact/Handoff，不再构造第二套物理来源证明。
+6. 未参与对应实现和合并者实际复验所有必要断言；真实漏验明确提示，不推进。
+7. 专业报告接收不等于修复完成，必要工序未完成不推进；全部完成后一次正常记录交接到 fresh S7，不生成 CleanRound。
+8. 原子写、CAS 与幂等由系统内部完成，不变成作者的 hash、回执、身份或登记操作。
 
 ## 2. S8→S9 的输入合同
 
-### 2.1 RepairContract Definition of Ready
+### 2.1 已批准目标与资料
 
-S9 入口只接受一份通过 S8 §8.4 和 §10 原子批准的 RepairContract。入口工具必须校验：
+S9 使用 S8 已批准的 Contract，不重新审批。系统提供修复目标、因果说明、分工依赖、必要断言与相关实际资料路径；Main 阅读后安排工作。缺少会影响专业工作的资料时，明确指出缺项及负责补齐的人；可以记录尚未完成的判断，不以全来源 exact set、hash、发行链或注册证据作为报告准入。
 
-| 输入 | 必须满足 |
-|:--|:--|
-| identity | `repair_contract_id / case_id / canonical_problem_id / revision / approved hash` 唯一且未撤销 |
-| source facts | `source_finding_ids[]` 与 Case exact set 一致；Finding/before-fix evidence 均可读取且 hash 正确 |
-| diagnosis | root-cause statement、violated authority/invariant、CausalModel ref 已批准 |
-| architecture intent | 正确 source-of-truth、ownership、交互方向和要删除的重复机制明确 |
-| execution model | `repair_units[]`、依赖 DAG、prospective/forbidden scope、required skills/tools 完整 |
-| safety | compatibility/migration/rollout/rollback 和 stop/escalation conditions 完整 |
-| verification | symptom、root-invariant、detection-gap assertions 以及 regression surfaces 完整 |
-| impact | impact expectations 和需要重算的历史 evidence 范围明确 |
-| independence | original finder/independent verifier route 可恢复，且 verifier 未被安排为同一 repair unit 的 Builder |
+### 2.2 当前责任关联与变化
 
-任一项缺失都返回 typed `CONTRACT_NOT_READY`，并指出字段、Case 和修复建议。入口不能“先建任务再慢慢补”，否则 Builder 会在不完整授权下开始写入。
+系统持有 Contract、Session、Plan、当前责任和 attempt，内部定位报告及既有记录；作者不抄机器字段。接收只确保准确路径对应当前责任与 attempt，并检查一次必要专业结构，不在 Plan、首次写入、Result、Impact 或 Targeted 反复验证 authority 锁、Bootstrap、freshness 或回执链。
 
-### 2.2 Contract 锁定与 stale 检查
-
-进入 S9 时生成 `repair_session_id`，锁定：
-
-- approved Contract revision/hash；
-- authority fingerprints；
-- source baseline/Findings；
-- implementation baseline commit/worktree；
-- repair-unit DAG；
-- prospective/forbidden scope；
-- assertion set 与 impact expectations。
-
-每次 PLAN_REPORT、首次写入、RepairResult submit、impact create/commit 和 targeted submit 都复验该锁。如果 Contract revision、REQ/design authority 或 implementation baseline 发生未声明变化，当前 session 标记 `stale`，停止继续消费。不得让一个旧计划在新 authority 上悄悄执行。
+目标或实际工作发生变化时，Main 根据专业事实安排后续责任；失效或历史对象不冒充当前完成，但不新增 stale 状态或自动重建 Session 的恢复协议。真实用户决策仍按原授权办理。
 
 ### 2.3 S9 如何使用 Findings
 
@@ -262,7 +311,7 @@ flowchart LR
 
 ### 3.2 RepairPlan
 
-RepairPlan 是 S9 Main/Repair Lead 从 RepairContract 编译出的执行计划：
+RepairPlan 是系统按 Main 的分工从已批准目标带出的执行资料。下表为既有内部对象字段说明，不新增字段；ID、revision、hash、baseline、路径和关联由系统负责，不是作者填答或反向证明的要求：
 
 | 字段 | 含义 |
 |:--|:--|
@@ -275,30 +324,30 @@ RepairPlan 是 S9 Main/Repair Lead 从 RepairContract 编译出的执行计划�
 | `shared_integration_points` | 需要串行合并的 schema/API/migration 等共享点 |
 | `verification_map` | 每个 unit 对应哪些 symptom/root/detection assertions |
 | `impact_seed` | prospective surfaces，仅用于预检；最终由真实 diff 覆盖 |
-| `approval_policy` | 默认连续执行或 high-risk approval checkpoint |
-| `status/revision/hash` | 机器生命周期 |
+| `approval_policy` | 既有内部资料；仅实际需要的用户决策沿原授权，不作为泛 Plan 启动许可 |
+| `status/revision/hash` | 既有机器记录，系统负责，不增加工作状态 |
 
 ### 3.3 RepairAssignment
 
-每个 Assignment 至少包含：
+以下是既有 Assignment 的系统资料说明，不是作者必须复制的信封或新增接收资格：
 
 - contract/session/plan revision 与 hash；
 - repair unit IDs 和依赖；
 - root invariant、architecture intent 与禁止的 symptom patches；
 - read scope、prospective write scope、forbidden scope；
-- before-fix assertions 和 expected red evidence；
+- 前检目标与必要断言；实际结果可为 pass/fail/blocked；
 - completion assertions 与 required checks；
 - migration/compatibility/rollback 责任；
 - required Skills/tools；
 - expected RepairResult schema；
 - stop/escalation conditions；
-- `plan_checkpoint=required` 和默认 `execute_after_plan=true`。
+- 既有计划工序说明；Plan 先本人实施但不是许可，不新增 checkpoint 字段。
 
 Assignment 不复制整份 protocol，也不要求 Agent 在聊天里复述所有文档。工具生成器把最相关约束注入 prompt；read helper 返回按顺序裁剪后的 Contract、authority 和代码入口。
 
 ### 3.4 RepairResult
 
-每个 Assignment 只有一份领域 RepairResult。Builder 填写 Hook 给出的准确专业答卷并保存；原 consumer 校验后创建/更新 Canonical RepairResult：
+Builder 保存本人当前 attempt 的专业 RepairResult。接收仅检查一次必要专业结构和当前责任/路径关联，再由原 Writer 原子幂等记录。下图仅说明既有对象；机器 ID、引用、hash、时间、变更与命令执行事实由系统带出，作者只填实际判断、观察、结果及路径，不新增字段或证明层：
 
 ```text
 RepairResult
@@ -326,40 +375,17 @@ RepairResult
 
 ### 3.5 ChangeImpact
 
-ChangeImpact 必须基于 session 的实际 changeset 计算：
+系统以已接收 Final Result 批次的实际 changed artifacts、原 last-wins 归并结果带出变更集合。Main 判断变更类型、受影响行为、旧依据是否仍适用、必要复验与未完成原因。实际文件或输出路径足够，不要求引用注册证据或 hash。
 
-- `actual_changed_artifacts[]` 与 content hashes；
-- source Contract/RepairResult refs；
-- 变更类型和受影响 authority/contracts/modules/data/interfaces；
-- `invalidated_evidence_ids[]`；
-- `superseded_evidence_ids[]` 及 replacement refs；
-- `retained_evidence_ids[]` 及保留理由；
-- `required_reverification[]`；
-- migration/compatibility/deployment implications；
-- prospective-vs-actual scope deviations；
-- reconciliation status/hash。
-
-只有 ChangeImpact 与真实 diff exact set 对齐，证据状态事务也成功后，才能开始 targeted re-verification。
-
-原监听器管理的问卷、派发上下文、检查点和 Hook 记录属于控制产物，不进入 Session
-产品 baseline/diff，不能要求作者为问卷自身补影响分析。复用原控制目录分类；未知的
-`.claude` 文件及冻结输入仍按原契约检查。Handoff 的证据引用集合须完整比较 path/hash，
-不得套用产品差异过滤而跳过控制目录中的证据。
+不重新扫描物理 Session、缓存或合并目录验证 exact 集合，不用 freshness、ledger 注册或整份来源镜像作为保存/进入后续工序的资格。真实影响尚未判断清楚时，记录报告并提示具体专业缺项，不把机器证明网搬到 consumer/helper。
 
 ### 3.6 TargetedReverification 与 RepairHandoff
 
-TargetedReverification 逐项证明当前 RepairContract 的局部因果断言：
+系统直接给出批准目标中的全部必要断言题干和槽位，包括症状、根因不变量、检测缺口及适用兼容要求。独立 verifier 填每项实际观察与结果，引用真实文件或输出；不能用总 PASS 隐藏失败或遗漏。
 
-- 每个 source Finding 的 symptom assertion；
-- 直接证明 root cause 被消除的 invariant assertions；
-- 证明新增 oracle 能抓回退的 detection-gap assertions；
-- compatibility/migration/rollback assertions；
-- ChangeImpact 要求的局部 re-verification；
-- scope compliance 和独立性。
+不让作者猜 assertion ID、别名、exact 数量、owner 池或发行链。缺哪项真实结果就明确指出题干及缺项，不推进。身份标签不能替代实际独立性：verifier 未参与对应实现与合并，确实在修复后产品上复验。
 
-Runtime 将三类 Contract 断言编译为稳定槽位并要求 exact coverage：`symptom-N` 对应 `symptom_assertions[N]`，`root-N` 对应 `root_invariant_assertions[N]`，`gap-N`（兼容别名 `detection-N`）对应 `detection_gap_assertions[N]`。因此 targeted 报告不能只提交足够数量的任意 assertion，也不能让 PASS 隐藏某个失败断言。
-
-RepairHandoff 则证明整个 S9 批次已经具备回 S7 的条件：所有 Contract/repair unit/Problem 的 disposition、ChangeImpact、targeted results、invalidated evidence、新 baseline 和下一轮 regression surfaces 都已闭合。
+必要工作与用户决策完成后，系统使用已接收 Final、Impact、Targeted 事实一次正常记录 Handoff 和 fresh S7 入口，无人工 Handoff 卷或全来源重证明。
 
 ## 4. 修复规划与有思路的派发
 
@@ -407,36 +433,20 @@ Main/Repair Lead 按以下顺序生成 RepairPlan：
 
 默认 WIP 不是固定人数。起始可取 `min(2, ready_non_conflicting_assignments)`，随后按 critical path、write conflicts、测试资源和反馈速度动态调整。并行度是结果，不是目标。
 
-### 4.3 PLAN_REPORT 后连续执行
+### 4.3 专业计划后连续执行
 
-沿用 L4 的统一机制：
-
-1. Sub-agent 读取 Assignment 和必需上下文；
-2. 第一份专业计划通过当前已投递的 `RepairPlanReport` 答卷保存；
-3. 计划把步骤映射到 `repair_unit_id`、被恢复 invariant、预计 artifacts、checks 和 stop conditions；原 generic adapter 从同一答卷更新 lifecycle checkpoint；
-4. 保存后默认直接执行，不另发第二份 PLAN_REPORT，也不进入 idle 等第二轮“批准”；
-5. Main 只有在计划缺失、偏离 Contract、扩大 scope、采用 forbidden patch 或 high-risk gate 命中时才打断；
-6. 普通计划纠偏通过消息完成，不 kill/recreate Agent。
-
-High-risk 例外包括不可逆数据迁移、权限/安全边界变化、生产发布操作、Contract 显式 `approval_required` 的步骤。此时 Agent 在批准点暂停的是高风险动作，不是整个任务。
-
-#### 4.3.A 一份专业 PlanReport 与 lifecycle checkpoint
-
-每个 RepairAssignment 只要求一份领域 `RepairPlanReport`：绑定原 Session/Plan/Assignment、
-assertion map，并说明计划步骤、至少一项红/blocked 的 pre-fix check 和拟改路径。派发时
-直接展示这份答卷的实际完整路径；保存交原 PlanReport Writer，`execution begin` 继续
-求值原 S9 阶段条件。Builder 不另写 generic `PLAN_REPORT`、不手动 issue/consume、不找
-Runtime/Schema。需要的平台 `agent-message plan_report` lifecycle checkpoint 由现有
-generic adapter 从同一答卷生成/更新并交原平台消费者；若现有宿主仍强制第二次手工提交，
-这是 adapter 缺口，不是第二项专业工作。Hook 给当前准确路径、具体缺项和下一动作，
-不以首个工具调用作许可判断。
+1. 作者读批准目标、必要资料和本人责任，实际做前检。
+2. 保存一次本人 PlanReport，记录计划、pass/fail/blocked 和拟改路径；`[]` 是有效无改动计划。
+3. 本人 Plan 记录后，Main 正常工具执行给出的 workspace bind/prepare，使用其实际 Worker 与 Result 路径继续工作；不等待 sibling Plans。
+4. 保存计划不是启动许可；无 generic Begin/activation/completion，不另交同内容报告。
+5. 专业偏差通过明确反馈和沟通处理；需要真实用户批准的动作沿原授权办理，不扩为所有计划的审批轮。
 
 ### 4.4 派发时必须注入的思考顺序
 
 Assignment 生成器应直接把以下顺序写进 Agent 的必经 prompt：
 
 ```text
-理解 invariant → 重放 red → 恢复 authority/ownership →
+理解 invariant → 实际前检并如实记录 → 恢复 authority/ownership →
 处理所有 consumers 与数据兼容 → 补 detection gap →
 运行 scoped checks → 填写并保存 Hook 提供的准确 RepairResult 答卷
 ```
@@ -445,53 +455,23 @@ Assignment 生成器应直接把以下顺序写进 Agent 的必经 prompt：
 
 - “禁止只修第一个 source Finding”；
 - “禁止以 fallback/alias/swallow/放宽测试掩盖问题”；
-- “scope 不足或 root cause 不成立时返回 S8，不自行扩权”；
+- “报告真实目标或诊断偏差，由 Main 决定必要的 S8、S2 回流或真实用户决策；不以 scope ACL 拒收报告”；
 - “completed 不是 closed；不得自报 CleanRound”；
-- “实际 changed artifacts 由提交工具从 diff 复算”。
+- “实际改动与执行事实由系统带出；Impact/Handoff 复用已接收 Final 批次”。
 
 ## 5. 从批准 Contract 到完整修复的工作流
 
-```mermaid
-flowchart TD
-    IN["Approved RepairContract"] --> DOR{"Definition of Ready valid?"}
-    DOR -->|"no"| S8A["Return S8 with typed gap"]
-    DOR -->|"yes"| LOCK["Lock Contract hash/baseline"]
-    LOCK --> PLAN["Compile RepairPlan + Assignment DAG"]
-    PLAN --> RED["Replay symptom + root assertions"]
-    RED --> REDOK{"Expected red reproduced?"}
-    REDOK -->|"no"| S8B["Return S8: causal/contract conflict"]
-    REDOK -->|"yes"| EXEC["Execute repair units"]
-    EXEC --> CONFLICT{"Root/scope/spec conflict?"}
-    CONFLICT -->|"causal model/scope"| S8C["Return S8"]
-    CONFLICT -->|"spec wrong"| S2["Return S2"]
-    CONFLICT -->|"REQ change"| PAUSE["Paused for human authority"]
-    CONFLICT -->|"no"| RESULTS["Canonical RepairResults"]
-    RESULTS --> DIFF["Compute actual session diff"]
-    DIFF --> IMPACT["Reconcile ChangeImpact + evidence validity"]
-    IMPACT --> TARGET["Independent TargetedReverification"]
-    TARGET --> PASS{"All assertions pass?"}
-    PASS -->|"no"| S8D["Reopen Case / revise Contract"]
-    PASS -->|"yes"| HANDOFF["Atomic RepairHandoff"]
-    HANDOFF --> S7["Start new S7 full round"]
-```
+Main 阅读批准目标并分工 → 本人 Plan 与实际前检 → Main 普通工具完成实际 startup → 本人实施或测试、自检并保存 Result → Main 实际集成与必要检查 → 专业 Impact → 独立 Targeted 所有必要断言 → 一次记录 Handoff 与 fresh S7。
 
-### 5.1 Step 1：重放全部 before-fix assertions
+任一步有未完成工序都明确提醒责任人；真实报告可保存，不能用形式资格取代实际工作。
 
-正式写入前，按 Contract 运行三类最小 red checks：
+### 5.1 Step 1：按批准目标做必要真实前检
 
-1. `symptom_assertions[]`：逐 Finding 重现 visible failure；
-2. `root_invariant_assertions[]`：直接暴露 authority/ownership/状态机等根机制错误；
-3. 已存在的 detection-gap candidate：证明现有 oracle 的确没有正确阻止问题，或记录其缺失。
-
-结果必须绑定 current session baseline。若出现以下情况，立即停止：
-
-- 表象无法重现且环境/数据没有可解释变化；
-- root assertion 已经 green；
-- 两个 source Findings 不能被同一已批准因果链解释；
-- reproduction 需要修改产品代码才能“造红”；
-- Contract 的 expected behavior 与 authority 不一致。
-
-这些都说明 diagnosis 或 Contract 需要修订，不是让 Builder继续猜。
+按 Contract 的 symptom、root invariant 与 detection 要求做必要前检，
+如实记录 pass/fail/blocked、真实证据位置及未完成原因，不要求全部 before-fix assertions 为 red。
+root assertion 已 green 或无法复现本身不使工作无效，更不能修改产品来造红。
+实际结果若与已批准诊断、因果链或正确行为不符，由专业判断说明差异，必要时回 S8 修订，
+不靠“非红”自动判无效，也不让 Builder 自行猜新根因。
 
 ### 5.2 Step 2：执行 Minimum Complete Root-Cause Repair
 
@@ -528,147 +508,60 @@ Contract 声明这些要求时，RepairResult 必须提供可执行事实：
 
 “先临时兼容以后再收拾”只有在 Contract 中是显式、限时、有 owner 和 removal assertion 的 repair unit 时才允许。
 
-### 5.5 Step 5：原 RepairResult consumer 的检查
+### 5.5 Step 5：记录真实 RepairResult 与未完成工序
 
-保存 Hook 提供的专业 RepairResult 答卷时，原 consumer 必须原子执行：
+保存专业 RepairResult 时，记录本人实际修复或测试、自检结果、证据位置、偏差和未完成原因；
+系统带出已知实际变更与检查事实，反馈具体未完成工序，不另列身份/hash/scope 等资格验证门槛。
+blocked、失败或有偏差的真实报告也能保存；记录成功不等于工作完成，实际工序未完成就不推进阶段。
+不另交通用完成报告，RepairResult 也不替代 Main 影响判断或独立 Targeted 复验。
 
-1. 校验 session/plan/assignment/contract identity、object version 和 hash；
-2. 复算当前 worktree/changeset changed artifacts；
-3. 校验每个 repair unit 都有实现结果和 invariant mapping；
-4. 校验全部 expected-red assertion 有 before-fix evidence；
-5. 校验 required checks、migration/rollback results 和 detection artifacts；
-6. 校验 actual paths 未越出 prospective scope、未进入 forbidden scope；
-7. 对任何 scope deviation 生成 typed conflict，而不是接受自由文本说明；
-8. 持久化 Canonical RepairResult 和 evidence hashes；
-9. 更新 Assignment 状态；
-10. 只有当前 dependency frontier 完成后才释放下游 Assignment。
+## 6. ChangeImpact：判断已知实际变更的影响
 
-这条保存路径会更新原 RepairResult；不另交通用完成报告。一个 markdown 答卷不能同时替代 RepairResult、ChangeImpact 和独立 Targeted PASS。直接 RepairResult 提交命令仅供明确的兼容或恢复诊断使用。
+### 6.1 输入来源
 
-## 6. ChangeImpact：用真实 diff 重建证据可信度
+只使用已接收 Final Result 批次记录的实际 changed artifacts，按原 last-wins 归并，系统带出路径与已有事实。不重新 WalkDir、重新求物理 diff 或对缓存求第二套来源证明；不让作者改掉机器字段来通过消费者。
 
-### 6.1 为什么影响分析必须在修复结果之后
+### 6.2 专业判断
 
-RepairContract 的 `impact_expectations` 只是计划种子。真实实现可能少改、追加必要生成物，或发现兼容变更。只有所有目标 RepairResults 提交后，Runtime 才能对整个 `repair_session_id` 计算 authoritative changeset。
+Main 说明行为和依赖如何受影响、哪些旧依据应 invalidated/superseded/retained、哪些工作需要 reverify，并给实际理由或文件/输出路径。无需 URI 前缀、注册证据池、hash 或 ledger 完整性证明；必要复验仍须真正执行。
 
-影响分析的输入必须是：
+### 6.3 计划与实际偏差
 
-- session 起点 baseline；
-- 各隔离 worktree 最终合并后的 content-addressed diff；
-- rename/generated/migration/config/dependency changes；
-- authority/contract/module/evidence 的依赖图；
-- RepairContract impact expectations。
+说明计划未发生或新增改动的实际原因与后果。偏差报告可以记录；若发现诊断、规格或用户决策缺口，由 Main 明确安排相应责任，不把路径差异一概当越权拒收。
 
-不能使用“触发阶段迁移的最后一次 Edit/Write 的 path”作为整个修复的 changed paths。
+### 6.4 保存与推进
 
-### 6.2 四类证据处置
-
-| 分类 | 判断 | 动作 |
-|:--|:--|:--|
-| `invalidated` | 证据依赖的行为、artifact、authority 或环境已改变，无法代表当前实现 | 标 invalid，保留历史和 invalidated-by refs |
-| `superseded` | 已有 fresh replacement，旧证据保留历史但不再是当前依据 | 链接 replacement evidence |
-| `retained` | 依赖图证明与改动无关，或内容寻址证明输入未变 | 写机器可复算理由，不接受“看起来无关” |
-| `required_reverification` | 必须在 S9 targeted 或下一 S7 重新执行 | 绑定 assertion/Claim/owner/阶段 |
-
-默认规则是保守失效，但不能简单“一改文件就清空所有历史”，否则系统只会制造无意义全量重测。正确做法是基于 authority、contract、module、data flow 和 environment dependency 传播影响。
-
-### 6.3 Prospective 与 actual scope 对账
-
-ChangeImpact 必须生成三类差异：
-
-- `expected_and_changed`：按计划发生；
-- `expected_but_unchanged`：需要解释 repair unit 是否遗漏或计划高估；
-- `unexpected_changed`：必须判断是合法的完整修复扩展、生成物，还是越权/Contract 不足。
-
-`unexpected_changed` 不能由 Builder 自行批准。若它改变 root-cause intent 或 authority，回 S8；若暴露规格错误，回 S2；若仅是同一 Contract 下可证明的实现伴随物，Main 更新 RepairPlan revision并保留审计，而不篡改 RepairContract。
-
-### 6.4 Impact create/commit 事务
-
-`repair impact create|commit` 应原子：
-
-1. 锁定最终 actual diff exact set；
-2. 计算依赖传播和四类 evidence disposition；
-3. 校验 Contract impact expectations 已逐项解释；
-4. 校验所有 source Findings 和 regression surfaces 均有 re-verification route；
-5. 更新 runtime evidence validity；
-6. 持久化 ChangeImpact revision/hash；
-7. 创建 TargetedReverification work package；
-8. 若差异未解释，保持 `impact_reconciliation`，不得进入 targeted phase。
+一次检查必要专业结构及当前责任关联，使用原 Writer 原子幂等记录判断。系统带出的 Final 变更集直接沿用，不再以 exact 集合、来源 hash、freshness、coverage/ledger 注册资格复验。真实影响判断未完成时提示具体缺项；完成后给独立 verifier 当前题目与实际资料，不靠下一次 Pre 准备。
 
 ## 7. TargetedReverification：证明根因修复，不宣称系统 clean
 
-### 7.1 独立性与 original finder continuity
+### 7.1 实际独立性
 
-Targeted verifier 优先选择 original finder 或保持其责任连续性的独立 Agent，因为它最熟悉原反例；但身份标签不能替代独立性和断言证据。
+Main 安排未参与对应实现与合并的人复验，提供批准目标、必要断言、Impact 和可读资料。original finder 可提供专业连续性背景，但不是身份/owner 池资格。复验责任不修改产品来使结果通过；不在工具入口检查写权限或 scope ACL。
 
-选择规则：
+### 7.2 全部必要断言的真实结果
 
-- 未参与被复验 repair unit 的实现和合并；
-- 可读取原 Finding、FindingSupplement、before-fix evidence、Contract 和 ChangeImpact；
-- 没有产品写权限，只能写 TargetedReverification/evidence；
-- original finder 不可恢复时，记录 continuity reason 并派发独立 verifier；
-- 多个 Finder 可由一个 verifier 批量执行同 Contract 的兼容 assertions，但结果仍逐 Finding/Assertion记录。
+系统给出断言原文和当前槽位，作者在修复后产品上实际检查症状、根因不变量、检测缺口以及适用兼容要求，填写观察、结果和实际证据路径。无需人工构造 ID/exact 数量、别名或来源发行证明；系统只明确指出哪项真实观察遗漏、失败或 blocked，未完成不推进，不能据此忽略漏验。
 
-### 7.2 复验顺序
+旧兼容元数据 `continuity_reason` 与 `scope_compliance` 可选；未填不拒收、不制造 scope fail，也不作为 Handoff 条件，不得为换取接收而编造 pass 或解释。全部必要断言的真实观察、结果、实际证据及未完成原因仍须如实记录，缺真实结果不推进。
 
-1. 验证 session/Contract/ChangeImpact hash；
-2. 在修复后 baseline 上按原步骤执行全部 symptom assertions；
-3. 执行 root-invariant assertions，证明单一 authority/正确 ownership/状态机制成立；
-4. 执行 detection-gap assertions，并通过 mutation/revert fixture 或等价机制证明 oracle 会抓回归；
-5. 执行 compatibility/migration/rollback assertions；
-6. 完成 ChangeImpact 指定的 targeted re-verification；
-7. 校验实际 scope 与 forbidden patches；
-8. 提交一份 Canonical TargetedReverification。
+### 7.3 结果与下一责任
 
-Targeted verifier 不通过阅读 Builder 的解释来判定 PASS；它消费结构化 Contract 和 fresh evidence。
-
-### 7.3 结果与路由
-
-| 结果 | 条件 | 下一动作 |
-|:--|:--|:--|
-| `pass` | 全部 assertions PASS、scope compliant、independence 合格 | 进入 RepairHandoff 汇总 |
-| `fail_same_cause` | 原根因仍存在或 repair unit 漏做 | 使用 `runtime investigation route --case-id <case> --route investigate_more --reason "targeted reverification requires causal reassessment" --reassessment-evidence <targeted-path>` 回同一 Case；由 S8 决定新 Contract revision，不在 S9 无限补丁 |
-| `fail_new_cause` | 表象仍在但证据指向新机制 | 用同一 `--reassessment-evidence` 回同一 Case，保留 targeted artifact hash，由 S8 注册新假设；只有因果模型确实不属于原 Case 时才新建 Case |
-| `blocked` | 环境/依赖/权限使结论不可得 | 保持证据和 checkpoint；解决阻塞后执行 `runtime repair targeted resume --actor <actor> --reason <resolution>`，再创建并提交新的独立复验；不得伪造 PASS |
-| `scope_changed` | 实际修复超 Contract/authority | 先用同一 `--reassessment-evidence` 回 S8；再由 S8 路由到新的 Contract、S2 或 paused |
-| `stale` | baseline/Contract/authority 已变 | 终止当前结果，重建 session |
-
-失败不是直接让同一 Builder在 S9 “再试一次”。非 `blocked` 失败必须把 targeted artifact 作为 `--reassessment-evidence` 带回原 Case，创建新 Case revision、清除旧 Contract 指针并退休旧 `review.repair` 指针；先由 S8 判断是实现遗漏、Contract 不完整、根因错误还是新的 Finding，才能避免在错误因果模型上反复局部修补。`blocked` 先解决验证阻塞，执行 status 给出的 `runtime repair targeted resume --actor <actor> --reason <resolution>`，再提交新的独立复验；它不构成因果证据。
+pass、fail、blocked 或偏差均可记录；仅必要断言全部实际通过且相关工序完成才交接。实现或诊断错误由 Main 按事实安排修复或回 S8，规格问题回 S2，需要真实用户决策则等待该决策。环境/依赖阻塞明确交给解决者，解决后沿既有责任继续，不伪造 PASS，不新增恢复状态或协议。
 
 ## 8. S9→S7：从局部因果可信度回到系统可信度
 
-### 8.1 RepairHandoff 的严格条件
+### 8.1 交接的实际完成条件
 
-只有同时满足以下条件才能生成 RepairHandoff：
+本人实施/测试、自检、必要 Main 集成检查、专业 Impact 和独立 verifier 对全部必要断言的实际复验已完成；真实用户决策已按授权履行。报告中的 fail/blocked/偏差不被隐藏，尚有实际工序未完成就明确提醒，不交接。
 
-- 所有当前 route 下 approved RepairContracts 均使用同一有效 baseline 或明确 DAG 顺序完成；
-- 每个 repair unit 都有完成的 RepairResult；
-- 每个 source Finding 都有 PASS symptom assertion；
-- 所有 root-invariant 和 detection-gap assertions PASS；
-- compatibility/migration/rollout/rollback obligations 已完成或有显式外部 checkpoint；
-- ChangeImpact 与 actual diff exact set 对齐；
-- invalidated/superseded/retained/reverify ledger 已提交；
-- 所有 targeted re-verification PASS；
-- canonical Problems/Cases/phase projection 与对象事实一致；
-- 没有 `contract_conflict/blocked/stale/open repair unit`；
-- 新 S7 baseline、regression surfaces、risk hints 和 invalidation refs 可计算。
+不要求人工证明 exact 集合、ledger 注册、owner 池、发行链、全局 projection 或所有来源 hash/freshness。已有机器关联由系统持有，不作为第二套接收资格。
 
-### 8.2 原子 handoff 事务
+### 8.2 一次正常记录交接
 
-`repair handoff create|commit` 应在一个事务中：
+条件满足时，在实际完成出口由原 Writer 内部原子幂等记录 Handoff，使用已接收 Final、Impact、Targeted 事实产生 fresh S7 seed。Changeset 与 Impact 同用 Final 批次 last-wins 变更集，不做物理 Session 重扫描或全来源重证明。无需人工 Handoff 答卷、create/commit 或等待下一次 Pre。
 
-1. 锁定所有 Contract、RepairResult、ChangeImpact、TargetedReverification hashes；
-2. 复算批次 completeness；
-3. 关闭/更新 canonical Problem 和 InvestigationCase projections；
-4. 固化 RepairHandoff；
-5. 生成新的 implementation baseline/fingerprint；
-6. 创建 S7 新 ReviewPlan seed 和新的 `review_round_id`；
-7. 将所有受影响旧 evidence 标为 invalid/superseded，避免跨轮污染；
-8. 把 `required_reverification` 投影为新 S7 Claims/risk hints，而不是直接判 PASS；
-9. lifecycle 进入 S7 `planning/delivery`；
-10. 返回唯一下一动作：生成/执行完整验证轮。
-
-不能先推进 cursor，再异步补 RepairHandoff；也不能保留 targeted PASS 作为新轮 Delivery/QA/E2E 的替代 evidence。
+系统给出实际 Handoff 与 S7 seed 路径及下一责任；重复观察和同答不重复执行。交接不能把 Targeted PASS 变成新轮 Delivery/QA/E2E 的 PASS。
 
 ### 8.3 新 S7 为什么仍然必须完整
 
@@ -691,118 +584,61 @@ TargetedReverification 回答的是“这个 Contract 的因果断言是否成�
 | 单一 repair unit、单一 owner、低风险 | 一个 repair Sub-agent，保存 RepairPlanReport 后连续执行 |
 | 多个无写冲突 units | 并行 Sub-agents，Main 按 DAG 汇总 |
 | schema/API/migration 跨模块协同 | Agent Team；Lead 维护 authority 和 integration order，成员按 ownership 执行 |
-| 高风险迁移/安全边界 | 专业 Agent + 明确 approval checkpoint + 独立 reviewer |
-| impact reconciliation | 由 Main/专门 impact Agent基于合并后 diff 执行，不分散给每个 Builder 自行裁决 |
+| 需要明确用户决策的动作 | 专业 Agent + 原已授权用户决策 + 独立 reviewer，不增加泛 Plan 许可 |
+| impact reconciliation | 系统带出已接收 Final 批次变更，Main 判断专业影响 |
 | targeted re-verification | original finder 或独立 verifier；与 repair Builder 隔离 |
 
 ### 9.2 Main/Repair Lead 的调度循环
 
-1. Main 按已批准 Contract 的原 S9 入口准备责任并派发 Builder Assignment；系统从既有 Session、Plan 和 Contract 投影中准备本责任问卷。
-2. Hook 给每个 Builder 当前 PlanReport 的准确 view/answer 路径。Builder 检查 Contract、assertion 与原规格链，填写有限修复计划、路径和至少一个修复前失败/阻塞检查，然后保存这份专业答案。原 PlanReport consumer 更新既有 plan-checkpoint/AgentBegin；每个 Assignment 各保存一份 PlanReport，不再另交 generic PLAN_REPORT。
-3. 跟踪原 graph/result 更新。每次进度提示都附本责任实际问卷完整路径、具体缺项和下一动作或等待 owner；不按身份或路径拦截工具调用。
-4. Hook 为每个 Builder 提供准确 RepairResult 路径。Builder 填写专业结论、assertion/unit 结果、证据、范围、风险、迁移和回滚字段并保存；原 RepairResult consumer 与 candidate consumer 校验专业答案、真实 Git 改动和必要检查，并投影到既有 completion。Main 继续完成真实集成、必要检查和配置的人类决策。
-5. 全部 RepairResult 通过后，由 Main/Repair Lead 填写并保存 Hook 提供的准确 ChangeImpact 问卷。原 consumer 基于 Session baseline 计算实际 Changeset，检查精确路径与摘要集合并更新 evidence validity；无需作者手算或复制机器字段。
-6. Main 派发与 repair Builder 独立的 verifier。Hook 提供准确 TargetedReverification 路径；verifier 按 Contract 的 Finding/assertion 范围完成专业验证并保存。原 consumer 保留 assignment 独立性、来源、assertion 与结果检查；失败按已记录恢复动作处理。
-7. Targeted PASS 被原 consumer 接收后，下一次 Main Hook 将已登记引用交给原 Handoff consumer，自动生成 handoff 与 S7 seed；不填写或提交 Handoff 表单。Main 继续按原 ReviewPlan 流程检查覆盖并派发新的完整 S7。
+Main 读批准目标、安排依赖与真实独立复验者，实际执行 native spawn/resume；Hook 不替代调度。本人 Plan 后，Main 按准确命令通过普通工具完成 workspace startup；原 prepare 给出真实 Worker 和 Result 卷。只有两者就绪才开工。
 
-正常作者路径只填写 Hook 明确给出的专业问卷并保存到准确路径。低层 session、plan、result、impact、targeted、handoff CLI 仅供明确的兼容、恢复或诊断场景参考，不作为普通工序；缺少准确问卷由 Main/系统接线处理。原 Case/Contract、来源证据、精确改动集合、独立 Targeted、真实 Main 集成检查与人类决策保持有效。
+作者完成实际工作并保存 Result，Main 完成实际集成及必要检查。Final 批次系统事实供 Main 填专业 Impact，独立者实际复验必要断言，完成出口自动记录 Handoff/fresh S7。普通 Pre、保存分工/位置和重复监听不做 workspace、Git、测试、队列遍历或全来源证明。
 
-Main 不应逐步遥控 Agent，也不应通过“你现在到哪一步”高频轮询治理。它消费结构化 plan/progress/result events；只有 Contract、scope、风险和路由发生异常才介入。
-任何状态板、Hook 或 Main 进度提示都必须带当前 Assignment 的实际问卷完整路径、具体缺项和下一动作/等待 owner；不得让 Builder 读取 Runtime 或状态文件猜测。若路径无法解析，问题归 Main/系统接线待办，不以残缺提示要求 Builder 自行补查。
+提示必须给当前责任、准确路径、真实缺项和下一动作/等待者。专业作者不读 Runtime 猜路径，不手工 issue/consume 或抄机器信封；正常 workspace/Git/check 命令由责任人执行，不受“手工 CLI 禁止”误导。
 
 ### 9.3 idle、stop 与失败恢复
 
 - Builder 的 RepairPlanReport 已接收且责任仍在执行时，不因暂时无消息判 idle；
 - 只有 Agent 在应提交 plan/result 时进入 idle、或 runtime 明确无 active tool/session，才发送纠偏消息；
-- Stop Hook 在 RepairResult 成功提交前阻止任务被误判完成；
+- Stop/Idle 提醒本人尚缺的真实工序或已记录等待项，不重验全来源、恢复 workspace 或把历史回执当许可；
 - session restore 读取 RepairPlan、Assignment status、last result/hash 和 worktree，不依赖聊天回忆；
 - Agent crash 后优先恢复同 Assignment；只有 worktree/ownership 已不可恢复才重派；
 - kill/recreate 是最后手段，不能作为正常“两轮对话”流程。
 
-## 10. 指引和控制必须埋在必经路径
+## 10. 在实际工序给清晰指引
 
-长篇 `agent-protocol.md` 只能解释理念，不能独自承担执行正确性。S9 的关键领域条件由对象、原 Writer/消费者和状态机求值；Hook 监听 graph 并提醒履职，不承担逐工具权限执法。
+| 时机 | 系统行为 |
+| --- | --- |
+| 进入责任 | 给批准目标、必要资料、真实工作位置和准确问卷。 |
+| 保存答案 | 记录真实专业事实一次，带出已知机器事实；失败、blocked 或偏差也能保存。 |
+| 普通监听与收尾 | 只提示真实遗漏或等待项及准确路径，不重跑业务或重复准备。 |
+| 实际责任完成 | 按阶段条件自动转移，最终交接 fresh S7，无额外交卷。 |
 
-| 必经路径 | 自动提供/强制的内容 | 强度 |
-|:--|:--|:--|
-| `repair session open` | Contract DoR、revision/hash、baseline/authority stale、source exact set | Hard deny |
-| `repair plan compile` | repair units、DAG、ownership、assertion coverage、verifier independence | Hard deny + generated plan |
-| Assignment/spawn prompt | architecture intent、invariant、forbidden patches、scope、red checks、result schema | Default injection |
-| RepairPlanReport / generic adapter | unit→step→artifact→check mapping；从同一答案更新生命周期 checkpoint | 原 PlanReport consumer 校验专业内容；适配器不要求重复 authoring |
-| PreToolUse / graph progress | 本 Assignment 的问卷完整路径、缺少的计划/证据/工序和下一动作 | observe/guidance；不作身份、路径、scope 或 first-write deny |
-| 原 `execution begin` / RepairResult Writer | PlanReport、active unit、current Contract 与专业结果条件 | 原 S9 阶段门；返回具体缺项，由 Hook 提醒，不拦普通文件/工具调用 |
-| `repair result submit` | actual diff、before-red、unit completeness、checks、scope | Hard deny + atomic persist |
-| `repair impact create/commit` | session-wide diff、dependency propagation、evidence validity exact set | Hard deny + atomic update |
-| targeted assignment | original facts、Contract assertions、ChangeImpact、read-only product responsibility | Generated questionnaire/prompt；Hook 不作逐工具 hard write deny，原 Targeted consumer 校验结果与独立性 |
-| `targeted result submit` | assertion completeness、fresh evidence、independence、scope | Hard deny + route |
-| `repair handoff create/commit` | batch completeness、no open unit、new baseline、new S7 round | Hard deny + atomic transition |
-| Stop/idle/session restore | result checkpoint、non-idle execution、recoverable state | Runtime governance |
-
-协议正文只保留“为什么”；Agent 真正走到每个动作时，工具只展示此刻必须知道的约束、缺失字段和唯一合法下一步。这样可以降低上下文成本，也避免读过长文后仍在关键入口忘记执行。
+实际工作未完成就不推进阶段；不能以阶段未完成为由拒绝记录真实报告。
+专业质量要求由 §5 的真实工序履行，不另设 CLI 身份、hash、scope 或回执资格门槛。
 
 ## 11. 生命周期、看板与确定性路由
 
-### 11.1 S9 lifecycle
+### 11.1 工作状态与工序投影
 
-```text
-contract_ready
-  → planning
-  → reproducing
-  → repairing
-  → impact_reconciliation
-  → targeted_reverification
-  → ready_for_full_review
-  → S7 planning/delivery
-```
+工作状态只有 `pending/active/blocked/done/cancelled`。现有 Runtime phase、领域 verdict 和执行标记仅投影已记录工序，不是新增工作状态或作者操作顺序。专业报告可以记录；实际工序未完成不推进。原子记录、幂等与 CAS 留系统内部，不删除全局阶段事实，也不以 generic envelope 授权启动。
 
-旁路：
+### 11.2 看板与提醒
 
-```text
-any active state
-  → contract_conflict → S8
-  → spec_conflict     → S2
-  → req_conflict      → paused
-  → blocked_external  → paused/operational owner
-  → stale             → rebuild session
-```
-
-Phase 是对象事实的投影：
-
-- 至少一个 ready Assignment 尚未开始时是 `planning/reproducing`；
-- 有 active repair unit 时是 `repairing`；
-- 所有 RepairResults 完成但 impact 未对齐时是 `impact_reconciliation`；
-- impact 对齐且 targeted assignments active 时是 `targeted_reverification`；
-- RepairHandoff completeness 通过后才是 `ready_for_full_review`。
-
-不再让一条 generic envelope 单独推动共享 phase。
-
-### 11.2 Macro-stage board
-
-看板应从权威对象计算，而不是让 Agent 手填状态：
-
-- ObservationBatch/source Finding exact count；
-- InvestigationCase/CausalModel/RepairContract revision；
-- repair units：ready/running/completed/blocked；
-- write conflicts 和 critical path；
-- before-red completeness；
-- symptom/root/detection assertion coverage；
-- actual changed artifacts 与 prospective deviations；
-- invalidated/superseded/retained/reverify counts；
-- targeted results；
-- 下一合法 route 与阻塞 owner。
+从已有记录展示本人责任、实际完成/阻塞、依赖解决者、专业结果、必要检查和下一准确路径。数量、覆盖或 registered receipt 不作为报告准入；仍明确指出全部必要断言中缺哪项真实结果。
 
 ### 11.3 路由优先级
 
 同一批次出现多种结果时：
 
-1. locked REQ 需要改变：pause 受影响 baseline；
-2. specification/contract authority 错：回 S2，旧 RepairContracts stale；
-3. CausalModel/RepairContract 错或 scope 不足：回 S8 revision；
-4. 外部环境/权限阻塞：paused/operational route；
+1. REQ 需要改变：等待真实用户决策并说明受影响工作；
+2. specification/contract authority 错：交 S2 纠正目标，不让历史目标冒充当前完成；
+3. CausalModel/RepairContract 错或目标不足：交 S8 重新判断；
+4. 外部环境或依赖阻塞：交具体解决者，记录 blocked；
 5. targeted fail：回 S8判断 same/new cause；
 6. 只有所有 Contracts/units/impact/targeted 都完成，才回 S7。
 
-这个优先级由 typed result 和 authority 层级计算，不由多个 requested events 竞速。
+由 Main 按实际结果安排上述责任，系统记录现有事实，不增加 typed 资格、状态或请求竞速协议。
 
 ## 12. 职责分布与 L1 准则
 
@@ -814,9 +650,9 @@ Phase 是对象事实的投影：
 | RepairPlan/DAG/ownership | S9 Main/Repair Lead | 不代 Builder提交实现结果 |
 | Repair unit implementation | Builder/Sub-agent/Team member | 不关闭 Problem，不批准自己的 targeted result |
 | Integration | Repair Lead 或专门 Integrator | 不改写 Contract intent |
-| ChangeImpact | Runtime + Impact reviewer | 不接受 Builder 自报 paths 作为最终权威 |
-| TargetedReverification | original finder 或独立 verifier | 不参与对应 repair unit 实现 |
-| Route/authority escalation | Main；REQ 由 Human | Agent 不得自行扩权 |
+| ChangeImpact | 系统带出已接收 Final 批次；Main 判断影响 | 不另求物理 diff 或注册证明 |
+| TargetedReverification | original finder 或独立 verifier | 未参与对应 repair unit 的实现或合并 |
+| Route/authority escalation | Main 判断实际目标变化；如需用户决策则按原授权办理 | 不扩成一般权限或 Plan 许可 |
 | Full-system clean judgment | S7 independent Reviewers | S9 不得生成 CleanRound |
 
 ### 12.2 L1 准则映射
@@ -826,19 +662,21 @@ Phase 是对象事实的投影：
 | D1 权威外置 | RepairContract、RepairPlan/Result、ChangeImpact、TargetedReverification、RepairHandoff 持久化并带 hash |
 | D2 自然路径观测 | assignment/问卷保存、Result submit、合并 diff、impact、targeted、handoff 更新既有 graph；Hook 提醒当前责任，不阻断逐工具路径 |
 | D3 门是顾问 | 缺失时返回具体 contract/unit/assertion/evidence/path，而不是笼统 not ready |
-| D4 引导性产物 | unit→invariant→assertion map 强迫 Builder先理解根因，actual diff→impact 强迫系统重算可信度 |
-| D5 三级强制 | 问卷引导、原 Schema/Writer/阶段门承担各自校验；Hook 负责 graph 监听、具体缺项提示与流转 |
+| D4 引导性产物 | 题干说明目标与全部必要断言；系统带出 Final 变更供 Main 判断影响，不另建来源证明 |
+| D5 三级强制 | 一次必要专业结构检查、当前责任关联与原 Writer 记录；Hook 提醒实际缺项，不保留额外来源准入 |
 | D6 三方收敛 | S8 定义修复意图，Builder实施，独立 verifier复验，S7重新审查整体 |
 | D7 收敛可观测 | unit DAG、red/green assertions、scope deviations、evidence validity、reopen rate 可计算 |
 | 公理一 原型 | 对应现实中的 root-cause remediation、change control、impact analysis、targeted retest、full regression |
 | 公理二 分工 | diagnosis、implementation、targeted verification、full review 分开 |
-| 公理三 消费 | RepairContract 被计划器/Builder消费，actual diff 被 impact 消费，RepairHandoff 被 S7消费 |
+| 公理三 消费 | 批准目标被作者履行，Final 已知变更供 Main 判断影响，实际完成事实交接到 fresh S7 |
 | 公理四 成本 | 先做定向因果复验，再用风险驱动但完整的 S7 Claims 覆盖系统 |
 | 公理五 传达 | completed/pass/ready/clean 四种语义严格分离 |
 
-## 13. 当前实现差距与迁移清单
+## 13. 迁移前实现对照（历史记录，非当前门槛）
 
-### 13.0 已落地的最小闭环（当前代码）
+本节所有“当前代码”“P0/P1”与缺口均指记录当时；不是当前实施清单或要求保留的门槛。当前迁移仅见 S9 审查。
+
+### 13.0 记录当时已落地的最小闭环
 
 - `internal/repair` 已将 approved Contract 的 hash/status/provenance 作为 S9 输入门禁，并以不可变文件写入 Session、Plan、Result、Changeset、ChangeImpact、TargetedReverification、RepairHandoff。
 - 原 Writer 与 Assignment 事实保留 session、plan、dispatch、执行门、Result、impact、targeted、handoff 的校验和状态投影。普通作者路径由 Hook 准备准确问卷，保存时复用原 consumer；Builder 只填 PlanReport/RepairResult 专业答案，不另发 generic PLAN_REPORT 或 completion。低层 CLI 仅供明确兼容、恢复或诊断使用。显式 Runtime revision 只作为集成/恢复断言；Main 检查/集成、Targeted 与 Handoff 的原有领域门保留。
@@ -850,7 +688,7 @@ Phase 是对象事实的投影：
 - `RepairResult` 提交会重算 Session-wide actual diff，拒绝漏报、虚报和错误 SHA；结果携带 Assignment、PlanReport、before-fix/check、scope deviation、migration/rollback/residual-risk 字段。Targeted 非 PASS 结果不再被裸拒绝，而是记录 failure route 并回到 investigation/blocked，向 Agent 显示下一动作；非 `blocked` 失败的下一动作包含带精确路径的 `runtime investigation route --route investigate_more --reassessment-evidence`，回流时创建新 Case revision 并清除旧 Contract 指针。
 - **历史实现记录（迁移前）**：RepairAssignment 是 Unit→Assignment 的确定性基础编译；`runtime repair dispatch` 曾将 Assignment 绑定到 Builder Team/Task/Agent/activation，并在同一注册 CAS 写入 `assignment_owners`。当时 S9 Hook 拦截 planning/reproducing 阶段产品写入，并按 PlanReport 绑定 scope 逐工具拒绝越界写入。该 Hook 行为待按当前目标迁移；本段不表示已从代码移除，也不作为目标权限契约。多 Assignment Result 按 exact unit/batch 聚合仍是原领域能力。高级 ownership/conflict/critical-path WIP、真实 Claude/Agent Team spawn 与完整多 Contract batch 仍有各自缺口。
 
-### 13.1 当前事实
+### 13.1 记录当时的事实
 
 | 机制 | 当前表现 | 目标修正 |
 |:--|:--|:--|
@@ -923,9 +761,11 @@ Phase 是对象事实的投影：
 4. 记录进度提示是否同时给出实际问卷完整路径、具体缺项和下一动作，以及遗漏工序/重复交付情况；
 5. 依据真实数据调整 WIP、high-risk checkpoints 和 full-review risk hints。
 
-## 14. 系统测试与运营指标
+## 14. 历史测试与运营指标参考（新验收见顶部）
 
-### 14.1 必须有的系统测试
+以下测试矩阵与指标保留为历史，不要求恢复旧身份、来源或发行证明，也不要求扩大本轮验收矩阵。
+
+### 14.1 当时列出的系统测试
 
 | 场景 | 期望 |
 |:--|:--|
@@ -977,59 +817,39 @@ Phase 是对象事实的投影：
 
 ## 15. Definition of Done
 
-S9 机制只有满足以下条件才算设计完成：
-
-- 唯一输入是 approved RepairContract identity/version/hash（由工具生成，Agent 不手工推进）；
-- RepairContract 可以稳定编译为 unit DAG、ownership、Assignment 和 assertion map；
-- RepairPlanReport 保存后默认连续执行，平台 lifecycle checkpoint 由原 generic adapter 同步，普通任务不依赖第二轮授意；
-- 原 `execution begin`、Result 与后续关键领域提交继续核验 active Contract/unit/scope；Hook 不对 first-write 或每次工具调用拦截，并在进度提示中列出问卷完整路径、具体缺项和下一动作；
-- Builder 在写前证明全部必要 symptom/root assertions 为 red；
-- 修复遵循 Minimum Complete Root-Cause Repair，而不是 smallest diff；
-- detection gap、compatibility、migration、rollout、rollback 均被作为 repair unit 消费；
-- Canonical RepairResult 与实际 changed artifacts 一致；
-- ChangeImpact 由 session-wide final diff 驱动，并原子更新 evidence validity；
-- TargetedReverification 逐 source Finding/root/detection assertion 执行且与 Builder 独立；
-- targeted fail/contract conflict/spec conflict/REQ conflict/stale 有确定性路由；
-- RepairHandoff 按 Contract/unit/assertion exact set 计算，不接受单条 envelope 代表整批；
-- S9 只创建 S7 新完整轮，不生成 CleanRound；
-- 旧 evidence 不污染新 baseline；
-- 目标设计与当前实现能力在文档和工具提示中清晰区分。
+- 当前职责、保留/删除边界与实际实现状态清楚分开；实现迁移与证据见 S9 审查，不以历史测试数量代替验收。
+- 一次本人 Plan、一次本人 Result；Main 正常执行 workspace、Git、检查，保存/普通监听不隐式 startup，无全员 Plan 屏障或 generic 许可。
+- 接收只检查必要专业结构、准确路径与当前责任/attempt；系统带出机器字段，原 Writer 一次原子幂等记录。
+- 前检真实 pass/fail/blocked，无改动测试不造 diff/commit；fail/blocked/偏差报告能记录，真实工序未完不推进。
+- Impact/Handoff 只消费已接收 Final 已知变更事实，Main 做专业判断，无 exact/physical diff/freshness/ledger 来源准入。
+- 未参与实现与合并者真实复验全部必要断言；系统给题干，漏验明确提示不推进，不以身份池/发行链代替独立工作。
+- 实际责任与明确用户决策完成后一次交接 fresh S7；无人工 Handoff 卷，不宣称 CleanRound。
+- 先验一个真实正常 S9 至 fresh S7，再验必要真实 blocked 提醒及普通观察/同答不重复；synthetic 专业输入、机械前缀、尾链模型分别标明，不冒充单轮全 native 闭环。
 
 ## 16. 易错点与渐进披露
 
 ### 16.1 易错点
 
-1. 把 S8 的 source Findings 直接逐条派给 Builder；S9 应按 RepairContract repair units 派发；
-2. 让 Builder重新解释 root cause；发现矛盾应回 S8 revision；
-3. 把 Minimum Complete Root-Cause Repair 理解为最少改几个文件；它是最小一致机制变更集；
-4. 只让第一个症状变绿，未验证同根其他 Findings；
-5. UI 加默认值、endpoint 加 alias、吞异常或放宽测试来掩盖失败；
-6. 在 before-fix assertion 不红时继续写代码；
-7. PLAN_REPORT 后让 Agent idle 等第二轮批准，导致会话被 kill；默认应连续执行；
-8. Main 频繁打断正常执行，而不是只处理计划偏移、scope 和高风险 gate；
-9. 用 Builder 自报 changed paths 作为 ChangeImpact 权威；必须从最终 diff 复算；
-10. 用最后一次 Edit/Write 的 path 代表整个 repair changeset；
-11. RepairResult completed 就关闭 Problem；还需 impact 和独立 targeted；
-12. 让同一个 Builder执行自己的 targeted re-verification；
-13. original finder 标签写对了就认为身份连续性成立；必须校验 assignment/agent relation；
-14. symptom assertions PASS 就忽略 root-invariant/detection assertions；
-15. detection test 只锁死当前输入，无法在根因回退时变红；
-16. `unexpected_changed` 由 Builder 自行解释并扩权；
-17. 一个 Contract PASS 就推进共享 phase，忽略其他 repair units/Cases；
-18. targeted PASS 后直接进入发布或 S10；必须回 S7 新完整轮；
-19. 新轮继续复用受影响旧 PASS；必须 invalid/supersede；
-20. 规格或 REQ 错误时继续修过期代码；应按 authority 层级回 S2/paused；
-21. 为绕过状态缺口直接编辑 runtime state；所有变化必须走领域事务并保留审计。
+- 将专业 Plan 当启动许可、等待全部人的 Plan 或恢复 generic Begin/activation/completion。
+- 把保存选择、Pre 或 observer 变成 workspace/Git/check/队列执行入口；ready 但缺 Result 卷就称可开工。
+- 以“领域完整性/原条件保留”恢复身份、scope、exact、hash、freshness、receipt、Bootstrap 或来源链资格。
+- 强制造红、造无改动 commit、无迁移双引用，要求作者猜 ID、别名、URI 或注册证据。
+- Impact 从物理目录重新扫描缓存而与已接收 Final 事实矛盾；Handoff 再做全来源证明。
+- 把报告接收当实际完成，或因报告 blocked/偏差而拒记事实；删除资格时反而忽略真实漏验。
+- 让实现者或合并者做自己的独立复验，或用 Targeted PASS 代替 fresh S7。
+- 为规避旧门扩张恢复协议、缓存、状态、预算或测试矩阵；删除原子记录/CAS而造成事实不一致。
 
 ### 16.2 阅读预算
 
 - **只想理解 S9 主线**：读 §0、§1、§5、§8；
 - **正在做 Repair Lead**：读 §2～§5、§9～§11；
-- **正在实施 repair unit**：只消费 approved RepairContract、Assignment、相关 authority/code、before-red assertions、scope 和 §5；
-- **正在做 impact**：读 §3.5、§6 和 final merged diff，不依赖 Builder 叙事；
+- **正在实施 repair unit**：只消费 approved RepairContract、Assignment、相关 authority/code、实际前检与必要断言、scope 和 §5；
+- **正在做 impact**：读 §3.5、§6 和系统带出的已接收 Final 批次，不猜物理目录；
 - **正在做 targeted re-verification**：读 §3.6、§7、source Findings、Contract assertions 和 ChangeImpact；
-- **正在维护 harness**：读 §10～§14，对照 session/assignment/transition/evidence/impact/runtime 实现；
+- **正在维护 harness**：读当前 §10～§12、§15 DoD、§16 易错点及机制审查当前迁移清单；§13/§14 仅查历史，不作实施要求；
 - **S7 下游 reviewer**：只消费 RepairHandoff、新 baseline、risk hints、invalidated/replacement ledger；不得把 targeted PASS 当当前轮 ReviewResult。
+
+> 以下 14.A–14.E、历史变更记录及旧依赖补充全部为审计证据，不是当前规范；与当前职责/删除边界冲突的规则不作为实现要求。
 
 ## 14.A · 复杂度审查审计（2026-08-26，S7~S9 第九轮）
 

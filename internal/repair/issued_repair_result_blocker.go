@@ -5,25 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/agentauth"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
-	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 // AcceptIssuedRepairResultBlockerRequest names the issued S9 answer and its
-// registered Worker source. AuthorizeSource remains an optional compatibility
-// callback; the original packet, Workspace execution, source, owner, and CAS
-// checks establish the domain facts when it is nil.
+// registered Worker source. AuthorizeSource is retained for request compatibility and is not called.
+// The current questionnaire and execution attempt locate the answer.
 type AcceptIssuedRepairResultBlockerRequest struct {
 	ExpectedRevision int
 	PacketID         string
@@ -39,25 +35,23 @@ type AcceptIssuedRepairResultBlockerRequest struct {
 // It deliberately stores no context; every operation receives its caller's
 // context and can reuse an outer workspace lock.
 type IssuedRepairResultBlockerCapability struct {
-	packet          workpacket.RepairResultPacket
-	artifact        runtimepkg.RepairResultBlockerArtifact
-	artifactRef     ArtifactRef
-	artifactBytes   []byte
-	messageRef      string
-	messageBytes    []byte
-	answer          json.RawMessage
-	sourceRoot      string
-	sourceHead      string
-	owner           string
-	taskID          string
-	mainRoot        string
-	beforeRevision  int
-	generation      int
-	authorizeSource func(root string, state map[string]any) error
+	packet         workpacket.RepairResultPacket
+	artifact       runtimepkg.RepairResultBlockerArtifact
+	artifactRef    ArtifactRef
+	artifactBytes  []byte
+	messageRef     string
+	messageBytes   []byte
+	answer         json.RawMessage
+	sourceRoot     string
+	owner          string
+	taskID         string
+	mainRoot       string
+	beforeRevision int
+	generation     int
 }
 
-// PrepareIssuedRepairResultBlocker verifies an issued packet and its complete
-// answer, then stages immutable message and answer artifacts for the original
+// PrepareIssuedRepairResultBlocker locates the current attempt, validates its
+// new professional answer once, and stages message/answer artifacts for the original
 // AGENT-LIFECYCLE writer. A nil capability with a receipt means an exact
 // previously accepted answer was found; no new Runtime mutation is implied.
 func PrepareIssuedRepairResultBlocker(
@@ -86,50 +80,25 @@ func PrepareIssuedRepairResultBlocker(
 	if err != nil || !found {
 		return nil, nil, fmt.Errorf("S9 issued RepairResult packet %q is unavailable: %v", req.PacketID, err)
 	}
-	if req.OwnerAgentID == "" || req.OwnerAgentID != packet.Binding.Sources.OwnerAgentID {
-		return nil, nil, errors.New("S9 blocker owner differs from the issued RepairAssignment")
-	}
+	req.OwnerAgentID = packet.Binding.Sources.OwnerAgentID
 	if req.AnswerPath != packet.AnswerPath {
 		return nil, nil, errors.New("S9 blocker answer path differs from the exact issued packet")
 	}
-	// Original accepted history is checked before revision, working-state, PLAN,
-	// and current-source gates. A replay is still bound to the same author bytes
-	// and source HEAD below; it never creates another lifecycle transition.
 	existing, accepted, err := runtimepkg.VerifiedRepairResultBlockerReceipt(root, snapshot.State, packet.ID, req.OwnerAgentID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if accepted {
-		if req.AuthorizeSource != nil {
-			if err := req.AuthorizeSource(root, snapshot.State); err != nil {
-				return nil, nil, err
-			}
-		}
-		if req.SourceRoot != existing.Artifact.ExecutionRoot {
-			return nil, nil, runtimepkg.ErrSubmissionConflict
-		}
-		if err := verifyAcceptedBlockerBytes(ctx, root, snapshot.State, packet, existing, req.SourceRoot, existing.Artifact.SourceHead, existing.Artifact.SubmittedAnswer); err != nil {
+		if err := verifyAcceptedBlockerBytes(ctx, root, snapshot.State, packet, existing, req.SourceRoot, "", existing.Artifact.SubmittedAnswer); err != nil {
 			return nil, nil, err
 		}
 		return nil, &existing, nil
 	}
-
 	if req.ExpectedRevision < 0 || req.ExpectedRevision != snapshot.Revision {
 		return nil, nil, runtimepkg.ErrStaleRevision
 	}
 	if err := rejectRepairResultBlockerOutcome(root, snapshot.State, packet, req.OwnerAgentID); err != nil {
 		return nil, nil, err
-	}
-	if err := runtimepkg.VerifyRepairResultPacketIssueAndCurrent(root, snapshot.State, packet); err != nil {
-		return nil, nil, err
-	}
-	if err := agentauth.ValidateWorkingAuthorization(root, snapshot.State, req.OwnerAgentID); err != nil {
-		return nil, nil, err
-	}
-	if req.AuthorizeSource != nil {
-		if err := req.AuthorizeSource(root, snapshot.State); err != nil {
-			return nil, nil, err
-		}
 	}
 	if req.SourceRoot == "" {
 		return nil, nil, errors.New("S9 blocker requires the exact registered Worker execution root")
@@ -139,14 +108,12 @@ func PrepareIssuedRepairResultBlocker(
 	if err != nil {
 		return nil, nil, err
 	}
+	head, _ = workspace.Git(ctx, execution.Path, "rev-parse", "HEAD")
 	answer, answerSHA, err := readIssuedRepairResultBlockerAnswer(req.SourceRoot, packet)
 	if err != nil {
 		return nil, nil, err
 	}
-	issueAfter, issueAt, err := repairResultIssueCoordinates(root, snapshot.State, packet)
-	if err != nil || issueAfter >= snapshot.Revision+1 {
-		return nil, nil, fmt.Errorf("S9 blocker source issue coordinates are unavailable or inconsistent: %v", err)
-	}
+	issueAt := time.Now().UTC()
 	packetSHA, err := workpacket.RepairResultPacketDigest(packet)
 	if err != nil {
 		return nil, nil, err
@@ -194,9 +161,9 @@ func PrepareIssuedRepairResultBlocker(
 		packet: packet, artifact: artifact, artifactRef: artifactRef,
 		artifactBytes: append([]byte(nil), artifactBytes...), messageRef: messageRef.Path,
 		messageBytes: append([]byte(nil), messageBytes...), answer: append(json.RawMessage(nil), answer...),
-		sourceRoot: execution.Path, sourceHead: head, owner: req.OwnerAgentID,
+		sourceRoot: execution.Path, owner: req.OwnerAgentID,
 		taskID: b.TaskID, mainRoot: root, beforeRevision: snapshot.Revision,
-		generation: b.BaselineGeneration, authorizeSource: req.AuthorizeSource,
+		generation: b.BaselineGeneration,
 	}
 	return capability, nil, nil
 }
@@ -219,11 +186,10 @@ func (capability *IssuedRepairResultBlockerCapability) EvidenceIDs() []string {
 	return []string{capability.messageRef, capability.artifactRef.Path}
 }
 
-// ClearResolvedBlockerIndex permits the original Agent lifecycle CAS to clear
-// an old resolution pointer only after ApplyLifecycleCAS has reverified the
-// exact Resume predecessor. The referenced immutable history is retained.
+// ClearResolvedBlockerIndex clears the previous resolution pointer when the
+// current work becomes blocked again. Accepted history remains available.
 func (capability *IssuedRepairResultBlockerCapability) ClearResolvedBlockerIndex() bool {
-	return capability != nil && capability.packet.Binding.Resume != nil
+	return capability != nil
 }
 
 // ValidateLifecycleRequest binds the pre-existing lifecycle entry to this
@@ -239,9 +205,8 @@ func (capability *IssuedRepairResultBlockerCapability) ValidateLifecycleRequest(
 	return nil
 }
 
-// AcceptedReplay proves that this exact already-accepted blocker can be
-// returned by the original lifecycle API without requiring the Agent to be
-// working again. It never accepts a changed author answer or Worker HEAD.
+// AcceptedReplay reads the same recorded blocker without repeating the
+// lifecycle event or checking the live Worker checkout.
 func (capability *IssuedRepairResultBlockerCapability) AcceptedReplay(ctx context.Context, root string, state map[string]any, owner, event, messagePath string) (bool, error) {
 	if err := capability.validate(); err != nil {
 		return false, err
@@ -255,24 +220,18 @@ func (capability *IssuedRepairResultBlockerCapability) AcceptedReplay(ctx contex
 	}
 	if !sameAbsolutePath(root, capability.mainRoot) || owner != capability.owner || event != "work_blocked" ||
 		!blockerRequestPathMatches(root, capability.messageRef, messagePath) || receipt.ArtifactRef != capability.artifactRef.Path ||
-		receipt.ArtifactSHA256 != capability.artifactRef.SHA256 || !reflect.DeepEqual(receipt.Artifact, capability.artifact) {
+		receipt.Artifact.ExecutionGeneration != capability.artifact.ExecutionGeneration ||
+		!sameAbsolutePath(receipt.Artifact.ExecutionRoot, capability.sourceRoot) ||
+		string(receipt.Artifact.SubmittedAnswer) != string(capability.answer) {
 		return false, runtimepkg.ErrSubmissionConflict
-	}
-	if capability.authorizeSource != nil {
-		if err := capability.authorizeSource(root, state); err != nil {
-			return false, err
-		}
-	}
-	if err := verifyAcceptedBlockerBytes(ctx, root, state, capability.packet, receipt, capability.sourceRoot, capability.sourceHead, capability.answer); err != nil {
-		return false, err
 	}
 	return true, nil
 }
 
 // ApplyLifecycleCAS is called only from the original Agent Runtime mutation's
-// Apply callback. It revalidates the issued packet, working PLAN, answer,
-// source/session, immutable files, and exact pre-CAS revision before adding
-// one typed evidence row. It does not write Runtime or mutate Agent fields.
+// Apply callback. It checks the current responsibility and execution attempt
+// before recording one blocker evidence row. Agent/graph changes stay in the
+// original lifecycle Writer.
 func (capability *IssuedRepairResultBlockerCapability) ApplyLifecycleCAS(
 	ctx context.Context,
 	root string,
@@ -287,12 +246,6 @@ func (capability *IssuedRepairResultBlockerCapability) ApplyLifecycleCAS(
 	if ctx == nil {
 		return errors.New("S9 blocker lifecycle Apply requires the original writer context")
 	}
-	lockedCtx, unlock, err := integration.LockWorkspace(ctx, root)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	ctx = lockedCtx
 	if !sameAbsolutePath(root, capability.mainRoot) || owner != capability.owner || taskID != capability.taskID ||
 		beforeRevision != capability.beforeRevision || generation != capability.generation {
 		return runtimepkg.ErrStaleRevision
@@ -307,69 +260,28 @@ func (capability *IssuedRepairResultBlockerCapability) ApplyLifecycleCAS(
 	if integerRepairResult(baseline["generation"]) != generation {
 		return errors.New("S9 blocker baseline generation changed before the original lifecycle CAS")
 	}
-	if err := agentauth.ValidateWorkingAuthorization(root, state, owner); err != nil {
-		return err
+	packet := capability.packet
+	pointer := repairPointer(state)
+	if pointer == nil || stringField(pointer["session_id"]) != packet.Binding.Sources.SessionID ||
+		stringField(pointer["plan_ref"]) != packet.Binding.Sources.PlanRef {
+		return errors.New("S9 blocker responsibility changed before recording")
 	}
-	if capability.authorizeSource != nil {
-		if err := capability.authorizeSource(root, state); err != nil {
-			return err
-		}
-	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(state, capability.packet.ID)
-	if err != nil || !found || !sameRepairResultPacket(packet, capability.packet) {
-		return fmt.Errorf("S9 blocker packet changed before original Agent lifecycle CAS: %v", err)
-	}
-	if err := runtimepkg.VerifyRepairResultPacketIssueAndCurrent(root, state, packet); err != nil {
-		return err
-	}
-	agent, found, err := repairResultBlockerAgent(state, owner)
-	if err != nil || !found {
-		return fmt.Errorf("S9 blocker owner Agent is unavailable before original lifecycle CAS: %v", err)
-	}
-	resolvedRef := stringField(agent["blocker_resolved_ref"])
-	if packet.Binding.Resume == nil {
-		if resolvedRef != "" {
-			return errors.New("S9 blocker owner retains a prior resolution index but this packet has no verified Resume lineage")
-		}
-	} else {
-		if resolvedRef != packet.Binding.Resume.ResolutionMessageRef {
-			return errors.New("S9 resumed blocker owner resolution index differs from its exact Resume predecessor")
-		}
-	}
-	if err := rejectRepairResultBlockerOutcome(root, state, packet, owner); err != nil {
-		return err
-	}
-	execution, head, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, capability.sourceRoot, capability.sourceHead)
+	execution, _, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, capability.sourceRoot, "")
 	if err != nil {
 		return err
 	}
-	if head != capability.sourceHead || execution.AssignmentID != capability.artifact.ExecutionAssignmentID || execution.Generation != capability.artifact.ExecutionGeneration || execution.PlatformSessionID != capability.artifact.PlatformSessionID || execution.BaseCommit != capability.artifact.BaseCommit {
-		return errors.New("S9 blocker execution tuple changed before original Agent lifecycle CAS")
-	}
-	answer, answerSHA, err := readIssuedRepairResultBlockerAnswer(capability.sourceRoot, packet)
-	if err != nil {
-		return err
-	}
-	if answerSHA != capability.artifact.AnswerSHA256 || string(answer) != string(capability.answer) {
-		return runtimepkg.ErrSubmissionConflict
+	if execution.AssignmentID != capability.artifact.ExecutionAssignmentID || execution.Generation != capability.artifact.ExecutionGeneration || execution.BaseCommit != capability.artifact.BaseCommit {
+		return errors.New("S9 blocker execution attempt changed before recording")
 	}
 	if !reflect.DeepEqual(messageBytes, capability.messageBytes) {
 		return runtimepkg.ErrSubmissionConflict
-	}
-	if err := verifyBlockerImmutableFiles(root, capability); err != nil {
-		return err
-	}
-	if accepted, err := blockerReceiptAlreadyExists(root, state, packet, owner); err != nil {
-		return err
-	} else if accepted {
-		return fmt.Errorf("S9 blocker was concurrently accepted; recover the exact original lifecycle event")
 	}
 	return appendRepairResultBlockerEvidence(state, packet, capability.artifactRef)
 }
 
 func (capability *IssuedRepairResultBlockerCapability) validate() error {
 	if capability == nil || capability.packet.ID == "" || capability.owner == "" || capability.taskID == "" ||
-		capability.mainRoot == "" || capability.sourceRoot == "" || capability.sourceHead == "" ||
+		capability.mainRoot == "" || capability.sourceRoot == "" ||
 		capability.messageRef == "" || len(capability.messageBytes) == 0 || len(capability.answer) == 0 ||
 		capability.artifactRef.Path == "" || capability.artifactRef.SHA256 == "" ||
 		len(capability.artifactBytes) == 0 || capability.beforeRevision < 0 || capability.generation < 1 {
@@ -379,72 +291,78 @@ func (capability *IssuedRepairResultBlockerCapability) validate() error {
 }
 
 func verifyAcceptedBlockerBytes(ctx context.Context, root string, state map[string]any, packet workpacket.RepairResultPacket, receipt runtimepkg.RepairResultBlockerReceipt, sourceRoot, expectedHead string, expectedAnswer json.RawMessage) error {
-	stored, found, err := runtimepkg.FindRepairResultPacket(state, packet.ID)
-	if err != nil || !found || !sameRepairResultPacket(stored, packet) {
-		return fmt.Errorf("S9 blocker replay packet differs from original Runtime issuance: %v", err)
-	}
 	if receipt.Artifact.PacketID != packet.ID || receipt.Artifact.AnswerPath != packet.AnswerPath || !sameAbsolutePath(sourceRoot, receipt.Artifact.ExecutionRoot) {
 		return runtimepkg.ErrSubmissionConflict
 	}
-	execution, head, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, sourceRoot, expectedHead)
-	if err != nil || execution.AssignmentID != receipt.Artifact.ExecutionAssignmentID || execution.Generation != receipt.Artifact.ExecutionGeneration || execution.PlatformSessionID != receipt.Artifact.PlatformSessionID || execution.BaseCommit != receipt.Artifact.BaseCommit || head != receipt.Artifact.SourceHead {
-		return fmt.Errorf("S9 exact blocker replay Worker execution/HEAD differs from its accepted source; preserve history and use explicit resolution/rework: %v", err)
+	execution, _, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, sourceRoot, "")
+	if err != nil || execution.AssignmentID != receipt.Artifact.ExecutionAssignmentID || execution.Generation != receipt.Artifact.ExecutionGeneration {
+		return runtimepkg.ErrSubmissionConflict
 	}
-	answerBytes, err := workpacket.ReadFile(execution.Path, packet.AnswerPath, repairResultAnswerLimit)
+	data, err := workpacket.ReadFile(sourceRoot, packet.AnswerPath, repairResultAnswerLimit)
 	if err != nil {
 		return err
 	}
-	answer, problems := workpacket.ValidateRepairResultAnswer(packet, answerBytes)
-	if len(problems) != 0 || workpacket.Digest(answer) != receipt.Artifact.AnswerSHA256 ||
-		string(answer) != string(receipt.Artifact.SubmittedAnswer) || string(answer) != string(expectedAnswer) {
+	var document struct {
+		Answer json.RawMessage `json:"answer"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	answer, err := canonicalRuntimeFacts(document.Answer)
+	if err != nil || string(answer) != string(expectedAnswer) || string(answer) != string(receipt.Artifact.SubmittedAnswer) {
 		return runtimepkg.ErrSubmissionConflict
 	}
 	return nil
 }
 
 func verifyIssuedRepairResultBlockerSource(ctx context.Context, root string, state map[string]any, packet workpacket.RepairResultPacket, requestedRoot, expectedHead string) (workspace.Execution, string, error) {
-	registry, execution, err := currentRepairExecution(ctx, root, state, packet, false)
+	raw, err := json.Marshal(state["workspace"])
 	if err != nil {
 		return workspace.Execution{}, "", err
 	}
-	canonicalRoot, err := workspace.Canonical(requestedRoot)
-	if err != nil || canonicalRoot != execution.Path || execution.Path != requestedRoot {
-		return workspace.Execution{}, "", errors.New("S9 blocker source root differs from its exact canonical registered Worker checkout")
+	var registry workspace.ExecutionRegistry
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		return workspace.Execution{}, "", err
+	}
+	b := packet.Binding.Sources
+	var selected *workspace.Execution
+	for _, execution := range registry.Executions {
+		if (execution.AssignmentID != b.RepairAssignmentID && execution.AssignmentID != b.ManifestAssignmentID) || execution.RuntimeID != b.RuntimeID || execution.BaselineGeneration != b.BaselineGeneration || execution.AgentID != b.OwnerAgentID {
+			continue
+		}
+		if selected != nil {
+			return workspace.Execution{}, "", errors.New("S9 blocker has ambiguous registered work locations")
+		}
+		copy := execution
+		selected = &copy
+	}
+	if selected == nil || selected.DeliveryRef != "" || selected.ReworkRef != packet.Binding.ReworkRef {
+		return workspace.Execution{}, "", errors.New("S9 blocker has no current ready workspace attempt")
+	}
+	execution := *selected
+	if requestedRoot == "" || !sameAbsolutePath(requestedRoot, execution.Path) {
+		return workspace.Execution{}, "", errors.New("S9 blocker answer root differs from the current Worker attempt")
 	}
 	var frozen map[string]any
 	if err := json.Unmarshal(packet.Inputs.Execution, &frozen); err != nil || frozen == nil {
 		return workspace.Execution{}, "", errors.New("S9 blocker packet has an invalid frozen execution definition")
 	}
-	currentBytes, err := json.Marshal(execution)
-	if err != nil {
-		return workspace.Execution{}, "", err
-	}
-	var current map[string]any
-	if err := json.Unmarshal(currentBytes, &current); err != nil || current == nil {
-		return workspace.Execution{}, "", errors.New("S9 current Workspace execution cannot be projected")
-	}
-	projection, err := runtimepkg.ProjectRepairResultExecution(current)
-	if err != nil || workpacket.Digest(projection) != packet.Binding.ExecutionSHA256 {
-		return workspace.Execution{}, "", fmt.Errorf("S9 registered Worker execution definition differs from its packet: %v", err)
-	}
 	if frozen["assignment_id"] != execution.AssignmentID || execution.RuntimeID != packet.Binding.Sources.RuntimeID ||
 		execution.BaselineGeneration != packet.Binding.Sources.BaselineGeneration || execution.AgentID != packet.Binding.Sources.OwnerAgentID ||
-		execution.PlatformSessionID == "" || frozen["platform_session_id"] != execution.PlatformSessionID ||
 		frozen["base_commit"] != execution.BaseCommit || frozen["worktree_path"] != execution.Path ||
 		integerRepairResult(frozen["execution_generation"]) != execution.Generation {
-		return workspace.Execution{}, "", errors.New("S9 blocker current execution owner/session/base tuple differs from the frozen assignment")
+		return workspace.Execution{}, "", errors.New("S9 blocker current execution owner/base tuple differs from the frozen assignment")
 	}
-	if registry == nil {
-		return workspace.Execution{}, "", errors.New("S9 blocker has no original registered Workspace registry")
+	// Explicit Main resolution retains its legacy source diagnostic. Normal
+	// blocker reception/progress never requests or depends on this proof.
+	if expectedHead != "" {
+		head, err := workspace.Git(ctx, execution.Path, "rev-parse", "HEAD")
+		if err != nil || head != expectedHead {
+			return workspace.Execution{}, "", errors.New("S9 resolution Worker HEAD differs from its recorded blocker")
+		}
+		return execution, head, nil
 	}
-	head, err := workspace.Git(ctx, execution.Path, "rev-parse", "HEAD")
-	if err != nil || !validBlockerCommit(head) {
-		return workspace.Execution{}, "", fmt.Errorf("read S9 blocker Worker source HEAD: %v", err)
-	}
-	if expectedHead != "" && head != expectedHead {
-		return workspace.Execution{}, "", errors.New("S9 blocker Worker source HEAD changed before the original lifecycle CAS")
-	}
-	return execution, head, nil
+	return execution, "", nil
 }
 
 func readIssuedRepairResultBlockerAnswer(sourceRoot string, packet workpacket.RepairResultPacket) (json.RawMessage, string, error) {
@@ -469,22 +387,19 @@ func readIssuedRepairResultBlockerAnswer(sourceRoot string, packet workpacket.Re
 }
 
 func rejectRepairResultBlockerOutcome(root string, state map[string]any, packet workpacket.RepairResultPacket, owner string) error {
-	if _, found, err := runtimepkg.VerifiedRepairResultCandidateReceipt(root, state, packet.ID, owner); err != nil {
+	_, execution, err := currentRepairExecution(context.Background(), root, state, packet, true)
+	if err != nil {
 		return err
-	} else if found {
-		return errors.New("S9 packet already has an accepted WorkspaceCandidate; blocker receipt would conflict")
 	}
-	if _, found, err := runtimepkg.VerifiedRepairResultReceipt(root, state, packet.ID, owner); err != nil {
+	if execution.DeliveryRef != "" {
+		return errors.New("S9 packet already has a candidate; a different blocker answer conflicts")
+	}
+	if _, _, found, err := existingIssuedRepairResult(root, state, packet.ResultID); err != nil {
 		return err
 	} else if found {
-		return errors.New("S9 packet already has an accepted Main Result; blocker receipt would conflict")
+		return errors.New("S9 packet already has a Final; a different blocker answer conflicts")
 	}
 	return nil
-}
-
-func blockerReceiptAlreadyExists(root string, state map[string]any, packet workpacket.RepairResultPacket, owner string) (bool, error) {
-	_, found, err := runtimepkg.VerifiedRepairResultBlockerReceipt(root, state, packet.ID, owner)
-	return found, err
 }
 
 func appendRepairResultBlockerEvidence(state map[string]any, packet workpacket.RepairResultPacket, ref ArtifactRef) error {
@@ -510,34 +425,12 @@ func appendRepairResultBlockerEvidence(state map[string]any, packet workpacket.R
 	return nil
 }
 
-func verifyBlockerImmutableFiles(root string, capability *IssuedRepairResultBlockerCapability) error {
-	message, err := workpacket.ReadFile(root, capability.messageRef, 1<<20)
-	if err != nil || !reflect.DeepEqual(message, capability.messageBytes) || workpacket.Digest(message) != capability.artifact.MessageSHA256 {
-		return fmt.Errorf("S9 immutable blocker message changed before original lifecycle CAS: %v", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", message); err != nil {
-		return err
-	}
-	artifact, err := workpacket.ReadFile(root, capability.artifactRef.Path, 20<<20)
-	if err != nil || !reflect.DeepEqual(artifact, capability.artifactBytes) || workpacket.Digest(artifact) != capability.artifactRef.SHA256 {
-		return fmt.Errorf("S9 immutable blocker artifact changed before original lifecycle CAS: %v", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("repair-result-blocker.schema.json", artifact); err != nil {
-		return err
-	}
-	var decoded runtimepkg.RepairResultBlockerArtifact
-	if err := json.Unmarshal(artifact, &decoded); err != nil || !reflect.DeepEqual(decoded, capability.artifact) {
-		return fmt.Errorf("S9 immutable blocker artifact no longer matches its capability: %v", err)
-	}
-	return nil
-}
-
 func blockerManifestAssignment(packet workpacket.RepairResultPacket) (map[string]any, error) {
 	var assignment map[string]any
 	if err := json.Unmarshal(packet.Inputs.Sources.ManifestAssignment, &assignment); err != nil || assignment == nil {
 		return nil, errors.New("S9 blocker packet has no valid frozen manifest Assignment")
 	}
-	if stringField(assignment["agent_definition_ref"]) == "" || stringField(assignment["agent_id"]) != packet.Binding.Sources.OwnerAgentID {
+	if stringField(assignment["agent_definition_ref"]) == "" {
 		return nil, errors.New("S9 blocker frozen manifest Assignment does not name the issued owner/Agent definition")
 	}
 	return assignment, nil
@@ -549,18 +442,6 @@ func blockerMessageID(packetID, answerSHA string) string {
 
 func blockerCorrelationID(packetID string) string {
 	return "corr-s9-blocker-" + strings.TrimPrefix(packetID, "packet-")
-}
-
-func validBlockerCommit(value string) bool {
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	for _, c := range value {
-		if !('0' <= c && c <= '9') && !('a' <= c && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func blockerRequestPathMatches(root, ref, supplied string) bool {
@@ -587,51 +468,13 @@ func writeBlockerImmutable(root, directory, schemaName string, document any) (Ar
 	if schemaName == "agent-message.schema.json" {
 		limit = 1 << 20
 	}
-	if int64(len(data)) > limit {
-		return ArtifactRef{}, nil, fmt.Errorf("S9 immutable blocker %s exceeds %d bytes", schemaName, limit)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes(schemaName, data); err != nil {
-		return ArtifactRef{}, nil, fmt.Errorf("validate immutable S9 blocker artifact: %w", err)
-	}
-	sha := sha256Bytes(data)
-	ref := ArtifactRef{Path: path.Join(directory, sha+".json"), SHA256: sha}
-	if existing, readErr := workpacket.ReadFile(root, ref.Path, limit); readErr == nil {
-		if !reflect.DeepEqual(existing, data) || sha256Bytes(existing) != ref.SHA256 {
-			return ArtifactRef{}, nil, runtimepkg.ErrSubmissionConflict
-		}
-		if err := syncBlockerArtifactParent(root, ref.Path); err != nil {
-			return ArtifactRef{}, nil, err
-		}
-		return ref, existing, nil
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return ArtifactRef{}, nil, readErr
-	}
-	written, err := writeImmutable(root, ref.Path, schemaName, document)
+	ref := fileRef(path.Join(directory, sha256Bytes(data)+".json"), data)
+	stored, err := workpacket.PublishBounded(root, ref.Path, data, limit)
 	if err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return ArtifactRef{}, nil, err
-		}
-		// Another exact retry may have created the same content-addressed file
-		// after our read. Reuse it only after a bounded no-symlink byte check.
-		existing, readErr := workpacket.ReadFile(root, ref.Path, limit)
-		if readErr == nil && reflect.DeepEqual(existing, data) && sha256Bytes(existing) == ref.SHA256 {
-			if syncErr := syncBlockerArtifactParent(root, ref.Path); syncErr != nil {
-				return ArtifactRef{}, nil, syncErr
-			}
-			return ref, existing, nil
-		}
 		return ArtifactRef{}, nil, err
 	}
-	if written != ref {
-		return ArtifactRef{}, nil, errors.New("immutable blocker writer returned a different content-addressed reference")
+	if !reflect.DeepEqual(stored, data) {
+		return ArtifactRef{}, nil, runtimepkg.ErrSubmissionConflict
 	}
-	return written, data, nil
-}
-
-func syncBlockerArtifactParent(root, relative string) error {
-	filePath, err := repositoryPath(root, relative)
-	if err != nil {
-		return err
-	}
-	return runtimepkg.SyncDirectory(filepath.Dir(filePath))
+	return ref, stored, nil
 }

@@ -127,6 +127,9 @@ func currentQuestionnaireLifecycleContext(root string, request policy.Input) str
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err == nil {
 		lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) && request.EffectiveAgentID() == "" && (request.AgentType != "" || request.AgentTranscriptPath != "" || request.Event == "SubagentStop" || request.Event == "TeammateIdle") {
+			return "S9 native Worker responsibility is not identified by this event. Main must provide its exact registered questionnaire path in the actual task prompt; saving that path uses its original registered owner. No Main responsibility was inferred."
+		}
 		if lifecycle["state"] == "building" {
 			return stageBuilderQuestionLifecycleContext(root, request, snapshot)
 		}
@@ -134,12 +137,32 @@ func currentQuestionnaireLifecycleContext(root string, request policy.Input) str
 			return context
 		}
 		if context := stageRepairLeadQuestionnaireContext(root, request, snapshot); context != "" {
+			if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
+				return strings.TrimSpace(strings.Join([]string{stageRepairVerifierDispatchContext(root, request, snapshot), context}, "\n"))
+			}
 			return context
+		}
+		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
+			dispatch := ""
+			if request.EffectiveAgentID() != "" || request.AgentType == "" && request.AgentTranscriptPath == "" {
+				dispatch = stageRepairDispatchContext(root, request, snapshot)
+			}
+			if context, handled := s9PacketQuestionnaireLifecycleContext(root, request, snapshot); handled {
+				return strings.TrimSpace(strings.Join([]string{dispatch, stageRepairVerifierDispatchContext(root, request, snapshot), context}, "\n"))
+			}
+			return strings.TrimSpace(strings.Join([]string{dispatch, stageRepairVerifierDispatchContext(root, request, snapshot)}, "\n"))
 		}
 		if context := stageReviewPlanQuestionnaireContext(root, request, snapshot); context != "" {
 			return context
 		}
 		stopFeedback := request.Event == "Stop" || request.Event == "SubagentStop" || request.Event == "TeammateIdle"
+		if lifecycle["state"] == "bug_resolution" && lifecycle["phase"] == "investigation" && runtime.PacketEnabled(snapshot.State) {
+			ctx, cancel := context.WithTimeout(contextForHook(request), 4*time.Second)
+			defer cancel()
+			lead := stageInvestigationLeadQuestionnaireContext(root, request, snapshot)
+			questions := stageHypothesisResultLifecycleContext(ctx, root, request, nil, snapshot, request.EffectiveAgentID())
+			return strings.TrimSpace(strings.Join([]string{lead, questions}, "\n"))
+		}
 		if lifecycle["state"] == "verification" && runtime.PacketEnabled(snapshot.State) && (request.Event == "PreToolUse" || request.Event == "SessionStart" || request.Event == "SubagentStart" || request.Event == "PreCompact" || stopFeedback) {
 			ctx, cancel := context.WithTimeout(contextForHook(request), 4*time.Second)
 			defer cancel()

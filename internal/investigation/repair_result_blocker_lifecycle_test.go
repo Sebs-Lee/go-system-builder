@@ -287,7 +287,12 @@ func TestS9RepairResultBlockerUsesOriginalAgentLifecycleCAS(t *testing.T) {
 
 func prepareWorkingS9RepairResultPacket(t *testing.T) (*intakeFixture, s9HookOwner, workpacket.RepairResultPacket, workspace.Execution, string, []byte, runtime.Snapshot) {
 	t.Helper()
-	fixture, plan, owners := prepareS9RepairPlanReportHookFixtureWithSetup(t, installS9WorkerBootstrapInputs)
+	return prepareS9RepairResultPacketWithPlanActivity(t, true)
+}
+
+func prepareS9RepairResultPacketWithPlanActivity(t *testing.T, beginBuilder bool) (*intakeFixture, s9HookOwner, workpacket.RepairResultPacket, workspace.Execution, string, []byte, runtime.Snapshot) {
+	t.Helper()
+	fixture, plan, owners := prepareS9RepairPlanReportHookFixtureWithActivity(t, installS9WorkerBootstrapInputs, beginBuilder)
 	if len(plan.Assignments) != 2 || len(owners) != 2 {
 		t.Fatalf("fixture assignments/owners=%d/%d, want two original S9 sibling Assignments", len(plan.Assignments), len(owners))
 	}
@@ -311,22 +316,22 @@ func prepareWorkingS9RepairResultPacket(t *testing.T) (*intakeFixture, s9HookOwn
 			t.Fatalf("original S9 PlanReport coverage was not accepted before Begin: %+v", receipt)
 		}
 	}
-	beforeBegin := currentS9Snapshot(t, fixture)
-	started, err := repair.BeginRepairExecution(fixture.root, fixture.statePath, fixture.journalPath, repair.BeginRepairExecutionRequest{
-		RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: beforeBegin.Revision, Actor: "main-session"},
-	})
-	if err != nil || started.State["lifecycle"].(map[string]any)["phase"] != "fixing" {
-		t.Fatalf("original S9 BeginRepairExecution failed: snapshot=%d err=%v", started.Revision, err)
+	started := currentS9Snapshot(t, fixture)
+	if life, _ := started.State["lifecycle"].(map[string]any); life == nil || life["phase"] != "fixing" {
+		t.Fatalf("personal PlanReport save did not reach normal work startup: %v", started.State["lifecycle"])
 	}
 	if code := runS9Command(t, fixture.root, "runtime", "workspace", "bind", "--root", fixture.root); code != 0 {
 		t.Fatal("original Main workspace bind failed")
 	}
 	prepareOut := runS9CommandOutput(t, fixture.root, "runtime", "workspace", "prepare", "--root", fixture.root,
 		"--assignment", owner.manifestAssignmentID, "--agent", owner.agentID, "--check-location", "main")
-	var prepared workspace.Execution
-	if err := json.Unmarshal(prepareOut, &prepared); err != nil || prepared.Status != "ready" || prepared.CheckLocation != "main" || len(prepared.Checks) == 0 {
-		t.Fatalf("original S9 prepare did not retain its Main-owned check without running it: execution=%+v err=%v", prepared, err)
+	var preparation struct {
+		Execution workspace.Execution `json:"execution"`
 	}
+	if err := json.Unmarshal(prepareOut, &preparation); err != nil || preparation.Execution.Status != "ready" || preparation.Execution.CheckLocation != "main" || len(preparation.Execution.Checks) != 0 {
+		t.Fatalf("normal S9 prepare must retain Main checks as pending work: output=%s err=%v", prepareOut, err)
+	}
+	prepared := preparation.Execution
 	workerRoot := prepared.Path
 	if workerRoot == "" || workerRoot == fixture.root {
 		t.Fatalf("original S9 execution must use its separate registered Worker checkout: %q", workerRoot)
@@ -343,26 +348,27 @@ func prepareWorkingS9RepairResultPacket(t *testing.T) (*intakeFixture, s9HookOwn
 	if !found || execution.Status != "ready" || execution.Path != workerRoot || execution.PlatformSessionID == "" {
 		t.Fatalf("original S9 Worker execution is not ready with a registered session: found=%t execution=%+v", found, execution)
 	}
-	if !s9AgentWorking(launched.State, owner.agentID) {
-		t.Fatal("original PLAN/AgentBegin flow did not leave the dispatched Agent working")
-	}
-	var issueResultOut, issueResultErr bytes.Buffer
-	if code := cli.Run([]string{"runtime", "stage-answer", "issue", "--root", fixture.root}, nil, &issueResultOut, &issueResultErr); code != 0 {
-		current := currentS9Snapshot(t, fixture)
-		currentRegistry, registryErr := workspace.Decode(current.State)
-		t.Fatalf("issue S9 RepairResult while owner is working: code=%d stderr=%s stdout=%s registry=%+v registryErr=%v", code, issueResultErr.String(), issueResultOut.String(), currentRegistry, registryErr)
-	}
-	var packets []workpacket.RepairResultPacket
-	if err := json.Unmarshal(issueResultOut.Bytes(), &packets); err != nil || len(packets) != 1 {
-		t.Fatalf("decode single ready-owner S9 RepairResult packet: count=%d err=%v stdout=%s", len(packets), err, issueResultOut.String())
-	}
-	packet := packets[0]
-	if packet.Binding.Sources.OwnerAgentID != owner.agentID || packet.Binding.Sources.ManifestAssignmentID != owner.manifestAssignmentID {
-		t.Fatalf("public S9 issue returned a packet for a different Worker: %+v", packet.Binding.Sources)
-	}
 	issued := currentS9Snapshot(t, fixture)
-	if !s9AgentWorking(issued.State, owner.agentID) {
-		t.Fatal("issuing the S9 Result packet changed the original Agent out of working state")
+	packets, err := runtime.RepairResultPackets(issued.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packet workpacket.RepairResultPacket
+	for _, candidate := range packets {
+		if candidate.Binding.Sources.OwnerAgentID == owner.agentID && candidate.Binding.Sources.ManifestAssignmentID == owner.manifestAssignmentID {
+			if packet.ID != "" {
+				t.Fatal("normal prepare published multiple personal Result packets")
+			}
+			packet = candidate
+		}
+	}
+	if packet.ID == "" {
+		t.Fatal("normal prepare did not supply the personal Result packet")
+	}
+	for _, path := range []string{packet.ViewPath, packet.AnswerPath} {
+		if _, err := os.Stat(filepath.Join(workerRoot, filepath.FromSlash(path))); err != nil {
+			t.Fatalf("normal prepare omitted personal Result file %s: %v", path, err)
+		}
 	}
 	issuedAgent := agentLifecycleRow(issued.State, owner.agentID)
 	if issuedAgent == nil {

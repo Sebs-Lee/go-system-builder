@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -8,23 +9,82 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
-// RepairResultResumeBinding derives a successor tuple from the latest unique,
-// accepted resolution for the exact unchanged S9 source/PlanReport/Execution/
-// Rework binding. It grants no permission and never trusts Agent pointers.
+// RepairResultResumeBinding reads the current owner's recorded resolution.
+// Historical journal acceptance coordinates are not needed to prepare work.
 func RepairResultResumeBinding(root string, state map[string]any, base workpacket.RepairResultBinding) (*workpacket.RepairResultResume, error) {
-	journal, err := repairResultResumeJournal(root, state)
+	review, _ := state["review"].(map[string]any)
+	pointer, _ := review["repair"].(map[string]any)
+	baseline, _ := state["baseline"].(map[string]any)
+	if state["runtime_id"] != base.Sources.RuntimeID || !hypothesisJSONEqual(baseline["generation"], base.Sources.BaselineGeneration) ||
+		pointer["session_id"] != base.Sources.SessionID || pointer["plan_ref"] != base.Sources.PlanRef {
+		return nil, nil
+	}
+	entities, _ := state["entities"].(map[string]any)
+	messageRef := ""
+	for _, agent := range objectRows(entities["agents"]) {
+		if agent["id"] == base.Sources.OwnerAgentID {
+			messageRef = stringValue(agent["blocker_resolved_ref"])
+		}
+	}
+	if messageRef == "" {
+		return nil, nil
+	}
+	var index map[string]any
+	for _, row := range objectRows(state["evidence"]) {
+		if row["kind"] == "repair_result_resolution" && row["path"] == messageRef {
+			if index != nil {
+				return nil, fmt.Errorf("S9 current resolution is indexed more than once")
+			}
+			index = row
+		}
+	}
+	if index == nil {
+		return nil, fmt.Errorf("S9 current resolution message is not recorded")
+	}
+	data, err := workpacket.ReadFile(root, messageRef, 1<<20)
 	if err != nil {
 		return nil, err
 	}
-	packets, err := RepairResultPackets(state)
-	if err != nil {
+	var message struct {
+		Resolution struct {
+			PacketID   string `json:"packet_id"`
+			PacketSHA  string `json:"packet_sha256"`
+			BlockerRef string `json:"blocker_ref"`
+			BlockerSHA string `json:"blocker_sha256"`
+		} `json:"s9_resolution"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil {
 		return nil, err
 	}
-	verifier, err := newRepairResultResumeVerifier(root, state, journal, packets)
-	if err != nil {
+	refs, _ := checkpointStringSlice(index["scope_refs"])
+	if !containsStringRuntime(refs, message.Resolution.PacketID) || !containsStringRuntime(refs, message.Resolution.BlockerRef) {
+		return nil, fmt.Errorf("S9 recorded resolution refers to another predecessor or blocker")
+	}
+	prior, found, err := FindRepairResultPacket(state, message.Resolution.PacketID)
+	if err != nil || !found {
+		return nil, fmt.Errorf("S9 resolution predecessor questionnaire is unavailable: %v", err)
+	}
+	b := prior.Binding
+	if b.Sources.RuntimeID != base.Sources.RuntimeID || b.Sources.BaselineGeneration != base.Sources.BaselineGeneration ||
+		b.Sources.SessionID != base.Sources.SessionID || b.Sources.RepairAssignmentID != base.Sources.RepairAssignmentID ||
+		b.Sources.OwnerAgentID != base.Sources.OwnerAgentID || b.ReworkRef != base.ReworkRef {
+		return nil, nil
+	}
+	var issued map[string]any
+	if err := json.Unmarshal(prior.Inputs.Execution, &issued); err != nil {
 		return nil, err
 	}
-	return verifier.resumeBinding(base)
+	workspace, _ := state["workspace"].(map[string]any)
+	executions, _ := workspace["executions"].(map[string]any)
+	execution, _ := executions[stringValue(issued["assignment_id"])].(map[string]any)
+	if execution == nil || !hypothesisJSONEqual(execution["execution_generation"], issued["execution_generation"]) || execution["worktree_path"] != issued["worktree_path"] {
+		return nil, nil
+	}
+	return &workpacket.RepairResultResume{
+		PredecessorPacketID: prior.ID, PredecessorPacketSHA256: message.Resolution.PacketSHA,
+		BlockerRef: message.Resolution.BlockerRef, BlockerSHA256: message.Resolution.BlockerSHA,
+		ResolutionMessageRef: messageRef, ResolutionMessageSHA256: stringValue(index["sha256"]),
+	}, nil
 }
 
 // VerifyRepairResultResume verifies a packet's full predecessor chain against

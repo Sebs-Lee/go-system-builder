@@ -2,6 +2,7 @@ package investigation_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 // Mechanical platform inputs exercise the public boundary, not a real-model S9 pass.
@@ -37,7 +39,8 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	if err := json.Unmarshal(mustRead(t, abs), &draft); err != nil {
 		t.Fatal(err)
 	}
-	draft["s9_resolution"].(map[string]any)["rationale"] = "Dependency restored; retry within the original immutable repair scope."
+	draft["s9_resolution"].(map[string]any)["rationale"] = "Dependency restored; continue the original repair."
+	draft["body"] = "Main reviewed the recovered dependency and chose to retry the unfinished work."
 	data, err := json.Marshal(draft)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +56,7 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	if pending, err := runtime.RepairResultResumePending(fixture.root, before.State, owner.agentID, predecessor.Binding.Sources.RepairAssignmentID); err != nil || !pending {
 		t.Fatalf("resolved predecessor did not wait for Main: pending=%t err=%v", pending, err)
 	}
+	listenerState, listenerJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
 	listenerInput, err := json.Marshal(map[string]any{
 		"hook_event_name": "SessionStart", "cwd": fixture.root, "session_id": "main-resume-listener-session",
 	})
@@ -61,7 +65,7 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	}
 	var listenerOut, listenerErr bytes.Buffer
 	if code := cli.Run([]string{"hook", "--event", "SessionStart", "--root", fixture.root}, bytes.NewReader(listenerInput), &listenerOut, &listenerErr); code != 0 {
-		t.Fatalf("original Main SessionStart listener did not prepare the Resume successor: code=%d stdout=%s stderr=%s", code, listenerOut.String(), listenerErr.String())
+		t.Fatalf("original Main SessionStart listener failed: code=%d stdout=%s stderr=%s", code, listenerOut.String(), listenerErr.String())
 	}
 	var listenerEnvelope struct {
 		Output struct {
@@ -71,6 +75,30 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	if err := json.Unmarshal(listenerOut.Bytes(), &listenerEnvelope); err != nil {
 		t.Fatalf("decode Main Resume listener context: %v; stdout=%s", err, listenerOut.String())
 	}
+	assertS9RuntimeBytesUnchanged(t, fixture, listenerState, listenerJournal, "read-only Main SessionStart before successor preparation")
+	for _, required := range []string{"runtime workspace prepare", fixture.root, owner.manifestAssignmentID, owner.agentID} {
+		if !strings.Contains(listenerEnvelope.Output.Context, required) {
+			t.Fatalf("read-only Main SessionStart omitted preparation fact %q: %s", required, listenerEnvelope.Output.Context)
+		}
+	}
+	prepareInput, err := json.Marshal(map[string]any{
+		"hook_event_name": "PreToolUse", "cwd": fixture.root, "session_id": "main-resume-listener-session",
+		"tool_name": "Read", "tool_input": map[string]any{"file_path": filepath.Join(fixture.root, filepath.FromSlash(predecessor.Binding.Sources.PlanRef))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listenerOut.Reset()
+	listenerErr.Reset()
+	if code := cli.Run([]string{"hook", "--event", "PreToolUse", "--root", fixture.root}, bytes.NewReader(prepareInput), &listenerOut, &listenerErr); code != 0 {
+		t.Fatalf("read-only Main PreToolUse failed: code=%d stdout=%s stderr=%s", code, listenerOut.String(), listenerErr.String())
+	}
+	if err := json.Unmarshal(listenerOut.Bytes(), &listenerEnvelope); err != nil {
+		t.Fatalf("decode Main Resume preparation context: %v; stdout=%s", err, listenerOut.String())
+	}
+	assertS9RuntimeBytesUnchanged(t, fixture, listenerState, listenerJournal, "read-only Main PreToolUse before successor preparation")
+	preparedBytes := runS9CommandOutput(t, fixture.root, "runtime", "workspace", "prepare", "--root", fixture.root,
+		"--assignment", owner.manifestAssignmentID, "--agent", owner.agentID, "--check-location", "main")
 	current := currentS9Snapshot(t, fixture)
 	packets, err := runtime.CurrentRepairResultPackets(fixture.root, current.State, owner.agentID)
 	if err != nil || len(packets) != 1 {
@@ -86,14 +114,17 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	}
 	wantView := filepath.Join(sourceRoot, filepath.FromSlash(successor.ViewPath))
 	wantAnswer := filepath.Join(sourceRoot, filepath.FromSlash(successor.AnswerPath))
-	if !strings.Contains(listenerEnvelope.Output.Context, wantView) || !strings.Contains(listenerEnvelope.Output.Context, wantAnswer) || strings.Contains(listenerEnvelope.Output.Context, filepath.Join(sourceRoot, filepath.FromSlash(predecessor.AnswerPath))) {
-		t.Fatalf("Main listener did not give Worker the complete current Resume questionnaire path, or revived the predecessor path: want view=%s answer=%s context=%s", wantView, wantAnswer, listenerEnvelope.Output.Context)
+	if !bytes.Contains(preparedBytes, []byte(successor.ViewPath)) || !bytes.Contains(preparedBytes, []byte(successor.AnswerPath)) {
+		t.Fatalf("normal Main prepare omitted the actual successor paths: want view=%s answer=%s output=%s", wantView, wantAnswer, preparedBytes)
+	}
+	if _, err := os.Stat(wantView); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wantAnswer); err != nil {
+		t.Fatal(err)
 	}
 	if pending, err := runtime.RepairResultResumePending(fixture.root, current.State, owner.agentID, successor.Binding.Sources.RepairAssignmentID); err != nil || pending {
 		t.Fatalf("verified successor still waits for issuance: pending=%t err=%v", pending, err)
-	}
-	if err := runtime.VerifyRepairResultPacketCurrent(fixture.root, current.State, predecessor); err == nil {
-		t.Fatal("retired predecessor became current again")
 	}
 	worker, err := hookctx.FromSnapshot(fixture.root, owner.agentID, current)
 	if err != nil || worker == nil || worker.PolicyContext.Agent == nil {
@@ -101,17 +132,6 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 	}
 	if worker.PolicyContext.Agent.RepairResultResumePending || len(worker.PolicyContext.RepairResultAnswerPaths) != 1 || worker.PolicyContext.RepairResultAnswerPaths[0] != successor.AnswerPath {
 		t.Fatalf("only new answer should be writable: %+v", worker.PolicyContext)
-	}
-	for _, tc := range []struct {
-		path string
-		deny bool
-	}{{predecessor.AnswerPath, true}, {successor.AnswerPath, false}} {
-		input := policy.Input{Event: "PreToolUse", ToolName: "Write", AgentID: owner.agentID, CWD: workerRoot, SessionID: execution.PlatformSessionID, Runtime: worker.PolicyContext,
-			ToolInput: map[string]any{"file_path": filepath.Join(workerRoot, filepath.FromSlash(tc.path))}}
-		decision, denied := policy.EvaluateAgentScoped(input)
-		if denied != tc.deny {
-			t.Fatalf("answer grant %s: denied=%t want=%t decision=%+v", tc.path, denied, tc.deny, decision)
-		}
 	}
 	if mayEnd, err := repair.RepairResultBlockerExecutionMayEnd(fixture.root, current.State, predecessor.ID, owner.agentID); err != nil || mayEnd {
 		t.Fatalf("historical blocker revived Stop: end=%t err=%v", mayEnd, err)
@@ -134,4 +154,29 @@ func TestS9ResumePublicHookRestoresOnlySuccessorAnswer(t *testing.T) {
 		t.Fatalf("old answer completed successor: %+v", old)
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, stateBytes, journalBytes, "retired answer save")
+	product := []byte("package api\n\nfunc Payload() string { return \"ready\" }\n")
+	productPath := filepath.Join(workerRoot, "internal/api/payload.go")
+	if err := os.MkdirAll(filepath.Dir(productPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(productPath, product, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runS9FixtureCommand(workerRoot, "sh", "-c", "test -f internal/api/payload.go"); err != nil {
+		t.Fatalf("actual successor self-check: %v", err)
+	}
+	for _, args := range [][]string{{"add", "--", "internal/api/payload.go"}, {"commit", "-m", "Repair payload after recovered dependency"}} {
+		if _, err := workspace.Git(context.Background(), workerRoot, args...); err != nil {
+			t.Fatalf("ordinary successor Git %v: %v", args, err)
+		}
+	}
+	writeS9RepairResultAnswer(t, workerRoot, successor, product)
+	delivered, _ := runS9RepairResultPostToolUseWithRaw(t, fixture.root, owner.agentID, workerRoot, execution.PlatformSessionID, successor.AnswerPath)
+	if !delivered.Accepted || !delivered.WorkComplete || delivered.PacketID != successor.ID || !delivered.ConsumerPending {
+		t.Fatalf("actual successor candidate did not reach Main pending: %+v", delivered)
+	}
+	if done, err := repair.RepairResultWorkComplete(fixture.root, currentS9Snapshot(t, fixture).State, predecessor.ID, owner.agentID); err != nil || done {
+		t.Fatalf("old predecessor completed the successor responsibility: done=%t err=%v", done, err)
+	}
+
 }

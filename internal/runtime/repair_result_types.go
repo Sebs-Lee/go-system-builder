@@ -31,9 +31,9 @@ type RepairResultCandidateProvenance struct {
 	BaseCommit              string                          `json:"base_commit"`
 	PlanReportRef           string                          `json:"plan_report_ref"`
 	PlanReportSHA256        string                          `json:"plan_report_sha256"`
-	CompletionReportRef     string                          `json:"completion_report_ref"`
-	CompletionReportSHA256  string                          `json:"completion_report_sha256"`
-	CompletionReportEventID string                          `json:"completion_report_event_id"`
+	CompletionReportRef     string                          `json:"completion_report_ref,omitempty"`
+	CompletionReportSHA256  string                          `json:"completion_report_sha256,omitempty"`
+	CompletionReportEventID string                          `json:"completion_report_event_id,omitempty"`
 	ReworkRef               string                          `json:"rework_ref"`
 	ReworkSHA256            string                          `json:"rework_sha256"`
 	Resume                  *workpacket.RepairResultResume  `json:"resume,omitempty"`
@@ -149,7 +149,11 @@ func ProjectRepairResultMainFacts(checkpointJSON []byte) (json.RawMessage, error
 	} {
 		v := cp[key]
 		if len(v) == 0 {
-			v = json.RawMessage("null")
+			if key == "check_receipts" || key == "tool_check_receipts" {
+				v = json.RawMessage("[]")
+			} else {
+				v = json.RawMessage("null")
+			}
 		}
 		projection[key] = v
 	}

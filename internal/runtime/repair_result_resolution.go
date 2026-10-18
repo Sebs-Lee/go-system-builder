@@ -48,41 +48,70 @@ func (receipt *RepairResultResolutionReceipt) UnmarshalJSON(data []byte) error {
 
 type repairResultResolutionReceiptWire RepairResultResolutionReceipt
 
-// VerifiedRepairResultResolutionReceipt reconstructs a unique accepted
-// blocker_resolved fact from the exact original S9 blocker receipt, the
-// immutable Main-authored resolution message, its evidence row and the full
-// Runtime journal. It deliberately does not require the Agent to remain
-// blocked: the event is historical even after its lifecycle projection moves.
-// A partial pointer/evidence/event lineage is an error; only complete absence
-// returns found=false.
+// VerifiedRepairResultResolutionReceipt reads an accepted indexed Main decision.
+// Explicit historical journal verification remains in the diagnostic readers.
 func VerifiedRepairResultResolutionReceipt(root string, state map[string]any, packetID, owner string) (RepairResultResolutionReceipt, bool, error) {
-	if packetID == "" {
-		return RepairResultResolutionReceipt{}, false, fmt.Errorf("S9 resolution receipt packet ID is required")
-	}
-	packets, err := RepairResultPackets(state)
-	if err != nil {
+	packet, found, err := FindRepairResultPacket(state, packetID)
+	if err != nil || !found {
 		return RepairResultResolutionReceipt{}, false, err
 	}
-	p, found := repairResultPacketByID(packets, packetID)
-	if !found {
+	if owner != "" && owner != packet.Binding.Sources.OwnerAgentID {
 		return RepairResultResolutionReceipt{}, false, nil
 	}
-	if owner == "" || owner != p.Binding.Sources.OwnerAgentID {
-		return RepairResultResolutionReceipt{}, false, fmt.Errorf("S9 resolution receipt owner differs from the originally issued packet")
+	rows, _ := state["evidence"].([]any)
+	var selected *RepairResultResolutionReceipt
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row == nil || row["kind"] != "repair_result_resolution" {
+			continue
+		}
+		encoded, _ := json.Marshal(row["scope_refs"])
+		var refs []string
+		_ = json.Unmarshal(encoded, &refs)
+		matches := false
+		for _, ref := range refs {
+			if ref == packetID {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		messageRef := stringValue(row["path"])
+		if messageRef == "" {
+			messageRef = stringValue(row["id"])
+		}
+		data, err := workpacket.ReadFile(root, messageRef, 1<<20)
+		if err != nil {
+			return RepairResultResolutionReceipt{}, false, err
+		}
+		var message struct {
+			Owner      string `json:"agent_id"`
+			Resolution struct {
+				PacketID      string `json:"packet_id"`
+				BlockerRef    string `json:"blocker_ref"`
+				BlockerSHA256 string `json:"blocker_sha256"`
+			} `json:"s9_resolution"`
+		}
+		if err := json.Unmarshal(data, &message); err != nil {
+			return RepairResultResolutionReceipt{}, false, err
+		}
+		if message.Resolution.PacketID != packetID || message.Owner != packet.Binding.Sources.OwnerAgentID {
+			return RepairResultResolutionReceipt{}, false, fmt.Errorf("recorded S9 resolution belongs to another questionnaire/responsibility")
+		}
+		if selected != nil {
+			return RepairResultResolutionReceipt{}, false, fmt.Errorf("S9 questionnaire has multiple recorded recovery decisions")
+		}
+		receipt := RepairResultResolutionReceipt{Contract: "s9-repair-result-resolution-receipt-v1", PacketID: packetID,
+			OwnerAgentID: message.Owner, BlockerRef: message.Resolution.BlockerRef, BlockerSHA256: message.Resolution.BlockerSHA256,
+			MessageRef: messageRef, MessageSHA256: stringValue(row["sha256"])}
+		selected = &receipt
 	}
-	journalBytes, err := controlproof.ReadJournalForState(root, state)
-	if err != nil {
-		return RepairResultResolutionReceipt{}, false, err
+	if selected == nil {
+		return RepairResultResolutionReceipt{}, false, nil
 	}
-	journal, err := controlproof.InspectJournalData(journalBytes)
-	if err != nil {
-		return RepairResultResolutionReceipt{}, false, err
-	}
-	verifier, err := newRepairResultResumeVerifier(root, state, journal, packets)
-	if err != nil {
-		return RepairResultResolutionReceipt{}, false, err
-	}
-	return verifier.resolution(p, owner)
+	return *selected, true, nil
 }
 
 func verifiedRepairResultResolutionReceiptWithJournal(root string, state map[string]any, p workpacket.RepairResultPacket, owner string, journal controlproof.JournalInspection) (RepairResultResolutionReceipt, bool, error) {

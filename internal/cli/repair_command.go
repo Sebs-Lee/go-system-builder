@@ -360,12 +360,24 @@ func runRuntimeRepairDispatch(args []string, stdout, stderr io.Writer) int {
 		"validation":         map[string]any{"result": "pass", "missing_responsibilities": []any{}, "unresolved_conflicts": []any{}, "warnings": []any{}, "validated_at": time.Now().UTC().Format(time.RFC3339Nano)},
 	}
 	taskObjective := "execute the approved RepairAssignment and restore its mapped assertions"
-	taskInstruction := "Read the approved RepairContract and PlanReport contract; send one generic PLAN_REPORT, submit the S9 domain PlanReport, wait for execution begin, then implement only this Assignment scope."
-	taskNextAction := "send one PLAN_REPORT with plan_ref, submit runtime repair plan-report, and continue when execution begins"
+	taskInstruction := "Read the approved RepairContract and supplied materials, perform actual prechecks, and record your PlanReport. Main then prepares the actual work location; implement or test your Assignment and record its RepairResult."
+	taskNextAction := "record your own PlanReport, then Main prepares the actual work location for implementation or testing"
 	if verificationMode {
 		taskObjective = fmt.Sprintf("independently re-execute the approved RepairContract assertions of %s and record the targeted reverification artifact", target.AssignmentID)
 		taskInstruction = "Read the approved RepairContract, RepairSession and RepairPlan; do not modify any product file; re-execute the contract assertions on the post-repair tree and commit `runtime repair targeted commit` with performing_assignment_id set to this verification assignment."
 		taskNextAction = "re-execute the contract assertions independently and submit the targeted reverification artifact"
+	}
+	if runtime.PacketEnabled(snapshot.State) {
+		taskInstruction = "Read the approved RepairContract and supplied materials; perform actual prechecks and record pass, fail or blocked truthfully. Fill and save your own PlanReport at the exact Main-root path supplied in the task prompt. Its saved answer records normal work startup without waiting for sibling Plans. Main normally runs runtime workspace prepare for this registered manifest Assignment and owner, chooses check-location main or worker, and provides the actual work location and exact RepairResult view/answer. Continue real implementation or testing there, then fill and save your own RepairResult. Main owns actual integration and necessary checks."
+		taskNextAction = "fill and save your own supplied PlanReport; Main then runs normal runtime workspace prepare and supplies your actual work location and exact RepairResult questionnaire"
+		if verificationMode {
+			taskInstruction = "Read the approved RepairContract, RepairSession and RepairPlan; independently re-execute the Contract assertions on the post-repair tree without modifying product files. Fill and save the exact TargetedReverification questionnaire supplied at the original targeted checkpoint; its original consumer records the independent result. Main must include this actual answer path and the TASK/manifest in the native Worker prompt."
+			taskNextAction = "independently check the Contract assertions, then fill and save the exact TargetedReverification questionnaire supplied by the listener"
+			if answerPath, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, dispatchAssignmentID); pathErr == nil {
+				taskInstruction += " Original answer path: " + answerPath + "; Main/system prepares this file when that responsibility becomes current."
+				taskNextAction += ": " + answerPath
+			}
+		}
 	}
 	task := map[string]any{
 		"task_id": taskID, "session_id": stringValue(pointer["session_id"]), "plan_id": plan.PlanID, "assignment_id": dispatchAssignmentID,
@@ -419,12 +431,20 @@ func runRuntimeRepairDispatch(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime repair dispatch", err))
 		return 1
 	}
+	if runtime.PacketEnabled(snapshot.State) {
+		fmt.Fprintf(stderr, "RepairAssignment %s (%s) dispatched to %s; manifest/task were generated internally (do not pass --manifest); next: %s\n", dispatchAssignmentID, manifestAssignmentID, *agentID, taskNextAction)
+		response := map[string]any{"assignment_id": dispatchAssignmentID, "agent_id": *agentID, "workgroup_id": workgroupID, "task_id": taskID, "manifest_path": manifestRel, "task_path": taskRel, "revision": next.Revision, "next_action": taskNextAction}
+		if verificationMode {
+			response["independent_verification"], response["original_assignment_id"] = true, target.AssignmentID
+		}
+		return encodeJSON(stdout, response)
+	}
 	if verificationMode {
 		fmt.Fprintf(stderr, "Independent verification assignment %s (%s) dispatched to %s; manifest/task were generated internally (do not pass --manifest); next: re-execute the RepairContract assertions and commit `runtime repair targeted commit --actor %s` with performing_assignment_id=%s\n", dispatchAssignmentID, manifestAssignmentID, *agentID, *agentID, dispatchAssignmentID)
 		return encodeJSON(stdout, map[string]any{"assignment_id": dispatchAssignmentID, "agent_id": *agentID, "workgroup_id": workgroupID, "task_id": taskID, "manifest_path": manifestRel, "task_path": taskRel, "revision": next.Revision, "independent_verification": true, "original_assignment_id": target.AssignmentID, "next_action": "re-execute the contract assertions independently, then commit the targeted reverification with performing_assignment_id set to this verification assignment"})
 	}
-	fmt.Fprintf(stderr, "RepairAssignment %s dispatched to %s; manifest/task were generated internally (do not pass --manifest); next: (optional) send the generic PLAN_REPORT so the platform auto-chain records the checkpoint — the S9 authority is the domain `runtime repair plan-report` below and does not require it\n", target.AssignmentID, *agentID)
-	return encodeJSON(stdout, map[string]any{"assignment_id": target.AssignmentID, "agent_id": *agentID, "workgroup_id": workgroupID, "task_id": taskID, "manifest_path": manifestRel, "task_path": taskRel, "revision": next.Revision, "next_action": "send one generic PLAN_REPORT with plan_ref, then submit the S9 domain runtime repair plan-report"})
+	fmt.Fprintf(stderr, "RepairAssignment %s dispatched to %s; manifest/task were generated internally (do not pass --manifest); next: record the Builder PlanReport, then Main normally prepares its actual work location\n", target.AssignmentID, *agentID)
+	return encodeJSON(stdout, map[string]any{"assignment_id": target.AssignmentID, "agent_id": *agentID, "workgroup_id": workgroupID, "task_id": taskID, "manifest_path": manifestRel, "task_path": taskRel, "revision": next.Revision, "next_action": "record the Builder PlanReport, then Main normally prepares its actual work location"})
 }
 
 func runRuntimeRepairSessionOpen(args []string, stdout, stderr io.Writer) int {
@@ -489,7 +509,11 @@ func runRuntimeRepairPlanCompile(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime repair plan compile", err))
 		return 1
 	}
-	fmt.Fprintf(stderr, "S9 RepairPlan %s compiled; next: dispatch each RepairAssignment, submit one domain PlanReport per Builder, then begin execution\n", plan.PlanID)
+	if _, err := prepareRepairEntry(common.root, resolveRootPath(common.root, common.state), resolveRootPath(common.root, common.journal), snapshot.State); err != nil {
+		fmt.Fprintln(stderr, "S9 RepairPlan compiled; Main division draft preparation: "+err.Error())
+		return 1
+	}
+	fmt.Fprintf(stderr, "S9 RepairPlan %s compiled; next: dispatch each RepairAssignment; each Builder records its own PlanReport before Main prepares its normal work location\n", plan.PlanID)
 	return encodeJSON(stdout, map[string]any{"plan": plan, "artifact_ref": ref, "revision": snapshot.Revision})
 }
 
@@ -532,7 +556,7 @@ func runRuntimeRepairPlanReportSubmit(args []string, stdout, stderr io.Writer) i
 		return 1
 	}
 	_ = report
-	fmt.Fprintln(stderr, "PlanReport accepted; next: runtime repair execution begin")
+	fmt.Fprintln(stderr, "PlanReport recorded; Main owns normal work startup and preparation of this Builder’s actual work location")
 	return encodeJSON(stdout, map[string]any{"report": report, "artifact_ref": ref, "revision": snapshot.Revision})
 }
 
@@ -910,7 +934,7 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	response := map[string]any{"repair": pointer, "revision": snapshot.Revision, "next": pointer["next_action"]}
 	if stringValue(pointer["plan_ref"]) != "" {
-		board, boardErr := repairAssignmentBoard(*root, pointer)
+		board, boardErr := repairAssignmentBoard(*root, pointer, runtime.PacketEnabled(snapshot.State))
 		if boardErr != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime repair status", boardErr))
 			return 1
@@ -930,7 +954,7 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 			}
 			response["plan_report_packets"] = rows
 			if len(unissued) > 0 {
-				response["next"] = "The listener must prepare current S9 PlanReport questionnaires for dispatched Assignments: " + strings.Join(unissued, ", ") + "; if no exact path arrives, Main must restore the original dispatch/PLAN facts"
+				response["next"] = "Main/system must prepare current S9 PlanReport questionnaires during normal dispatch: " + strings.Join(unissued, ", ") + "; if no exact path arrives, Main/system owns the missing dispatch preparation"
 			} else if len(rows) > 0 {
 				phase := ""
 				if lifecycle, ok := snapshot.State["lifecycle"].(map[string]any); ok {
@@ -945,7 +969,7 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 						}
 					}
 					if len(pending) > 0 {
-						response["next"] = "Builders must fill each exact S9 answer_path and save through the PostToolUse Hook: " + strings.Join(pending, ", ") + "; these receipts do not release product writes before BeginRepairExecution"
+						response["next"] = "Builders must fill each exact S9 answer_path and save through the PostToolUse Hook: " + strings.Join(pending, ", ") + "; each recorded Plan starts that Builder’s normal work flow; Main supplies its prepared work location and Result question"
 					}
 				}
 			}
@@ -1028,13 +1052,18 @@ func repairResultPacketStatus(root string, state map[string]any) ([]any, string)
 		return rows, "Preserve typed S9 candidate evidence; a frozen source, packet, or owner-check proof needs the original named rework/recovery path. Do not submit a legacy Result."
 	}
 	if len(rows) == 0 {
-		return rows, "prepare each registered S9 Worker with explicit `--check-location main|worker`; after a genuine completion_report, the listener prepares the post-execution questionnaire and supplies its exact path"
+		return rows, "Main selects the actual check_location (main or worker) in the supplied Builder questionnaire and saves it for original Worker preparation; the listener then supplies the exact RepairResult path. Saving that professional Result automatically uses the original completion consumer; no separate completion_report is required"
 	}
 	if anyIssued {
 		return rows, "Builders must fill their exact issued S9-result answer and save through platform PostToolUse; an accepted candidate still requires original Main integration"
 	}
 	if allComplete {
-		return rows, "Worker candidates and own checks are complete; Main must run `runtime task-integrate` for actual merge, required checks, and original Result acceptance"
+		commands := []string{}
+		for _, row := range rows {
+			packet := row.(map[string]any)
+			commands = append(commands, fmt.Sprintf("runtime workspace integrate --root %q --assignment %q --agent %q --check-command <actual necessary Main check command>", root, packet["manifest_assignment_id"], packet["owner_agent_id"]))
+		}
+		return rows, "Worker candidates and own checks are complete; Main performs actual integration and records Final using: " + strings.Join(commands, "; ") + ". Main selects and runs checks for the actual repair; repeat --check-command for multiple checks. Use this typed S9 workspace command, not generic runtime task-integrate."
 	}
 	return rows, "keep the original S9 execution active and follow its named recovery action"
 }
@@ -1095,7 +1124,7 @@ func repairPlanReportPacketStatus(root string, state map[string]any, board map[s
 // Runtime phase provide progress. Keeping this projection derived means
 // recovery can show every Assignment, dependency, lock and missing artifact
 // without adding a second mutable scheduler state.
-func repairAssignmentBoard(root string, pointer map[string]any) (map[string]any, error) {
+func repairAssignmentBoard(root string, pointer map[string]any, packetMode bool) (map[string]any, error) {
 	planRef := repair.ArtifactRef{Path: stringValue(pointer["plan_ref"]), SHA256: stringValue(pointer["plan_sha256"])}
 	plan, err := repair.ValidateRepairPlan(root, planRef)
 	if err != nil {
@@ -1261,7 +1290,10 @@ func repairAssignmentBoard(root string, pointer map[string]any) (map[string]any,
 		if len(missingReports) > 0 {
 			next = "submit one S9 PlanReport for each missing Assignment: " + strings.Join(missingReports, ", ")
 		} else {
-			next = "all S9 PlanReports are present; run `runtime repair execution begin` to release the first-write barrier"
+			next = "recorded Builder Plans are ready for Main to prepare their actual work locations with runtime workspace prepare"
+			if packetMode {
+				next = "Main prepares each recorded Builder’s actual work location with runtime workspace prepare; the saved Plan already records normal startup"
+			}
 		}
 	case "repairing":
 		if len(blocked) > 0 {
@@ -1275,10 +1307,19 @@ func repairAssignmentBoard(root string, pointer map[string]any) (map[string]any,
 		}
 	case "impact_reconciliation":
 		next = "compute the session-wide Changeset, then commit ChangeImpact"
+		if packetMode {
+			next = "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis"
+		}
 	case "targeted_reverification":
 		next = "submit the independent targeted reverification"
+		if packetMode {
+			next = "the registered independent verifier fills and saves the exact TargetedReverification questionnaire supplied by the listener; the original consumer checks the Contract assertions"
+		}
 	case "ready_for_full_review":
 		next = "create and commit the complete RepairHandoff; S7 then registers a fresh full ReviewPlan"
+		if packetMode {
+			next = "S9 has no author-filled Handoff form; when the necessary professional work is complete, its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. If actual work remains, follow the recorded missing work; do not wait for another Hook to perform Handoff"
+		}
 	}
 	return map[string]any{
 		"plan_id":         plan.PlanID,

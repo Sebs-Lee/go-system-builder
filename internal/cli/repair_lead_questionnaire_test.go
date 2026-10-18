@@ -181,17 +181,19 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := repair.SubmitRepairPlanReportToRuntime(root, statePath, journalPath, repair.SubmitPlanReportRequest{
+		if saved, _, err := repair.SubmitRepairPlanReportToRuntime(root, statePath, journalPath, repair.SubmitPlanReportRequest{
 			RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: expectedRevision, Actor: builders[index]}, Report: reportRef,
 		}); err != nil {
 			t.Fatal(err)
+		} else {
+			expectedRevision = saved.Revision
 		}
-		expectedRevision++
 	}
-	if _, err := repair.BeginRepairExecution(root, statePath, journalPath, repair.BeginRepairExecutionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: expectedRevision, Actor: "Main"}}); err != nil {
+	if started, err := repair.BeginRepairExecution(root, statePath, journalPath, repair.BeginRepairExecutionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: expectedRevision, Actor: "Main"}}); err != nil {
 		t.Fatal(err)
+	} else {
+		expectedRevision = started.Revision
 	}
-	expectedRevision++
 	changedBytes := [][]byte{
 		[]byte("package api\n\nfunc FixedPayload() {}\n"),
 		[]byte("package api\n\nfunc FixedOther() {}\n"),
@@ -230,13 +232,38 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		t.Fatalf("RepairResult changed lifecycle phase to %q; routing must use the repair pointer status", got)
 	}
 
+	// A transient Python cache is not part of either accepted synthetic Final.
+	// Keep it present through Impact/Handoff to exercise the recorded source.
+	cachePath := filepath.Join(root, "src", "__pycache__", "transient.cpython-312.pyc")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte("synthetic test transient Python cache\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "src/__pycache__/transient.cpython-312.pyc").Run(); err == nil {
+		t.Fatal("test transient cache must not be tracked")
+	}
+	finalArtifacts := map[string]string{}
+	for _, ref := range repairArtifactRefs(repairPointer, "result_refs", "result_ref", "result_sha256") {
+		result, err := repair.ValidateRepairResult(root, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, artifact := range result.ChangedArtifacts {
+			finalArtifacts[artifact.Path] = artifact.SHA256
+		}
+	}
+	if len(finalArtifacts) != len(changedPaths) {
+		t.Fatalf("accepted original Final batch changed artifacts: %+v", finalArtifacts)
+	}
 	impactPath, err := repairLeadQuestionnairePath(root, resultSnapshot.State, "change-impact.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, event := range []string{"Stop", "Idle"} {
 		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, resultSnapshot)
-		if !strings.Contains(context, impactPath) || !strings.Contains(context, "read-only") {
+		if !strings.Contains(context, impactPath) {
 			t.Fatalf("%s did not report the current sourced path as read-only: %s", event, context)
 		}
 		if _, err := os.Stat(impactPath); !os.IsNotExist(err) {
@@ -247,8 +274,19 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	if !strings.Contains(impactContext, impactPath) {
 		t.Fatalf("Main context omitted the actual ChangeImpact path %s: %s", impactPath, impactContext)
 	}
+	if _, err := prepareRepairImpactQuestionnaire(root, resultSnapshot.State); err != nil {
+		t.Fatal(err)
+	}
 	var impactAnswer repair.ChangeImpactRequest
 	readRepairLeadJSON(t, impactPath, &impactAnswer)
+	if len(impactAnswer.ChangedArtifacts) != len(finalArtifacts) {
+		t.Fatalf("Impact must use only accepted Final artifacts, not transient cache: %+v", impactAnswer.ChangedArtifacts)
+	}
+	for _, artifact := range impactAnswer.ChangedArtifacts {
+		if expected, ok := finalArtifacts[artifact.Path]; !ok || artifact.SHA256 != expected {
+			t.Fatalf("Impact artifact differs from accepted Final batch: %+v", artifact)
+		}
+	}
 	wantReverificationIDs, err := repairImpactReverificationIDs(resultSnapshot.State)
 	if err != nil || len(impactAnswer.RequiredReverificationIDs) != 1 || impactAnswer.RequiredReverificationIDs[0] != wantReverificationIDs[0] {
 		t.Fatalf("Impact draft required IDs = %#v, want one current Contract obligation %#v (err=%v)", impactAnswer.RequiredReverificationIDs, wantReverificationIDs, err)
@@ -294,13 +332,21 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	if err != nil || impactReplay.Revision != impactRevision {
 		t.Fatalf("Impact replay changed Runtime revision: %d -> %d err=%v", impactRevision, impactReplay.Revision, err)
 	}
+	t.Run("ImpactReplayComparesOnlyProfessionalContent", func(t *testing.T) {
+		assertRepairLeadAnswerReplay(t, root, impactPath, impactSave, stringValue(repairPointerCLI(impactReplay.State)["impact_ref"]), func(answer map[string]any) {
+			answer["decisions"].([]any)[0].(map[string]any)["rationale"] = "different professional impact judgment"
+		})
+	})
 
 	verifierOwners := []string{"verifier-lead-chain-1"}
-	for index, assignment := range assignments[:1] {
-		var dispatchOut, dispatchErr bytes.Buffer
-		if code := Run([]string{"runtime", "repair", "dispatch", "--root", root, "--assignment-id", assignment.AssignmentID, "--agent-id", verifierOwners[index], "--independent-verification"}, strings.NewReader(""), &dispatchOut, &dispatchErr); code != 0 {
-			t.Fatalf("dispatch actual independent verifier %d: code=%d stdout=%s stderr=%s", index, code, dispatchOut.String(), dispatchErr.String())
-		}
+	divisionPath, err := repairLeadQuestionnairePath(root, impactSnapshot.State, "independent-verifier-dispatch.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRepairLeadJSON(t, divisionPath, []repairVerifierDispatchChoice{{AssignmentID: assignments[0].AssignmentID, IndependentVerification: true, AgentID: verifierOwners[0]}})
+	feedback.Reset()
+	if handled, _ := runSavedRepairVerifierDispatch(root, repairLeadSaveInput(root, divisionPath, ""), &feedback, &bytes.Buffer{}); !handled || !strings.Contains(feedback.String(), "Independent verifier answer:") {
+		t.Fatalf("actual verifier division save did not prepare Targeted: %s", feedback.String())
 	}
 	targetPaths := make([]string, len(verifierOwners))
 	targetSaves := make([]policy.Input, len(verifierOwners))
@@ -328,12 +374,10 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mappingErr := repairTargetedRequestMappingError(selections, []string{"reverify-legacy-one", "reverify-legacy-two"}); mappingErr == nil || !strings.Contains(mappingErr.Error(), "supports one TargetedReverification") {
-		t.Fatalf("ambiguous old multi-ID impact was not reported as a source gap: %v", mappingErr)
+	if mappingErr := repairTargetedRequestMappingError(selections, []string{"reverify-legacy-one", "reverify-legacy-two"}); mappingErr != nil {
+		t.Fatalf("stored obligation IDs must not become report qualifications: %v", mappingErr)
 	}
-	if mappingErr := repairTargetedRequestMappingError(append(selections, selections[0]), wantReverificationIDs); mappingErr == nil || !strings.Contains(mappingErr.Error(), "maps to 2 independently dispatched verifier assignments") {
-		t.Fatalf("ambiguous multi-verifier source was not reported: %v", mappingErr)
-	}
+	var handoffContext string
 	for index := range assignments[:1] {
 		targetSnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
 		if err != nil {
@@ -351,8 +395,13 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		var targetAnswer repair.TargetedReverificationRequest
 		readRepairLeadJSON(t, targetPath, &targetAnswer)
-		if got, want := targetAnswer.ReverificationID, wantReverificationIDs[0]; got != want {
-			t.Fatalf("Targeted DTO ID = %q, want the current Contract obligation %q", got, want)
+		var draftFields map[string]json.RawMessage
+		readRepairLeadJSON(t, targetPath, &draftFields)
+		if draftFields["continuity_reason"] != nil || draftFields["scope_compliance"] != nil {
+			t.Fatal("new Targeted questionnaire still asks for duplicate legacy report fields")
+		}
+		if targetAnswer.ReverificationID == "" {
+			t.Fatal("Targeted responsibility must supply its machine record identity")
 		}
 		if len(targetAnswer.AssertionResults) != 3 {
 			t.Fatalf("Targeted DTO has %d assertions, want all 3 current Contract assertion slots", len(targetAnswer.AssertionResults))
@@ -368,8 +417,6 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 				t.Fatalf("incomplete Targeted answer wrote Runtime: revision=%d want=%d err=%v", unchanged.Revision, targetSnapshot.Revision, err)
 			}
 		}
-		targetAnswer.ContinuityReason = "test://blocked-run: the verifier environment was unavailable before the assertion replay"
-		targetAnswer.ScopeCompliance = "pass"
 		targetAnswer.Result = "blocked"
 		targetAnswer.FailureClass = "blocked"
 		for i := range targetAnswer.AssertionResults {
@@ -390,7 +437,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			t.Fatalf("blocked Contract responsibility did not retain its original answer path %s: %#v", targetPath, paths)
 		}
 		blockedContext := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse", AgentID: verifierOwners[index]}, blockedSnapshot)
-		if !strings.Contains(blockedContext, targetPath) || !strings.Contains(blockedContext, "environmental blocker") || !strings.Contains(blockedContext, "actual continuity basis") {
+		if !strings.Contains(blockedContext, targetPath) || !strings.Contains(blockedContext, "environmental blocker") || !strings.Contains(blockedContext, "actual assertion observations") {
 			t.Fatalf("blocked verifier context omitted the same questionnaire or resume instruction: %s", blockedContext)
 		}
 		var persistedBlocked repair.TargetedReverificationRequest
@@ -410,7 +457,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		for _, event := range []string{"Stop", "Idle"} {
 			readOnly := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event, AgentID: verifierOwners[index]}, blockedSnapshot)
-			if !strings.Contains(readOnly, targetPath) || !strings.Contains(readOnly, "read-only") {
+			if !strings.Contains(readOnly, targetPath) {
 				t.Fatalf("%s omitted the existing blocked questionnaire or read-only note: %s", event, readOnly)
 			}
 		}
@@ -430,7 +477,9 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			t.Fatalf("blocked replay changed the old failed artifact: %v", readErr)
 		}
 
-		persistedBlocked.ContinuityReason = "test://replay-log: restored the verifier environment and re-ran the approved assertions"
+		if persistedBlocked.ContinuityReason != "" || persistedBlocked.ScopeCompliance != "" {
+			t.Fatal("recorded environmental blocker fabricated optional legacy judgments")
+		}
 		persistedBlocked.Result = "pass"
 		persistedBlocked.FailureClass = ""
 		persistedBlocked.PerformedAt = time.Time{}
@@ -443,13 +492,14 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if handled, _ := runSavedRepairLeadQuestionnaire(root, targetSaves[index], &feedback, &bytes.Buffer{}); !handled || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
 			t.Fatalf("resolved blocker did not resume/create/commit the pass result: handled=%v feedback=%s", handled, feedback.String())
 		}
+		handoffContext = feedback.String()
 		var persistedPass repair.TargetedReverificationRequest
 		readRepairLeadJSON(t, targetPath, &persistedPass)
 		if persistedPass.PerformedAt.IsZero() || persistedPass.PerformedAt.Equal(blockedPerformedAt) {
 			t.Fatalf("resumed Targeted save did not persist a fresh PerformedAt: blocked=%s resumed=%s", blockedPerformedAt, persistedPass.PerformedAt)
 		}
 		afterTarget, err := runtime.NewStore(statePath, journalPath).Snapshot()
-		if err != nil || stringValue(repairPointerCLI(afterTarget.State)["status"]) != "ready_for_full_review" {
+		if err != nil || stringValue(repairPointerCLI(afterTarget.State)["status"]) != "closed" {
 			t.Fatalf("resumed Targeted consumer did not reach handoff status: status=%q err=%v", stringValue(repairPointerCLI(afterTarget.State)["status"]), err)
 		}
 		resumedRefs := repairArtifactRefs(repairPointerCLI(afterTarget.State), "targeted_reverification_artifacts", "", "")
@@ -494,27 +544,24 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if err != nil || replayedTarget.Revision != afterTarget.Revision {
 			t.Fatalf("Targeted replay for %s changed Runtime revision: %d -> %d err=%v", verifierOwners[index], afterTarget.Revision, replayedTarget.Revision, err)
 		}
+		t.Run("TargetedReplayComparesOnlyProfessionalContent", func(t *testing.T) {
+			ref, ok := registeredTargetedForSelection(root, repairPointerCLI(replayedTarget.State), selections[0])
+			if !ok {
+				t.Fatal("original accepted PASS not found")
+			}
+			assertRepairLeadAnswerReplay(t, root, targetPath, targetSaves[index], ref.Path, func(answer map[string]any) {
+				results := answer["assertion_results"].([]any)
+				results[0].(map[string]any)["evidence_refs"] = []any{"logs/different-actual-observation.log"}
+			})
+		})
 	}
 	readySnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
-	if err != nil || stringValue(repairPointerCLI(readySnapshot.State)["status"]) != "ready_for_full_review" {
+	if err != nil || stringValue(repairPointerCLI(readySnapshot.State)["status"]) != "closed" {
 		t.Fatalf("all independent verifiers did not reach handoff status: status=%q err=%v", stringValue(repairPointerCLI(readySnapshot.State)["status"]), err)
 	}
-	targetRevision := readySnapshot.Revision
-	for _, event := range []string{"Stop", "Idle"} {
-		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, readySnapshot)
-		if !strings.Contains(context, "no remaining professional Main answer") || !strings.Contains(context, "read-only") {
-			t.Fatalf("%s did not report read-only automatic Handoff behavior: %s", event, context)
-		}
+	for _, event := range []string{"Stop", "Idle", "PreToolUse"} {
+		stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, readySnapshot)
 	}
-	if _, err := os.Stat(filepath.Join(root, ".claude", "review", "repair", "handoffs")); !os.IsNotExist(err) {
-		t.Fatalf("Stop/Idle created a Handoff artifact directory: %v", err)
-	}
-	readOnlySnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
-	if err != nil || readOnlySnapshot.Revision != targetRevision || stringValue(repairPointerCLI(readOnlySnapshot.State)["handoff_ref"]) != "" {
-		t.Fatalf("Stop/Idle changed Runtime before active Main event: revision=%d handoff=%q err=%v", readOnlySnapshot.Revision, stringValue(repairPointerCLI(readOnlySnapshot.State)["handoff_ref"]), err)
-	}
-
-	handoffContext := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, readySnapshot)
 	handoffSnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
 		t.Fatal(err)
@@ -522,11 +569,27 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	handoffPointer := repairPointerCLI(handoffSnapshot.State)
 	handoffRef, err := repairPointerRef(handoffPointer, "handoff_ref", "handoff_sha256", "committed RepairHandoff")
 	if err != nil {
-		t.Fatalf("normal Main event did not automatically commit Handoff: %v; context=%s", err, handoffContext)
+		t.Fatalf("actual Targeted save did not automatically commit Handoff: %v; context=%s", err, handoffContext)
 	}
 	handoffPath, err := absoluteQuestionnairePath(root, handoffRef.Path)
 	if err != nil || !strings.Contains(handoffContext, handoffPath) {
 		t.Fatalf("handoff context omitted actual artifact path %s: %s err=%v", handoffPath, handoffContext, err)
+	}
+	handoff, err := repair.ValidateRepairHandoff(root, handoffRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changeset, err := repair.ValidateChangeset(root, handoff.ChangesetRef)
+	if err != nil || len(changeset.Artifacts) != len(finalArtifacts) {
+		t.Fatalf("Handoff Changeset must retain the accepted Final artifact set: %+v %v", changeset.Artifacts, err)
+	}
+	for _, artifact := range changeset.Artifacts {
+		if expected, ok := finalArtifacts[artifact.Path]; !ok || artifact.SHA256 != expected {
+			t.Fatalf("Handoff Changeset differs from accepted Final batch: %+v", artifact)
+		}
+	}
+	if _, err := os.Stat(cachePath); err != nil {
+		t.Fatalf("normal Impact/Handoff must not require deleting transient cache: %v", err)
 	}
 	seedPath, err := absoluteQuestionnairePath(root, stringValue(handoffPointer["review_plan_seed_ref"]))
 	if err != nil || !strings.Contains(handoffContext, seedPath) {
@@ -690,13 +753,48 @@ func TestS9RepairReadbackUsesOriginalSessionAndPlanWriters(t *testing.T) {
 		"scope": []string{"internal/api"}, "assertion_ids": []string{"all"},
 	}})
 
-	context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
+	before, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reminder := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
+	after, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil || before.Revision != after.Revision || !strings.Contains(reminder, "runtime repair session open") {
+		t.Fatalf("ordinary reminder changed Runtime or omitted startup: %s (%v)", reminder, err)
+	}
+	runtimeID, generation, contract, err := repairReadbackContractSource(root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix, err := repairReadbackIDSuffix(runtimeID, generation, contract.CaseID, contract.ContractID, contract.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, commandErr bytes.Buffer
+	if code := runRuntimeRepairSessionOpen([]string{"--root", root, "--session-id", "repair-session-" + suffix, "--created-by", "Main", "--actor", "Main"}, &out, &commandErr); code != 0 {
+		t.Fatalf("normal session startup: %s", commandErr.String())
+	}
+	if code := runRuntimeRepairPlanCompile([]string{"--root", root, "--plan-id", "repair-plan-" + suffix, "--created-by", "Main", "--actor", "Main"}, &out, &commandErr); code != 0 {
+		t.Fatalf("normal plan compile: %s", commandErr.String())
+	}
+	compiled, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = compiled.State
+	for _, name := range []string{"builder-dispatch.json", "independent-verifier-dispatch.json"} {
+		path, err := repairLeadQuestionnairePath(root, state, name)
+		if err != nil || questionnaireMissing(path) {
+			t.Fatalf("normal startup omitted division %s: %v", path, err)
+		}
+	}
+	context := stageRepairDispatchContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
 	prepared, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	pointer := repairPointerCLI(prepared.State)
-	for _, key := range []string{"contract_ref", "path", "plan_ref"} {
+	for _, key := range []string{"contract_ref", "plan_ref"} {
 		refPath := stringValue(pointer[key])
 		if refPath == "" {
 			t.Fatalf("original writer did not register %s: %#v", key, pointer)
@@ -706,10 +804,10 @@ func TestS9RepairReadbackUsesOriginalSessionAndPlanWriters(t *testing.T) {
 			t.Fatalf("readback context omitted exact %s path %s: %s (err=%v)", key, absPath, context, err)
 		}
 	}
-	if stringValue(pointer["status"]) != "planning" || !strings.Contains(context, "Contract-derived RepairPlan") {
+	if stringValue(pointer["status"]) != "planning" || !strings.Contains(context, "original RepairPlan") {
 		t.Fatalf("readback did not use the original Session/Plan APIs: pointer=%#v context=%s", pointer, context)
 	}
-	_, err = prepareRepairReadback(root, prepared.State)
+	_, err = prepareRepairReadback(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), prepared.State)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +827,7 @@ func TestS9RepairReadbackIDsIncludeCurrentCaseAndContract(t *testing.T) {
 		"id": "unit-lead-questionnaire-a", "description": "restore Case A source authority",
 		"scope": []string{"internal/api"}, "assertion_ids": []string{"all"},
 	}})
-	first, err := prepareRepairReadback(root, stateA)
+	first, err := prepareRepairReadback(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), stateA)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,7 +847,7 @@ func TestS9RepairReadbackIDsIncludeCurrentCaseAndContract(t *testing.T) {
 		"id": "unit-lead-questionnaire-b", "description": "restore Case B source authority",
 		"scope": []string{"internal/api"}, "assertion_ids": []string{"all"},
 	}})
-	second, err := prepareRepairReadback(root, stateB)
+	second, err := prepareRepairReadback(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), stateB)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,12 +16,12 @@ func RepairResultAssignmentBinding(root string, state map[string]any, owner stri
 		return "", false
 	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
-	if lifecycle["state"] != "bug_resolution" || lifecycle["phase"] != "fixing" {
+	if lifecycle["state"] != "bug_resolution" {
 		return "", false
 	}
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
-	if pointer == nil || pointer["status"] != "repairing" {
+	if pointer == nil || pointer["session_id"] == "" || pointer["plan_ref"] == "" {
 		return "", false
 	}
 	owners, _ := pointer["assignment_owners"].(map[string]any)
@@ -43,40 +43,23 @@ func RepairResultAssignmentBinding(root string, state map[string]any, owner stri
 		// into a generic completion path.
 		return assignmentID, true
 	}
-	reviewMap, _ := state["review"].(map[string]any)
 	runtimeID := workspace.RuntimeID(state)
 	generation := workspace.Generation(state)
-	round := repairResultInteger(reviewMap["round"])
 	sessionID, _ := pointer["session_id"].(string)
 	planRef, _ := pointer["plan_ref"].(string)
-	planSHA, _ := pointer["plan_sha256"].(string)
 	for _, packet := range packets {
 		b := packet.Binding.Sources
 		if b.RepairAssignmentID == assignmentID && b.RuntimeID == runtimeID && b.BaselineGeneration == generation &&
-			b.ReviewRound == round && b.SessionID == sessionID && b.PlanRef == planRef && b.PlanSHA256 == planSHA {
+			b.SessionID == sessionID && b.PlanRef == planRef {
 			return assignmentID, true
 		}
 	}
 	return "", false
 }
 
-func repairResultInteger(value any) int {
-	switch n := value.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
-// RepairResultWorkComplete is the only S9 stop/idle completion proof. A
-// candidate receipt by itself is not enough: the original repair consumer
-// must revalidate the current candidate/source/attempt and every owner-owned
-// check for this exact RepairAssignment.
+// RepairResultWorkComplete reads the current Builder's accepted delivery
+// facts. Main integration/checks remain separate work; Stop does not re-prove
+// them or require the cleaned-up Worker checkout to still exist.
 func RepairResultWorkComplete(root string, state map[string]any, agent *policy.AgentContext) bool {
 	if agent == nil || !agent.RepairResultAssignment || agent.ID == "" || agent.RepairAssignmentID == "" || state == nil {
 		return false
@@ -85,76 +68,30 @@ func RepairResultWorkComplete(root string, state map[string]any, agent *policy.A
 	if !bound || assignmentID != agent.RepairAssignmentID {
 		return false
 	}
-	packets, err := loopruntime.CurrentRepairResultPackets(root, state, agent.ID)
-	if err != nil {
-		return false
-	}
-	var selectedID string
-	for _, packet := range packets {
-		binding := packet.Binding.Sources
-		if binding.OwnerAgentID != agent.ID || binding.RepairAssignmentID != assignmentID {
-			continue
-		}
-		if selectedID != "" {
-			return false
-		}
-		if loopruntime.VerifyRepairResultPacketIssue(root, state, packet) != nil {
-			return false
-		}
-		if loopruntime.VerifyRepairResultPacketCurrent(root, state, packet) != nil {
-			// It is no longer a fresh write responsibility. The historical
-			// final-receipt path below may still prove this exact attempt complete.
-			continue
-		}
-		selectedID = packet.ID
-	}
-	if selectedID != "" {
-		complete, err := repair.RepairResultWorkComplete(root, state, selectedID, agent.ID)
-		return err == nil && complete
-	}
-
-	// A completed execution can leave the fresh selector after its exact
-	// accepted final Result is durable. Preserve only that already-issued
-	// responsibility: locate packets for the same current Session/Plan and
-	// Assignment, then require both the original verified final receipt and the
-	// domain's current-attempt completion proof. This branch grants no new save
-	// or delivery permission.
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
-	runtimeID := workspace.RuntimeID(state)
-	generation := workspace.Generation(state)
-	round := repairResultInteger(review["round"])
-	sessionID, _ := pointer["session_id"].(string)
-	planRef, _ := pointer["plan_ref"].(string)
-	planSHA, _ := pointer["plan_sha256"].(string)
-	all, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPackets(state)
 	if err != nil {
 		return false
 	}
-	var finalPacketID string
-	for _, packet := range all {
-		binding := packet.Binding.Sources
-		if binding.OwnerAgentID != agent.ID || binding.RepairAssignmentID != assignmentID ||
-			binding.RuntimeID != runtimeID || binding.BaselineGeneration != generation || binding.ReviewRound != round ||
-			binding.SessionID != sessionID || binding.PlanRef != planRef || binding.PlanSHA256 != planSHA {
+	completed := 0
+	for _, packet := range packets {
+		b := packet.Binding.Sources
+		if b.OwnerAgentID != agent.ID || b.RepairAssignmentID != assignmentID ||
+			b.RuntimeID != workspace.RuntimeID(state) || b.BaselineGeneration != workspace.Generation(state) ||
+			b.SessionID != pointer["session_id"] || b.PlanRef != pointer["plan_ref"] {
 			continue
 		}
-		if loopruntime.VerifyRepairResultPacketIssue(root, state, packet) != nil {
+		// The domain projection associates the retained candidate with the
+		// current execution generation/rework/path. An old attempt cannot
+		// complete the current one, even after its historical Final exists.
+		complete, err := repair.RepairResultWorkComplete(root, state, packet.ID, agent.ID)
+		if err != nil {
 			return false
 		}
-		if _, accepted, receiptErr := loopruntime.VerifiedRepairResultReceipt(root, state, packet.ID, agent.ID); receiptErr != nil {
-			return false
-		} else if !accepted {
-			continue
+		if complete {
+			completed++
 		}
-		if finalPacketID != "" {
-			return false
-		}
-		finalPacketID = packet.ID
 	}
-	if finalPacketID == "" {
-		return false
-	}
-	complete, err := repair.RepairResultWorkComplete(root, state, finalPacketID, agent.ID)
-	return err == nil && complete
+	return completed == 1
 }

@@ -2,6 +2,7 @@ package submission
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 
@@ -34,7 +35,7 @@ func (s *Service) saveRepairResultBlocker(ctx context.Context, packet workpacket
 	}
 	if prior == nil {
 		if capability == nil {
-			err := errors.New("original S9 blocker preparation returned no proof")
+			err := errors.New("original S9 blocker preparation returned no current responsibility")
 			return rejected(snapshot, packet.ID, err), err
 		}
 		next, advanceErr := assignment.AdvanceAgentWithContext(ctx, s.Root, s.StatePath, s.JournalPath, assignment.AgentEventRequest{
@@ -56,16 +57,16 @@ func (s *Service) saveRepairResultBlocker(ctx context.Context, packet workpacket
 	}
 	result, found, err := repairResultBlockerReceipt(s.Root, snapshot, packet, owner)
 	if err == nil && !found {
-		err = errors.New("original S9 blocker CAS has no verifiable receipt")
+		err = errors.New("original S9 blocker record is unavailable")
 	}
 	if err == nil && found && result.currentRepairResultBlocker {
 		if verdict == "contract_conflict" {
 			result.NextAction = "原 Contract 冲突答卷已接收，本次执行可结束，交付未完成；Main 必须回原 S8 新 Contract 审批人闸，不能在同一 Contract/Session/Plan 上普通 retry。"
 		} else if path, publishErr := publishRepairResultResolutionDraft(s.Root, snapshot, packet, owner); publishErr != nil {
 			result.Error = "original blocker accepted; Main resolution draft publication failed: " + publishErr.Error()
-			result.NextAction = "原阻塞接收已保留；Main 草稿发布失败。保全来源并原样重放本答卷以恢复草稿，不重建 Runtime 接收。"
+			result.NextAction += " 原阻塞接收已保留；Main 草稿发布失败。保全来源并原样重放本答卷以恢复该路径的草稿，不重建 Runtime 接收。"
 		} else {
-			result.NextAction = "原阻塞答卷已接收，本次执行可结束，交付未完成；等待 Main 填写并保存 " + path + " 的恢复理由与依据。"
+			result.NextAction = "原阻塞答卷已接收，本次执行可结束，交付未完成；等待 Main 填写并保存 " + filepath.Join(s.Root, filepath.FromSlash(path)) + " 的恢复理由与依据。"
 		}
 	}
 	return result, err
@@ -85,12 +86,24 @@ func repairResultBlockerReceipt(root string, snapshot loopruntime.Snapshot, pack
 	mayEnd, currentErr := repair.RepairResultBlockerExecutionMayEnd(root, snapshot.State, packet.ID, owner)
 	result.currentRepairResultBlocker = currentErr == nil && mayEnd
 	result.WaitingOn = append(result.WaitingOn, Waiting{Reason: "original S9 blocker requires Main recovery", Owner: "Main", Ref: original.ArtifactRef})
-	result.NextAction = "原阻塞答卷已接收；当前阻塞证明成立时可结束本次执行，Main 按原阻塞恢复路径接手。本人交付尚未完成。"
-	if !result.currentRepairResultBlocker {
-		result.NextAction = "原阻塞答卷的历史接收已保留；当前阻塞或来源证明已变化，用 runtime repair status 检查原恢复责任，历史回执不授结束或写入权限。"
+	result.NextAction = "阻塞答卷已记录，交付未完成；当前责任已变化，由 Main 检查当前工作安排。原答卷：" + filepath.Join(original.Artifact.ExecutionRoot, filepath.FromSlash(packet.AnswerPath)) + "；Main 按原当前责任接手。"
+	if result.currentRepairResultBlocker {
+		var answer struct {
+			Verdict string `json:"verdict"`
+		}
+		_ = json.Unmarshal(original.Artifact.SubmittedAnswer, &answer)
+		if answer.Verdict == "contract_conflict" {
+			result.NextAction = "原 Contract 冲突答卷已接收，本次执行可结束，交付未完成；Main 必须回原 S8 新 Contract 审批人闸，不能在同一 Contract/Session/Plan 上普通 retry。"
+		} else if path, pathErr := workpacket.RepairResultResolutionAuthoringPath(packet); pathErr != nil {
+			result.NextAction = "原阻塞答卷已接收；本人交付尚未完成。Main 恢复问卷的原路径投影不可用：" + pathErr.Error()
+		} else {
+			path = filepath.Join(root, filepath.FromSlash(path))
+			result.WaitingOn = []Waiting{{Reason: "original S9 blocker requires Main recovery", Owner: "Main", Ref: path}}
+			result.NextAction = "原阻塞答卷已接收，本次执行可结束，交付未完成；等待 Main 填写并保存 " + path + " 的恢复理由与依据。"
+		}
 	}
 	if currentErr != nil {
-		result.Error = "original blocker accepted; current execution-end proof unavailable: " + currentErr.Error()
+		result.Error = "blocker recorded; current responsibility information unavailable: " + currentErr.Error()
 	}
 	return result, true, nil
 }

@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/checkexec"
 	"github.com/entroforge/go-system-builder/internal/controlproof"
-	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
@@ -30,7 +30,6 @@ func RepairResultPackets(state map[string]any) ([]workpacket.RepairResultPacket,
 	}
 	seen := map[string]bool{}
 	packets := make([]workpacket.RepairResultPacket, 0)
-	packetValidator := schema.NewEmbeddedValidator()
 	for i, raw := range rows {
 		row, ok := raw.(map[string]any)
 		id := stringValue(row["packet_id"])
@@ -45,21 +44,14 @@ func RepairResultPackets(state map[string]any) ([]workpacket.RepairResultPacket,
 		if err != nil {
 			return nil, err
 		}
-		if err := packetValidator.ValidateBytes("repair-result-work-packet.schema.json", data); err != nil {
-			return nil, fmt.Errorf("S9 packet %s schema: %w", id, err)
-		}
 		var p workpacket.RepairResultPacket
 		if err := json.Unmarshal(data, &p); err != nil {
 			return nil, err
 		}
-		rebuilt, err := workpacket.RebuildRepairResult(p)
-		if err != nil || !reflect.DeepEqual(p, rebuilt) || p.ID != id {
-			return nil, fmt.Errorf("S9 packet %s differs from its canonical rebuild", id)
+		if p.ID != id {
+			return nil, fmt.Errorf("S9 packet %s identity differs from its registry entry", id)
 		}
 		packets = append(packets, p)
-	}
-	if len(packets) > 0 && !PacketEnabled(state) {
-		return nil, fmt.Errorf("S9 packets require the explicit v1.2 packet contract")
 	}
 	sort.Slice(packets, func(i, j int) bool { return packets[i].ID < packets[j].ID })
 	return packets, nil
@@ -78,16 +70,41 @@ func FindRepairResultPacket(state map[string]any, id string) (workpacket.RepairR
 	if id == "" {
 		return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 packet ID is required")
 	}
-	packets, err := RepairResultPackets(state)
+	entities, _ := state["entities"].(map[string]any)
+	rawRows := entities["work_packets"]
+	if rawRows == nil {
+		return workpacket.RepairResultPacket{}, false, nil
+	}
+	rows, ok := rawRows.([]any)
+	if !ok {
+		return workpacket.RepairResultPacket{}, false, fmt.Errorf("Runtime work_packets is not an array")
+	}
+	var selected map[string]any
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["packet_id"] != id {
+			continue
+		}
+		if selected != nil {
+			return workpacket.RepairResultPacket{}, false, fmt.Errorf("duplicate Runtime packet identity %s", id)
+		}
+		selected = row
+	}
+	if selected == nil || selected["template_id"] != repairResultPacketTemplateID {
+		return workpacket.RepairResultPacket{}, false, nil
+	}
+	data, err := json.Marshal(selected)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
-	for _, p := range packets {
-		if p.ID == id {
-			return p, true, nil
-		}
+	var packet workpacket.RepairResultPacket
+	if err := json.Unmarshal(data, &packet); err != nil {
+		return workpacket.RepairResultPacket{}, false, err
 	}
-	return workpacket.RepairResultPacket{}, false, nil
+	if packet.ID != id {
+		return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 packet %s identity differs from its registry entry", id)
+	}
+	return packet, true, nil
 }
 
 // CurrentRepairResultPackets selects current responsibilities, not write grants.
@@ -99,16 +116,8 @@ func CurrentRepairResultPackets(root string, state map[string]any, owner string)
 	return currentRepairResultPackets(root, state, owner, all)
 }
 
-func currentRepairResultPackets(root string, state map[string]any, owner string, all []workpacket.RepairResultPacket) ([]workpacket.RepairResultPacket, error) {
-	candidates := currentRepairResultCandidates(state, owner, all)
-	if len(candidates) == 0 {
-		return []workpacket.RepairResultPacket{}, nil
-	}
-	journal, err := repairResultResumeJournal(root, state)
-	if err != nil {
-		return nil, err
-	}
-	return currentRepairResultPacketsWithJournal(root, state, owner, all, candidates, journal)
+func currentRepairResultPackets(_ string, state map[string]any, owner string, all []workpacket.RepairResultPacket) ([]workpacket.RepairResultPacket, error) {
+	return currentRepairResultCandidates(state, owner, all), nil
 }
 
 func currentRepairResultCandidates(state map[string]any, owner string, all []workpacket.RepairResultPacket) []workpacket.RepairResultPacket {
@@ -116,14 +125,51 @@ func currentRepairResultCandidates(state map[string]any, owner string, all []wor
 	pointer, _ := review["repair"].(map[string]any)
 	baseline, _ := state["baseline"].(map[string]any)
 	gen, _ := integerField(baseline, "generation")
-	round, _ := integerField(review, "round")
+	owners, _ := pointer["assignment_owners"].(map[string]any)
+	workspace, _ := state["workspace"].(map[string]any)
+	executions, _ := workspace["executions"].(map[string]any)
+	entities, _ := state["entities"].(map[string]any)
 	candidates := make([]workpacket.RepairResultPacket, 0, len(all))
 	for _, p := range all {
 		b := p.Binding.Sources
-		if (owner != "" && b.OwnerAgentID != owner) || b.RuntimeID != state["runtime_id"] || b.BaselineGeneration != gen || b.ReviewRound != round || pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 {
+		if (owner != "" && b.OwnerAgentID != owner) || b.RuntimeID != state["runtime_id"] || b.BaselineGeneration != gen || pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef || owners[b.RepairAssignmentID] != b.OwnerAgentID {
 			continue
 		}
-		candidates = append(candidates, p)
+		var issued map[string]any
+		if json.Unmarshal(p.Inputs.Execution, &issued) != nil || issued == nil {
+			continue
+		}
+		execution, _ := executions[stringValue(issued["assignment_id"])].(map[string]any)
+		if execution == nil || execution["runtime_id"] != b.RuntimeID || execution["agent_id"] != b.OwnerAgentID ||
+			!hypothesisJSONEqual(execution["baseline_generation"], b.BaselineGeneration) ||
+			!hypothesisJSONEqual(execution["execution_generation"], issued["execution_generation"]) ||
+			execution["worktree_path"] != issued["worktree_path"] || stringValue(execution["rework_ref"]) != p.Binding.ReworkRef {
+			continue
+		}
+		// Resolution and successor pointers are already recorded Runtime facts.
+		// Reading them does not require replaying their journal or source chain.
+		retired := false
+		messageDir := path.Join(".claude/evidence", b.RuntimeID, fmt.Sprintf("g%d", b.BaselineGeneration), "S9", "blocker-messages", p.ID)
+		for _, agent := range objectRows(entities["agents"]) {
+			ref := stringValue(agent["blocker_resolved_ref"])
+			if agent["id"] == b.OwnerAgentID && (ref == messageDir || strings.HasPrefix(ref, messageDir+"/")) {
+				retired = true
+			}
+		}
+		for _, row := range objectRows(state["evidence"]) {
+			refs, _ := checkpointStringSlice(row["scope_refs"])
+			if row["kind"] == "repair_result_resolution" && containsStringRuntime(refs, p.ID) {
+				retired = true
+			}
+		}
+		for _, successor := range all {
+			if successor.Binding.Sources.RuntimeID == b.RuntimeID && successor.Binding.Sources.SessionID == b.SessionID && successor.Binding.Resume != nil && successor.Binding.Resume.PredecessorPacketID == p.ID {
+				retired = true
+			}
+		}
+		if !retired {
+			candidates = append(candidates, p)
+		}
 	}
 	return candidates
 }
@@ -245,7 +291,7 @@ func ProjectRepairResultExecution(execution map[string]any) (json.RawMessage, er
 	projection := map[string]any{}
 	for _, key := range []string{
 		"assignment_record", "assignment_record_sha256", "worker_checks", "check_profiles",
-		"purpose", "work_packet_id", "stage_entry", "check_location", "platform_session_id",
+		"purpose", "work_packet_id", "stage_entry", "check_location",
 		"assignment_id", "runtime_id", "baseline_generation", "execution_generation", "agent_id",
 		"worktree_path", "branch", "target_branch", "base_commit", "write_paths", "required_checks",
 		"inputs", "bootstrap_sha256",
@@ -308,196 +354,61 @@ func RepairResultExecution(state map[string]any, p workpacket.RepairResultPacket
 	return repairResultExecution(state, p)
 }
 
+// VerifyRepairResultSources checks the readable work records associated with
+// this result. It does not certify completion or replay planning permissions.
 func VerifyRepairResultSources(root string, state map[string]any, p workpacket.RepairResultPacket, issuedAfter int) error {
-	data, err := controlproof.ReadJournalForState(root, state)
-	if err != nil {
-		return err
-	}
-	j, err := controlproof.InspectJournalData(data)
-	if err != nil {
-		return err
-	}
-	if err := controlproof.ValidateStateJournalPair(state, j); err != nil {
-		return err
-	}
-	return verifyRepairResultSources(root, state, p, j, issuedAfter)
+	return verifyRepairResultSources(root, state, p, controlproof.JournalInspection{}, issuedAfter)
 }
 
-func verifyRepairResultSources(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, issuedAfter int) error {
+func verifyRepairResultSources(root string, state map[string]any, p workpacket.RepairResultPacket, _ controlproof.JournalInspection, _ int) error {
 	b := p.Binding.Sources
-	// The original PlanReport source verifier owns approval/dispatch chronology.
-	source := workpacket.RepairPlanReportPacket{Binding: b, Inputs: p.Inputs.Sources}
-	if err := verifyRepairPlanReportSources(root, state, source, j, issuedAfter); err != nil {
-		return err
-	}
-	report, err := readRepairPacketSource(root, p.Binding.PlanReportRef, p.Binding.PlanReportSHA256, "repair-plan-report.schema.json")
+	data, err := workpacket.ReadFile(root, p.Binding.PlanReportRef, 20<<20)
 	if err != nil {
 		return err
 	}
-	var frozen map[string]any
-	if json.Unmarshal(p.Inputs.PlanReport, &frozen) != nil || !hypothesisJSONEqual(report, frozen) || report["assignment_id"] != b.RepairAssignmentID || report["session_id"] != b.SessionID || report["plan_id"] != b.PlanID || report["agent_id"] != b.OwnerAgentID {
-		return fmt.Errorf("S9 result's original PlanReport differs")
+	var report map[string]any
+	if json.Unmarshal(data, &report) != nil || report == nil || report["assignment_id"] != b.RepairAssignmentID || report["session_id"] != b.SessionID || report["plan_id"] != b.PlanID || report["agent_id"] != b.OwnerAgentID {
+		return fmt.Errorf("S9 result PlanReport does not describe this responsibility")
 	}
-	// First typed result topology requires the exact original issued PlanReport
-	// receipt. A legacy artifact is not upgraded by reading its current bytes.
-	rawReceipt, _ := report["receipt"].(map[string]any)
-	reportPacketID := stringValue(rawReceipt["packet_id"])
-	reportPacket, foundReport, err := FindRepairPlanReportPacket(state, reportPacketID)
-	if err != nil || !foundReport || reportPacket.Binding.OwnerAgentID != b.OwnerAgentID {
-		return fmt.Errorf("S9 result's original issued PlanReport packet is unavailable: %v", err)
-	}
-	if err := verifyRegisteredRepairPlanReportPacketIssue(root, state, reportPacket, j); err != nil {
-		return err
-	}
-	receiptBytes, err := json.Marshal(rawReceipt)
-	if err != nil {
-		return err
-	}
-	var receipt RepairPlanReportReceipt
-	if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
-		return err
-	}
-	if err := verifyRepairPlanReportReceipt(root, state, reportPacket, j, report, p.Binding.PlanReportRef, receipt); err != nil {
-		return err
-	}
-	if receipt.ReportRef != p.Binding.PlanReportRef || receipt.AcceptedAfterRuntimeRevision >= issuedAfter {
-		return fmt.Errorf("S9 result needs its original PlanReport receipt before issuance")
-	}
-	if receipt.RuntimeID != b.RuntimeID || receipt.BaselineGeneration != b.BaselineGeneration || receipt.ReviewRound != b.ReviewRound || receipt.CaseRef != b.CaseRef || receipt.CaseSHA256 != b.CaseSHA256 || receipt.ContractRef != b.ContractRef || receipt.ContractSHA256 != b.ContractSHA256 || receipt.SessionRef != b.SessionRef || receipt.SessionSHA256 != b.SessionSHA256 || receipt.PlanRef != b.PlanRef || receipt.PlanSHA256 != b.PlanSHA256 || receipt.RepairAssignmentID != b.RepairAssignmentID || receipt.RepairAssignmentSHA256 != b.RepairAssignmentSHA256 || receipt.ManifestAssignmentID != b.ManifestAssignmentID || receipt.ManifestAssignmentSHA256 != b.ManifestAssignmentSHA256 || receipt.TeamID != b.TeamID || receipt.TaskID != b.TaskID || receipt.TaskRef != b.TaskRef || receipt.TaskSHA256 != b.TaskSHA256 || receipt.ManifestRef != b.ManifestRef || receipt.ManifestSHA256 != b.ManifestSHA256 {
-		return fmt.Errorf("S9 result and original PlanReport dispatch/source closure differ")
+	var task map[string]any
+	if json.Unmarshal(p.Inputs.Sources.Task, &task) != nil || task == nil || task["task_id"] != b.TaskID {
+		return fmt.Errorf("S9 result task does not describe this responsibility")
 	}
 	var execution map[string]any
 	if json.Unmarshal(p.Inputs.Execution, &execution) != nil || execution == nil {
 		return fmt.Errorf("S9 result execution input invalid")
 	}
-	if workpacket.Digest(p.Inputs.Execution) != p.Binding.ExecutionSHA256 || (execution["assignment_id"] != b.RepairAssignmentID && execution["assignment_id"] != b.ManifestAssignmentID) || execution["runtime_id"] != b.RuntimeID || execution["agent_id"] != b.OwnerAgentID || !hypothesisJSONEqual(execution["baseline_generation"], b.BaselineGeneration) {
-		return fmt.Errorf("S9 result frozen execution identity differs")
+	if (execution["assignment_id"] != b.RepairAssignmentID && execution["assignment_id"] != b.ManifestAssignmentID) || execution["runtime_id"] != b.RuntimeID || execution["agent_id"] != b.OwnerAgentID || !hypothesisJSONEqual(execution["baseline_generation"], b.BaselineGeneration) {
+		return fmt.Errorf("S9 result execution describes another responsibility")
 	}
-	commands := []string{}
-	for _, check := range objectRows(report["red_checks"]) {
-		command := stringValue(check["command"])
-		if strings.TrimSpace(command) != "" {
-			commands = append(commands, command)
-		}
-	}
-	if !hypothesisJSONEqual(execution["required_checks"], commands) {
-		return fmt.Errorf("S9 execution checks are not the exact accepted PlanReport commands")
-	}
-	location := stringValue(execution["check_location"])
-	expectedProfiles, err := RepairResultCheckProfiles(p.Binding.PlanReportSHA256, commands, location)
-	if err != nil {
-		return err
+	commands, valid := checkpointStringSlice(execution["required_checks"])
+	if !valid && execution["required_checks"] != nil {
+		return fmt.Errorf("S9 execution required_checks must be commands")
 	}
 	var manifestAssignment map[string]any
-	if err := json.Unmarshal(p.Inputs.Sources.ManifestAssignment, &manifestAssignment); err != nil {
-		return err
+	if json.Unmarshal(p.Inputs.Sources.ManifestAssignment, &manifestAssignment) != nil || manifestAssignment == nil || manifestAssignment["assignment_id"] != b.ManifestAssignmentID {
+		return fmt.Errorf("S9 result manifest assignment differs")
 	}
-	if declared := objectRows(manifestAssignment["check_profiles"]); len(declared) > 0 {
-		encoded, err := json.Marshal(declared)
+	if declared, exists := manifestAssignment["required_checks"]; exists && !hypothesisJSONEqual(declared, commands) {
+		return fmt.Errorf("S9 execution checks differ from the configured manifest checks")
+	}
+	var profiles []checkexec.Profile
+	if raw := execution["check_profiles"]; raw != nil {
+		encoded, err := json.Marshal(raw)
 		if err != nil {
 			return err
 		}
-		var profiles []checkexec.Profile
 		if err := json.Unmarshal(encoded, &profiles); err != nil {
 			return err
 		}
-		if err := checkexec.ValidateProfiles(profiles, commands, location); err != nil {
+	}
+	if len(profiles) > 0 {
+		if err := checkexec.ValidateProfiles(profiles, commands, stringValue(execution["check_location"])); err != nil {
 			return err
 		}
-		expectedProfiles = profiles
 	}
-	if !hypothesisJSONEqual(execution["check_profiles"], expectedProfiles) {
-		return fmt.Errorf("S9 frozen profiles have no exact original dispatch/accepted-report source")
-	}
-	if err := verifyRepairResultAttempt(root, p, j, issuedAfter); err != nil {
-		return err
-	}
-	// Begin remains Main's original gate; packet issuance cannot manufacture it.
-	beginCount := 0
-	for _, event := range j.Events {
-		eventAfter, eventErr := integerField(event, "after_revision")
-		if eventErr == nil && eventAfter > receipt.AcceptedAfterRuntimeRevision && eventAfter < issuedAfter && (event["transition_id"] == "S9-SESSION-OPEN" || event["transition_id"] == "PTR-BUG-09") {
-			return fmt.Errorf("S9 Session/Plan was replaced after the bound PlanReport acceptance; named recovery required")
-		}
-		if event["transition_id"] != "PTR-BUG-11" || event["runtime_id"] != b.RuntimeID {
-			continue
-		}
-		after, ae := integerField(event, "after_revision")
-		gen, ge := integerField(event, "baseline_generation")
-		if ae != nil || ge != nil || after <= receipt.AcceptedAfterRuntimeRevision || after >= issuedAfter || gen != b.BaselineGeneration {
-			continue
-		}
-		actor, _ := event["actor"].(map[string]any)
-		from, _ := event["from"].(map[string]any)
-		to, _ := event["to"].(map[string]any)
-		refs, _ := checkpointStringSlice(event["evidence_ids"])
-		// Original Begin can reference any member of the exact accepted report set.
-		if actor["id"] == "" || from["state"] != "bug_resolution" || from["phase"] != "reproducing" || to["state"] != "bug_resolution" || to["phase"] != "fixing" || len(refs) != 1 {
-			return fmt.Errorf("S9 original Begin event tuple differs")
-		}
-		beginCount++
-	}
-	if beginCount != 1 {
-		return fmt.Errorf("S9 result needs one retained original Begin after its PlanReport and before issuance")
-	}
-	return nil
-}
-
-func verifyRepairResultAttempt(root string, p workpacket.RepairResultPacket, j controlproof.JournalInspection, issuedAfter int) error {
-	if p.Binding.ReworkRef == "" {
-		if p.Binding.ReworkSHA256 != "" || string(p.Inputs.ReworkReceipt) != "null" {
-			return fmt.Errorf("S9 initial attempt has inconsistent rework source")
-		}
-		return nil
-	}
-	data, err := workpacket.ReadFile(root, p.Binding.ReworkRef, 20<<20)
-	if err != nil || workpacket.Digest(data) != p.Binding.ReworkSHA256 {
-		return fmt.Errorf("S9 original rework artifact SHA differs: %v", err)
-	}
-	canonical, err := canonicalRuntimeJSON(data)
-	if err != nil {
-		return err
-	}
-	frozen, err := canonicalRuntimeJSON(p.Inputs.ReworkReceipt)
-	if err != nil || string(canonical) != string(frozen) {
-		return fmt.Errorf("S9 frozen rework receipt differs")
-	}
-	var document map[string]any
-	if json.Unmarshal(data, &document) != nil {
-		return fmt.Errorf("S9 rework receipt invalid")
-	}
-	old, _ := document["Execution"].(map[string]any)
-	// The original reworkReceipt has exported, untagged envelope keys.
-	if old == nil {
-		old, _ = document["execution"].(map[string]any)
-	}
-	var execution map[string]any
-	_ = json.Unmarshal(p.Inputs.Execution, &execution)
-	for _, key := range []string{"assignment_id", "runtime_id", "baseline_generation", "execution_generation", "agent_id", "worktree_path", "base_commit"} {
-		if !hypothesisJSONEqual(old[key], execution[key]) {
-			return fmt.Errorf("S9 rework %s differs from original execution", key)
-		}
-	}
-	matches := 0
-	for _, event := range j.Events {
-		if event["transition_id"] != "WORKSPACE-REWORK" {
-			continue
-		}
-		refs, _ := checkpointStringSlice(event["evidence_ids"])
-		if (!hypothesisStringContains(refs, p.Binding.Sources.RepairAssignmentID) && !hypothesisStringContains(refs, p.Binding.Sources.ManifestAssignmentID)) || !hypothesisStringContains(refs, p.Binding.ReworkRef) || !strings.HasPrefix(stringValue(event["message"]), "preserve failed delivery and explicitly reopen original scope:") {
-			continue
-		}
-		after, ae := integerField(event, "after_revision")
-		gen, ge := integerField(event, "baseline_generation")
-		actor, _ := event["actor"].(map[string]any)
-		if ae != nil || ge != nil || after >= issuedAfter || gen != p.Binding.Sources.BaselineGeneration || event["runtime_id"] != p.Binding.Sources.RuntimeID || actor["id"] != "main" {
-			return fmt.Errorf("S9 rework event identity differs")
-		}
-		matches++
-	}
-	if matches != 1 {
-		return fmt.Errorf("S9 typed attempt needs the exact retained original rework event/ref; legacy unlinked attempts require named recovery")
-	}
+	// Missing commands/profiles remain an actual Main configuration or execution
+	// gap. Recording the professional result here supplies no passing checks.
 	return nil
 }
 

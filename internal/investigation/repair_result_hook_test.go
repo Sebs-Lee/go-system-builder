@@ -50,16 +50,16 @@ func prepareAcceptedS9RepairResultCandidate(t *testing.T) s9AcceptedRepairResult
 }
 
 func prepareAcceptedS9RepairResultCandidateWithoutManualCompletion(t *testing.T) s9AcceptedRepairResultFixture {
-	return prepareAcceptedS9RepairResultCandidateWithOptions(t, false, false)
+	return prepareAcceptedS9RepairResultCandidateWithOptions(t, false, false, false)
 }
 
 func prepareAcceptedS9RepairResultCandidateWithResume(t *testing.T, withResume bool) s9AcceptedRepairResultFixture {
-	return prepareAcceptedS9RepairResultCandidateWithOptions(t, withResume, true)
+	return prepareAcceptedS9RepairResultCandidateWithOptions(t, withResume, true, false)
 }
 
-func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume, withManualCompletion bool) s9AcceptedRepairResultFixture {
+func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume, withManualCompletion, professionalAnswerOnly bool) s9AcceptedRepairResultFixture {
 	t.Helper()
-	fixture, plan, owners := prepareS9RepairPlanReportHookFixtureWithSetup(t, installS9WorkerBootstrapInputs)
+	fixture, plan, owners := prepareS9RepairPlanReportHookFixtureWithActivity(t, installS9WorkerBootstrapInputs, withManualCompletion)
 	if len(plan.Assignments) != 2 || len(owners) != 2 {
 		t.Fatalf("fixture assignments/owners=%d/%d, want the original two-assignment S9 plan", len(plan.Assignments), len(owners))
 	}
@@ -80,21 +80,55 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 		t.Fatalf("decode original sibling PlanReports: packets=%d err=%v stdout=%s", len(reportPackets), err, issueReportsOut.String())
 	}
 	for _, packet := range reportPackets {
+		if professionalAnswerOnly {
+			viewBytes, err := os.ReadFile(filepath.Join(fixture.root, filepath.FromSlash(packet.ViewPath)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var view map[string]json.RawMessage
+			var questionnaire workpacket.RepairPlanReportDraft
+			if json.Unmarshal(viewBytes, &view) != nil || json.Unmarshal(viewBytes, &questionnaire) != nil ||
+				len(questionnaire.Questions) == 0 || questionnaire.Instruction == "" || len(questionnaire.Read) == 0 ||
+				view["inputs"] != nil || view["draft"] != nil {
+				t.Fatalf("Plan view must expose the professional questionnaire without packet mirrors: %s", viewBytes)
+			}
+			planRead := false
+			for _, material := range questionnaire.Read {
+				if !filepath.IsAbs(material.Path) {
+					t.Fatalf("Plan view material path must be absolute: %q", material.Path)
+				}
+				info, err := os.Stat(material.Path)
+				if err != nil {
+					t.Fatalf("Plan view material must exist at its supplied path: %v", err)
+				}
+				if !info.IsDir() {
+					if _, err := os.ReadFile(material.Path); err != nil {
+						t.Fatalf("Plan view file material must be readable: %v", err)
+					}
+				}
+				if material.Path != filepath.Join(fixture.root, filepath.FromSlash(packet.Binding.PlanRef)) {
+					continue
+				}
+				data, err := os.ReadFile(material.Path)
+				var suppliedPlan repair.RepairPlan
+				if err != nil || json.Unmarshal(data, &suppliedPlan) != nil || suppliedPlan.PlanID != plan.PlanID || len(suppliedPlan.Assignments) != len(plan.Assignments) {
+					t.Fatalf("Plan read pointer must retain the actual Plan and assignment IDs: %v", err)
+				}
+				planRead = true
+			}
+			if !planRead {
+				t.Fatal("professional Plan view omitted its actual Plan read pointer")
+			}
+		}
 		answerPath := writeS9RepairPlanReportForResult(t, fixture.root, packet, redCommand)
 		receipt := runS9PostToolUse(t, fixture, packet.Binding.OwnerAgentID, fixture.root, answerPath)
 		if !receipt.Accepted || receipt.PacketID != packet.ID || receipt.WorkComplete {
 			t.Fatalf("original S9 pre-execution report was not accepted exactly: %+v", receipt)
 		}
 	}
-	current := currentS9Snapshot(t, fixture)
-	started, err := repair.BeginRepairExecution(fixture.root, fixture.statePath, fixture.journalPath, repair.BeginRepairExecutionRequest{
-		RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: "main-session"},
-	})
-	if err != nil {
-		t.Fatalf("begin original S9 repair execution after full PlanReport coverage: %v", err)
-	}
+	started := currentS9Snapshot(t, fixture)
 	if life, _ := started.State["lifecycle"].(map[string]any); life == nil || life["phase"] != "fixing" {
-		t.Fatalf("original S9 execution-begin did not enter fixing: %v", started.State["lifecycle"])
+		t.Fatalf("personal PlanReport save did not reach normal work startup: %v", started.State["lifecycle"])
 	}
 
 	owner := owners[0]
@@ -103,10 +137,32 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 	}
 	prepareOutput := runS9CommandOutput(t, fixture.root, "runtime", "workspace", "prepare", "--root", fixture.root,
 		"--assignment", owner.manifestAssignmentID, "--agent", owner.agentID, "--check-location", "main")
-	var prepared workspace.Execution
-	if err := json.Unmarshal(prepareOutput, &prepared); err != nil || prepared.Status != "ready" || prepared.CheckLocation != "main" || len(prepared.Checks) != 1 {
-		t.Fatalf("original S9 Workspace prepare did not retain the Main-owned check: execution=%+v err=%v output=%s", prepared, err, prepareOutput)
+	var preparation struct {
+		Execution workspace.Execution `json:"execution"`
 	}
+	if err := json.Unmarshal(prepareOutput, &preparation); err != nil || preparation.Execution.Status != "ready" || preparation.Execution.CheckLocation != "main" || len(preparation.Execution.Checks) != 0 {
+		t.Fatalf("S9 Workspace prepare must leave Main checks for actual integration: execution=%+v err=%v output=%s", preparation.Execution, err, prepareOutput)
+	}
+	if professionalAnswerOnly {
+		var output map[string]json.RawMessage
+		if err := json.Unmarshal(prepareOutput, &output); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := output["commit_command"]; exists {
+			t.Fatalf("S9 prepare still asks for a commit form: %s", prepareOutput)
+		}
+		var nextAction string
+		if err := json.Unmarshal(output["next_action"], &nextAction); err != nil {
+			t.Fatal(err)
+		}
+		for _, guidance := range []string{"ordinary git add and git commit", "no-change tests require no new commit", "save the supplied RepairResult answer", "No extra commit form or generic completion report", "Main owns real integration and necessary checks"} {
+			if !strings.Contains(nextAction, guidance) {
+				t.Fatalf("S9 prepare lost %q guidance: %s", guidance, prepareOutput)
+			}
+		}
+		t.Log("public S9 prepare omits commit_command and supplies ordinary Git, no-change, Result-save and Main integration guidance")
+	}
+	prepared := preparation.Execution
 	workerRoot := prepared.Path
 	if workerRoot == "" || workerRoot == fixture.root {
 		t.Fatalf("S9 execution must use a separate registered Worker checkout: %q", workerRoot)
@@ -152,7 +208,16 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 	if err := os.WriteFile(productPath, productBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	commitS9WorkerPayload(t, workerRoot, owner, submissionPaths)
+	if professionalAnswerOnly {
+		for _, args := range [][]string{{"add", "--", "internal/api/payload.go"}, {"commit", "-m", "Implement the assigned payload boundary"}} {
+			if _, err := workspace.Git(context.Background(), workerRoot, args...); err != nil {
+				t.Fatalf("ordinary Worker Git %v failed: %v", args, err)
+			}
+		}
+		t.Log("actual Worker source change committed with ordinary git add and git commit")
+	} else {
+		commitS9WorkerPayload(t, workerRoot, owner, submissionPaths)
+	}
 	if _, err := workspace.Git(context.Background(), workerRoot, "diff", "--check", "HEAD^", "HEAD"); err != nil {
 		t.Fatalf("original Worker committed patch failed the real Git whitespace check: %v", err)
 	}
@@ -166,17 +231,68 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 		}
 	}
 
-	var issueResultOut, issueResultErr bytes.Buffer
-	if code := cli.Run([]string{"runtime", "stage-answer", "issue", "--root", fixture.root}, nil, &issueResultOut, &issueResultErr); code != 0 {
-		issueState := currentS9State(t, fixture)
-		issueRegistry, registryErr := workspace.Decode(issueState)
-		t.Fatalf("issue original typed S9 RepairResult: code=%d stderr=%s stdout=%s workspace executions=%+v registry error=%v PlanReport bindings=%+v", code, issueResultErr.String(), issueResultOut.String(), issueRegistry, registryErr, []workpacket.RepairPlanReportPacket{reportPackets[0], reportPackets[1]})
-	}
 	var resultPackets []workpacket.RepairResultPacket
-	if err := json.Unmarshal(issueResultOut.Bytes(), &resultPackets); err != nil || len(resultPackets) != 1 {
-		t.Fatalf("decode current ready S9 RepairResult packet: packets=%d err=%v stdout=%s", len(resultPackets), err, issueResultOut.String())
+	if withResume {
+		var issueResultOut, issueResultErr bytes.Buffer
+		if code := cli.Run([]string{"runtime", "stage-answer", "issue", "--root", fixture.root}, nil, &issueResultOut, &issueResultErr); code != 0 {
+			issueState := currentS9State(t, fixture)
+			issueRegistry, registryErr := workspace.Decode(issueState)
+			t.Fatalf("issue original typed S9 RepairResult: code=%d stderr=%s stdout=%s workspace executions=%+v registry error=%v PlanReport bindings=%+v", code, issueResultErr.String(), issueResultOut.String(), issueRegistry, registryErr, []workpacket.RepairPlanReportPacket{reportPackets[0], reportPackets[1]})
+		}
+		if err := json.Unmarshal(issueResultOut.Bytes(), &resultPackets); err != nil || len(resultPackets) != 1 {
+			t.Fatalf("decode current ready S9 RepairResult packet: packets=%d err=%v stdout=%s", len(resultPackets), err, issueResultOut.String())
+		}
+	} else {
+		packets, err := runtime.RepairResultPackets(currentS9State(t, fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, packet := range packets {
+			if packet.Binding.Sources.OwnerAgentID == owner.agentID && packet.Binding.Sources.SessionID == plan.SessionID && packet.Binding.Sources.PlanID == plan.PlanID {
+				resultPackets = append(resultPackets, packet)
+			}
+		}
+		if len(resultPackets) != 1 {
+			t.Fatalf("normal prepare must publish one personal Result: %d", len(resultPackets))
+		}
+		for _, path := range []string{resultPackets[0].ViewPath, resultPackets[0].AnswerPath} {
+			if _, err := os.Stat(filepath.Join(workerRoot, filepath.FromSlash(path))); err != nil {
+				t.Fatalf("normal prepare omitted personal Result file %s: %v", path, err)
+			}
+		}
 	}
 	packet := resultPackets[0]
+	if professionalAnswerOnly {
+		viewBytes, err := os.ReadFile(filepath.Join(workerRoot, filepath.FromSlash(packet.ViewPath)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var view map[string]json.RawMessage
+		var questionnaire workpacket.RepairResultDraft
+		if json.Unmarshal(viewBytes, &view) != nil || json.Unmarshal(viewBytes, &questionnaire) != nil ||
+			len(questionnaire.Questions) == 0 || questionnaire.Instruction == "" || len(questionnaire.Read) == 0 ||
+			view["inputs"] != nil || view["draft"] != nil {
+			t.Fatalf("Result view must expose the professional questionnaire without packet mirrors: %s", viewBytes)
+		}
+		for _, material := range questionnaire.Read {
+			if !filepath.IsAbs(material.Path) {
+				t.Fatalf("Result view material path must be absolute: %q", material.Path)
+			}
+			info, err := os.Stat(material.Path)
+			if err != nil {
+				t.Fatalf("Result view material must exist at its supplied path: %v", err)
+			}
+			if !info.IsDir() {
+				if _, err := os.ReadFile(material.Path); err != nil {
+					t.Fatalf("Result view file material must be readable: %v", err)
+				}
+			}
+		}
+		answerDraft, err := os.ReadFile(filepath.Join(workerRoot, filepath.FromSlash(packet.AnswerPath)))
+		if err != nil || !bytes.Equal(answerDraft, viewBytes) {
+			t.Fatalf("initial Result view and answer must supply identical professional materials: %v", err)
+		}
+	}
 	if packet.Binding.Sources.OwnerAgentID != owner.agentID || packet.Binding.Sources.RepairAssignmentID != plan.Assignments[0].AssignmentID || packet.Binding.Sources.ManifestAssignmentID != owner.manifestAssignmentID {
 		t.Fatalf("issued S9 result packet does not bind the selected original assignment: %+v", packet.Binding.Sources)
 	}
@@ -217,10 +333,27 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, beforeReceiptState, beforeReceiptJournal, "read-only unaccepted candidate receipt")
 	answerPath, answerBytes := writeS9RepairResultAnswer(t, workerRoot, packet, productBytes)
+	if professionalAnswerOnly {
+		var authored struct {
+			Answer json.RawMessage `json:"answer"`
+		}
+		if err := json.Unmarshal(answerBytes, &authored); err != nil {
+			t.Fatal(err)
+		}
+		answerBytes, err = json.Marshal(map[string]json.RawMessage{"answer": authored.Answer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		answerBytes = append(answerBytes, '\n')
+		if err := os.WriteFile(filepath.Join(workerRoot, filepath.FromSlash(answerPath)), answerBytes, 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("normal public Result save uses only {answer: professional answer}; UI envelope omitted without changing professional content")
+	}
+
 	if !withManualCompletion {
-		// The new path must start with an unreported owner and no authored
-		// completion envelope. The Hook save below must invoke the existing
-		// task-complete consumer from the validated professional Result.
+		// The professional path starts without a generic completion envelope.
+		// Saving this Result must preserve the Agent/TASK lifecycle.
 		completionPath := filepath.Join(workerRoot, filepath.FromSlash(submissionPaths.Completion))
 		if _, err := os.Stat(completionPath); !os.IsNotExist(err) {
 			t.Fatalf("new S9 path already has a separately authored completion report: %s (stat error %v)", completionPath, err)
@@ -240,40 +373,41 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 		}
 	}
 
-	// Neither the old public candidate constructor nor the old typed Result
-	// constructor can forge the private capability produced by the packet
-	// receiver/Main integration writers.
+	// Public candidate capture needs the current execution and actual Git
+	// source, without a private issued capability. Capturing is not acceptance.
 	beforeNoCapabilityState, beforeNoCapabilityJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
-	_, _, noCapabilityCandidateErr := repair.CreateWorkspaceCandidate(context.Background(), fixture.root, currentS9State(t, fixture), execution, repair.RepairResultRequest{
-		ResultID: "repair-result-unissued-capability-check", AssignmentID: packet.Binding.Sources.RepairAssignmentID,
+	publicCandidate, _, candidateErr := repair.CreateWorkspaceCandidate(context.Background(), fixture.root, currentS9State(t, fixture), execution, repair.RepairResultRequest{
+		ResultID: "repair-result-public-capture", AssignmentID: packet.Binding.Sources.RepairAssignmentID,
 		ProducerAgentID: owner.agentID, UnitResults: []repair.RepairUnitResult{{UnitID: "unit-api-contract", Status: "pass"}},
 	})
-	if noCapabilityCandidateErr == nil || !strings.Contains(noCapabilityCandidateErr.Error(), "use its exact answer and original candidate receiver") {
-		t.Fatalf("public workspace candidate constructor bypassed the issued S9 capability: %v", noCapabilityCandidateErr)
+	if candidateErr != nil || publicCandidate.ExecutionGeneration != execution.Generation ||
+		publicCandidate.AssignmentID != execution.AssignmentID || publicCandidate.SourceHead == "" ||
+		len(publicCandidate.Proposal.ChangedArtifacts) != 1 || publicCandidate.Proposal.ChangedArtifacts[0].Path != "internal/api/payload.go" {
+		t.Fatalf("public candidate did not capture the current attempt and actual Git change: candidate=%+v err=%v", publicCandidate, candidateErr)
 	}
-	if _, _, noCapabilityResultErr := repair.SubmitRepairResult(fixture.root, repair.RepairResultRequest{
-		ResultID: packet.ResultID, AssignmentID: packet.Binding.Sources.RepairAssignmentID, ProducerAgentID: owner.agentID,
-		Verdict: "completed", Receipt: &runtime.RepairResultReceipt{},
-	}); noCapabilityResultErr == nil || !strings.Contains(noCapabilityResultErr.Error(), "private issued-result integration capability") {
-		t.Fatalf("public typed RepairResult constructor bypassed the private Main capability: %v", noCapabilityResultErr)
+	staleExecution := execution
+	staleExecution.Generation++
+	if _, _, err := repair.CreateWorkspaceCandidate(context.Background(), fixture.root, currentS9State(t, fixture), staleExecution, publicCandidate.Proposal); err == nil {
+		t.Fatal("public candidate accepted a different execution attempt")
 	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforeNoCapabilityState, beforeNoCapabilityJournal, "public no-capability S9 candidate/Result refusal")
+	assertS9RuntimeBytesUnchanged(t, fixture, beforeNoCapabilityState, beforeNoCapabilityJournal, "public candidate capture and wrong-attempt refusal")
 
-	// The registered execution root remains mandatory. AuthorizeSource is an
-	// optional compatibility callback; the public Hook derives source/owner
-	// facts from the exact current packet instead of its metadata payload.
+	// The registered execution root still identifies the actual work location;
+	// the public Hook derives source/owner facts from the current packet.
 	issuedResult := currentS9Snapshot(t, fixture)
-	beforeLegacyState, beforeLegacyJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
-	_, _, _, legacyErr := repair.SubmitRepairResultToRuntime(fixture.root, fixture.statePath, fixture.journalPath, repair.SubmitResultRuntimeRequest{
-		RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: issuedResult.Revision, Actor: owner.agentID},
-		Result: repair.RepairResultRequest{
-			ResultID: packet.ResultID, AssignmentID: packet.Binding.Sources.RepairAssignmentID, ProducerAgentID: owner.agentID,
-		},
-	})
-	if legacyErr == nil || !strings.Contains(legacyErr.Error(), "already has an issued typed RepairResult packet") {
-		t.Fatalf("legacy untyped Result Writer bypassed the issued S9 packet guard: %v", legacyErr)
+	if !professionalAnswerOnly {
+		beforeLegacyState, beforeLegacyJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
+		_, _, _, legacyErr := repair.SubmitRepairResultToRuntime(fixture.root, fixture.statePath, fixture.journalPath, repair.SubmitResultRuntimeRequest{
+			RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: issuedResult.Revision, Actor: owner.agentID},
+			Result: repair.RepairResultRequest{
+				ResultID: packet.ResultID, AssignmentID: packet.Binding.Sources.RepairAssignmentID, ProducerAgentID: owner.agentID,
+			},
+		})
+		if legacyErr == nil || !strings.Contains(legacyErr.Error(), "already has an issued typed RepairResult packet") {
+			t.Fatalf("legacy untyped Result Writer bypassed the issued S9 packet guard: %v", legacyErr)
+		}
+		assertS9RuntimeBytesUnchanged(t, fixture, beforeLegacyState, beforeLegacyJournal, "legacy untyped issued-target refusal")
 	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforeLegacyState, beforeLegacyJournal, "legacy untyped issued-target refusal")
 	beforeRejectedState, beforeRejectedJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
 	baseRequest := repair.AcceptIssuedRepairResultCandidateRequest{
 		ExpectedRevision: issuedResult.Revision, PacketID: packet.ID, AnswerPath: packet.AnswerPath,
@@ -285,12 +419,7 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 	if _, _, _, err := repair.AcceptIssuedRepairResultCandidate(context.Background(), fixture.root, fixture.statePath, fixture.journalPath, wrongRoot); err == nil {
 		t.Fatal("direct original candidate receiver accepted a foreign SourceRoot")
 	}
-	deniedSource := baseRequest
-	deniedSource.AuthorizeSource = func(string, map[string]any) error { return errors.New("fixture source/session denial") }
-	if _, _, _, err := repair.AcceptIssuedRepairResultCandidate(context.Background(), fixture.root, fixture.statePath, fixture.journalPath, deniedSource); err == nil || !strings.Contains(err.Error(), "fixture source/session denial") {
-		t.Fatalf("direct original candidate receiver ignored source authorization callback: %v", err)
-	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforeRejectedState, beforeRejectedJournal, "rejected direct candidate source authority")
+	assertS9RuntimeBytesUnchanged(t, fixture, beforeRejectedState, beforeRejectedJournal, "rejected direct candidate foreign work location")
 
 	answerAbs := filepath.Join(workerRoot, filepath.FromSlash(packet.AnswerPath))
 	beforeInvalidState, beforeInvalidJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
@@ -325,27 +454,62 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 	if !accepted.Accepted || accepted.PacketID != packet.ID || !accepted.WorkComplete || !accepted.ConsumerPending {
 		t.Fatalf("accepted S9 Worker candidate did not project owner-complete/Main-pending: %+v", accepted)
 	}
-	if _, found, err := runtime.VerifiedRepairResultCandidateReceipt(fixture.root, currentS9State(t, fixture), packet.ID, owner.agentID); err != nil || !found {
-		t.Fatalf("original Runtime lacks exact candidate receipt: found=%t err=%v", found, err)
-	}
-	if _, found, err := runtime.VerifiedRepairResultReceipt(fixture.root, currentS9State(t, fixture), packet.ID, owner.agentID); err != nil || found {
-		t.Fatalf("candidate acceptance prematurely created final Main Result receipt: found=%t err=%v", found, err)
+	if !professionalAnswerOnly {
+		if _, found, err := runtime.VerifiedRepairResultCandidateReceipt(fixture.root, currentS9State(t, fixture), packet.ID, owner.agentID); err != nil || !found {
+			t.Fatalf("original Runtime lacks exact candidate receipt: found=%t err=%v", found, err)
+		}
+		if _, found, err := runtime.VerifiedRepairResultReceipt(fixture.root, currentS9State(t, fixture), packet.ID, owner.agentID); err != nil || found {
+			t.Fatalf("candidate acceptance prematurely created final Main Result receipt: found=%t err=%v", found, err)
+		}
 	}
 
 	acceptedSnapshot := currentS9Snapshot(t, fixture)
 	acceptedState, acceptedJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
-	candidateReceipt, candidateFound, err := runtime.VerifiedRepairResultCandidateReceipt(fixture.root, acceptedSnapshot.State, packet.ID, owner.agentID)
-	if err != nil || !candidateFound {
-		t.Fatalf("read original accepted S9 candidate receipt for shared fixture: found=%t err=%v", candidateFound, err)
+	deniedSource := baseRequest
+	deniedSource.ExpectedRevision = acceptedSnapshot.Revision
+	callbackCalled := false
+	deniedSource.AuthorizeSource = func(string, map[string]any) error {
+		callbackCalled = true
+		return errors.New("fixture source/session denial")
+	}
+	if _, _, _, err := repair.AcceptIssuedRepairResultCandidate(context.Background(), fixture.root, fixture.statePath, fixture.journalPath, deniedSource); err != nil || callbackCalled {
+		t.Fatalf("accepted same-answer replay must ignore the old source authorization callback: called=%t err=%v", callbackCalled, err)
+	}
+	assertS9RuntimeBytesUnchanged(t, fixture, acceptedState, acceptedJournal, "same-answer replay ignores old source authorization")
+	var candidateReceipt runtime.RepairResultCandidateReceipt
+	if professionalAnswerOnly {
+		publicBytes := runS9CommandOutput(t, fixture.root, "runtime", "stage-answer", "receipt", "--root", fixture.root, "--agent", owner.agentID, "--packet", packet.ID)
+		var receipt submission.Receipt
+		if err := json.Unmarshal(publicBytes, &receipt); err != nil || !receipt.Accepted || !receipt.WorkComplete || len(receipt.DomainRefs) != 1 {
+			t.Fatalf("public candidate facts unavailable: receipt=%+v err=%v", receipt, err)
+		}
+		ref := receipt.DomainRefs[0]
+		candidateBytes := mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(ref)))
+		candidate, err := repair.ReadWorkspaceCandidate(fixture.root, repair.ArtifactRef{Path: ref})
+		if err != nil || candidate.Provenance == nil {
+			t.Fatalf("read current candidate: %v", err)
+		}
+		candidateReceipt = runtime.RepairResultCandidateReceipt{CandidateRef: ref, CandidateSHA256: workpacket.Digest(candidateBytes), Provenance: *candidate.Provenance}
+	} else {
+		var candidateFound bool
+		var err error
+		candidateReceipt, candidateFound, err = runtime.VerifiedRepairResultCandidateReceipt(fixture.root, acceptedSnapshot.State, packet.ID, owner.agentID)
+		if err != nil || !candidateFound {
+			t.Fatalf("read original accepted S9 candidate receipt for shared fixture: found=%t err=%v", candidateFound, err)
+		}
 	}
 	if !withManualCompletion {
 		provenance := candidateReceipt.Provenance
-		if provenance.CompletionReportRef == "" || provenance.CompletionReportSHA256 == "" || provenance.CompletionReportEventID == "" {
-			t.Fatalf("professional RepairResult save did not retain the original task-completion receipt: %+v", provenance)
+		if provenance.CompletionReportRef != "" || provenance.CompletionReportSHA256 != "" || provenance.CompletionReportEventID != "" {
+			t.Fatalf("professional candidate generated a generic completion binding: %+v", provenance)
 		}
-		projected, err := runtime.CurrentRepairResultCompletionReport(fixture.root, acceptedSnapshot.State, packet)
-		if err != nil || projected.Ref != provenance.CompletionReportRef || projected.SHA256 != provenance.CompletionReportSHA256 || projected.EventID != provenance.CompletionReportEventID {
-			t.Fatalf("RepairResult candidate is not bound to the exact auto-projected original completion: projected=%+v provenance=%+v err=%v", projected, provenance, err)
+		if _, err := runtime.CurrentRepairResultCompletionReport(fixture.root, acceptedSnapshot.State, packet); err == nil {
+			t.Fatal("professional Result save generated a generic completion report")
+		}
+		beforeEntities, _ := json.Marshal(issuedResult.State["entities"])
+		afterEntities, _ := json.Marshal(acceptedSnapshot.State["entities"])
+		if !bytes.Equal(beforeEntities, afterEntities) {
+			t.Fatal("professional Result save changed the Agent/TASK lifecycle")
 		}
 	}
 	return s9AcceptedRepairResultFixture{
@@ -361,12 +525,25 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 
 // TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain runs
 // the original approval, S9 dispatch/PLAN/PlanReport, Workspace execution,
-// Hook reception, Worker commit/check, automatic original completion consumer,
+// Hook reception, Worker commit/check, professional candidate acceptance,
 // and Main integration writers. The
 // authored professional answer is mechanical fixture input; this test does
 // not claim model judgment or a human-reviewed engineering conclusion.
+func TestS9RepairResultCandidateDoesNotRequireGenericCompletion(t *testing.T) {
+	accepted := prepareAcceptedS9RepairResultCandidateWithoutManualCompletion(t)
+	if accepted.acceptedSnapshot.Revision != accepted.issueSnapshot.Revision+1 {
+		t.Fatalf("professional Result required additional lifecycle commits: before=%d after=%d", accepted.issueSnapshot.Revision, accepted.acceptedSnapshot.Revision)
+	}
+	beforeState, beforeJournal := mustRead(t, accepted.fixture.statePath), mustRead(t, accepted.fixture.journalPath)
+	replayed := runS9RepairResultPostToolUse(t, accepted.fixture.root, accepted.owner.agentID, accepted.workerRoot, accepted.execution.PlatformSessionID, accepted.answerPath)
+	if !replayed.Accepted || !replayed.WorkComplete {
+		t.Fatalf("professional candidate same-answer replay failed: %+v", replayed)
+	}
+	assertS9RuntimeBytesUnchanged(t, accepted.fixture, beforeState, beforeJournal, "professional candidate same-answer replay without generic completion")
+}
+
 func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *testing.T) {
-	acceptedFixture := prepareAcceptedS9RepairResultCandidateWithoutManualCompletion(t)
+	acceptedFixture := prepareAcceptedS9RepairResultCandidateWithOptions(t, false, false, true)
 	fixture := acceptedFixture.fixture
 	owner := acceptedFixture.owner
 	packet := acceptedFixture.packet
@@ -377,6 +554,88 @@ func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *tes
 	answerBytes := acceptedFixture.answerBytes
 	issuedResult := acceptedFixture.issueSnapshot
 	acceptedState, acceptedJournal := acceptedFixture.acceptedState, acceptedFixture.acceptedJournal
+	// Typed delivery facts must be visible without a generic completion report.
+	pendingBytes := runS9CommandOutput(t, fixture.root, "runtime", "workspace", "pending", "--root", fixture.root)
+	var pending []integration.PendingIntegration
+	if err := json.Unmarshal(pendingBytes, &pending); err != nil {
+		t.Fatal(err)
+	}
+	pendingFound := false
+	for _, row := range pending {
+		if row.AssignmentID == owner.manifestAssignmentID {
+			pendingFound = strings.Join(row.Command, " ") == "loop-harness runtime workspace integrate --root "+fixture.root+" --assignment "+owner.manifestAssignmentID+" --agent "+owner.agentID && strings.Contains(row.Failure, "--check-command")
+		}
+	}
+	if !pendingFound {
+		t.Fatalf("accepted typed candidate disappeared from normal Main pending projection: %s", pendingBytes)
+	}
+	readMainContext := func() string {
+		t.Helper()
+		input, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Read", "agent_id": "Main", "cwd": fixture.root, "tool_input": map[string]any{"file_path": filepath.Join(fixture.root, "internal/api/payload.go")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out, stderr bytes.Buffer
+		if code := cli.Run([]string{"hook", "--event", "PreToolUse", "--root", fixture.root}, bytes.NewReader(input), &out, &stderr); code != 0 {
+			t.Fatalf("Main current-work projection: %d %s", code, &stderr)
+		}
+		var envelope struct {
+			Output struct {
+				Context string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		return envelope.Output.Context
+	}
+	candidateContext := readMainContext()
+	candidateHint := "Assignment " + packet.Binding.Sources.RepairAssignmentID + ": candidate received; Main runs "
+	start := strings.Index(candidateContext, candidateHint)
+	if start < 0 {
+		t.Fatalf("Main current feedback omitted accepted typed candidate: %s", candidateContext)
+	}
+	currentHint := candidateContext[start:]
+	if end := strings.Index(currentHint, ". "); end >= 0 {
+		currentHint = currentHint[:end]
+	}
+	if !strings.Contains(currentHint, "runtime workspace integrate") || !strings.Contains(currentHint, "--check-command") || strings.Contains(currentHint, packet.AnswerPath) {
+		t.Fatalf("candidate feedback did not prioritize integration over the old questionnaire: %s", currentHint)
+	}
+	// Acceptance is not completion: the same current candidate may honestly
+	// record unfinished work. This only projects fixture facts, without a save.
+	candidatePath := filepath.Join(fixture.root, filepath.FromSlash(acceptedFixture.candidateReceipt.CandidateRef))
+	candidateBytes := mustRead(t, candidatePath)
+	var pendingCandidate repair.WorkspaceCandidate
+	if err := json.Unmarshal(candidateBytes, &pendingCandidate); err != nil {
+		t.Fatal(err)
+	}
+	pendingCandidate.Proposal.Verdict = "blocked"
+	pendingBytes, err := json.Marshal(pendingCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidatePath, pendingBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := repair.RepairResultWorkComplete(fixture.root, acceptedFixture.acceptedSnapshot.State, packet.ID, owner.agentID); err != nil || done {
+		t.Fatalf("received blocked candidate was treated as completed: done=%t err=%v", done, err)
+	}
+	pendingCandidate.Proposal.Verdict = "completed"
+	pendingCandidate.Proposal.UnitResults = nil
+	pendingBytes, err = json.Marshal(pendingCandidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidatePath, pendingBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := repair.RepairResultWorkComplete(fixture.root, acceptedFixture.acceptedSnapshot.State, packet.ID, owner.agentID); err != nil || done {
+		t.Fatalf("received candidate with missing actual unit work was treated as completed: done=%t err=%v", done, err)
+	}
+	if err := os.WriteFile(candidatePath, candidateBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	// Changed bytes under the accepted same packet conflict; restoring the exact
 	// answer allows a zero-write replay of the original durable candidate.
 	changedAnswer := bytes.Replace(answerBytes, []byte("Mechanical fixture observation"), []byte("Changed fixture observation"), 1)
@@ -404,34 +663,24 @@ func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *tes
 		t.Fatal("original S9 Worker Stop remained blocked after its exact accepted professional Result and auto-projected completion")
 	}
 
-	// PlanReport remains an immutable current source through Main acceptance.
-	// Tampering it must block integration before the original Main proof writer.
-	planReportPath := filepath.Join(fixture.root, filepath.FromSlash(packet.Binding.PlanReportRef))
-	planReportBytes := mustRead(t, planReportPath)
-	if err := os.WriteFile(planReportPath, append(append([]byte{}, planReportBytes...), []byte(" ")...), 0o600); err != nil {
+	testCWD, err := os.Getwd()
+	if err != nil {
 		t.Fatal(err)
 	}
-	beforeDriftState, beforeDriftJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
-	driftOut, driftErr := new(bytes.Buffer), new(bytes.Buffer)
-	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", fixture.root, "--assignment", owner.manifestAssignmentID, "--agent", owner.agentID}, nil, driftOut, driftErr); code == 0 {
-		t.Fatalf("Main integration accepted drifted immutable PlanReport source: stdout=%s", driftOut.String())
+	relativeRoot, err := filepath.Rel(testCWD, fixture.root)
+	if err != nil || filepath.IsAbs(relativeRoot) {
+		t.Fatalf("normal relative Main root: %q %v", relativeRoot, err)
 	}
-	if !strings.Contains(driftErr.String(), packet.Binding.PlanReportRef) || !strings.Contains(strings.ToLower(driftErr.String()), "bytes/sha differ") {
-		t.Fatalf("Main integration rejected tampered PlanReport for an unrelated reason; want the exact source path and byte/SHA mismatch, stderr=%s stdout=%s", driftErr.String(), driftOut.String())
-	}
-	assertS9RuntimeBytesUnchanged(t, fixture, beforeDriftState, beforeDriftJournal, "drifted PlanReport integration refusal")
-	if err := os.WriteFile(planReportPath, planReportBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	var integratedOut, integratedErr bytes.Buffer
-	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", fixture.root, "--assignment", owner.manifestAssignmentID, "--agent", owner.agentID}, nil, &integratedOut, &integratedErr); code != 0 {
+	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", relativeRoot, "--assignment", owner.manifestAssignmentID, "--agent", owner.agentID, "--check-command", "test -f internal/api/payload.go"}, nil, &integratedOut, &integratedErr); code != 0 {
 		t.Fatalf("original Main merge/check/Result/ACK/cleanup chain failed: code=%d stderr=%s stdout=%s", code, integratedErr.String(), integratedOut.String())
 	}
 	final := currentS9Snapshot(t, fixture)
-	if _, found, err := runtime.VerifiedRepairResultReceipt(fixture.root, final.State, packet.ID, owner.agentID); err != nil || !found {
-		t.Fatalf("original Main integration did not retain its typed Result receipt: found=%t err=%v", found, err)
+	completedContext := readMainContext()
+	if !strings.Contains(completedContext, "Assignment "+packet.Binding.Sources.RepairAssignmentID+" is complete; Main integration/checks and cleanup are recorded.") || strings.Contains(completedContext, "Original execution "+owner.manifestAssignmentID+" owner=") {
+		t.Fatalf("completed execution still asks Main to recover or repeat old author work: %s", completedContext)
 	}
+
 	publicReceiptBytes := runS9CommandOutput(t, fixture.root, "runtime", "stage-answer", "receipt", "--root", fixture.root, "--agent", owner.agentID, "--packet", packet.ID)
 	assertSharedSubmissionReceiptWire(t, publicReceiptBytes)
 	var publicReceipt submission.Receipt
@@ -460,10 +709,14 @@ func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *tes
 		t.Fatalf("original Main cleanup should have removed the Worker checkout before receipt replay; stat error=%v", err)
 	}
 
-	acceptedFinal, foundFinal, err := runtime.VerifiedRepairResultReceipt(fixture.root, final.State, packet.ID, owner.agentID)
-	if err != nil || !foundFinal {
-		t.Fatalf("read exact accepted original S9 Main receipt before stale-revision replay: found=%t err=%v", foundFinal, err)
+	if len(publicReceipt.DomainRefs) != 2 {
+		t.Fatalf("Final receipt lacks candidate/Result refs: %+v", publicReceipt)
 	}
+	var finalResult repair.RepairResult
+	if err := json.Unmarshal(mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(publicReceipt.DomainRefs[1]))), &finalResult); err != nil || finalResult.Receipt == nil {
+		t.Fatalf("read recorded Final facts: %v", err)
+	}
+	acceptedFinal := *finalResult.Receipt
 	resultBytesBeforeReplay := mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(acceptedFinal.ResultRef)))
 	beforeReplayState, beforeReplayJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
 	replaySnapshot, replayResult, replayRef, err := repair.SubmitIssuedRepairResult(context.Background(), fixture.root, fixture.statePath, fixture.journalPath, repair.SubmitIssuedRepairResultRequest{
@@ -498,7 +751,7 @@ func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *tes
 		ExpectedRevision: issuedResult.Revision, PacketID: packet.ID, OwnerAgentID: owner.agentID,
 		MainProof: forgedProof, OccurredAt: time.Now().UTC(),
 	})
-	if forgedErr == nil || !strings.Contains(strings.ToLower(forgedErr.Error()), "caller main facts differ") {
+	if !errors.Is(forgedErr, runtime.ErrSubmissionConflict) {
 		t.Fatalf("stale-revision replay accepted forged nonempty Main verified facts: %v", forgedErr)
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, beforeForgedState, beforeForgedJournal, "forged Main facts replay refusal")
@@ -513,6 +766,26 @@ func TestS9RepairResultUsesOriginalWorkerCandidateAndMainIntegrationChain(t *tes
 	if !hook.RepairResultWorkComplete(fixture.root, final.State, loadedOwner.PolicyContext.Agent) {
 		t.Fatal("original hook responsibility projector did not accept the exact final S9 Result after Main ACK/cleanup")
 	}
+	// Later-phase snapshots project the retained Builder facts only; this is
+	// not a synthetic Impact/Targeted consumer acceptance or stage PASS.
+	for _, phase := range []string{"impact_reconciliation", "targeted_reverification"} {
+		encoded, err := json.Marshal(final.State)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var later map[string]any
+		if err := json.Unmarshal(encoded, &later); err != nil {
+			t.Fatal(err)
+		}
+		later["lifecycle"].(map[string]any)["phase"] = phase
+		later["review"].(map[string]any)["repair"].(map[string]any)["status"] = phase
+		loaded, err := hookctx.FromSnapshot(fixture.root, owner.agentID, runtime.Snapshot{State: later, Revision: final.Revision})
+		if err != nil || loaded == nil || loaded.PolicyContext.Agent == nil || !loaded.PolicyContext.Agent.RepairResultAssignment ||
+			!hook.RepairResultWorkComplete(fixture.root, later, loaded.PolicyContext.Agent) || len(loaded.PolicyContext.RepairResultAnswerPaths) != 0 {
+			t.Fatalf("later %s lost completed Builder facts or exposed a fresh answer: loaded=%+v err=%v", phase, loaded, err)
+		}
+	}
+
 }
 
 func installS9WorkerBootstrapInputs(t *testing.T, root string) {

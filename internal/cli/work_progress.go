@@ -216,6 +216,12 @@ func projectWorkProgress(root string, request policy.Input, snap runtime.Snapsho
 	if life["state"] == "inactive" || life["state"] == "paused" || snap.State["bound_req"] == nil {
 		return f, nil, nil
 	}
+	if runtime.PacketEnabled(snap.State) && life["state"] == "bug_resolution" && s9ProfessionalPhase(progressText(life["phase"])) {
+		// S9 professional listeners and saved-answer consumers own its actual
+		// progress. This optional legacy sampler has no S9 typed-packet or
+		// native-actor coverage; unknown telemetry is not missing work.
+		return f, nil, nil
+	}
 	originalEntities, _ := snap.State["entities"].(map[string]any)
 	for _, key := range []string{"agents", "tasks", "teams"} {
 		if rows, ok := originalEntities[key].([]any); ok && len(rows) > 32 {

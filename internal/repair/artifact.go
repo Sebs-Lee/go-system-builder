@@ -591,8 +591,44 @@ func ComputeSessionChangesetRecord(root string, session RepairSession) (Changese
 	if err != nil {
 		return Changeset{}, err
 	}
+	return repairChangesetRecord(session.SessionID, "session_diff", artifacts)
+}
+
+// CurrentRepairResultChangeset projects the existing accepted Final Result
+// batch for both Impact and Handoff. It does not rescan the working directory
+// or replay Contract/Plan/source qualification.
+func CurrentRepairResultChangeset(root string, state map[string]any) (Changeset, error) {
+	pointer := repairPointer(state)
+	refs, err := currentRepairResultRefs(pointer)
+	if err != nil {
+		return Changeset{}, err
+	}
+	results := make([]RepairResult, 0, len(refs))
+	for _, ref := range refs {
+		data, err := workpacket.ReadFile(root, ref.Path, 20<<20)
+		if err != nil {
+			return Changeset{}, err
+		}
+		var result RepairResult
+		if err := json.Unmarshal(data, &result); err != nil {
+			return Changeset{}, err
+		}
+		results = append(results, result)
+	}
+	changed, err := aggregateRepairResultArtifacts(results)
+	if err != nil {
+		return Changeset{}, err
+	}
+	artifacts := make([]ArtifactRef, 0, len(changed))
+	for _, item := range changed {
+		artifacts = append(artifacts, ArtifactRef{Path: item.Path, SHA256: item.SHA256, Status: item.Status})
+	}
+	return repairChangesetRecord(stringField(pointer["session_id"]), "explicit", artifacts)
+}
+
+func repairChangesetRecord(sessionID, source string, artifacts []ArtifactRef) (Changeset, error) {
 	if len(artifacts) == 0 {
-		return Changeset{}, errors.New("actual Session diff is empty")
+		return Changeset{}, errors.New("repair changeset is empty")
 	}
 	lines := make([]string, 0, len(artifacts))
 	for _, artifact := range artifacts {
@@ -600,7 +636,7 @@ func ComputeSessionChangesetRecord(root string, session RepairSession) (Changese
 	}
 	sort.Strings(lines)
 	digest := sha256Bytes([]byte(strings.Join(lines, "\n")))
-	return Changeset{SchemaVersion: "1.0.0", RecordType: "repair_changeset", ChangesetID: "repair-changeset-" + digest[:16], SessionID: session.SessionID, Source: "session_diff", Artifacts: artifacts, Digest: digest, ComputedAt: nowOr(time.Time{})}, nil
+	return Changeset{SchemaVersion: "1.0.0", RecordType: "repair_changeset", ChangesetID: "repair-changeset-" + digest[:16], SessionID: sessionID, Source: source, Artifacts: artifacts, Digest: digest, ComputedAt: nowOr(time.Time{})}, nil
 }
 
 func exactIDs(expected, actual []string) error {

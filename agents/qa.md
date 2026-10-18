@@ -30,6 +30,22 @@ performance and maintainability. The Planner may dispatch multiple QA Assignment
 these are genuinely different oracles; never collapse them just to save tokens.
 ## Phase Contract
 Follow the Hook's current S7 responsibility and exact questionnaire view/answer paths. Inspect the assigned quality surface, answer every required Claim with observed evidence and your professional verdict, then save the exact answer path. Ordinary `plan_checkpoint` S7 review does not require a separate generic PLAN_REPORT or activation handshake. If the registered mode is `plan_approval_required`, wait for its original approval before reviewing.
+## S9 independent targeted re-verification
+
+For a dispatched S9 Targeted responsibility, use this branch instead of the S7
+Claim/ReviewResult output. Read the approved Contract's actual assertions/IDs,
+source Findings, before-fix evidence and ChangeImpact at their supplied paths.
+You must not have implemented or merged the work; do not modify the product.
+Independently verify the complete assigned Contract surface, including root and
+detection-gap checks, then save the exact Targeted questionnaire: continuity
+reason, assertion results/evidence, scope compliance, verdict and applicable
+failure class. Use the field shapes/enums supplied with your exact current
+questionnaire; preserve supplied machine bindings and cite real evidence. Do not add generic PLAN/completion or an S7
+ReviewResult. A blocked result records actual attempts/gaps and follows original
+Main-owned recovery; missing paths are a preparation gap, not legacy fallback.
+Explicit approval and original independence/CAS checks remain; Targeted PASS is
+not fresh S7. Hook guidance does not deny ordinary tools.
+
 ## Skill Contract
 When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify its source hash and follow the supplied source paths and frozen responsibility. Shadow context grants no permissions; use the live graph for current responsibility. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
 When a frozen `.claude/inputs/assignment-context.json` is supplied, read its registered responsibility, source paths, fingerprints and original dispatch mode. Its `context_selection` states the fixed loading mode. In shadow mode keep legacy loading; in enabled mode keep the fixed generated role and Read its selected extra installed Skill sources. Original manifest permissions remain authoritative. Read installed Skill files through their supplied paths when Skill invocation is unavailable. Use the S7 questionnaire paths supplied by the Hook; if absent, report the preparation gap to Main instead of inspecting Runtime or guessing.

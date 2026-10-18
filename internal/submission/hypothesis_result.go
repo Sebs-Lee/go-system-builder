@@ -3,7 +3,6 @@ package submission
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,8 +12,6 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
-
-const hypothesisResultAnswerLimit int64 = 20 << 20
 
 // IssueHypothesisResults delegates issuance to the original Case/Runtime
 // issuer. The packet registry and original PACKET-ISSUE event remain the only
@@ -89,17 +86,6 @@ func (s *Service) SaveHypothesisResultFrom(ctx context.Context, owner, path, sou
 			err := errors.New("S8 answer source root differs from its current registered path")
 			return rejected(snapshot, packet.ID, err), err
 		}
-	}
-	answerBytes, err := workpacket.ReadFile(actualRoot, packet.AnswerPath, hypothesisResultAnswerLimit)
-	if err != nil {
-		return rejected(snapshot, packet.ID, err), err
-	}
-	_, issues := workpacket.ValidateHypothesisResultAnswer(packet, answerBytes)
-	if len(issues) != 0 {
-		err := fmt.Errorf("S8 answer %s: %s (%s)", issues[0].Pointer, issues[0].Expected, issues[0].Observed)
-		r := rejected(snapshot, packet.ID, err)
-		r.FieldErrors = issues
-		return r, err
 	}
 	if err := ctx.Err(); err != nil {
 		return rejected(snapshot, packet.ID, err), err

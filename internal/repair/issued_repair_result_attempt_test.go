@@ -13,7 +13,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
-// These tests exercise only the immutable execution projection and typed
+// These tests exercise only the current registered attempt association and typed
 // target matcher. They are mechanical helper coverage, not evidence of the
 // original S9 writer or Hook chain.
 func TestRepairResultAttemptStillCurrentProjection(t *testing.T) {
@@ -26,16 +26,16 @@ func TestRepairResultAttemptStillCurrentProjection(t *testing.T) {
 		mutate func(*workspace.Execution)
 		want   bool
 	}{
-		{name: "ready exact frozen execution", want: true},
-		{name: "complete exact frozen execution", mutate: func(e *workspace.Execution) { e.Status = "complete" }, want: true},
+		{name: "ready current attempt", want: true},
+		{name: "complete current attempt", mutate: func(e *workspace.Execution) { e.Status = "complete" }, want: true},
 		{name: "rework attempt changed", mutate: func(e *workspace.Execution) { e.ReworkRef = "runtime/evidence/rework/next.json" }, want: false},
 		{name: "delivery path changed", mutate: func(e *workspace.Execution) { e.DeliveryRef = filepath.Join(root, "candidate-next.json") }, want: false},
 		{name: "delivery SHA changed", mutate: func(e *workspace.Execution) { e.DeliverySHA256 = strings.Repeat("b", 64) }, want: false},
-		{name: "profile changed", mutate: func(e *workspace.Execution) { e.CheckProfiles[0].Command = "go test ./other" }, want: false},
-		{name: "scope changed", mutate: func(e *workspace.Execution) { e.WritePaths = []string{"internal/other"} }, want: false},
-		{name: "base changed", mutate: func(e *workspace.Execution) { e.BaseCommit = strings.Repeat("b", 40) }, want: false},
-		{name: "platform session changed", mutate: func(e *workspace.Execution) { e.PlatformSessionID = "session-next" }, want: false},
-		{name: "bootstrap changed", mutate: func(e *workspace.Execution) { e.BootstrapSHA256 = strings.Repeat("b", 64) }, want: false},
+		{name: "profile changed", mutate: func(e *workspace.Execution) { e.CheckProfiles[0].Command = "go test ./other" }, want: true},
+		{name: "scope changed", mutate: func(e *workspace.Execution) { e.WritePaths = []string{"internal/other"} }, want: true},
+		{name: "base changed", mutate: func(e *workspace.Execution) { e.BaseCommit = strings.Repeat("b", 40) }, want: true},
+		{name: "platform session changed", mutate: func(e *workspace.Execution) { e.PlatformSessionID = "session-next" }, want: true},
+		{name: "bootstrap changed", mutate: func(e *workspace.Execution) { e.BootstrapSHA256 = strings.Repeat("b", 64) }, want: true},
 		{name: "execution left current state", mutate: func(e *workspace.Execution) { e.Status = "rework" }, want: false},
 	}
 	for _, tc := range cases {

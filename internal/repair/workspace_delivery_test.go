@@ -40,7 +40,7 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	if _, err := workspace.Git(ctx, root, "commit", "-m", "requirement input"); err != nil {
 		t.Fatal(err)
 	}
-	contractRef, contractSHA := writeRuntimeContract(t, root)
+	contractRef, contractSHA := writeRuntimeMigrationContract(t, root)
 	state["review"].(map[string]any)["investigation"] = map[string]any{"case_id": "investigation-case-1", "path": ".claude/review/investigation/cases/investigation-case-1-r2.json", "sha256": repeatHex("b", 64), "revision": 2, "status": "contract_approved", "source_finding_ids": []any{"finding-1"}, "observation_batch_id": "observation-batch-1", "updated_at": "2026-08-25T00:00:00Z", "repair_contract_ref": contractRef.Path, "repair_contract_sha256": contractSHA}
 	req039fixtures.WriteState(t, root, state)
 	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), nil, 0o644); err != nil {
@@ -55,7 +55,10 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, planReportRef, err := repair.CreatePlanReport(root, repair.PlanReportRequest{Session: sessionRef, Plan: planRef, AssignmentID: "repair-assignment-unit-1", AgentID: "builder-1", ReportID: "repair-plan-report-1", PlanText: "restore the payload authority", RedChecks: []repair.RepairCheck{{Name: "original failure", Command: "test -f internal/api/payload.go", Result: "fail", EvidenceRefs: []string{"test://red"}}}, ProposedPaths: []string{"internal/api/payload.go"}})
+	if inside, err := workspace.Git(ctx, root, "rev-parse", "--is-inside-work-tree"); err != nil || inside != "true" {
+		t.Fatalf("actual passing precheck: %q %v", inside, err)
+	}
+	_, planReportRef, err := repair.CreatePlanReport(root, repair.PlanReportRequest{Session: sessionRef, Plan: planRef, AssignmentID: "repair-assignment-unit-1", AgentID: "builder-1", ReportID: "repair-plan-report-1", PlanText: "restore the payload authority", RedChecks: []repair.RepairCheck{{Name: "actual passing precheck", Command: "git rev-parse --is-inside-work-tree", Result: "pass", EvidenceRefs: []string{"test://actual-precheck"}}}, ProposedPaths: []string{"internal/api/payload.go"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +83,7 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 			t.Fatal(err)
 		}
 	}
-	e, err := b.Plan(ctx, started.State, "assignment-s9-unit-1", "builder-1", authority.Assignment.Scope, authority.Checks, authority.Inputs)
+	e, err := b.Plan(ctx, started.State, "assignment-s9-unit-1", "builder-1", authority.Assignment.Scope, []string{"test -f internal/api/payload.go && test -d internal/api"}, authority.Inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,8 +129,21 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	proposal := repair.RepairResultRequest{ResultID: "repair-result-worker", ProducerAgentID: e.AgentID, AssignmentID: e.AssignmentID, UnitResults: []repair.RepairUnitResult{{UnitID: "unit-1", Status: "pass", EvidenceRefs: []string{"test://unit"}}}, Checks: []repair.RepairCheck{{Name: "post-fix", Command: e.Checks[0], Result: "pass", EvidenceRefs: []string{"test://green"}}}, Result: "pass"}
+	proposal.ScopeDeviations = []string{"The precheck assessed repository availability; payload behavior was not checked before implementation."}
+	noOp, noOpRef, err := repair.CreateWorkspaceCandidate(ctx, root, started.State, e, proposal)
+	if err != nil {
+		t.Fatalf("clean no-op candidate without migration/rollback references: %v", err)
+	}
+	if noOp.SourceHead != e.BaseCommit || len(noOp.Proposal.ChangedArtifacts) != 0 || noOp.Proposal.MigrationRef != "" || noOp.Proposal.RollbackRef != "" {
+		t.Fatalf("no-op candidate lost its actual HEAD/empty diff: %+v", noOp)
+	}
+	if _, err := repair.ValidateWorkspaceCandidate(root, started.State, e, noOpRef); err != nil {
+		t.Fatalf("no-op candidate does not match its actual Worker: %v", err)
+	}
+	// This assertion stops at the candidate boundary. No-op integration is
+	// deliberately not exercised by this original changed-source flow below.
 	writeFile(t, e.Path, "internal/api/payload.go", "package api\n")
-	proposal := repair.RepairResultRequest{ResultID: "repair-result-worker", ProducerAgentID: e.AgentID, AssignmentID: e.AssignmentID, UnitResults: []repair.RepairUnitResult{{UnitID: "unit-1", Status: "pass", EvidenceRefs: []string{"test://unit"}}}, Checks: []repair.RepairCheck{{Name: "post-fix", Command: authority.Checks[0], Result: "pass", EvidenceRefs: []string{"test://green"}}}, Result: "pass"}
 	if _, _, err = repair.CreateWorkspaceCandidate(ctx, root, started.State, e, proposal); err == nil {
 		t.Fatal("untracked source was silently omitted")
 	}
@@ -181,11 +197,39 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	if result.Result != "pass" {
 		t.Fatalf("domain result=%s", result.Result)
 	}
+	if len(result.ScopeDeviations) != 1 || result.ScopeDeviations[0] != proposal.ScopeDeviations[0] {
+		t.Fatalf("domain Result lost the actual reported deviation: %+v", result.ScopeDeviations)
+	}
+	if len(result.BeforeFixChecks) != 1 || result.BeforeFixChecks[0].Result != "pass" {
+		t.Fatalf("domain Result did not retain the actual passing precheck: %+v", result.BeforeFixChecks)
+	}
 	if _, exists, err := repair.RegisteredWorkspaceResult(root, finalized.State, c); err != nil || !exists {
 		t.Fatalf("verified result cannot resume: %v", err)
 	}
 	if finalized.State["lifecycle"].(map[string]any)["state"] != "bug_resolution" {
 		t.Fatal("candidate skipped independent verification/fresh S7")
+	}
+	// Recording the actual diff must also work when Main needs to assess a
+	// change outside the proposed scope. This is not integration approval.
+	writeFile(t, e.Path, "outside-assignment.txt", "actual deviation\n")
+	if _, err := workspace.Git(ctx, e.Path, "add", "outside-assignment.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.Git(ctx, e.Path, "commit", "-m", "record actual deviation"); err != nil {
+		t.Fatal(err)
+	}
+	deviationProposal := proposal
+	deviationProposal.ScopeDeviations = []string{"Main must assess outside-assignment.txt"}
+	deviation, _, err := repair.CreateWorkspaceCandidate(ctx, root, started.State, e, deviationProposal)
+	if err != nil {
+		t.Fatalf("actual out-of-scope diff could not be recorded: %v", err)
+	}
+	foundDeviation := false
+	for _, artifact := range deviation.Proposal.ChangedArtifacts {
+		foundDeviation = foundDeviation || artifact.Path == "outside-assignment.txt"
+	}
+	if !foundDeviation {
+		t.Fatal("candidate omitted actual out-of-scope diff")
 	}
 	e.Generation++
 	if _, err = repair.ValidateWorkspaceCandidate(root, started.State, e, ref); err == nil {

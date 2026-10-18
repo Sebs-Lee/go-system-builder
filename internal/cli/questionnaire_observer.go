@@ -7,21 +7,32 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/policy"
-	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
-	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	// Script/MCP tools can return the actual saved path. This is the same
+	// existing path selector, not a shell parser or a native identity mapping.
+	if _, saved := savedQuestionnairePath(request); !saved {
+		if path, ok := request.ToolResponse["file_path"].(string); ok {
+			located := request
+			located.ToolInput = map[string]any{"file_path": path}
+			if actual, ok := savedQuestionnairePath(located); ok && (isS9RepairPlanReportPath(actual) || isS9RepairResultPath(actual) || isS9RepairResultResolutionPath(actual) || strings.Contains(filepath.ToSlash(actual), "/.claude/submissions/s9/")) {
+				request = located
+			}
+		}
+	}
 	for _, receive := range []func(string, policy.Input, io.Writer, io.Writer) (bool, int){
-		runSavedRepairLeadQuestionnaire,
+		runSavedRepairDispatch, runSavedRepairVerifierDispatch,
+		runSavedInvestigationLeadQuestionnaire, runSavedRepairLeadQuestionnaire,
 		runSavedReviewPlanQuestionnaire, runSavedAuditQuestionnaire,
 		runSavedBuilderQuestionnaire, runSavedStageAnswerHook,
 	} {
@@ -33,10 +44,15 @@ func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr
 }
 
 type observedQuestionnaire struct {
-	path     string
-	draft    any
-	s6Result bool
-	s7Plan   bool
+	path                string
+	draft               any
+	s6Result            bool
+	s7Plan              bool
+	s8Packet            *workpacket.HypothesisResultPacket
+	s8AcceptedAnswerSHA string
+	s8Case              map[string]any
+	s9Kind              string
+	s9Packet            *s9ListenerQuestionnaire
 }
 
 // A successful script or MCP tool can save a questionnaire without exposing a
@@ -62,7 +78,13 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	}
 	var contexts []string
 	seen := map[string]bool{}
-	for _, q := range observableQuestionnaires(root, snapshot) {
+	leadPaths := investigationLeadQuestionnairePaths(root, snapshot.State)
+	questionnaires := observableQuestionnaires(root, snapshot)
+	if lifecycle := mapFieldCLI(snapshot.State, "lifecycle"); lifecycle["state"] == "bug_resolution" && lifecycle["phase"] != "investigation" {
+		questionnaires = s9ObservableQuestionnaires(root, snapshot.State, request)
+	}
+questionnaires:
+	for _, q := range questionnaires {
 		if q.path == "" || seen[q.path] {
 			continue
 		}
@@ -75,6 +97,26 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 		if err != nil {
 			continue
 		}
+		if q.s9Kind != "" && s9ObservedQuestionnaireUnchanged(root, snapshot.State, q, data) {
+			continue
+		}
+		for _, leadPath := range leadPaths {
+			if !samePath(q.path, leadPath) {
+				continue
+			}
+			if !investigationLeadQuestionnaireHasProfessionalContent(q.path, data) ||
+				s8ObservedHypothesesAlreadyRegistered(q.path, data, snapshot.State, q.s8Case) ||
+				s8ObservedRouteAlreadyRegistered(root, q.path, data, snapshot.State, q.s8Case) ||
+				s8ObservedContractAlreadyProjected(root, q.path, data, snapshot.State, q.s8Case) {
+				continue questionnaires
+			}
+		}
+		if q.s8Packet != nil && q.s8AcceptedAnswerSHA != "" {
+			answer, issues := workpacket.ValidateHypothesisResultAnswer(*q.s8Packet, data)
+			if len(issues) == 0 && workpacket.Digest(answer) == q.s8AcceptedAnswerSHA {
+				continue // Existing exact accepted content; an actual changed save still reaches the original conflict check.
+			}
+		}
 		var answer any
 		if json.Unmarshal(data, &answer) == nil {
 			if q.s6Result && !s6ObservedResultHasProfessionalContent(data) {
@@ -83,10 +125,10 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 			if q.s7Plan && !s7ObservedPlanHasProfessionalContent(data) {
 				continue
 			}
-			if q.draft != nil && reflect.DeepEqual(answer, q.draft) {
+			if q.s9Kind == "" && q.draft != nil && reflect.DeepEqual(answer, q.draft) {
 				continue
 			}
-			if q.draft == nil {
+			if q.draft == nil && q.s9Kind == "" {
 				fields, _ := answer.(map[string]any)
 				if _, audit := fields["manifest_type"]; audit && stringValue(fields["outcome"]) == "" {
 					continue
@@ -158,6 +200,13 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 		return nil
 	}
 	var out []observedQuestionnaire
+	var s8Case map[string]any
+	if stage == "S8" {
+		s8Case, _ = readS8ListenerCase(root, state)
+		for _, path := range investigationLeadQuestionnairePaths(root, state) {
+			out = append(out, observedQuestionnaire{path: path, s8Case: s8Case})
+		}
+	}
 	if stage == "S7" {
 		facts, _ := state["review"].(map[string]any)
 		if ptr := review.PlanPointerFromState(state); ptr == nil || ptr.ReviewRound != tolerantInt(facts["round"]) {
@@ -165,9 +214,7 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 		}
 	}
 	if stage == "S9" {
-		for _, path := range repairLeadQuestionnairePaths(root, state) {
-			out = append(out, observedQuestionnaire{path: path})
-		}
+		return nil // S9 passive probes need the actual current responsibility.
 	}
 	if kind := currentAuditKind(state); kind != "" {
 		if status := inspectS10Artifact(root, state, kind); status.ManifestPath != "" {
@@ -185,26 +232,15 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 		if !strings.HasPrefix(template, strings.ToLower(stage)+"-") {
 			continue
 		}
-		if stage == "S9" {
-			switch stringValue(repairPointerCLI(state)["status"]) {
-			case "impact_reconciliation", "targeted_reverification", "ready_for_full_review":
-				// SubmitResult can leave lifecycle.fixing while the original
-				// repair pointer has already moved to Main or verifier work.
-				continue
-			}
-			phase := stringValue(lifecycle["phase"])
-			if phase == "fixing" && template != "s9-repair-result-v1" {
-				continue
-			}
-			if (phase == "planning" || phase == "reproducing") && template != "s9-plan-report-v1" {
-				continue
-			}
-			if phase != "fixing" && phase != "planning" && phase != "reproducing" {
+		path, source := stringValue(row["answer_path"]), root
+		binding, _ := row["binding"].(map[string]any)
+		if template == "s8-hypothesis-result-v1" {
+			pointer := investigationPointer(state)
+			baseline, _ := state["baseline"].(map[string]any)
+			if pointer == nil || binding["case_id"] != pointer["case_id"] || binding["runtime_id"] != state["runtime_id"] || tolerantInt(binding["baseline_generation"]) != tolerantInt(baseline["generation"]) {
 				continue
 			}
 		}
-		path, source := stringValue(row["answer_path"]), root
-		binding, _ := row["binding"].(map[string]any)
 		if stage == "S2" || stage == "S3" || stage == "S4" {
 			current, issued, verified, err := currentIssuedPlanningAnswerPath(state, stringValue(lifecycle["phase"]))
 			if err != nil || !issued || !verified || path != current {
@@ -218,24 +254,9 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 			}
 		}
 		owner, assignment := stringValue(binding["owner_agent_id"]), stringValue(binding["assignment_id"])
+		var acceptedPacket *workpacket.HypothesisResultPacket
+		var acceptedAnswerSHA string
 		switch stringValue(row["template_id"]) {
-		case "s9-repair-result-v1":
-			data, _ := json.Marshal(row)
-			var packet workpacket.RepairResultPacket
-			if json.Unmarshal(data, &packet) != nil {
-				continue
-			}
-			if path, data, err := repair.RepairResultResolutionDraft(root, state, packet.ID, packet.Binding.Sources.OwnerAgentID); err == nil {
-				var draft any
-				if json.Unmarshal(data, &draft) == nil {
-					out = append(out, observedQuestionnaire{path: filepath.Join(root, filepath.FromSlash(path)), draft: draft})
-				}
-			}
-			var err error
-			source, _, err = submission.RepairResultRegisteredSource(root, state, packet)
-			if err != nil {
-				continue
-			}
 		case "s7-review-result-v1", "s8-hypothesis-result-v1":
 			if template == "s7-review-result-v1" {
 				facts, _ := state["review"].(map[string]any)
@@ -249,6 +270,15 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 			source, err = questionnaireSourceRoot(root, state, assignment, owner, stringValue(binding["runtime_id"]), tolerantInt(binding["baseline_generation"]))
 			if err != nil {
 				continue
+			}
+			if template == "s8-hypothesis-result-v1" && s8Case != nil {
+				data, _ := json.Marshal(row)
+				var packet workpacket.HypothesisResultPacket
+				if json.Unmarshal(data, &packet) == nil {
+					if receipt, accepted := s8ListenerReceipt(s8Case, packet); accepted && filepath.Clean(receipt.ExecutionRoot) == filepath.Clean(source) {
+						acceptedPacket, acceptedAnswerSHA = &packet, receipt.AnswerSHA256
+					}
+				}
 			}
 		case "s5-document-review-v1":
 			data, _ := json.Marshal(row)
@@ -270,7 +300,7 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 			}
 		}
 		if path != "" {
-			out = append(out, observedQuestionnaire{path: filepath.Join(source, filepath.FromSlash(path)), draft: row["draft"]})
+			out = append(out, observedQuestionnaire{path: filepath.Join(source, filepath.FromSlash(path)), draft: row["draft"], s8Packet: acceptedPacket, s8AcceptedAnswerSHA: acceptedAnswerSHA})
 		}
 	}
 	if stage == "S6" {
@@ -347,4 +377,137 @@ func s6ObservedResultHasProfessionalContent(data []byte) bool {
 
 func s6NonNull(raw json.RawMessage) bool {
 	return len(raw) > 0 && string(bytes.TrimSpace(raw)) != "null"
+}
+
+// Unchanged Main questions are already represented by the original Case and
+// Runtime dispatch. This is an observer projection, never an acceptance check;
+// explicit saves and any changed or incomplete registration keep the original
+// consumer's complete validation and conflict feedback.
+func s8ObservedHypothesesAlreadyRegistered(path string, data []byte, state, document map[string]any) bool {
+	if filepath.Base(path) != "hypotheses.json" || document == nil || workpacket.ValidateUniqueJSON(data) != nil {
+		return false
+	}
+	var questions []investigationLeadQuestion
+	if investigationLeadDecode(data, &questions) != nil || len(questions) == 0 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, q := range questions {
+		if q.HypothesisID == "" || seen[q.HypothesisID] {
+			return false
+		}
+		seen[q.HypothesisID] = true
+		var registered map[string]any
+		for _, h := range objectSliceAny(document["hypotheses"]) {
+			if h["hypothesis_id"] == q.HypothesisID {
+				if registered != nil {
+					return false
+				}
+				registered = h
+			}
+		}
+		if registered == nil || !investigationLeadSameQuestion(q, investigationLeadQuestionFromCase(registered)) {
+			return false
+		}
+		assignment := stringValue(registered["assignment_id"])
+		owner := investigationLeadRegisteredOwner(state, assignment)
+		if assignment == "" || owner == "" || q.AgentID != "" && q.AgentID != owner || !s8ObservedDispatchRecorded(state, assignment, owner) {
+			return false
+		}
+	}
+	return true
+}
+
+func s8ObservedDispatchRecorded(state map[string]any, assignment, owner string) bool {
+	entities := mapFieldCLI(state, "entities")
+	var agent map[string]any
+	for _, row := range objectSliceAny(entities["agents"]) {
+		if row["id"] == owner {
+			if agent != nil {
+				return false
+			}
+			agent = row
+		}
+	}
+	if agent == nil || agent["role"] != "investigator" {
+		return false
+	}
+	manifest, fragment, found := strings.Cut(stringValue(agent["prompt_ref"]), "#")
+	if !found || manifest == "" || fragment != assignment {
+		return false
+	}
+	teamFound := false
+	for _, team := range objectSliceAny(entities["teams"]) {
+		if team["id"] == agent["team_id"] && team["kind"] == "investigator" && team["manifest_ref"] == manifest && len(stringValue(team["manifest_sha256"])) == 64 {
+			if teamFound {
+				return false
+			}
+			teamFound = true
+		}
+	}
+	if !teamFound {
+		return false
+	}
+	for _, task := range objectSliceAny(entities["tasks"]) {
+		if slices.Contains(stringSliceAny(agent["task_ids"]), stringValue(task["id"])) && slices.Contains(stringSliceAny(task["owner_agent_ids"]), owner) && stringValue(task["path"]) != "" && len(stringValue(task["sha256"])) == 64 {
+			return true
+		}
+	}
+	return false
+}
+
+// A persisted route is already represented by its original Case revision.
+// Routes with a separate downstream consumer remain observable until that
+// existing consumer records its acknowledgement; an unchanged save can then
+// recover an interrupted handoff instead of being silently dropped.
+func s8ObservedRouteAlreadyRegistered(root, path string, data []byte, state, document map[string]any) bool {
+	if document == nil || !strings.HasPrefix(filepath.Base(path), "route-") || !investigationLeadAtRouteRevision(document) || workpacket.ValidateUniqueJSON(data) != nil {
+		return false
+	}
+	expected, err := investigationLeadRoutePath(root, state, document)
+	if err != nil || !samePath(path, expected) {
+		return false
+	}
+	var answer investigationLeadRouteAnswer
+	if investigationLeadDecode(data, &answer) != nil || !investigationLeadRouteMatches(answer, document) {
+		return false
+	}
+	pointer := investigationPointer(state)
+	route := stringValue(document["route"])
+	if pointer == nil || pointer["case_id"] != document["case_id"] || stringValue(pointer["route"]) != route {
+		return false
+	}
+	switch route {
+	case "s9_repair", "human_req_change", "investigate_more":
+		return true
+	case "s2_spec_rework", "duplicate", "s7_no_change":
+		return stringValue(pointer["route_consumed_at"]) != "" && pointer["route_consumer"] == "S8-ROUTE-CONSUME"
+	}
+	return false
+}
+
+// Equal current projection bytes already exist in the original final draft.
+// This skips passive resubmission only; it records no acceptance or approval.
+func s8ObservedContractAlreadyProjected(root, path string, data []byte, state, document map[string]any) bool {
+	if document == nil || document["route"] != "s9_repair" || !strings.HasPrefix(filepath.Base(path), "contract-") {
+		return false
+	}
+	pointer := investigationPointer(state)
+	if pointer == nil || pointer["case_id"] != document["case_id"] || tolerantInt(pointer["revision"]) != tolerantInt(document["revision"]) || stringValue(pointer["sha256"]) == "" {
+		return false
+	}
+	routePath, err := investigationLeadRoutePath(root, state, document)
+	if err != nil || !samePath(path, filepath.Join(filepath.Dir(routePath), "contract-"+stringValue(pointer["sha256"])+".json")) {
+		return false
+	}
+	finalPath, finalBytes, err := investigationLeadContractProjectionBytes(root, data, document)
+	if err != nil {
+		return false
+	}
+	relative, err := filepath.Rel(root, finalPath)
+	if err != nil {
+		return false
+	}
+	actual, err := workpacket.ReadFile(root, filepath.ToSlash(relative), 20<<20)
+	return err == nil && bytes.Equal(actual, finalBytes)
 }

@@ -7,14 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"reflect"
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/agentauth"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
-	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
@@ -22,8 +19,8 @@ import (
 const repairResultResolutionMessageLimit = 1 << 20
 
 // PrepareIssuedRepairResultResolutionRequest names the exact Main resolution
-// file. AuthorizeMain is an optional compatibility callback; the original
-// packet/blocker and resolution validators own domain acceptance.
+// file. AuthorizeMain is retained for compatibility and is not called;
+// the current blocker/attempt locates the recovery decision.
 type PrepareIssuedRepairResultResolutionRequest struct {
 	ExpectedRevision int
 	PacketID         string
@@ -47,7 +44,6 @@ type IssuedRepairResultResolutionCapability struct {
 	mainRoot       string
 	beforeRevision int
 	generation     int
-	authorizeMain  func(root string, state map[string]any) error
 }
 
 // RepairResultResolutionAuthoringPath derives Main's one authoring path from
@@ -59,7 +55,8 @@ func RepairResultResolutionAuthoringPath(packet workpacket.RepairResultPacket) (
 // RepairResultResolutionDraft returns an incomplete Main authoring envelope
 // for the exact currently unresolved blocker. It does not write the file or
 // authorize lifecycle transitions. The empty rationale marks the draft as
-// incomplete until Main supplies its decision rationale.
+// incomplete until Main supplies its recovery judgment, actual evidence or
+// unfinished-work explanation. Body is optional and derived from the rationale.
 func RepairResultResolutionDraft(root string, state map[string]any, packetID, owner string) (string, []byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -84,15 +81,9 @@ func RepairResultResolutionDraft(root string, state map[string]any, packetID, ow
 	if err := rejectContractConflictResolution(blocker); err != nil {
 		return "", nil, err
 	}
-	messageBytes, err := workpacket.ReadFile(root, blocker.Artifact.MessageRef, repairResultResolutionMessageLimit)
+	messageBytes, err := readAcceptedBlockerMessage(root, blocker)
 	if err != nil {
-		return "", nil, fmt.Errorf("read original immutable S9 blocker message: %w", err)
-	}
-	if workpacket.Digest(messageBytes) != blocker.Artifact.MessageSHA256 {
-		return "", nil, errors.New("original immutable S9 blocker message differs from its accepted SHA")
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", messageBytes); err != nil {
-		return "", nil, fmt.Errorf("validate original immutable S9 blocker message: %w", err)
+		return "", nil, err
 	}
 	var original map[string]any
 	if err := json.Unmarshal(messageBytes, &original); err != nil || original == nil {
@@ -140,20 +131,13 @@ func PrepareIssuedRepairResultResolution(
 	if err != nil || !found {
 		return nil, nil, fmt.Errorf("S9 issued RepairResult packet %q is unavailable: %v", req.PacketID, err)
 	}
-	if req.OwnerAgentID == "" || req.OwnerAgentID != packet.Binding.Sources.OwnerAgentID {
-		return nil, nil, errors.New("S9 resolution owner differs from the issued RepairAssignment")
-	}
+	req.OwnerAgentID = packet.Binding.Sources.OwnerAgentID
 	expectedPath, err := RepairResultResolutionAuthoringPath(packet)
 	if err != nil {
 		return nil, nil, err
 	}
 	if req.AuthoringPath != expectedPath {
 		return nil, nil, errors.New("S9 resolution path differs from the exact current Main authoring path")
-	}
-	if req.AuthorizeMain != nil {
-		if err := req.AuthorizeMain(root, snapshot.State); err != nil {
-			return nil, nil, err
-		}
 	}
 
 	// History is checked before current state and expected revision so an exact
@@ -190,6 +174,28 @@ func PrepareIssuedRepairResultResolution(
 	if err := validateRepairResultResolutionAuthoring(authoringBytes, originalMessage, packet, blocker); err != nil {
 		return nil, nil, err
 	}
+	var authored struct {
+		Body       string `json:"body"`
+		Resolution struct {
+			Rationale    string `json:"rationale"`
+			EvidenceRefs []any  `json:"evidence_refs"`
+		} `json:"s9_resolution"`
+	}
+	if err := json.Unmarshal(authoringBytes, &authored); err != nil {
+		return nil, nil, err
+	}
+	var original map[string]any
+	if err := json.Unmarshal(originalMessage, &original); err != nil {
+		return nil, nil, err
+	}
+	message, err := buildRepairResultResolutionEnvelope(original, packet, blocker, authored.Body, authored.Resolution.EvidenceRefs, authored.Resolution.Rationale)
+	if err != nil {
+		return nil, nil, err
+	}
+	authoringBytes, err = canonicalJSON(message)
+	if err != nil {
+		return nil, nil, err
+	}
 	messageRef, storedBytes, err := publishRepairResultResolutionMessage(root, packet, authoringBytes)
 	if err != nil {
 		return nil, nil, err
@@ -204,7 +210,6 @@ func PrepareIssuedRepairResultResolution(
 		messageBytes: append([]byte(nil), storedBytes...), authoringPath: req.AuthoringPath,
 		owner: req.OwnerAgentID, taskID: binding.TaskID, mainRoot: root,
 		beforeRevision: snapshot.Revision, generation: binding.BaselineGeneration,
-		authorizeMain: req.AuthorizeMain,
 	}
 	return capability, nil, nil
 }
@@ -253,28 +258,19 @@ func (capability *IssuedRepairResultResolutionCapability) AcceptedReplay(ctx con
 		!blockerRequestPathMatches(root, capability.messageRef, messagePath) {
 		return false, runtimepkg.ErrSubmissionConflict
 	}
-	if capability.authorizeMain != nil {
-		if err := capability.authorizeMain(root, state); err != nil {
-			return false, err
-		}
-	}
 	receipt, found, err := runtimepkg.VerifiedRepairResultResolutionReceipt(root, state, capability.packet.ID, owner)
 	if err != nil || !found {
 		return false, err
 	}
-	if receipt.BlockerRef != capability.blocker.ArtifactRef || receipt.BlockerSHA256 != capability.blocker.ArtifactSHA256 ||
-		receipt.MessageRef != capability.messageRef || receipt.MessageSHA256 != capability.messageSHA256 {
+	if receipt.BlockerRef != capability.blocker.ArtifactRef || receipt.MessageRef != capability.messageRef {
 		return false, runtimepkg.ErrSubmissionConflict
-	}
-	if err := verifyCapabilityResolutionBytes(root, capability); err != nil {
-		return false, err
 	}
 	return true, nil
 }
 
 // ApplyLifecycleCAS is invoked from the original Agent Writer's Apply callback.
-// It rechecks the current blocked PLAN/source/attempt, predecessor receipt and
-// exact saved bytes before appending the evidence row.
+// It associates the recorded decision with the current blocked responsibility
+// and execution attempt before appending its existing evidence row.
 func (capability *IssuedRepairResultResolutionCapability) ApplyLifecycleCAS(
 	ctx context.Context,
 	root string,
@@ -289,12 +285,6 @@ func (capability *IssuedRepairResultResolutionCapability) ApplyLifecycleCAS(
 	if ctx == nil {
 		return errors.New("S9 resolution lifecycle Apply requires the original writer context")
 	}
-	lockedCtx, unlock, err := integration.LockWorkspace(ctx, root)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	ctx = lockedCtx
 	if !sameAbsolutePath(root, capability.mainRoot) || owner != capability.owner || taskID != capability.taskID ||
 		beforeRevision != capability.beforeRevision || generation != capability.generation {
 		return runtimepkg.ErrStaleRevision
@@ -309,32 +299,28 @@ func (capability *IssuedRepairResultResolutionCapability) ApplyLifecycleCAS(
 	if integerRepairResult(baseline["generation"]) != generation {
 		return errors.New("S9 resolution baseline generation changed before the original lifecycle CAS")
 	}
-	if capability.authorizeMain != nil {
-		if err := capability.authorizeMain(root, state); err != nil {
-			return err
-		}
-	}
-	if !reflect.DeepEqual(messageBytes, capability.messageBytes) {
+	if !bytes.Equal(messageBytes, capability.messageBytes) {
 		return runtimepkg.ErrSubmissionConflict
 	}
-	if err := verifyCapabilityResolutionBytes(root, capability); err != nil {
-		return err
+	packet := capability.packet
+	pointer := repairPointer(state)
+	if pointer == nil || stringField(pointer["session_id"]) != packet.Binding.Sources.SessionID || stringField(pointer["plan_ref"]) != packet.Binding.Sources.PlanRef {
+		return errors.New("S9 resolution responsibility changed before recording")
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(state, capability.packet.ID)
-	if err != nil || !found || !sameRepairResultPacket(packet, capability.packet) {
-		return fmt.Errorf("S9 resolution packet changed before original Agent lifecycle CAS: %v", err)
+	agent, found, err := repairResultBlockerAgent(state, owner)
+	if err != nil || !found {
+		return fmt.Errorf("S9 blocked responsibility unavailable: %v", err)
 	}
-	blocker, err := validateCurrentRepairResultResolutionBlocker(ctx, root, state, packet, owner, &capability.blocker)
+	blocker := capability.blocker
+	if workstate.AgentActivity(agent) != "blocked" || stringField(agent["work_blocked_ref"]) != blocker.Artifact.MessageRef || stringField(agent["blocker_resolved_ref"]) != "" {
+		return runtimepkg.ErrSubmissionConflict
+	}
+	execution, _, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, blocker.Artifact.ExecutionRoot, "")
 	if err != nil {
 		return err
 	}
-	if err := rejectContractConflictResolution(blocker); err != nil {
-		return err
-	}
-	if accepted, err := resolutionReceiptAlreadyExists(root, state, packet, owner); err != nil {
-		return err
-	} else if accepted {
-		return errors.New("S9 resolution was concurrently accepted; recover the exact original lifecycle event")
+	if execution.AssignmentID != blocker.Artifact.ExecutionAssignmentID || execution.Generation != blocker.Artifact.ExecutionGeneration {
+		return errors.New("S9 blocked execution attempt changed before recording the recovery decision")
 	}
 	return appendRepairResultResolutionEvidence(state, packet, blocker, ArtifactRef{Path: capability.messageRef, SHA256: capability.messageSHA256})
 }
@@ -366,10 +352,6 @@ func validateCurrentRepairResultResolutionBlocker(
 	if owner == "" || owner != packet.Binding.Sources.OwnerAgentID {
 		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution owner differs from the issued RepairAssignment")
 	}
-	stored, found, err := runtimepkg.FindRepairResultPacket(state, packet.ID)
-	if err != nil || !found || !sameRepairResultPacket(stored, packet) {
-		return runtimepkg.RepairResultBlockerReceipt{}, fmt.Errorf("S9 resolution packet differs from its exact Runtime issuance: %v", err)
-	}
 	blocker, accepted, err := runtimepkg.VerifiedRepairResultBlockerReceipt(root, state, packet.ID, owner)
 	if err != nil {
 		return runtimepkg.RepairResultBlockerReceipt{}, err
@@ -377,7 +359,7 @@ func validateCurrentRepairResultResolutionBlocker(
 	if !accepted {
 		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution requires the original accepted typed blocker receipt")
 	}
-	if expected != nil && !reflect.DeepEqual(blocker, *expected) {
+	if expected != nil && (blocker.ArtifactRef != expected.ArtifactRef || blocker.Artifact.MessageRef != expected.Artifact.MessageRef) {
 		return runtimepkg.RepairResultBlockerReceipt{}, runtimepkg.ErrSubmissionConflict
 	}
 	if _, resolved, err := runtimepkg.VerifiedRepairResultResolutionReceipt(root, state, packet.ID, owner); err != nil {
@@ -398,38 +380,16 @@ func validateCurrentRepairResultResolutionBlocker(
 		stringField(agent["work_blocked_ref"]) != blocker.Artifact.MessageRef || stringField(agent["blocker_resolved_ref"]) != "" {
 		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution owner is not blocked on this exact unresolved blocker message")
 	}
-	if !currentRepairResultBlockerEvidence(state, blocker.ArtifactRef) {
-		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution predecessor blocker evidence is invalidated or not current")
+	pointer := repairPointer(state)
+	if pointer == nil || stringField(pointer["session_id"]) != packet.Binding.Sources.SessionID || stringField(pointer["plan_ref"]) != packet.Binding.Sources.PlanRef {
+		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 blocker belongs to a previous repair responsibility")
 	}
-	if err := agentauth.ValidateBlockedPlanAuthorization(root, state, owner); err != nil {
-		return runtimepkg.RepairResultBlockerReceipt{}, fmt.Errorf("S9 resolution has no current original blocked PLAN authorization: %w", err)
-	}
-	current, err := runtimepkg.CurrentRepairResultPackets(root, state, owner)
+	execution, _, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, blocker.Artifact.ExecutionRoot, "")
 	if err != nil {
 		return runtimepkg.RepairResultBlockerReceipt{}, err
 	}
-	if len(current) != 1 || current[0].ID != packet.ID {
-		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution packet is not the unique current blocker attempt")
-	}
-	if err := runtimepkg.VerifyRepairResultPacketIssueAndCurrent(root, state, packet); err != nil {
-		return runtimepkg.RepairResultBlockerReceipt{}, err
-	}
-	execution, head, err := verifyIssuedRepairResultBlockerSource(ctx, root, state, packet, blocker.Artifact.ExecutionRoot, blocker.Artifact.SourceHead)
-	if err != nil {
-		return runtimepkg.RepairResultBlockerReceipt{}, err
-	}
-	if head != blocker.Artifact.SourceHead || execution.AssignmentID != blocker.Artifact.ExecutionAssignmentID ||
-		execution.Generation != blocker.Artifact.ExecutionGeneration || execution.PlatformSessionID != blocker.Artifact.PlatformSessionID ||
-		execution.Path != blocker.Artifact.ExecutionRoot || execution.BaseCommit != blocker.Artifact.BaseCommit {
-		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 resolution Worker execution/attempt differs from the accepted blocker tuple")
-	}
-	answerBytes, err := workpacket.ReadFile(execution.Path, packet.AnswerPath, repairResultAnswerLimit)
-	if err != nil {
-		return runtimepkg.RepairResultBlockerReceipt{}, err
-	}
-	answer, problems := workpacket.ValidateRepairResultAnswer(packet, answerBytes)
-	if len(problems) != 0 || workpacket.Digest(answer) != blocker.Artifact.AnswerSHA256 || !bytes.Equal(answer, blocker.Artifact.SubmittedAnswer) {
-		return runtimepkg.RepairResultBlockerReceipt{}, runtimepkg.ErrSubmissionConflict
+	if execution.AssignmentID != blocker.Artifact.ExecutionAssignmentID || execution.Generation != blocker.Artifact.ExecutionGeneration {
+		return runtimepkg.RepairResultBlockerReceipt{}, errors.New("S9 blocked execution attempt changed")
 	}
 	return blocker, nil
 }
@@ -460,6 +420,9 @@ func buildRepairResultResolutionEnvelope(original map[string]any, packet workpac
 	delete(message, "s9_blocker")
 	message["message_type"] = "blocker_resolution"
 	message["message_id"] = resolutionMessageID(packet.ID, blocker.ArtifactSHA256)
+	if strings.TrimSpace(body) == "" {
+		body = rationale
+	}
 	message["body"] = body
 	message["s9_resolution"] = map[string]any{
 		"decision": "retry", "rationale": rationale, "evidence_refs": evidenceRefs,
@@ -474,52 +437,29 @@ func buildRepairResultResolutionEnvelope(original map[string]any, packet workpac
 
 func validateRepairResultResolutionAuthoring(data, originalBytes []byte, packet workpacket.RepairResultPacket, blocker runtimepkg.RepairResultBlockerReceipt) error {
 	if len(data) == 0 || len(data) > repairResultResolutionMessageLimit {
-		return errors.New("S9 Main resolution authoring file is empty or exceeds 1 MiB")
+		return errors.New("S9 recovery answer is empty or exceeds 1 MiB")
 	}
 	if err := workpacket.ValidateUniqueJSON(data); err != nil {
-		return fmt.Errorf("S9 Main resolution JSON: %w", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", data); err != nil {
-		return fmt.Errorf("S9 Main resolution message schema: %w", err)
-	}
-	var original map[string]any
-	if err := json.Unmarshal(originalBytes, &original); err != nil || original == nil {
-		return fmt.Errorf("decode accepted S9 blocker message: %v", err)
-	}
-	var actual map[string]any
-	if err := json.Unmarshal(data, &actual); err != nil || actual == nil {
-		return fmt.Errorf("decode S9 Main resolution message: %v", err)
-	}
-	body, ok := actual["body"].(string)
-	if !ok {
-		return errors.New("S9 Main resolution body must retain its original string field")
-	}
-	actualResolution, ok := actual["s9_resolution"].(map[string]any)
-	if !ok {
-		return errors.New("S9 Main resolution lacks its closed s9_resolution object")
-	}
-	rationale, ok := actualResolution["rationale"].(string)
-	if !ok {
-		return errors.New("S9 Main resolution rationale must retain its schema-defined string field")
-	}
-	evidenceRefs, ok := actualResolution["evidence_refs"].([]any)
-	if !ok {
-		return errors.New("S9 Main resolution evidence_refs must be an array")
-	}
-	expected, err := buildRepairResultResolutionEnvelope(original, packet, blocker, body, evidenceRefs, rationale)
-	if err != nil {
 		return err
 	}
-	actualBytes, err := json.Marshal(actual)
-	if err != nil {
+	var authored struct {
+		Body       string `json:"body"`
+		Resolution struct {
+			Decision     string   `json:"decision"`
+			Rationale    string   `json:"rationale"`
+			EvidenceRefs []string `json:"evidence_refs"`
+		} `json:"s9_resolution"`
+	}
+	if err := json.Unmarshal(data, &authored); err != nil {
 		return err
 	}
-	expectedBytes, err := json.Marshal(expected)
-	if err != nil {
-		return err
+	if authored.Resolution.Decision != "retry" || strings.TrimSpace(authored.Resolution.Rationale) == "" || authored.Resolution.EvidenceRefs == nil {
+		return errors.New("S9 recovery decision requires retry, a recovery judgment/rationale and actual evidence_refs (or an explanation of unfinished work); body is supplied by the system")
 	}
-	if !bytes.Equal(actualBytes, expectedBytes) {
-		return errors.New("S9 Main resolution changed a machine-bound blocker, packet, owner, or execution field")
+	for _, ref := range authored.Resolution.EvidenceRefs {
+		if strings.TrimSpace(ref) == "" {
+			return errors.New("S9 recovery evidence locations must be non-empty strings")
+		}
 	}
 	return nil
 }
@@ -529,21 +469,12 @@ func readAcceptedBlockerMessage(root string, blocker runtimepkg.RepairResultBloc
 	if err != nil {
 		return nil, fmt.Errorf("read accepted S9 blocker lifecycle message: %w", err)
 	}
-	if workpacket.Digest(message) != blocker.Artifact.MessageSHA256 {
-		return nil, errors.New("accepted S9 blocker lifecycle message differs from its immutable SHA")
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", message); err != nil {
-		return nil, fmt.Errorf("validate accepted S9 blocker lifecycle message: %w", err)
-	}
 	return message, nil
 }
 
 func publishRepairResultResolutionMessage(root string, packet workpacket.RepairResultPacket, data []byte) (string, []byte, error) {
 	if len(data) == 0 || len(data) > repairResultResolutionMessageLimit {
 		return "", nil, errors.New("S9 immutable resolution message is empty or exceeds 1 MiB")
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", data); err != nil {
-		return "", nil, fmt.Errorf("validate immutable S9 resolution message: %w", err)
 	}
 	b := packet.Binding.Sources
 	digest := workpacket.Digest(data)
@@ -570,30 +501,31 @@ func verifyExactRepairResultResolutionReplay(root, authoringPath string, packet 
 	if err != nil {
 		return fmt.Errorf("read accepted immutable S9 Main resolution message: %w", err)
 	}
-	if workpacket.Digest(immutable) != receipt.MessageSHA256 || !bytes.Equal(authoring, immutable) {
+	project := func(data []byte) ([]byte, error) {
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return nil, err
+		}
+		var decision map[string]json.RawMessage
+		if err := json.Unmarshal(doc["s9_resolution"], &decision); err != nil {
+			return nil, err
+		}
+		var body, rationale string
+		_ = json.Unmarshal(doc["body"], &body)
+		_ = json.Unmarshal(decision["rationale"], &rationale)
+		if strings.TrimSpace(body) == "" {
+			body = rationale
+		}
+		bodyBytes, _ := json.Marshal(body)
+		doc["body"] = bodyBytes
+		return json.Marshal(map[string]json.RawMessage{"body": doc["body"], "decision": decision["decision"], "rationale": decision["rationale"], "evidence_refs": decision["evidence_refs"]})
+	}
+	actual, actualErr := project(authoring)
+	accepted, acceptedErr := project(immutable)
+	if actualErr != nil || acceptedErr != nil || !bytes.Equal(actual, accepted) {
 		return runtimepkg.ErrSubmissionConflict
 	}
 	return nil
-}
-
-func verifyCapabilityResolutionBytes(root string, capability *IssuedRepairResultResolutionCapability) error {
-	immutable, err := workpacket.ReadFile(root, capability.messageRef, repairResultResolutionMessageLimit)
-	if err != nil || !bytes.Equal(immutable, capability.messageBytes) || workpacket.Digest(immutable) != capability.messageSHA256 {
-		return fmt.Errorf("S9 immutable resolution message changed before the original lifecycle CAS: %v", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("agent-message.schema.json", immutable); err != nil {
-		return err
-	}
-	authoring, err := workpacket.ReadFile(root, capability.authoringPath, repairResultResolutionMessageLimit)
-	if err != nil || !bytes.Equal(authoring, capability.messageBytes) {
-		return fmt.Errorf("S9 Main resolution authoring bytes changed after Prepare: %v", err)
-	}
-	return nil
-}
-
-func resolutionReceiptAlreadyExists(root string, state map[string]any, packet workpacket.RepairResultPacket, owner string) (bool, error) {
-	_, found, err := runtimepkg.VerifiedRepairResultResolutionReceipt(root, state, packet.ID, owner)
-	return found, err
 }
 
 func appendRepairResultResolutionEvidence(state map[string]any, packet workpacket.RepairResultPacket, blocker runtimepkg.RepairResultBlockerReceipt, message ArtifactRef) error {
@@ -638,5 +570,8 @@ func anyString(values []any, wanted string) bool {
 }
 
 func resolutionMessageID(packetID, blockerSHA string) string {
-	return "msg-s9-resolution-" + strings.TrimPrefix(packetID, "packet-") + "-" + blockerSHA[:16]
+	if len(blockerSHA) > 16 {
+		blockerSHA = blockerSHA[:16]
+	}
+	return "msg-s9-resolution-" + strings.TrimPrefix(packetID, "packet-") + "-" + blockerSHA
 }

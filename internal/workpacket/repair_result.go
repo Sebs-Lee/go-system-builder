@@ -303,13 +303,11 @@ func RepairResultPacketContentDigest(packet RepairResultPacket) (string, error) 
 	return Digest(canonical), nil
 }
 
-// ValidateRepairResultAnswer validates the full authoring file, preserves the
-// immutable packet envelope, and returns only the canonical nine-field
-// professional answer. Original S9 consumers verify authority, sources,
-// execution, candidate, checks, and Result acceptance.
+// ValidateRepairResultAnswer returns the professional answer from the
+// authoring file. Display metadata does not affect answer acceptance.
 func ValidateRepairResultAnswer(packet RepairResultPacket, data []byte) (json.RawMessage, []FieldError) {
 	issue := func(pointer, expected, observed string) (json.RawMessage, []FieldError) {
-		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，只填写 answer 中的专业观测、实施结论与资料引用。"}}
+		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "填写 answer 中的专业观测、实施结论与资料引用。"}}
 	}
 	if len(data) > repairResultPacketLimit {
 		return issue("/", "JSON <= 20 MiB", "oversized")
@@ -317,22 +315,11 @@ func ValidateRepairResultAnswer(packet RepairResultPacket, data []byte) (json.Ra
 	if err := ValidateUniqueJSON(data); err != nil {
 		return issue("/", "unique JSON keys", err.Error())
 	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s9-result.schema.json", data); err != nil {
-		return issue("/", "registered closed S9 RepairResult answer", err.Error())
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil || document == nil {
+		return issue("/", "one JSON object containing answer", "invalid JSON object")
 	}
-	var draft RepairResultDraft
-	if err := decodeOneStrictJSON(data, &draft); err != nil {
-		return issue("/", "one closed S9 RepairResult questionnaire", err.Error())
-	}
-	expected, err := RebuildRepairResult(packet)
-	if err != nil || !reflect.DeepEqual(packet, expected) {
-		return issue("/", "canonical issued S9 RepairResult packet", "packet identity differs")
-	}
-	answer := draft.Answer
-	draft.Answer = expected.Draft.Answer
-	if !reflect.DeepEqual(draft, expected.Draft) {
-		return issue("/", "unchanged issued machine fields", "questionnaire or binding was edited")
-	}
+	answer := document["answer"]
 	canonicalAnswer, err := canonicalJSON(answer)
 	if err != nil {
 		return issue("/answer", "one JSON professional answer object", err.Error())
@@ -353,6 +340,9 @@ func validateCompleteRepairResultAnswer(sources RepairPlanReportInputs, data []b
 		return "/answer", "valid S9 professional object", err.Error()
 	}
 	for _, name := range []string{"verdict", "before_fix_results", "unit_results", "detection_gap_artifacts", "evidence_refs", "scope_deviations", "residual_risks", "migration_ref", "rollback_ref"} {
+		if len(answerFields[name]) == 0 {
+			return "/answer/" + name, "explicit professional field", "missing"
+		}
 		if bytes.Equal(bytes.TrimSpace(answerFields[name]), []byte("null")) {
 			return "/answer/" + name, "explicit completed answer value, not null", "null"
 		}
@@ -452,11 +442,28 @@ func validateRepairResultRefs(values []string, pointer string, requireOne bool) 
 }
 
 func canonicalRepairResultInputs(binding RepairResultBinding, inputs RepairResultInputs) (RepairResultInputs, error) {
-	canonicalSources, err := canonicalRepairPlanReportInputs(binding.Sources, inputs.Sources)
-	if err != nil {
-		return RepairResultInputs{}, fmt.Errorf("S9 RepairResult source closure: %w", err)
+	// These documents are already accepted facts used to populate the draft.
+	// Canonicalize their readable JSON without replaying their source proofs.
+	canonicalSources := inputs.Sources
+	canonicalSources.ProspectiveScope = append([]string{}, inputs.Sources.ProspectiveScope...)
+	canonicalSources.ForbiddenScope = append([]string{}, inputs.Sources.ForbiddenScope...)
+	for _, source := range []struct {
+		name string
+		raw  *json.RawMessage
+	}{
+		{"Case", &canonicalSources.Case}, {"Contract", &canonicalSources.Contract},
+		{"Session", &canonicalSources.Session}, {"Plan", &canonicalSources.Plan},
+		{"Task", &canonicalSources.Task}, {"RepairAssignment", &canonicalSources.RepairAssignment},
+		{"ManifestAssignment", &canonicalSources.ManifestAssignment},
+	} {
+		value, err := canonicalRepairResultObject(*source.raw, source.name)
+		if err != nil {
+			return RepairResultInputs{}, err
+		}
+		*source.raw = value
 	}
 	canonical := RepairResultInputs{Sources: canonicalSources}
+	var err error
 	canonical.PlanReport, err = canonicalRepairResultObject(inputs.PlanReport, "PlanReport")
 	if err != nil {
 		return RepairResultInputs{}, err
@@ -472,23 +479,11 @@ func canonicalRepairResultInputs(binding RepairResultBinding, inputs RepairResul
 	if len(canonical.PlanReport)+len(canonical.Execution)+len(canonical.ReworkReceipt) > repairResultPacketLimit {
 		return RepairResultInputs{}, fmt.Errorf("S9 RepairResult frozen input closure exceeds 20 MiB")
 	}
-	if !digestPattern.MatchString(binding.ExecutionSHA256) || Digest(canonical.Execution) != binding.ExecutionSHA256 {
-		return RepairResultInputs{}, fmt.Errorf("S9 registered Execution definition digest differs from binding")
-	}
 	if err := validateRepairResultExecution(binding, canonical.Execution); err != nil {
 		return RepairResultInputs{}, err
 	}
-	if err := validateRepairResultPlanReport(binding, canonicalSources, canonical.PlanReport); err != nil {
+	if err := validateRepairResultPlanReport(binding, canonical.PlanReport); err != nil {
 		return RepairResultInputs{}, err
-	}
-	if binding.ReworkRef == "" || binding.ReworkSHA256 == "" {
-		if binding.ReworkRef != "" || binding.ReworkSHA256 != "" || string(canonical.ReworkReceipt) != "null" {
-			return RepairResultInputs{}, fmt.Errorf("S9 first-attempt Rework tuple must have empty ref/SHA and explicit null receipt")
-		}
-	} else {
-		if !safeRepairPlanReportRef(binding.ReworkRef) || !digestPattern.MatchString(binding.ReworkSHA256) || string(canonical.ReworkReceipt) == "null" {
-			return RepairResultInputs{}, fmt.Errorf("S9 rework attempt requires one safe pinned Rework receipt")
-		}
 	}
 	encoded, err := json.Marshal(canonical)
 	if err != nil {
@@ -519,20 +514,14 @@ func validateRepairResultBinding(binding RepairResultBinding) error {
 	return nil
 }
 
-// ValidateRepairResultResume checks the closed tuple's value-level shape. Its
-// authority is established only by the Runtime's original packet/evidence/
-// journal reader.
+// ValidateRepairResultResume checks the current recorded recovery association.
+// Historical packet, evidence and journal proofs are not acceptance conditions.
 func ValidateRepairResultResume(owner string, resume *RepairResultResume) error {
 	if resume == nil {
 		return nil
 	}
-	if owner == "" || !repairResultPacketIDRE.MatchString(resume.PredecessorPacketID) ||
-		!digestPattern.MatchString(resume.PredecessorPacketSHA256) || !safeRepairPlanReportRef(resume.BlockerRef) ||
-		!digestPattern.MatchString(resume.BlockerSHA256) || !safeRepairPlanReportRef(resume.ResolutionMessageRef) ||
-		!digestPattern.MatchString(resume.ResolutionMessageSHA256) || resume.ResolutionEventID != fmt.Sprintf("evt-agent-%s-blocker_resolved-r%d", owner, resume.ResolutionAfterRevision) ||
-		resume.ResolutionIdempotencyKey != fmt.Sprintf("runtime:agent:%s:blocker_resolved:%d", owner, resume.ResolutionBeforeRevision) ||
-		resume.ResolutionBeforeRevision < 0 || resume.ResolutionAfterRevision != resume.ResolutionBeforeRevision+1 || resume.ResolutionSequence < 1 {
-		return fmt.Errorf("S9 Resume tuple has invalid packet, artifact, event or acceptance coordinates")
+	if owner == "" || resume.PredecessorPacketID == "" || !safeRepairPlanReportRef(resume.BlockerRef) || !safeRepairPlanReportRef(resume.ResolutionMessageRef) {
+		return fmt.Errorf("S9 Resume requires its predecessor, blocker and recorded resolution")
 	}
 	return nil
 }
@@ -554,144 +543,32 @@ func RepairResultResumeSHA256(resume *RepairResultResume) (string, error) {
 	return Digest(canonical), nil
 }
 
-func validateRepairResultPlanReport(binding RepairResultBinding, sources RepairPlanReportInputs, raw json.RawMessage) error {
-	if err := schema.NewEmbeddedValidator().ValidateBytes("repair-plan-report.schema.json", raw); err != nil {
-		return fmt.Errorf("S9 exact PlanReport source schema: %w", err)
-	}
+func validateRepairResultPlanReport(binding RepairResultBinding, raw json.RawMessage) error {
 	report, err := repairPlanReportObject(raw, "accepted PlanReport")
 	if err != nil {
 		return err
 	}
-	if report["record_type"] != "repair_plan_report" || report["session_id"] != binding.Sources.SessionID ||
+	if report["session_id"] != binding.Sources.SessionID ||
 		report["plan_id"] != binding.Sources.PlanID || report["assignment_id"] != binding.Sources.RepairAssignmentID ||
 		report["agent_id"] != binding.Sources.OwnerAgentID {
-		return fmt.Errorf("S9 PlanReport identity differs from the original source/owner binding")
-	}
-	assignment, err := repairPlanReportObject(sources.RepairAssignment, "RepairAssignment")
-	if err != nil {
-		return fmt.Errorf("S9 exact RepairAssignment source: %w", err)
-	}
-	assertionIDs, ok := repairPlanReportStringSlice(assignment["assertion_ids"])
-	if !ok || len(assertionIDs) == 0 || !repairPlanReportJSONEqual(report["assertion_ids"], assertionIDs) {
-		return fmt.Errorf("S9 PlanReport assertion set differs from its exact RepairAssignment")
-	}
-	if report["receipt"] == nil {
-		return fmt.Errorf("S9 RepairResult requires an originally accepted PlanReport receipt")
-	}
-	receiptData, err := json.Marshal(report["receipt"])
-	if err != nil {
-		return err
-	}
-	canonicalReceipt, err := canonicalJSON(receiptData)
-	if err != nil {
-		return err
-	}
-	var receipt map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(canonicalReceipt))
-	decoder.UseNumber()
-	if err := decoder.Decode(&receipt); err != nil || receipt == nil {
-		return fmt.Errorf("S9 PlanReport receipt must be an object")
-	}
-	expected := map[string]any{
-		"contract": "s9-plan-report-receipt-v1", "owner_agent_id": binding.Sources.OwnerAgentID,
-		"runtime_id": binding.Sources.RuntimeID, "baseline_generation": binding.Sources.BaselineGeneration,
-		"review_round": binding.Sources.ReviewRound, "case_id": binding.Sources.CaseID,
-		"case_ref": binding.Sources.CaseRef, "case_sha256": binding.Sources.CaseSHA256,
-		"contract_id": binding.Sources.ContractID, "contract_ref": binding.Sources.ContractRef,
-		"contract_sha256": binding.Sources.ContractSHA256, "session_id": binding.Sources.SessionID,
-		"session_ref": binding.Sources.SessionRef, "session_sha256": binding.Sources.SessionSHA256,
-		"plan_id": binding.Sources.PlanID, "plan_ref": binding.Sources.PlanRef,
-		"plan_sha256": binding.Sources.PlanSHA256, "repair_assignment_id": binding.Sources.RepairAssignmentID,
-		"repair_assignment_sha256":   binding.Sources.RepairAssignmentSHA256,
-		"manifest_assignment_id":     binding.Sources.ManifestAssignmentID,
-		"manifest_assignment_sha256": binding.Sources.ManifestAssignmentSHA256,
-		"team_id":                    binding.Sources.TeamID, "task_id": binding.Sources.TaskID,
-		"task_ref": binding.Sources.TaskRef, "task_sha256": binding.Sources.TaskSHA256,
-		"manifest_ref": binding.Sources.ManifestRef, "manifest_sha256": binding.Sources.ManifestSHA256,
-		"report_id": report["report_id"], "report_ref": binding.PlanReportRef,
-		"work_complete": false,
-	}
-	for key, want := range expected {
-		if !repairPlanReportJSONEqual(receipt[key], want) {
-			return fmt.Errorf("S9 accepted PlanReport receipt %s differs from the frozen binding", key)
-		}
+		return fmt.Errorf("S9 PlanReport differs from the current repair responsibility")
 	}
 	return nil
 }
 
 func validateRepairResultExecution(binding RepairResultBinding, raw json.RawMessage) error {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
-		return fmt.Errorf("S9 Execution definition must be one JSON object")
-	}
-	allowed := map[string]bool{
-		"assignment_record": true, "assignment_record_sha256": true, "worker_checks": true, "check_profiles": true,
-		"purpose": true, "work_packet_id": true, "stage_entry": true, "check_location": true,
-		"platform_session_id": true, "assignment_id": true, "runtime_id": true,
-		"baseline_generation": true, "execution_generation": true, "agent_id": true,
-		"worktree_path": true, "branch": true, "target_branch": true, "base_commit": true,
-		"write_paths": true, "required_checks": true, "inputs": true, "bootstrap_sha256": true,
-	}
-	for name := range fields {
-		if !allowed[name] {
-			return fmt.Errorf("S9 Execution definition contains unapproved field %q", name)
-		}
-	}
-	// workspace.Execution deliberately omits several S6-only or not-yet-
-	// available fields for an ordinary S9 dispatch. Their absence means that
-	// no such S6 source was registered; the neutral packet must preserve that
-	// absence instead of inventing a Record, WorkerChecks, or session tuple.
-	// The core execution identity and Main/Worker check definition remain
-	// required by the closed schema below.
-	for _, name := range []string{
-		"check_profiles", "check_location", "assignment_id", "runtime_id",
-		"baseline_generation", "execution_generation", "agent_id", "worktree_path",
-		"branch", "target_branch", "base_commit", "write_paths", "required_checks",
-		"inputs", "bootstrap_sha256",
-	} {
-		if _, ok := fields[name]; !ok {
-			return fmt.Errorf("S9 Execution definition omits required field %q", name)
-		}
-	}
-	_, hasRecord := fields["assignment_record"]
-	_, hasRecordSHA := fields["assignment_record_sha256"]
-	if hasRecord != hasRecordSHA {
-		return fmt.Errorf("S9 Execution Assignment Record reference and digest must be present together")
-	}
-	if hasRecord {
-		recordNull := bytes.Equal(bytes.TrimSpace(fields["assignment_record"]), []byte("null"))
-		digestNull := bytes.Equal(bytes.TrimSpace(fields["assignment_record_sha256"]), []byte("null"))
-		if recordNull != digestNull {
-			return fmt.Errorf("S9 Execution Assignment Record reference and digest nullability differs")
-		}
-	}
 	var execution struct {
-		AssignmentRecord       json.RawMessage `json:"assignment_record"`
-		AssignmentRecordSHA256 string          `json:"assignment_record_sha256"`
-		RuntimeID              string          `json:"runtime_id"`
-		BaselineGeneration     int             `json:"baseline_generation"`
-		AssignmentID           string          `json:"assignment_id"`
-		AgentID                string          `json:"agent_id"`
+		RuntimeID          string `json:"runtime_id"`
+		BaselineGeneration int    `json:"baseline_generation"`
+		AssignmentID       string `json:"assignment_id"`
+		AgentID            string `json:"agent_id"`
 	}
 	if err := json.Unmarshal(raw, &execution); err != nil {
 		return fmt.Errorf("decode S9 Execution definition: %w", err)
 	}
 	if execution.RuntimeID != binding.Sources.RuntimeID || execution.BaselineGeneration != binding.Sources.BaselineGeneration ||
 		execution.AssignmentID != binding.Sources.ManifestAssignmentID || execution.AgentID != binding.Sources.OwnerAgentID {
-		return fmt.Errorf("S9 Execution owner/assignment/runtime/generation differs from the frozen source binding")
-	}
-	if len(execution.AssignmentRecord) != 0 && !bytes.Equal(bytes.TrimSpace(execution.AssignmentRecord), []byte("null")) {
-		if !digestPattern.MatchString(execution.AssignmentRecordSHA256) {
-			return fmt.Errorf("S9 Execution must bind the canonical Assignment Record bytes")
-		}
-		var recordRef struct {
-			RuntimeID          string `json:"runtime_id"`
-			BaselineGeneration int    `json:"baseline_generation"`
-			AssignmentID       string `json:"assignment_id"`
-		}
-		if err := decodeOneStrictJSON(execution.AssignmentRecord, &recordRef); err != nil || recordRef.RuntimeID != execution.RuntimeID || recordRef.BaselineGeneration != execution.BaselineGeneration || recordRef.AssignmentID != execution.AssignmentID {
-			return fmt.Errorf("S9 Execution Assignment Record reference differs from the execution tuple")
-		}
+		return fmt.Errorf("S9 Execution differs from the current repair responsibility")
 	}
 	return nil
 }

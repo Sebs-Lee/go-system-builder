@@ -88,7 +88,7 @@ func (s *Service) SaveRepairResultResolutionFrom(ctx context.Context, path strin
 	owner := packet.Binding.Sources.OwnerAgentID
 	capability, prior, err := repair.PrepareIssuedRepairResultResolution(ctx, s.Root, s.StatePath, s.JournalPath, repair.PrepareIssuedRepairResultResolutionRequest{
 		ExpectedRevision: snapshot.Revision, PacketID: packet.ID, OwnerAgentID: owner,
-		AuthoringPath: rel, AuthorizeMain: authorizeMain,
+		AuthoringPath: rel,
 	})
 	if err != nil {
 		return rejected(snapshot, packet.ID, err), err
@@ -123,7 +123,7 @@ func repairResultResolutionReceipt(root string, snapshot loopruntime.Snapshot, p
 		return result, err
 	}
 	if !accepted {
-		return result, errors.New("original S9 Main resolution CAS has no verifiable receipt")
+		return result, errors.New("S9 Main recovery decision has not been recorded")
 	}
 	result.Accepted = true
 	result.ResponsibilityStatus = "blocker_resolution_recorded"
@@ -131,8 +131,8 @@ func repairResultResolutionReceipt(root string, snapshot loopruntime.Snapshot, p
 	result.WorkComplete = false
 	result.ConsumerOwner, result.ConsumerPending = "main", true
 	result.DomainRefs = []string{original.MessageRef, original.BlockerRef}
-	result.WaitingOn = []Waiting{{Reason: "a new verified Resume successor is required", Owner: "Main", Ref: packet.ID}}
-	result.NextAction = "Main 恢复决定已由原生命周期接收；原责任尝试已结束，旧答卷路径不再接收。Main 下一次进入 SessionStart 或 PreToolUse 时，原监听器会准备继任 RepairResult 的准确问卷路径；Worker 按新路径继续。"
+	result.WaitingOn = []Waiting{{Reason: "Main must continue the recovered responsibility and prepare its current Result questionnaire", Owner: "Main", Ref: packet.ID}}
+	result.NextAction = fmt.Sprintf("Main 恢复决定已记录；Main 按实际恢复安排继续，并显式运行原 runtime workspace prepare --root %q --assignment %q --agent %q，沿该执行当前已选择的 --check-location 准备准确 Result 卷。继任卷尚未准备前保持待办；普通监听不会自动准备，旧已接收内容无需重交。", root, packet.Binding.Sources.ManifestAssignmentID, owner)
 	return result, nil
 }
 

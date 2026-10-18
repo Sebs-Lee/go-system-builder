@@ -312,13 +312,16 @@ supplied by the Hook; the save adapters call the original begin/report
 operations. That Builder uses its returned `commit_command` for the original
 delivery commit. Main receives the Result and runs the original integration.
 Explicit lifecycle commands
-remain compatibility/diagnostic adapters. For S9, Main registers the
-PlanReport Assignment and prepares/launches its Worker. The Hook supplies the
-exact PlanReport answer path; saving the professional answer updates the
-existing plan-checkpoint/AgentBegin projection. After every required PlanReport
-is accepted, let the original graph/listener advance to `fixing`; do not run a
-manual execution-begin command on the normal path. After implementation, the
-Hook supplies the exact RepairResult answer path.
+remain compatibility/diagnostic adapters. For S9, Main saves the original
+professional division; the original issuer supplies each Builder's exact
+Main-root PlanReport view/answer paths and current-step brief for Main to carry
+verbatim into the native task. The Builder performs real prechecks and personally
+saves PlanReport there, then waits without implementing; that save updates the
+existing plan-checkpoint/AgentBegin projection. After every original required
+report and condition is ready, the system calls original BeginRepairExecution;
+Main then uses the original registered Worker prepare/launch flow, and the
+Builder implements only at the prepared Worker root with its current RepairResult
+path. Do not run a manual execution-begin command on the normal path.
 The Builder fills the professional result and saves it; the original consumer
 checks the answer, actual Git changes and required checks, then projects the
 same result onto the existing completion record. Do not send an extra generic

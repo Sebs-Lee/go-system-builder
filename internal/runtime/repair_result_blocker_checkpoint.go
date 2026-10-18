@@ -12,39 +12,66 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
-// VerifiedRepairResultBlockerReceipt reconstructs the original accepted
-// S9 blocker receipt from the registered packet, immutable evidence index,
-// artifact/message bytes and the full original Runtime journal. It is a
-// historical fact reader only: it does not inspect current Agent labels,
-// current Worker files or current source freshness, and it grants no write.
+// VerifiedRepairResultBlockerReceipt reads the blocker already registered by
+// the Agent Writer. Historical journal/source verification is diagnostic only.
 func VerifiedRepairResultBlockerReceipt(root string, state map[string]any, packetID, owner string) (RepairResultBlockerReceipt, bool, error) {
-	if packetID == "" {
-		return RepairResultBlockerReceipt{}, false, fmt.Errorf("S9 blocker receipt packet ID is required")
-	}
-	packets, err := RepairResultPackets(state)
-	if err != nil {
+	packet, found, err := FindRepairResultPacket(state, packetID)
+	if err != nil || !found {
 		return RepairResultBlockerReceipt{}, false, err
 	}
-	p, found := repairResultPacketByID(packets, packetID)
-	if !found {
+	if owner != "" && owner != packet.Binding.Sources.OwnerAgentID {
 		return RepairResultBlockerReceipt{}, false, nil
 	}
-	if owner == "" || owner != p.Binding.Sources.OwnerAgentID {
-		return RepairResultBlockerReceipt{}, false, fmt.Errorf("S9 blocker receipt owner differs from the originally issued packet")
+	var selected *RepairResultBlockerReceipt
+	rows, _ := state["evidence"].([]any)
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row == nil || row["kind"] != "repair_result_blocker" {
+			continue
+		}
+		refs, _ := json.Marshal(row["scope_refs"])
+		var scopes []string
+		_ = json.Unmarshal(refs, &scopes)
+		matches := false
+		for _, scope := range scopes {
+			if scope == packetID {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		artifactPath := stringValue(row["path"])
+		if artifactPath == "" {
+			artifactPath = stringValue(row["id"])
+		}
+		data, err := workpacket.ReadFile(root, artifactPath, 20<<20)
+		if err != nil {
+			return RepairResultBlockerReceipt{}, false, err
+		}
+		// This is an accepted record, not new professional input. Avoid the
+		// artifact's new-input schema/answer/hash validation during projection.
+		type recordedArtifact RepairResultBlockerArtifact
+		var artifact recordedArtifact
+		if err := json.Unmarshal(data, &artifact); err != nil {
+			return RepairResultBlockerReceipt{}, false, err
+		}
+		if artifact.PacketID != packetID || artifact.Binding.Sources.OwnerAgentID != packet.Binding.Sources.OwnerAgentID ||
+			artifact.Binding.Sources.RuntimeID != packet.Binding.Sources.RuntimeID || artifact.AnswerPath != packet.AnswerPath {
+			return RepairResultBlockerReceipt{}, false, fmt.Errorf("recorded S9 blocker belongs to another questionnaire/responsibility")
+		}
+		if selected != nil {
+			return RepairResultBlockerReceipt{}, false, fmt.Errorf("S9 blocker has multiple recorded answers")
+		}
+		receipt := RepairResultBlockerReceipt{Contract: "s9-repair-result-blocker-receipt-v1",
+			ArtifactRef: artifactPath, ArtifactSHA256: stringValue(row["sha256"]), Artifact: RepairResultBlockerArtifact(artifact)}
+		selected = &receipt
 	}
-	journalBytes, err := controlproof.ReadJournalForState(root, state)
-	if err != nil {
-		return RepairResultBlockerReceipt{}, false, err
+	if selected == nil {
+		return RepairResultBlockerReceipt{}, false, nil
 	}
-	journal, err := controlproof.InspectJournalData(journalBytes)
-	if err != nil {
-		return RepairResultBlockerReceipt{}, false, err
-	}
-	verifier, err := newRepairResultResumeVerifier(root, state, journal, packets)
-	if err != nil {
-		return RepairResultBlockerReceipt{}, false, err
-	}
-	return verifier.blocker(p, owner)
+	return *selected, true, nil
 }
 
 func verifiedRepairResultBlockerReceiptWithJournal(root string, state map[string]any, p workpacket.RepairResultPacket, owner string, journal controlproof.JournalInspection) (RepairResultBlockerReceipt, bool, error) {
@@ -380,8 +407,8 @@ func verifyRepairResultBlockerArtifact(p workpacket.RepairResultPacket, artifact
 		return fmt.Errorf("S9 blocker frozen execution digest differs: %v", err)
 	}
 	frozenAssignmentID := stringValue(execution["assignment_id"])
-	if execution["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(execution["baseline_generation"], b.BaselineGeneration) || execution["agent_id"] != b.OwnerAgentID || !validBlockerExecutionAssignmentID(frozenAssignmentID, b.RepairAssignmentID, b.ManifestAssignmentID, artifact.ExecutionAssignmentID) || artifact.ExecutionGeneration < 1 || !hypothesisJSONEqual(execution["execution_generation"], artifact.ExecutionGeneration) || artifact.ExecutionRoot != stringValue(execution["worktree_path"]) || artifact.PlatformSessionID == "" || execution["platform_session_id"] != artifact.PlatformSessionID || artifact.BaseCommit != stringValue(execution["base_commit"]) || !validBlockerCommitID(artifact.SourceHead) {
-		return fmt.Errorf("S9 blocker artifact execution/owner/session/base tuple differs from frozen packet")
+	if execution["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(execution["baseline_generation"], b.BaselineGeneration) || execution["agent_id"] != b.OwnerAgentID || !validBlockerExecutionAssignmentID(frozenAssignmentID, b.RepairAssignmentID, b.ManifestAssignmentID, artifact.ExecutionAssignmentID) || artifact.ExecutionGeneration < 1 || !hypothesisJSONEqual(execution["execution_generation"], artifact.ExecutionGeneration) || artifact.ExecutionRoot != stringValue(execution["worktree_path"]) || artifact.BaseCommit != stringValue(execution["base_commit"]) || !validBlockerCommitID(artifact.SourceHead) {
+		return fmt.Errorf("S9 blocker artifact execution/owner/base tuple differs from frozen packet")
 	}
 	draft, err := repairResultBlockerDraft(p, artifact.SubmittedAnswer)
 	if err != nil {

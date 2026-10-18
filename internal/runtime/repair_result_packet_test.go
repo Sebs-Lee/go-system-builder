@@ -86,6 +86,33 @@ func newRepairResultRuntimeFixture(t *testing.T) repairResultRuntimeFixture {
 }
 
 func TestRepairResultPacketSourcesAndCheckpointFiltering(t *testing.T) {
+	t.Run("professional records do not replay planning qualifications", func(t *testing.T) {
+		f := newRepairResultRuntimeFixture(t)
+		var report map[string]any
+		if err := json.Unmarshal(f.packet.Inputs.PlanReport, &report); err != nil {
+			t.Fatal(err)
+		}
+		delete(report, "receipt")
+		report["red_checks"] = []any{map[string]any{"name": "actual earlier observation", "command": "different precheck", "result": "blocked", "evidence_refs": []string{"local observation"}}}
+		data, _ := json.Marshal(report)
+		if err := os.WriteFile(filepath.Join(f.plan.root, f.packet.Binding.PlanReportRef), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		// Neither Plan issuance/receipt nor Begin chronology is required to
+		// associate these records. This check reads no journal or source closure.
+		if err := VerifyRepairResultSources(f.plan.root, f.plan.state, f.packet, 0); err != nil {
+			t.Fatalf("readable professional records rejected: %v", err)
+		}
+		delete(f.execution, "required_checks")
+		delete(f.execution, "check_profiles")
+		f.packet.Inputs.Execution, _ = ProjectRepairResultExecution(f.execution)
+		if err := VerifyRepairResultSources(f.plan.root, f.plan.state, f.packet, 0); err != nil {
+			t.Fatalf("missing Main check configuration prevented recording: %v", err)
+		}
+		if _, accepted, err := VerifiedRepairResultCandidateReceipt(f.plan.root, f.plan.state, f.packet.ID, f.packet.Binding.Sources.OwnerAgentID); accepted {
+			t.Fatalf("source association manufactured a completed candidate: %v", err)
+		}
+	})
 	f := newRepairResultRuntimeFixture(t)
 	if err := VerifyRepairResultPacketIssue(f.plan.root, f.plan.state, f.packet); err != nil {
 		t.Fatal(err)

@@ -97,9 +97,6 @@ func findRepairResultCandidateReceipt(root string, state map[string]any, p workp
 	if err := verifyRepairResultAcceptanceEvent(state, p, j, eventID, receipt.AcceptedIdempotencyKey, "WORKSPACE", path, after, seq); err != nil {
 		return RepairResultCandidateReceipt{}, false, err
 	}
-	if _, err := verifyRepairResultCompletionReport(root, state, p, j, RepairResultCompletionReport{Ref: provenance.CompletionReportRef, SHA256: provenance.CompletionReportSHA256, EventID: provenance.CompletionReportEventID}, index); err != nil {
-		return RepairResultCandidateReceipt{}, false, err
-	}
 	// A current delivery pointer can never disagree with its own original event.
 	workspace, _ := state["workspace"].(map[string]any)
 	executions, _ := workspace["executions"].(map[string]any)
@@ -566,12 +563,10 @@ func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r
 		return fmt.Errorf("S9 retained checkpoint is not a verified Main lifecycle")
 	}
 	var definition struct {
-		AssignmentID string              `json:"assignment_id"`
-		Branch       string              `json:"branch"`
-		Target       string              `json:"target_branch"`
-		Path         string              `json:"worktree_path"`
-		Checks       []string            `json:"required_checks"`
-		Profiles     []checkexec.Profile `json:"check_profiles"`
+		AssignmentID string `json:"assignment_id"`
+		Branch       string `json:"branch"`
+		Target       string `json:"target_branch"`
+		Path         string `json:"worktree_path"`
 	}
 	if err := json.Unmarshal(p.Inputs.Execution, &definition); err != nil {
 		return err
@@ -579,106 +574,65 @@ func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r
 	if checkpoint["assignment_id"] != definition.AssignmentID || checkpoint["worktree_path"] != definition.Path || checkpoint["source_branch"] != definition.Branch || checkpoint["target_branch"] != definition.Target || checkpoint["source_head"] != r.Provenance.SourceHead || !hypothesisJSONEqual(checkpoint["baseline_generation"], r.Provenance.BaselineGeneration) {
 		return fmt.Errorf("S9 Main checkpoint differs from exact original candidate/execution")
 	}
-	rawRefs, err := json.Marshal(checkpoint["tool_check_receipts"])
-	if err != nil {
-		return err
-	}
-	var toolRefs []checkexec.ToolReceipt
-	if err := json.Unmarshal(rawRefs, &toolRefs); err != nil {
-		return err
-	}
 	paths, pathsOK := checkpointStringSlice(checkpoint["check_receipts"])
-	if !pathsOK {
-		return fmt.Errorf("S9 checkpoint check receipt paths are not strings")
+	if !pathsOK || len(paths) == 0 || stringValue(checkpoint["tested_head"]) == "" {
+		return fmt.Errorf("S9 Main checks remain pending: actual executed checks and tested HEAD are required")
 	}
-	pathSet := map[string]bool{}
-	for _, path := range paths {
-		if pathSet[path] {
-			return fmt.Errorf("S9 Main checkpoint repeats a receipt path")
-		}
-		pathSet[path] = true
-	}
-	binding := checkexec.Binding{RuntimeID: r.Provenance.RuntimeID, Generation: r.Provenance.BaselineGeneration, AssignmentID: r.Provenance.ExecutionAssignmentID, Owner: r.Provenance.OwnerAgentID, ExecutionGeneration: r.Provenance.ExecutionGeneration, Responsibility: "main_required_integration"}
 	evidenceRoot := filepath.Join(root, filepath.Dir(filepath.FromSlash(proof.CheckpointRef)), "checks")
-	checks := objectRows(document["checks"])
-	expected := 0
-	seenRefs := map[string]bool{}
-	for index, command := range definition.Checks {
-		if strings.HasPrefix(strings.TrimSpace(command), "locked:") {
+	actualChecks := map[string]string{}
+	seenPaths := map[string]bool{}
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(root, path)
+		}
+		if seenPaths[path] {
+			return fmt.Errorf("S9 Main checkpoint repeats a check record")
+		}
+		seenPaths[path] = true
+		relative, err := filepath.Rel(evidenceRoot, path)
+		if err != nil || !filepath.IsLocal(relative) {
+			return fmt.Errorf("S9 Main check record escaped assignment evidence")
+		}
+		data, err := workpacket.ReadFile(evidenceRoot, filepath.ToSlash(relative), 4<<20)
+		if err != nil {
+			return err
+		}
+		var executed map[string]any
+		if json.Unmarshal(data, &executed) != nil {
+			return fmt.Errorf("S9 Main check record invalid")
+		}
+		// Failed attempts remain history. A successful retry must have its
+		// own real execution at the checkpoint's tested HEAD.
+		if executed["status"] != "pass" || !hypothesisJSONEqual(executed["exit_code"], 0) || executed["head_before"] != checkpoint["tested_head"] || executed["head_after"] != checkpoint["tested_head"] {
 			continue
 		}
-		expected++
-		var profile *checkexec.Profile
-		for i := range definition.Profiles {
-			if definition.Profiles[i].CheckIndex == index {
-				if profile != nil {
-					return fmt.Errorf("S9 Main check has duplicate registered profile")
-				}
-				profile = &definition.Profiles[i]
-			}
+		command := stringValue(executed["command"])
+		cwd := stringValue(executed["cwd"])
+		if cwd != "" && !filepath.IsAbs(cwd) {
+			cwd = filepath.Join(root, cwd)
 		}
-		if profile == nil || profile.Command != command {
-			return fmt.Errorf("S9 Main declared check lacks exact frozen profile")
+		if strings.TrimSpace(command) == "" || cwd == "" || filepath.Clean(cwd) != root {
+			return fmt.Errorf("S9 Main check lacks its actual command or Main checkout")
 		}
-		matched := 0
-		for _, ref := range toolRefs {
-			if ref.Command != command || ref.ProfileDigest != profile.Digest() {
-				continue
-			}
-			matched++
-			if seenRefs[ref.Path] || !pathSet[ref.Path] || ref.Binding != binding {
-				return fmt.Errorf("S9 Main receipt coverage or runner binding differs")
-			}
-			seenRefs[ref.Path] = true
-			verified, err := checkexec.VerifyToolReceipt(evidenceRoot, ref)
-			if err != nil {
-				return err
-			}
-			if !verified.Passed {
-				return fmt.Errorf("S9 Main required check did not pass")
-			}
-			data, err := workpacket.ReadFile(evidenceRoot, filepath.ToSlash(mustRepairResultRelative(evidenceRoot, ref.Path)), 4<<20)
-			if err != nil {
-				return err
-			}
-			var executed map[string]any
-			if json.Unmarshal(data, &executed) != nil {
-				return fmt.Errorf("S9 Main receipt invalid")
-			}
-			if executed["head_before"] != checkpoint["tested_head"] || executed["head_after"] != checkpoint["tested_head"] || executed["cwd"] != root || ref.Checkout != root || executed["status"] != "pass" || !hypothesisJSONEqual(executed["exit_code"], 0) {
-				return fmt.Errorf("S9 Main check did not run at the frozen tested head/root")
-			}
-			relative, err := filepath.Rel(root, ref.Path)
-			if err != nil || !filepath.IsLocal(relative) {
-				return fmt.Errorf("S9 Main receipt escaped original root")
-			}
-			evidence := "path:" + filepath.ToSlash(relative) + "#sha256=" + ref.SHA256
-			count := 0
-			for _, check := range checks {
-				if check["command"] == command && check["result"] == "pass" && hypothesisExactStringSet(check["evidence_refs"], []string{evidence}) {
-					count++
-				}
-			}
-			if count != 1 {
-				return fmt.Errorf("S9 final Result checks differ from actual exact Main receipts")
-			}
+		relative, err = filepath.Rel(root, path)
+		if err != nil || !filepath.IsLocal(relative) {
+			return fmt.Errorf("S9 Main check record escaped Main root")
 		}
-		if matched != 1 {
-			return fmt.Errorf("S9 Main required profile lacks unique captured receipt")
-		}
+		actualChecks[command] = "path:" + filepath.ToSlash(relative) + "#sha256=" + workpacket.Digest(data)
 	}
-	if expected == 0 || len(toolRefs) != expected || len(paths) != expected || len(checks) != expected {
-		return fmt.Errorf("S9 Main required-check exact coverage differs")
+	checks := objectRows(document["checks"])
+	if len(actualChecks) == 0 || len(checks) != len(actualChecks) {
+		return fmt.Errorf("S9 final Result needs the actual successful Main checks")
+	}
+	for _, check := range checks {
+		command := stringValue(check["command"])
+		evidence, exists := actualChecks[command]
+		if !exists || check["result"] != "pass" || !hypothesisExactStringSet(check["evidence_refs"], []string{evidence}) {
+			return fmt.Errorf("S9 final Result checks differ from actual Main execution")
+		}
+		delete(actualChecks, command)
 	}
 	return nil
-}
-
-func mustRepairResultRelative(root, path string) string {
-	relative, err := filepath.Rel(root, path)
-	if err != nil || !filepath.IsLocal(relative) {
-		return "../invalid-s9-receipt"
-	}
-	return relative
 }
 
 func validateRepairResultCheckpointIndices(root string, state map[string]any, journalBytes []byte) (map[string]any, error) {

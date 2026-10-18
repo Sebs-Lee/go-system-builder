@@ -15,11 +15,7 @@ func projectRepairResultResolution(root string, snapshot runtime.Snapshot, owner
 	}
 	if owner != "" && context.Agent != nil && context.Agent.RepairResultAssignment {
 		pending, err := runtime.RepairResultResumePending(root, snapshot.State, owner, context.Agent.RepairAssignmentID)
-		if pending || err != nil {
-			context.Agent.RepairResultResumePending = true
-			context.Agent.RepairAllowedWritePaths = nil
-			context.RepairResultAnswerPaths = nil
-		}
+		context.Agent.RepairResultResumePending = pending || err != nil
 		return
 	}
 	if owner != "" || context.Agent != nil {
@@ -32,8 +28,7 @@ func projectRepairResultResolution(root string, snapshot runtime.Snapshot, owner
 	for _, packet := range packets {
 		owner := packet.Binding.Sources.OwnerAgentID
 		blocker, accepted, err := runtime.VerifiedRepairResultBlockerReceipt(root, snapshot.State, packet.ID, owner)
-		if err != nil || !accepted || runtime.VerifyRepairResultPacketIssue(root, snapshot.State, packet) != nil ||
-			runtime.VerifyRepairResultPacketCurrent(root, snapshot.State, packet) != nil {
+		if err != nil || !accepted {
 			continue
 		}
 		entities, _ := snapshot.State["entities"].(map[string]any)

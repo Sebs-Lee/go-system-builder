@@ -7,18 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/agentauth"
 	"github.com/entroforge/go-system-builder/internal/controlproof"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
-	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 const repairPlanReportAnswerLimit int64 = 20 << 20
@@ -44,35 +41,6 @@ type issuedPlanReportCapability struct {
 	answer    json.RawMessage
 	answerSHA string
 	source    string
-	authorize func(root string, state map[string]any) error
-}
-
-// ValidateRepairPlanReportAuthoringStage permits a current issued S9
-// PlanReport to be saved before the generic PLAN checkpoint, but only for the
-// exact plan_checkpoint Builder still in its original reading state. Callers
-// must separately validate this packet's issuance and current Assignment.
-func ValidateRepairPlanReportAuthoringStage(root string, state map[string]any, owner string) error {
-	if err := agentauth.ValidateWorkingAuthorization(root, state, owner); err == nil {
-		return nil
-	} else {
-		entities, _ := state["entities"].(map[string]any)
-		rows, _ := entities["agents"].([]any)
-		var found map[string]any
-		for _, raw := range rows {
-			row, _ := raw.(map[string]any)
-			if row == nil || row["id"] != owner {
-				continue
-			}
-			if found != nil {
-				return err
-			}
-			found = row
-		}
-		if found == nil || workstate.AgentActivity(found) != "reading" || found["dispatch_mode"] != "plan_checkpoint" {
-			return err
-		}
-		return nil
-	}
 }
 
 func validateIssuedPlanReportCapability(root string, state map[string]any, req SubmitPlanReportRequest, report PlanReport, _ bool) error {
@@ -81,71 +49,19 @@ func validateIssuedPlanReportCapability(root string, state map[string]any, req S
 		return errors.New("missing private S9 issued PlanReport capability")
 	}
 	packet, found, err := runtimepkg.FindRepairPlanReportPacket(state, capability.packet.ID)
-	if err != nil || !found || !sameRepairPlanReportPacket(packet, capability.packet) {
-		return fmt.Errorf("S9 packet is no longer the exact registered Runtime packet: %v", err)
+	if err != nil || !found {
+		return fmt.Errorf("S9 current Plan packet is unavailable: %v", err)
 	}
-	if req.Actor != capability.packet.Binding.OwnerAgentID || report.AgentID != capability.packet.Binding.OwnerAgentID || report.ReportID != capability.packet.ReportID ||
-		report.SessionID != capability.packet.Binding.SessionID || report.PlanID != capability.packet.Binding.PlanID || report.AssignmentID != capability.packet.Binding.RepairAssignmentID {
-		return errors.New("S9 PlanReport actor or original Assignment tuple differs from the private packet capability")
-	}
-	if report.Receipt == nil || !reflect.DeepEqual(*report.Receipt, capability.receipt) || capability.receipt.PacketID != capability.packet.ID ||
-		capability.receipt.AnswerSHA256 != capability.answerSHA || capability.receipt.ReportRef != req.Report.Path ||
-		capability.receipt.ReportID != report.ReportID || capability.receipt.WorkComplete {
-		return errors.New("S9 PlanReport receipt does not match the private accepted-answer capability")
-	}
-	if err := runtimepkg.VerifyRepairPlanReportPacketIssue(root, state, capability.packet); err != nil {
-		return err
-	}
-	if err := runtimepkg.VerifyRepairPlanReportCurrent(root, state, capability.packet); err != nil {
-		return err
-	}
-	revision, ok := integerForRepairReport(state["revision"])
-	if !ok || revision < 0 {
-		return errors.New("S9 current Runtime revision is invalid")
-	}
-	if err := runtimepkg.VerifyRepairPlanReportSources(root, state, capability.packet, revision+1); err != nil {
-		return err
-	}
-	if capability.authorize != nil {
-		if err := capability.authorize(root, state); err != nil {
-			return err
-		}
-	}
-	registeredRoot, err := repairPlanReportSourceRoot(root, state, capability.packet)
-	if err != nil || !sameAbsolutePath(registeredRoot, capability.source) {
-		return errors.New("S9 PlanReport authoring root no longer matches registered execution authority")
-	}
-	answerBytes, err := workpacket.ReadFile(capability.source, capability.packet.AnswerPath, repairPlanReportAnswerLimit)
-	if err != nil {
-		return err
-	}
-	answer, problems := workpacket.ValidateRepairPlanReportAnswer(capability.packet, answerBytes)
-	if len(problems) > 0 || workpacket.Digest(answer) != capability.answerSHA || !bytesEqualRepairPlanReportAnswer(answer, capability.answer) {
-		return runtimepkg.ErrSubmissionConflict
-	}
-	if err := ValidateRepairPlanReportAuthoringStage(root, state, capability.packet.Binding.OwnerAgentID); err != nil {
-		return err
-	}
-	issueAt, err := repairPlanReportIssueTime(root, state, capability.packet)
-	if err != nil {
-		return err
-	}
-	if report.ReportedAt != issueAt.UTC().Format(time.RFC3339Nano) {
-		return errors.New("S9 PlanReport reported_at is not derived from the original PACKET-ISSUE event")
-	}
-	var professional workpacket.RepairPlanReportProfessionalAnswer
-	if err := json.Unmarshal(capability.answer, &professional); err != nil {
-		return err
-	}
-	if report.Plan != professional.Plan || !reflect.DeepEqual(report.ProposedPaths, professional.ProposedPaths) {
-		return errors.New("S9 PlanReport professional projection differs from the accepted packet answer")
-	}
-	wantChecks := make([]RepairCheck, len(professional.RedChecks))
-	for i, check := range professional.RedChecks {
-		wantChecks[i] = RepairCheck{Name: check.Name, Command: check.Command, Result: check.Result, EvidenceRefs: append([]string(nil), check.EvidenceRefs...)}
-	}
-	if !reflect.DeepEqual(report.RedChecks, wantChecks) {
-		return errors.New("S9 PlanReport red-check projection differs from the accepted packet answer")
+	b := packet.Binding
+	pointer := repairPointer(state)
+	baseline, _ := state["baseline"].(map[string]any)
+	generation, _ := integerForRepairReport(baseline["generation"])
+	if state["runtime_id"] != b.RuntimeID || generation != b.BaselineGeneration ||
+		pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef ||
+		stringMapField(pointer["assignment_owners"])[b.RepairAssignmentID] != b.OwnerAgentID ||
+		req.Actor != b.OwnerAgentID || report.AgentID != b.OwnerAgentID || report.AssignmentID != b.RepairAssignmentID ||
+		report.PlanID != b.PlanID || report.SessionID != b.SessionID || report.ReportID != packet.ReportID {
+		return errors.New("S9 Plan report does not correspond to the current responsibility")
 	}
 	return nil
 }
@@ -175,20 +91,11 @@ func IssueRepairPlanReportPackets(root, statePath, journalPath string, expectedR
 	}
 	issued := make([]workpacket.RepairPlanReportPacket, 0, len(candidates))
 	for _, packet := range candidates {
-		if err := runtimepkg.VerifyRepairPlanReportSources(root, current.State, packet, current.Revision+1); err != nil {
-			return nil, fmt.Errorf("S9 packet source closure for Assignment %s: %w", packet.Binding.RepairAssignmentID, err)
-		}
 		if prior, found, err := runtimepkg.FindRepairPlanReportPacket(current.State, packet.ID); err != nil {
 			return nil, err
 		} else if found {
 			if !sameRepairPlanReportPacket(prior, packet) {
 				return nil, fmt.Errorf("S9 packet identity %s is already registered with different frozen sources", packet.ID)
-			}
-			if err := runtimepkg.VerifyRepairPlanReportPacketIssue(root, current.State, prior); err != nil {
-				return nil, fmt.Errorf("S9 packet %s has no exact original issuance: %w", packet.ID, err)
-			}
-			if err := runtimepkg.VerifyRepairPlanReportCurrent(root, current.State, prior); err != nil {
-				return nil, err
 			}
 			issued = append(issued, prior)
 			continue
@@ -210,12 +117,6 @@ func IssueRepairPlanReportPackets(root, statePath, journalPath string, expectedR
 		stored, found, err := runtimepkg.FindRepairPlanReportPacket(latest.State, packet.ID)
 		if err != nil || !found || !sameRepairPlanReportPacket(stored, packet) {
 			return nil, fmt.Errorf("S9 packet %s was not retained exactly by the original Runtime writer: %v", packet.ID, err)
-		}
-		if err := runtimepkg.VerifyRepairPlanReportPacketIssue(root, latest.State, stored); err != nil {
-			return nil, err
-		}
-		if err := runtimepkg.VerifyRepairPlanReportCurrent(root, latest.State, stored); err != nil {
-			return nil, err
 		}
 		issued = append(issued, stored)
 		current = latest
@@ -243,12 +144,16 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 		From: cursor, To: cursor, BaselineGeneration: packet.Binding.BaselineGeneration,
 		OccurredAt: time.Now().UTC(), RetainLastTransition: true,
 		Apply: func(state map[string]any) error {
-			if err := runtimepkg.VerifyRepairPlanReportSources(root, state, packet, current.Revision+1); err != nil {
-				return err
-			}
-			fresh, err := buildRepairPlanReportPackets(root, state, packet.Binding.OwnerAgentID)
-			if err != nil || !containsRepairPlanReportPacket(fresh, packet) {
-				return fmt.Errorf("S9 dispatch/source tuple changed before packet publication: %v", err)
+			review, _ := state["review"].(map[string]any)
+			pointer, _ := review["repair"].(map[string]any)
+			baseline, _ := state["baseline"].(map[string]any)
+			generation, _ := integerForRepairReport(baseline["generation"])
+			b := packet.Binding
+			entities, _ := state["entities"].(map[string]any)
+			if state["runtime_id"] != b.RuntimeID || generation != b.BaselineGeneration ||
+				pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 ||
+				stringMapField(pointer["assignment_owners"])[b.RepairAssignmentID] != b.OwnerAgentID {
+				return errors.New("S9 current repair responsibility changed before packet publication")
 			}
 			if existing, found, err := runtimepkg.FindRepairPlanReportPacket(state, packet.ID); err != nil {
 				return err
@@ -270,8 +175,7 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 					return fmt.Errorf("RepairAssignment %s already has issued S9 packet %s; inspect its receipt or use named recovery", b.RepairAssignmentID, other.ID)
 				}
 			}
-			entities, ok := state["entities"].(map[string]any)
-			if !ok {
+			if entities == nil {
 				return errors.New("S9 packet issue requires Runtime entities")
 			}
 			rows, ok := entities["work_packets"].([]any)
@@ -293,8 +197,7 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 	latest, readErr := writer.Snapshot()
 	if readErr == nil {
 		stored, found, findErr := runtimepkg.FindRepairPlanReportPacket(latest.State, packet.ID)
-		if findErr == nil && found && sameRepairPlanReportPacket(stored, packet) &&
-			runtimepkg.VerifyRepairPlanReportPacketIssue(root, latest.State, stored) == nil {
+		if findErr == nil && found && sameRepairPlanReportPacket(stored, packet) {
 			return nil
 		}
 	}
@@ -309,8 +212,8 @@ func buildRepairPlanReportPackets(root string, state map[string]any, ownerFilter
 	pointer, _ := review["repair"].(map[string]any)
 	casePointer, _ := review["investigation"].(map[string]any)
 	lifecycle, _ := state["lifecycle"].(map[string]any)
-	if pointer == nil || (pointer["status"] != "planning" && pointer["status"] != "reproducing") || lifecycle["state"] != "bug_resolution" ||
-		(lifecycle["phase"] != "planning" && lifecycle["phase"] != "reproducing") {
+	if pointer == nil || (pointer["status"] != "planning" && pointer["status"] != "reproducing" && pointer["status"] != "repairing") || lifecycle["state"] != "bug_resolution" ||
+		(lifecycle["phase"] != "planning" && lifecycle["phase"] != "reproducing" && lifecycle["phase"] != "fixing") {
 		return []workpacket.RepairPlanReportPacket{}, nil
 	}
 	base, _ := state["baseline"].(map[string]any)
@@ -570,10 +473,10 @@ func containsStringForRepairReport(values []string, wanted string) bool {
 
 // SubmitIssuedRepairPlanReport accepts one professional S9 answer through the
 // original immutable PlanReport writer. The receipt only records planning
-// evidence (work_complete=false); BeginRepairExecution remains a separate
-// original checkpoint.
+// evidence (work_complete=false); the same original Writer submission records
+// the Builder work-start fact without a second Begin permission transaction.
 func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req SubmitIssuedRepairPlanReportRequest) (runtimepkg.Snapshot, PlanReport, error) {
-	snapshot, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
+	snapshot, _, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
 	if err != nil {
 		return runtimepkg.Snapshot{}, PlanReport{}, err
 	}
@@ -594,11 +497,6 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	if req.SourceRoot == "" || !sameAbsolutePath(req.SourceRoot, actualSource) {
 		return snapshot, PlanReport{}, errors.New("S9 answer source root differs from the current registered Main/Worker source")
 	}
-	if req.AuthorizeSource != nil {
-		if err := req.AuthorizeSource(root, snapshot.State); err != nil {
-			return snapshot, PlanReport{}, err
-		}
-	}
 	answerBytes, err := workpacket.ReadFile(actualSource, packet.AnswerPath, repairPlanReportAnswerLimit)
 	if err != nil {
 		return snapshot, PlanReport{}, err
@@ -608,33 +506,32 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 		return snapshot, PlanReport{}, fmt.Errorf("S9 answer %s: %s (%s)", problems[0].Pointer, problems[0].Expected, problems[0].Observed)
 	}
 	answerSHA := workpacket.Digest(answer)
-	if err := runtimepkg.VerifyRepairPlanReportPacketIssue(root, snapshot.State, packet); err != nil {
-		return snapshot, PlanReport{}, err
-	}
-	if accepted, ok, receiptErr := runtimepkg.VerifiedRepairPlanReportReceipt(root, snapshot.State, packet.ID, req.OwnerAgentID); receiptErr != nil {
-		return snapshot, PlanReport{}, receiptErr
-	} else if ok {
-		if accepted.AnswerSHA256 != answerSHA || accepted.ExecutionRoot == "" || !sameAbsolutePath(accepted.ExecutionRoot, actualSource) {
+	// Same-answer replay reads only its indexed report; it does not replay
+	// historical issuance or source certification.
+	for _, ref := range existingArtifactRefs(repairPointer(snapshot.State)["plan_report_refs"]) {
+		if ref.Path != filepath.ToSlash(filepath.Join(artifactRoot, "plan-reports", packet.ReportID+".json")) {
+			continue
+		}
+		data, err := workpacket.ReadFile(root, ref.Path, repairPlanReportAnswerLimit)
+		if err != nil {
+			return snapshot, PlanReport{}, err
+		}
+		var report PlanReport
+		if err := json.Unmarshal(data, &report); err != nil {
+			return snapshot, PlanReport{}, err
+		}
+		if report.Receipt == nil || report.Receipt.PacketID != packet.ID || report.AgentID != req.OwnerAgentID ||
+			!bytesEqualRepairPlanReportAnswer(report.Receipt.SubmittedAnswer, answer) {
 			return snapshot, PlanReport{}, runtimepkg.ErrSubmissionConflict
 		}
-		report, err := loadAcceptedRepairPlanReport(root, snapshot.State, accepted)
-		return snapshot, report, err
+		return snapshot, report, nil
 	}
 	if err := checkRevision(req.ExpectedRevision, snapshot.Revision, "runtime S9 issued PlanReport answer"); err != nil {
 		return snapshot, PlanReport{}, err
 	}
-	if err := runtimepkg.VerifyRepairPlanReportCurrent(root, snapshot.State, packet); err != nil {
-		return snapshot, PlanReport{}, err
-	}
-	if err := runtimepkg.VerifyRepairPlanReportSources(root, snapshot.State, packet, snapshot.Revision+1); err != nil {
-		return snapshot, PlanReport{}, err
-	}
- if err := ValidateRepairPlanReportAuthoringStage(root, snapshot.State, req.OwnerAgentID); err != nil {
-		return snapshot, PlanReport{}, err
-	}
-	issueAt, err := repairPlanReportIssueTime(root, snapshot.State, packet)
-	if err != nil {
-		return snapshot, PlanReport{}, err
+	issueAt := req.OccurredAt
+	if issueAt.IsZero() {
+		issueAt = time.Now().UTC()
 	}
 	var professional workpacket.RepairPlanReportProfessionalAnswer
 	if err := json.Unmarshal(answer, &professional); err != nil {
@@ -648,23 +545,23 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	if err != nil {
 		return snapshot, PlanReport{}, err
 	}
-	if err := cleanupUnacceptedIssuedPlanReport(root, writer, snapshot, packet, receipt, professional, issueAt); err != nil {
+	var assignment struct {
+		AssertionIDs []string `json:"assertion_ids"`
+	}
+	if err := json.Unmarshal(packet.Inputs.RepairAssignment, &assignment); err != nil {
 		return snapshot, PlanReport{}, err
 	}
 	_, ref, err := CreatePlanReport(root, PlanReportRequest{
 		Session:      ArtifactRef{ID: packet.Binding.SessionID, Path: packet.Binding.SessionRef, SHA256: packet.Binding.SessionSHA256},
 		Plan:         ArtifactRef{ID: packet.Binding.PlanID, Path: packet.Binding.PlanRef, SHA256: packet.Binding.PlanSHA256},
-		AssignmentID: packet.Binding.RepairAssignmentID, AgentID: req.OwnerAgentID, ReportID: packet.ReportID,
+		AssignmentID: packet.Binding.RepairAssignmentID, AgentID: req.OwnerAgentID, ReportID: packet.ReportID, AssertionIDs: assignment.AssertionIDs,
 		PlanText: professional.Plan, RedChecks: checks, ProposedPaths: append([]string(nil), professional.ProposedPaths...),
 		OccurredAt: issueAt, issuedReceipt: &receipt,
 	})
 	if err != nil {
-		if recovered, recoveredReport, recoveredErr := recoverAcceptedRepairPlanReport(root, statePath, journalPath, packet, req, answerSHA, actualSource); recoveredErr == nil && recovered {
-			return recoveredReport.snapshot, recoveredReport.report, nil
-		}
 		return snapshot, PlanReport{}, err
 	}
-	capability := &issuedPlanReportCapability{packet: packet, receipt: receipt, answer: answer, answerSHA: answerSHA, source: actualSource, authorize: req.AuthorizeSource}
+	capability := &issuedPlanReportCapability{packet: packet, receipt: receipt, answer: answer, answerSHA: answerSHA, source: actualSource}
 	occurredAt := req.OccurredAt
 	if occurredAt.IsZero() {
 		occurredAt = time.Now().UTC()
@@ -674,41 +571,20 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 		Report:         ref, issued: capability,
 	})
 	if err != nil {
-		if recovered, recoveredReport, recoveredErr := recoverAcceptedRepairPlanReport(root, statePath, journalPath, packet, req, answerSHA, actualSource); recoveredErr == nil && recovered {
-			return recoveredReport.snapshot, recoveredReport.report, nil
-		}
 		return snapshot, PlanReport{}, err
-	}
-	if committed.Receipt == nil || !reflect.DeepEqual(*committed.Receipt, receipt) {
-		return next, committed, errors.New("original S9 Report consumer returned without the exact issued receipt")
-	}
-	accepted, ok, err := runtimepkg.VerifiedRepairPlanReportReceipt(root, next.State, packet.ID, req.OwnerAgentID)
-	if err != nil {
-		return next, committed, err
-	}
-	if !ok || !reflect.DeepEqual(accepted, receipt) {
-		return next, committed, errors.New("original S9 Report consumer did not retain its exact accepted receipt")
 	}
 	return next, committed, nil
 }
 
 func newRepairPlanReportReceipt(root string, snapshot runtimepkg.Snapshot, packet workpacket.RepairPlanReportPacket, answer json.RawMessage, answerSHA, executionRoot string, issueAt time.Time) (runtimepkg.RepairPlanReportReceipt, error) {
-	journalBytes, err := controlproof.ReadJournalForState(root, snapshot.State)
-	if err != nil {
-		return runtimepkg.RepairPlanReportReceipt{}, err
-	}
-	journal, err := controlproof.InspectJournalData(journalBytes)
-	if err != nil {
-		return runtimepkg.RepairPlanReportReceipt{}, err
-	}
+	journal, _ := snapshot.State["journal"].(map[string]any)
+	sequence, _ := integerForRepairReport(journal["last_sequence"])
 	commitRevision := snapshot.Revision + 1
-	if snapshot.Revision < 0 || journal.TailSequence < 0 {
-		return runtimepkg.RepairPlanReportReceipt{}, errors.New("S9 receipt cannot predict an invalid original Runtime CAS")
-	}
-	packetSHA, err := workpacket.RepairPlanReportPacketDigest(packet)
+	packetBytes, err := json.Marshal(packet)
 	if err != nil {
 		return runtimepkg.RepairPlanReportReceipt{}, err
 	}
+	packetSHA := workpacket.Digest(packetBytes)
 	b := packet.Binding
 	return runtimepkg.RepairPlanReportReceipt{
 		Contract: repairPlanReportReceiptContract, PacketID: packet.ID,
@@ -725,7 +601,7 @@ func newRepairPlanReportReceipt(root string, snapshot runtimepkg.Snapshot, packe
 		ReportID: packet.ReportID, ReportRef: filepath.ToSlash(filepath.Join(artifactRoot, "plan-reports", packet.ReportID+".json")),
 		WorkComplete: false, IssuanceEventID: packet.IssuanceEventID,
 		AcceptedEventID: "evt-s9-issued-plan-report-" + packet.ID, AcceptedIdempotencyKey: "runtime:s9:issued-plan-report:" + packet.ID,
-		AcceptedAfterRuntimeRevision: commitRevision, AcceptedSequence: journal.TailSequence + 1,
+		AcceptedAfterRuntimeRevision: commitRevision, AcceptedSequence: sequence + 1,
 	}, nil
 }
 
@@ -754,20 +630,16 @@ func repairPlanReportSourceRoot(root string, state map[string]any, packet workpa
 	if err != nil {
 		return "", err
 	}
-	registry, err := workspace.Decode(state)
-	if err != nil {
-		return "", err
+	b := packet.Binding
+	pointer := repairPointer(state)
+	baseline, _ := state["baseline"].(map[string]any)
+	generation, _ := integerForRepairReport(baseline["generation"])
+	if state["runtime_id"] != b.RuntimeID || generation != b.BaselineGeneration ||
+		pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef ||
+		stringMapField(pointer["assignment_owners"])[b.RepairAssignmentID] != b.OwnerAgentID {
+		return "", errors.New("S9 Plan packet is not the current responsibility")
 	}
-	if registry == nil {
-		return mainRoot, nil
-	}
-	if err := registry.ValidateAuthority(state); err != nil {
-		return "", err
-	}
-	if !repairPlanReportWorkerDeclared(registry, packet) {
-		return mainRoot, nil
-	}
-	return "", errors.New("S9 pre-execution PlanReport has no registered Worker authoring profile; use its Main-root packet path")
+	return mainRoot, nil
 }
 
 func repairPlanReportWorkerDeclared(registry *workspace.ExecutionRegistry, packet workpacket.RepairPlanReportPacket) bool {
@@ -919,215 +791,62 @@ func loadAcceptedRepairPlanReport(root string, state map[string]any, receipt run
 	return PlanReport{}, errors.New("S9 accepted receipt is not retained by the original repair pointer")
 }
 
+// This binding keeps normal startup attached to the recorded task and report.
+// It does not establish a write grant or require sibling PlanReports.
 type repairExecutionBeginBinding struct {
 	runtimeID          string
 	baselineGeneration int
-	reviewRound        int
 	sessionID          string
-	sessionRef         ArtifactRef
-	contractID         string
-	contractRef        ArtifactRef
-	planID             string
 	planRef            ArtifactRef
 	reportRef          ArtifactRef
-	reportRefs         []ArtifactRef
 }
 
 func captureRepairExecutionBeginBinding(root string, state map[string]any) (repairExecutionBeginBinding, PlanReport, error) {
 	pointer := repairPointer(state)
-	if pointer == nil || stringField(pointer["status"]) != "reproducing" {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires status=reproducing; submit a PlanReport first")
-	}
-	lifecycle := mapField(state, "lifecycle")
-	if lifecycle["state"] != "bug_resolution" || lifecycle["phase"] != "reproducing" {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires the original bug_resolution.reproducing cursor")
-	}
-	runtimeID := stringField(state["runtime_id"])
-	baseGeneration, ok := integerForRepairReport(mapField(state, "baseline")["generation"])
-	if runtimeID == "" || !ok || baseGeneration < 0 {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires an exact Runtime and baseline generation")
-	}
-	round, ok := integerForRepairReport(mapField(state, "review")["round"])
-	if !ok || round < 1 {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires a valid current Review round")
-	}
-	sessionID := stringField(pointer["session_id"])
-	sessionRef, err := pointerArtifact(pointer, "path", "sha256", "current RepairSession")
-	if err != nil || sessionID == "" {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires the exact current RepairSession")
-	}
-	contractID := stringField(pointer["contract_id"])
-	contractRef, err := pointerArtifact(pointer, "contract_ref", "contract_sha256", "current approved RepairContract")
-	if err != nil || contractID == "" {
-		return repairExecutionBeginBinding{}, PlanReport{}, errors.New("S9 execution begin requires the exact current approved RepairContract")
-	}
 	planRef, err := pointerArtifact(pointer, "plan_ref", "plan_sha256", "current RepairPlan")
 	if err != nil {
 		return repairExecutionBeginBinding{}, PlanReport{}, err
 	}
-	reportRef, err := pointerArtifact(pointer, "plan_report_ref", "plan_report_sha256", "current RepairPlan report")
+	reportRef, err := pointerArtifact(pointer, "plan_report_ref", "plan_report_sha256", "current PlanReport")
 	if err != nil {
 		return repairExecutionBeginBinding{}, PlanReport{}, err
 	}
-	reportRefs, err := strictPlanReportRefs(pointer["plan_report_refs"], reportRef)
-	if err != nil {
-		return repairExecutionBeginBinding{}, PlanReport{}, err
-	}
-	binding := repairExecutionBeginBinding{
-		runtimeID: runtimeID, baselineGeneration: baseGeneration, reviewRound: round,
-		sessionID: sessionID, sessionRef: sessionRef, contractID: contractID, contractRef: contractRef,
-		planRef: planRef, reportRef: reportRef, reportRefs: reportRefs,
-	}
+	binding := repairExecutionBeginBinding{runtimeID: stringField(state["runtime_id"]), baselineGeneration: baselineGeneration(state), sessionID: stringField(pointer["session_id"]), planRef: planRef, reportRef: reportRef}
 	report, err := validateRepairExecutionBeginState(root, state, binding)
-	if err != nil {
-		return repairExecutionBeginBinding{}, PlanReport{}, err
-	}
-	plan, err := ValidateRepairPlan(root, planRef)
-	if err != nil {
-		return repairExecutionBeginBinding{}, PlanReport{}, err
-	}
-	binding.planID = plan.PlanID
-	return binding, report, nil
+	return binding, report, err
 }
 
 func validateRepairExecutionBeginState(root string, state map[string]any, expected repairExecutionBeginBinding) (PlanReport, error) {
 	pointer := repairPointer(state)
-	lifecycle := mapField(state, "lifecycle")
-	baseGeneration, baseOK := integerForRepairReport(mapField(state, "baseline")["generation"])
-	round, roundOK := integerForRepairReport(mapField(state, "review")["round"])
-	if pointer == nil || stringField(state["runtime_id"]) != expected.runtimeID || !baseOK || baseGeneration != expected.baselineGeneration || !roundOK || round != expected.reviewRound ||
-		lifecycle["state"] != "bug_resolution" || lifecycle["phase"] != "reproducing" || stringField(pointer["status"]) != "reproducing" ||
-		stringField(pointer["session_id"]) != expected.sessionID || stringField(pointer["contract_id"]) != expected.contractID {
-		return PlanReport{}, errors.New("S9 Runtime, cursor, generation, Session, or Contract changed before execution begin")
-	}
-	sessionRef, err := pointerArtifact(pointer, "path", "sha256", "current RepairSession")
-	if err != nil || sessionRef != expected.sessionRef {
-		return PlanReport{}, errors.New("S9 current RepairSession reference changed before execution begin")
-	}
-	contractRef, err := pointerArtifact(pointer, "contract_ref", "contract_sha256", "current approved RepairContract")
-	if err != nil || contractRef != expected.contractRef {
-		return PlanReport{}, errors.New("S9 current approved Contract reference changed before execution begin")
+	if pointer == nil || stringField(state["runtime_id"]) != expected.runtimeID || baselineGeneration(state) != expected.baselineGeneration || stringField(pointer["session_id"]) != expected.sessionID || lifecycleState(state) != "bug_resolution" || lifecyclePhase(state) != "reproducing" || pointer["status"] != "reproducing" {
+		return PlanReport{}, errors.New("S9 current task changed before normal work startup")
 	}
 	planRef, err := pointerArtifact(pointer, "plan_ref", "plan_sha256", "current RepairPlan")
 	if err != nil || planRef != expected.planRef {
-		return PlanReport{}, errors.New("S9 current RepairPlan reference changed before execution begin")
+		return PlanReport{}, errors.New("S9 current Plan changed before normal work startup")
 	}
-	reportRef, err := pointerArtifact(pointer, "plan_report_ref", "plan_report_sha256", "current RepairPlan report")
+	reportRef, err := pointerArtifact(pointer, "plan_report_ref", "plan_report_sha256", "current PlanReport")
 	if err != nil || reportRef != expected.reportRef {
-		return PlanReport{}, errors.New("S9 current singular PlanReport reference changed before execution begin")
+		return PlanReport{}, errors.New("S9 current PlanReport changed before normal work startup")
 	}
-	reportRefs, err := strictPlanReportRefs(pointer["plan_report_refs"], reportRef)
-	if err != nil || !sameArtifactRefSequence(reportRefs, expected.reportRefs) {
-		return PlanReport{}, errors.New("S9 PlanReport reference set changed before execution begin")
-	}
-	session, err := ValidateRepairSession(root, expected.sessionRef)
-	if err != nil {
-		return PlanReport{}, fmt.Errorf("current S9 RepairSession is invalid: %w", err)
-	}
-	contract, err := ValidateApprovedContractRef(root, ContractRef{Path: expected.contractRef.Path, SHA256: expected.contractRef.SHA256})
-	if err != nil {
-		return PlanReport{}, fmt.Errorf("current S9 approved Contract is invalid: %w", err)
-	}
-	plan, err := ValidateRepairPlan(root, expected.planRef)
-	if err != nil {
-		return PlanReport{}, fmt.Errorf("current S9 RepairPlan is invalid: %w", err)
-	}
-	if session.SessionID != expected.sessionID || session.RuntimeID != expected.runtimeID || session.BaselineGeneration != expected.baselineGeneration ||
-		session.ContractRef != expected.contractRef.Path || session.ContractSHA256 != expected.contractRef.SHA256 || contract.ContractID != expected.contractID ||
-		plan.PlanID != expected.planID && expected.planID != "" || plan.SessionID != expected.sessionID || plan.ContractID != expected.contractID ||
-		plan.ContractRef != expected.contractRef.Path || plan.ContractSHA256 != expected.contractRef.SHA256 {
-		return PlanReport{}, errors.New("S9 immutable Session, Contract, and Plan identity tuple differs from current Runtime authority")
-	}
-	if len(plan.Assignments) == 0 {
-		return PlanReport{}, errors.New("S9 current RepairPlan has no Assignments to cover")
-	}
-	assignments := make(map[string]RepairAssignment, len(plan.Assignments))
-	for _, assignment := range plan.Assignments {
-		if assignment.AssignmentID == "" {
-			return PlanReport{}, errors.New("S9 current RepairPlan contains an empty Assignment identity")
-		}
-		if _, duplicate := assignments[assignment.AssignmentID]; duplicate {
-			return PlanReport{}, fmt.Errorf("S9 current RepairPlan duplicates Assignment %s", assignment.AssignmentID)
-		}
-		assignments[assignment.AssignmentID] = assignment
-	}
-	owners := stringMapField(pointer["assignment_owners"])
-	packets, err := runtimepkg.RepairPlanReportPackets(state)
+	plan, err := ValidateRepairPlan(root, planRef)
 	if err != nil {
 		return PlanReport{}, err
 	}
-	packetsByAssignment := map[string]workpacket.RepairPlanReportPacket{}
-	for _, packet := range packets {
-		binding := packet.Binding
-		if binding.RuntimeID != expected.runtimeID || binding.BaselineGeneration != expected.baselineGeneration || binding.ReviewRound != expected.reviewRound ||
-			binding.SessionID != expected.sessionID || binding.PlanID != plan.PlanID {
-			continue
-		}
-		if _, duplicate := packetsByAssignment[binding.RepairAssignmentID]; duplicate {
-			return PlanReport{}, fmt.Errorf("S9 RepairAssignment %s has multiple issued PlanReport packets", binding.RepairAssignmentID)
-		}
-		packetsByAssignment[binding.RepairAssignmentID] = packet
+	report, err := ValidatePlanReport(root, reportRef)
+	if err != nil {
+		return PlanReport{}, err
 	}
-	reportsByAssignment := make(map[string]PlanReport, len(reportRefs))
-	var singularReport PlanReport
-	for index, ref := range reportRefs {
-		report, err := ValidatePlanReport(root, ref)
-		if err != nil {
-			return PlanReport{}, fmt.Errorf("current S9 PlanReport[%d] is invalid: %w", index, err)
-		}
-		if report.SessionID != expected.sessionID || report.PlanID != plan.PlanID {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s is not bound to the current Session and Plan", ref.Path)
-		}
-		assignment, found := assignments[report.AssignmentID]
-		if !found {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s names Assignment %s outside the current Plan", ref.Path, report.AssignmentID)
-		}
-		if _, duplicate := reportsByAssignment[report.AssignmentID]; duplicate {
-			return PlanReport{}, fmt.Errorf("S9 current pointer has multiple PlanReports for Assignment %s", report.AssignmentID)
-		}
-		if err := exactIDs(assignment.AssertionIDs, report.AssertionIDs); err != nil {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s assertion coverage differs from Assignment %s: %w", ref.Path, report.AssignmentID, err)
-		}
-		if assignment.OwnerAgentID != "" && report.AgentID != assignment.OwnerAgentID {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s owner differs from immutable Assignment %s", ref.Path, report.AssignmentID)
-		}
-		if owner := owners[report.AssignmentID]; owner != "" && report.AgentID != owner {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s owner differs from current Assignment owner %s", ref.Path, owner)
-		}
-		packet, issued := packetsByAssignment[report.AssignmentID]
-		if issued {
-			if report.Receipt == nil || packet.ReportID != report.ReportID || report.Receipt.PacketID != packet.ID {
-				return PlanReport{}, fmt.Errorf("S9 issued Assignment %s is not covered by its exact accepted PlanReport packet", report.AssignmentID)
-			}
-			if err := runtimepkg.VerifyRepairPlanReportCurrent(root, state, packet); err != nil {
-				return PlanReport{}, err
-			}
-			verified, accepted, err := runtimepkg.VerifiedRepairPlanReportReceipt(root, state, packet.ID, report.AgentID)
-			if err != nil || !accepted || !reflect.DeepEqual(verified, *report.Receipt) {
-				return PlanReport{}, fmt.Errorf("S9 Assignment %s receipt is not accepted by the original Runtime journal: %v", report.AssignmentID, err)
-			}
-		} else if report.Receipt != nil {
-			return PlanReport{}, fmt.Errorf("S9 PlanReport %s has a typed receipt without its registered packet", ref.Path)
-		}
-		if ref.Path == expected.reportRef.Path && ref.SHA256 == expected.reportRef.SHA256 {
-			singularReport = report
-		}
-		reportsByAssignment[report.AssignmentID] = report
+	if report.SessionID != expected.sessionID || plan.SessionID != expected.sessionID || report.PlanID != plan.PlanID {
+		return PlanReport{}, errors.New("S9 recorded PlanReport is not attached to the current task")
 	}
-	missing := make([]string, 0)
-	for assignmentID := range assignments {
-		if _, ok := reportsByAssignment[assignmentID]; !ok {
-			missing = append(missing, assignmentID)
-		}
+	if _, found := assignmentByID(plan.Assignments, report.AssignmentID); !found {
+		return PlanReport{}, errors.New("S9 recorded PlanReport Assignment is absent from the current Plan")
 	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return PlanReport{}, fmt.Errorf("S9 execution begin is blocked: missing PlanReport for assignments %v; submit one report per assignment", missing)
+	if owner := stringMapField(pointer["assignment_owners"])[report.AssignmentID]; owner != "" && owner != report.AgentID {
+		return PlanReport{}, errors.New("S9 recorded PlanReport differs from its current responsibility")
 	}
-	if singularReport.ReportID == "" {
-		return PlanReport{}, errors.New("S9 singular current PlanReport reference is not present in the full report set")
-	}
-	return singularReport, nil
+	return report, nil
 }
 
 func strictPlanReportRefs(raw any, singular ArtifactRef) ([]ArtifactRef, error) {
@@ -1167,18 +886,6 @@ func strictPlanReportRefs(raw any, singular ArtifactRef) ([]ArtifactRef, error) 
 	return nil, errors.New("S9 singular current PlanReport is absent from plan_report_refs")
 }
 
-func sameArtifactRefSequence(left, right []ArtifactRef) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i].Path != right[i].Path || left[i].SHA256 != right[i].SHA256 {
-			return false
-		}
-	}
-	return true
-}
-
 type recoveredRepairPlanReport struct {
 	snapshot runtimepkg.Snapshot
 	report   PlanReport
@@ -1188,11 +895,6 @@ func recoverAcceptedRepairPlanReport(root, statePath, journalPath string, packet
 	snapshot, _, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
 	if err != nil {
 		return false, recoveredRepairPlanReport{}, err
-	}
-	if req.AuthorizeSource != nil {
-		if err := req.AuthorizeSource(root, snapshot.State); err != nil {
-			return false, recoveredRepairPlanReport{}, fmt.Errorf("S9 replay source callback no longer matches: %w", err)
-		}
 	}
 	actual, err := repairPlanReportSourceRoot(root, snapshot.State, packet)
 	if err != nil || !sameAbsolutePath(actual, sourceRoot) {
@@ -1239,5 +941,28 @@ func readIssuedRepairPlanReportRuntime(root, statePath, journalPath string) (run
 // original Report artifact and Runtime journal. It never interprets the draft
 // as permission or reads an unaccepted authoring file.
 func IssuedRepairPlanReportReceipt(root string, state map[string]any, packetID, owner string) (runtimepkg.RepairPlanReportReceipt, bool, error) {
-	return runtimepkg.VerifiedRepairPlanReportReceipt(root, state, packetID, owner)
+	packet, found, err := runtimepkg.FindRepairPlanReportPacket(state, packetID)
+	if err != nil || !found {
+		return runtimepkg.RepairPlanReportReceipt{}, false, err
+	}
+	if owner == "" || packet.Binding.OwnerAgentID != owner {
+		return runtimepkg.RepairPlanReportReceipt{}, false, errors.New("Plan receipt does not match its recorded responsibility")
+	}
+	for _, ref := range existingArtifactRefs(repairPointer(state)["plan_report_refs"]) {
+		if ref.Path != filepath.ToSlash(filepath.Join(artifactRoot, "plan-reports", packet.ReportID+".json")) {
+			continue
+		}
+		data, err := workpacket.ReadFile(root, ref.Path, repairPlanReportAnswerLimit)
+		if err != nil {
+			return runtimepkg.RepairPlanReportReceipt{}, false, err
+		}
+		var report PlanReport
+		if err := json.Unmarshal(data, &report); err != nil {
+			return runtimepkg.RepairPlanReportReceipt{}, false, err
+		}
+		if report.Receipt != nil && report.ReportID == packet.ReportID && report.AgentID == owner && report.Receipt.PacketID == packetID {
+			return *report.Receipt, true, nil
+		}
+	}
+	return runtimepkg.RepairPlanReportReceipt{}, false, nil
 }

@@ -51,7 +51,11 @@ func (b *ExecutionRegistry) Launch(ctx context.Context, e Execution, binary, rol
 	if resume {
 		flag = "--resume"
 	}
-	if HasDispatchContext(e) {
+	state, s9, err := b.s9AuthoringState()
+	if err != nil {
+		return err
+	}
+	if HasDispatchContext(e) && !s9 {
 		c, err := b.ReadDispatchContext(e)
 		if err != nil {
 			return err
@@ -89,7 +93,22 @@ func (b *ExecutionRegistry) Launch(ctx context.Context, e Execution, binary, rol
 			}
 		}
 	}
-	if e.Purpose == DocumentReviewPurpose {
+	if s9 {
+		var reading []string
+		if HasDispatchContext(e) {
+			c, err := b.ReadDispatchContext(e)
+			if err != nil {
+				return err
+			}
+			reading = c.ReadingOrder()
+		}
+		question := s9LaunchQuestionnaire(b.MainRoot, e, state)
+		data, _ := json.Marshal(map[string]any{"responsibility": e.AssignmentID, "main_root": b.MainRoot, "worker_root": e.Path, "input_read_order": reading, "questionnaire": question, "check_commands": workspaceCheckCommands(e)})
+		prompt += "\nCurrent S9 professional work: " + string(data) + "\nRead the supplied current questionnaire and actual input documents. Personally fill its professional answer and save the exact answer path through an editor, script or extension tool. Record actual work and real check results for this responsibility; known Git/task data is supplied. For actual source changes, use ordinary git add and git commit in this Worker, then save the supplied RepairResult answer. No-change tests require no new commit. No extra commit form or generic completion report is required. Independent verification remains separate work; Main owns real integration, necessary checks and subsequent stage handoff."
+		if len(question) == 0 {
+			prompt += " Main/system preparation gap: the current personal S9 questionnaire is not yet indexed; Main must supply its exact view/answer paths. Keep that concrete gap visible without constructing another plan or report."
+		}
+	} else if e.Purpose == DocumentReviewPurpose {
 		reviewContext := map[string]any{"assignment": e, "work_packet_ref": ".claude/inputs/work-packet.json", "answer_path": submissionPaths.Answer, "submission_paths": workerSubmissionPathProjection(DispatchContext{AnswerPath: submissionPaths.Answer}, submissionPaths), "frozen_input_root": ".claude/inputs", "receipt_command": WorkerInvocation(e, "receipt"), "review_check_command": WorkerInvocation(e, "review-check"), "observation_commands": ObservationCommands(e), "owned_check_commands": ownedCheckCommands(e)}
 		reviewPrompt := "\nRegistered S5 document review: %s\nRead the issued execution view. Each packet read[].path is authority-relative: read it below frozen_input_root. Fill only answer.conclusion/findings in the exact answer_path and save with Write/Edit; the original consumer validates and records the review. An ordinary plan_checkpoint review has no generic PLAN_REPORT or begin step. A plan_approval_required assignment still waits for its original approval. End this responsibility when work_complete=true; Main owns peer delivery, system followup and human decisions. Product writes, commit, Builder report and delivery are not granted."
 		if submissionPaths.Plan != "" {
@@ -126,7 +145,7 @@ func (b *ExecutionRegistry) Launch(ctx context.Context, e Execution, binary, rol
 			contextProjection["s9_delivery_command"] = WorkerInvocation(e, "deliver")
 		}
 		contextData, _ := json.Marshal(contextProjection)
-		prompt += "\nRegistered Harness context: " + string(contextData) + "\nRead approved input documents under .claude/inputs. Keep the Main checkout unchanged. Write only the exact lifecycle submission paths listed in submission_paths."
+		prompt += "\nRegistered Harness context: " + string(contextData) + "\nRead approved input documents under .claude/inputs. Keep the Main checkout unchanged. Save professional answers at their supplied submission paths."
 		if dispatchContext.PlanDraft != nil {
 			prompt += " Complete the supplied professional PLAN at the exact plan path. Saving it calls the original begin and activation flow automatically."
 		}
@@ -139,7 +158,7 @@ func (b *ExecutionRegistry) Launch(ctx context.Context, e Execution, binary, rol
 		if canonicalS6BuilderCommitDraft(e, dispatchContext) {
 			prompt += " " + canonicalS6CommitDraftGuidance
 		}
-		prompt += " Use the repository agent-protocol schemas. Use the observation_commands adapters for Git status, diffs and history; pwd is also allowed. Use only the exact registered adapters for other Bash; executable check commands are shown by workspace prepare."
+		prompt += " Use the repository agent-protocol schemas and actual Git/check commands appropriate to this work; workspace prepare lists the supplied check commands."
 		if dispatchContext.ResultDraft != nil || !contextBound {
 			prompt += " " + builderSubmissionOrder
 		}
@@ -160,6 +179,70 @@ func (b *ExecutionRegistry) Launch(ctx context.Context, e Execution, binary, rol
 		cmd.Env = append(cmd.Env, entry)
 	}
 	return processtree.Run(cmd)
+}
+
+// s9AuthoringState reads current stage facts once. It does not validate packet
+// identity, source hashes or receipts to choose the professional authoring flow.
+func (b *ExecutionRegistry) s9AuthoringState() (map[string]any, bool, error) {
+	data, err := os.ReadFile(filepath.Join(b.MainRoot, ".claude/loop-state.json"))
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, false, err
+	}
+	life, _ := state["lifecycle"].(map[string]any)
+	configuration, _ := state["configuration"].(map[string]any)
+	optimization, _ := configuration["optimization"].(map[string]any)
+	if life["state"] != "bug_resolution" || optimization["packet"] != true {
+		return state, false, nil
+	}
+	switch life["phase"] {
+	case "repair_readback", "planning", "reproducing", "fixing", "impact_reconciliation", "targeted_reverification", "ready_for_full_review":
+		return state, true, nil
+	}
+	return state, false, nil
+}
+
+// Bindings select only the existing personal path, never permission to work.
+// Missing questions remain preparation gaps within the same S9 workflow.
+func s9LaunchQuestionnaire(mainRoot string, e Execution, state map[string]any) map[string]string {
+	life, _ := state["lifecycle"].(map[string]any)
+	var template, root string
+	switch life["phase"] {
+	case "repair_readback", "planning", "reproducing":
+		template, root = "s9-plan-report-v1", mainRoot
+	case "fixing":
+		template, root = "s9-repair-result-v1", e.Path
+	default:
+		return nil // A later professional responsibility needs its own question.
+	}
+	entities, _ := state["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	var question map[string]string
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["template_id"] != template {
+			continue
+		}
+		binding, _ := row["binding"].(map[string]any)
+		if template == "s9-repair-result-v1" {
+			binding, _ = binding["sources"].(map[string]any)
+		}
+		if binding["owner_agent_id"] != e.AgentID || binding["manifest_assignment_id"] != e.AssignmentID && binding["repair_assignment_id"] != e.AssignmentID {
+			continue
+		}
+		view, _ := row["view_path"].(string)
+		answer, _ := row["answer_path"].(string)
+		if view != "" && answer != "" {
+			question = map[string]string{"view_path": filepath.Join(root, filepath.FromSlash(view)), "answer_path": filepath.Join(root, filepath.FromSlash(answer))}
+		}
+	}
+	return question
 }
 
 func workerSubmissionPathProjection(c DispatchContext, paths WorkerSubmissionPaths) map[string]string {

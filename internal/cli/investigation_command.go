@@ -1097,6 +1097,13 @@ func runRuntimeInvestigationContractApprove(args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, formatFailure("runtime investigation contract approve", err))
 		return 1
 	}
+	prepared, prepareErr := prepareRepairEntry(resolveRootPath(*root, "."), resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), snapshot.State)
+	if prepareErr != nil {
+		fmt.Fprintln(stderr, "S8 Contract approval recorded; S9 entry preparation: "+prepareErr.Error())
+		return 1
+	}
+	snapshot.State = prepared
+	snapshot.Revision = integerValue(prepared["revision"])
 	pointer := investigationPointer(snapshot.State)
 	fmt.Fprintf(stderr, "repair contract approve: %s is approved for Case %s; next: S9 consume the approved Contract; do not create a BUG as authority\n", pointer["repair_contract_ref"], pointer["case_id"])
 	return encodeJSON(stdout, map[string]any{

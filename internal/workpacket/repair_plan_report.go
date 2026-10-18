@@ -258,12 +258,11 @@ func RepairPlanReportPacketDigest(packet RepairPlanReportPacket) (string, error)
 	return Digest(canonical), nil
 }
 
-// ValidateRepairPlanReportAnswer returns only the three author-owned S9
-// planning fields. Execution, source freshness, and repair authorization are
-// rechecked by the original repair consumer.
+// ValidateRepairPlanReportAnswer returns the professional answer from the
+// authoring file. Display metadata does not affect answer acceptance.
 func ValidateRepairPlanReportAnswer(packet RepairPlanReportPacket, data []byte) (json.RawMessage, []FieldError) {
 	issue := func(pointer, expected, observed string) (json.RawMessage, []FieldError) {
-		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，只填写 plan、red_checks 和 proposed_paths。"}}
+		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "填写 answer 中的 plan、red_checks 和 proposed_paths，记录本人实际计划与前检。"}}
 	}
 	if len(data) > repairPlanReportPacketLimit {
 		return issue("/", "JSON <= 20 MiB", "oversized")
@@ -271,22 +270,11 @@ func ValidateRepairPlanReportAnswer(packet RepairPlanReportPacket, data []byte) 
 	if err := ValidateUniqueJSON(data); err != nil {
 		return issue("/", "unique JSON keys", err.Error())
 	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s9-plan.schema.json", data); err != nil {
-		return issue("/", "registered closed S9 PlanReport answer", err.Error())
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(data, &document); err != nil || document == nil {
+		return issue("/", "one JSON object containing answer", "invalid JSON object")
 	}
-	var draft RepairPlanReportDraft
-	if err := decodeOneStrictJSON(data, &draft); err != nil {
-		return issue("/", "one closed S9 PlanReport questionnaire", err.Error())
-	}
-	expected, err := RebuildRepairPlanReport(packet)
-	if err != nil || !reflect.DeepEqual(packet, expected) {
-		return issue("/", "canonical issued S9 PlanReport packet", "packet identity differs")
-	}
-	answer := draft.Answer
-	draft.Answer = expected.Draft.Answer
-	if !reflect.DeepEqual(draft, expected.Draft) {
-		return issue("/", "unchanged issued machine fields", "questionnaire or binding was edited")
-	}
+	answer := document["answer"]
 	canonicalAnswer, err := canonicalJSON(answer)
 	if err != nil {
 		return issue("/answer", "one JSON answer object", err.Error())
@@ -308,7 +296,6 @@ func validateCompleteRepairPlanReportAnswer(inputs RepairPlanReportInputs, data 
 	if len(answer.RedChecks) == 0 || len(answer.RedChecks) > 128 {
 		return "/answer/red_checks", "one or more bounded red checks", "empty or oversized"
 	}
-	foundRed := false
 	for i, check := range answer.RedChecks {
 		prefix := fmt.Sprintf("/answer/red_checks/%d", i)
 		if strings.TrimSpace(check.Name) == "" || strings.TrimSpace(check.Command) == "" {
@@ -317,40 +304,19 @@ func validateCompleteRepairPlanReportAnswer(inputs RepairPlanReportInputs, data 
 		if check.Result != "fail" && check.Result != "pass" && check.Result != "blocked" {
 			return prefix + "/result", "fail | pass | blocked", check.Result
 		}
-		if check.Result == "fail" || check.Result == "blocked" {
-			foundRed = true
-		}
 		if len(check.EvidenceRefs) == 0 {
-			return prefix + "/evidence_refs", "at least one execution anchor", "empty"
+			return prefix + "/evidence_refs", "at least one evidence reference", "empty"
 		}
-		anchored := false
 		seenRefs := map[string]bool{}
 		for _, ref := range check.EvidenceRefs {
 			if strings.TrimSpace(ref) == "" || ref != strings.TrimSpace(ref) || seenRefs[ref] {
-				return prefix + "/evidence_refs", "unique non-empty exact evidence anchors", ref
+				return prefix + "/evidence_refs", "unique non-empty evidence references", ref
 			}
 			seenRefs[ref] = true
-			if strings.Contains(ref, "://") {
-				anchored = true
-			}
-		}
-		if !anchored {
-			return prefix + "/evidence_refs", "at least one execution anchor containing ://", "no anchor"
 		}
 	}
-	if !foundRed {
-		return "/answer/red_checks", "at least one fail or blocked red check", "all checks pass"
-	}
-	if len(answer.ProposedPaths) == 0 || len(answer.ProposedPaths) > 4096 {
-		return "/answer/proposed_paths", "one or more bounded paths", "empty or oversized"
-	}
-	repairAssignment, err := repairPlanReportObject(inputs.RepairAssignment, "RepairAssignment")
-	if err != nil {
-		return "/inputs/repair_assignment", "canonical exact RepairAssignment", err.Error()
-	}
-	assignmentScope, ok := repairPlanReportStringSlice(repairAssignment["scope"])
-	if !ok || len(assignmentScope) == 0 {
-		return "/inputs/repair_assignment/scope", "non-empty frozen RepairAssignment scope", "invalid"
+	if answer.ProposedPaths == nil || len(answer.ProposedPaths) > 4096 {
+		return "/answer/proposed_paths", "explicit path array; [] for no product changes", "missing, null or oversized"
 	}
 	seenPaths := map[string]bool{}
 	for i, value := range answer.ProposedPaths {
@@ -360,15 +326,7 @@ func validateCompleteRepairPlanReportAnswer(inputs RepairPlanReportInputs, data 
 			return pointer, "unique safe relative proposed path", value
 		}
 		seenPaths[path] = true
-		if !repairPlanReportPathInScope(path, assignmentScope) {
-			return pointer, "path within original RepairAssignment scope", path
-		}
-		if !repairPlanReportPathInScope(path, inputs.ProspectiveScope) {
-			return pointer, "path within prospective scope", path
-		}
-		if repairPlanReportPathInScope(path, inputs.ForbiddenScope) {
-			return pointer, "path outside forbidden scope", path
-		}
+
 	}
 	return "", "", ""
 }

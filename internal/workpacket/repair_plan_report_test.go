@@ -207,25 +207,21 @@ func TestValidateRepairPlanReportAnswerKeepsOnlyProfessionalFields(t *testing.T)
 		t.Fatalf("answer projection must contain only three professional fields: %#v", projected)
 	}
 
-	mutated := map[string]any{}
-	if err := json.Unmarshal(completeBytes, &mutated); err != nil {
-		t.Fatal(err)
-	}
-	mutated["instruction"] = "edited prompt"
-	mutatedBytes, _ := json.Marshal(mutated)
-	if _, fields := ValidateRepairPlanReportAnswer(packet, mutatedBytes); len(fields) == 0 || fields[0].Pointer != "/" {
-		t.Fatalf("edited machine prompt should be rejected: %#v", fields)
+	for _, metadata := range []map[string]any{
+		{"answer": answer},
+		{"answer": answer, "title": nil, "instruction": "edited prompt", "read": "changed", "questions": map[string]any{"plan": map[string]any{"example": map[string]any{"note": "expected omitted"}}}},
+	} {
+		changed, _ := json.Marshal(metadata)
+		got, fields := ValidateRepairPlanReportAnswer(packet, changed)
+		if len(fields) != 0 || !bytes.Equal(got, projection) {
+			t.Fatalf("display metadata changed professional acceptance: fields=%#v answer=%s", fields, got)
+		}
 	}
 
 	for name, mutate := range map[string]func(map[string]any){
-		"out-of-scope": func(a map[string]any) { a["proposed_paths"] = []any{"docs/requirements/REQ-001.md"} },
-		"forbidden":    func(a map[string]any) { a["proposed_paths"] = []any{"internal/api/generated/client.go"} },
 		"noncanonical": func(a map[string]any) { a["proposed_paths"] = []any{"internal/api/../api/payload.go"} },
-		"green-only": func(a map[string]any) {
-			a["red_checks"] = []any{map[string]any{"name": "green", "command": "go test ./...", "result": "pass", "evidence_refs": []string{"test://green"}}}
-		},
-		"bare-anchor": func(a map[string]any) {
-			a["red_checks"] = []any{map[string]any{"name": "red", "command": "go test ./...", "result": "fail", "evidence_refs": []string{"observed in terminal"}}}
+		"empty-reference": func(a map[string]any) {
+			a["red_checks"] = []any{map[string]any{"name": "red", "command": "go test ./...", "result": "fail", "evidence_refs": []string{""}}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -238,6 +234,47 @@ func TestValidateRepairPlanReportAnswerKeepsOnlyProfessionalFields(t *testing.T)
 			candidateBytes, _ := json.Marshal(candidate)
 			if _, fields := ValidateRepairPlanReportAnswer(packet, candidateBytes); len(fields) == 0 {
 				t.Fatal("invalid S9 answer was accepted")
+			}
+		})
+	}
+	for _, paths := range [][]string{{}, nil} {
+		var candidate map[string]any
+		if err := json.Unmarshal(completeBytes, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		candidate["answer"].(map[string]any)["proposed_paths"] = paths
+		data, _ := json.Marshal(candidate)
+		_, fields := ValidateRepairPlanReportAnswer(packet, data)
+		if paths != nil && len(fields) != 0 {
+			t.Fatalf("explicit no-change paths rejected: %#v", fields)
+		}
+		if paths == nil && (len(fields) == 0 || fields[0].Pointer != "/answer/proposed_paths") {
+			t.Fatalf("null paths must request an explicit array: %#v", fields)
+		}
+	}
+	for _, path := range []string{"docs/requirements/REQ-001.md", "internal/api/generated/client.go"} {
+		var candidate map[string]any
+		if err := json.Unmarshal(completeBytes, &candidate); err != nil {
+			t.Fatal(err)
+		}
+		answer := candidate["answer"].(map[string]any)
+		answer["proposed_paths"] = []string{path}
+		answer["red_checks"] = []any{map[string]any{"name": "actual precheck", "command": "go test ./internal/api", "result": "pass", "evidence_refs": []string{".claude/evidence/precheck.log"}}}
+		data, _ := json.Marshal(candidate)
+		if _, fields := ValidateRepairPlanReportAnswer(packet, data); len(fields) != 0 {
+			t.Fatalf("actual pass and proposed path must be recorded: %#v", fields)
+		}
+	}
+	for _, ref := range []string{"evidence-red-1", ".claude/evidence/red.log", "test://repair-plan/before-fix"} {
+		t.Run(ref, func(t *testing.T) {
+			var candidate map[string]any
+			if err := json.Unmarshal(completeBytes, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			candidate["answer"].(map[string]any)["red_checks"] = []any{map[string]any{"name": "red", "command": "go test ./...", "result": "fail", "evidence_refs": []string{ref}}}
+			candidateBytes, _ := json.Marshal(candidate)
+			if _, fields := ValidateRepairPlanReportAnswer(packet, candidateBytes); len(fields) != 0 {
+				t.Fatalf("non-empty evidence reference was rejected by format: %#v", fields)
 			}
 		})
 	}

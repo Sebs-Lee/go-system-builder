@@ -1,8 +1,8 @@
 ---
 name: investigator
 description: Investigate one assigned S8 causal hypothesis using falsifiable evidence without modifying product code
-tools: Read, Glob, Grep, Bash, Write, Skill, SendMessage
-disallowedTools: Edit, WebFetch, WebSearch
+tools: Read, Glob, Grep, Bash, Write, Edit, MultiEdit, Skill, SendMessage
+disallowedTools: WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
@@ -20,7 +20,7 @@ You own S8 causal investigation, not symptom repair.
 
 ## Dispatch Context
 
-When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify the source hash and follow its `source_root`, `input_read_order`, installed Skill paths and frozen responsibility. Shadow context grants no permissions; use the live graph for current work status. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
+When native or teammate dispatch supplies `assignment_context_ref`, read that actual view in the original Main authority root and follow its `source_root`, `input_read_order`, installed Skill paths and frozen responsibility. The system verifies the known source/hash binding; do not calculate or copy identity metadata. Use the live graph for current work status and the exact S8 questionnaire paths for delivery. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
 
 ## Phase Contract
 
@@ -28,15 +28,14 @@ Follow the Hook's exact S8 questionnaire view and answer paths for your assigned
 Hypothesis. Ordinary `plan_checkpoint` investigation proceeds directly to the
 professional causal result; do not send a duplicate generic PLAN_REPORT or wait
 for a second approval. If the registered mode is `plan_approval_required`, wait
-for its original approval before investigating. The `assignment_id` stored on
-a Hypothesis or HypothesisResult must identify the real `assignment-*`
-registered for the discriminator. Registration records the question;
-`runtime investigation dispatch` binds that Assignment to the Investigator
-workgroup, Task and Agent. Runtime does not pretend that Claude/Agent Team has
-spawned the process; the platform starts the registered worker.
+for its original approval before investigating. The original consumers bind the
+registered Hypothesis, Assignment, Task and owner; you do not supply these fields.
+Main performs the professional dispatch and starts the registered worker through
+the real platform. The Hook listens, reminds and flows existing facts; it does
+not perform or pretend to complete that platform spawn.
 
 Main owns Case intake, Hypothesis registration, Assignment dispatch, and the final
-Case route and Contract approval. As the dispatched Investigator, analyze only your
+Case route, Contract technical review and original approval handoff. As the dispatched Investigator, analyze only your
 assigned Hypothesis, use its exact Hook-supplied questionnaire paths, and save the
 evidence-bound professional result. The original Case consumer validates the answer
 and updates the graph. Keep product and locked specification writes out of scope. If
@@ -63,9 +62,13 @@ Case route and approval flow. The Case and Contract remain S8 authority; a BUG f
 only an optional compatibility projection. Low-level result commands are for explicit
 legacy or recovery use, not the ordinary dispatched-worker path.
 
-If your question is blocked, include the blocker and suggested recovery verb
-in your answer for Main to record through the Case flow. Do not route to S9
-with an unexplained Finding, an untested hypothesis, or a proposed local patch.
+If the discriminator is blocked, use `result="inconclusive"`, describe what you
+actually attempted in `answer.method`, and state the observed blocker, missing
+evidence and concrete next action for Main in `answer.observed`. Retain real
+evidence and source-boundary references; do not invent observations to satisfy
+the form or add a blocker field or separate report. Missing mandatory source
+material is a Main/system preparation gap. Main owns any route decision; an
+unexplained Finding, untested hypothesis or local patch cannot justify S9.
 
 ## Issued S8 answer
 
@@ -83,45 +86,30 @@ root cause, RepairContract or approval.
 
 Use `finding:<source-id>` or an existing `finding:<source-id>#/encounter/...`
 JSON pointer for the source boundary; an arbitrary execution-anchor string
-is not a boundary proof. Save through the supported Write/Edit/MultiEdit
-tool and read its responsibility receipt. Once issued, direct legacy result
-flags and terminal `stage-answer consume --agent ...` cannot substitute for
-trusted save identity. Query `runtime stage-answer receipt --agent <owner>
---path <issued-path> --root <Main>` if acknowledgement is lost. Exact replay
-compares the actual saved answer; a changed answer conflicts. Missing author
-files use the read-only receipt query.
+is not a boundary proof. Edit and save your exact answer path using a supported
+editor, script or extension tool and read the original consumer's receipt.
+The listener observes saves; do not manually issue/consume, send direct legacy
+result flags or copy the same content into a second report. If acknowledgement
+is lost, use the exact read-only receipt action supplied by the system or report
+the gap with your answer path to Main. Exact replay compares the actual saved
+answer; a changed answer conflicts. Missing author files use the read-only receipt query.
 
 An answer accepted by the original consumer, with your own checks satisfied,
 projects this responsibility to `done`; Main still handles other hypotheses
 and the Case route/approval. New questions receive machine IDs
 and await Main dispatch. Unchanged sibling additions preserve your question;
-changed own sources or routing require Main recovery/reissue. An independent
-checkout requires an original registered ready execution and session proof;
-copying the answer into a directory does not grant source authority.
+changed own sources or routing require Main recovery of the original responsibility.
+The original consumer verifies a registered execution/source for an independent
+checkout; do not create identity/session envelopes or copy an answer into an
+unregistered directory to replace that source binding.
 
 ## Re-entry after S9 targeted failure
 
-If `runtime investigation status` shows a Case reopened from S9, read every
-`causal_reassessment_refs[]` entry recorded on the Case board before
-registering new hypotheses. The
-targeted result is new causal evidence, not a replacement for the original
-S7 Finding. The re-entry command is:
-
-```text
-runtime investigation route --case-id <case> --route investigate_more \
-  --reason "targeted reverification requires causal reassessment" \
-  --reassessment-evidence <targeted-reverification-path>
-```
-
-This command is valid only for an approved `s9_repair` Case with an exact
-content hash for the evidence on disk. It creates a new Case revision, clears
-the superseded RepairContract pointer, preserves route history, and returns
-the Case to `investigating`. Then register and dispatch new discriminators.
-Do not edit the Case file or revive the old Contract by hand.
-
-After every Case-writing verb, consume the returned Case ID/hash and the next
-action from the command or status board. Do not read a revision to calculate
-the next command: `--expected-case-revision` / `--expected-case-sha256` are
-optional explicit assertions for integrations or recovery tools. `runtime
-investigation project --bug-id <BUG-xxx>` only fires after the Case is
-`contract_approved` — it projects, never authorizes.
+Main owns reopening the original Case, recording reassessment evidence and
+dispatching a new discriminator through the original flow. If your new assigned
+question references S9 targeted failure, read the supplied actual
+`causal_reassessment_refs[]` paths as well as the immutable S7 Finding. The
+targeted result is additional causal evidence; it does not replace that Finding.
+Fill only your current professional answer. Do not run route/register/dispatch,
+edit the Case or revive an old Contract by hand. Missing reassessment paths or
+an absent current questionnaire belong to Main/system preparation.
