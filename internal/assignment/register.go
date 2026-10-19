@@ -144,10 +144,10 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 		"team-manifest.schema.json",
 		manifestData,
 	); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("team manifest schema: %w", err)
+		return loopruntime.Snapshot{}, fmt.Errorf("team manifest schema: %w%s", err, manifestSchemaHint(err))
 	}
 	if err := team.ValidateBytes(manifestData); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("team manifest semantics: %w", err)
+		return loopruntime.Snapshot{}, fmt.Errorf("team manifest semantics: %w%s", err, manifestSemanticsHint(err))
 	}
 	if !workstate.SupportsAssignments(current["schema_version"]) {
 		var declared manifest
@@ -1032,6 +1032,41 @@ func (e *ErrDuplicateTaskID) Error() string {
 // planning check (semantic.taskIDPattern) and the runtime loop-state schema:
 // TASK-NNN with an optional numeric sub-suffix (TASK-001, TASK-001-01).
 var taskIDPattern = regexp.MustCompile(`^TASK-[0-9]{3,}(?:-[0-9]{2,})?$`)
+
+// manifestHint translates r97-native failure shapes (B/C roads) into the
+// concrete missing piece. It only appends guidance; the underlying
+// validation judgment is unchanged.
+func manifestHint(err error, hints []struct{ needle, hint string }) string {
+	msg := err.Error()
+	for _, h := range hints {
+		if strings.Contains(msg, h.needle) {
+			return " — fix: " + h.hint
+		}
+	}
+	return ""
+}
+
+func manifestSchemaHint(err error) string {
+	return manifestHint(err, []struct{ needle, hint string }{
+		{"assignment_record_contract", "S6-only contract fields (s6-v1.2) do not belong in a document-verifier manifest; drop assignment_record_contract/closing_contract s6 values"},
+		{"closing_contract", "s6-closing-v1 is Builder-only; a document-verifier assignment carries no closing_contract"},
+		{"integration_mode", "document-verifier assignments use dispatch_mode plan_checkpoint, not S6 integration fields"},
+		{"na_rationale", "every responsibility_disposition needs explicit na_rationale and evidence_ref (null when assigned)"},
+		{"review_round", "review_round is integer-or-null in the manifest; the round label (review-e4) lives in workgroup_id/manifest_id/assignment_ids"},
+		{"version", "every document reference needs id/path/version/sha256; version comes from the Runtime documents registry or the file Version header"},
+	})
+}
+
+func manifestSemanticsHint(err error) string {
+	return manifestHint(err, []struct{ needle, hint string }{
+		{"planned_agent_count", "the two reviewer Agent IDs must be distinct actual platform identities"},
+		{"separation edge", "both DV assignments must exist with different agent_ids so the independence edge resolves"},
+		{"missing mandatory responsibility", "a document_verifier manifest needs both DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY assignments"},
+		{"requires skill", "reviewer skill_refs come from the registered responsibility profile: DV-SPEC-CONSISTENCY needs document-verification/specification-planning/api-contracts, DV-TASK-EXECUTABILITY needs document-verification/specification-planning/testing-strategy"},
+		{"max_parallel_agents", "S5 runs both reviewers in parallel: max_parallel_agents=2, planned_agent_count=2"},
+		{"does not match ^TASK-", "pass a canonical TASK entity id as --task-id (digits only, e.g. TASK-001-01 mapped from the plan filename); never a REQ id; --task is the actual plan file path"},
+	})
+}
 
 // RegisterTask adds a canonical TASK entity to state.entities.tasks in the
 // "candidate" state. The operation uses CAS-safe append via
