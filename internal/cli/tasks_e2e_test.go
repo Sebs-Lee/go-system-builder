@@ -297,6 +297,64 @@ func TestTasksCheckFlagsNonTaskDependency(t *testing.T) {
 	}
 }
 
+// TestTasksCheckRejectsNonCanonicalTaskID verifies the S4→S5 handoff guard:
+// a TASK filename id that the runtime schema and workgroup registration
+// reject (e.g. TASK-REQ-001-01) must already fail tasks check at TR-002,
+// not surface later at S5 registration.
+func TestTasksCheckRejectsNonCanonicalTaskID(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/dev/contracts", "docs/dev/tasks", "docs/requirements"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/dev/contracts/BE-800.md", "# BE-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
+	write("docs/dev/contracts/CONTRACTS-800.md", "# CONTRACTS-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-800/FR-801 | — | BE-800 §1 | — |\n")
+	write("docs/dev/tasks/TASK-REQ-800-01.md", "# TASK-REQ-800-01\n\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-800\n\n"+
+		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-800 | §1 |\n\n"+
+		"## 7. Closing Contract\n\n```text\nassert BE-800 §1 == satisfied\n```\n\n"+
+		"## 8. Dependencies\n\n| Dependency | Required evidence | Status |\n|:--|:--|:--|\n| N/A | — | — |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "TASK-REQ-800-01") || !strings.Contains(stderr.String(), "does not match") {
+		t.Fatalf("non-canonical TASK id must be rejected with the canonical shape, got exit %d: %s", code, stderr.String())
+	}
+}
+
+// TestTasksCheckAcceptsNumericSubSuffix pins the canonical multi-wave shape:
+// TASK-800-01 passes the id gate (other problems may still fire).
+func TestTasksCheckAcceptsNumericSubSuffix(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"docs/dev/contracts", "docs/dev/tasks", "docs/requirements"} {
+		if err := os.MkdirAll(filepath.Join(root, rel), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("docs/dev/contracts/BE-800.md", "# BE-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
+	write("docs/dev/contracts/CONTRACTS-800.md", "# CONTRACTS-800\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-800/FR-801 | — | BE-800 §1 | — |\n")
+	write("docs/dev/tasks/TASK-800-01.md", "# TASK-800-01\n\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-800\n\n"+
+		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-800 | §1 |\n\n"+
+		"## 7. Closing Contract\n\n```text\nassert BE-800 §1 == satisfied\n```\n\n"+
+		"## 8. Dependencies\n\n| Dependency | Required evidence | Status |\n|:--|:--|:--|\n| N/A | — | — |\n")
+	var stdout, stderr bytes.Buffer
+	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("canonical TASK-800-01 must pass tasks check, got exit %d: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "batch ready") {
+		t.Fatalf("canonical batch must report ready, got: %s", stdout.String())
+	}
+}
 // TestContractsCheckFlagsClauseNumberDrift verifies that an index cell
 // citing a §n the target contract never declares must be flagged.
 func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {

@@ -49,7 +49,10 @@ func bridgeFixture(t *testing.T, reqBody string) string {
 		"module": "investor-workbench", "fixtures": []any{map[string]any{"id": "fix", "persona": "op", "synthetic": true, "setup": []any{"s"}, "cleanup": []any{"c"}}},
 	})
 	writeJSON(t, filepath.Join(dir, "cross-matrix.json"), map[string]any{
-		"module": "investor-workbench", "entries": []any{map[string]any{"fact": "fact-x", "req_ref": "REQ-001/FR-001", "story": "S-001", "branch": "b-pos"}},
+		"module": "investor-workbench", "entries": []any{
+			map[string]any{"fact": "fact-x", "req_ref": "REQ-001/FR-001", "story": "S-001", "branch": "b-pos"},
+			map[string]any{"fact": "fact-x", "req_ref": "REQ-001/FR-001", "story": "S-001", "branch": "b-neg"},
+		},
 	})
 	if err := os.WriteFile(filepath.Join(dir, "stories.md"), []byte("# S-001\n"), 0o644); err != nil {
 		t.Fatal(err)

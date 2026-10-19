@@ -157,6 +157,7 @@ func TestScenarioValidationReportsProfileRatiosAndPreservesRequiredCoverage(t *t
 				model["rules"].([]any)[0].(map[string]any)["branches"] = branches
 			}
 			writeModel(t, root, model)
+			syncCrossMatrixToModel(t, root, model)
 			if _, err := scenario.GenerateModule(root, "investor-workbench"); err != nil {
 				t.Fatalf("profile %s rejected a ratio below its risk reference: %v", profile, err)
 			}
@@ -211,6 +212,7 @@ func TestScenarioValidationAcceptsConfiguredRatios(t *testing.T) {
 			}
 			model["rules"].([]any)[0].(map[string]any)["branches"] = branches
 			writeModel(t, root, model)
+			syncCrossMatrixToModel(t, root, model)
 			if _, err := scenario.GenerateModule(root, "investor-workbench"); err != nil {
 				t.Fatalf("configured %s ratio rejected: %v", profile, err)
 			}
@@ -779,6 +781,7 @@ func validCrossMatrix(module string) map[string]any {
 		"module": module,
 		"entries": []any{
 			map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001", "branch": "branch-allow"},
+			map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001", "branch": "branch-reject"},
 		},
 	}
 }
@@ -828,6 +831,26 @@ func loadModel(t *testing.T, root string) map[string]any {
 func writeModel(t *testing.T, root string, model map[string]any) {
 	t.Helper()
 	writeJSON(t, filepath.Join(root, "docs/design/prototypes/investor-workbench/scenario-model.json"), model)
+}
+
+// syncCrossMatrixToModel rewrites the module cross-matrix so every branch of
+// the freshly written model has exactly one covering cell. Tests that mutate
+// the model must call this after writeModel, otherwise the new branch-floor
+// check rejects the stale matrix — which is the intended production behavior.
+func syncCrossMatrixToModel(t *testing.T, root string, model map[string]any) {
+	t.Helper()
+	var entries []any
+	for _, rule := range model["rules"].([]any) {
+		for _, branch := range rule.(map[string]any)["branches"].([]any) {
+			entries = append(entries, map[string]any{
+				"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001",
+				"branch": branch.(map[string]any)["id"],
+			})
+		}
+	}
+	writeJSON(t, filepath.Join(root, "docs/design/prototypes/investor-workbench/cross-matrix.json"), map[string]any{
+		"module": "investor-workbench", "entries": entries,
+	})
 }
 
 func writeSpecs(t *testing.T, root string, files map[string]string) {

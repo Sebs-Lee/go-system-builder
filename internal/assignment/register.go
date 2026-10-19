@@ -997,7 +997,7 @@ func validateEvidenceFiles(root string, refs []string) ([]string, error) {
 //   - ID is not already present in entities.tasks (duplicate id rejected).
 type RegisterTaskRequest struct {
 	ExpectedRevision int
-	TaskID           string   // matches ^TASK-[0-9]{3,}$
+	TaskID           string   // matches ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$
 	Path             string   // canonical task spec path
 	OwnerAgentIDs    []string // must exist in entities.agents
 	SourceContractID string   // primary contract reference (e.g. "BUG-003")
@@ -1028,16 +1028,17 @@ func (e *ErrDuplicateTaskID) Error() string {
 	return fmt.Sprintf("task %s already registered", e.TaskID)
 }
 
-// taskIDPattern matches the canonical TASK-NNN id format used in the task
-// schema and the existing entities.
-var taskIDPattern = regexp.MustCompile(`^TASK-[0-9]{3,}$`)
+// taskIDPattern matches the canonical TASK id format shared with the S4
+// planning check (semantic.taskIDPattern) and the runtime loop-state schema:
+// TASK-NNN with an optional numeric sub-suffix (TASK-001, TASK-001-01).
+var taskIDPattern = regexp.MustCompile(`^TASK-[0-9]{3,}(?:-[0-9]{2,})?$`)
 
 // RegisterTask adds a canonical TASK entity to state.entities.tasks in the
 // "candidate" state. The operation uses CAS-safe append via
 // loopruntime.Store.Update.
 func RegisterTask(root, statePath, journalPath string, req RegisterTaskRequest) (loopruntime.Snapshot, error) {
 	if !taskIDPattern.MatchString(req.TaskID) {
-		return loopruntime.Snapshot{}, fmt.Errorf("task id %q does not match ^TASK-[0-9]{3,}$", req.TaskID)
+		return loopruntime.Snapshot{}, fmt.Errorf("task id %q does not match ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ (canonical shape shared with the S4 planning check and the runtime schema)", req.TaskID)
 	}
 	if req.Path == "" {
 		return loopruntime.Snapshot{}, &ErrMissingTaskPath{}

@@ -25,6 +25,12 @@ var (
 	taskClauseNumber = regexp.MustCompile(`§\s*(\d+)`)
 	taskDepReference = regexp.MustCompile(`^TASK-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
 	taskContractCell = regexp.MustCompile(`^(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+	// taskIDPattern is the single canonical TASK id shape shared by S4
+	// planning (this check), the runtime loop-state schema
+	// (^TASK-[0-9]{3,}(?:-[0-9]{2,})?$) and RegisterTask. A filename id
+	// that fails here is rejected at TR-002 instead of surfacing later
+	// at S5 workgroup registration.
+	taskIDPattern = regexp.MustCompile(`^TASK-[0-9]{3,}(?:-[0-9]{2,})?$`)
 )
 
 type TaskCheckResult struct {
@@ -156,6 +162,17 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 	for _, task := range tasks {
 		byID[task.id] = task
 		result.Problems = append(result.Problems, task.problems...)
+		if !taskIDPattern.MatchString(task.id) {
+			// The S5 runtime schema and workgroup registration require the
+			// canonical ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ shape for the entity
+			// id passed as --task-id. The filename id feeds that parameter,
+			// so a non-canonical filename breaks S5 registration. r97 B-road
+			// precedent: entity id TASK-001-01 bound to file
+			// TASK-REQ-001-01.md is accepted (path bytes + plan membership
+			// are what the Writer checks), but the Main must then pass the
+			// canonical entity id explicitly — the filename is not reused.
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: TASK id %q does not match the canonical ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ shape required by the S5 runtime schema — rename the file and its index/dependency references, or register S5 with an explicit canonical --task-id for this path, before TR-002", task.rel, task.id))
+		}
 		if task.status == "cancelled" {
 			result.Cancelled++
 			continue

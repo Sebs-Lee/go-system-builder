@@ -183,6 +183,16 @@
     ],
     "S8-CAUSAL-INVESTIGATION": [
       "bug-resolution"
+    ],
+    "DV-SPEC-CONSISTENCY": [
+      "document-verification",
+      "specification-planning",
+      "api-contracts"
+    ],
+    "DV-TASK-EXECUTABILITY": [
+      "document-verification",
+      "specification-planning",
+      "testing-strategy"
     ]
   }
 }

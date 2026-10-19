@@ -94,6 +94,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	}
 	coveredFacts := map[string]bool{}
 	coveredStories := map[string]bool{}
+	coveredBranches := map[string]bool{}
 	seen := map[string]bool{}
 	for i, entry := range matrix.Entries {
 		cell := fmt.Sprintf("entry %d (fact=%s req_ref=%s story=%s)", i, entry.Fact, entry.ReqRef, entry.Story)
@@ -133,6 +134,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 			if !ruleCitesReqRef(rule, entry.ReqRef) {
 				return fmt.Errorf("cross-matrix %s names branch %q but its rule %q never cites %q in source_refs — the matrix must join the model, not assert alongside it", cell, entry.Branch, rule.ID, entry.ReqRef)
 			}
+			coveredBranches[entry.Branch] = true
 		default:
 			if reason := strings.TrimSpace(entry.NoBranchReason); utf8.RuneCountInString(reason) < 8 || !strings.ContainsFunc(reason, unicode.IsLetter) {
 				return fmt.Errorf("cross-matrix %s no_branch_reason %q is not a rationale — a real reason names the why (at least 8 characters with a letter); free-word escapes are not endorsed N/A", cell, entry.NoBranchReason)
@@ -147,6 +149,13 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	for _, story := range storyIDsFromHeadings(source.stories) {
 		if !coveredStories[story] {
 			return fmt.Errorf("cross-matrix never hunts story %q — every story must appear in at least one cell (silence is not coverage)", story)
+		}
+	}
+	for _, rule := range source.model.Rules {
+		for _, branch := range rule.Branches {
+			if branch.Required && !coveredBranches[branch.ID] {
+				return fmt.Errorf("cross-matrix never hunts required branch %q of rule %q — every required branch must appear in at least one cell with a branch reference (a no_branch_reason cell does not cover it)", branch.ID, rule.ID)
+			}
 		}
 	}
 	return nil
