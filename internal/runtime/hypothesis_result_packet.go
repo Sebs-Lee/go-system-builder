@@ -132,8 +132,8 @@ func CurrentHypothesisResultPackets(root string, state map[string]any, owner str
 		}
 		digest, err := workpacket.HypothesisQuestionDigest(question)
 		if err != nil || digest != b.HypothesisQuestionSHA256 || !hypothesisExactStringSet(document["source_finding_ids"], b.SourceFindingIDs) ||
-			document["observation_batch_id"] != b.ObservationBatchID || document["observation_batch_ref"] != b.ObservationBatchRef ||
-			document["observation_batch_sha256"] != b.ObservationBatchSHA256 || document["baseline_digest"] != b.BaselineDigest {
+			stringValue(document["observation_batch_id"]) != b.ObservationBatchID || stringValue(document["observation_batch_ref"]) != b.ObservationBatchRef ||
+			stringValue(document["observation_batch_sha256"]) != b.ObservationBatchSHA256 || stringValue(document["baseline_digest"]) != b.BaselineDigest {
 			continue
 		}
 		accepted := false
@@ -268,9 +268,9 @@ func verifyHypothesisResultPacketSources(root string, state map[string]any, p wo
 	caseRev, caseRevErr := integerField(caseDocument, "revision")
 	caseGen, caseGenErr := integerField(caseDocument, "baseline_generation")
 	if caseDocument["case_id"] != b.CaseID || caseRevErr != nil || caseRev != b.CaseRevision ||
-		caseGenErr != nil || caseGen != b.BaselineGeneration || caseDocument["baseline_digest"] != b.BaselineDigest ||
-		caseDocument["observation_batch_id"] != b.ObservationBatchID || caseDocument["observation_batch_ref"] != b.ObservationBatchRef ||
-		caseDocument["observation_batch_sha256"] != b.ObservationBatchSHA256 || !hypothesisJSONEqual(caseDocument["source_finding_ids"], b.SourceFindingIDs) {
+		caseGenErr != nil || caseGen != b.BaselineGeneration || stringValue(caseDocument["baseline_digest"]) != b.BaselineDigest ||
+		stringValue(caseDocument["observation_batch_id"]) != b.ObservationBatchID || stringValue(caseDocument["observation_batch_ref"]) != b.ObservationBatchRef ||
+		stringValue(caseDocument["observation_batch_sha256"]) != b.ObservationBatchSHA256 || !hypothesisJSONEqual(caseDocument["source_finding_ids"], b.SourceFindingIDs) {
 		return fmt.Errorf("S8 frozen Case tuple differs")
 	}
 	var hypothesis map[string]any
@@ -292,16 +292,18 @@ func verifyHypothesisResultPacketSources(root string, state map[string]any, p wo
 	if !hypothesisJSONEqual(route, p.Inputs.CaseRoute) {
 		return fmt.Errorf("S8 frozen route tuple differs")
 	}
-	batch, err := read(b.ObservationBatchRef, b.ObservationBatchSHA256, "observation-batch.schema.json")
-	if err != nil {
-		return err
-	}
-	batchGen, batchGenErr := integerField(batch, "baseline_generation")
-	batchRound, batchRoundErr := integerField(batch, "review_round")
-	if batch["observation_batch_id"] != b.ObservationBatchID || batch["runtime_id"] != b.RuntimeID ||
-		batchGenErr != nil || batchGen != b.BaselineGeneration || batchRoundErr != nil || batchRound != b.ReviewRound ||
-		batch["subject_digest"] != b.BaselineDigest || !hypothesisExactStringSet(batch["finding_ids"], b.SourceFindingIDs) {
-		return fmt.Errorf("S8 original ObservationBatch tuple differs")
+	if b.ObservationBatchRef != "" {
+		batch, err := read(b.ObservationBatchRef, b.ObservationBatchSHA256, "observation-batch.schema.json")
+		if err != nil {
+			return err
+		}
+		batchGen, batchGenErr := integerField(batch, "baseline_generation")
+		batchRound, batchRoundErr := integerField(batch, "review_round")
+		if batch["observation_batch_id"] != b.ObservationBatchID || batch["runtime_id"] != b.RuntimeID ||
+			batchGenErr != nil || batchGen != b.BaselineGeneration || batchRoundErr != nil || batchRound != b.ReviewRound ||
+			batch["subject_digest"] != b.BaselineDigest || !hypothesisExactStringSet(batch["finding_ids"], b.SourceFindingIDs) {
+			return fmt.Errorf("S8 original ObservationBatch tuple differs")
+		}
 	}
 	for _, finding := range p.Inputs.Findings {
 		document, err := read(finding.Ref, finding.SHA256, "finding.schema.json")
@@ -349,9 +351,9 @@ func verifyHypothesisResultPacketSources(root string, state map[string]any, p wo
 		if err != nil {
 			return err
 		}
-		if dispatchCase["case_id"] != b.CaseID || dispatchCase["observation_batch_id"] != b.ObservationBatchID ||
-			dispatchCase["observation_batch_ref"] != b.ObservationBatchRef || dispatchCase["observation_batch_sha256"] != b.ObservationBatchSHA256 ||
-			dispatchCase["baseline_digest"] != b.BaselineDigest || !hypothesisJSONEqual(dispatchCase["baseline_generation"], b.BaselineGeneration) ||
+		if dispatchCase["case_id"] != b.CaseID || stringValue(dispatchCase["observation_batch_id"]) != b.ObservationBatchID ||
+			stringValue(dispatchCase["observation_batch_ref"]) != b.ObservationBatchRef || stringValue(dispatchCase["observation_batch_sha256"]) != b.ObservationBatchSHA256 ||
+			stringValue(dispatchCase["baseline_digest"]) != b.BaselineDigest || !hypothesisJSONEqual(dispatchCase["baseline_generation"], b.BaselineGeneration) ||
 			!hypothesisExactStringSet(dispatchCase["source_finding_ids"], b.SourceFindingIDs) || !hypothesisCaseRouteEqual(dispatchCase, p.Inputs.CaseRoute) {
 			return fmt.Errorf("S8 dispatch Case relevant source closure differs")
 		}

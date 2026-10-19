@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/transition"
 )
 
 func stageHumanReleaseQuestionnaireContext(root string, request policy.Input, snapshot runtime.Snapshot) string {
@@ -21,57 +23,64 @@ func stageHumanReleaseQuestionnaireContext(root string, request policy.Input, sn
 	}
 	var packages []string
 	for _, kind := range []string{acceptance.ManifestAcceptance, acceptance.ManifestReleaseAudit} {
-		status := inspectS10Artifact(root, snapshot.State, kind)
-		if status.State != "ready" || status.ManifestPath == "" || status.EvidenceID == "" {
-			return fmt.Sprintf("S11 is waiting for the human, but the current %s evidence package path cannot be verified from this Runtime. Do not infer a file from templates or directory names; Main must repair the S10 package references.", kind)
+		found := false
+		rows := stateEvidence(snapshot.State)
+		for i := len(rows) - 1; i >= 0; i-- {
+			entry, _ := rows[i].(map[string]any)
+			if stringValue(entry["kind"]) != kind || stringValue(entry["status"]) != "valid" ||
+				integerValue(entry["baseline_generation"]) != integerValue(nestedStateValue(snapshot.State, "baseline", "generation")) ||
+				integerValue(entry["review_round"]) != integerValue(nestedStateValue(snapshot.State, "review", "round")) {
+				continue
+			}
+			file, err := safeS10Path(root, stringValue(entry["path"]))
+			if err != nil {
+				return fmt.Sprintf("S11 %s recorded material path is unavailable: %v", kind, err)
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return fmt.Sprintf("S11 %s material %s cannot be read: %v", kind, file, err)
+			}
+			var envelope struct {
+				ManifestPath string `json:"audit_manifest_path"`
+			}
+			if err := json.Unmarshal(data, &envelope); err != nil {
+				return fmt.Sprintf("S11 recorded %s material %s cannot be decoded: %v", kind, file, err)
+			}
+			manifestPath, err := absoluteQuestionnairePath(root, envelope.ManifestPath)
+			if err != nil {
+				return fmt.Sprintf("S11 recorded %s questionnaire path is missing: %v", kind, err)
+			}
+			found = true
+			reportPath := strings.TrimSuffix(manifestPath, ".json") + ".md"
+			if _, err := os.Stat(reportPath); err == nil {
+				packages = append(packages, fmt.Sprintf("%s readable report: %s; original questionnaire: %s", kind, reportPath, manifestPath))
+			} else {
+				packages = append(packages, fmt.Sprintf("%s readable report is unavailable at %s (%v); original questionnaire: %s", kind, reportPath, err, manifestPath))
+			}
+			var report acceptance.Manifest
+			if data, err := os.ReadFile(manifestPath); err == nil && json.Unmarshal(data, &report) == nil {
+				for _, risk := range report.Risks {
+					packages = append(packages, fmt.Sprintf("Reported risk: %s; impact/handling: %s; owner: %s; existing follow-up: %s", risk.ID, risk.Impact, risk.Owner, risk.TrackingRef))
+				}
+			}
+			break
 		}
-		entry := evidenceEntryByID(snapshot.State, status.EvidenceID)
-		if entry == nil {
-			return fmt.Sprintf("S11 %s package evidence %s has no current Runtime path; do not guess.", kind, status.EvidenceID)
+		if !found {
+			packages = append(packages, "S11 recorded "+kind+" material is missing; Main must resolve this material gap.")
 		}
-		evidencePath, err := absoluteQuestionnairePath(root, stringValue(entry["path"]))
-		if err != nil {
-			return fmt.Sprintf("S11 %s package evidence %s has an unresolved Runtime path: %v", kind, status.EvidenceID, err)
-		}
-		manifestPath, err := absoluteQuestionnairePath(root, status.ManifestPath)
-		if err != nil {
-			return fmt.Sprintf("S11 %s package manifest path is unresolved: %v", kind, err)
-		}
-		packages = append(packages, fmt.Sprintf("%s evidence %s: %s (manifest %s)", kind, status.EvidenceID, evidencePath, manifestPath))
 	}
-	packageText := strings.Join(packages, "\n")
-	runtimeScope := "runtime_release:" + stringValue(snapshot.State["runtime_id"])
-	legacyScope := fmt.Sprintf("%s@%d", runtimeScope, snapshot.Revision)
-	for _, raw := range stateEvidence(snapshot.State) {
-		entry, _ := raw.(map[string]any)
-		if entry == nil || stringValue(entry["kind"]) != "human_decision" || stringValue(entry["status"]) != "valid" || runtime.HumanDecisionEvidenceConsumed(entry) {
-			continue
-		}
-		if !evidenceIncludesScope(entry, runtimeScope) && !evidenceIncludesScope(entry, legacyScope) {
-			continue
-		}
-		path, err := absoluteQuestionnairePath(root, stringValue(entry["path"]))
-		if err == nil {
-			return fmt.Sprintf("S11 human review package paths:\n%s\nExisting current human decision evidence %s: %s. Only the human chooses a disposition; the existing gateway consumes this registered evidence. This Hook does not publish or deploy.", packageText, stringValue(entry["id"]), path)
-		}
-	}
-
 	path, decisionID, err := humanReleaseQuestionnairePath(root, snapshot.State)
 	if err != nil {
-		return fmt.Sprintf("S11 human review package paths:\n%s\nThe exact human decision application path cannot be derived from the current Runtime: %v. Do not guess a path or disposition.", packageText, err)
+		return fmt.Sprintf("S11 current human decision path is unavailable: %v. Main must resolve the recorded material gap; do not reconstruct metadata.", err)
 	}
-	if questionnairePreparationEvent(request.Event) {
-		if err := prepareHumanDecisionApplication(path, snapshot.State, decisionID); err != nil {
-			return fmt.Sprintf("S11 human review package paths:\n%s\nThe system could not prepare the human decision application at %s: %v", packageText, path, err)
-		}
-		return humanDecisionApplicationContext(packageText, path, decisionID)
-	}
+	context := humanDecisionApplicationContext(strings.Join(packages, "\n"), path, decisionID)
+
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return fmt.Sprintf("S11 human review package paths:\n%s\nThe human decision application is not prepared yet; its exact path is %s. This Hook event is read-only. SessionStart or PreToolUse prepares it; Stop/Idle only reports the missing application.", packageText, path)
+		context += " The stage-entry application is missing at that exact path; this is a system preparation gap, not a reason to wait for another Pre."
 	} else if err != nil {
-		return fmt.Sprintf("S11 human decision application at %s could not be inspected: %v", path, err)
+		context += fmt.Sprintf(" Application inspection failed: %v.", err)
 	}
-	return humanDecisionApplicationContext(packageText, path, decisionID)
+	return context
 }
 
 func humanReleaseQuestionnairePath(root string, state map[string]any) (string, string, error) {
@@ -88,7 +97,28 @@ func humanReleaseQuestionnairePath(root string, state map[string]any) (string, s
 	if segment == "" || segment == "." || segment == ".." {
 		return "", "", fmt.Errorf("current runtime_id cannot form the human decision application path")
 	}
-	decisionID := fmt.Sprintf("hd-s11-%s-g%d-r%d", segment, generation, round)
+	var auditID string
+	rows := stateEvidence(state)
+	if stringValue(nestedStateValue(state, "lifecycle", "state")) != "awaiting_human_release" {
+		for i := len(rows) - 1; i >= 0; i-- {
+			entry, _ := rows[i].(map[string]any)
+			if stringValue(entry["kind"]) == "human_decision" && runtime.HumanDecisionEvidenceConsumed(entry) && integerValue(entry["baseline_generation"]) == generation && integerValue(entry["review_round"]) == round {
+				path, err := absoluteQuestionnairePath(root, stringValue(entry["path"]))
+				return path, stringValue(entry["id"]), err
+			}
+		}
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		entry, _ := rows[i].(map[string]any)
+		if stringValue(entry["kind"]) == acceptance.ManifestReleaseAudit && stringValue(entry["status"]) == "valid" && integerValue(entry["baseline_generation"]) == generation && integerValue(entry["review_round"]) == round {
+			auditID = stringValue(entry["id"])
+			break
+		}
+	}
+	if auditID == "" {
+		return "", "", fmt.Errorf("current release audit record is missing")
+	}
+	decisionID := fmt.Sprintf("hd-s11-%s-g%d-r%d-p%d-%s", segment, generation, round, integerValue(nestedStateValue(state, "lifecycle", "phase_revision")), auditPathSegment.ReplaceAllString(auditID, "-"))
 	path, err := absoluteQuestionnairePath(root, filepath.ToSlash(filepath.Join(".claude", "decisions", decisionID+".json")))
 	return path, decisionID, err
 }
@@ -121,7 +151,81 @@ func prepareHumanDecisionApplication(path string, state map[string]any, decision
 }
 
 func humanDecisionApplicationContext(packageText, path, decisionID string) string {
-	return fmt.Sprintf("S11 human review package paths:\n%s\nHuman decision application: %s (decision_id %s). The human must personally choose and fill decision/disposition, reason, and approved_by; valid dispositions are approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort. This is only an application draft: saving it does not register human_decision evidence, approve the release, or publish/deploy. The existing human gateway still requires registered decision evidence and the actual human actor.", packageText, path, decisionID)
+	return fmt.Sprintf("S11 human review materials:\n%s\nHuman decision application: %s (system decision_id %s). The human chooses the actual disposition and may give a reason: approve → release_authorized (authorization recorded, no deployment); defer → paused; reject_defect → S8 investigation; reject_acceptance → acceptance; reject_release_audit → release_audit; abort → aborted. After the human explicitly chooses, Main faithfully fills only disposition and optional reason in this current application and saves it using edits, scripts or MCP. The normal save records and consumes the decision through the original Writer and follows its fixed exit automatically; no command or evidence registration is needed. Empty disposition remains a draft. Main must not invent the human choice; saving is not identity authentication. System metadata is supplied internally. Authorization does not publish or deploy.", packageText, path, decisionID)
+}
+
+// A normal save carries the human's explicit choice, not an identity proof.
+func runSavedHumanReleaseQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	if request.Event != "PostToolUse" || request.Error != "" {
+		return false, 0
+	}
+	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
+		return false, 0
+	}
+	actual, saved := savedQuestionnairePath(request)
+	if !saved {
+		if path, ok := request.ToolResponse["file_path"].(string); ok {
+			located := request
+			located.ToolInput = map[string]any{"file_path": path}
+			actual, saved = savedQuestionnairePath(located)
+		}
+	}
+	if !saved {
+		return false, 0
+	}
+	statePath, journalPath := filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl")
+	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	if err != nil || lifecycleState(snapshot.State) != "awaiting_human_release" {
+		return false, 0
+	}
+	path, id, err := humanReleaseQuestionnairePath(root, snapshot.State)
+	if err != nil || !samePath(actual, path) {
+		return false, 0
+	}
+	feedback := func(message string) (bool, int) {
+		return true, auditQuestionnaireFeedback(stdout, "S11 decision application: "+path+". "+message)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return feedback("Saved file cannot be read: " + err.Error())
+	}
+	var answer struct {
+		Disposition string `json:"disposition"`
+		Reason      string `json:"reason"`
+	}
+	if err = json.Unmarshal(data, &answer); err != nil {
+		return feedback("Saved decision fields cannot be decoded: " + err.Error() + ". Fill disposition and optional reason using strings.")
+	}
+	answer.Disposition = strings.TrimSpace(answer.Disposition)
+	if answer.Disposition == "" {
+		return feedback("Draft only: the actual human disposition is not supplied. No Runtime or journal decision was recorded. Choose only after the human's explicit intent: approve, defer, reject_defect, reject_acceptance, reject_release_audit, abort.")
+	}
+	transitionID, err := runtime.HumanReleaseTransitionID(answer.Disposition)
+	if err != nil {
+		return feedback("Disposition must be approve, defer, reject_defect, reject_acceptance, reject_release_audit, or abort; the actual choice is still required.")
+	}
+	actor := strings.TrimSpace(request.AgentID)
+	if actor == "" {
+		actor = "Main"
+	}
+	next, err := transition.Apply(root, statePath, journalPath, transition.Request{
+		TransitionID: transitionID, ExpectedRevision: snapshot.Revision, ExpectedRuntimeID: stringValue(snapshot.State["runtime_id"]), Actor: actor,
+		Params: map[string]any{"decision_id": id, "decision_path": path, "disposition": answer.Disposition, "reason": answer.Reason},
+	})
+	if err != nil {
+		return feedback("No successful transition was confirmed: " + err.Error() + ". The original Writer reports the actual recording result; do not guess another path or repeat already accepted work.")
+	}
+	message := fmt.Sprintf("Recorded and consumed %s through %s; current cursor %s. Actual reason: %s.", answer.Disposition, transitionID, lifecycleState(next.State), answer.Reason)
+	if transitionID == "TR-028" || transitionID == "TR-029" {
+		paths, err := prepareAuditReworkQuestionnaires(root, next.State, transitionID, path)
+		if err != nil {
+			return feedback(message + " Decision is recorded, but S10 rework preparation failed: " + err.Error())
+		}
+		message += " Current S10 report(s), retaining observations with final outcome cleared once: " + strings.Join(paths, ", ") + "."
+	} else if transitionID == "TR-027" {
+		message += " " + stageInvestigationLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, next)
+	}
+	return feedback(message)
 }
 
 func evidenceIncludesScope(entry map[string]any, want string) bool {

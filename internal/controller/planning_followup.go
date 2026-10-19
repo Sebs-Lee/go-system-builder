@@ -38,11 +38,20 @@ func currentPlanningFollowup(root string, state map[string]any, candidate *trans
 	switch phase {
 	case "design":
 		stage, templateID, transitionID = "S2", "s2-design-v1", "PTR-PLAN-01"
-		p, err := runtime.CurrentDesignPacket(state)
-		if err != nil {
-			return true, "", fmt.Errorf("resolve current S2 Main binding: %w", err)
+		var current struct {
+			RuntimeID string `json:"runtime_id"`
+			Baseline  struct {
+				Generation int `json:"generation"`
+			} `json:"baseline"`
+			Lifecycle struct {
+				Entry int `json:"phase_revision"`
+			} `json:"lifecycle"`
 		}
-		binding, expectedDesign = p.Binding, &p
+		data, err := json.Marshal(state)
+		if err != nil || json.Unmarshal(data, &current) != nil {
+			return true, "", fmt.Errorf("current S2 responsibility is unreadable")
+		}
+		binding = workpacket.PlanningBinding{RuntimeID: current.RuntimeID, Generation: current.Baseline.Generation, StageEntry: current.Lifecycle.Entry, Stage: "S2"}
 	case "contracts":
 		stage, templateID, transitionID = "S3", "s3-contract-v1", "PTR-PLAN-02"
 		var err error
@@ -124,10 +133,10 @@ func findCurrentPlanningPacket(state map[string]any, stage, templateID string, b
 		if !samePlanningStageSlot(packet.binding, binding) {
 			continue
 		}
-		if !reflect.DeepEqual(packet.binding, binding) {
+		if stage != "S2" && !reflect.DeepEqual(packet.binding, binding) {
 			return planningSubmissionPacket{}, fmt.Errorf("current %s typed packet has a different owner or locked REQ binding", stage)
 		}
-		if expectedDesign != nil {
+		if stage != "S2" && expectedDesign != nil {
 			actual, ok := packet.value.(workpacket.DesignPacket)
 			if !ok || !reflect.DeepEqual(actual, *expectedDesign) {
 				return planningSubmissionPacket{}, fmt.Errorf("current S2 packet differs from the original Main template projection")
@@ -172,6 +181,15 @@ func currentPlanningSubmission(state map[string]any, packetID string, binding wo
 	if err != nil || !found {
 		return runtime.SubmissionRecord{}, fmt.Errorf("current %s submission is unreadable: %v", binding.Stage, err)
 	}
+	if binding.Stage == "S2" {
+		if record.PacketID != packetID || record.FollowupID == "" || record.EvidenceID == "" || record.OriginState != "planning" || record.OriginPhase != "design" || record.OriginEntry != binding.StageEntry || (record.ControlStatus != "pending" && record.ControlStatus != "no_transition") {
+			return runtime.SubmissionRecord{}, fmt.Errorf("current S2 report is not pending at this design entry")
+		}
+		if _, err := runtime.SubmissionFollowup(state, record.FollowupID); err != nil {
+			return record, err
+		}
+		return record, nil
+	}
 	key := workpacket.Digest([]byte("submission:" + packetID))
 	retryable := record.ControlStatus == "pending" || ((binding.Stage == "S3" || binding.Stage == "S4") && record.ControlStatus == "no_transition")
 	if record.Key != key || record.PacketID != packetID || record.Owner != "Main" || record.FollowupID != workpacket.Digest([]byte(key+":after-domain")) || record.ContentHash == "" || record.EvidenceID == "" || !retryable || record.OriginState != "planning" || record.OriginPhase != phase || record.OriginEntry != binding.StageEntry || record.RevisionPacketID != "" || record.SupersededBy != "" {
@@ -197,6 +215,11 @@ func currentPlanningSubmission(state map[string]any, packetID string, binding wo
 }
 
 func validatePlanningSubmissionEvidence(root string, state map[string]any, packet planningSubmissionPacket, record runtime.SubmissionRecord, binding workpacket.PlanningBinding) error {
+	if binding.Stage == "S2" {
+		// The accepted record identifies the report. Its professional conclusion
+		// and actual materials are read by the original design gate.
+		return nil
+	}
 	evidenceRows, _ := state["evidence"].([]any)
 	var evidence map[string]any
 	count := 0
@@ -225,23 +248,6 @@ func validatePlanningSubmissionEvidence(root string, state map[string]any, packe
 		return fmt.Errorf("current %s accepted evidence bytes differ from its registered digest", binding.Stage)
 	}
 	switch p := packet.value.(type) {
-	case workpacket.DesignPacket:
-		var envelope struct {
-			Conclusion string               `json:"conclusion"`
-			Subjects   []workpacket.Subject `json:"subject_refs"`
-		}
-		if err := json.Unmarshal(data, &envelope); err != nil || len(envelope.Subjects) != 2 {
-			return fmt.Errorf("current S2 accepted evidence envelope is malformed")
-		}
-		architecture := envelope.Subjects[1].Path
-		answer := workpacket.DesignAnswer{Conclusion: &envelope.Conclusion, ArchitecturePath: &architecture}
-		if err := runtime.ValidateDesignEnvelope(p, record.EvidenceID, answer, data); err != nil {
-			return fmt.Errorf("current S2 accepted evidence does not match its packet: %w", err)
-		}
-		digest, err := workpacket.DesignAnswerDigest(answer)
-		if err != nil || digest != record.ContentHash {
-			return fmt.Errorf("current S2 accepted answer digest differs from its submission")
-		}
 	case workpacket.ContractPacket:
 		var envelope struct {
 			Answer workpacket.ContractAnswer `json:"contract_answer"`

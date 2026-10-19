@@ -107,6 +107,8 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 		return r
 	}
 	expected := map[string]map[string]bool{}
+	// Instances are consumer-scoped baseline examples, never schema authorities.
+	examples := map[string]map[string]bool{}
 	// A contract index is not necessarily a one-file batch. Keep authority
 	// checks grouped by the effective REQ so unrelated requirements do not
 	// reject one another during an all-index authoring check.
@@ -155,7 +157,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 		}
 		if m[1] == "none" {
 			reason := regexp.MustCompile(`(?m)^>\s*Shared model reason:\s*(.+)$`).FindStringSubmatch(content)
-			if reason == nil || strings.TrimSpace(reason[1]) == "" || strings.Contains(reason[1], "{") {
+			if reason == nil || strings.TrimSpace(reason[1]) == "" {
 				r.Problems = append(r.Problems, rel+": policy none requires a concrete Shared model reason")
 			}
 			continue
@@ -221,6 +223,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 			if len(consumers) == 0 {
 				fail(fmt.Errorf("declare consumer contract links"))
 			}
+			var rowConsumers []string
 			for _, ref := range consumers {
 				cp, cf, err := Resolve(root, rel, ref)
 				if err != nil {
@@ -236,6 +239,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 					expected[cp] = map[string]bool{}
 				}
 				expected[cp][key(p, f)] = true
+				rowConsumers = append(rowConsumers, cp)
 				cb, err := files.ReadFile(filepath.Join(root, cp))
 				if err != nil {
 					fail(err)
@@ -282,9 +286,17 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 				err = sch.Validate(instance)
 				if i == 4 && err != nil {
 					fail(fmt.Errorf("valid example %s rejected: %w", ep, err))
+					continue
 				}
 				if i == 5 && err == nil {
 					fail(fmt.Errorf("structural negative %s unexpectedly passes; business negatives belong in CASE/CT", ep))
+					continue
+				}
+				for _, cp := range rowConsumers {
+					if examples[cp] == nil {
+						examples[cp] = map[string]bool{}
+					}
+					examples[cp][ep] = true
 				}
 			}
 		}
@@ -303,7 +315,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 				r.Problems = append(r.Problems, cp+": "+err.Error())
 				continue
 			}
-			if strings.HasSuffix(rp, ".json") && !definitions[key(rp, rf)] {
+			if strings.HasSuffix(rp, ".json") && !definitions[key(rp, rf)] && !examples[cp][key(rp, rf)] {
 				r.Problems = append(r.Problems, cp+": undeclared shared model input "+key(rp, rf))
 			}
 		}

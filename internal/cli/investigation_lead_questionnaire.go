@@ -51,15 +51,19 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 	}
 	paths := investigationLeadQuestionnairePaths(root, snapshot.State)
 	if len(paths) == 0 {
-		return "S8 Main questionnaire cannot resolve the current sealed ObservationBatch source. Main must restore the original S7 handoff reference; the listener did not guess an answer path."
+		return "S8 Main questionnaire cannot resolve its current recorded source path (sealed S7 Batch or explicit human defect decision). Main must resolve this system material gap; do not invent a Batch or guess an answer path."
 	}
 	batch, document, batchRef, err := investigationLeadSource(root, snapshot.State)
 	if err != nil {
 		return "S8 Main questionnaire: " + paths[0] + ". Original source could not be read: " + err.Error()
 	}
 	path := paths[0]
+	human := investigationLeadHumanSource(snapshot.State)
 	var draft any = investigationLeadIntakeAnswer{}
 	questions := "Read the sealed Batch and immutable Findings, including encounter boundaries and capture gaps. Fill grouping_rationale: why this exact Finding set is a provisional causal investigation group, then save this file. Case identity, source set and versions are supplied by the original intake consumer."
+	if human != nil {
+		questions = "Read the actual human defect decision and its reason. Fill grouping_rationale with your professional investigation framing of that reported problem, then save this intake. Do not invent Findings, a sealed Batch or a root-cause conclusion; the original intake records a provisional Case."
+	}
 	if document != nil {
 		rows := []investigationLeadQuestion{}
 		for _, h := range objectSliceAny(document["hypotheses"]) {
@@ -72,6 +76,9 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 		}
 		draft = rows
 		questions = "Each array row is one falsifiable causal question: fill statement, invariant, discriminator, expected_outcomes as an object with support/refute strings, source_finding_ids as Finding IDs, and evidence_refs as the registered evidence IDs or real execution anchors described below. Both reference fields are string arrays. Explain the read-only investigation bounds and when the discriminator must stop or return inconclusive. Consider credible competing mechanisms; do not manufacture an alternative merely to fill rows. Select the professional division of work; agent_id is optional when no owner has been selected. Existing hypothesis_id values are supplied from the Case; new rows need no ID, and rows may be reordered. Save this file to register the questions and their original Investigator dispatches. Main must then use the platform to actually start/resume the named investigators; registration does not prove a platform launch."
+	}
+	if human != nil && document != nil {
+		questions = "Fill each actual causal question using statement, invariant, discriminator and expected_outcomes (support/refute strings). source_finding_ids may stay [] when no actual Findings exist; evidence_refs may use the actual human decision ID/path shown here. Other references retain their existing semantics. Explain actual read-only bounds and inconclusive cases; no invented competing hypothesis is required. Save, then Main actually dispatches the chosen investigators."
 	}
 	if repairLeadPreparationEvent(request.Event) {
 		var err error
@@ -88,7 +95,11 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 		return "S8 Main questionnaire: " + path + ". Not prepared yet; the next Main SessionStart or PreToolUse will create the draft. This event is read-only. " + questions
 	}
 	var sources strings.Builder
-	fmt.Fprintf(&sources, "Batch: %s. ", resolveRootPath(root, batchRef))
+	if human != nil {
+		fmt.Fprintf(&sources, "Human defect decision %s: %s. Actual reason: %s. ", stringValue(human["id"]), resolveRootPath(root, batchRef), stringValue(batch["reason"]))
+	} else {
+		fmt.Fprintf(&sources, "Batch: %s. ", resolveRootPath(root, batchRef))
+	}
 	ids := stringSliceAny(batch["finding_ids"])
 	for _, row := range objectSliceAny(mapFieldCLI(snapshot.State, "entities")["findings"]) {
 		for _, id := range ids {
@@ -98,7 +109,10 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 		}
 	}
 	if document != nil {
-		fmt.Fprintf(&sources, "Current Case: %s. %s ", resolveRootPath(root, stringValue(investigationPointer(snapshot.State)["path"])), investigationLeadEvidenceReferenceContext(root, snapshot.State))
+		fmt.Fprintf(&sources, "Current Case: %s. ", resolveRootPath(root, stringValue(investigationPointer(snapshot.State)["path"])))
+		if human == nil {
+			sources.WriteString(investigationLeadEvidenceReferenceContext(root, snapshot.State))
+		}
 	}
 	routeHint := ""
 	if routePaths := investigationLeadDispositionPaths(root, snapshot.State); len(routePaths) != 0 {
@@ -187,12 +201,34 @@ func investigationLeadCurrent(state map[string]any) bool {
 			(stringValue(pointer["route"]) == "" || stringValue(pointer["route"]) == "investigate_more")))
 }
 
+// The explicit TR-027 source is an actual human decision, never a sealed Batch.
+func investigationLeadHumanSource(state map[string]any) map[string]any {
+	if mapFieldCLI(state, "review")["observation_batch"] != nil {
+		return nil
+	}
+	rows := stateEvidence(state)
+	for i := len(rows) - 1; i >= 0; i-- {
+		row, _ := rows[i].(map[string]any)
+		if stringValue(row["kind"]) != "human_decision" || integerValue(row["baseline_generation"]) != integerValue(nestedStateValue(state, "baseline", "generation")) || integerValue(row["review_round"]) != integerValue(nestedStateValue(state, "review", "round")) {
+			continue
+		}
+		if stringValue(row["consumed_by"]) == "TR-027" {
+			return row
+		}
+		return nil
+	}
+	return nil
+}
+
 // Select only existing authority references. The original domain consumers
 // perform their full baseline, exact-set, evidence and CAS validation on save.
 func investigationLeadBatchReference(state map[string]any) (string, string) {
 	review := mapFieldCLI(state, "review")
 	if batch, _ := review["observation_batch"].(map[string]any); batch != nil {
 		return stringValue(batch["path"]), stringValue(batch["sha256"])
+	}
+	if human := investigationLeadHumanSource(state); human != nil {
+		return stringValue(human["path"]), stringValue(human["sha256"])
 	}
 	rows := objectSliceAny(state["evidence"])
 	for i := len(rows) - 1; i >= 0; i-- {
@@ -251,6 +287,33 @@ func investigationLeadReadObject(root, ref, sha string) (map[string]any, error) 
 
 func investigationLeadSource(root string, state map[string]any) (map[string]any, map[string]any, string, error) {
 	ref, sha := investigationLeadBatchReference(state)
+	if human := investigationLeadHumanSource(state); human != nil {
+		data, err := workpacket.ReadFile(root, ref, 20<<20)
+		if err != nil {
+			return nil, nil, ref, err
+		}
+		var decision map[string]any
+		if err = json.Unmarshal(data, &decision); err != nil {
+			return nil, nil, ref, err
+		}
+		if decision["runtime_id"] != state["runtime_id"] || decision["disposition"] != "reject_defect" {
+			return nil, nil, ref, fmt.Errorf("human decision %s does not describe this Runtime defect return", ref)
+		}
+		var document map[string]any
+		if pointer := investigationPointer(state); pointer != nil {
+			data, err = workpacket.ReadFile(root, stringValue(pointer["path"]), 20<<20)
+			if err == nil {
+				err = json.Unmarshal(data, &document)
+			}
+			if err != nil {
+				return nil, nil, ref, err
+			}
+			if document["case_id"] != pointer["case_id"] {
+				return nil, nil, ref, fmt.Errorf("current Case path describes another investigation")
+			}
+		}
+		return decision, document, ref, nil
+	}
 	batch, err := investigationLeadReadObject(root, ref, sha)
 	if err != nil {
 		return nil, nil, ref, err
@@ -307,6 +370,9 @@ func runSavedInvestigationLeadQuestionnaire(root string, request policy.Input, s
 			return feedback("S8 grouping answer: " + err.Error())
 		}
 		if strings.TrimSpace(answer.GroupingRationale) == "" {
+			if investigationLeadHumanSource(snapshot.State) != nil {
+				return feedback("S8 grouping_rationale is incomplete: explain the provisional investigation of the actual human-reported problem, then save this same intake.")
+			}
 			return feedback("S8 grouping_rationale is incomplete: explain why the sealed Finding set is a provisional investigation group, then save.")
 		}
 		if document != nil {
@@ -348,7 +414,11 @@ func runSavedInvestigationLeadQuestionnaire(root string, request policy.Input, s
 			professional := *q
 			professional.AgentID = ""
 			encoded, _ := json.Marshal(professional)
-			digest := sha256.Sum256(append([]byte(stringValue(batch["observation_batch_id"])+"\x00"), encoded...))
+			sourceID := stringValue(batch["observation_batch_id"])
+			if human := investigationLeadHumanSource(snapshot.State); human != nil {
+				sourceID = stringValue(human["id"])
+			}
+			digest := sha256.Sum256(append([]byte(sourceID+"\x00"), encoded...))
 			q.HypothesisID = "hypothesis-" + hex.EncodeToString(digest[:])
 		}
 	}

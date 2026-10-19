@@ -139,7 +139,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		result.ErrorCode = CodeRuntimeInval
 		return result, nil
 	}
-	if req.Files == nil && len(catalog.Definition.MutableEvidenceKinds) > 0 {
+	if cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") && req.Files == nil && len(catalog.Definition.MutableEvidenceKinds) > 0 {
 		if view, viewErr := productionFiles(req.Root, snapshot.State, catalog); viewErr == nil {
 			req.Files = view // refresh and evaluation share the same pinned input snapshot
 			kinds := map[string]bool{}
@@ -189,7 +189,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		return finishControlCycle(result), nil
 	}
 	files := req.Files
-	if files == nil {
+	if files == nil && cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") {
 		view, viewErr := productionFiles(req.Root, snapshot.State, catalog)
 		if viewErr != nil {
 			result.Error = viewErr.Error()
@@ -460,7 +460,7 @@ func recomputeAfterStale(
 		return out, 1, nil
 	}
 	files := req.Files
-	if files == nil {
+	if files == nil && cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") {
 		view, viewErr := productionFiles(req.Root, refreshed.State, catalog)
 		if viewErr != nil {
 			return ControlResult{Snapshot: refreshed, Decision: allowDecision(), Error: viewErr.Error(), ErrorCode: CodeGateUnknown, QualityGate: QualityGateResult{Status: StatusUnknown, ErrorCode: CodeGateUnknown, Missing: []string{viewErr.Error()}}}, 1, nil

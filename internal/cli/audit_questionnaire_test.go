@@ -50,67 +50,22 @@ func TestAuditManifestDraftUsesAuthoritativeInventoryAndDerivedMetrics(t *testin
 		ClaimIDs:       []string{"CLAIM-9"},
 		ChangedPaths:   []string{"internal/example.go"},
 	}
-	draft := auditManifestDraft(state, acceptance.ManifestAcceptance, authority)
-	if draft.RuntimeID != "loop-REQ-7" || draft.BaselineGeneration != 3 || draft.ReviewRound != 5 {
-		t.Fatalf("draft binding = %q g%d r%d", draft.RuntimeID, draft.BaselineGeneration, draft.ReviewRound)
-	}
-	want := map[string]bool{
-		"requirement:REQ-7/FR-1":                false,
-		"contract:CONTRACT-2":                   false,
-		"task:TASK-4#closing-contract":          false,
-		"claim:CLAIM-9":                         false,
-		"changed_path:path:internal/example.go": false,
-	}
-	for _, item := range draft.CoverageInventory {
-		want[item.Category+":"+item.ID] = true
-		if item.Expected != "" || item.Oracle != "" || item.Owner != "" || item.Disposition != "" {
-			t.Fatalf("draft invented professional judgment for %s: %#v", item.ID, item)
+	for _, kind := range []string{acceptance.ManifestAcceptance, acceptance.ManifestReleaseAudit} {
+		draft := auditManifestDraft(state, kind, authority)
+		if draft.SchemaVersion != acceptance.SchemaVersionAcceptance || draft.ManifestType != kind || draft.RuntimeID != "loop-REQ-7" || draft.BaselineGeneration != 3 || draft.ReviewRound != 5 {
+			t.Fatalf("%s draft lost current Runtime binding: %#v", kind, draft)
 		}
-	}
-	for item, found := range want {
-		if !found {
-			t.Errorf("draft omitted authoritative inventory row %s", item)
+		if len(draft.CoverageInventory) != 0 || len(draft.Counterevidence) != 0 || len(draft.AuditAreas) != 0 {
+			t.Fatalf("%s metadata draft invented authority rows, per-row counterevidence or eight audit tasks: %#v", kind, draft)
 		}
-	}
-	if len(draft.Counterevidence) != len(draft.CoverageInventory) {
-		t.Fatalf("counterevidence rows = %d, inventory rows = %d", len(draft.Counterevidence), len(draft.CoverageInventory))
-	}
-	if draft.Metrics != acceptance.DeriveMetrics(draft) {
-		t.Fatalf("draft metrics were not derived by the acceptance validator: %#v", draft.Metrics)
-	}
-	if draft.Outcome != "" {
-		t.Fatal("draft must not infer a professional S10 outcome")
+		if draft.Outcome != "" || len(draft.Risks) != 0 || len(draft.TechnicalDebt) != 0 || len(draft.BlockingFindings) != 0 {
+			t.Fatalf("%s empty draft invented professional conclusions or obligations: %#v", kind, draft)
+		}
+		if draft.Metrics != acceptance.DeriveMetrics(draft) {
+			t.Fatalf("%s display metrics differ from the empty current draft: %#v", kind, draft.Metrics)
+		}
 	}
 
-	release := auditManifestDraft(state, acceptance.ManifestReleaseAudit, authority)
-	if len(release.AuditAreas) != 0 {
-		t.Fatal("new questionnaire must collect audit judgments only in coverage rows")
-	}
-	areaCount := 0
-	for i := range release.CoverageInventory {
-		item := &release.CoverageInventory[i]
-		if item.Category != "audit_area" {
-			continue
-		}
-		areaCount++
-		if item.Disposition != "" || item.Owner != "" || len(item.EvidenceRefs) != 0 {
-			t.Fatalf("audit draft invented a professional answer: %#v", item)
-		}
-		item.Disposition, item.Owner = "pass", "Independent Release Auditor"
-		item.EvidenceRefs = []string{"test://audit/" + item.ID}
-	}
-	if areaCount != len(acceptance.AuditAreaIDs) || len(release.Counterevidence) != len(release.CoverageInventory) {
-		t.Fatalf("release audit omitted original coverage/counterevidence: %#v", release)
-	}
-	projectAuditAreaSummary(&release)
-	if len(release.AuditAreas) != len(acceptance.AuditAreaIDs) {
-		t.Fatalf("professional rows did not project all original audit areas: %#v", release.AuditAreas)
-	}
-	for _, area := range release.AuditAreas {
-		if area.Conclusion != "pass" || area.Owner != "Independent Release Auditor" || len(area.EvidenceRefs) != 1 || area.EvidenceRefs[0] != "test://audit/"+area.ID {
-			t.Fatalf("summary changed the professional answer: %#v", area)
-		}
-	}
 }
 
 func TestAuditQuestionnaireStopIsReadOnlyAndKeepsDraft(t *testing.T) {

@@ -21,8 +21,8 @@ func TestDesignProjectionFrozenMainAndProfessionalAnswer(t *testing.T) {
 		t.Fatal("projection fabricated a professional pass", p)
 	}
 	data, _ := json.Marshal(p.Draft)
-	if _, issues := ValidateDesignAnswer(p, data); len(issues) == 0 || issues[0].Pointer != "/answer/conclusion" {
-		t.Fatal("draft accepted", issues)
+	if answer, issues := ValidateDesignAnswer(p, data); len(issues) != 0 || answer.Conclusion != nil {
+		t.Fatal("draft must remain readable without inventing a passing answer", issues)
 	}
 	pass, path := "pass", "docs/architecture/ARCHITECTURE-001.md"
 	draft := p.Draft
@@ -35,8 +35,11 @@ func TestDesignProjectionFrozenMainAndProfessionalAnswer(t *testing.T) {
 	changed := draft
 	changed.Title = "tampered"
 	bad, _ := json.Marshal(changed)
-	if _, issues := ValidateDesignAnswer(p, bad); len(issues) == 0 {
-		t.Fatal("machine question changed")
+	if _, issues := ValidateDesignAnswer(p, bad); len(issues) != 0 {
+		t.Fatal("presentation metadata became a professional admission requirement", issues)
+	}
+	if _, issues := ValidateDesignAnswer(p, []byte(`{"answer":{"conclusion":123,"architecture_path":"docs/architecture/ARCHITECTURE-001.md"}}`)); len(issues) == 0 {
+		t.Fatal("malformed professional field type was accepted")
 	}
 	arch := Reference{ID: "ARCHITECTURE-001", Path: path, Version: "v1.0.0", SHA256: Digest([]byte("actual locked architecture"))}
 	evidence, err := DesignEvidence(p, "ev-design", arch, answer, time.Now().UTC())

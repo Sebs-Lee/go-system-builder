@@ -11,7 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/cli"
 )
 
-func TestQuestionnaireListenerRestoresExactPathAndPreservesAnswer(t *testing.T) {
+func TestQuestionnaireListenerReportsMissingViewReadOnlyAndPreservesAnswer(t *testing.T) {
 	root, packet := newDesignFixture(t, "none")
 	answerPath := filepath.Join(root, packet.AnswerPath)
 	stageJSON(t, root, packet.AnswerPath, designDraft(packet))
@@ -37,7 +37,7 @@ func TestQuestionnaireListenerRestoresExactPathAndPreservesAnswer(t *testing.T) 
 		if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(envelope.Output.Context, answerPath) || strings.Contains(envelope.Output.Context, "runtime stage-answer issue") || envelope.Output.Permission == "deny" {
+		if !strings.Contains(envelope.Output.Context, answerPath) || !strings.Contains(envelope.Output.Context, filepath.Join(root, packet.ViewPath)) || !strings.Contains(envelope.Output.Context, "Current missing work/material") || strings.Contains(envelope.Output.Context, "runtime stage-answer issue") || envelope.Output.Permission == "deny" {
 			t.Fatalf("missing exact questionnaire path or unexpected operation gate: %s", &out)
 		}
 	}
@@ -45,8 +45,8 @@ func TestQuestionnaireListenerRestoresExactPathAndPreservesAnswer(t *testing.T) 
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("listener overwrote the answer: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, packet.ViewPath)); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(root, packet.ViewPath)); !os.IsNotExist(err) {
+		t.Fatalf("ordinary Pre must report missing entry material without reissuing: %v", err)
 	}
 }
 

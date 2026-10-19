@@ -17,6 +17,7 @@ func TestReceiptJSONDerivesFiveStateFromOriginalConsumerFacts(t *testing.T) {
 		{"issued", Receipt{PacketID: "p"}, workstate.Active},
 		{"reception alone", Receipt{PacketID: "p", Accepted: true}, workstate.Active},
 		{"consumer complete", Receipt{PacketID: "p", Accepted: true, WorkComplete: true}, workstate.Done},
+		{"completed prior stage waiting on next preparation", Receipt{PacketID: "p", Accepted: true, WorkComplete: true, WaitingOn: []Waiting{{Reason: "system_followup", Owner: "Main", Ref: "PTR-PLAN-01"}}}, workstate.Done},
 		{"unaccepted completion", Receipt{PacketID: "p", WorkComplete: true}, workstate.Active},
 		{"rework", Receipt{PacketID: "p", Accepted: true, ResponsibilityStatus: "main_result_accepted_rework_required"}, workstate.Blocked},
 		{"owner proof unavailable", Receipt{PacketID: "p", Accepted: true, ResponsibilityStatus: "main_result_accepted_owner_status_unavailable"}, workstate.Blocked},

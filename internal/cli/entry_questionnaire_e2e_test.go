@@ -41,7 +41,7 @@ func initEntryQuestionnaireRoot(t *testing.T, reqs map[string]string) string {
 func TestEntryQuestionnaireS0PreparesActualDraftWithoutHumanDecision(t *testing.T) {
 	root := initEntryQuestionnaireRoot(t, nil)
 	path := filepath.Join(root, "docs/requirements/REQ-001.md")
-	out := entryQuestionnaireHook(t, root, "PreToolUse", path)
+	out := entryQuestionnaireHook(t, root, "SessionStart", path)
 	var envelope struct {
 		Output struct {
 			Context    string `json:"additionalContext"`
@@ -87,9 +87,9 @@ func TestEntryQuestionnaireStopReadsWithoutPreparingDraft(t *testing.T) {
 func TestEntryQuestionnaireS1NamesHumanChoicesAndSaveDoesNotBind(t *testing.T) {
 	root := initEntryQuestionnaireRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
 	path := filepath.Join(root, ".claude/submissions/requirement-binding.md")
-	out := entryQuestionnaireHook(t, root, "PreToolUse", path)
-	if !strings.Contains(out, path) || !strings.Contains(out, "actual human binding approval") || !strings.Contains(out, "release destination") {
-		t.Fatalf("incomplete binding questions: %s", out)
+	out := entryQuestionnaireHook(t, root, "SessionStart", path)
+	if !strings.Contains(out, path) || !strings.Contains(out, "startup decision") || !strings.Contains(out, "release destination") {
+		t.Fatalf("incomplete current binding questions: %s", out)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -98,10 +98,67 @@ func TestEntryQuestionnaireS1NamesHumanChoicesAndSaveDoesNotBind(t *testing.T) {
 	if !bytes.Contains(data, []byte(filepath.Join(root, "docs/requirements/REQ-098.md"))) {
 		t.Fatalf("actual requirement path absent: %s", data)
 	}
-	if err := os.WriteFile(path, append(data, []byte("\nAgent-authored approve text is not a human decision.\n")...), 0o644); err != nil {
-		t.Fatal(err)
+	if !bytes.Contains(data, []byte("Write each selected ref verbatim")) || !bytes.Contains(data, []byte("develop, main or origin/main")) {
+		t.Fatalf("branch answer format guidance absent: %s", data)
+	}
+	statePath, journalPath := filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")
+	before, _ := os.ReadFile(statePath)
+	journalBefore, _ := os.ReadFile(journalPath)
+	entryQuestionnaireHook(t, root, "PreToolUse", path)
+	entryQuestionnaireHook(t, root, "Stop", path)
+	after, _ := os.ReadFile(statePath)
+	journalAfter, _ := os.ReadFile(journalPath)
+	if !bytes.Equal(before, after) || !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatal("ordinary S0/S1 Pre/Stop wrote Runtime or journal")
 	}
 	entryQuestionnaireHook(t, root, "PostToolUse", path)
+	assertEntryInactive(t, root)
+	// Synthetic explicit human lock/start intent is faithfully recorded in
+	// the existing four answers. The normal save performs the original bind.
+	text := string(data)
+	text = strings.Replace(text, "- Who actually authorized this binding? ", "- Who actually authorized this binding? actual-test-human", 1)
+	text = strings.Replace(text, "- Which development branch was selected? ", "- Which development branch was selected? feature/req", 1)
+	text = strings.Replace(text, "- What is the explicit release destination? ", "- What is the explicit release destination? origin/main", 1)
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = entryQuestionnaireHook(t, root, "PostToolUse", path)
+	bound := readJSONMap(t, statePath)
+	if bound["lifecycle"].(map[string]any)["state"] != "planning" || bound["lifecycle"].(map[string]any)["phase"] != "design" || bound["bound_req"].(map[string]any)["approved_by"] != "actual-test-human" {
+		t.Fatalf("normal binding save did not reach original TR001/S2: %s", out)
+	}
+	workspace := bound["bound_req"].(map[string]any)["workspace"].(map[string]any)
+	if workspace["dev_branch"] != "feature/req" || workspace["release_upstream"] != "origin/main" {
+		t.Fatalf("selected branch refs were not recorded verbatim: %#v", workspace)
+	}
+	boundBytes, _ := os.ReadFile(statePath)
+	entryQuestionnaireHook(t, root, "PostToolUse", path)
+	replayBytes, _ := os.ReadFile(statePath)
+	if !bytes.Equal(boundBytes, replayBytes) {
+		t.Fatal("consumed binding request replay changed the active Runtime")
+	}
+	// The original explicit unbind creates a new inactive responsibility even
+	// though its Runtime tuple resets. Even with a custom unbind archive, the
+	// original bind already created a new default archive coordinate. No old
+	// startup choice may authorize this new responsibility.
+	var unbindOut, unbindErr bytes.Buffer
+	if code := cli.Run([]string{"req", "unbind", "--root", root, "--archive-dir", ".claude/custom-runtime-archive", "--approved-by", "actual-test-human", "--reason", "Synthetic end of the current binding."}, nil, &unbindOut, &unbindErr); code != 0 {
+		t.Fatalf("original unbind failed: %s %s", unbindOut.String(), unbindErr.String())
+	}
+	currentFiles, err := filepath.Glob(filepath.Join(root, ".claude/submissions/*/requirement-binding.md"))
+	if err != nil || len(currentFiles) != 1 {
+		t.Fatalf("new archive-bound entry was not prepared: %v %v", currentFiles, err)
+	}
+	currentData, err := os.ReadFile(currentFiles[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(currentData, []byte("actual-test-human")) {
+		t.Fatal("new responsibility reused the old authorization")
+	}
+	entryQuestionnaireHook(t, root, "PostToolUse", path)
+	assertEntryInactive(t, root)
+	entryQuestionnaireHook(t, root, "PostToolUse", currentFiles[0])
 	assertEntryInactive(t, root)
 }
 
@@ -120,5 +177,42 @@ func assertEntryInactive(t *testing.T, root string) {
 	}
 	if bound, _ := state["bound_req"].(map[string]any); bound != nil && bound["id"] != "" {
 		t.Fatalf("draft/save bound a requirement: %+v", bound)
+	}
+}
+
+func TestEntryQuestionnaireS1AuthorizationQuestionAcceptsShortAndLegacy(t *testing.T) {
+	for _, tc := range []struct{ name, question, authorization string }{
+		{"short actual decision", "Who actually authorized this binding?", "actual-test-human"},
+		{"legacy actual decision", "Who actually authorized this binding? Record that human decision; do not infer it from Git identity.", "actual-test-human"},
+		{"short empty", "Who actually authorized this binding?", ""},
+		{"legacy empty", "Who actually authorized this binding? Record that human decision; do not infer it from Git identity.", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := initEntryQuestionnaireRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
+			path := filepath.Join(root, ".claude/submissions/requirement-binding.md")
+			entryQuestionnaireHook(t, root, "SessionStart", path)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := strings.Replace(string(data), "- Who actually authorized this binding? ", "- "+tc.question+" "+tc.authorization, 1)
+			text = strings.Replace(text, "- Which development branch was selected? ", "- Which development branch was selected? feature/req", 1)
+			text = strings.Replace(text, "- What is the explicit release destination? ", "- What is the explicit release destination? origin/main", 1)
+			if err := os.WriteFile(path, []byte(text), 0644); err != nil {
+				t.Fatal(err)
+			}
+			out := entryQuestionnaireHook(t, root, "PostToolUse", path)
+			if tc.authorization == "" {
+				assertEntryInactive(t, root)
+				if !strings.Contains(out, "Still unanswered") {
+					t.Fatal(out)
+				}
+				return
+			}
+			state := readJSONMap(t, filepath.Join(root, ".claude/loop-state.json"))
+			if state["lifecycle"].(map[string]any)["state"] != "planning" || state["bound_req"].(map[string]any)["approved_by"] != tc.authorization {
+				t.Fatalf("actual decision not accepted: %s", out)
+			}
+		})
 	}
 }

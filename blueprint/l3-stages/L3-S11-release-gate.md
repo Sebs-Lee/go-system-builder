@@ -1,26 +1,47 @@
 # L3-S11 — 人工发布闸（Human Release Gateway）
 
-> 层：第三层 ｜ 上游：S10 release-ready package ｜ 状态：`awaiting_human_release` ｜ 下游：`release_authorized`、`paused`、S8、S10 或 `aborted`
->
-> 阅读顺序：§1～§3 先回答“为什么必须停机等人、人的决策是什么、决策之后去哪里”；§4 再映射 package、固定命令、六条路由、暂停/归档和真实发布边界；§5～§8 审计分工、当前硬约束、出口和易错点。S6～S11 尚未完成机制优化，本文不把“有一条本地 decision 记录”表述成已完成身份认证或已执行发布。
+> 上游：S10已接收专业报告；下游：原六处置固定出口。当前契约优先于本页历史主体；本片正常保存与原退回责任交接已取得限定机械/宿主证据；非Investigator执行、完整S8或真实发布完成。
 
-> **Revision 口径**：Runtime `revision` 是 Writer 内部提交序号，不是 S11 人闸条件、人类授权凭证或 Agent 的正常输入。S11 人只选择 disposition；主会话提交当前 package/context 和 decision ID，Writer 负责锁内校验、一次性消费、提交与 revision 记录。显式 revision 仅是集成/恢复调用者可选的高级断言，统一边界见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
+## 当前最小契约（2026-10-18）
 
-## 本轮减负与现有人闸入口（2026-10-15）
+本节与[GLOBAL§0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-18优先于旧方案)是当前规范；具体迁移与限定验证见[S11机制审查](../global-optimization/S11-MECHANISM-REVIEW.md)。
 
-S11 不发行 Agent 问卷，不新增 stage-answer schema/state/receipt。Main 将当前 `awaiting_human_release`
-Runtime 中实际存在的 acceptance/release-audit envelope 与 manifest 路径交给人；不要求人或 Agent
-手抄 metadata 或扫描目录猜路径。Human 只阅读实际包并通过原 `runtime human-decision` 六枚举入口
-提交真实决定；Agent 保存答案、文件出现、超时或建议 approve 都不构成人类决定。当前 CLI 要求已注册的
-`human_decision` evidence reference，但原入口没有发布 decision draft 路径。本轮 helper 会如实列出
-S10 package 路径；如果没有现成、可核验的 decision evidence，则明确报此接线缺口，不造决定或猜路径。
+### 逐工序职责
 
-原入口和验证锚点为 `runtime human-decision`、`internal/cli/s11_human_gateway_test.go`、
-`internal/transition/human_decision_scope_test.go`、`internal/transition/s11_human_gateway_test.go`
-及 Controller no-candidate。`internal/cli/audit_questionnaire.go` 提供 S11 当前 package 路径读取；
-宿主 Hook 调用仍待接线。最小接线复用现有 pending package 与 human-decision/decision-evidence
-消费，不造新的申请协议。TR-025 只记录 release authorization；
-真实 merge/publish/deploy/formal release 仍由人经 Harness 外现有发布流程执行。
+1. **原TR017完成入口准备一次**：复用S10已接收的可读报告、实际结论、真实剩余风险与准确材料路径，准备现有S11申请草稿。不给人整套机器清单，不重审S10，不让人复制metadata/hash/发行证明；无风险不造风险、恢复任务或“唯一未决事实”。普通Pre/Stop只读展示当前材料、等待选择，不准备或推进业务。
+2. **人明确决定**：人阅读候选与风险，明确选择 `approve/defer/reject_defect/reject_acceptance/reject_release_audit/abort`，按实际需要说明理由。无决定、沉默、超时或Agent自己的建议都不等于人类选择；没有真实选择时将原disposition留空等待。停止的是未经决定的自动推进，不是阅读、解释或记录真实决定。
+3. **Main如实保存真实决定**：Main按人的明确原意填写已预备问卷的原 `disposition` 与可选 `reason` 并保存；其余metadata由系统准备。PostToolUse观察准确当前问卷，自动调用既有原Writer入口，同次逻辑提交记录、消费并执行固定出口，不再要求Main运行命令或另交凭证。空选择是草稿，不写Runtime。真实人意是履职要求，Hook不认证身份，也不要求human_confirmed字段或额外证明；actor仅作系统已有调用者记录。原 `runtime human-decision` 及 `--decision-evidence` 只留兼容/恢复，不是正常职责或验证步骤。
+4. **固定去向与真实交接**：approve仅记录授权，不执行发布；defer保原恢复事实；reject_defect把人的实际问题或已有finding交原S8，不要求先造注册finding或placeholder才接决定；reject_acceptance/reject_release_audit把原reason与准确路径交原S10责任，保留已有观察、清除被退回步骤的旧最终结论并明确待办，旧pass不能当新答。abort沿原出口。没有自动发布或自动rollover。
+5. **返回S11再作决定**：根据当前已知S10报告及既有lifecycle.phase_revision（真实阶段入口，机器内部）定位新的现决定，不复用已消费旧申请；defer经原resume/TR019返回S11，即使audit记录未变也准备新的申请，普通Pre/Stop不补准备，不让人填写revision；沿已有对象与消费事实处理，不新增attempt字段或提交协议。缺实际当前材料/明确选择则说清缺项，不猜决定。
+
+TR027的原S8 intake仅对明确人类问题来源作局部兼容，可放宽既有Batch专属必需约束；不新增字段/schema/状态，不把decision ID冒充Batch或虚构Finding，不重写全S8；原Investigator工作包也须沿该Case与实际human_decision材料给出已登记问题，允许既有Batch字段缺失/Finding集合为空，不使领取问题再要求伪Batch。
+
+兼容/恢复命令help仍须如实说明原参数，但正常提示只给准确问卷路径、六处置去向和原disposition/reason含义，不让作者转去猜actions或拼命令。
+
+### 保留与删除
+
+| 保留 | 删除的额外义务/资格 |
+|---|---|
+| 真实明确选择、准确当前责任与候选关联、原六固定出口 | 人/Main重做S10全审、全量hash/开发源/登记证明、身份字符串认证 |
+| 原Writer原子性/CAS、一次逻辑记录和消费事实；同决定正常幂等 | 人填metadata、手工注册decision证据、逐字命令授权、revision算术 |
+| 人的实际问题/理由及必要返工交接；已接收观察可复用 | 为六路由造完整反证表、虚构finding/风险/票据、因缺机器证明拒绝真实决定 |
+| 批准与实际发布分开；没有默认批准 | Hook拦普通工具、自动代选、下一Pre补准备/交接 |
+
+工作状态沿用 `pending/active/blocked/done/cancelled`；既有 `awaiting_human_release` 等是阶段/生命周期游标，六处置是决定，不另造工作状态机。一次逻辑提交不限定物理I/O次数；正常同答不重复业务，真实并发/当前责任冲突沿原Writer边界，不重证明整份来源。
+
+### 正常提示与异常边界
+
+提示应直接列当前候选、已接收结论、真实风险及完整路径，再解释六处置的实际去向。Main将人已明确的选择和必要理由填入原问卷；正常保存由监听自动接收并推进，人不重复填表或执行命令。决定未给则继续等，不用泛恢复或命令占位符让人猜。
+
+真实返工不能被旧结论自动跳过；实际材料缺失则指出文件/责任，不造证据。没有真人决定不得向批准出口推进；批准记录不意味着merge、publish、deploy或formal release已经发生。外部发布与下一周期仍按各自实际授权，不扩为本片实现。
+
+### 实施次序与验收界线
+
+原入口展示、决定消费、返工与作者文案三片已落地，本片限定实施/回归/宿主scope完成：r88真实return正常保存退审、本人补审后再S11新空申请；最终r89真实defect正常保存交原S8 Case/问题/packet，发卷后普通Pre保持current、无false-stale。机械分轮、版本/安装与旧失败见[S11-LANDING-REPORT.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s11-reduction-20261018/S11-LANDING-REPORT.md)；不是最终同版全矩阵。上游synthetic S7与实际prior S10复用、模拟操作者决定边界保留；未执行Investigator/完整S8，不是真实发布授权或全局完成。
+
+## 历史主体（以下旧§1–§8仅保留设计/实现追溯）
+
+以下hash/登记资格、人工对账、完整命令、尚无draft等是当时设计或实现记录，不构成当前规范、现状断言或保留旧门的授权。以顶部契约和当前机制审查为准；保留历史证据，不逐句继承旧“必须”。
 
 ## 1. 第一层：S11 的立意与目标
 

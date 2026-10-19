@@ -267,16 +267,31 @@ func (s *Service) Save(ctx context.Context, owner, path string) (Receipt, error)
 	// No Writer lock survives this call. A crash here leaves a durable pending
 	// event for bounded recovery, without asking the author to resubmit work.
 	result, controlErr := s.control(ctx, record.FollowupID, owner)
-	if controlErr == nil && result.Error == "" {
+	var designAnswerPath string
+	if controlErr == nil && result.Snapshot.State != nil {
 		next = result.Snapshot
+		life, _ := next.State["lifecycle"].(map[string]any)
+		if result.Error == "" && result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" && life["state"] == "planning" && life["phase"] == "design" && runtime.PacketEnabled(next.State) {
+			if design, err := runtime.CurrentDesignPacket(next.State); err == nil {
+				if _, found, err := runtime.FindDesignPacket(next.State, design.ID); err == nil && found {
+					designAnswerPath = design.AnswerPath
+				}
+			}
+		}
 	}
 	r, err := receipt(s.Root, next, p, record)
 	if err != nil {
 		return Receipt{}, err
 	}
+	if designAnswerPath != "" {
+		r.NextAction = "完成本轮实际设计后保存当前S2答卷：" + filepath.Join(s.Root, designAnswerPath)
+	}
 	if controlErr != nil || result.Error != "" {
 		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
 		r.NextAction = "本人交付已接收；由 Main 恢复系统接续。"
+		if result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" {
+			r.NextAction = result.Error
+		}
 	}
 	if result.QualityGate.Status == controller.StatusNotReady && len(r.WaitingOn) == 0 {
 		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "stage_gate_not_ready", Owner: "Main", Ref: result.QualityGate.GateID})
@@ -305,7 +320,22 @@ func validateS5ApprovalMode(root string, state map[string]any, owner string) err
 }
 
 func (s *Service) control(ctx context.Context, event, owner string) (controller.ControlResult, error) {
-	return controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, CWD: s.Root, Event: "PostToolUse", ToolName: "Write", AgentID: owner, SubmissionFollowupID: event, Files: s.Files})
+	result, err := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, CWD: s.Root, Event: "PostToolUse", ToolName: "Write", AgentID: owner, SubmissionFollowupID: event, Files: s.Files})
+	life, _ := result.Snapshot.State["lifecycle"].(map[string]any)
+	if err == nil && result.Error == "" && result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" && life["state"] == "planning" && life["phase"] == "design" && runtime.PacketEnabled(result.Snapshot.State) {
+		_, prepareErr := s.IssueDesign(ctx)
+		if prepareErr == nil {
+			var prepared runtime.Snapshot
+			prepared, prepareErr = s.snapshot()
+			if prepareErr == nil {
+				result.Snapshot = prepared
+			}
+		}
+		if prepareErr != nil {
+			result.Error = "TR-004已完成并返回S2；设计问卷准备未完成：" + prepareErr.Error()
+		}
+	}
+	return result, err
 }
 
 func evidenceRows(state map[string]any) []map[string]any {

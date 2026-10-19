@@ -87,29 +87,29 @@ func progressAction(action string) bool {
 // ObserveWorkProgress writes only one bounded cache slot per runtime/owner/session.
 // Unknown observations reset the diagnostic count; loss of telemetry is never
 // evidence of stagnation. Wall time is descriptive, not a liveness deadline.
-func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) (*ProgressNotice, error) {
+func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) (*ProgressNotice, bool, bool, error) {
 	if facts.Binding == "" || facts.Owner == "" || facts.Session == "" || !facts.Known {
-		return nil, nil
+		return nil, false, false, nil
 	}
 	key := progressHash(facts.Owner + "\x00" + facts.Session)
 	ref := ".claude/hook-notices/work-progress/" + key + ".json"
 	parent, name, err := workpacket.OpenParent(root, ref, true)
 	if err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 	defer parent.Close()
 	if err := workpacket.CheckPath(root, ref); err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 	lockRef := ref + ".lck"
 	if err := workpacket.CheckPath(root, lockRef); err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 	release, err := filelock.Acquire(ctx, filepath.Join(root, filepath.FromSlash(lockRef)))
 	if err != nil {
-		return nil, fmt.Errorf("progress diagnostic cache unavailable: %w", err)
+		return nil, false, false, fmt.Errorf("progress diagnostic cache unavailable: %w", err)
 	}
 	defer release()
 	r := progressRecord{}
@@ -120,19 +120,20 @@ func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) 
 		decodeErr := decoder.Decode(&r)
 		var extra any
 		if decodeErr != nil || decoder.Decode(&extra) != io.EOF || r.Version != 1 || r.Reads == nil || len(r.Reads) > 64 || len(r.Actions) > 8 || r.Repeats < 0 || r.Repeats > ProgressRepeatThreshold || len(r.LastProgressAt) > 40 || (r.LastProgressKind != "responsibility_facts" && r.LastProgressKind != "necessary_source_range") {
-			return nil, fmt.Errorf("progress diagnostic cache damaged; Main may remove only this cache slot")
+			return nil, false, false, fmt.Errorf("progress diagnostic cache damaged; Main may remove only this cache slot")
 		}
 		for _, action := range r.Actions {
 			if !progressAction(action) {
-				return nil, fmt.Errorf("progress cache action vocabulary invalid")
+				return nil, false, false, fmt.Errorf("progress cache action vocabulary invalid")
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, err
+		return nil, false, false, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	binding, semantic, gap := progressHash(facts.Binding), progressHash(facts.Semantic), progressHash(facts.Gap)
 	changed := r.Version == 0 || r.Binding != binding || r.Semantic != semantic || r.Gap != gap
+	factsChanged := changed
 	if changed {
 		r = progressRecord{Version: 1, Binding: binding, Semantic: semantic, Gap: gap, Reads: map[string]bool{}, LastProgressAt: now, LastProgressKind: "responsibility_facts", Actions: []string{}}
 	}
@@ -193,16 +194,16 @@ func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) 
 	}
 	data, err = json.Marshal(r)
 	if err != nil || len(data) > 64<<10 {
-		return nil, fmt.Errorf("progress cache exceeds bound")
+		return nil, false, false, fmt.Errorf("progress cache exceeds bound")
 	}
 	var id [12]byte
 	if _, err := rand.Read(id[:]); err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 	temporary := fmt.Sprintf(".progress-%x", id)
 	f, err := parent.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 	defer parent.Remove(temporary)
 	_, err = f.Write(data)
@@ -214,9 +215,9 @@ func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) 
 		err = parent.Rename(temporary, name)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
-	return notice, nil
+	return notice, true, factsChanged, nil
 }
 
 func progressBound(s string, bytes int) string {

@@ -299,7 +299,7 @@ func TestTaskPlanningAnswerPendingFollowupRecovery(t *testing.T) {
 	assertDesignCheckpoint(t, root)
 }
 
-func TestTaskPlanningAnswerRejectsScopeAndSourceDrift(t *testing.T) {
+func TestTaskPlanningAnswerRejectsRealMissingWorkButAllowsTemplateDescriptionChange(t *testing.T) {
 	for _, mode := range []string{"incomplete", "missing_scope", "source_drift"} {
 		t.Run(mode, func(t *testing.T) {
 			root, p := newTaskPlanningAnswerFixture(t)
@@ -318,8 +318,15 @@ func TestTaskPlanningAnswerRejectsScopeAndSourceDrift(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if r, err := s.SaveTaskPlanning(context.Background(), p.AnswerPath); err == nil || r.Accepted {
-				t.Fatalf("invalid S4 accepted: %+v %v", r, err)
+			r, saveErr := s.SaveTaskPlanning(context.Background(), p.AnswerPath)
+			if mode == "source_drift" {
+				if saveErr != nil || !r.Accepted || !r.WorkComplete {
+					t.Fatalf("historical template text became a new qualification: %+v %v", r, saveErr)
+				}
+				return
+			}
+			if saveErr == nil || r.Accepted {
+				t.Fatalf("invalid S4 accepted: %+v %v", r, saveErr)
 			}
 			after := stageSnapshot(t, root)
 			if before.Revision != after.Revision || len(before.State["evidence"].([]any)) != len(after.State["evidence"].([]any)) {

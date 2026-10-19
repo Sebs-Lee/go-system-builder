@@ -85,8 +85,16 @@ func TestTaskGranularityAdviceOnlyNamesObservedCoupling(t *testing.T) {
 			t.Fatalf("unsupported advice: %+v", item)
 		}
 	}
-	if !kinds["same_file_writes"] || !kinds["shared_read_write_context"] || !kinds["closing_oracle_unresolved"] {
+	if !kinds["same_file_writes"] || !kinds["shared_read_write_context"] {
 		t.Fatalf("missing coupling observations: %+v", advice)
+	}
+	for _, item := range AnalyzeTaskGranularity([]TaskContextSummary{{TaskID: "TASK-SINGLE", TaskRef: "TASK-SINGLE.md", Modules: []string{"src/inventory", "tests"}}}) {
+		if item.Kind == "closing_oracle_unresolved" || item.Kind == "multiple_write_modules" {
+			t.Fatalf("speculative author proof request retained: %+v", item)
+		}
+	}
+	if kinds["closing_oracle_unresolved"] || kinds["multiple_write_modules"] {
+		t.Fatal("machine-recognized command or path grouping became an advisory")
 	}
 	b.Writes = []string{"internal/independent/a.go"}
 	for _, item := range AnalyzeTaskGranularity([]TaskContextSummary{a, b}) {

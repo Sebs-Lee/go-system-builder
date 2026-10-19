@@ -341,6 +341,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if err != nil {
 				return results, err
 			}
+			preparation, preparationWaiting := s.preparePlanningOutlet(ctx, &result)
 			latest, err := s.snapshot()
 			if err != nil {
 				return results, err
@@ -352,6 +353,8 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if result.Error != "" {
 				r.NextAction = "Main 恢复原 contract followup；无需重新提交专业判断。"
 			}
+			r.NextAction += preparation
+			r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
 			results = append(results, r)
 			if len(results) == limit {
 				break
@@ -368,6 +371,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if err != nil {
 				return results, err
 			}
+			preparation, preparationWaiting := s.preparePlanningOutlet(ctx, &result)
 			latest, err := s.snapshot()
 			if err != nil {
 				return results, err
@@ -379,6 +383,8 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if result.Error != "" {
 				r.NextAction = "Main 恢复原 design followup；无需重新提交专业判断。"
 			}
+			r.NextAction += preparation
+			r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
 			results = append(results, r)
 			if len(results) == limit {
 				break
@@ -408,8 +414,16 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 		if err != nil {
 			return results, err
 		}
+		if result.Error == "" && result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" {
+			if design, err := runtime.CurrentDesignPacket(latest.State); err == nil {
+				r.NextAction = "完成本轮实际设计后保存当前S2答卷：" + filepath.Join(s.Root, design.AnswerPath)
+			}
+		}
 		if result.Error != "" {
 			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
+			if result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" {
+				r.NextAction = result.Error
+			}
 		}
 		results = append(results, r)
 		if len(results) == limit {

@@ -1,10 +1,17 @@
 {
- "stage":"S2",
- "adapter":"planning_design",
- "title":"Complete the current design and receive its original planning evidence",
- "instruction":"Read the frozen locked REQ. Complete and self-review the original ARCHITECTURE and applicable design/scenario work. Fill only answer; the system provides identity and original evidence bindings. Pass is your professional judgment. Original UI impact, gates, ADR decisions and downstream independent review remain required.",
- "questions":{
-  "conclusion":{"question":"Has the original design self-review passed for this exact requirement?","choices":["pass"]},
-  "architecture_path":{"question":"Where is the actual locked ARCHITECTURE document for this design?"}
- }
+  "stage": "S2",
+  "adapter": "planning_design",
+  "title": "Complete the current design and receive its original planning evidence",
+  "instruction": "Read the current REQ and supplied design/template/material paths. Complete the actual architecture boundaries, data/state/error/recovery, integration and contract decisions; record relevant alternatives, risks and necessary real human direction judgments in the existing ADR/materials. Reuse the current affected module truth: update applicable UI/scenario work for UI changes, or service behavior/scenario work when relevant without UI; do not invent unrelated work. Check applicable scenario bridge/generate/validate results as real design work. Then self-review the actual deliverables. Fill only the existing answer.conclusion and answer.architecture_path; keep conclusion empty while work or necessary judgment is unfinished. A pass is this professional self-review, not an independent certification of every task. Saving continues the original stage outlet; no issue, evidence registration or repeated report is required.",
+  "questions": {
+    "conclusion": {
+      "question": "After the actual design work and necessary human direction judgments, has your design self-review passed? Leave this field empty/null while unfinished; actual missing work will be reported without recording a passing decision.",
+      "choices": [
+        "pass"
+      ]
+    },
+    "architecture_path": {
+      "question": "What is the actual current docs/architecture/ARCHITECTURE-*.md path? Use the supplied architecture template and current project materials; finish/lock the actual design when ready. The system reads the document; do not copy hashes, evidence IDs or permissions."
+    }
+  }
 }

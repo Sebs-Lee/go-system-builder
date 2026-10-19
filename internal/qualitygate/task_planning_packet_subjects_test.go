@@ -101,38 +101,31 @@ func TestVerifiedTaskPlanningPacketSourcesProjectsAcceptedInputsAndActualBatch(t
 	}
 }
 
-func TestVerifiedTaskPlanningPacketSourcesRejectsUnacceptedOrDriftedFacts(t *testing.T) {
-	t.Run("professional answer hash", func(t *testing.T) {
-		fixture := newTaskPlanningPacketSubjectFixture(t)
-		fixture.submissionRow["content_sha256"] = workpacket.Digest([]byte("different professional answer"))
-		if _, _, err := verifiedTaskPlanningPacketFacts(fixture.input); err == nil || !strings.Contains(err.Error(), "professional answer") {
-			t.Fatalf("accepted a changed S4 professional answer hash: %v", err)
-		}
-	})
+func TestVerifiedTaskPlanningPacketSourcesReadsRecordedFactsWithoutHistoricalQualification(t *testing.T) {
+	fixture := newTaskPlanningPacketSubjectFixture(t)
+	fixture.submissionRow["content_sha256"] = workpacket.Digest([]byte("historical digest not replayed"))
+	writeContractPacketSubjectFile(t, fixture.root, "docs/dev/tasks/TASK-template.md", "# changed current template\n")
+	writeContractPacketSubjectFile(t, fixture.root, "docs/dev/tasks/TASK-REQ-001-02.md", "> Status: cancelled\n> Version: v1.0.0\nchanged\n")
+	fixture.input.Files = taskPlanningReadOnlyView{root: fixture.root}
+	facts, accepted, err := verifiedTaskPlanningPacketFacts(fixture.input)
+	if err != nil || !accepted || len(facts) == 0 {
+		t.Fatalf("record projection replayed old qualification: %v %v", accepted, err)
+	}
+}
 
-	t.Run("actual task output hash", func(t *testing.T) {
-		fixture := newTaskPlanningPacketSubjectFixture(t)
-		writeContractPacketSubjectFile(t, fixture.root, "docs/dev/tasks/TASK-REQ-001-02.md", "> Status: cancelled\n> Version: v1.0.0\n> Source REQ refs: REQ-001\nchanged\n")
-		if _, _, err := verifiedTaskPlanningPacketFacts(fixture.input); err == nil || !strings.Contains(err.Error(), "actual validated output") {
-			t.Fatalf("accepted changed TASK bytes under the historical envelope hash: %v", err)
+func TestVerifiedTaskPlanningPacketSourcesReportsUnreadableRecordedEnvelope(t *testing.T) {
+	fixture := newTaskPlanningPacketSubjectFixture(t)
+	for _, raw := range fixture.input.Snapshot.State["evidence"].([]any) {
+		row := raw.(map[string]any)
+		if row["id"] == fixture.submissionRow["evidence_id"] {
+			if err := os.Remove(filepath.Join(fixture.root, row["path"].(string))); err != nil {
+				t.Fatal(err)
+			}
 		}
-	})
-
-	t.Run("frozen template drift", func(t *testing.T) {
-		fixture := newTaskPlanningPacketSubjectFixture(t)
-		writeContractPacketSubjectFile(t, fixture.root, "docs/dev/tasks/TASK-template.md", "# changed task template\n")
-		if _, _, err := verifiedTaskPlanningPacketFacts(fixture.input); err == nil {
-			t.Fatal("accepted drift in the S4 frozen task template")
-		}
-	})
-
-	t.Run("original directory-capable view", func(t *testing.T) {
-		fixture := newTaskPlanningPacketSubjectFixture(t)
-		fixture.input.Files = taskPlanningReadOnlyView{root: fixture.root}
-		if _, _, err := verifiedTaskPlanningPacketFacts(fixture.input); err == nil || !strings.Contains(err.Error(), "directory reads") {
-			t.Fatalf("accepted a file view that cannot verify the original directory closure: %v", err)
-		}
-	})
+	}
+	if _, accepted, err := verifiedTaskPlanningPacketFacts(fixture.input); !accepted || err == nil || !strings.Contains(err.Error(), "envelope") {
+		t.Fatalf("missing recorded envelope not reported: accepted=%v err=%v", accepted, err)
+	}
 }
 
 func TestTaskPlanningGateTreatsUnacceptedPacketAsMissingEvidence(t *testing.T) {
@@ -163,9 +156,11 @@ func TestTaskPlanningGateTreatsUnacceptedPacketAsMissingEvidence(t *testing.T) {
 	}
 }
 
-func TestTaskPlanningGateReportsAcceptedOutputDriftAsConflict(t *testing.T) {
+func TestTaskPlanningGateReportsUnreadableRecordedOutputAsConflict(t *testing.T) {
 	fixture := newTaskPlanningPacketSubjectFixture(t)
-	writeContractPacketSubjectFile(t, fixture.root, "docs/dev/tasks/TASK-REQ-001-01.md", "> Status: complete\n> Version: v1.0.0\n> Source REQ refs: REQ-001\nchanged\n")
+	if err := os.Remove(filepath.Join(fixture.root, "docs/dev/tasks/TASK-REQ-001-01.md")); err != nil {
+		t.Fatal(err)
+	}
 	input := fixture.input
 	input.GateID = "GATE-PLANNING-TASKS-COMPLETE"
 	input.TransitionID = "TR-002"
@@ -177,7 +172,7 @@ func TestTaskPlanningGateReportsAcceptedOutputDriftAsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Status != StatusUnknown || result.ErrorCode != ErrorGateUnknown || len(result.Conflicts) == 0 || !strings.Contains(result.Conflicts[0], "TASK-REQ-001-01.md") {
-		t.Fatalf("accepted S4 output drift was hidden by the disk fallback: status %q code %q conflicts %#v", result.Status, result.ErrorCode, result.Conflicts)
+		t.Fatalf("unreadable S4 output was hidden by the disk fallback: status %q code %q conflicts %#v", result.Status, result.ErrorCode, result.Conflicts)
 	}
 }
 

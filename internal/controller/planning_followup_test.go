@@ -42,8 +42,8 @@ func TestCurrentPlanningPacketRequiresUniqueExactCurrentBinding(t *testing.T) {
 			wrong["owner"] = "worker-a"
 			wrongOwnerEntities := wrongOwnerState["entities"].(map[string]any)
 			wrongOwnerEntities["work_packets"] = []any{wrongOwnerRow}
-			if _, err := findCurrentPlanningPacket(wrongOwnerState, wrongOwnerBinding.Stage, planningTemplateForPhase(phase), wrongOwnerBinding, expectedDesignForPhase(t, phase, wrongOwnerState)); err == nil {
-				t.Fatal("same-entry wrong-owner packet was accepted")
+			if _, err := findCurrentPlanningPacket(wrongOwnerState, wrongOwnerBinding.Stage, planningTemplateForPhase(phase), wrongOwnerBinding, expectedDesignForPhase(t, phase, wrongOwnerState)); (phase == "design" && err != nil) || (phase != "design" && err == nil) {
+				t.Fatalf("owner metadata differs from expected %s behavior: %v", phase, err)
 			}
 
 			wrongREQState, wrongREQBinding, wrongREQRow := planningFollowupFixture(t, phase)
@@ -51,8 +51,19 @@ func TestCurrentPlanningPacketRequiresUniqueExactCurrentBinding(t *testing.T) {
 			wrongREQ["id"] = "REQ-040"
 			wrongREQEntities := wrongREQState["entities"].(map[string]any)
 			wrongREQEntities["work_packets"] = []any{wrongREQRow}
-			if _, err := findCurrentPlanningPacket(wrongREQState, wrongREQBinding.Stage, planningTemplateForPhase(phase), wrongREQBinding, expectedDesignForPhase(t, phase, wrongREQState)); err == nil {
-				t.Fatal("same-entry wrong-REQ packet was accepted")
+			if _, err := findCurrentPlanningPacket(wrongREQState, wrongREQBinding.Stage, planningTemplateForPhase(phase), wrongREQBinding, expectedDesignForPhase(t, phase, wrongREQState)); (phase == "design" && err != nil) || (phase != "design" && err == nil) {
+				t.Fatalf("REQ display metadata differs from expected %s behavior: %v", phase, err)
+			}
+			if phase == "design" {
+				entities["work_packets"] = []any{row}
+				entities["submissions"] = []any{map[string]any{
+					"packet_id": row["packet_id"], "owner": "actual-author", "submission_key": "recorded-key",
+					"followup_event_id": "recorded-followup", "evidence_id": "accepted-design",
+					"control_status": "no_transition", "origin_state": "planning", "origin_phase": "design", "origin_entry": binding.StageEntry,
+				}}
+				if _, err := currentPlanningSubmission(state, row["packet_id"].(string), binding, "design", "s2-design-v1"); err != nil {
+					t.Fatalf("accepted S2 no_transition must continue without owner/key proof: %v", err)
+				}
 			}
 		})
 	}

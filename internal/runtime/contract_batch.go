@@ -26,7 +26,6 @@ var (
 
 type contractIndexRow struct {
 	id      string
-	typ     string
 	status  string
 	version string
 }
@@ -448,9 +447,15 @@ func validateContractIndex(path, content string, p workpacket.ContractPacket, an
 	if contractHeaderField(content, "状态", "Status") != "locked" || contractHeaderField(content, "版本", "Version") == "" {
 		return fmt.Errorf("S3 CONTRACTS index must declare status=locked and a version")
 	}
-	reqMatch := regexp.MustCompile(`(?m)^>\s*(?:需求|REQ|Requirement)\s*[:：]\s*` + regexp.QuoteMeta(p.Binding.Requirement.ID) + `\s*$`)
-	if !reqMatch.MatchString(content) {
-		return fmt.Errorf("S3 CONTRACTS index does not declare frozen requirement %s", p.Binding.Requirement.ID)
+	reqHeaders := regexp.MustCompile(`(?m)^>\s*(?:需求|REQ|Requirement)\s*[:：]\s*(.*)$`).FindAllStringSubmatch(content, -1)
+	if len(reqHeaders) == 0 {
+		return fmt.Errorf("S3 CONTRACTS index missing requirement declaration for %s", p.Binding.Requirement.ID)
+	}
+	for _, header := range reqHeaders {
+		id, err := contractIndexDisplayID(header[1], regexp.MustCompile(`\bREQ-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`))
+		if err != nil || id != p.Binding.Requirement.ID {
+			return fmt.Errorf("S3 CONTRACTS index requirement declaration %q does not unambiguously identify %s", header[1], p.Binding.Requirement.ID)
+		}
 	}
 	indexRows, err := contractInventoryRows(content)
 	if err != nil {
@@ -462,20 +467,28 @@ func validateContractIndex(path, content string, p workpacket.ContractPacket, an
 		syncSet[id] = true
 	}
 	declared := map[string]bool{}
+	notApplicable := func(id string) bool {
+		family := strings.SplitN(id, "-", 2)[0]
+		return answer.Applicability[family].Disposition == "not_applicable"
+	}
 	for id, row := range indexRows {
+		if notApplicable(id) {
+			continue
+		}
 		declared[id] = true
 		if row.status != "locked" || row.version == "" {
 			return fmt.Errorf("S3 index row %s must declare locked status and version", id)
 		}
-		if !contractTypeMatches(id, row.typ) {
-			return fmt.Errorf("S3 index row %s has contradictory type %q", id, row.typ)
-		}
 	}
 	for _, id := range syncIDs {
-		declared[id] = true
+		if !notApplicable(id) {
+			declared[id] = true
+		}
 	}
 	for _, id := range contractIDsInSection(content, "需求覆盖矩阵") {
-		declared[id] = true
+		if !notApplicable(id) {
+			declared[id] = true
+		}
 	}
 	actual := map[string]workpacket.Reference{}
 	for _, ref := range artifacts[1:] {
@@ -497,6 +510,9 @@ func validateContractIndex(path, content string, p workpacket.ContractPacket, an
 		}
 	}
 	for id, row := range indexRows {
+		if notApplicable(id) {
+			continue
+		}
 		ref, ok := actual[id]
 		if !ok || ref.Version != row.version {
 			return fmt.Errorf("S3 index row %s version differs from the delivered contract", id)
@@ -508,26 +524,63 @@ func validateContractIndex(path, content string, p workpacket.ContractPacket, an
 	return nil
 }
 
+// contractIndexDisplayID reads an existing document ID through Markdown presentation.
+// Repeated label/target occurrences of the same ID agree; different IDs are ambiguous.
+func contractIndexDisplayID(value string, tokens *regexp.Regexp) (string, error) {
+	found := ""
+	for _, id := range tokens.FindAllString(value, -1) {
+		if found != "" && found != id {
+			return "", fmt.Errorf("conflicting document IDs %s and %s", found, id)
+		}
+		found = id
+	}
+	if found == "" {
+		return "", fmt.Errorf("missing document ID")
+	}
+	return found, nil
+}
+
 func contractInventoryRows(content string) (map[string]contractIndexRow, error) {
 	section := markdownSection(content, "合同清单")
+	start := strings.Index(content, section)
+	if start < 0 {
+		start = 0
+	}
+	offset := strings.Count(content[:start], "\n")
 	rows := map[string]contractIndexRow{}
-	for _, line := range strings.Split(section, "\n") {
+	lines := strings.Split(section, "\n")
+	inTable := false
+	for lineIndex, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "|") {
+		if !inTable {
+			if !strings.HasPrefix(trimmed, "|") {
+				continue
+			}
+			cells := splitMarkdownRow(trimmed)
+			if len(cells) == 0 || !(cells[0] == "合同ID" || strings.EqualFold(cells[0], "Contract ID") || strings.EqualFold(cells[0], "ID")) {
+				continue
+			}
+			inTable = true
 			continue
+		}
+		if !strings.HasPrefix(trimmed, "|") {
+			break
 		}
 		cells := splitMarkdownRow(trimmed)
-		if len(cells) == 0 || cells[0] == "合同ID" || strings.EqualFold(cells[0], "Contract ID") || strings.EqualFold(cells[0], "ID") || strings.HasPrefix(cells[0], ":-") || strings.HasPrefix(cells[0], "--") {
+		if len(cells) > 0 && (strings.HasPrefix(cells[0], ":-") || strings.HasPrefix(cells[0], "--")) {
 			continue
 		}
-		if !contractIDPattern.MatchString(cells[0]) || len(cells) < 6 {
-			return nil, fmt.Errorf("S3 index has an invalid contract inventory row")
+		if len(cells) < 6 {
+			return nil, fmt.Errorf("S3 index contract inventory line %d: expected 6 columns (ID/type/owner/status/version/integration), got %d", offset+lineIndex+1, len(cells))
 		}
-		id := cells[0]
+		id, err := contractIndexDisplayID(cells[0], contractTokenRE)
+		if err != nil {
+			return nil, fmt.Errorf("S3 index contract inventory line %d column 合同ID: %w", offset+lineIndex+1, err)
+		}
 		if _, exists := rows[id]; exists {
-			return nil, fmt.Errorf("S3 index repeats contract row %s", id)
+			return nil, fmt.Errorf("S3 index contract inventory line %d column 合同ID repeats %s", offset+lineIndex+1, id)
 		}
-		rows[id] = contractIndexRow{id: id, typ: cells[1], status: cells[3], version: cells[4]}
+		rows[id] = contractIndexRow{id: id, status: cells[3], version: cells[4]}
 	}
 	return rows, nil
 }
@@ -566,20 +619,6 @@ func splitMarkdownRow(line string) []string {
 		cells[i] = strings.TrimSpace(strings.Trim(cells[i], "`"))
 	}
 	return cells
-}
-
-func contractTypeMatches(id, typ string) bool {
-	typ = strings.ToLower(strings.TrimSpace(typ))
-	switch {
-	case strings.HasPrefix(id, "FE-"):
-		return typ == "frontend" || typ == "front-end" || typ == "前端" || typ == "fe"
-	case strings.HasPrefix(id, "BE-"):
-		return typ == "backend" || typ == "back-end" || typ == "后端" || typ == "be"
-	case strings.HasPrefix(id, "SYNC-"):
-		return typ == "sync" || typ == "联调" || typ == "联调点" || typ == "协议" || typ == "同步" || typ == "api"
-	default:
-		return false
-	}
 }
 
 func sameStringSet(a, b map[string]bool) bool {

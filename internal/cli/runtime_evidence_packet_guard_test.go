@@ -22,9 +22,9 @@ func TestRuntimeEvidenceAddPacketPlanningKindRequiresTypedConsumer(t *testing.T)
 			name: "S2 no current packet",
 			setup: func(t *testing.T) (string, string, string) {
 				root := newPlanningEvidenceRoot(t, "design", true)
-				return root, "planning_design", "loop-harness runtime stage-answer issue --root " + root
+				return root, "planning_design", "real stage-entry preparation is missing"
 			},
-			wantAction: "loop-harness runtime stage-answer issue",
+			wantAction: "not manually issue or consume",
 		},
 		{
 			name: "S3 no current packet",
@@ -46,10 +46,10 @@ func TestRuntimeEvidenceAddPacketPlanningKindRequiresTypedConsumer(t *testing.T)
 			name: "current issued packet",
 			setup: func(t *testing.T) (string, string, string) {
 				root, packet := newDesignFixture(t, "none")
-				command := "loop-harness runtime stage-answer consume --root " + root + " --agent Main --path " + packet.AnswerPath
+				command := filepath.Join(root, filepath.FromSlash(packet.AnswerPath))
 				return root, "planning_design", command
 			},
-			wantAction: "loop-harness runtime stage-answer consume",
+			wantAction: "Save the professional answer normally",
 		},
 	}
 	for _, tc := range tests {

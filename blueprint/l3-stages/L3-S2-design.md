@@ -2,7 +2,28 @@
 
 > 层：第三层 ｜ 上游：L2 §S2 + L2「单一验证分母」 ｜ 前置：S1 已绑定 REQ ｜ 下游：S3 契约
 >
-> 阅读顺序：§1～§3 先说明 S2 为什么存在、要完成哪些设计任务以及如何收敛；§4 再把模板、skill、harness、hook 挂到相应步骤；§5～§8 用于职责审计、准则映射、出口判定与遇错查阅。本文把“当前已经机械生效的能力”和“仍靠流程纪律或尚有接线缺口的能力”分开表述。
+> 阅读顺序：先读顶部当前最小契约；后文旧主体仅供追溯，不作为恢复旧门或正常命令手续的依据。
+
+## 当前最小契约（2026-10-18）
+
+本节与[GLOBAL§0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-18优先于旧方案)为当前规范；三段迁移与验证边界见[S0–S2机制审查](../global-optimization/S0-S2-MECHANISM-REVIEW.md)。本次实施/限定回归done；r91有限宿主范围通过：MiniMax自然exit0、无外部timeout，639.243807714025s，原四题正常保存绑定develop/main准确目标，S2两字段正常保存经PTR-PLAN-01到rev6/planning.contracts/entry2并备S3卷；cross-matrix无null且未借读包外schema。[r91宿主审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/native-s012-r91-minimax-audit.md)。本次复用8份真实专业源，非从零全S0创作、全局完成、真实发布或性能提升；S0仅复用历史草稿/未授权等待与真实锁定交接边界及本轮机械证据，不泛化更宽业务。原20函数/7包编译构建与host-only包安装证据见[落地记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/S0-S2-LANDING-REPORT.md)。r3原19函数实际RUN/PASS、构建与linux/amd64评估包空安装通过。[限定验证与包安装](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/verification-20261018T133235.172892Z/package-install-r90.json)；不继承历史通过或宣称全仓/全平台验收。
+
+**2026-10-19 本轮优先补线（设计固定，待实施）：** amendment/恢复/返工等原成功出口复用原下一卷 issuer，一次备当前 S2 卷；普通 Pre/Stop 不补发/重证，真实保存仍交原记录/出口。AC 实际多 FR 逐项读关联，仅消费当前有效验收表，排除历史 fenced 引文；cross-matrix 同 fact×FR×story 可有多个实际 branch，不迫专业故事为唯一键改义。真实必要覆盖/设计工作与人意保留，不新字段或手工推进。负例比例和资料方法政策此片不改。本轮三 fresh 完整链0/3及 S2 未覆盖边界以[GLOBAL 当前优先契约](../GLOBAL-OPTIMIZATION-DESIGN.md#当前优先实施契约2026-10-19本轮重验后固定尚未落地)为准，旧 r91 局部通过不升级。
+
+ADR状态缺项反馈须指向已有 `docs/design/decisions/ADR-template.md`，列出原值 `proposed / accepted / rejected / deprecated`；实际方向获接受时记录 `accepted`，不让作者搜索二进制猜值，也不以状态代替真实人的方向决定。
+
+S2沿现设计问卷的 `architecture_path` / `conclusion` 两专业字段及实际架构/UI/服务/ADR工作，不新字段、题目数量门或通用许可。系统一次给完整职责、适用条件材料、已有REQ与实际产物路径和准确答卷路径，作者不猜机器字段/路径/命令。
+
+- Main实际完成相关设计并保存原答案；空conclusion是草稿，反馈明确未答项。UI/服务行为/ADR等真实专业工作不能靠自报pass跳过；实际必要材料缺失则具体提醒，不重建全包/全历史proof来认证专业充分性。
+- 正常接收删除Main身份资格、全packet/Draft DeepEqual、开发source hash及重建envelope等重复资格；只保必要已用字段类型可读、准确当前卷/责任关联、原Writer/CAS与同答幂等，不移到consumer/helper继续证明；深层planning checkpoint、PTR-PLAN-01 transition与qualitygate同样只读已记录结论、当前责任和实际材料缺项，不重建envelope/evidence/fileview证明或要求exact主体集合。
+- 初始真实S2责任开始/原TR001成功出口一次准备；普通Pre/Stop只读，不重证来源或写业务。真实专业保存调用原记录及PTR-PLAN-01出口，交原S3责任，不要求手动recover/issue/consume。
+- 已收卷而本步出口未完成，下次同份正常保存接续原出口、不重复登记；已完成跨stage旧卷回放只读不重推进。真实修改、并发及旧轮冲突沿原当前责任边界，不造修订/重试协议。
+
+删除接收资格不等于删除实际设计责任：保真实产物与适用工作，Hook只准确提醒可见缺项，不能代做设计审查或凭身份/hash声称完成。
+
+## 历史主体（以下原章节仅作设计与实现追溯）
+
+旧正文中的命令必需、逐层确认、身份/hash/发行证明、普通Pre准备、异答一概拒收或recover手续，不构成本次保留授权；与当前契约冲突时不得据此恢复。原专业目标与历史证据保留，本次实际验证范围见顶部，不从历史主体继承通过。
 
 ## 1. 第一层：S2 的立意与目标
 

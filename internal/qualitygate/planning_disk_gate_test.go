@@ -192,6 +192,7 @@ func TestPlanningDesignGateReadsDiskDeclaredArchitecture(t *testing.T) {
 				"runtime_id": "loop-test",
 				"lifecycle":  map[string]any{"state": "planning", "phase": "design", "phase_revision": float64(1)},
 				"baseline":   map[string]any{"generation": float64(1)},
+				"bound_req":  map[string]any{"id": "REQ-001", "path": "docs/requirements/REQ-001.md", "status": "locked"},
 				"review":     map[string]any{"round": float64(0)},
 				"documents": []any{ // req registered by bind; design NOT registered (organic pre-commit state)
 					map[string]any{"id": "REQ-001", "kind": "req", "path": "docs/requirements/REQ-001.md", "version": "v1.0.0", "sha256": sha256Hex(reqData), "status": "locked", "generation": float64(1)},

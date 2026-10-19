@@ -143,29 +143,21 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	if len(request.ExpectedOutcomes) < 2 || strings.TrimSpace(stringField(request.ExpectedOutcomes["support"])) == "" || strings.TrimSpace(stringField(request.ExpectedOutcomes["refute"])) == "" {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "hypothesis expected_outcomes must name non-empty support and refute outcomes")
 	}
-	sourceIDs, err := normalizeSet(request.SourceFindingIDs, "Hypothesis.source_finding_ids")
-	if err != nil {
-		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+	sourceIDs := []string{}
+	if len(request.SourceFindingIDs) > 0 {
+		var err error
+		sourceIDs, err = normalizeSet(request.SourceFindingIDs, "Hypothesis.source_finding_ids")
+		if err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
+		}
 	}
 	evidenceRefs, err := nonEmptyStrings(request.EvidenceRefs, "Hypothesis.evidence_refs")
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	// RC-14: unified evidence attestation — every Hypothesis.evidence_refs entry must be
-	// an execution anchor (://) or a current-generation, valid, SHA-verified Runtime
-	// evidence id. Phantom `evidence/phantom.json` or stale-generation ids are rejected
-	// here before the Case revision is written.
 	snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot()
 	if serr != nil {
-		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for Hypothesis.evidence_refs attestation: %v", serr)
-	}
-	if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
-		State:              snapshot.State,
-		Root:               root,
-		RequireSHA:         true,
-		RequireReviewRound: currentReviewRound(snapshot.State),
-	}); err != nil {
-		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "Hypothesis.evidence_refs: %v", err)
+		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for Hypothesis.evidence_refs: %v", serr)
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		ExpectedRevision:     request.ExpectedRevision,
@@ -175,6 +167,35 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 		Operation:            "hypothesis_registered",
 		OccurredAt:           request.OccurredAt,
 		Mutate: func(document map[string]any) error {
+			if len(sourceIDs) == 0 && stringField(document["observation_batch_id"]) != "" {
+				return errors.New("Hypothesis.source_finding_ids must contain at least one Finding ID for a Batch Case")
+			}
+			refsToValidate := evidenceRefs
+			if stringField(document["observation_batch_id"]) == "" {
+				// A human intake Case carries the actual consumed decision as
+				// source material, not as a fabricated Finding or execution receipt.
+				boundaries := stringSliceValues(document["failure_boundary_refs"])
+				refsToValidate = nil
+				for _, ref := range evidenceRefs {
+					matched := false
+					for _, boundary := range boundaries {
+						if ref == boundary {
+							matched = true
+							break
+						}
+					}
+					if !matched {
+						refsToValidate = append(refsToValidate, ref)
+					}
+				}
+			}
+			if len(refsToValidate) > 0 {
+				if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{
+					State: snapshot.State, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(snapshot.State),
+				}); err != nil {
+					return fmt.Errorf("Hypothesis.evidence_refs: %w", err)
+				}
+			}
 			caseIDs, err := stringSlice(document["source_finding_ids"], "InvestigationCase.source_finding_ids")
 			if err != nil {
 				return err
@@ -752,7 +773,11 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	if err := exactFindingSetWithDetails(caseIDs, nextIDs); err != nil {
+	if len(caseIDs) == 0 {
+		if len(nextIDs) != 0 {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "source Finding set is immutable")
+		}
+	} else if err := exactFindingSetWithDetails(caseIDs, nextIDs); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "source Finding exact set is immutable: %v", err)
 	}
 	// RC-18 S8-H3: the Case pins the digest of the S7 frozen baseline it was
@@ -762,7 +787,7 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	// changing it would bless the drift — so the mutation message carries the
 	// warning into the journal and the status board surfaces it to the caller.
 	driftWarning := ""
-	if plan, _, planErr := review.LoadPlan(root, current.State); planErr == nil {
+	if plan, _, planErr := review.LoadPlan(root, current.State); planErr == nil && stringField(nextDocument["baseline_digest"]) != "" {
 		if digest := review.SubjectDigest(plan); digest != stringField(nextDocument["baseline_digest"]) {
 			driftWarning = fmt.Sprintf("baseline_digest drift: Case pins %s but the frozen ReviewPlan subjects now digest to %s; the investigation baseline is stale — re-verify findings against the current baseline before causal closure",
 				stringField(nextDocument["baseline_digest"]), digest)

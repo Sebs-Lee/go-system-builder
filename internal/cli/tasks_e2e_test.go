@@ -362,8 +362,8 @@ func TestTasksCheckReportsReferenceLoads(t *testing.T) {
 	write("docs/dev/tasks/TASK-830-01.md", "# TASK-830-01\n\n> Status: complete\n> Version: v1.0.0\n> Primary contract: BE-830\n\n"+
 		"## 2. Document Manifest\n\n| Order | Kind | ID | Path | Clauses |\n|:--|:--|:--|:--|:--|\n| 1 | contract | BE-830 | `docs/dev/contracts/BE-830.md` | §1 |\n| 2 | req | REQ-830 | `docs/requirements/REQ-830.md` | FR |\n\n"+
 		"## 3. Delivered Clauses\n\n| Contract | Delivered clauses |\n|:--|:--|\n| BE-830 | §1 |\n\n"+
-		"## 4. Scope\n\n| Type | Paths / Commands |\n|:--|:--|\n| read paths | `docs/dev/contracts/BE-830.md` |\n| prospective write paths | `internal/x/a.go`, `internal/x/b.go` |\n\n"+
-		"## 7. Closing Contract\n\n```text\nassert BE-830 §1 == satisfied\n```\n")
+		"## 4. Scope\n\n| Type | Paths / Commands |\n|:--|:--|\n| read paths | `docs/dev/contracts/BE-830.md` |\n| prospective write paths | `internal/x/a.go`, `tests/test_x.py` |\n\n"+
+		"## 7. Closing Contract\n\n```text\nassert python3 -m unittest discover -s tests == pass\n```\n")
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"tasks", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
@@ -377,8 +377,18 @@ func TestTasksCheckReportsReferenceLoads(t *testing.T) {
 	if err := json.Unmarshal(jsonOut.Bytes(), &analysis); err != nil {
 		t.Fatal(err)
 	}
-	if analysis["context_analysis_version"] != "1.0.0" || len(analysis["task_contexts"].([]any)) != 1 || len(analysis["granularity_advice"].([]any)) == 0 {
+	if analysis["context_analysis_version"] != "1.0.0" || len(analysis["task_contexts"].([]any)) != 1 {
 		t.Fatalf("structured oracle/reading advice missing: %s", jsonOut.String())
+	}
+	advice, _ := analysis["granularity_advice"].([]any)
+	for _, item := range advice {
+		kind := item.(map[string]any)["kind"]
+		if kind == "closing_oracle_unresolved" || kind == "multiple_write_modules" {
+			t.Fatalf("speculative advisory retained: %s", jsonOut.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "closing_oracle_unresolved") || strings.Contains(stdout.String(), "multiple_write_modules") {
+		t.Fatal("CLI still requests speculative proof")
 	}
 	out := stdout.String()
 	if !strings.Contains(out, "TASK-830-01: required reading ~") || !strings.Contains(out, "write paths 2") || !strings.Contains(out, "reference only") {

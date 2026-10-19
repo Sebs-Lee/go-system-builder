@@ -29,6 +29,33 @@ func TestContractArtifactsReturnsExactLockedBatch(t *testing.T) {
 	if refs[0].SHA256 != workpacket.Digest(readContractFile(t, f.root, f.indexPath)) || refs[1].SHA256 != workpacket.Digest(readContractFile(t, f.root, f.contractPath)) {
 		t.Fatal("artifact SHA does not describe checkout content")
 	}
+	for _, display := range []string{"REQ-001（v1.0.0，当前需求）", "`REQ-001`", "[REQ-001](../../requirements/REQ-001.md)（current）"} {
+		original := string(readContractFile(t, f.root, f.indexPath))
+		presented := strings.Replace(original, "> 需求：REQ-001", "> 需求："+display, 1)
+		presented = strings.Replace(presented, "| BE-001 |", "| [BE-001](BE-001.md) |", 1)
+		writeContractFile(t, f.root, f.indexPath, presented)
+		if _, err := runtime.ContractArtifacts(f.root, f.state, f.packet, f.answer, f.files); err != nil {
+			t.Fatalf("natural index display %q rejected: %v", display, err)
+		}
+		writeContractFile(t, f.root, f.indexPath, original)
+	}
+
+	// The real booking index keeps applicability tables after the inventory,
+	// and displays an inapplicable FE row without inventing a FE document.
+	natural := newContractBatchFixture(t)
+	index := string(readContractFile(t, natural.root, natural.indexPath))
+	index = strings.Replace(index, "| BE-001 | 后端 | Builder | locked | v1.0.0 | N/A |", "| FE-001 | frontend — **`not_applicable`** | 不适用（本 REQ 无前端交付物） | 无文档（判定见下节） | — | 无 |\n| BE-001 | backend | Builder | locked | v1.0.0 | SYNC-001 |\n| SYNC-001 | 联调/线缆 | Builder | locked | v1.0.0 | 无前端消费者 |", 1)
+	index = strings.Replace(index, "\n## 联调点矩阵", "\n**适用性判定**\n\n| 合同 | disposition | 依据 |\n|:---|:---|:---|\n| FE-001 | not_applicable | 无前端交付物 |\n\n### FE-001 不适用判定\n\n| 项 | 结论 | 依据 |\n|:---|:---|:---|\n| 合同文档 | 无 | 真实专业不适用 |\n\n## 联调点矩阵", 1)
+	index = strings.Replace(index, "|:---|:---|:---|:---|:---|\n\n## 需求覆盖矩阵", "|:---|:---|:---|:---|:---|\n| SYNC-001 | 不适用 | BE-001 | SYNC-001 | locked |\n\n## 需求覆盖矩阵", 1)
+	writeContractFile(t, natural.root, natural.indexPath, index)
+	writeContractFile(t, natural.root, "docs/dev/contracts/SYNC-001.md", "# Wire contract\n> 状态：locked\n> 版本：v1.0.0\n")
+	natural.answer.ContractPaths = append(natural.answer.ContractPaths, "docs/dev/contracts/SYNC-001.md")
+	natural.answer.Applicability["SYNC"] = workpacket.ContractApplicability{Disposition: "required", Rationale: "实际 HTTP 线缆契约"}
+	got, err := runtime.ContractArtifacts(natural.root, natural.state, natural.packet, natural.answer, natural.files)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("natural booking inventory/N-A and display text rejected: %#v %v", got, err)
+	}
+
 }
 
 func TestContractArtifactsAppendsCurrentSharedModelCheckerClosure(t *testing.T) {
@@ -192,6 +219,23 @@ func TestContractArtifactsRejectsIndexContractSetContradiction(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "index contract set differs") {
 		t.Fatalf("index mismatch error = %v", err)
 	}
+	for _, owner := range []string{"REQ-002", "[REQ-001](../../requirements/REQ-002.md)", "REQ-001 / REQ-002"} {
+		fresh := newContractBatchFixture(t)
+		text := strings.Replace(string(readContractFile(t, fresh.root, fresh.indexPath)), "> 需求：REQ-001", "> 需求："+owner, 1)
+		writeContractFile(t, fresh.root, fresh.indexPath, text)
+		if _, err := runtime.ContractArtifacts(fresh.root, fresh.state, fresh.packet, fresh.answer, fresh.files); err == nil || !strings.Contains(err.Error(), "requirement declaration") {
+			t.Fatalf("different/ambiguous requirement %q accepted: %v", owner, err)
+		}
+	}
+	for _, cell := range []string{"[BE-001](BE-002.md)", ""} {
+		fresh := newContractBatchFixture(t)
+		text := strings.Replace(string(readContractFile(t, fresh.root, fresh.indexPath)), "| BE-001 |", "| "+cell+" |", 1)
+		writeContractFile(t, fresh.root, fresh.indexPath, text)
+		if _, err := runtime.ContractArtifacts(fresh.root, fresh.state, fresh.packet, fresh.answer, fresh.files); err == nil || !strings.Contains(err.Error(), "column 合同ID") {
+			t.Fatalf("bad inventory cell %q missing specific feedback: %v", cell, err)
+		}
+	}
+
 }
 
 func TestContractArtifactsRejectsDraftAmongSubmittedContracts(t *testing.T) {

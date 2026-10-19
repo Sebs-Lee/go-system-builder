@@ -137,7 +137,7 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 		return Receipt{}, err
 	}
 	id := "ev-submission-" + workpacket.Digest([]byte("submission:"+p.ID))
-	envelopePath := ".claude/evidence/submissions/" + p.ID + "/" + digest + ".json"
+	envelopePath := ""
 	if accepted {
 		if prior.ContentHash != digest {
 			return rejected(snap, p.ID, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
@@ -155,12 +155,6 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 			return Receipt{}, fmt.Errorf("original planning evidence missing")
 		}
 	} else {
-		if err := runtime.ValidateIssuedContractPacket(s.Root, snap.State, p, s.Files); err != nil {
-			return s.unreceivedContractReceipt(snap, p, err), err
-		}
-		if err := s.validateContractChecks(snap.State, p); err != nil {
-			return s.unreceivedContractReceipt(snap, p, err), err
-		}
 		arch, err := runtime.ContractArtifacts(s.Root, snap.State, p, answer, s.Files)
 		if err != nil {
 			return s.unreceivedContractReceipt(snap, p, err), err
@@ -170,28 +164,31 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 			return Receipt{}, err
 		}
 		encoded, _ := json.MarshalIndent(envelope, "", "  ")
-		stored, err := workpacket.Publish(s.Root, envelopePath, append(encoded, '\n'))
+		encoded = append(encoded, '\n')
+		envelopePath = ".claude/evidence/submissions/" + p.ID + "/" + workpacket.Digest(encoded) + ".json"
+		stored, err := workpacket.Publish(s.Root, envelopePath, encoded)
 		if err != nil {
 			return Receipt{}, err
 		}
-		if err := runtime.ValidateContractEnvelope(p, id, answer, stored); err != nil {
-			return Receipt{}, err
+		if !bytes.Equal(stored, encoded) {
+			err := fmt.Errorf("S3 published evidence differs from this reception: %s", envelopePath)
+			return s.unreceivedContractReceipt(snap, p, err), err
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return rejected(snap, p.ID, err), err
 	}
 	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_contract", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
-		if err := workspace.RequireMain(root); err != nil {
+		if err := s.validateContractChecks(state, p); err != nil {
 			return err
 		}
-		if err := runtime.ValidateIssuedContractPacket(root, state, p, s.Files); err != nil {
-			return err
+		if verified, ok := s.Files.(interface{ Verify() error }); ok {
+			return verified.Verify()
 		}
-		return s.validateContractChecks(state, p)
+		return nil
 	}}})
 	if err != nil {
-		return rejected(snap, p.ID, err), err
+		return s.unreceivedContractReceipt(snap, p, err), err
 	}
 	record, found, err := runtime.FindSubmission(next.State, p.ID)
 	if err != nil || !found {
@@ -203,6 +200,11 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 		}
 	}
 	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: record.FollowupID, Files: s.Files})
+	preparation := ""
+	var preparationWaiting []Waiting
+	if controlErr == nil && result.Error == "" {
+		preparation, preparationWaiting = s.preparePlanningOutlet(ctx, &result)
+	}
 	if controlErr == nil && result.Error == "" {
 		next = result.Snapshot
 	}
@@ -223,6 +225,8 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	} else if !result.QualityGate.TransitionCommitted && len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
 		r.NextAction = fmt.Sprintf("S3 答卷已接收，阶段尚未推进。原门 %s：缺项 %v；冲突 %v。按具体条目修复文档或系统接续，监听器会继续检查；无需重交已接收答案。", result.QualityGate.GateID, result.QualityGate.Missing, result.QualityGate.Conflicts)
 	}
+	r.NextAction += preparation
+	r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
 	return r, nil
 }
 

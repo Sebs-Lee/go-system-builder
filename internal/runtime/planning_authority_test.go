@@ -10,7 +10,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
-func TestDesignAuthorityUsesOriginalMainStageAndExactRequirement(t *testing.T) {
+func TestDesignAuthorityAssociatesCurrentEntryWithoutSourceProof(t *testing.T) {
 	root := t.TempDir()
 	ref := "docs/requirements/REQ-001.md"
 	bytes := []byte("# REQ-001\n> Status: locked\n> Version: v1.0.0\n")
@@ -24,12 +24,16 @@ func TestDesignAuthorityUsesOriginalMainStageAndExactRequirement(t *testing.T) {
 	if err := runtime.ValidateDesignPacket(root, state, p, fileview.Disk{Root: root}); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.ValidateDesignPacket(t.TempDir(), state, p, fileview.Disk{Root: root}); err == nil {
-		t.Fatal("other checkout supplied Main stage authority")
+	if err := runtime.ValidateDesignPacket(t.TempDir(), state, p, nil); err != nil {
+		t.Fatalf("source location became an authoring qualification: %v", err)
 	}
 	os.WriteFile(filepath.Join(root, ref), []byte("drifted"), 0600)
-	if err := runtime.ValidateDesignPacket(root, state, p, fileview.Disk{Root: root}); err == nil {
-		t.Fatal("unfrozen requirement accepted")
+	if err := runtime.ValidateDesignPacket(root, state, p, fileview.Disk{Root: root}); err != nil {
+		t.Fatalf("current responsibility was rejected by source fingerprint: %v", err)
+	}
+	state["lifecycle"].(map[string]any)["phase_revision"] = 3
+	if err := runtime.ValidateDesignPacket(root, state, p, nil); err == nil {
+		t.Fatal("old entry associated with the current responsibility")
 	}
 	state["lifecycle"].(map[string]any)["phase"] = "contracts"
 	if _, err := runtime.CurrentDesignPacket(state); err == nil {

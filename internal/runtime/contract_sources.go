@@ -21,7 +21,7 @@ const contractScenarioRoot = "docs/design/prototypes"
 var (
 	contractModuleName   = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	contractMarkdownLink = regexp.MustCompile(`\[([^\]]+)\]\(([^\s)]+)\)`)
-	contractKnownPath    = regexp.MustCompile(`(?:docs/design/decisions/ADR-[A-Za-z0-9._/-]+|docs/architecture/(?:data-model|state)/[A-Za-z0-9._/-]+)`)
+	contractKnownPath    = regexp.MustCompile(`docs/design/decisions/ADR-[A-Za-z0-9._/-]+`)
 	contractREQTableID   = regexp.MustCompile(`^(AC|NFR)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
 	contractADRIdentity  = regexp.MustCompile(`ADR-[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 	contractADRStatus    = regexp.MustCompile(`(?m)^>\s*(?:状态|Status)\s*[:：]\s*([^\s]+)`)
@@ -73,7 +73,7 @@ func ResolveContractInputs(root string, state map[string]any, files fileview.Rea
 		if err != nil {
 			return nil, fmt.Errorf("read S3 source from authority checkout %s: %w", path, err)
 		}
-		if workpacket.Digest(viewBytes) != expectedSHA || workpacket.Digest(diskBytes) != expectedSHA || !bytes.Equal(viewBytes, diskBytes) {
+		if (expectedSHA != "" && (workpacket.Digest(viewBytes) != expectedSHA || workpacket.Digest(diskBytes) != expectedSHA)) || !bytes.Equal(viewBytes, diskBytes) {
 			return nil, fmt.Errorf("S3 frozen input differs from original checkout SHA: %s", path)
 		}
 		loaded[path] = append([]byte(nil), viewBytes...)
@@ -82,10 +82,14 @@ func ResolveContractInputs(root string, state map[string]any, files fileview.Rea
 	if _, err := readFrozen(binding.Requirement.Path, binding.Requirement.SHA256); err != nil {
 		return workpacket.ContractInputs{}, err
 	}
-	for _, design := range designs {
-		if _, err := readFrozen(design.Path, design.SHA256); err != nil {
+	// S2 records which design was actually reviewed. Its historical bytes do
+	// not freeze a later committed explanation before S3 has been issued.
+	for i, design := range designs {
+		data, err := readFrozen(design.Path, "")
+		if err != nil {
 			return workpacket.ContractInputs{}, err
 		}
+		inputs.Designs[i].SHA256 = workpacket.Digest(data)
 	}
 
 	// The bridge's actual source rule is project-wide: it enumerates every
@@ -127,7 +131,10 @@ func ResolveContractInputs(root string, state map[string]any, files fileview.Rea
 	queued := map[string]bool{}
 	schemaSources := map[string]bool{}
 	for path, content := range loaded {
-		for _, match := range contractMarkdownLink.FindAllStringSubmatch(string(content), -1) {
+		if !strings.HasSuffix(strings.ToLower(path), ".md") {
+			continue
+		}
+		for _, match := range contractMarkdownLink.FindAllStringSubmatch(string(contractReferenceText(content)), -1) {
 			candidate, ok := resolveContractLink(path, match[2])
 			if ok && contractLinkNamesSchema(match[1], candidate) {
 				schemaSources[candidate] = true
@@ -360,6 +367,56 @@ func readConditionalSource(root string, files fileview.Reader, path string) ([]b
 	return viewBytes, nil
 }
 
+// contractReferenceText excludes Markdown examples, not natural-language claims.
+// Model/state dependencies are expressed by links, never by bare path mentions.
+func contractReferenceText(data []byte) []byte {
+	var out strings.Builder
+	var fence byte
+	fenceLength := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		marker, length := byte(0), 0
+		if len(trimmed) > 0 && (trimmed[0] == '`' || trimmed[0] == '~') {
+			marker = trimmed[0]
+			for length < len(trimmed) && trimmed[length] == marker {
+				length++
+			}
+		}
+		if fence != 0 {
+			if marker == fence && length >= fenceLength && strings.TrimSpace(trimmed[length:]) == "" {
+				fence = 0
+			}
+			continue
+		}
+		if length >= 3 {
+			fence, fenceLength = marker, length
+			continue
+		}
+		for len(line) > 0 {
+			start := strings.IndexByte(line, '`')
+			if start < 0 {
+				out.WriteString(line)
+				break
+			}
+			out.WriteString(line[:start])
+			width := 1
+			for start+width < len(line) && line[start+width] == '`' {
+				width++
+			}
+			delimiter := line[start : start+width]
+			end := strings.Index(line[start+width:], delimiter)
+			if end < 0 {
+				out.WriteString(line[start:])
+				break
+			}
+			out.WriteByte(' ')
+			line = line[start+width+end+width:]
+		}
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
+}
+
 func contractInitialDependencies(from string, data []byte) []string {
 	set := map[string]bool{}
 	add := func(path string) {
@@ -375,10 +432,12 @@ func contractInitialDependencies(from string, data []byte) []string {
 	for _, match := range contractADRIdentity.FindAll(data, -1) {
 		add(filepath.ToSlash(filepath.Join("docs/design/decisions", string(match)+".md")))
 	}
-	for _, match := range contractMarkdownLink.FindAllStringSubmatch(string(data), -1) {
-		candidate, ok := resolveContractLink(from, match[2])
-		if ok && contractInitialDependency(candidate) {
-			add(candidate)
+	if strings.HasSuffix(strings.ToLower(from), ".md") {
+		for _, match := range contractMarkdownLink.FindAllStringSubmatch(string(contractReferenceText(data)), -1) {
+			candidate, ok := resolveContractLink(from, match[2])
+			if ok && contractInitialDependency(candidate) {
+				add(candidate)
+			}
 		}
 	}
 	return sortedKeys(set)
@@ -413,6 +472,7 @@ func contractTransitiveDependencies(from string, data []byte, schemaSources map[
 		}
 	}
 	if strings.HasSuffix(strings.ToLower(from), ".md") && (strings.HasPrefix(from, "docs/design/decisions/ADR-") || strings.HasPrefix(from, "docs/architecture/data-model/") || strings.HasPrefix(from, "docs/architecture/state/")) {
+		data = contractReferenceText(data)
 		for _, match := range contractMarkdownLink.FindAllStringSubmatch(string(data), -1) {
 			candidate, ok := resolveContractLink(from, match[2])
 			if ok && candidate != from && !strings.HasPrefix(candidate, "docs/dev/contracts/") {
@@ -579,9 +639,10 @@ func contractADRsForRequirement(root string, files fileview.Reader, req workpack
 		if associatedREQ != req.Path && associatedREQ != req.ID {
 			continue
 		}
+		const statusHelp = "; see docs/design/decisions/ADR-template.md: proposed / accepted / rejected / deprecated; record accepted only when the actual direction decision accepts this ADR"
 		status := contractADRStatus.FindStringSubmatch(string(data))
 		if status == nil {
-			return nil, fmt.Errorf("S2 ADR associated with %s has no explicit status: %s", req.ID, path)
+			return nil, fmt.Errorf("S2 ADR associated with %s has no explicit status: %s%s", req.ID, path, statusHelp)
 		}
 		switch strings.ToLower(strings.TrimSpace(status[1])) {
 		case "accepted":
@@ -594,9 +655,9 @@ func contractADRsForRequirement(root string, files fileview.Reader, req workpack
 			// These are historical records, not active S3 inputs. An explicit
 			// link from an upstream source can still freeze one as context.
 		case "proposed":
-			return nil, fmt.Errorf("S2 ADR associated with %s is still proposed: %s", req.ID, path)
+			return nil, fmt.Errorf("S2 ADR associated with %s is still proposed: %s%s", req.ID, path, statusHelp)
 		default:
-			return nil, fmt.Errorf("S2 ADR associated with %s has unsupported status %q: %s", req.ID, status[1], path)
+			return nil, fmt.Errorf("S2 ADR associated with %s has unsupported status %q: %s%s", req.ID, status[1], path, statusHelp)
 		}
 	}
 	return result, nil

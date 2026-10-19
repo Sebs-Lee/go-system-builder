@@ -74,11 +74,10 @@ func SubmissionFollowup(state map[string]any, eventID string) (SubmissionRecord,
 		if p, design, err := FindDesignPacket(state, record.PacketID); err != nil {
 			return record, err
 		} else if design {
-			key := workpacket.Digest([]byte("submission:" + p.ID))
-			if record.Key != key || record.FollowupID != workpacket.Digest([]byte(key+":after-domain")) || record.Owner != "Main" || record.OriginState != "planning" || record.OriginPhase != "design" || record.OriginEntry != p.Binding.StageEntry {
-				return record, fmt.Errorf("invalid design followup binding")
+			if record.OriginState != "planning" || record.OriginPhase != "design" || record.OriginEntry != p.Binding.StageEntry {
+				return record, fmt.Errorf("design followup responsibility differs")
 			}
-			if record.ControlStatus != "pending" {
+			if record.ControlStatus != "pending" && record.ControlStatus != "no_transition" {
 				return record, ErrSubmissionFollowupProcessed
 			}
 			life, _ := state["lifecycle"].(map[string]any)
@@ -86,7 +85,7 @@ func SubmissionFollowup(state map[string]any, eventID string) (SubmissionRecord,
 			if err != nil {
 				return record, err
 			}
-			if state["runtime_id"] != p.Binding.RuntimeID || baselineGeneration(state) != p.Binding.Generation || life["state"] != "planning" || life["phase"] != "design" || entry != p.Binding.StageEntry {
+			if state["runtime_id"] != p.Binding.RuntimeID || baselineGeneration(state) != p.Binding.Generation || life["state"] != "planning" || life["phase"] != "design" || entry != record.OriginEntry {
 				return record, ErrSubmissionFollowupOriginChanged
 			}
 			return record, nil
@@ -135,7 +134,7 @@ func setSubmissionControl(state map[string]any, eventID, status, transitionEvent
 		if row["followup_event_id"] == eventID {
 			if row["control_status"] != "pending" {
 				// Stamp runs after the original engine changed the cursor. Only
-				// exact S3/S4 no_transition origins may complete their original
+				// S2/S3/S4 no_transition origins may complete their original
 				// adjacent move; other processed work remains historical.
 				if row["control_status"] != "no_transition" || status != "advanced" || !validNoTransitionPlanningStamp(state, stringValue(row["packet_id"])) {
 					return ErrSubmissionFollowupProcessed
@@ -156,6 +155,9 @@ func validNoTransitionPlanningStamp(state map[string]any, packetID string) bool 
 	entry, entryErr := integerField(life, "phase_revision")
 	if entryErr != nil {
 		return false
+	}
+	if packet, found, err := FindDesignPacket(state, packetID); err == nil && found {
+		return state["runtime_id"] == packet.Binding.RuntimeID && baselineGeneration(state) == packet.Binding.Generation && life["state"] == "planning" && life["phase"] == "contracts" && entry == packet.Binding.StageEntry+1
 	}
 	if packet, found, err := FindContractPacket(state, packetID); err == nil && found {
 		return state["runtime_id"] == packet.Binding.RuntimeID && baselineGeneration(state) == packet.Binding.Generation && life["state"] == "planning" && life["phase"] == "tasks" && entry == packet.Binding.StageEntry+1
@@ -180,6 +182,11 @@ func RecordSubmissionEvaluation(root, statePath, journalPath, eventID string, va
 		return snapshot, nil
 	} else if followupErr != nil && !errors.Is(followupErr, ErrSubmissionFollowupOriginChanged) {
 		return Snapshot{}, followupErr
+	}
+	if followupErr == nil && record.OriginState == "planning" && record.OriginPhase == "design" {
+		// An evaluated but uncompleted S2 exit remains available to the
+		// next normal save at this same responsibility, without another write.
+		return snapshot, nil
 	}
 	if followupErr == nil && record.OriginPhase == "contracts" {
 		if _, found, err := FindContractPacket(snapshot.State, record.PacketID); err != nil {

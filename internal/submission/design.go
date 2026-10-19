@@ -5,19 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/controller"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/transition"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
-	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 func (s *Service) IssueDesign(ctx context.Context) (workpacket.DesignPacket, error) {
-	if err := workspace.RequireMain(s.Root); err != nil {
-		return workpacket.DesignPacket{}, err
-	}
 	snap, err := s.snapshot()
 	if err != nil {
 		return workpacket.DesignPacket{}, err
@@ -53,6 +53,10 @@ func (s *Service) DesignForPath(path string) (workpacket.DesignPacket, bool, err
 	if err != nil {
 		return workpacket.DesignPacket{}, false, err
 	}
+	return s.designForPath(snap, path)
+}
+
+func (s *Service) designForPath(snap runtime.Snapshot, path string) (workpacket.DesignPacket, bool, error) {
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(s.Root, path)
 	}
@@ -63,28 +67,23 @@ func (s *Service) DesignForPath(path string) (workpacket.DesignPacket, bool, err
 		if row["template_id"] != "s2-design-v1" {
 			continue
 		}
+		if filepath.Clean(path) != filepath.Join(s.Root, filepath.FromSlash(text(row["answer_path"]))) {
+			continue
+		}
 		p, found, err := runtime.FindDesignPacket(snap.State, text(row["packet_id"]))
-		if err != nil {
-			return p, false, err
-		}
-		if found && filepath.Clean(path) == filepath.Join(s.Root, filepath.FromSlash(p.AnswerPath)) {
-			return p, true, workpacket.CheckPath(s.Root, p.AnswerPath)
-		}
+		return p, found, err
 	}
 	return workpacket.DesignPacket{}, false, nil
 }
 
 func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) {
-	if err := workspace.RequireMain(s.Root); err != nil {
-		return Receipt{}, err
-	}
-	p, issued, err := s.DesignForPath(path)
-	if err != nil || !issued {
-		return Receipt{}, fmt.Errorf("design path has no original Main issuance: %v", err)
-	}
 	snap, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
+	}
+	p, issued, err := s.designForPath(snap, path)
+	if err != nil || !issued {
+		return Receipt{}, fmt.Errorf("design path does not locate its registered responsibility: %v", err)
 	}
 	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, 256<<10)
 	if err != nil {
@@ -97,70 +96,75 @@ func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) 
 		r.FieldErrors = issues
 		return r, err
 	}
-	digest, err := workpacket.DesignAnswerDigest(answer)
-	if err != nil {
-		return Receipt{}, err
-	}
 	prior, accepted, err := runtime.FindSubmission(snap.State, p.ID)
 	if err != nil {
 		return Receipt{}, err
 	}
-	id := "ev-submission-" + workpacket.Digest([]byte("submission:"+p.ID))
-	envelopePath := ".claude/evidence/submissions/" + p.ID + "/" + digest + ".json"
-	if accepted {
-		if prior.ContentHash != digest {
-			return rejected(snap, p.ID, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
-		}
-		id = prior.EvidenceID
-		found := false
-		for _, ev := range evidenceRows(snap.State) {
-			if ev["id"] == id {
-				envelopePath = text(ev["path"])
-				found = true
-				break
-			}
-		}
-		if !found {
-			return Receipt{}, fmt.Errorf("original planning evidence missing")
-		}
-	} else {
+	digest, err := workpacket.DesignAnswerDigest(answer)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if accepted && prior.ContentHash != digest {
+		return rejected(snap, p.ID, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
+	}
+	next := snap
+	if !accepted {
 		if err := runtime.ValidateDesignPacket(s.Root, snap.State, p, s.Files); err != nil {
 			return rejected(snap, p.ID, err), err
 		}
-		arch, err := runtime.DesignArchitecture(s.Root, *answer.ArchitecturePath, s.Files)
-		if err != nil {
-			return rejected(snap, p.ID, err), err
+		var missing []string
+		if answer.Conclusion == nil || strings.TrimSpace(*answer.Conclusion) == "" {
+			missing = append(missing, "complete the actual design self-review; leave conclusion empty while unfinished")
 		}
+		if answer.ArchitecturePath == nil || *answer.ArchitecturePath == "" {
+			missing = append(missing, "provide the actual architecture_path")
+		}
+		var arch workpacket.Reference
+		if answer.ArchitecturePath != nil && *answer.ArchitecturePath != "" {
+			arch, err = runtime.DesignArchitecture(s.Root, *answer.ArchitecturePath, nil)
+			if err != nil {
+				missing = append(missing, err.Error())
+			}
+		}
+		if len(missing) > 0 {
+			r := emptyReceipt(snap, p.ID)
+			r.NextAction = "Continue the current design answer at " + filepath.Join(s.Root, p.AnswerPath) + ": " + strings.Join(missing, "; ") + ". No design decision was recorded."
+			return r, nil
+		}
+		id := "ev-submission-" + workpacket.Digest([]byte("submission:"+p.ID))
+		envelopePath := ".claude/evidence/submissions/" + p.ID + "/" + digest + ".json"
 		envelope, err := workpacket.DesignEvidence(p, id, arch, answer, time.Now().UTC())
 		if err != nil {
 			return Receipt{}, err
 		}
-		encoded, _ := json.MarshalIndent(envelope, "", "  ")
-		stored, err := workpacket.Publish(s.Root, envelopePath, append(encoded, '\n'))
+		encoded, err := json.MarshalIndent(envelope, "", "  ")
 		if err != nil {
 			return Receipt{}, err
 		}
-		if err := runtime.ValidateDesignEnvelope(p, id, answer, stored); err != nil {
+		if _, err := workpacket.Publish(s.Root, envelopePath, append(encoded, '\n')); err != nil {
 			return Receipt{}, err
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return rejected(snap, p.ID, err), err
-	}
-	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_design", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
-		if err := workspace.RequireMain(root); err != nil {
-			return err
+		if err := ctx.Err(); err != nil {
+			return rejected(snap, p.ID, err), err
 		}
-		return runtime.ValidateDesignPacket(root, state, p, s.Files)
-	}}})
-	if err != nil {
-		return rejected(snap, p.ID, err), err
+		next, err = runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_design", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data}})
+		if err != nil {
+			return rejected(snap, p.ID, err), err
+		}
+		prior, accepted, err = runtime.FindSubmission(next.State, p.ID)
+		if err != nil || !accepted {
+			return Receipt{}, fmt.Errorf("design reception has no durable record")
+		}
 	}
-	record, found, err := runtime.FindSubmission(next.State, p.ID)
-	if err != nil || !found {
-		return Receipt{}, fmt.Errorf("design reception has no durable original record")
+	if (prior.ControlStatus != "pending" && prior.ControlStatus != "no_transition") || runtime.ValidateDesignPacket(s.Root, next.State, p, nil) != nil {
+		return s.designReceipt(next, p)
 	}
-	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: record.FollowupID, Files: s.Files})
+	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: prior.FollowupID, Files: s.Files})
+	preparation := ""
+	var preparationWaiting []Waiting
+	if controlErr == nil && result.Error == "" {
+		preparation, preparationWaiting = s.preparePlanningOutlet(ctx, &result)
+	}
 	if controlErr == nil && result.Error == "" {
 		next = result.Snapshot
 	}
@@ -169,11 +173,13 @@ func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) 
 		return Receipt{}, err
 	}
 	if controlErr != nil || result.Error != "" {
-		r.NextAction = "Main 运行 `.claude/bin/loop-harness runtime stage-answer recover --root . --agent Main` 接续原 system followup；无需重新提交设计判断。"
-		if len(r.WaitingOn) == 0 {
-			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
-		}
+		r.NextAction = "Design was recorded; the original stage outlet remains pending. Save this same answer to continue; do not repeat the design report."
 	}
+	if len(result.QualityGate.Missing) > 0 || len(result.QualityGate.Conflicts) > 0 {
+		r.NextAction = "Design report was recorded. Complete the actual current design/material gaps before progressing: " + strings.Join(append(result.QualityGate.Missing, result.QualityGate.Conflicts...), "; ") + ". Keep the same answer and its recorded observations; save it to continue the original outlet when ready."
+	}
+	r.NextAction += preparation
+	r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
 	return r, nil
 }
 
@@ -186,51 +192,48 @@ func (s *Service) designReceipt(snap runtime.Snapshot, p workpacket.DesignPacket
 	if !found {
 		return rejected(snap, p.ID, fmt.Errorf("design answer not received")), nil
 	}
-	key := workpacket.Digest([]byte("submission:" + p.ID))
-	if record.Owner != "Main" || record.Key != key || record.FollowupID != workpacket.Digest([]byte(key+":after-domain")) || record.OriginState != "planning" || record.OriginPhase != "design" || record.OriginEntry != p.Binding.StageEntry {
-		return r, fmt.Errorf("design receipt original responsibility differs")
-	}
-	for _, ev := range evidenceRows(snap.State) {
-		if ev["id"] != record.EvidenceID {
-			continue
-		}
-		data, err := workpacket.ReadFile(s.Root, text(ev["path"]), 1<<20)
-		if err != nil || workpacket.Digest(data) != ev["sha256"] || ev["kind"] != "planning_design" {
-			return r, fmt.Errorf("original design evidence no longer matches")
-		}
-		var value map[string]json.RawMessage
-		json.Unmarshal(data, &value)
-		var conclusion string
-		var subjects []workpacket.Subject
-		if json.Unmarshal(value["conclusion"], &conclusion) != nil || json.Unmarshal(value["subject_refs"], &subjects) != nil || len(subjects) != 2 {
-			return r, fmt.Errorf("original design evidence malformed")
-		}
-		path := subjects[1].Path
-		answer := workpacket.DesignAnswer{Conclusion: &conclusion, ArchitecturePath: &path}
-		if err := runtime.ValidateDesignEnvelope(p, record.EvidenceID, answer, data); err != nil {
-			return r, err
-		}
-		digest, err := workpacket.DesignAnswerDigest(answer)
-		if err != nil || digest != record.ContentHash {
-			return r, fmt.Errorf("design receipt professional digest differs")
-		}
-		r.SubmissionKey = record.Key
-		r.Accepted = true
-		r.WorkComplete = true
-		r.ResponsibilityStatus = "accepted"
-		r.DomainRefs = []string{record.EvidenceID}
-		r.NextAction = "设计交付已被原消费者接收；Main 按原门继续阶段工作。"
-		if baseline, ok := snap.State["baseline"].(map[string]any); !ok || snap.State["runtime_id"] != p.Binding.RuntimeID || number(baseline["generation"]) != p.Binding.Generation {
-			r.WorkComplete = false
-			r.ResponsibilityStatus = "replaced"
-		}
-		if record.ControlStatus == "pending" {
-			r.NextAction = "Main 运行 `.claude/bin/loop-harness runtime stage-answer recover --root . --agent Main` 接续原 system followup；无需重新提交设计判断。"
-			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
-		}
+	r.SubmissionKey = record.Key
+	r.Accepted = true
+	r.DomainRefs = []string{record.EvidenceID}
+	r.ResponsibilityStatus = "accepted"
+	r.WorkComplete = record.ControlStatus != "pending" && record.ControlStatus != "no_transition"
+	r.NextAction = "Design report was recorded; follow the current stage's actual professional work. Acceptance is not independent certification of every design task."
+	if (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && runtime.ValidateDesignPacket(s.Root, snap.State, p, nil) != nil {
+		r.ResponsibilityStatus = "replaced"
+		r.NextAction = "This design reception remains recorded, but the current stage responsibility has changed. Follow its current questionnaire; do not replay the old stage outlet."
 		return r, nil
 	}
-	return r, fmt.Errorf("design receipt original domain reference missing")
+	if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
+		r.NextAction = "Design report was recorded; the original stage outlet is pending. Save this same answer to continue the original outlet without another report."
+		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
+	}
+	for _, ev := range evidenceRows(snap.State) {
+		if ev["id"] == record.EvidenceID {
+			materialPath := filepath.Join(s.Root, text(ev["path"]))
+			data, readErr := os.ReadFile(materialPath)
+			var material struct {
+				Subjects []workpacket.Subject `json:"subject_refs"`
+			}
+			if readErr == nil {
+				readErr = json.Unmarshal(data, &material)
+			}
+			if readErr != nil {
+				r.NextAction = "The accepted design material is unavailable at " + materialPath + ": " + readErr.Error() + ". Restore the recorded material; do not submit a replacement proof."
+				return r, nil
+			}
+			// Report missing actual reading material without re-certifying its
+			// historical bytes, subject count, version or producer.
+			for _, subject := range material.Subjects {
+				if _, err := workpacket.ReadFile(s.Root, subject.Path, 2<<20); err != nil {
+					r.NextAction = "Accepted design reading material is unavailable at " + filepath.Join(s.Root, subject.Path) + ": " + err.Error() + ". Main must restore that material; the original reception remains recorded."
+					break
+				}
+			}
+			return r, nil
+		}
+	}
+	r.NextAction = "The accepted design record has no material reference; Main must restore that recorded material without repeating the professional answer."
+	return r, nil
 }
 
 func (s *Service) DesignReceipt(path, packetID string) (Receipt, error) {
@@ -249,4 +252,57 @@ func (s *Service) DesignReceipt(path, packetID string) (Receipt, error) {
 		return Receipt{}, fmt.Errorf("no original design issuance")
 	}
 	return s.designReceipt(snap, p)
+}
+
+// preparePlanningOutlet completes only the next responsibility of an actual
+// committed planning transition. Old-answer replay never calls this outlet.
+func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.ControlResult) (string, []Waiting) {
+	if !result.QualityGate.TransitionCommitted || !runtime.PacketEnabled(result.Snapshot.State) {
+		return "", nil
+	}
+	id := result.QualityGate.CandidateTransition
+	if id != "PTR-PLAN-01" && id != "PTR-PLAN-02" {
+		return "", nil
+	}
+	preparationFailed := func(err error) (string, []Waiting) {
+		return " The preceding report and stage transition are recorded; the original next-stage questionnaire preparation failed: " + err.Error() + ". Main/system must continue the existing questionnaire preparation through the original listener after resolving this actual error. Do not resubmit the completed report, invent a questionnaire path, or fabricate inapplicable materials.", []Waiting{{Reason: "system_followup", Owner: "Main", Ref: id}}
+	}
+	service := *s
+	if service.Files == nil {
+		catalog, err := transition.LoadCatalog(s.Root)
+		if err != nil {
+			return preparationFailed(err)
+		}
+		ref, err := fileview.DevelopmentRef(result.Snapshot.State)
+		if err != nil {
+			return preparationFailed(err)
+		}
+		service.Files, err = fileview.New(s.Root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
+		if err != nil {
+			return preparationFailed(err)
+		}
+	}
+	var view, answer string
+	var err error
+	if id == "PTR-PLAN-01" {
+		var packet workpacket.ContractPacket
+		packet, err = service.IssueContracts(ctx)
+		view, answer = packet.ViewPath, packet.AnswerPath
+	} else {
+		var packet workpacket.TaskPlanningPacket
+		packet, err = service.IssueTaskPlanning(ctx)
+		view, answer = packet.ViewPath, packet.AnswerPath
+	}
+	if err != nil {
+		return preparationFailed(err)
+	}
+	current, err := s.snapshot()
+	if err == nil {
+		result.Snapshot = current
+	}
+	message := fmt.Sprintf(" Current next-stage questionnaire: read %s; answer %s. Fill its professional answers and save normally.", filepath.Join(s.Root, view), filepath.Join(s.Root, answer))
+	if err != nil {
+		message += " Preparation recorded, but current Runtime could not be read: " + err.Error()
+	}
+	return message, nil
 }

@@ -107,9 +107,9 @@ func VerifyHypothesisResultContinuity(root string, state map[string]any, p workp
 
 func verifyHypothesisContinuityProjection(document map[string]any, p workpacket.HypothesisResultPacket) error {
 	b := p.Binding
-	if document["case_id"] != b.CaseID || document["observation_batch_id"] != b.ObservationBatchID ||
-		document["observation_batch_ref"] != b.ObservationBatchRef || document["observation_batch_sha256"] != b.ObservationBatchSHA256 ||
-		document["baseline_digest"] != b.BaselineDigest || !hypothesisJSONEqual(document["baseline_generation"], b.BaselineGeneration) ||
+	if document["case_id"] != b.CaseID || stringValue(document["observation_batch_id"]) != b.ObservationBatchID ||
+		stringValue(document["observation_batch_ref"]) != b.ObservationBatchRef || stringValue(document["observation_batch_sha256"]) != b.ObservationBatchSHA256 ||
+		stringValue(document["baseline_digest"]) != b.BaselineDigest || !hypothesisJSONEqual(document["baseline_generation"], b.BaselineGeneration) ||
 		!hypothesisExactStringSet(document["source_finding_ids"], b.SourceFindingIDs) || !hypothesisCaseRouteEqual(document, p.Inputs.CaseRoute) {
 		return fmt.Errorf("S8 own Case source or route changed after issuance")
 	}

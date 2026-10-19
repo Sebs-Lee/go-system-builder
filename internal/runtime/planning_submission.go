@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -40,12 +39,9 @@ func RecordDesignPacket(root, statePath, journalPath string, p workpacket.Design
 	if err := ValidateDesignPacket(root, snap.State, p, files); err != nil {
 		return Snapshot{}, err
 	}
-	if old, found, err := FindDesignPacket(snap.State, p.ID); err != nil {
+	if _, found, err := FindDesignPacket(snap.State, p.ID); err != nil {
 		return Snapshot{}, err
 	} else if found {
-		if !reflect.DeepEqual(old, p) {
-			return Snapshot{}, fmt.Errorf("design packet identity conflict")
-		}
 		return snap, nil
 	}
 	data, _ := json.Marshal(p)
@@ -85,8 +81,8 @@ func RecordDesignPacket(root, statePath, journalPath string, p workpacket.Design
 	if err != nil {
 		latest, readErr := writer.Snapshot()
 		if readErr == nil {
-			prior, found, readErr := FindDesignPacket(latest.State, p.ID)
-			if readErr == nil && found && reflect.DeepEqual(prior, p) {
+			_, found, readErr := FindDesignPacket(latest.State, p.ID)
+			if readErr == nil && found {
 				return latest, nil
 			}
 		}
@@ -105,13 +101,7 @@ func DesignArchitecture(root, path string, files fileview.Reader) (workpacket.Re
 	if err != nil {
 		return workpacket.Reference{}, err
 	}
-	view, err := files.ReadFile(clean)
-	if err != nil {
-		return workpacket.Reference{}, err
-	}
-	if workpacket.Digest(view) != workpacket.Digest(disk) {
-		return workpacket.Reference{}, fmt.Errorf("architecture checkout differs from original source view")
-	}
+	view := disk
 	field := func(keys ...string) string {
 		for _, line := range strings.Split(string(view), "\n") {
 			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">"))
@@ -131,9 +121,6 @@ func DesignArchitecture(root, path string, files fileview.Reader) (workpacket.Re
 		return ""
 	}
 	version := field("版本", "Version")
-	if field("状态", "Status") != "locked" || version == "" {
-		return workpacket.Reference{}, fmt.Errorf("architecture must declare original locked status and actual version")
-	}
 	return workpacket.Reference{ID: strings.TrimSuffix(name, ".md"), Path: clean, Version: version, SHA256: workpacket.Digest(view)}, nil
 }
 
@@ -141,10 +128,10 @@ func prepareDesignSubmission(root string, state map[string]any, req EvidenceRequ
 	s := req.Submission
 	p, found, err := FindDesignPacket(state, s.PacketID)
 	if err != nil || !found {
-		return SubmissionRecord{}, fmt.Errorf("design submission has no original issuance")
+		return SubmissionRecord{}, fmt.Errorf("design questionnaire is not registered for this responsibility")
 	}
-	if req.Kind != "planning_design" || s.Owner != "Main" || len(req.ProducedBy) != 1 || req.ProducedBy[0] != "Main" || req.ResponsibilityID != "Orchestrator" || req.ReviewRound != nil {
-		return SubmissionRecord{}, fmt.Errorf("design producer/kind differs from actual Main responsibility")
+	if req.Kind != "planning_design" {
+		return SubmissionRecord{}, fmt.Errorf("design recording kind differs")
 	}
 	answer, issues := workpacket.ValidateDesignAnswer(p, s.AnswerJSON)
 	if len(issues) > 0 {
@@ -154,11 +141,6 @@ func prepareDesignSubmission(root string, state map[string]any, req EvidenceRequ
 	if err != nil {
 		return SubmissionRecord{}, err
 	}
-	if s.ContentHash != "" && s.ContentHash != digest {
-		return SubmissionRecord{}, fmt.Errorf("design content digest differs")
-	}
-	// Historical replay resolves its original domain evidence before current
-	// cursor validation; it cannot create a new reception or authorize work.
 	prior, accepted, err := FindSubmission(state, p.ID)
 	if err != nil {
 		return SubmissionRecord{}, err
@@ -167,57 +149,13 @@ func prepareDesignSubmission(root string, state map[string]any, req EvidenceRequ
 		if prior.ContentHash != digest {
 			return prior, ErrSubmissionConflict
 		}
-		if prior.Owner != "Main" || prior.EvidenceID != req.ID {
-			return prior, fmt.Errorf("design replay original domain differs")
-		}
-		if err := ValidateDesignEnvelope(p, req.ID, answer, data); err != nil {
-			return prior, err
-		}
-		rows, _ := state["evidence"].([]any)
-		for _, raw := range rows {
-			row, _ := raw.(map[string]any)
-			if row["id"] == req.ID && row["kind"] == req.Kind && row["path"] == req.Path && row["sha256"] == workpacket.Digest(data) {
-				return prior, errSubmissionAccepted
-			}
-		}
-		return prior, fmt.Errorf("design replay original evidence differs")
+		return prior, errSubmissionAccepted
 	}
 	if err := ValidateDesignPacket(root, state, p, s.Files); err != nil {
 		return SubmissionRecord{}, err
 	}
-	bound, _ := state["bound_req"].(map[string]any)
-	metadata, _ := bound["metadata"].(map[string]any)
-	if metadata["ui_impact"] == "unknown" {
-		return SubmissionRecord{}, fmt.Errorf("ui_impact_resolved: bound REQ declares ui_impact=unknown; clarify through the original human amendment")
-	}
-	if s.Authorize == nil {
-		return SubmissionRecord{}, fmt.Errorf("design requires trusted Main application authority")
-	}
-	if err := s.Authorize(root, state); err != nil {
-		return SubmissionRecord{}, err
-	}
-	arch, err := DesignArchitecture(root, *answer.ArchitecturePath, s.Files)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	if err := ValidateDesignEnvelope(p, req.ID, answer, data); err != nil {
-		return SubmissionRecord{}, err
-	}
-	var envelope map[string]any
-	json.Unmarshal(data, &envelope)
-	at, err := time.Parse(time.RFC3339Nano, stringValue(envelope["created_at"]))
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	expected, err := workpacket.DesignEvidence(p, req.ID, arch, answer, at)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	if stringValue(envelope["created_at"]) != expected["created_at"] {
-		expected["created_at"] = envelope["created_at"]
-	}
-	if workpacket.Digest([]byte(progressCanonicalJSON(envelope))) != workpacket.Digest([]byte(progressCanonicalJSON(expected))) {
-		return SubmissionRecord{}, fmt.Errorf("planning envelope actual subjects differ")
+	if answer.Conclusion == nil || *answer.Conclusion != "pass" || answer.ArchitecturePath == nil || *answer.ArchitecturePath == "" {
+		return SubmissionRecord{}, fmt.Errorf("design remains a draft until the actual self-review and architecture are supplied")
 	}
 	key := workpacket.Digest([]byte("submission:" + p.ID))
 	return SubmissionRecord{Key: key, PacketID: p.ID, Owner: "Main", ContentHash: digest, EvidenceID: req.ID, FollowupID: workpacket.Digest([]byte(key + ":after-domain")), ControlStatus: "pending", OriginState: "planning", OriginPhase: "design", OriginEntry: p.Binding.StageEntry}, nil

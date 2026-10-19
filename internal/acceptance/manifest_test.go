@@ -160,8 +160,26 @@ func TestValidateBlockedManifestAllowsUnknownCounterevidenceWithoutEvidenceRefs(
 
 func TestValidateAcceptanceDoesNotRequireAuditAreaMetric(t *testing.T) {
 	data := validAcceptanceManifestWithoutAuditAreaMetric(t)
-	if _, err := Validate(data, ManifestAcceptance); err != nil {
-		t.Fatalf("acceptance manifest should not require release-only audit_area_coverage: %v", err)
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Outcome = "pass"
+	manifest.CoverageInventory = []CoverageItem{{ID: "actual-promise", Category: "requirement", Disposition: "unknown", Oracle: "", EvidenceRefs: []string{}}}
+	manifest.Counterevidence = nil
+	manifest.AuditAreas = nil
+	// Displayed numbers cannot erase the current author's unfinished observation.
+	manifest.Metrics = Metrics{RequirementCoverage: 1, ContractCoverage: 1, ChangedPathCoverage: 1}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := ValidateForOutcome(data, ManifestAcceptance, manifest.Outcome)
+	if err != nil {
+		t.Fatalf("professional unknown with no extra evidence/oracle should be recorded: %v", err)
+	}
+	if summary.UnknownCount != 1 || summary.AuditAreaCount != 0 || summary.Metrics.RequirementCoverage != 0 {
+		t.Fatalf("display metrics hid unfinished professional work or required release-only areas: %+v", summary)
 	}
 }
 
@@ -226,28 +244,41 @@ func TestValidateManifestRejectsMismatchedTypeAndDuplicateRows(t *testing.T) {
 	}
 }
 
-func TestValidateManifestRequiresReleaseAuditAreas(t *testing.T) {
+func TestValidateManifestAllowsRelevantReleaseAuditAreas(t *testing.T) {
 	data := []byte(`{
   "schema_version":"1.0.0",
   "manifest_type":"release_audit",
   "runtime_id":"loop-req-1",
   "baseline_generation":1,
   "review_round":1,
-  "coverage_inventory":[{"id":"A","category":"audit_area","source_refs":["x"],"expected":"x","oracle":"y","owner":"Release Auditor","evidence_refs":["ev"],"disposition":"pass"}],
-  "counterevidence":[{"id":"CE-A","inventory_id":"A","question":"what disproves x?","evidence_refs":["ev-ce"],"outcome":"pass"}],
-  "audit_areas":[{"id":"state_machine","conclusion":"pass","owner":"Release Auditor","evidence_refs":["ev"]}],
+  "coverage_inventory":[{"id":"A","category":"audit_area","source_refs":["x"],"expected":"x","oracle":"","owner":"Release Auditor","evidence_refs":[],"disposition":"pass"}],
+  "counterevidence":[],
+  "audit_areas":[{"id":"state_machine","conclusion":"pass","owner":"Release Auditor","evidence_refs":[]}],
   "risks":[],"technical_debt":[],"blocking_findings":[],
   "metrics":{"requirement_coverage":1,"contract_coverage":1,"changed_path_coverage":1,"audit_area_coverage":0.125,"unknown_count":0,"unsupported_pass_count":0,"unowned_risk_count":0,"untracked_debt_count":0,"blocking_finding_count":0}
 }`)
 
-	_, err := Validate(data, "release_audit")
-	if err == nil {
-		t.Fatal("release audit must require all audit areas")
+	summary, err := Validate(data, ManifestReleaseAudit)
+	if err != nil {
+		t.Fatalf("one relevant audit area needs no invented categories or counterevidence: %v", err)
 	}
-	for _, want := range []string{"audit_areas", "8", "missing"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not identify %q", err, want)
-		}
+	if summary.AuditAreaCount != 1 || summary.CounterevidenceCount != 0 || summary.UnsupportedPassCount != 0 || summary.UnknownCount != 0 {
+		t.Fatalf("relevant professional pass was treated as an evidence qualification: %+v", summary)
+	}
+	var manifest Manifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Outcome = "approved"
+	manifest.AuditAreas[0].Conclusion = "fail"
+	manifest.Metrics.AuditAreaCoverage = 1
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err = ValidateForOutcome(data, ManifestReleaseAudit, manifest.Outcome)
+	if err != nil || summary.UnknownCount != 1 || summary.Metrics.AuditAreaCoverage != 0 {
+		t.Fatalf("honest failed observation must be recorded and remain unfinished despite displayed 1.0: summary=%+v err=%v", summary, err)
 	}
 }
 

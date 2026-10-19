@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,141 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
+
+var bindingQuestions = []string{
+	"Which requirement is selected?",
+	"Who actually authorized this binding?",
+	"Which development branch was selected?",
+	"What is the explicit release destination?",
+}
+
+// Only directory names identify the existing Runtime boundary. Historical
+// state, journal and hash proofs are not read to locate the current request.
+func bindingQuestionnairePath(root string) (string, error) {
+	entries, err := os.ReadDir(filepath.Join(root, ".claude", "runtime-archive"))
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	latest, stamp := "", ""
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		i := strings.LastIndex(name, "-")
+		if i < 0 {
+			continue
+		}
+		candidate := name[i+1:]
+		if _, err := time.Parse("20060102T150405.000000000Z", candidate); err != nil {
+			continue
+		}
+		if candidate > stamp {
+			latest, stamp = name, candidate
+		}
+	}
+	if latest == "" {
+		return filepath.Abs(filepath.Join(root, ".claude", "submissions", "requirement-binding.md"))
+	}
+	return filepath.Abs(filepath.Join(root, ".claude", "submissions", latest, "requirement-binding.md"))
+}
+
+func bindingQuestionnaireAnswers(data []byte) []string {
+	answers := make([]string, len(bindingQuestions))
+	for _, line := range strings.Split(string(data), "\n") {
+		for i, question := range bindingQuestions {
+			if answer, ok := strings.CutPrefix(strings.TrimSpace(line), "- "+question); ok {
+				// Legacy drafts included this explanation in the question itself.
+				// Remove it before reading the actual decision, including an empty draft.
+				if i == 1 {
+					answer = strings.TrimPrefix(strings.TrimSpace(answer), "Record that human decision; do not infer it from Git identity.")
+				}
+				answers[i] = strings.TrimSpace(answer)
+			}
+		}
+	}
+	return answers
+}
+
+func runSavedEntryQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	if request.Event != "PostToolUse" || request.Error != "" {
+		return false, 0
+	}
+	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
+		return false, 0
+	}
+	actual, saved := savedQuestionnairePath(request)
+	if !saved {
+		if path, ok := request.ToolResponse["file_path"].(string); ok {
+			located := request
+			located.ToolInput = map[string]any{"file_path": path}
+			actual, saved = savedQuestionnairePath(located)
+		}
+	}
+	if !saved {
+		return false, 0
+	}
+	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl")).Snapshot()
+	if err != nil {
+		return false, 0
+	}
+	relative, _ := filepath.Rel(root, actual)
+	bindingSave := filepath.Base(actual) == "requirement-binding.md" && strings.HasPrefix(filepath.ToSlash(relative), ".claude/submissions/")
+	if lifecycleState(snapshot.State) != "inactive" {
+		if bindingSave {
+			return true, auditQuestionnaireFeedback(stdout, "This binding application is not an inactive responsibility; the existing Runtime/binding receipt remains authoritative. Its save did not bind again or advance another stage.")
+		}
+		return false, 0
+	}
+	path, err := bindingQuestionnairePath(root)
+	if err != nil {
+		return false, 0
+	}
+	if !samePath(actual, path) {
+		if bindingSave {
+			return true, auditQuestionnaireFeedback(stdout, "This is an earlier binding application, not the current request at "+path+". Old authorization was not reused; fill only the current responsibility after an actual human startup decision.")
+		}
+		// S0 has no separate submission: saving the real locked requirement
+		// merely prepares the original binding questions, never a default approval.
+		rel, err := filepath.Rel(root, actual)
+		if err != nil || filepath.Dir(filepath.ToSlash(rel)) != "docs/requirements" || !strings.HasPrefix(filepath.Base(rel), "REQ-") {
+			return false, 0
+		}
+		data, err := os.ReadFile(actual)
+		if err != nil || markdownField(string(data), "状态", "Status") != "locked" {
+			return false, 0
+		}
+		context := stageEntryQuestionnaireContext(root, policy.Input{Event: "SessionStart"}, snapshot)
+		return true, auditQuestionnaireFeedback(stdout, context)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return true, auditQuestionnaireFeedback(stdout, "S1 current binding request "+path+" cannot be read: "+err.Error())
+	}
+	answers := bindingQuestionnaireAnswers(data)
+	var missing []string
+	for i, value := range answers {
+		if value == "" {
+			missing = append(missing, bindingQuestions[i])
+		}
+	}
+	if len(missing) > 0 {
+		return true, auditQuestionnaireFeedback(stdout, "S1 draft: "+path+". Still unanswered: "+strings.Join(missing, "; ")+". Write the selected branch refs verbatim, for example develop, main or origin/main; put explanations in a separate paragraph, not on the branch answer lines. Record only actual choices; leave authorization empty unless the human has actually authorized this requirement to start. No binding was recorded.")
+	}
+	selected := answers[0]
+	if filepath.IsAbs(selected) {
+		selected, err = filepath.Rel(root, selected)
+		if err != nil {
+			return true, auditQuestionnaireFeedback(stdout, err.Error())
+		}
+	}
+	var output, errors bytes.Buffer
+	code := bindRequirement(root, filepath.ToSlash(selected), answers[1], answers[2], answers[3], "", "", true, &output, &errors)
+	if code != 0 {
+		return true, auditQuestionnaireFeedback(stdout, "S1 original binding/preparation result for "+path+": "+errors.String()+". Follow the actual recorded outcome above; real Git commits/branch setup are Main's ordinary work, not Hook actions.")
+	}
+	return true, auditQuestionnaireFeedback(stdout, "S1 binding recorded through original TR-001; current cursor planning.design (S2). No further binding command is required. "+stageAnswerLifecycleContext(root, request))
+}
 
 // Entry questions reuse the original REQ document and a human-readable binding
 // request. Preparing either draft never locks a REQ or records human approval.
@@ -26,37 +163,58 @@ func stageEntryQuestionnaireContext(root string, request policy.Input, snapshot 
 	if err != nil {
 		return "S0/S1 questionnaire root is unavailable; Main must restore the project path: " + err.Error()
 	}
-	readonly := request.Event == "Stop" || request.Event == "SubagentStop" || request.Event == "TeammateIdle"
-	candidates := classifyRequirements(root)
+	readonly := request.Event != "SessionStart"
+	candidates := scanRequirements(root)
 	var locked []reqSummary
 	var drafts []reqSummary
 	used := map[string]bool{}
 	for _, candidate := range candidates {
 		used[candidate.ID] = true
-		if candidate.Bindable {
+		if candidate.Status == "locked" {
 			locked = append(locked, candidate)
 		} else if candidate.Status != "archived" && candidate.Status != "locked" {
 			drafts = append(drafts, candidate)
 		}
 	}
 	if len(locked) > 0 {
-		path := filepath.Join(root, ".claude/submissions/requirement-binding.md")
-		var body strings.Builder
-		body.WriteString("# Requirement binding request\n\nRead the selected locked requirement; obtain the actual human binding decision.\n\n## Candidate requirement paths\n\n")
-		for _, candidate := range locked {
-			fmt.Fprintf(&body, "- %s\n", filepath.Join(root, filepath.FromSlash(candidate.Path)))
+		path, err := bindingQuestionnairePath(root)
+		if err != nil {
+			return "S1 current binding request path is unavailable: " + err.Error()
 		}
-		body.WriteString("\n## Questions\n\n- Which requirement is selected?\n- Who actually authorized this binding? Record that human decision; do not infer it from Git identity.\n- Which development branch was selected?\n- What is the explicit release destination?\n\nRecord the real human answers here. Main then executes the original req bind using those exact choices. Saving this request does not approve or bind a requirement.\n")
-		if readonly {
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				return "S1 binding questionnaire is not prepared at " + path + "; the next tool listener must prepare it. Main must obtain the actual human binding approval and explicit branch destinations."
+		if !readonly {
+			var body strings.Builder
+			body.WriteString("# Requirement binding request\n\nRead the actual selected locked requirement. Main records the human's actual lock and startup intent; an existing explicit lock plus startup decision is not asked again. A name records the decision, not identity authentication. Leave that answer empty if startup has not been authorized.\n\n## Candidate requirement paths\n\n")
+			for _, candidate := range locked {
+				fmt.Fprintf(&body, "- %s\n", filepath.Join(root, filepath.FromSlash(candidate.Path)))
 			}
-		} else {
+			body.WriteString("\n## Questions\n\nWrite each actual answer after its existing question on the same line. Empty is unanswered, not a default choice. Branches must be actual selected project destinations, not guessed from HEAD or a default remote. Write each selected ref verbatim, for example develop, main or origin/main. Put explanations in a separate paragraph; do not append parenthetical notes to a selected ref.\n\n")
+			values := make([]string, 4)
+			if len(locked) == 1 {
+				values[0] = filepath.Join(root, filepath.FromSlash(locked[0].Path))
+			}
+			known := mapFieldCLI(mapFieldCLI(snapshot.State, "bound_req"), "workspace")
+			values[2], values[3] = stringValue(known["dev_branch"]), stringValue(known["release_upstream"])
+			for i, question := range bindingQuestions {
+				fmt.Fprintf(&body, "- %s %s\n", question, values[i])
+			}
+			body.WriteString("\nSave this same request by editing, scripts or MCP. The original receiver binds through TR-001 and gives S2; do not run a binding command or copy metadata. The selected locked REQ must actually be committed on the chosen development branch. Main does ordinary Git work; the Hook does not commit, create branches, push or publish.\n")
 			if err := prepareQuestionnaireText(path, body.String()); err != nil {
-				return "S1 binding questionnaire preparation failed at " + path + ": " + err.Error()
+				return "S1 request preparation failed at " + path + ": " + err.Error()
 			}
 		}
-		return "S1 binding questionnaire: " + path + ". Missing: selected locked REQ, actual human binding approval, explicit development branch and release destination. Collect only missing choices from the human, then Main uses the original req bind with those exact values. A saved request is not human approval or a Runtime transition."
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "S1 current binding request: " + path + ". The responsibility-entry request is missing or unreadable: " + err.Error() + ". Main must resolve this preparation gap; ordinary Pre/Stop do not prepare it."
+		}
+		answers := bindingQuestionnaireAnswers(data)
+		var missing []string
+		for i, value := range answers {
+			if value == "" {
+				missing = append(missing, bindingQuestions[i])
+			}
+		}
+		return "S1 binding questionnaire: " + path + ". Current unanswered choices: " + strings.Join(missing, "; ") + ". Record the human's actual startup decision (name is a record, not authentication), selected requirement and actual project branch destinations on the four question lines. Write branch refs verbatim (for example develop, main or origin/main), with explanations in a separate paragraph, then save normally for original TR-001 and S2. Do not repeat an already explicit lock/start decision or execute a binding command."
+
 	}
 	if len(drafts) > 0 {
 		var body strings.Builder
@@ -79,7 +237,7 @@ func stageEntryQuestionnaireContext(root string, request policy.Input, snapshot 
 	path := filepath.Join(root, "docs/requirements", id+".md")
 	templatePath := filepath.Join(root, "docs/requirements/REQ-template.md")
 	if readonly {
-		return "S0 questionnaire is not prepared yet. The next tool listener must prepare " + path + " from " + templatePath + "; Main owns preparation. No human confirmation or lock is recorded."
+		return "S0 questionnaire is not prepared yet. The responsibility-entry preparation must supply " + path + " from " + templatePath + "; Main owns preparation. No human confirmation or lock is recorded."
 	}
 	template, err := os.ReadFile(templatePath)
 	if err != nil {

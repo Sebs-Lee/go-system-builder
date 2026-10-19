@@ -97,8 +97,8 @@ evidence envelopes for normal continuation.
    via `.claude/skills/design-foundation/SKILL.md` before locking the UI REQ.
    Pure backend work records Foundation as `N/A` on the project map.
 1. Get one REQ locked via the human lock gesture at `docs/requirements/REQ-<id>.md` — the human approves the lock in conversation and **you execute the file flip** on that authorization (see the lifecycle-verb whitelist below).
-2. Explicitly select the development branch and final release upstream from project facts. Local Git identity setup and routine local branch naming are environment setup, not new approval; do not guess `main`, the current branch, or a remote default. Ensure the locked REQ is committed on the selected development branch; if it is only in the working tree or index, make the routine local commit there before binding, without pushing it.
-3. Run `loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>`. Replace all placeholders before execution. `--approved-by` names the human authorized for this lock/bind; never infer it from `git config user.name`.
+2. Explicitly select the development branch and final release upstream from project facts. Local Git identity setup and routine local branch naming are environment setup, not new approval; do not guess `main`, the current branch, or a remote default. Ensure the locked REQ is committed on the selected development branch; if it is only in the working tree or index, report the actual missing committed REQ object; binding does not automatically commit or push it.
+3. Follow the exact current `requirement-binding.md` path supplied by the entry reminder. Fill its existing four questions: selected REQ, actual authorization record, development branch, release target. Known facts are supplied by the system. A real instruction that already locks and starts the work needs no second confirmation; lock alone does not authorize startup. Names record the actual decision, not identity authentication. Leave undecided choices blank. Normal save invokes the original binding transaction and hands off S2; `req bind` is compatibility/recovery only, not another approval or normal task.
 4. Then proceed above.
 
 **If the Runtime is terminal** (`release_authorized` or `aborted`) **and a
@@ -119,6 +119,12 @@ does not execute a merge, deployment, publication, or release.
 
 This is the Main-session loop. Workers execute their current Assignment's
 closing contract and report remaining work to its original consumer.
+
+For S0–S2, follow the current short stage contract instead of the generic
+source-hash recheck, approval barrier or next-Pre instruction below. Preserve
+actual human decisions and applicable professional work; S1/S2 normal save
+records and completes the original outlet. Ordinary Pre/Stop are read only,
+and an accepted report with unfinished outlet continues on the same save.
 
 Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or tool result. Full procedure, autonomous decision rules, and stop conditions live in `.claude/skills/loop-orchestration/SKILL.md`.
 
@@ -167,20 +173,26 @@ the Milestone instead of relying on conversation memory.
 ## Control boundaries
 
 - Humans own lock, release and the explicit stage authority boundaries below. The Driver autonomously executes work within those boundaries — including executing the `状态：locked` file flip on the human's explicit lock gesture.
-- Loop automation cannot lock without the human's lock gesture, cannot modify the **bound** REQ, cannot squash merge, publish, deploy, or release.
+- Loop automation cannot lock without the human's lock gesture, cannot modify the **bound** REQ without a real explicit human amendment decision, cannot squash merge, publish, deploy, or release.
 - **Lifecycle-verb whitelist** — what the main session may execute on a human's behalf:
   | Verb | May the agent run it? | Required human gesture |
   |:--|:--|:--|
-  | `req bind` | yes | the human's explicit instruction in conversation (verbal-authorization chain) |
-  | `runtime pause` / `runtime resume` / `req amend` / `req unbind` / `runtime rollover` / `runtime human-decision` | only when the human supplies the complete command line verbatim (including `--approved-by`) | the human's own typed/approved command — never infer the approver name from context |
-  "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization, and `req bind --approved-by <same human>` is the second confirmation. When in doubt, hand the command up and wait.
-- `/loop` only delivers the Layer 2 prompt. REQ binding is `loop-harness req bind`; the two are independent lifetimes.
+  | S1 requirement binding | Main fills the original four questions at the supplied current path and saves; req bind is compatibility/recovery only | actual explicit startup decision, reusing an already clear lock-and-start instruction; name records the decision, not authentication |
+  | `runtime pause` / `runtime resume` / `req amend` | carry out the necessary original commands on a real clear human business decision; no verbatim command or repeat execution approval required | record the actual decision and its known human attribution; ask only if intent, scope or attribution is unclear; Git identity is not approval |
+  | `req unbind` / `runtime rollover` | only on an explicit human decision for that specific abandonment or new period; do not infer it from amendment approval | actual specific human choice and attribution; never treat Git identity as approval |
+  | S11 human release decision | Main faithfully fills the prepared application’s original disposition and optional reason, then saves; PostToolUse receives and advances through the original Writer | a real clear human choice; without one leave disposition empty and wait; no metadata, command or identity proof required |
+  "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization. S1 reuses a clear accompanying startup decision without second confirmation. If startup intent is absent, leave that original answer blank and ask for the actual decision; do not request a command as proof.
+- `/loop` only delivers the Layer 2 prompt. S1 binding uses normal save of the current four-question application; the original transaction owns binding and the S2 handoff.
 - Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. S6 Builders retain their professional PLAN_REPORT. S9 Builders personally save PlanReport before work and RepairResult after work, directly recording professional facts without a generic PLAN/AgentBegin/activation/completion acceptance prerequisite; actual checks and explicit user decisions remain required work. Do not add generic PLAN or completion submissions. Outside S9, any `plan_approval_required` assignment retains its original approval and activation.
 - Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for its required checkpoint or result; it does not take over or project that responsibility to `done` unless the assignment is revoked or reassigned.
 - Blocking findings enter the canonical BUG cycle. Targeted re-verification never produces a clean round.
-- S10 is an anti-shortcut acceptance and release audit. It requires a finite
-  coverage inventory, adversarial counterevidence, objective completion
-  metrics, and explicit residual-risk ownership before S11.
+- S10 overrides the generic Driver steps 7–8 on repeated verification and
+  waiting for the next PreToolUse: Main collects actual professional results
+  in the supplied current Manifest; reuse applicable S7 observations and add
+  checks only for specific gaps, contradictions or actual risks. Save once for
+  this step's original exit or concrete remaining work. Do not create per-row
+  counterevidence, duplicate reports or metrics obligations. Actual unfinished
+  work cannot count as complete; real residual risks need impact and ownership.
 - S10 is read-only for product code, locked REQ, contracts, and TASKs. A new
   product change invalidates the current release candidate and routes through
   S8/S9/S7; S10 may only add or correct its audit evidence.
@@ -245,7 +257,7 @@ For exceptional blockers, the main session uses the Gateway types below. Explici
 | `missing_external_permission` | external access the main session cannot obtain, after all other work is done |
 | `runtime_integrity` | snapshot/journal cannot be safely reconciled |
 
-A Gateway package includes: type, `completed work` (a human-readable evidence inventory, not a responsibility status), the single unresolved fact, impact, recommendation, resume stage. Everything else is autonomous work — do not stop.
+For S11 `release_ready`, reuse the accepted S10 readable reports, actual residual risks and exact paths; do not create a duplicate Gateway package or invent an unresolved fact. TR-017 prepares current materials once; ordinary Pre/Stop only reads. The human explicitly chooses one of the six dispositions. Main faithfully fills the supplied application’s original `disposition` and optional `reason`, then saves; PostToolUse automatically records/consumes that decision through the original Writer and fixed outlet. Without a real human choice leave disposition empty: draft saves do not write Runtime or default to approval. The Hook does not authenticate identity or demand extra confirmation fields/proofs; metadata and caller attribution come from the system. The original human-decision command is compatibility/recovery, not a normal task. Rejection carries the original reason and exact paths to S8/S10; S10 retains observations and clears the returned step’s old final conclusion. Other Gateway types retain their existing package requirements: type, completed work (an evidence inventory, not a responsibility status), actual unresolved issue, impact, recommendation and resume stage.
 
 ## Runtime authority
 
@@ -307,7 +319,7 @@ Load the rest on demand.
 {lint command}
 ```
 
-Loop commands:
+Compatibility/recovery commands (normal S1 uses the supplied four-question application and save):
 
 ```bash
 .claude/bin/loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>
@@ -389,8 +401,8 @@ For a new bound REQ, an explicit finite human grant may delegate ordinary S8 con
 ## Approved repair policy at new requirement binding
 
 If installation recorded a human-approved project repair policy, include its
-unchanged path and SHA256 using `req bind --repair-policy` and
-`--repair-policy-sha256`. Do not create or enlarge a policy from an account name.
+unchanged path and SHA256 in the existing binding-policy facts. The compatibility/recovery CLI exposes these as `req bind --repair-policy` and
+`--repair-policy-sha256`; running that command is not an extra normal binding step. Do not create or enlarge a policy from an account name.
 See `docs/bounded-repair-autonomy.md`. In-scope technical RepairContract approvals
 then use the Driver's registered review and pinned policy, without another human
 approval. Missing authority, business changes and release keep their Gateway.

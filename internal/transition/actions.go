@@ -558,22 +558,38 @@ func acceptedContractArtifacts(state map[string]any, ctx *ActionContext) ([]work
 				return nil, fmt.Errorf("S3 registration original evidence changed: %v", err)
 			}
 			var envelope struct {
-				Answer workpacket.ContractAnswer `json:"contract_answer"`
+				Answer   workpacket.ContractAnswer `json:"contract_answer"`
+				Subjects []workpacket.Subject      `json:"subject_refs"`
 			}
 			if err := json.Unmarshal(data, &envelope); err != nil {
 				return nil, err
 			}
-			if err := loopruntime.ValidateContractEnvelope(packet, record.EvidenceID, envelope.Answer, data); err != nil {
-				return nil, err
+			digest, err := workpacket.ContractAnswerDigest(envelope.Answer)
+			if err != nil || digest != record.ContentHash || envelope.Answer.IndexPath == nil {
+				return nil, fmt.Errorf("S3 registration original answer differs")
 			}
-			// The engine has moved the cursor before dispatching actions.
-			// Reuse the exact original S3 binding for this read-only check.
-			projection := make(map[string]any, len(state))
-			for key, value := range state {
-				projection[key] = value
+			paths := append([]string{*envelope.Answer.IndexPath}, envelope.Answer.ContractPaths...)
+			refs := make([]workpacket.Reference, 0, len(paths))
+			for _, path := range paths {
+				found := false
+				for _, subject := range envelope.Subjects {
+					if subject.Path != path {
+						continue
+					}
+					refs = append(refs, workpacket.Reference{ID: strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), Path: path, Version: subject.Version, SHA256: subject.SHA256})
+					found = true
+					break
+				}
+				if !found {
+					return nil, fmt.Errorf("S3 registration received contract is missing: %s", path)
+				}
 			}
-			projection["lifecycle"] = map[string]any{"state": "planning", "phase": "contracts", "phase_revision": packet.Binding.StageEntry}
-			return loopruntime.ContractArtifacts(actionRoot(state, ctx), projection, packet, envelope.Answer, files)
+			if verified, ok := files.(interface{ Verify() error }); ok {
+				if err := verified.Verify(); err != nil {
+					return nil, err
+				}
+			}
+			return refs, nil
 		}
 		return nil, fmt.Errorf("S3 registration original evidence is missing")
 	}
@@ -1291,6 +1307,14 @@ func actionRecordHumanReleaseDecision(state map[string]any, ctx *ActionContext) 
 	}
 	if strings.TrimSpace(decisionRef) == "" {
 		return ActionResult{Status: "failed", Detail: "human release decision evidence missing"}, fmt.Errorf("record_human_release_decision: human_decision_record evidence missing")
+	}
+	if ctx.Spec.ID == "TR-027" {
+		// The human problem is the new intake source. Retire only the current
+		// S7/S8 entry pointers; their recorded observations and files remain.
+		if review, _ := state["review"].(map[string]any); review != nil {
+			review["observation_batch"] = nil
+			review["investigation"] = nil
+		}
 	}
 	return ActionResult{
 		Status: "committed",

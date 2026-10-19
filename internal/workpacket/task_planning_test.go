@@ -188,3 +188,50 @@ func mustTaskPlanningJSON(t *testing.T, p TaskPlanningPacket) []byte {
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestValidateTaskPlanningAnswerDoesNotRebuildSourcePacket(t *testing.T) {
+	p := taskPlanningFixture(t)
+	pass, index := "pass", "docs/dev/tasks/index-REQ-001.md"
+	draft := p.Draft
+	draft.Answer = TaskPlanningAnswer{Conclusion: &pass, IndexPath: &index, TaskPaths: []string{"docs/dev/tasks/TASK-001.md"}}
+	data, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Source/packet qualification belongs neither to professional answer decoding
+	// nor to repeated reception. The current questionnaire was selected by path.
+	p.Inputs = TaskPlanningInputs{}
+	p.Draft.Questions = nil
+	answer, issues := ValidateTaskPlanningAnswer(p, data)
+	if len(issues) != 0 || answer.Conclusion == nil || *answer.Conclusion != "pass" {
+		t.Fatalf("professional answer re-proved source packet: %+v %+v", answer, issues)
+	}
+}
+
+func TestTaskPlanningEvidenceIncludesActualCancelledTaskWithoutChangingProfessionalAnswer(t *testing.T) {
+	p := taskPlanningFixture(t)
+	pass, index := "pass", "docs/dev/tasks/index-REQ-001.md"
+	answer := TaskPlanningAnswer{Conclusion: &pass, IndexPath: &index, TaskPaths: []string{"docs/dev/tasks/TASK-001.md"}}
+	artifacts := []Reference{
+		{Path: index, Version: "v1.0.0", SHA256: Digest([]byte("index"))},
+		{Path: "docs/dev/tasks/TASK-001.md", Version: "v1.0.0", SHA256: Digest([]byte("complete"))},
+		{Path: "docs/dev/tasks/TASK-002.md", Version: "v1.0.0", SHA256: Digest([]byte("cancelled"))},
+	}
+	envelope, err := TaskPlanningEvidence(p, "E-S4", artifacts, answer, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := envelope["task_planning_answer"].(TaskPlanningAnswer)
+	if len(actual.TaskPaths) != 1 || actual.TaskPaths[0] != answer.TaskPaths[0] {
+		t.Fatalf("professional answer was extended: %+v", actual)
+	}
+	found := false
+	for _, subject := range envelope["subject_refs"].([]Subject) {
+		if subject.Path == "docs/dev/tasks/TASK-002.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("actual cancelled TASK fact omitted")
+	}
+}

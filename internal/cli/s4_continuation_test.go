@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/controller"
-	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
@@ -273,7 +273,7 @@ func TestS4AdvancedReplayReturnsOriginalReceiptWithoutFalseFollowup(t *testing.T
 	}
 }
 
-func TestS4UncommittedOutputExplainsOriginalAnswerAndBranch(t *testing.T) {
+func TestS4UncommittedDescriptionAcceptsUnchangedProfessionalAnswer(t *testing.T) {
 	root, p := newTaskPlanningAnswerFixture(t)
 	path := "docs/dev/tasks/TASK-039-01.md"
 	b, err := os.ReadFile(filepath.Join(root, path))
@@ -286,17 +286,25 @@ func TestS4UncommittedOutputExplainsOriginalAnswerAndBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := s.SaveTaskPlanning(context.Background(), p.AnswerPath)
-	if err == nil || r.Accepted {
-		t.Fatalf("uncommitted task unexpectedly accepted: %+v %v", r, err)
+	beforeAnswer, err := os.ReadFile(filepath.Join(root, p.AnswerPath))
+	if err != nil {
+		t.Fatal(err)
 	}
-	branch, _ := fileview.DevelopmentRef(stageSnapshot(t, root).State)
-	if !strings.Contains(r.Error, path) || !strings.Contains(r.Error, branch) || !strings.Contains(r.Error, "commit") || !strings.Contains(r.NextAction, filepath.Join(root, p.AnswerPath)) || strings.Contains(r.NextAction, "具名修订") {
-		t.Errorf("S4 leaves commit/current-answer action implicit: %+v", r)
+	r, err := s.SaveTaskPlanning(context.Background(), p.AnswerPath)
+	if err != nil || !r.Accepted || !r.WorkComplete {
+		t.Fatalf("description-only uncommitted change rejected: %+v %v", r, err)
+	}
+	afterAnswer, err := os.ReadFile(filepath.Join(root, p.AnswerPath))
+	if err != nil || !bytes.Equal(beforeAnswer, afterAnswer) {
+		t.Fatalf("professional answer changed on receipt: %v", err)
+	}
+	actual, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil || !bytes.Equal(actual, append(b, []byte("\nProfessional task repair retained.\n")...)) {
+		t.Fatalf("actual professional task was rewritten: %v", err)
 	}
 }
 
-func TestS4GatePreservesConcreteAcceptedOutputDrift(t *testing.T) {
+func TestS4AcceptedDescriptionChangeKeepsRecordedCompletionAndOriginalFollowup(t *testing.T) {
 	root, p := newTaskPlanningAnswerFixture(t)
 	stageJSON(t, root, p.AnswerPath, completedTaskPlanningDraft(p))
 	s, err := submission.New(root)
@@ -329,7 +337,26 @@ func TestS4GatePreservesConcreteAcceptedOutputDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(result.Conflicts, " "), path) {
-		t.Errorf("S4 gate discarded exact output drift: %+v", result)
+	if result.Status != qualitygate.StatusSatisfied || len(result.Conflicts) != 0 {
+		t.Fatalf("description-only change retroactively invalidated completion: %+v", result)
+	}
+	before := stageSnapshot(t, root)
+	beforeAnswer, err := os.ReadFile(filepath.Join(root, p.AnswerPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := s.SaveTaskPlanning(context.Background(), p.AnswerPath)
+	if err != nil || !replayed.Accepted || replayed.SubmissionKey != receipt.SubmissionKey || replayed.CurrentStage != "S5" {
+		t.Fatalf("original pending followup did not continue: %+v %v", replayed, err)
+	}
+	after := stageSnapshot(t, root)
+	beforeEntities := before.State["entities"].(map[string]any)
+	afterEntities := after.State["entities"].(map[string]any)
+	if len(beforeEntities["submissions"].([]any)) != len(afterEntities["submissions"].([]any)) || len(before.State["evidence"].([]any)) != len(after.State["evidence"].([]any)) {
+		t.Fatal("same report was received again")
+	}
+	afterAnswer, err := os.ReadFile(filepath.Join(root, p.AnswerPath))
+	if err != nil || !bytes.Equal(beforeAnswer, afterAnswer) {
+		t.Fatalf("professional answer changed: %v", err)
 	}
 }

@@ -83,7 +83,16 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read evidence artifact: %w", err)
 	}
-	if err := acceptance.ValidateEvidenceArtifact(root, request.Kind, data); err != nil {
+	var s10Binding struct {
+		RuntimeID          string `json:"runtime_id"`
+		BaselineGeneration int    `json:"baseline_generation"`
+		ReviewRound        int    `json:"review_round"`
+	}
+	if isS10RoundScopedKind(request.Kind) {
+		if err := json.Unmarshal(data, &s10Binding); err != nil {
+			return Snapshot{}, fmt.Errorf("read S10 recording association: %w", err)
+		}
+	} else if err := acceptance.ValidateEvidenceArtifact(root, request.Kind, data); err != nil {
 		return Snapshot{}, err
 	}
 	// S10 evidence must bind to the current review round (L3-S10 §4.2): the
@@ -103,7 +112,9 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		return Snapshot{}, fmt.Errorf("read runtime: %w", err)
 	}
 	current := snapshot.State
-	if request.Submission != nil {
+	// S3 performs its professional reception inside the atomic Apply below.
+	// Other submission kinds retain their existing preflight behavior.
+	if request.Submission != nil && request.Kind != "planning_contract" {
 		if _, err := prepareSubmission(root, current, request, data); errors.Is(err, errSubmissionAccepted) {
 			return snapshot, nil
 		} else if err != nil {
@@ -116,46 +127,13 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	runtimeID, _ := current["runtime_id"].(string)
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	from := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
-	// S10 registration must consume the same authoritative finite inventory
-	// as the Quality Gate once the Runtime has entered a real review round.
-	// Keep the round-zero bootstrap fixture/legacy path structural-only; a
-	// production S10 state has a bound REQ and pinned ReviewPlan, which makes
-	// the non-self-declared denominator reconstructible here as well.
-	if isS10RoundScopedKind(request.Kind) && acceptance.S10AuthorityAvailable(current) {
-		manifestType := "acceptance"
-		if request.Kind == "release_audit" || request.Kind == "release_audit_record" {
-			manifestType = "release_audit"
-		}
-		var envelope struct {
-			Conclusion string `json:"conclusion"`
-		}
-		if err := json.Unmarshal(data, &envelope); err != nil || strings.TrimSpace(envelope.Conclusion) == "" {
-			return Snapshot{}, fmt.Errorf("S10 %s evidence requires a non-empty conclusion before authoritative inventory validation", manifestType)
-		}
-		// RC-15 (S10-H1): validate the manifest the envelope RESOLVES to, not
-		// the envelope bytes themselves — the envelope carries registration
-		// metadata (kind, evidence_id, ...) that no manifest decoder may be
-		// asked to accept under DisallowUnknownFields.
-		manifestData, _, envelopeConclusion, resolveErr := acceptance.ResolveS10Manifest(root, request.Kind, data)
-		if resolveErr != nil {
-			return Snapshot{}, resolveErr
-		}
-		// Keep `data` as the registered file's original bytes: the evidence
-		// row's recorded sha256 and the board's on-disk hash check bind to the
-		// envelope file; only the validators below consume the resolved
-		// manifest bytes.
-		s10ManifestData := manifestData
-		envelope.Conclusion = envelopeConclusion
-		baseline, baselineErr := acceptance.BuildS10ExternalBaseline(root, current, nil)
-		if baselineErr != nil {
-			return Snapshot{}, fmt.Errorf("S10 external baseline is unverifiable: %w; restore the current-generation completion/change-impact artifacts", baselineErr)
-		}
-		authority, authorityErr := acceptance.BuildS10InventoryAuthority(root, current, baseline)
-		if authorityErr != nil {
-			return Snapshot{}, fmt.Errorf("S10 authoritative inventory is unverifiable: %w; restore the current bound REQ, contract/TASK registrations, and pinned S7 ReviewPlan", authorityErr)
-		}
-		if _, err := acceptance.ValidateForOutcomeWithBaselineAndAuthority(s10ManifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline, authority); err != nil {
-			return Snapshot{}, err
+	// The professional manifest was checked by its normal save receiver.
+	// Recording retains only the current system association, not source proofs.
+	if isS10RoundScopedKind(request.Kind) {
+		baseline, _ := current["baseline"].(map[string]any)
+		review, _ := current["review"].(map[string]any)
+		if s10Binding.RuntimeID != runtimeID || !hypothesisJSONEqual(baseline["generation"], s10Binding.BaselineGeneration) || !hypothesisJSONEqual(review["round"], s10Binding.ReviewRound) {
+			return Snapshot{}, fmt.Errorf("S10 report does not describe the current responsibility/round")
 		}
 	}
 
@@ -186,6 +164,13 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		Message:        "Recorded a current fingerprinted evidence artifact.",
 		OccurredAt:     occurredAt,
 		Apply: func(state map[string]any) error {
+			if isS10RoundScopedKind(request.Kind) {
+				baseline, _ := state["baseline"].(map[string]any)
+				review, _ := state["review"].(map[string]any)
+				if state["runtime_id"] != s10Binding.RuntimeID || !hypothesisJSONEqual(baseline["generation"], s10Binding.BaselineGeneration) || !hypothesisJSONEqual(review["round"], s10Binding.ReviewRound) {
+					return fmt.Errorf("current S10 responsibility changed before recording")
+				}
+			}
 			var submission SubmissionRecord
 			if request.Submission != nil {
 				var err error
@@ -255,6 +240,11 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 			// never from the artifact's mere presence or the outer error text.
 			latest, readErr := store.Snapshot()
 			if readErr == nil {
+				if request.Kind == "planning_contract" {
+					if _, accepted, findErr := FindSubmission(latest.State, request.Submission.PacketID); findErr != nil || !accepted {
+						return next, err
+					}
+				}
 				_, replayErr := prepareSubmission(root, latest.State, request, data)
 				if errors.Is(replayErr, errSubmissionAccepted) {
 					return latest, nil

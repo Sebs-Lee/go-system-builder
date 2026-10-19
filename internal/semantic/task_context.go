@@ -381,14 +381,6 @@ func unionSpanBytes(spans []byteSpan) int {
 // gate, size threshold, execution result or edit to the approved batch.
 func AnalyzeTaskGranularity(summaries []TaskContextSummary) []TaskGranularityAdvisory {
 	result := []TaskGranularityAdvisory{}
-	for _, s := range summaries {
-		if len(s.CheckEntrances) == 0 {
-			result = append(result, TaskGranularityAdvisory{Kind: "closing_oracle_unresolved", TaskIDs: []string{s.TaskID}, SourceRefs: []string{s.TaskRef + "#closing-contract"}, Paths: []string{}, Observation: "No recognized declared check entrance was found; assert text does not prove behavior.", Question: "Which approved assertion and observable oracle close this responsibility?"})
-		}
-		if len(s.Modules) > 1 {
-			result = append(result, TaskGranularityAdvisory{Kind: "multiple_write_modules", TaskIDs: []string{s.TaskID}, SourceRefs: []string{s.TaskRef + "#scope"}, Paths: append([]string{}, s.Modules...), Observation: "The declared write set spans multiple path groups; this does not establish task size or independence.", Question: "Can one responsibility close these changes, or do distinct owners/oracles require separate TASKs?"})
-		}
-	}
 	for i, a := range summaries {
 		for _, b := range summaries[i+1:] {
 			shared := []string{}

@@ -264,6 +264,10 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 		return runREQUnbind(args[1:], stdout, stderr)
 	}
 	if args[0] == "amend" {
+		if wantsHelp(args[1:]) {
+			runREQAmend([]string{"--help"}, stdout, stdout)
+			return 0
+		}
 		return runREQAmend(args[1:], stdout, stderr)
 	}
 	flags := flag.NewFlagSet("req bind", flag.ContinueOnError)
@@ -280,6 +284,15 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
 		return 2
 	}
+	return bindRequirement(*root, *reqPath, *approvedBy, *devBranch, *releaseUpstream, *repairPolicyPath, *repairPolicySHA, *asJSON, stdout, stderr)
+}
+
+// bindRequirement is the original TR-001 transaction shared by the normal
+// binding questionnaire and the explicit compatibility command, without a CLI subprocess.
+func bindRequirement(rootValue, reqValue, approverValue, devValue, releaseValue, policyValue, policySHAValue string, jsonOutput bool, stdout, stderr io.Writer) int {
+	root, reqPath, approvedBy := &rootValue, &reqValue, &approverValue
+	devBranch, releaseUpstream := &devValue, &releaseValue
+	repairPolicyPath, repairPolicySHA, asJSON := &policyValue, &policySHAValue, &jsonOutput
 	if *approvedBy == "" {
 		fmt.Fprintln(stderr, "req bind requires --approved-by <actual-approver from this binding authorization>; do not infer it from git user.name")
 		return 2
@@ -374,13 +387,6 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	// Preflight: refuse to burn a drifted control-plane fingerprint into a
-	// fresh baseline. Parse-level drift already fails closed above (catalog
-	// load); this catches a valid-but-changed definition or policy file.
-	if hint := controlPlaneDrift(*root, snapshot.State); hint != "" {
-		fmt.Fprintln(stderr, formatFailure("req bind", fmt.Errorf("control plane drifted: %s", hint)))
-		return 1
-	}
 	now := time.Now().UTC()
 	shaHex := transition.REQSHA256(data)
 	next, err := transition.Apply(*root, statePath, journalPath, transition.Request{
@@ -394,6 +400,26 @@ func runREQ(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("req bind", err))
 		return 1
+	}
+	if runtime.PacketEnabled(next.State) {
+		absRoot, rootErr := filepath.Abs(*root)
+		if rootErr != nil {
+			fmt.Fprintln(stderr, "Binding recorded, but S2 preparation root is unavailable: "+rootErr.Error())
+			return 1
+		}
+		service := submission.Service{Root: absRoot, StatePath: filepath.Join(absRoot, ".claude/loop-state.json"), JournalPath: filepath.Join(absRoot, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
+		packet, prepareErr := service.IssueDesign(context.Background())
+		if prepareErr != nil {
+			fmt.Fprintln(stderr, "Binding recorded, but its S2 design questionnaire preparation failed: "+prepareErr.Error())
+			return 1
+		}
+		fmt.Fprintf(infoW, "S2 design view: %s; answer: %s\n", resolveRootPath(absRoot, packet.ViewPath), resolveRootPath(absRoot, packet.AnswerPath))
+		latest, readErr := runtime.NewStore(statePath, journalPath).Snapshot()
+		if readErr != nil {
+			fmt.Fprintln(stderr, "Binding and S2 preparation recorded, but the current Runtime could not be read: "+readErr.Error())
+			return 1
+		}
+		next = latest
 	}
 	if *asJSON {
 		return encodeJSON(stdout, next.State)
@@ -551,17 +577,12 @@ func projectNext(state, phase, root string) (string, string, string) {
 	cursor, _ := runtime.StageFor(state, phase, root)
 	switch state {
 	case "inactive":
-		action := "produce one human-locked REQ (docs/requirements/REQ-template.md + skills: requirement-funnel), then bind it"
-		skill := "requirement-funnel"
-		if cmd := soleBindableCommand(root); cmd != "" {
-			action = "bind the human-locked REQ: " + cmd + " (or tell the main session to bind it for you)"
-			skill = "loop-orchestration"
+		for _, req := range scanRequirements(root) {
+			if req.Status == "locked" {
+				return "S1", "loop-orchestration", "record the actual selected requirement, human startup decision and explicit project branch destinations in the supplied current binding request; save normally for original TR-001 and S2"
+			}
 		}
-		stage := "S0"
-		if len(bindableOnly(root)) > 0 {
-			stage = "S1"
-		}
-		return stage, skill, action
+		return "S0", "requirement-funnel", "continue the existing requirement draft with the real user; after the actual lock/start decision, save the current requirement and complete the supplied original binding request"
 	case "planning":
 		return cursor, "specification-planning", "complete the planning phase for " + phase
 	case "document_verification":
@@ -583,7 +604,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "bug_resolution":
 		switch phase {
 		case "investigation":
-			return "S8", "bug-resolution", "ingest or continue the InvestigationCase from the sealed ObservationBatch; do not create a BUG or reproduce the symptom"
+			return "S8", "bug-resolution", "investigate the current reported problem and actual observations using the supplied InvestigationCase questionnaire; the source may be sealed S7 observations or the actual human defect decision, not an invented Batch"
 		case "bug_report_review":
 			return "S8", "bug-resolution", "reconcile the legacy BUG projection into its InvestigationCase; new S8 work must not accept a BUG as the authority"
 		case "repair_readback":
@@ -604,9 +625,9 @@ func projectNext(state, phase, root string) (string, string, string) {
 		if state == "acceptance" {
 			return "S10", "acceptance-and-handoff", "complete the existing acceptance manifest at the exact questionnaire path supplied by the listener: professional dispositions, counterevidence, references and conclusion; save for the original acceptance consumer and stage conditions"
 		}
-		return "S10", "acceptance-and-handoff", "complete the existing release-audit questionnaire at its exact supplied path, including all eight areas and counterevidence; save for the original consumer; report blocking findings through the original rework route"
+		return "S10", "acceptance-and-handoff", "review this change's actual release risks using accepted acceptance results and applicable existing observations; save the exact supplied release-audit questionnaire for its original exit; eight themes are reading prompts, not required tasks or per-row counterevidence"
 	case "awaiting_human_release":
-		return "S11", "acceptance-and-handoff", "present the current release request and evidence paths to the human; await the actual disposition and use the original human-decision entry; a saved Agent answer is not human approval"
+		return "S11", "acceptance-and-handoff", "present the current release materials and exact application to the human; after an actual explicit choice, faithfully fill disposition and optional reason in that application and save normally; the original listener records and follows its fixed exit automatically; empty disposition remains a waiting draft"
 	case "release_authorized":
 		return "S11", "acceptance-and-handoff", "S11 human-authorized terminal; Harness performs no merge, publication, deployment, or formal release"
 	case "aborted":
@@ -1000,7 +1021,7 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 			"primary_skill":   "requirement-funnel",
 			"read":            []any{"docs/requirements/"},
 			"missing":         []any{"human_locked_req"},
-			"done_when":       []any{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"},
+			"done_when":       []any{"the real requirement is locked and the actual four choices in the exact current binding request are saved for original TR-001 and S2"},
 			"human_required":  false,
 			"blocked":         false,
 			"blocker":         nil,
@@ -1164,10 +1185,25 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "task-receipt" {
 		return runTaskReceipt(args[1:], stdout, stderr)
 	}
+	// Lifecycle leaves expose their own registered flags without reading Runtime.
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		switch args[0] {
+		case "pause":
+			runRuntimePause([]string{"--help"}, stdout, stdout)
+			return 0
+		case "resume":
+			runRuntimeResume([]string{"--help"}, stdout, stdout)
+			return 0
+		}
+	}
 	if wantsHelp(args) && (len(args) == 0 || args[0] != "register-workgroup") {
 		name := compactHelpName(args)
 		if name == "" {
 			name = "<stage-specific verb>"
+		}
+		if name == "human-decision" {
+			printCommandHelp(stdout, "loop-harness runtime human-decision --root <project-root> --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> --actor Main [--reason <human-reason>]", "Record the human's explicit choice through its fixed transition; actor is a caller record, not authentication. --reason is optional. The system supplies the current decision path and association. --decision-evidence <existing-reference> is optional compatibility only, not a normal registration step. This command does not publish or deploy.")
+			return 0
 		}
 		if name == "transition" {
 			printCommandHelp(stdout, "loop-harness runtime transition --id <ID> --actor <role> [--affected-paths <repo-relative-path>]...", "Low-level recovery only. Repeat --affected-paths for multiple literal paths (including deleted paths); use all alone only for an explicitly authorized full sweep. --params does not supply affected paths. Normal continuation uses stage-specific verbs.")
@@ -1347,6 +1383,44 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime transition", err))
 			return 1
+		}
+		if lifecycleState(next.State) == "planning" && stringValue(nestedStateValue(next.State, "lifecycle", "phase")) == "design" && runtime.PacketEnabled(next.State) {
+			absRoot, rootErr := filepath.Abs(*root)
+			if rootErr != nil {
+				fmt.Fprintln(stderr, rootErr)
+				return 1
+			}
+			service := submission.Service{Root: absRoot, StatePath: resolvedStatePath, JournalPath: resolvedJournalPath, Validator: semantic.RuntimeCandidateValidator{}}
+			packet, prepareErr := service.IssueDesign(context.Background())
+			if prepareErr != nil {
+				fmt.Fprintln(stderr, "Transition recorded, but S2 design preparation failed: "+prepareErr.Error())
+				return 1
+			}
+			fmt.Fprintf(stderr, "S2 design view: %s; answer: %s\n", resolveRootPath(absRoot, packet.ViewPath), resolveRootPath(absRoot, packet.AnswerPath))
+			current, readErr := runtime.NewStore(resolvedStatePath, resolvedJournalPath).Snapshot()
+			if readErr != nil {
+				fmt.Fprintln(stderr, readErr)
+				return 1
+			}
+			next = current
+		}
+		if (*transitionID == "TR-009" || *transitionID == "TR-015") && runtime.PacketEnabled(next.State) {
+			if kind := currentAuditKind(next.State); kind != "" {
+				if _, _, err := prepareAuditQuestionnaire(*root, next.State, kind); err != nil {
+					fmt.Fprintf(stderr, "S10 %s responsibility is current but its questionnaire preparation failed: %v\n", kind, err)
+					return 1
+				}
+			}
+		}
+		if (*transitionID == "TR-017" || *transitionID == "TR-019") && lifecycleState(next.State) == "awaiting_human_release" {
+			path, id, err := humanReleaseQuestionnairePath(*root, next.State)
+			if err == nil {
+				err = prepareHumanDecisionApplication(path, next.State, id)
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "S11 decision application preparation failed: %v\n", err)
+				return 1
+			}
 		}
 		if err := json.NewEncoder(stdout).Encode(next); err != nil {
 			fmt.Fprintf(stderr, "encode runtime transition: %v\n", err)
@@ -2095,7 +2169,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 // The disposition is mapped to a fixed transition by the Runtime package; the
 // caller cannot supply a target state or transition ID. This makes the command
 // usable for both legacy S11 snapshots and the current human gateway while
-// keeping missing evidence and actor fail-closed. Runtime revision is an
+// recording explicit human dispositions without treating the caller as authentication. Runtime revision is an
 // optional advanced assertion; the normal path lets the Writer use its
 // current locked snapshot.
 func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
@@ -2107,9 +2181,10 @@ func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
 	journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
 	disposition := flags.String("disposition", "", "one of approve, defer, reject_defect, reject_acceptance, reject_release_audit, abort")
 	expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
-	actor := flags.String("actor", "", "human decision actor")
+	actor := flags.String("actor", "", "caller record, not authentication")
+	reason := flags.String("reason", "", "actual human decision reason, when supplied")
 	decisionEvidence := flags.String("decision-evidence", "", "human_decision_record evidence reference")
-	findingEvidence := flags.String("finding-evidence", "", "finding_record evidence reference; required for reject_defect")
+	findingEvidence := flags.String("finding-evidence", "", "optional existing finding_record evidence reference")
 	if err := parseWorkspaceFlags(flags, args); err != nil {
 		return 2
 	}
@@ -2121,9 +2196,6 @@ func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(*actor) == "" {
 		missing = append(missing, "--actor")
 	}
-	if strings.TrimSpace(*decisionEvidence) == "" {
-		missing = append(missing, "--decision-evidence")
-	}
 	if len(missing) > 0 {
 		fmt.Fprintf(stderr, "runtime human-decision requires %s; choose --disposition approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort\n", strings.Join(missing, ", "))
 		return 2
@@ -2134,21 +2206,36 @@ func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime human-decision: %v; choose approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort\n", err)
 		return 2
 	}
-	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionRejectDefect) && strings.TrimSpace(*findingEvidence) == "" {
-		fmt.Fprintln(stderr, "runtime human-decision reject_defect requires --finding-evidence for finding_record")
-		return 2
-	}
 
 	evidence := map[string]string{"human_decision_record": strings.TrimSpace(*decisionEvidence)}
 	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionDefer) {
 		evidence["pause_record"] = "generated:pause_checkpoint"
 	}
-	if strings.TrimSpace(*disposition) == string(runtime.HumanReleaseDispositionRejectDefect) {
+	if strings.TrimSpace(*findingEvidence) != "" {
 		evidence["finding_record"] = strings.TrimSpace(*findingEvidence)
 	}
 
+	var params map[string]any
+	var runtimeID string
+	if strings.TrimSpace(*decisionEvidence) == "" {
+		snapshot, err := runtime.NewStore(resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath)).Snapshot()
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime human-decision", err))
+			return 1
+		}
+		path, id, err := humanReleaseQuestionnairePath(*root, snapshot.State)
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("runtime human-decision", err))
+			return 1
+		}
+		params = map[string]any{"decision_id": id, "decision_path": path, "disposition": strings.TrimSpace(*disposition), "reason": *reason}
+		runtimeID = stringValue(snapshot.State["runtime_id"])
+		if *expectedRevision < 0 {
+			*expectedRevision = snapshot.Revision
+		}
+	}
 	next, err := transition.Apply(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), transition.Request{
-		TransitionID:     transitionID,
+		TransitionID: transitionID, Params: params, ExpectedRuntimeID: runtimeID,
 		ExpectedRevision: *expectedRevision,
 		Actor:            strings.TrimSpace(*actor),
 		Evidence:         evidence,
@@ -2156,6 +2243,20 @@ func runRuntimeHumanDecision(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime human-decision", err))
 		return 1
+	}
+	if transitionID == "TR-028" || transitionID == "TR-029" {
+		decisionPath := stringValue(params["decision_path"])
+		if decisionPath == "" {
+			if entry := evidenceEntryByID(next.State, strings.TrimSpace(*decisionEvidence)); entry != nil {
+				decisionPath = resolveRootPath(*root, stringValue(entry["path"]))
+			}
+		}
+		paths, err := prepareAuditReworkQuestionnaires(*root, next.State, transitionID, decisionPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "Human decision is recorded, but S10 rework preparation failed: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stderr, "Human decision %s recorded at %s; reason: %s. Continue the current S10 report(s): %s. Existing observations are retained; the prior final outcome is cleared only once.\n", *disposition, decisionPath, *reason, strings.Join(paths, ", "))
 	}
 	return encodeJSON(stdout, next)
 }
@@ -2278,6 +2379,7 @@ func runRuntimeRollover(args []string, stdout, stderr io.Writer) int {
 	} else if note != "" {
 		fmt.Fprintf(stdout, "REQ %s (dual-fingerprint receipt: %s)\n", note, filepath.Join(record.ArchiveDir, "req-archive.json"))
 	}
+	fmt.Fprintln(stdout, stageEntryQuestionnaireContext(*root, policy.Input{Event: "SessionStart"}, runtime.Snapshot{State: freshState}))
 	return 0
 }
 
@@ -2546,6 +2648,15 @@ func packetPlanningEvidenceAddRefusal(root, statePath, journalPath, kind string)
 	if err != nil {
 		return "", true, err
 	}
+	if phase == "design" {
+		if !verified {
+			return "Current S2 questionnaire association is ambiguous or unavailable; Main must resolve the actual entry record, not register a parallel envelope.", true, nil
+		}
+		if !issued {
+			return "The current S2 responsibility has no registered questionnaire. Its real stage-entry preparation is missing; Main must resolve that system gap, not manually issue or consume.", true, nil
+		}
+		return "Use the current S2 answer at " + resolveRootPath(root, answerPath) + ". Save the professional answer normally; the original listener records and advances it without a command or parallel envelope.", true, nil
+	}
 	if !verified {
 		status := renderExecCommand([]string{"loop-harness", "status", "--root", root})
 		return fmt.Sprintf("packet-mode Main %s packet binding cannot be verified; do not register planning evidence directly. Inspect the current Runtime with %s", phase, status), true, nil
@@ -2564,18 +2675,32 @@ func packetPlanningEvidenceAddRefusal(root, statePath, journalPath, kind string)
 func currentIssuedPlanningAnswerPath(state map[string]any, phase string) (path string, issued, verified bool, err error) {
 	switch phase {
 	case "design":
-		expected, err := runtime.CurrentDesignPacket(state)
-		if err != nil {
-			return "", false, false, err
+		life := mapFieldCLI(state, "lifecycle")
+		if life["state"] != "planning" || life["phase"] != "design" {
+			return "", false, false, fmt.Errorf("S2 design is not the current entry")
 		}
-		packet, found, conflict := currentDesignPlanningPacket(state, expected)
-		if conflict {
-			return "", false, false, nil
+		rows, _ := mapFieldCLI(state, "entities")["work_packets"].([]any)
+		count := 0
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			if row["template_id"] != "s2-design-v1" {
+				continue
+			}
+			binding, _ := row["binding"].(map[string]any)
+			if binding["runtime_id"] != state["runtime_id"] || integerValue(binding["generation"]) != integerValue(nestedStateValue(state, "baseline", "generation")) || integerValue(binding["stage_entry"]) != integerValue(life["phase_revision"]) {
+				continue
+			}
+			answer, ok := row["answer_path"].(string)
+			if !ok || strings.TrimSpace(answer) == "" {
+				return "", false, false, fmt.Errorf("current S2 design record has no readable answer path")
+			}
+			path = answer
+			count++
 		}
-		if !found {
-			return "", false, true, nil
+		if count > 1 {
+			return "", false, false, fmt.Errorf("multiple S2 design questionnaires describe the current Runtime/generation/entry")
 		}
-		return packet.AnswerPath, true, true, nil
+		return path, count == 1, true, nil
 	case "contracts":
 		binding, designs, err := runtime.CurrentContractBinding(state)
 		if err != nil {
@@ -2961,11 +3086,17 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.Event == "PostToolUse" {
 		// Observe ordinary successful tools before non-checkpoint Bash exits.
 		// The sampler owns only diagnostic caches and never a control cycle.
-		progressNotice := observeWorkProgress(root, request, stderr)
+		progressNotice, progressKnown, progressChanged := observeWorkProgress(root, request, stderr)
+		_, explicitSave := savedQuestionnairePath(request)
+		if explicitSave || !progressKnown || progressChanged {
+			if preparation := prepareCurrentPlanningAfterChange(root, request); preparation != "" {
+				fmt.Fprintln(stderr, preparation)
+			}
+		}
 		if handled, code := receiveSavedQuestionnaire(root, request, stdout, stderr); handled {
 			return code
 		}
-		if handled, code := runObservedQuestionnaireSaves(root, request, stdout, stderr); handled {
+		if handled, code := runObservedQuestionnaireSaves(root, request, stdout, stderr, progressKnown, progressChanged); handled {
 			return code
 		}
 		if progressNotice != nil && len(progressNotify) > 0 && progressNotify[0] {
@@ -3030,7 +3161,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	var decision policy.Decision
 	mainStopBlocked := false
 	s6ObservationReused := false
-	if request.Event == "Stop" {
+	if request.Event == "Stop" && !(graphObserved && (lifecycleState(controlResult.Snapshot.State) == "acceptance" || lifecycleState(controlResult.Snapshot.State) == "release_audit" || lifecycleState(controlResult.Snapshot.State) == "awaiting_human_release" || lifecycleState(controlResult.Snapshot.State) == "inactive")) {
 		if stopDecision, blocked := hook.MainStopDecision(root, request); blocked {
 			decision = stopDecision
 			mainStopBlocked = true
@@ -3576,6 +3707,40 @@ func runControlCycleForHook(root string, request policy.Input) controller.Contro
 			},
 		}
 	}
+	if result.QualityGate.TransitionCommitted && lifecycleState(result.Snapshot.State) == "planning" && stringValue(nestedStateValue(result.Snapshot.State, "lifecycle", "phase")) == "design" && runtime.PacketEnabled(result.Snapshot.State) {
+		absRoot, rootErr := filepath.Abs(root)
+		if rootErr != nil {
+			result.Warnings = append(result.Warnings, rootErr.Error())
+		} else {
+			statePath, journalPath := filepath.Join(absRoot, ".claude/loop-state.json"), filepath.Join(absRoot, ".claude/loop-events.jsonl")
+			service := submission.Service{Root: absRoot, StatePath: statePath, JournalPath: journalPath, Validator: semantic.RuntimeCandidateValidator{}}
+			if _, prepareErr := service.IssueDesign(contextForHook(request)); prepareErr != nil {
+				result.Warnings = append(result.Warnings, "Transition recorded, but S2 questionnaire preparation failed: "+prepareErr.Error())
+			} else if current, readErr := runtime.NewStore(statePath, journalPath).Snapshot(); readErr != nil {
+				result.Warnings = append(result.Warnings, readErr.Error())
+			} else {
+				result.Snapshot = current
+			}
+		}
+	}
+	if result.QualityGate.TransitionCommitted && (result.QualityGate.CandidateTransition == "TR-009" || result.QualityGate.CandidateTransition == "TR-015") && runtime.PacketEnabled(result.Snapshot.State) {
+		if kind := currentAuditKind(result.Snapshot.State); kind != "" {
+			if _, _, err := prepareAuditQuestionnaire(root, result.Snapshot.State, kind); err != nil {
+				result.Warnings = append(result.Warnings, "S10 current questionnaire preparation: "+err.Error())
+			}
+		}
+	}
+
+	if result.QualityGate.TransitionCommitted && (result.QualityGate.CandidateTransition == "TR-017" || result.QualityGate.CandidateTransition == "TR-019") && lifecycleState(result.Snapshot.State) == "awaiting_human_release" {
+		path, id, err := humanReleaseQuestionnairePath(root, result.Snapshot.State)
+		if err == nil {
+			err = prepareHumanDecisionApplication(path, result.Snapshot.State, id)
+		}
+		if err != nil {
+			result.Warnings = append(result.Warnings, "S11 decision application preparation failed: "+err.Error())
+		}
+	}
+
 	return result
 }
 

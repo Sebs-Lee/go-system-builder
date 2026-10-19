@@ -22,10 +22,10 @@ type HypothesisResultBinding struct {
 	CaseSHA256                 string   `json:"case_sha256"`
 	CaseRevision               int      `json:"case_revision"`
 	CaseRouteSHA256            string   `json:"case_route_sha256"`
-	ObservationBatchID         string   `json:"observation_batch_id"`
-	ObservationBatchRef        string   `json:"observation_batch_ref"`
-	ObservationBatchSHA256     string   `json:"observation_batch_sha256"`
-	BaselineDigest             string   `json:"baseline_digest"`
+	ObservationBatchID         string   `json:"observation_batch_id,omitempty"`
+	ObservationBatchRef        string   `json:"observation_batch_ref,omitempty"`
+	ObservationBatchSHA256     string   `json:"observation_batch_sha256,omitempty"`
+	BaselineDigest             string   `json:"baseline_digest,omitempty"`
 	SourceFindingIDs           []string `json:"source_finding_ids"`
 	HypothesisID               string   `json:"hypothesis_id"`
 	HypothesisQuestionSHA256   string   `json:"hypothesis_question_sha256"`
@@ -234,7 +234,7 @@ func HypothesisQuestionDigest(question HypothesisResultQuestion) (string, error)
 	}{
 		Statement: question.Statement, Invariant: question.Invariant,
 		Discriminator: question.Discriminator, ExpectedOutcomes: question.ExpectedOutcomes,
-		SourceFindingIDs: append([]string(nil), question.SourceFindingIDs...),
+		SourceFindingIDs: append([]string{}, question.SourceFindingIDs...),
 		EvidenceRefs:     append([]string(nil), question.EvidenceRefs...),
 	}
 	data, err := json.Marshal(projection)
@@ -493,7 +493,7 @@ func canonicalHypothesisResultInputs(binding HypothesisResultBinding, inputs Hyp
 	if err != nil || routeDigest != binding.CaseRouteSHA256 {
 		return HypothesisResultInputs{}, fmt.Errorf("S8 current InvestigationCase route tuple is invalid or differs from its binding")
 	}
-	if len(inputs.Findings) != len(binding.SourceFindingIDs) || len(inputs.Findings) == 0 || len(inputs.Findings) > 512 {
+	if len(inputs.Findings) != len(binding.SourceFindingIDs) || binding.ObservationBatchID != "" && len(inputs.Findings) == 0 || len(inputs.Findings) > 512 {
 		return HypothesisResultInputs{}, fmt.Errorf("S8 packet Finding documents must exactly match the bounded Case source Finding set")
 	}
 	findings := make([]HypothesisResultFinding, len(inputs.Findings))
@@ -587,11 +587,13 @@ func validateHypothesisEvidenceRefs(binding HypothesisResultBinding, question Hy
 func validateHypothesisResultBinding(binding HypothesisResultBinding) error {
 	if !safeComponent(binding.RuntimeID) || binding.BaselineGeneration < 0 || binding.ReviewRound < 1 ||
 		!validInvestigationCaseID(binding.CaseID) || !safeRelative(binding.CaseRef) || binding.CaseRef == "." || !digestPattern.MatchString(binding.CaseSHA256) || binding.CaseRevision < 1 || !digestPattern.MatchString(binding.CaseRouteSHA256) ||
-		!validObservationBatchID(binding.ObservationBatchID) || !safeRelative(binding.ObservationBatchRef) || binding.ObservationBatchRef == "." || !digestPattern.MatchString(binding.ObservationBatchSHA256) || !digestPattern.MatchString(binding.BaselineDigest) ||
 		!validHypothesisID(binding.HypothesisID) || !digestPattern.MatchString(binding.HypothesisQuestionSHA256) || !validAssignmentID(binding.AssignmentID) || !digestPattern.MatchString(binding.AssignmentSHA256) ||
 		!safeComponent(binding.TeamID) || !safeComponent(binding.TaskID) || !safeRelative(binding.TaskRef) || binding.TaskRef == "." || !digestPattern.MatchString(binding.TaskSHA256) || !safeRelative(binding.ManifestRef) || binding.ManifestRef == "." || !digestPattern.MatchString(binding.ManifestSHA256) ||
-		!safeComponent(binding.OwnerAgentID) || len(binding.SourceFindingIDs) == 0 || len(binding.SourceFindingIDs) > 512 || len(binding.HypothesisSourceFindingIDs) == 0 || len(binding.HypothesisSourceFindingIDs) > len(binding.SourceFindingIDs) {
-		return fmt.Errorf("S8 HypothesisResult requires a complete, bounded Case, ObservationBatch, Hypothesis, and registered Assignment binding")
+		!safeComponent(binding.OwnerAgentID) || len(binding.SourceFindingIDs) > 512 || len(binding.HypothesisSourceFindingIDs) > len(binding.SourceFindingIDs) {
+		return fmt.Errorf("S8 HypothesisResult requires a complete, bounded Case, Hypothesis, and registered Assignment binding")
+	}
+	if binding.ObservationBatchID != "" && (!validObservationBatchID(binding.ObservationBatchID) || !safeRelative(binding.ObservationBatchRef) || binding.ObservationBatchRef == "." || !digestPattern.MatchString(binding.ObservationBatchSHA256) || !digestPattern.MatchString(binding.BaselineDigest) || len(binding.SourceFindingIDs) == 0 || len(binding.HypothesisSourceFindingIDs) == 0) {
+		return fmt.Errorf("S8 ObservationBatch binding is incomplete")
 	}
 	if err := identity.ValidateAgentID(binding.OwnerAgentID); err != nil {
 		return fmt.Errorf("S8 HypothesisResult owner: %w", err)
@@ -603,8 +605,10 @@ func validateHypothesisResultBinding(binding HypothesisResultBinding) error {
 		}
 		caseSet[id] = true
 	}
-	if err := validateOrderedSubset(binding.HypothesisSourceFindingIDs, binding.SourceFindingIDs, "Hypothesis source Finding IDs"); err != nil {
-		return err
+	if len(binding.SourceFindingIDs) > 0 {
+		if err := validateOrderedSubset(binding.HypothesisSourceFindingIDs, binding.SourceFindingIDs, "Hypothesis source Finding IDs"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -612,7 +616,7 @@ func validateHypothesisResultBinding(binding HypothesisResultBinding) error {
 func validateHypothesisQuestion(question HypothesisResultQuestion) error {
 	if !validHypothesisID(question.HypothesisID) || !validAssignmentID(question.AssignmentID) || question.Status != "open" ||
 		strings.TrimSpace(question.Statement) == "" || strings.TrimSpace(question.Invariant) == "" || strings.TrimSpace(question.Discriminator) == "" ||
-		strings.TrimSpace(question.ExpectedOutcomes.Support) == "" || strings.TrimSpace(question.ExpectedOutcomes.Refute) == "" || len(question.SourceFindingIDs) == 0 || len(question.EvidenceRefs) == 0 {
+		strings.TrimSpace(question.ExpectedOutcomes.Support) == "" || strings.TrimSpace(question.ExpectedOutcomes.Refute) == "" || len(question.EvidenceRefs) == 0 {
 		return fmt.Errorf("S8 packet requires the exact open, falsifiable registered Hypothesis question")
 	}
 	for _, ref := range question.EvidenceRefs {
@@ -664,7 +668,7 @@ func makeHypothesisResultRead(binding HypothesisResultBinding, inputs Hypothesis
 	seen := map[string]bool{}
 	read := make([]ReadItem, 0, len(paths))
 	for _, item := range paths {
-		if !seen[item.path] {
+		if item.path != "" && !seen[item.path] {
 			seen[item.path] = true
 			read = append(read, ReadItem{Path: item.path, Purpose: item.purpose})
 		}
@@ -673,13 +677,13 @@ func makeHypothesisResultRead(binding HypothesisResultBinding, inputs Hypothesis
 }
 
 func cloneHypothesisResultBinding(binding HypothesisResultBinding) HypothesisResultBinding {
-	binding.SourceFindingIDs = append([]string(nil), binding.SourceFindingIDs...)
-	binding.HypothesisSourceFindingIDs = append([]string(nil), binding.HypothesisSourceFindingIDs...)
+	binding.SourceFindingIDs = append([]string{}, binding.SourceFindingIDs...)
+	binding.HypothesisSourceFindingIDs = append([]string{}, binding.HypothesisSourceFindingIDs...)
 	return binding
 }
 
 func cloneHypothesisResultQuestion(question HypothesisResultQuestion) HypothesisResultQuestion {
-	question.SourceFindingIDs = append([]string(nil), question.SourceFindingIDs...)
+	question.SourceFindingIDs = append([]string{}, question.SourceFindingIDs...)
 	question.EvidenceRefs = append([]string(nil), question.EvidenceRefs...)
 	return question
 }

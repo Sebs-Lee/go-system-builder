@@ -354,6 +354,19 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 	if rel == ".claude/submissions/plan.json" || rel == ".claude/submissions/completion.json" {
 		return false, 0
 	}
+	if strings.Contains(rel, "/S2/") {
+		ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
+		defer cancel()
+		service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
+		r, saveErr := service.SaveDesign(ctx, path)
+		if saveErr != nil {
+			fmt.Fprintf(stderr, "design not accepted: %v\n", saveErr)
+			if r.Error == "" {
+				r.Error = saveErr.Error()
+			}
+		}
+		return true, renderStageAnswerHook(stdout, path, r, "S2")
+	}
 	// The original packet at this exact path owns S2/S3/S4 Main authoring;
 	// Hook actor and CWD metadata do not select or authorize its consumer.
 	s, err := submission.New(root)
@@ -707,7 +720,11 @@ func renderStageAnswerHook(stdout io.Writer, path string, r submission.Receipt, 
 		r.NextAction = "由 Main 恢复本次接收所需的控制状态。"
 	}
 	if path != "" {
-		r.NextAction = "Questionnaire: " + path + ". " + r.NextAction
+		label := "Questionnaire: "
+		if r.Accepted && r.WorkComplete || len(stages) > 0 && r.CurrentStage != "" && r.CurrentStage != stages[0] {
+			label = "Submitted questionnaire (not the current pending answer): "
+		}
+		r.NextAction = label + path + ". " + r.NextAction
 	}
 	if r.CurrentStage == "" {
 		r.CurrentStage = "unknown"
@@ -748,6 +765,23 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 	}
 	if request.Event == "SubagentStart" && request.EffectiveAgentID() == "" {
 		return ""
+	}
+	// S2 feedback reads only its existing entry and answer. Entry completion
+	// prepares the questionnaire; ordinary observation never issues it.
+	if snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); err == nil {
+		life, _ := snapshot.State["lifecycle"].(map[string]any)
+		if life["state"] == "planning" && life["phase"] == "design" {
+			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
+				return ""
+			} // Display the current Main responsibility, not a Worker task.
+			return stageDesignQuestionnaireContext(root, snapshot)
+		}
+		if life["state"] == "planning" && (life["phase"] == "contracts" || life["phase"] == "tasks") {
+			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
+				return ""
+			}
+			return stageCurrentPlanningContext(root, snapshot)
+		}
 	}
 	newSubmission := submission.New
 	if request.Event == "PreToolUse" || stopFeedback {
@@ -895,15 +929,79 @@ func stageS5PreparationGuidance(root string, state map[string]any) string {
 	return fmt.Sprintf("S5 entry %d: the current independent reviewers are not registered yet. Main: read %s; prepare this entry's manifest at %s for DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY with distinct reviewers. Use current accepted S4 sources and new entry-specific team/agent/assignment/output paths; preserve historical manifests and receipts. The original runtime register-workgroup and workspace prepare entries issue the exact view/answer paths; do not run stage-answer issue or copy old hashes. Reviewers then fill only conclusion/findings and save once.", entry, filepath.Join(root, ".claude/skills/team-planning/SKILL.md"), manifest)
 }
 
+// stageDesignQuestionnaireContext projects current work, not issuance proof.
+func stageDesignQuestionnaireContext(root string, snapshot runtime.Snapshot) string {
+	life, _ := snapshot.State["lifecycle"].(map[string]any)
+	baseline, _ := snapshot.State["baseline"].(map[string]any)
+	entities, _ := snapshot.State["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["template_id"] != "s2-design-v1" {
+			continue
+		}
+		packet, found, err := runtime.FindDesignPacket(snapshot.State, stringValue(row["packet_id"]))
+		if err != nil || !found || packet.Binding.RuntimeID != snapshot.State["runtime_id"] || packet.Binding.Generation != integerValue(baseline["generation"]) || packet.Binding.StageEntry != integerValue(life["phase_revision"]) {
+			continue
+		}
+		view := filepath.Join(root, packet.ViewPath)
+		answer := filepath.Join(root, packet.AnswerPath)
+		if record, accepted, err := runtime.FindSubmission(snapshot.State, packet.ID); err == nil && accepted {
+			service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl")}
+			if receipt, err := service.DesignReceipt("", packet.ID); err == nil {
+				message := "S2 design report is already recorded at " + answer + ". " + receipt.NextAction
+				if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
+					bound, _ := snapshot.State["bound_req"].(map[string]any)
+					metadata, _ := bound["metadata"].(map[string]any)
+					if metadata["ui_impact"] == "unknown" {
+						message += " Current actual gap: REQ UI impact remains unknown; resolve that professional question before progressing."
+					}
+				}
+				return message
+			}
+			return "S2 design report is already recorded. Its current material reference cannot be read; Main must restore that material, not repeat the report."
+		}
+		var missing []string
+		for _, path := range []string{view, answer} {
+			if _, err := os.Stat(path); err != nil {
+				missing = append(missing, path+": "+err.Error())
+			}
+		}
+		data, err := os.ReadFile(answer)
+		if err == nil {
+			professional, issues := workpacket.ValidateDesignAnswer(packet, data)
+			if len(issues) > 0 {
+				missing = append(missing, issues[0].Pointer+": "+issues[0].Expected)
+			} else {
+				if professional.Conclusion == nil || strings.TrimSpace(*professional.Conclusion) == "" {
+					missing = append(missing, "actual self-review conclusion is unfinished; leave it empty until ready")
+				}
+				if professional.ArchitecturePath == nil || *professional.ArchitecturePath == "" {
+					missing = append(missing, "actual architecture_path is unanswered")
+				} else if _, err := runtime.DesignArchitecture(root, *professional.ArchitecturePath, nil); err != nil {
+					missing = append(missing, err.Error())
+				}
+			}
+		}
+		bound, _ := snapshot.State["bound_req"].(map[string]any)
+		metadata, _ := bound["metadata"].(map[string]any)
+		if metadata["ui_impact"] == "unknown" {
+			missing = append(missing, "current REQ UI impact remains unknown; resolve the actual design/requirement question before progressing")
+		}
+		return "S2 current design questionnaire: read " + view + "; fill only conclusion and architecture_path in " + answer + " and save. Complete the actual architecture, relevant ADR/human direction judgment and applicable module/scenario work described in the view. Templates: " + filepath.Join(root, "docs/architecture/ARCHITECTURE-template.md") + ", " + filepath.Join(root, "docs/design/decisions/ADR-template.md") + ", " + filepath.Join(root, "docs/design/prototypes/README.md") + ". Current missing work/material: " + strings.Join(missing, "; ") + ". Empty conclusion is a draft, not failure or PASS. No issue/register/recovery command is required."
+	}
+	return "S2 entry questionnaire has not been prepared by the system entry outlet. Main/system maintenance must finish that preparation and provide its actual view/answer paths; do not guess a path, manually issue a packet or invent evidence. Existing requirement material: " + filepath.Join(root, stringValue(mapFieldCLI(snapshot.State, "bound_req")["path"])) + "."
+}
+
 func stagePlanningQuestionnaireLifecycleContext(ctx context.Context, service *submission.Service, phase string) string {
 	var stage, viewPath, answerPath, delivery string
 	switch phase {
 	case "design":
-		packet, err := service.IssueDesign(ctx)
+		snapshot, err := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()
 		if err != nil {
-			return "S2 Design questionnaire could not be ensured from the current Main planning state: " + err.Error()
+			return "S2 current design context could not be read: " + err.Error()
 		}
-		stage, viewPath, answerPath = "S2 Design", packet.ViewPath, packet.AnswerPath
+		return stageDesignQuestionnaireContext(service.Root, snapshot)
 	case "contracts":
 		packet, err := service.IssueContracts(ctx)
 		if err != nil {
@@ -1613,4 +1711,96 @@ func questionnaireSourceRoot(root string, state map[string]any, assignment, owne
 		}
 	}
 	return root, nil
+}
+
+// registeredPlanningRow selects the existing responsibility, without rebuilding
+// its packet, checking historical sources or accepting an answer during a read.
+func registeredPlanningRow(state map[string]any) (map[string]any, error) {
+	life, _ := state["lifecycle"].(map[string]any)
+	template := map[string]string{"contracts": "s3-contract-v1", "tasks": "s4-task-planning-v1"}[stringValue(life["phase"])]
+	if life["state"] != "planning" || template == "" {
+		return nil, nil
+	}
+	entities, _ := state["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	var current map[string]any
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["template_id"] != template {
+			continue
+		}
+		binding, _ := row["binding"].(map[string]any)
+		if binding["runtime_id"] != state["runtime_id"] || tolerantInt(binding["generation"]) != tolerantInt(mapFieldCLI(state, "baseline")["generation"]) || tolerantInt(binding["stage_entry"]) != tolerantInt(life["phase_revision"]) {
+			continue
+		}
+		if current != nil {
+			return nil, fmt.Errorf("multiple current questionnaires are registered; Main must resolve the actual entry ambiguity")
+		}
+		current = row
+	}
+	return current, nil
+}
+
+func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string {
+	phase := stringValue(mapFieldCLI(snapshot.State, "lifecycle")["phase"])
+	stage := map[string]string{"contracts": "S3", "tasks": "S4"}[phase]
+	row, err := registeredPlanningRow(snapshot.State)
+	if err != nil {
+		return stage + " current entry: " + err.Error()
+	}
+	if row == nil {
+		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path, manually issue or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage))
+	}
+	view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
+	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Complete its original professional questions and save normally. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer))
+	for _, path := range []string{view, answer} {
+		if path == "" {
+			message += " Current registered questionnaire path is missing; Main must finish entry preparation."
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			message += " Current material missing: " + filepath.Join(root, path) + " (" + err.Error() + ")."
+		}
+	}
+	if record, found, err := runtime.FindSubmission(snapshot.State, stringValue(row["packet_id"])); err == nil && found {
+		if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
+			message += " The professional answer is already recorded; its original outlet is pending. Resolve the actual material gaps and save the same answer or changed professional material to continue; no duplicate report."
+		} else {
+			message += " This answer is already received; follow the current stage responsibility without resubmitting it."
+		}
+	}
+	return message
+}
+
+// Only a genuine Post save/material change calls this existing preparation
+// outlet. Reads do not issue, repair, or reconstruct questionnaires.
+func prepareCurrentPlanningAfterChange(root string, request policy.Input) string {
+	switch request.ToolName {
+	case "Read", "Glob", "Grep":
+		return ""
+	}
+	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil || !runtime.PacketEnabled(snapshot.State) {
+		return ""
+	}
+	life := mapFieldCLI(snapshot.State, "lifecycle")
+	if life["state"] != "planning" || (life["phase"] != "contracts" && life["phase"] != "tasks") || !mainQuestionnaireViewer(request) {
+		return ""
+	}
+	row, err := registeredPlanningRow(snapshot.State)
+	if err != nil {
+		return "Current planning preparation: " + err.Error()
+	}
+	if row != nil {
+		_, vErr := os.Stat(filepath.Join(root, stringValue(row["view_path"])))
+		_, aErr := os.Stat(filepath.Join(root, stringValue(row["answer_path"])))
+		if vErr == nil && aErr == nil {
+			return ""
+		}
+	}
+	service, err := submission.New(root)
+	if err != nil {
+		return "Current planning entry preparation needs: " + err.Error()
+	}
+	return stagePlanningQuestionnaireLifecycleContext(contextForHook(request), service, stringValue(life["phase"]))
 }

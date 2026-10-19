@@ -3,7 +3,9 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/fileview"
@@ -20,12 +22,16 @@ func prepareTaskPlanningSubmission(root string, state map[string]any, req Eviden
 	if err != nil || !found {
 		return SubmissionRecord{}, fmt.Errorf("S4 submission has no original issuance")
 	}
-	if req.Kind != "planning_task" || s.Owner != "Main" || len(req.ProducedBy) != 1 || req.ProducedBy[0] != "Main" || req.ResponsibilityID != "Orchestrator" || req.ReviewRound != nil {
-		return SubmissionRecord{}, fmt.Errorf("S4 producer/kind differs from actual Main responsibility")
+	if req.Kind != "planning_task" {
+		return SubmissionRecord{}, fmt.Errorf("S4 recording kind differs")
 	}
-	answer, issues := workpacket.ValidateTaskPlanningAnswer(p, s.AnswerJSON)
-	if len(issues) > 0 {
-		return SubmissionRecord{}, fmt.Errorf("contract answer %s: %s", issues[0].Pointer, issues[0].Expected)
+	var draft workpacket.TaskPlanningDraft
+	if err := json.Unmarshal(s.AnswerJSON, &draft); err != nil {
+		return SubmissionRecord{}, err
+	}
+	answer := draft.Answer
+	if err := validateStoredTaskPlanningAnswer(answer); err != nil {
+		return SubmissionRecord{}, err
 	}
 	digest, err := workpacket.TaskPlanningAnswerDigest(answer)
 	if err != nil {
@@ -42,7 +48,7 @@ func prepareTaskPlanningSubmission(root string, state map[string]any, req Eviden
 		if prior.ContentHash != digest {
 			return prior, ErrSubmissionConflict
 		}
-		if prior.Owner != "Main" || prior.EvidenceID != req.ID {
+		if prior.EvidenceID != req.ID {
 			return prior, fmt.Errorf("S4 replay original domain differs")
 		}
 		if err := ValidateTaskPlanningEnvelope(p, req.ID, answer, data); err != nil {
@@ -57,110 +63,71 @@ func prepareTaskPlanningSubmission(root string, state map[string]any, req Eviden
 		}
 		return prior, fmt.Errorf("S4 replay original evidence differs")
 	}
-	if err := ValidateIssuedTaskPlanningPacket(root, state, p, s.Files); err != nil {
-		return SubmissionRecord{}, err
-	}
-	if s.Authorize == nil {
-		return SubmissionRecord{}, fmt.Errorf("S4 requires trusted Main application authority")
-	}
-	if err := s.Authorize(root, state); err != nil {
-		return SubmissionRecord{}, err
-	}
-	artifacts, err := TaskPlanningArtifacts(root, state, p, answer, s.Files)
-	if err != nil {
-		return SubmissionRecord{}, err
+	life, _ := state["lifecycle"].(map[string]any)
+	baseline, _ := state["baseline"].(map[string]any)
+	entry, entryErr := integerField(life, "phase_revision")
+	generation, generationErr := integerField(baseline, "generation")
+	if entryErr != nil || generationErr != nil || state["runtime_id"] != p.Binding.RuntimeID || life["state"] != "planning" || life["phase"] != "tasks" || entry != p.Binding.StageEntry || generation != p.Binding.Generation {
+		return SubmissionRecord{}, fmt.Errorf("S4 questionnaire is not the current responsibility")
 	}
 	if err := ValidateTaskPlanningEnvelope(p, req.ID, answer, data); err != nil {
 		return SubmissionRecord{}, err
 	}
-	var value map[string]any
-	json.Unmarshal(data, &value)
-	at, err := time.Parse(time.RFC3339Nano, stringValue(value["created_at"]))
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	expected, err := workpacket.TaskPlanningEvidence(p, req.ID, artifacts, answer, at)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	expected["created_at"] = value["created_at"]
-	if progressCanonicalJSON(value) != progressCanonicalJSON(expected) {
-		return SubmissionRecord{}, fmt.Errorf("S4 planning envelope actual subjects differ")
-	}
 	key := workpacket.Digest([]byte("submission:" + p.ID))
-	return SubmissionRecord{Key: key, PacketID: p.ID, Owner: "Main", ContentHash: digest, EvidenceID: req.ID, FollowupID: workpacket.Digest([]byte(key + ":after-domain")), ControlStatus: "pending", OriginState: "planning", OriginPhase: "tasks", OriginEntry: p.Binding.StageEntry}, nil
+	return SubmissionRecord{Key: key, PacketID: p.ID, Owner: p.Binding.Owner, ContentHash: digest, EvidenceID: req.ID, FollowupID: workpacket.Digest([]byte(key + ":after-domain")), ControlStatus: "pending", OriginState: "planning", OriginPhase: "tasks", OriginEntry: p.Binding.StageEntry}, nil
 }
 
-// ValidateTaskPlanningEnvelope verifies historical professional facts without
-// reinterpreting them against a later project cursor or changing authoring file.
+// ValidateTaskPlanningEnvelope checks readable recorded facts, not historical source proof.
 func ValidateTaskPlanningEnvelope(p workpacket.TaskPlanningPacket, id string, answer workpacket.TaskPlanningAnswer, data []byte) error {
 	if err := workpacket.ValidateUniqueJSON(data); err != nil {
 		return err
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var value struct {
+		EvidenceID string                        `json:"evidence_id"`
+		Kind       string                        `json:"kind"`
+		RuntimeID  string                        `json:"runtime_id"`
+		Generation int                           `json:"baseline_generation"`
+		Subjects   []workpacket.Subject          `json:"subject_refs"`
+		Conclusion string                        `json:"conclusion"`
+		CreatedAt  string                        `json:"created_at"`
+		Answer     workpacket.TaskPlanningAnswer `json:"task_planning_answer"`
+	}
+	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	for _, key := range []string{"schema_version", "evidence_id", "kind", "runtime_id", "baseline_generation", "producer_agent_id", "producer_responsibility", "subject_refs", "conclusion", "created_at", "task_planning_answer"} {
-		if _, ok := raw[key]; !ok {
-			return fmt.Errorf("S4 planning envelope missing %s", key)
-		}
+	if value.EvidenceID != id || value.Kind != "planning_task" || value.RuntimeID != p.Binding.RuntimeID || value.Generation != p.Binding.Generation {
+		return fmt.Errorf("S4 record differs from current questionnaire association")
 	}
-	if len(raw) != 11 {
-		return fmt.Errorf("S4 planning envelope has unsupported fields")
-	}
-	var historical workpacket.TaskPlanningAnswer
-	if err := json.Unmarshal(raw["task_planning_answer"], &historical); err != nil {
+	if _, err := time.Parse(time.RFC3339Nano, value.CreatedAt); err != nil {
 		return err
 	}
-	draft := p.Draft
-	draft.Answer = historical
-	encoded, _ := json.Marshal(draft)
-	historical, issues := workpacket.ValidateTaskPlanningAnswer(p, encoded)
-	if len(issues) > 0 {
-		return fmt.Errorf("S4 historical answer invalid")
+	if err := validateStoredTaskPlanningAnswer(value.Answer); err != nil {
+		return err
+	}
+	if value.Conclusion != *value.Answer.Conclusion {
+		return fmt.Errorf("S4 record conclusion differs from answer")
 	}
 	a, err := workpacket.TaskPlanningAnswerDigest(answer)
 	if err != nil {
 		return err
 	}
-	h, err := workpacket.TaskPlanningAnswerDigest(historical)
+	h, err := workpacket.TaskPlanningAnswerDigest(value.Answer)
 	if err != nil || a != h {
 		return fmt.Errorf("S4 evidence differs from professional answer")
 	}
-	var subjects []workpacket.Subject
-	if err := json.Unmarshal(raw["subject_refs"], &subjects); err != nil {
-		return err
+	return nil
+}
+
+func validateStoredTaskPlanningAnswer(answer workpacket.TaskPlanningAnswer) error {
+	if answer.Conclusion == nil || *answer.Conclusion != "pass" || answer.IndexPath == nil || !safeTaskPlanningPath(*answer.IndexPath) || len(answer.TaskPaths) == 0 {
+		return fmt.Errorf("S4 record requires conclusion, index and TASK paths")
 	}
-	byPath := map[string]workpacket.Subject{}
-	for _, ref := range subjects {
-		if _, duplicate := byPath[ref.Path]; duplicate {
-			return fmt.Errorf("S4 evidence duplicate subjects")
+	seen := map[string]bool{*answer.IndexPath: true}
+	for _, path := range answer.TaskPaths {
+		if !safeTaskPlanningPath(path) || filepath.ToSlash(filepath.Dir(path)) != taskPlanningDirectory || !strings.HasPrefix(filepath.Base(path), "TASK-") || !strings.HasSuffix(path, ".md") || seen[path] {
+			return fmt.Errorf("S4 record has invalid or duplicate TASK path")
 		}
-		byPath[ref.Path] = ref
-	}
-	paths := append([]string{*answer.IndexPath}, answer.TaskPaths...)
-	artifacts := []workpacket.Reference{}
-	for _, path := range paths {
-		ref, ok := byPath[path]
-		if !ok {
-			return fmt.Errorf("S4 evidence missing delivered contract")
-		}
-		artifacts = append(artifacts, workpacket.Reference{Path: path, Version: ref.Version, SHA256: ref.SHA256})
-	}
-	var value map[string]any
-	json.Unmarshal(data, &value)
-	at, err := time.Parse(time.RFC3339Nano, stringValue(value["created_at"]))
-	if err != nil {
-		return err
-	}
-	expected, err := workpacket.TaskPlanningEvidence(p, id, artifacts, answer, at)
-	if err != nil {
-		return err
-	}
-	expected["created_at"] = value["created_at"]
-	if progressCanonicalJSON(value) != progressCanonicalJSON(expected) {
-		return fmt.Errorf("S4 envelope differs from frozen original subjects and professional answer")
+		seen[path] = true
 	}
 	return nil
 }

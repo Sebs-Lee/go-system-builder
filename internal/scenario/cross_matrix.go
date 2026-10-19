@@ -97,7 +97,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	seen := map[string]bool{}
 	for i, entry := range matrix.Entries {
 		cell := fmt.Sprintf("entry %d (fact=%s req_ref=%s story=%s)", i, entry.Fact, entry.ReqRef, entry.Story)
-		key := entry.Fact + "|" + entry.ReqRef + "|" + entry.Story
+		key := entry.Fact + "|" + entry.ReqRef + "|" + entry.Story + "|" + entry.Branch
 		if seen[key] {
 			return fmt.Errorf("cross-matrix %s duplicates an earlier cell", cell)
 		}

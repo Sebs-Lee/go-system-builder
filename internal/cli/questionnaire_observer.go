@@ -2,17 +2,21 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -31,9 +35,9 @@ func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr
 		}
 	}
 	for _, receive := range []func(string, policy.Input, io.Writer, io.Writer) (bool, int){
-		runSavedRepairDispatch, runSavedRepairVerifierDispatch,
+		runSavedEntryQuestionnaire, runSavedRepairDispatch, runSavedRepairVerifierDispatch,
 		runSavedInvestigationLeadQuestionnaire, runSavedRepairLeadQuestionnaire,
-		runSavedReviewPlanQuestionnaire, runSavedAuditQuestionnaire,
+		runSavedReviewPlanQuestionnaire, runSavedAuditQuestionnaire, runSavedHumanReleaseQuestionnaire,
 		runSavedBuilderQuestionnaire, runSavedStageAnswerHook,
 	} {
 		if handled, code := receive(root, request, stdout, stderr); handled {
@@ -58,7 +62,41 @@ type observedQuestionnaire struct {
 // A successful script or MCP tool can save a questionnaire without exposing a
 // file_path. Read the graph's existing exact files, never parse command text or
 // invent a tool policy. Unchanged issued drafts do not invoke a domain consumer.
-func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, stderr io.Writer, progress ...bool) (bool, int) {
+	// A successful Post can finish an already recorded S4 responsibility even
+	// when it did not save a file. Keep its real tool identity; this is the
+	// original pending followup, never a Read promoted into a new submission.
+	if request.Event == "PostToolUse" && request.Error == "" {
+		failed, _ := request.ToolResponse["is_error"].(bool)
+		if owner := request.EffectiveAgentID(); !failed && (owner == "" || owner == "Main") {
+			snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+			if err == nil && mapFieldCLI(snapshot.State, "lifecycle")["phase"] == "tasks" {
+				row, rowErr := registeredPlanningRow(snapshot.State)
+				if rowErr == nil && row != nil {
+					record, found, findErr := runtime.FindSubmission(snapshot.State, stringValue(row["packet_id"]))
+					if findErr == nil && found && (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") {
+						path := filepath.Join(root, stringValue(row["answer_path"]))
+						service, serviceErr := submission.New(root)
+						if serviceErr == nil {
+							ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
+							defer cancel()
+							receipt, saveErr := service.SaveTaskPlanning(ctx, path)
+							if saveErr != nil {
+								fmt.Fprintf(stderr, "S4 original followup pending: %v\n", saveErr)
+								if receipt.Error == "" {
+									receipt.Error = saveErr.Error()
+								}
+							}
+							return true, renderStageAnswerHook(stdout, path, receipt, "S4")
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(progress) == 2 && progress[0] && !progress[1] {
+		return false, 0
+	}
 	switch request.ToolName {
 	case "Read", "Glob", "Grep":
 		return false, 0
@@ -69,7 +107,7 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
 		return false, 0
 	}
-	if _, explicit := savedQuestionnairePath(request); explicit {
+	if _, explicit := savedQuestionnairePath(request); explicit && (len(progress) != 2 || !progress[0]) {
 		return false, 0
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
@@ -78,7 +116,10 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	}
 	var contexts []string
 	seen := map[string]bool{}
-	leadPaths := investigationLeadQuestionnairePaths(root, snapshot.State)
+	var leadPaths []string
+	if currentAuditKind(snapshot.State) == "" {
+		leadPaths = investigationLeadQuestionnairePaths(root, snapshot.State)
+	}
 	questionnaires := observableQuestionnaires(root, snapshot)
 	if lifecycle := mapFieldCLI(snapshot.State, "lifecycle"); lifecycle["state"] == "bug_resolution" && lifecycle["phase"] != "investigation" {
 		questionnaires = s9ObservableQuestionnaires(root, snapshot.State, request)
@@ -130,9 +171,6 @@ questionnaires:
 			}
 			if q.draft == nil && q.s9Kind == "" {
 				fields, _ := answer.(map[string]any)
-				if _, audit := fields["manifest_type"]; audit && stringValue(fields["outcome"]) == "" {
-					continue
-				}
 				if _, targeted := fields["performing_assignment_id"]; targeted && stringValue(fields["result"]) == "" {
 					continue
 				}
@@ -196,7 +234,27 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 	state := snapshot.State
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	stage, _, _ := projectNext(stringValue(lifecycle["state"]), stringValue(lifecycle["phase"]), root)
-	if stage == "S0" || stage == "S1" || stage == "S11" {
+	if lifecycle["state"] == "inactive" {
+		if path, err := bindingQuestionnairePath(root); err == nil {
+			out := []observedQuestionnaire{{path: path}}
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				for _, req := range scanRequirements(root) {
+					if req.Status == "locked" {
+						out = append(out, observedQuestionnaire{path: filepath.Join(root, filepath.FromSlash(req.Path))})
+					}
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	if stage == "S0" || stage == "S1" {
+		return nil
+	}
+	if lifecycle["state"] == "awaiting_human_release" {
+		if path, _, err := humanReleaseQuestionnairePath(root, state); err == nil {
+			return []observedQuestionnaire{{path: path}}
+		}
 		return nil
 	}
 	var out []observedQuestionnaire
@@ -217,11 +275,10 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 		return nil // S9 passive probes need the actual current responsibility.
 	}
 	if kind := currentAuditKind(state); kind != "" {
-		if status := inspectS10Artifact(root, state, kind); status.ManifestPath != "" {
-			out = append(out, observedQuestionnaire{path: filepath.Join(root, filepath.FromSlash(status.ManifestPath))})
-		} else if path, err := auditQuestionnairePath(root, state, kind); err == nil {
-			out = append(out, observedQuestionnaire{path: filepath.Join(root, filepath.FromSlash(path))})
+		if path, err := auditQuestionnairePath(root, state, kind); err == nil {
+			return []observedQuestionnaire{{path: filepath.Join(root, filepath.FromSlash(path))}}
 		}
+		return nil
 	}
 	entities, _ := state["entities"].(map[string]any)
 	rows, _ := entities["work_packets"].([]any)

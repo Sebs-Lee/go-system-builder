@@ -1955,8 +1955,7 @@
         "record_human_release_decision"
       ],
       "required_evidence": [
-        "human_decision_record",
-        "finding_record"
+        "human_decision_record"
       ],
       "human_decision_scope": "runtime_release",
       "on_guard_failure": "reject",

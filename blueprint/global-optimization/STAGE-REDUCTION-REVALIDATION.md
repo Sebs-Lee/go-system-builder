@@ -20,6 +20,23 @@
 - 旧 4/9 是历史完整链证据，不能当作本轮全阶段重新验收通过。after-r18
   的 S2、S3、S4 真实填卷证据可追溯，但不能代替最新合并候选或其他阶段的验收。
 
+## 当前重验与实施范围（2026-10-19）
+
+本轮小片已实施并完成限定机械回归。r94 原生历史保留：A 到 S4 双卷，C 到 S3 空卷，B 首次 S3 接收仍因 8s Hook deadline 失败；插桩诊断不算 native PASS。r95 fresh 安装仅机械重放已完成的 S1/S2 原 consumer 前缀，随后 B 唯一 native S3 段一次 Edit 正常接收并实际 Read S4 view/answer，仍为空稿；原 Post 附件 8003ms、stderr 空，这是整条 Hook 平台计时，不证明内部超时或性能余量/根治。完整链仍 **0/3**，S4 实际履职、S5–S11、独立 Worker 与产品 oracle 未验。详见[本轮限定报告](/home/sebs/.cache/gsb-global-optimization-20261019T002858Z/R95-ROUND-REPORT.md)。本次三处顶部状态为打包后文档结果更新，r95 二进制及冻结源 manifest 未改，不声称当前全部文档仍逐字等同冻结快照。
+
+以下表保留 r91 原完整链历史基线：同 r91 linux/amd64 包、三不同 fresh 题材、原生 MiniMax 完整 S0–S11 **0/3 通过**。这是完整链结果，不新增阶段通过计数，不覆盖下方历史局部证据。详见[全局重验报告](/home/sebs/.cache/gsb-global-revalidation-20261018T143345Z/GLOBAL-REVALIDATION-REPORT.md)。
+
+| 场景 | 本轮真实覆盖/停止边界 | 本轮完整链 |
+|---|---|---|
+| A 工单 CLI | S0–S2 完成；S3 保存未接受，多次原 Hook budget deadline 后主动停止 | 未通过 |
+| B 预约 HTTP | S0/S1 完成；真实 amendment 后当前 S2 卷缺失；另明示一次发行诊断恢复后到 S3 仍未接收，不补算首次链 | 未通过 |
+| C 金额分摊 | S0/S1 完成；S2 设计包曾 generate/validate 通过，amendment 后缺当前卷，bridge 仍读历史 AC | 未通过 |
+| S4–S11 / 产品 oracle / 独立职责 | 三 fresh 场景均未提供本轮覆盖；历史其他包/题材不代通过 | 未验 |
+
+**当前已按固定 blueprint 完成小片实施及对应机械回归，r94 原生实测待定。** 实施按[GLOBAL§0 当前优先契约](../GLOBAL-OPTIMIZATION-DESIGN.md#当前优先实施契约2026-10-19本轮重验后固定尚未落地)：原 amendment 等成功出口复用原 issuer；只读监听不重收未变答案、相关答案/资料/真实 Git 输出变化仍自动接原 consumer；AC 多 FR/有效表排历史围栏、同三元组多实际 branch、S3 自然 Markdown/范围和已登记样例分类；机器指纹系统带出、真实人意不索逐字命令。保实际专业缺项、完整必要覆盖、独立 review、人闸和现五态，不新状态/证明字段/preflight/缓存/协议或提高时限。
+
+已用一次函数回放测到重复 prepare 区间，尚不将其视为全部原生 timeout 的唯一原因；S2 负例配额与资料/泛化方法的大重构留后续审查。限定回归先对应本轮原错，之后再补当前未覆盖职责与同版三题材完整链；明确 synthetic 或诊断前缀不能冒 fresh 成功。下方各阶段 done 均仅其原标注版本/局部范围，不表示本轮重验完成。
+
 ## 本轮阶段清单
 
 ### S6 本轮有界范围 done（2026-10-16）
@@ -134,9 +151,9 @@ after-r23，原始模型日志和旧答卷保留。本地回归报告为
 
 | 阶段 | 梳理/设计 | 落地对账 | 本轮回归 | 本轮宿主验证 | 当前重点 |
 | --- | --- | --- | --- | --- | --- |
-| S0 需求漏斗 | done | active | active | pending | 原 REQ 模板发题、保留草稿和未经人决策不锁定的定向测试通过，等合并候选复跑 |
-| S1 绑定 | done | active | active | pending | 实际绑定申请路径和人类选择已接线；保存不自动批准/绑定的测试通过 |
-| S2 设计 | done | active | active | done | after-r21 全新安装，真实 Claude 填卷，原消费者推进 S3；12 轮、约 82 秒 |
+| S0 需求漏斗 | done | done | done | done | 本片限定scope完成：r91原20函数/7包compile+build及host-only安装通过；S0仅历史draft/未授权等待与真实锁定交接边界，加本轮原机械；非r91从零S0创作。8专业源复用，非全局/发布/性能结论。[当前审查](S0-S2-MECHANISM-REVIEW.md)。 |
+| S1 绑定 | done | done | done | done | 本片限定scope完成：r91原20函数/7包compile+build及host-only安装通过；r91原四题准确develop/main绑定、S2两字段normal save→PTR-PLAN-01/S3，目标和模板两缺口有限实测通过。8专业源复用，非全局/发布/性能结论。[当前审查](S0-S2-MECHANISM-REVIEW.md)。 |
+| S2 设计 | done | done | done | done | 本片限定scope完成：r91原20函数/7包compile+build及host-only安装通过；r91原四题准确develop/main绑定、S2两字段normal save→PTR-PLAN-01/S3，目标和模板两缺口有限实测通过。8专业源复用，非全局/发布/性能结论。[当前审查](S0-S2-MECHANISM-REVIEW.md)。 |
 | S3 合同 | done | done | done | done | r115 定向 89 项通过；after-r28 真实 muse 保留BE修复、原PTR登记、两次重放及S4入口投递通过；旧S5清单全局校验失败另列 |
 | S4 任务拆分 | done | done | done | done | r121 定向60项、来源/接收整包14项通过；after-r29真实muse修复TASK、一次保存并原TR-002进S5/e8，两次重放零写入；旧S5 manifest全局失败另列 |
 | S5 文档验证 | done | done | done | done | r128定向48项、相关四包102项通过；after-r32真实独立双PASS/原TR-003进S6，六次新旧答卷重放零写入，tasks check/validate/doctor全过；未开展S6 |
@@ -144,8 +161,8 @@ after-r23，原始模型日志和旧答卷保留。本地回归报告为
 | S7 验证轮 | done | done | done | done | 仅本轮限定范围：R48 backend Clean；R51 真冷 TR-006/Main Plan 原登记/7问卷准备；R50 synthetic browser bug-v4 原3职责接收→ObservationBatch/TR-008进S8，clean-v2 原3职责接收→CleanRound/TR-009进S10。六段466条直接Hook响应无内部deadline/4秒defer；clean外层720秒截止后同E2E恢复完成、bug编排误约束纠正及旧失败均保留。最新43项不同定向测试PASS（32核心+11原边界）（skip exporter不计）；after-r52构建0，生产Go相对R51无变更，非R52新完整链。未做S8/S10专业工作、非全分支/全平台/全阶段；[详细证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r52-s7-closeout-final.json) |
 | S8 调查 | done | done | done | done | 仅本轮限定范围：A/B/C/D1 已落地；after-r56 59 项不同顶层定向测试 PASS、0 fail/skip（154.619秒）。真实 Main→一名 native Investigator 本人 supported→原 Case/route 接收→Contract 无授权等待，专业修稿后外部显式仿真人决策经原批准事务到 S9 planning 即停；Runtime rev11/Case r5 contract_approved，无 S9 专业执行。101 条直接 Hook 均 exit0，选定内部 deadline/defer、专业 schema/route 拒收为0。synthetic 上游非新 S7 通过，仿真人决策非真实用户授权；三 schema 单验 PASS，全项目缺 scenario-model 仍失败；非全平台/全分支模型验收。[收尾证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/reports/r56-s8-closeout-final.json)、[范围说明](S8-MECHANISM-REVIEW.md) |
 | S9 修复 | done | done | done | done | 限定本轮：r86/r79单次CLI无人工续接，1624.111264s/exit0/非超时，rev31 repair.closed→freshS7 round2；本人2Plan/2Final、Main真实集成/检查、Impact、独立5项观察、Handoff已接收。r85/r78亦闭环但3次人工续接、累计1706.755652s，非性能对照。r86旧continuity门曾触发、由本人补后接收；r80移除此门仅经原lead全尾机械例及独立install/原case/代码核查，不冒充r80全链nativePASS；synthetic上游非真人S7/S8，freshS7非S7PASS，无新同版全矩阵资格。[范围与证据](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s9-blueprint-landing-20261018/s9-closure-summary.md) |
-| S10 验收 | done | active | active | pending | 原 RecordEvidence、派生 metrics/审计汇总及完整 S10→S11 权威链通过定向回归 |
-| S11 发布闸 | done | active | active | pending | 真实 S10 前置链、准确申请/证据路径及 Agent 自批不推进测试通过 |
+| S10 验收 | done | done | done | done | 仅本轮限定范围：入口/接收/原出口与作者文案已落地；r10五原函数及build、r11测试helper修正后原S11 PASS（非r11全六重跑），linux/amd64评估包空安装通过。真实r85 synthetic S7入口后Main完成acceptance/audit、TR015/017至rev7待真人；两段220.905855s、一次人工continue，非单轮全自动。r84失败642.164147s保留；非新S7 PASS/真人批准/发布/全仓或全平台验证。[S10-LANDING-REPORT.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/S10-LANDING-REPORT.md) |
+| S11 发布闸 | done | done | done | done | 仅本片正常保存自动消费与原退回责任交接：r88return退审补审再S11新空申请、最终r89defect交原S8问题包且Pre无false-stale；分轮机械/linux-only安装与旧失败保留，非最终同版全矩阵。synthetic S7+实际prior S10复用/模拟选择，非Investigator执行、完整S8、真实发布或全局完成。[S11-LANDING-REPORT.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s11-reduction-20261018/S11-LANDING-REPORT.md) |
 
 S9 当前依据仅为 [review 顶部职责/迁移表及最新证据](S9-MECHANISM-REVIEW.md)；下文旧 S9 r号记录与当时安排为历史，不是当前设计或下一轮执行计划。真实必要断言未复验须具体提醒且不推进；删除ID拼写/严格数量/extra项与注册义务证明，不取消独立复验。
 

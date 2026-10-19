@@ -1,35 +1,71 @@
 # L3-S10 — 验收与发布审计（Acceptance & Audit）
 
-> 层：第三层 ｜ 上游：L2 §S10 ｜ 前置：S7 当前 review round 已形成有效 clean round ｜ 下游：S11 `awaiting_human_release`，或回 S7 / paused
+> 层：第三层 ｜ 上游：L2 §S10 ｜ 前置：S7 当前 review round 已形成有效 clean round ｜ 下游：S11 `awaiting_human_release`，或既有返工/待决策出口
 >
-> 阅读顺序：§1～§3 先回答“验收和审计各自要证明什么、为什么不能把 clean round 直接当 release”；§4 再按审查全集、反证审查、验收材料、审计八区、风险分流和 S11 handoff 展开；§5～§9 审计职责、Agent 协作、当前实现边界、出口和易错点。本文把目标工作流、Agent 引导和现有代码能力分开记录。
+> 阅读顺序：先读当前最小契约及机制审查；后文旧主体仅查历史，不作为本轮实施规范。
 
-## 本轮减负与原消费路径（2026-10-15）
+<a id="当前最小契约2026-10-18设计已固定尚未实施"></a>
 
-S10 复用现有 `acceptance.Manifest` 作为唯一答卷和机器来源，不新增 typed issue/receipt
-协议。S10 开始时由系统从当前 Runtime/S7 round 生成或读取实际 manifest 完整路径，
-并自动带入 Runtime、generation、round 和权威审查全集；作者只填写专业
-处置、反证、证据、风险与结论。保存时校验 manifest 并复用原 `RecordEvidence`/
-Controller 路径，envelope、来源绑定和哈希由系统生成。ACC/audit Markdown 仍由原
-`manifest render` 生成；不再要求作者分别维护 manifest、Markdown 和 evidence envelope。
-作者必须填写当前 manifest 的 `outcome` 专业结论，且使用该 audit 类型允许的
-取值；不要从证据或空值自动推断 PASS。如原结构缺该字段，只扩展现有
-`acceptance.Manifest` 和 schema，不另造 answer protocol 或状态。Release Audit 答卷
-预置原有八个 `audit_area` coverage rows 和对应反证问题；作者在每行填写专业结论、owner
-与 evidence 一次。保存时原 consumer 仅在 `audit_areas` 汇总为空时从这些行投影汇总，
-并 derive metrics。已存在的手工 `audit_areas` 汇总保持不变，继续交原 validator 校验；
-作者不重复填写汇总或派生指标。
+## 当前最小契约（2026-10-18，已落地，限定验证）
 
-`docs/reports/acceptance/ACC-template.md`、`docs/reports/release-audits/TEMPLATE.md` 和
-`docs/examples/s10/*` 是说明/示例，不是本轮真实答卷路径。候选中的
-`internal/cli/audit_questionnaire.go` 与 Hook 入口已接真实路径投递、保存及原
-`RecordEvidence`。`s10/` 是明确的 disk 控制产物源，原 envelope 绑定其实际字节；
-不再让作者猜是否要额外 commit 问卷才能被阶段门读到。Stop/Idle 只报告准确路径，
-不准备或批准答案。原测试/宿主入口是
-`internal/acceptance/manifest_test.go`、`internal/cli/s10_command_test.go`、
-`internal/cli/s10_wire_test.go`、`internal/qualitygate/canonical_s10_baseline_test.go`、
-`internal/cli/audit_hooks_e2e_test.go` 与现有 `s10 manifest` CLI/QualityGate/Controller；
-完整 S10→S11 及返工路由仍须由本轮回归和真实宿主验证，状态见全阶段重新验收清单。
+本节与 [GLOBAL §0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-18优先于旧方案) 为当前规范；具体旧链删除点及三片迁移见 [S10机制审查](../global-optimization/S10-MECHANISM-REVIEW.md)。60379d4后两轮静态规划已按下述边界落实；限定机械及真实宿主范围见本节末与机制审查当前证据，不扩成全局完成。
+
+S10本节短契约覆盖通用Driver及其他入口文案中重复审查、强制ledger/全项另造反证与等待nextPre的旧句；相关AGENTS模板、发布审计规则、协议、Skill及模板/examples已随原三片同步，不另增工序。
+
+### 逐工序职责
+
+1. 原 **TR-009完成时准备acceptance责任**：系统从原S7当轮结果及已知对象给准确现Manifest路径、承诺原文与准确材料来源，不发明oracle、适用性或新义务。当前clean消费原S7结果及既有失效事实；疑似影响由Main判断，不全盘hash或重证发行链。S9 freshS7种子不是clean round。
+2. **Main汇入真实审查结果**：逐项确认REQ承诺/适用Closing Contract有实际结果；适用于当前产品的S7观察可直接引用，仅具体缺口、矛盾或本步特有风险补检查，不默认重测、新日志或逐行反证。必要独立审查按实际工作安排并真实通知，不是每行新派Agent/新表单；Main保存现Manifest并保留原作者归属，Hook不验身份资格。
+3. **保存当前报告**：可读问卷、已使用字段能按现有类型解码及准确当前责任关联是Hook接收边界。草稿空outcome仍保存在原文件，只反馈具体未答项，不算最终提交、不自动返工；明确review_required/blocked才沿原负向路由。无结论绝不默认PASS，unknown/fail与已报阻断不能当完成向前推进。
+4. **验收完成→release_audit**：仅本步真实完成后执行一个原TR-015出口并准备audit准确卷。audit引用已验收结论，不复制acceptance全部REQ/Contract/Claim表重审；八主题只是固定简短阅读提示，由Main/专业作者判断本次涉及，不建Hook相关性/完整性引擎。不适用一次说明，不造任务、证据或引用。
+5. **审计完成→S11待真人**：Main/专业审查者完成相关审计与风险判断后，原TR-017交接既有人闸材料；S10不代签或发布，本次不实现S11。实际缺项留本步具体提醒或走明确负向路由，不等下一Pre补业务，不每次编辑render或连跑多stage。
+
+### Hook能做 / 不能做
+
+| 能做的最小工作 | 不能做的专业替代或额外资格 |
+|---|---|
+| 读本次现卷、已使用字段能按现有类型解码、准确定位当前责任；读取空/unknown/fail与已报阻断 | 不调用原full validator“一次”冒充减负；不认证覆盖率、证据充分性、实际独立、N/A理由或风险归零 |
+| 系统带现成目标/来源/关联；metrics与汇总仅作显示 | 不生成oracle/适用性，不按ID、exact数量、extra材料、八区数量、owner名字、登记hash或票据拼写准入 |
+| 沿原Writer/CAS记录本次事实；完成时执行本步原出口，反馈下一准确卷/人闸材料 | 不在普通Pre/Stop/重复监听准备、全扫描、重跑审查或建立完整性/相关性引擎 |
+| 同专业同答只读；当前卷真实补充沿现有内容ID/RecordEvidence及最新匹配记录选择 | 不一概异答拒收，不新造修订协议；仅真实并发/旧轮/当前责任冲突沿原内部边界处理，换stage旧卷重放不造新责任 |
+
+推进读取作者明确专业结论、现卷明确未完成/阻断项，以及原S7当前轮完成/失效事实；不据metrics比例证明现实覆盖或证据充分性。
+
+同卷已经登记而本步原出口尚未提交时，下次同份正常保存继续原出口，不重复登记；不能因“同答只读”把未完成的TR015/017截断。已完成跨stage的旧卷回放不重推进。沿已有记录与当前游标处理，不新增重试状态、证明、协议或预算。
+
+工作状态沿用 `pending/active/blocked/done/cancelled`；`acceptance`/`release_audit`是已有阶段游标，专业结论另行表达。原Writer原子性/CAS保留，一次逻辑记录不要求一次物理I/O。不新增状态、格式、字段、API、缓存、队列或矩阵。
+
+### 现有字段怎么填
+
+| 字段 | 本次责任 |
+|---|---|
+| 行ID / category / owner及Runtime/generation/round | 系统从现有任务带出机器关联，owner不是作者必须发明的人名或身份资格；风险责任按真实情况另报 |
+| `expected` / `source_refs` | 系统带已有承诺/预期与准确来源，不让作者另抄机器ID或发明标准 |
+| `disposition` | 本人专业结论，未知如实unknown，不默认PASS |
+| `evidence_refs` | 确有现成输出/文件时引用；已有来源与oracle的实际依据可表达履职，不为数组非空新建日志/文件 |
+| `oracle` | 仅必要时补判断依据、实际观察或未完成原因，沿原字符串；不强每行非空或每行发明反证，不新增观察报告 |
+| `na_reason` | 真不适用一次说明，Hook不认证理由；无contract/changed_path对象不造N/A行补类别 |
+| `outcome` / 风险 | 草稿可空，最终由专业作者明确结论；仅真实相关风险说明影响、责任与处置，不逐项硬要ticket/recovery证据 |
+
+真实承诺、适用反例、必要独立审查与风险不能漏，判断责任属于Main/专业作者。Hook提示现卷可见空项和作者明确报告的未完成，不因evidence_refs为空或由此派生的UnsupportedPassCount否决，也不鉴定依据充分性/真实性；oracle沿原字符串语义，不引入文字格式解析协议。已有观察可同时支持主行/反例；coverage专业行及可选audit_areas原样保留，展示汇总不改写已报unknown/fail，不在保存时制造第二份镜像摘要。不重复维护metrics、Markdown和envelope；旧诊断CLI信封链不进普通作者流。
+
+### 正常任务与反馈示例
+
+任务：打开消息提供的本次Manifest完整路径，读题旁承诺原文和材料。已有S7观察足以回答时直接引用，在disposition填本人结论、evidence_refs写实际位置；有具体缺口才补检查，必要时在oracle说明观察/原因。未答保留unknown，空outcome是草稿；完成后明确结论并保存同一文件，不另交hash、信封或总结。发布审计只补实际发布风险，不重审整份验收表。
+
+反馈须展开真实值，例如“验收问题‘重启后订单仍可读取’目前unknown；答卷〈本次实际完整路径〉中oracle说明尚未观察重启，已有材料〈实际日志路径〉只有本次进程结果。Main通知当前验收责任继续该项；本次草稿未推进”。尖括号必须由实际路径/事实替换，不能原样发占位文本、UNKNOWN计数或泛恢复建议；原因未知就明确未知，不编造结论。
+
+### 当前落地与验收界线
+
+入口/题目供给、原记录/专业责任边界、已接收事实/本步完成出口已落地。普通S10 Pre/Stop只读；真实完成保存调用本步原出口，TR009/015准备准确现卷，必要交接直接RenderMarkdown一次，草稿/同答不render或重跑业务。专业audit_areas原样保留，未完不被展示汇总吞掉。
+
+限定机械证据为r10主程序构建/两包test-c及五原函数PASS，原S11失败因测试helper取旧unknown记录；r11仅修helper并重编CLI/重跑原S11 PASS1.994370s，生产与文档对r10等价，未称r11全六重跑。见[validation-r11-summary.json](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/validation-r11-summary.json)。r85为linux/amd64 host-only评估包，构包35.359s、原installer全新空根安装1.370564s均exit0，inventory零差异；非全仓/全平台验证。
+
+真实r85从明确synthetic S7经原TR009的入口开始，Main复用已有真实输出并阅读产品，保存acceptance/audit，原TR015/017到rev7 `awaiting_human_release`；无人工代填专业答案。首段84.640263s自然结束于audit，同会话一次人工continue后136.265592s完成，合计220.905855s（不含续接间隔），不是单轮全自动。见[native-s10-r85-audit.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/native-s10-r85-audit.md)及[native-s10-r85-installed/.claude/evidence/s10-validation-report.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/native-s10-r85-installed/.claude/evidence/s10-validation-report.md)。上游synthetic S7非新模型S7 PASS，S11申请草稿已备但decision/disposition/reason/approved_by均未填，无human_decision evidence/真人批准/发布；重复Hook噪声仅观测，样本耗时不证明性能收益。r84两段642.164147s的实际失败与猜结构/旧指引问题保留于[native-s10-r84-terminal-audit.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/native-s10-r84-terminal-audit.md)，不用作者主观耗时估计。
+
+## 历史主体（以下旧§1–§9及依赖说明仅保留原设计/实现记录）
+
+以下“必须/exact/全八区/来源证明/下一Pre/原门保留/自动render”等均是当时方案或实现说明，**不再构成当前实施规范或资格兜底**。旧代码能力与旧测试不自动证明本轮契约已实现；当前仅以上节及机制审查为准。保留旧章节与证据供追溯，不据此恢复被取消的门槛。
 
 ## 1. 第一层：S10 的立意与目标
 

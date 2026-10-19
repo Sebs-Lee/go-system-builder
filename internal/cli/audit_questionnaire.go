@@ -38,14 +38,6 @@ func stageAuditQuestionnaireContext(root string, request policy.Input, snapshot 
 	if kind == "" {
 		return ""
 	}
-	status := inspectS10Artifact(root, snapshot.State, kind)
-	if status.State == "ready" || status.State == "review_required" || status.State == "blocked" {
-		path, err := absoluteQuestionnairePath(root, status.ManifestPath)
-		if err != nil {
-			return fmt.Sprintf("S10 %s evidence is registered, but its manifest path cannot be resolved: %v", kind, err)
-		}
-		return fmt.Sprintf("S10 %s questionnaire is already saved at %s; the original evidence and Controller path will evaluate it. Wait for Main's next stage instruction.", kind, path)
-	}
 	path, err := auditQuestionnairePath(root, snapshot.State, kind)
 	if err != nil {
 		return fmt.Sprintf("S10 %s is active, but the system could not prepare its exact manifest path from the current Runtime: %v. This is a wiring/source gap; do not guess a path or reconstruct the inventory from other Runtime files.", kind, err)
@@ -54,18 +46,21 @@ func stageAuditQuestionnaireContext(root string, request policy.Input, snapshot 
 	if err != nil {
 		return fmt.Sprintf("S10 %s is active, but its exact manifest path cannot be resolved: %v", kind, err)
 	}
-	if questionnairePreparationEvent(request.Event) {
-		if _, _, err := prepareAuditQuestionnaire(root, snapshot.State, kind); err != nil {
-			return fmt.Sprintf("S10 %s is active, but the system could not prepare its exact manifest path %s from the current Runtime: %v. Do not guess a path or reconstruct the inventory from other Runtime files.", kind, absPath, err)
-		}
-		return fmt.Sprintf("S10 %s manifest answer: %s. The system filled current Runtime/generation/review round and authoritative inventory IDs. Fill the professional expected/oracle/owner, disposition, counterevidence, evidence, risks, and outcome fields in this file, then save it. For release audit, answer the eight audit_area coverage rows once; the listener derives the original audit_areas summary and metrics. The existing evidence/Controller consumer runs after a valid save; do not author an envelope or a second report.", kind, absPath)
-	}
+	readmePath, _ := filepath.Abs(filepath.Join(root, "docs", "examples", "s10", "README.md"))
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); os.IsNotExist(err) {
-		return fmt.Sprintf("S10 %s answer draft is not prepared yet; the exact path is %s. This Hook event is read-only. SessionStart or PreToolUse prepares it; Stop/Idle only reports the missing draft.", kind, absPath)
+		return fmt.Sprintf("S10 %s answer draft is not prepared yet; the exact path is %s. This Hook event is read-only. The original stage-entry action must prepare this draft; Main should report this wiring gap, not guess a path or wait for another Hook.", kind, absPath)
 	} else if err != nil {
 		return fmt.Sprintf("S10 %s answer draft at %s could not be inspected: %v", kind, absPath, err)
 	}
-	return fmt.Sprintf("S10 %s manifest answer is at %s. This Hook event is read-only; review or continue filling this existing draft, then save it. The original evidence/Controller consumer runs after a valid save.", kind, absPath)
+	outcomes := "pass / review_required"
+	if kind == acceptance.ManifestReleaseAudit {
+		outcomes = "approved / approved_with_risk / blocked"
+	}
+	method := "Reuse applicable S7 results; disposition is your judgment, oracle may explain observations or unfinished causes, and evidence_refs may point to existing output."
+	if kind == acceptance.ManifestReleaseAudit {
+		method = "Reference accepted acceptance results; review actual release risks. Reading prompts: state transitions, transactions, concurrency, data/migration, call sites, observability, verification, documentation/release. These are not eight required tasks."
+	}
+	return fmt.Sprintf("S10 %s answer: %s. Main collects actual reviewers' results here, reporting actual results against each commitment in expected and its source material. %s disposition: pass / not_applicable / unknown / fail. outcome: %s; empty outcome remains a draft. Save this same file by edits, scripts or MCP. No envelope or second report is required. The same observation can be written once in oracle; counterevidence and risks may stay [] when there is no actual content. Existing object shapes: %s.", kind, absPath, method, outcomes, readmePath)
 }
 
 func questionnairePreparationEvent(event string) bool {
@@ -80,10 +75,6 @@ func absoluteQuestionnairePath(root, relative string) (string, error) {
 }
 
 func prepareAuditQuestionnaire(root string, state map[string]any, kind string) (string, acceptance.Manifest, error) {
-	status := inspectS10Artifact(root, state, kind)
-	if status.State == "ready" || status.State == "review_required" || status.State == "blocked" {
-		return status.ManifestPath, acceptance.Manifest{}, nil
-	}
 	path, err := auditQuestionnairePath(root, state, kind)
 	if err != nil {
 		return "", acceptance.Manifest{}, err
@@ -93,19 +84,129 @@ func prepareAuditQuestionnaire(root string, state map[string]any, kind string) (
 		return "", acceptance.Manifest{}, err
 	}
 	if _, err := os.Stat(draftPath); err == nil {
+		// Existing audit observations survive re-entry. Refresh only the
+		// system acceptance reference to the latest accepted report.
+		if kind == acceptance.ManifestReleaseAudit {
+			data, err := os.ReadFile(draftPath)
+			if err != nil {
+				return "", acceptance.Manifest{}, err
+			}
+			var existing acceptance.Manifest
+			if err := json.Unmarshal(data, &existing); err != nil {
+				return "", acceptance.Manifest{}, err
+			}
+			var latest string
+			rows := stateEvidence(state)
+			for i := len(rows) - 1; i >= 0; i-- {
+				entry, _ := rows[i].(map[string]any)
+				if stringValue(entry["kind"]) == acceptance.ManifestAcceptance && stringValue(entry["status"]) == "valid" && integerValue(entry["baseline_generation"]) == integerValue(nestedStateValue(state, "baseline", "generation")) && integerValue(entry["review_round"]) == integerValue(nestedStateValue(state, "review", "round")) {
+					latest = stringValue(entry["path"])
+					break
+				}
+			}
+			changed := false
+			for i := range existing.CoverageInventory {
+				item := &existing.CoverageInventory[i]
+				if item.ID != "acceptance" || latest == "" {
+					continue
+				}
+				found := false
+				kept := item.SourceRefs[:0]
+				for _, ref := range item.SourceRefs {
+					oldAcceptance := false
+					for _, raw := range rows {
+						entry, _ := raw.(map[string]any)
+						if stringValue(entry["kind"]) == acceptance.ManifestAcceptance && stringValue(entry["path"]) == ref && ref != latest {
+							oldAcceptance = true
+							break
+						}
+					}
+					if oldAcceptance {
+						changed = true
+						continue
+					}
+					kept = append(kept, ref)
+				}
+				item.SourceRefs = kept
+				for _, ref := range item.SourceRefs {
+					if ref == latest {
+						found = true
+					}
+				}
+				if !found {
+					item.SourceRefs = append(item.SourceRefs, latest)
+					changed = true
+				}
+			}
+			if changed {
+				data, err = json.MarshalIndent(existing, "", "  ")
+				if err != nil {
+					return "", acceptance.Manifest{}, err
+				}
+				if err = os.WriteFile(draftPath, append(data, '\n'), 0o644); err != nil {
+					return "", acceptance.Manifest{}, err
+				}
+			}
+			return path, existing, nil
+		}
 		return path, acceptance.Manifest{}, nil
 	} else if !os.IsNotExist(err) {
 		return "", acceptance.Manifest{}, fmt.Errorf("inspect existing manifest %s: %w", draftPath, err)
 	}
-	baseline, err := acceptance.BuildS10ExternalBaseline(root, state, nil)
-	if err != nil {
-		return "", acceptance.Manifest{}, fmt.Errorf("build current changed-path inventory: %w", err)
+	manifest := auditManifestDraft(state, kind, acceptance.InventoryAuthority{})
+	// Stage entry reads existing materials; it does not certify their history.
+	addMaterial := func(id, category, path, owner string) error {
+		if path == "" {
+			return fmt.Errorf("%s %s has no material path", category, id)
+		}
+		if owner == "" {
+			owner = "Main"
+		}
+		material, err := safeS10Path(root, path)
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(material)
+		if err != nil {
+			return fmt.Errorf("read %s material %s: %w", category, path, err)
+		}
+		refs := []string{path}
+		if plan := stringValue(mapFieldCLI(mapFieldCLI(state, "review"), "plan")["path"]); plan != "" {
+			refs = append(refs, plan)
+		}
+		manifest.CoverageInventory = append(manifest.CoverageInventory, acceptance.CoverageItem{
+			ID: id, Category: category, SourceRefs: refs, Expected: string(data),
+			Owner: owner, Disposition: "unknown", EvidenceRefs: []string{},
+		})
+		return nil
 	}
-	authority, err := acceptance.BuildS10InventoryAuthority(root, state, baseline)
-	if err != nil {
-		return "", acceptance.Manifest{}, fmt.Errorf("build current authoritative inventory: %w", err)
+	if kind == acceptance.ManifestAcceptance {
+		bound := mapFieldCLI(state, "bound_req")
+		if err := addMaterial(stringValue(bound["id"]), "requirement", stringValue(bound["path"]), "Main"); err != nil {
+			return "", acceptance.Manifest{}, err
+		}
+		documents, _ := state["documents"].([]any)
+		for _, raw := range documents {
+			doc, _ := raw.(map[string]any)
+			category := stringValue(doc["kind"])
+			if (category != "contract" && category != "task") || integerValue(doc["generation"]) != manifest.BaselineGeneration {
+				continue
+			}
+			if err := addMaterial(stringValue(doc["id"]), category, stringValue(doc["path"]), stringValue(doc["owner"])); err != nil {
+				return "", acceptance.Manifest{}, err
+			}
+		}
+	} else {
+		accepted, err := auditQuestionnairePath(root, state, acceptance.ManifestAcceptance)
+		if err != nil {
+			return "", acceptance.Manifest{}, err
+		}
+		manifest.CoverageInventory = append(manifest.CoverageInventory, acceptance.CoverageItem{
+			ID: "acceptance", Category: "requirement", SourceRefs: []string{accepted}, Owner: "Main",
+			Expected:    "Review actual release risks using the accepted acceptance result; do not repeat its requirement checks.",
+			Disposition: "unknown", EvidenceRefs: []string{},
+		})
 	}
-	manifest := auditManifestDraft(state, kind, authority)
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", acceptance.Manifest{}, fmt.Errorf("encode current manifest draft: %w", err)
@@ -116,7 +217,81 @@ func prepareAuditQuestionnaire(root string, state map[string]any, kind string) (
 	return path, manifest, nil
 }
 
-func auditManifestDraft(state map[string]any, kind string, authority acceptance.InventoryAuthority) acceptance.Manifest {
+// Human rejection returns to the existing report, retaining observations and
+// adding the actual decision as material. Its source reference makes replay a no-op.
+func prepareAuditReworkQuestionnaires(root string, state map[string]any, transitionID, decisionPath string) ([]string, error) {
+	kinds := []string{acceptance.ManifestReleaseAudit}
+	if transitionID == "TR-028" {
+		kinds = []string{acceptance.ManifestAcceptance, acceptance.ManifestReleaseAudit}
+	}
+	if decisionPath == "" {
+		return nil, fmt.Errorf("the recorded human decision material path is missing")
+	}
+	decisionData, err := os.ReadFile(decisionPath)
+	if err != nil {
+		return nil, err
+	}
+	var decision struct {
+		ID     string `json:"decision_id"`
+		Reason string `json:"reason"`
+	}
+	if err = json.Unmarshal(decisionData, &decision); err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, kind := range kinds {
+		rel, err := auditQuestionnairePath(root, state, kind)
+		if err != nil {
+			return paths, err
+		}
+		path, err := absoluteQuestionnairePath(root, rel)
+		if err != nil {
+			return paths, err
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			if _, _, err = prepareAuditQuestionnaire(root, state, kind); err != nil {
+				return paths, err
+			}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return paths, err
+		}
+		var report acceptance.Manifest
+		if err = json.Unmarshal(data, &report); err != nil {
+			return paths, err
+		}
+		already := false
+		for _, item := range report.CoverageInventory {
+			for _, ref := range item.SourceRefs {
+				if ref == decisionPath {
+					already = true
+				}
+			}
+		}
+		if !already {
+			report.Outcome = ""
+			if len(report.CoverageInventory) == 0 {
+				report.CoverageInventory = append(report.CoverageInventory, acceptance.CoverageItem{ID: decision.ID, Category: "requirement", Owner: "Main", Expected: decision.Reason, SourceRefs: []string{decisionPath}, Disposition: "unknown"})
+			} else {
+				for i := range report.CoverageInventory {
+					report.CoverageInventory[i].SourceRefs = append(report.CoverageInventory[i].SourceRefs, decisionPath)
+				}
+			}
+			data, err = json.MarshalIndent(report, "", "  ")
+			if err != nil {
+				return paths, err
+			}
+			if err = os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+				return paths, err
+			}
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func auditManifestDraft(state map[string]any, kind string, _ acceptance.InventoryAuthority) acceptance.Manifest {
 	manifest := acceptance.Manifest{
 		SchemaVersion:      acceptance.SchemaVersionAcceptance,
 		ManifestType:       kind,
@@ -129,50 +304,8 @@ func auditManifestDraft(state map[string]any, kind string, authority acceptance.
 		TechnicalDebt:      []acceptance.DebtItem{},
 		BlockingFindings:   []acceptance.BlockingFinding{},
 	}
-	add := func(category string, ids []string) {
-		for _, id := range ids {
-			source := id
-			if category == "changed_path" && !strings.HasPrefix(id, "path:") {
-				id = "path:" + id
-			}
-			manifest.CoverageInventory = append(manifest.CoverageInventory, acceptance.CoverageItem{
-				ID: id, Category: category, SourceRefs: []string{source},
-				EvidenceRefs: []string{},
-			})
-		}
-	}
-	add("requirement", authority.RequirementIDs)
-	add("contract", authority.ContractIDs)
-	add("task", authority.TaskIDs)
-	add("claim", authority.ClaimIDs)
-	add("changed_path", authority.ChangedPaths)
-	if kind == acceptance.ManifestReleaseAudit {
-		add("audit_area", acceptance.AuditAreaIDs)
-	}
-	for _, item := range manifest.CoverageInventory {
-		manifest.Counterevidence = append(manifest.Counterevidence, acceptance.CounterevidenceItem{
-			ID: "counter:" + item.ID, InventoryID: item.ID, EvidenceRefs: []string{},
-		})
-	}
 	manifest.Metrics = acceptance.DeriveMetrics(manifest)
 	return manifest
-}
-
-// The original manifest carries an audit-area summary. New questionnaires
-// collect that judgment in the coverage rows once and project the summary on
-// save. Previously authored summaries remain subject to the original validator.
-func projectAuditAreaSummary(manifest *acceptance.Manifest) {
-	if manifest.ManifestType != acceptance.ManifestReleaseAudit || len(manifest.AuditAreas) != 0 {
-		return
-	}
-	for _, item := range manifest.CoverageInventory {
-		if item.Category == "audit_area" {
-			manifest.AuditAreas = append(manifest.AuditAreas, acceptance.AuditArea{
-				ID: item.ID, Conclusion: item.Disposition, Owner: item.Owner,
-				EvidenceRefs: append([]string(nil), item.EvidenceRefs...),
-			})
-		}
-	}
 }
 
 func auditQuestionnairePath(root string, state map[string]any, kind string) (string, error) {
@@ -209,14 +342,6 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 	if kind == "" {
 		return false, 0
 	}
-	status := inspectS10Artifact(root, snapshot.State, kind)
-	if (status.State == "ready" || status.State == "review_required" || status.State == "blocked") && status.ManifestPath != "" {
-		expected, pathErr := absoluteQuestionnairePath(root, status.ManifestPath)
-		if pathErr == nil && filepath.Clean(actualPath) == filepath.Clean(expected) {
-			return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s manifest %s is already registered with its exact current fingerprint. Replay did not register evidence or advance lifecycle; wait for Main/Controller.", kind, expected))
-		}
-		return false, 0
-	}
 	path, pathErr := auditQuestionnairePath(root, snapshot.State, kind)
 	if pathErr != nil {
 		return false, 0
@@ -237,39 +362,43 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 	if err != nil {
 		return reject(fmt.Errorf("read saved manifest: %w", err))
 	}
+	readmePath, _ := filepath.Abs(filepath.Join(root, "docs", "examples", "s10", "README.md"))
 	var manifest acceptance.Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return reject(fmt.Errorf("decode saved manifest: %w", err))
+		return reject(fmt.Errorf("decode saved manifest: %w; counterevidence and risks entries, when used, are objects, not strings; existing field examples: %s", err, readmePath))
 	}
-	if manifest.ManifestType != kind || manifest.RuntimeID != stringValue(snapshot.State["runtime_id"]) ||
-		manifest.BaselineGeneration != integerValue(nestedStateValue(snapshot.State, "baseline", "generation")) ||
-		manifest.ReviewRound != integerValue(nestedStateValue(snapshot.State, "review", "round")) {
-		return reject(fmt.Errorf("manifest_type, runtime_id, baseline_generation, and review_round must match the current Runtime"))
+	// The exact current answer path supplies machine association, not the author.
+	manifest.SchemaVersion = acceptance.SchemaVersionAcceptance
+	manifest.ManifestType = kind
+	manifest.RuntimeID = stringValue(snapshot.State["runtime_id"])
+	manifest.BaselineGeneration = integerValue(nestedStateValue(snapshot.State, "baseline", "generation"))
+	manifest.ReviewRound = integerValue(nestedStateValue(snapshot.State, "review", "round"))
+	if strings.TrimSpace(manifest.Outcome) == "" {
+		var missing []string
+		for _, item := range manifest.CoverageInventory {
+			if item.Disposition == "" || item.Disposition == "unknown" || item.Disposition == "fail" {
+				missing = append(missing, fmt.Sprintf("%s (disposition=%q, observation/reason=%q)", strings.Join(item.SourceRefs, ", "), item.Disposition, item.Oracle))
+			}
+		}
+		return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s draft remains at %s; final outcome is unanswered. Current unfinished items: %s. Save continued professional work in this same file; no evidence was recorded and no negative route was selected.", kind, expected, strings.Join(missing, "; ")))
 	}
-	if strings.TrimSpace(manifest.Outcome) == "" || !validAuditOutcome(kind, manifest.Outcome) {
-		return reject(fmt.Errorf("outcome is required; record the professional conclusion in this manifest, do not infer PASS"))
+	if !validAuditOutcome(kind, manifest.Outcome) {
+		allowed := "pass / review_required"
+		if kind == acceptance.ManifestReleaseAudit {
+			allowed = "approved / approved_with_risk / blocked"
+		}
+		return reject(fmt.Errorf("outcome for %s must be %s; leave it empty for a draft, never infer PASS", kind, allowed))
 	}
 	actor := "Main" // The original S10 responsibility, not a Hook identity claim.
-	baseline, err := acceptance.BuildS10ExternalBaseline(root, snapshot.State, nil)
-	if err != nil {
-		return reject(fmt.Errorf("current changed-path baseline is unverifiable: %w", err))
-	}
-	authority, err := acceptance.BuildS10InventoryAuthority(root, snapshot.State, baseline)
-	if err != nil {
-		return reject(fmt.Errorf("current authoritative inventory is unverifiable: %w", err))
-	}
-	projectAuditAreaSummary(&manifest)
 	manifest.Metrics = acceptance.DeriveMetrics(manifest)
 	data, err = json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return reject(fmt.Errorf("encode manifest with derived metrics: %w", err))
 	}
 	data = append(data, '\n')
-	if _, err := acceptance.ValidateForOutcomeWithBaselineAndAuthority(data, kind, manifest.Outcome, baseline, authority); err != nil {
+	summary, err := acceptance.ValidateForOutcome(data, kind, manifest.Outcome)
+	if err != nil {
 		return reject(err)
-	}
-	if err := os.WriteFile(artifactPath, data, 0o644); err != nil {
-		return reject(fmt.Errorf("write machine-derived metrics to the same manifest: %w", err))
 	}
 
 	manifestSHA := sha256HexForArtifact(data)
@@ -294,33 +423,89 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 	}
 	envelopeData = append(envelopeData, '\n')
 	envelopeSHA := sha256HexForArtifact(envelopeData)
-	if existing, ok := registeredAuditEvidence(snapshot.State, evidenceID, envelopePath, envelopeSHA); ok {
-		return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s manifest %s already has current evidence %s; replay did not re-register or advance lifecycle.", kind, expected, existing))
-	}
-	if evidenceHasID(snapshot.State, evidenceID) {
-		return reject(fmt.Errorf("evidence id %s already exists with a different path or fingerprint; no duplicate was registered", evidenceID))
-	}
-	if err := writeAuditArtifactExclusive(root, envelopePath, envelopeData); err != nil {
-		return reject(err)
-	}
-	round := manifest.ReviewRound
-	_, err = runtime.RecordEvidence(root,
-		filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"),
-		runtime.EvidenceRequest{
-			ExpectedRevision: -1, ID: evidenceID, Kind: kind, Path: envelopePath,
-			ProducedBy: []string{actor}, ResponsibilityID: responsibility, ReviewRound: &round,
-			Validator: semantic.RuntimeCandidateValidator{},
+	_, recorded := registeredAuditEvidence(snapshot.State, evidenceID, envelopePath, envelopeSHA)
+	if !recorded {
+		if evidenceHasID(snapshot.State, evidenceID) {
+			return reject(fmt.Errorf("evidence id %s already exists with different content; no duplicate was registered", evidenceID))
+		}
+		if err := os.WriteFile(artifactPath, data, 0o644); err != nil {
+			return reject(fmt.Errorf("write machine-derived metrics to the same manifest: %w", err))
+		}
+		if err := writeAuditArtifactExclusive(root, envelopePath, envelopeData); err != nil {
+			return reject(err)
+		}
+		round := manifest.ReviewRound
+		_, err = runtime.RecordEvidence(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), runtime.EvidenceRequest{
+			ExpectedRevision: -1, ID: evidenceID, Kind: kind, Path: envelopePath, ProducedBy: []string{actor}, ResponsibilityID: responsibility, ReviewRound: &round, Validator: semantic.RuntimeCandidateValidator{},
 		})
-	if err != nil {
-		latest, snapshotErr := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
-		if snapshotErr == nil {
-			if existing, ok := registeredAuditEvidence(latest.State, evidenceID, envelopePath, sha256HexForArtifact(envelopeData)); ok {
-				return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s manifest %s is registered as %s; concurrent replay did not write a duplicate.", kind, expected, existing))
+		if err != nil {
+			latest, snapshotErr := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+			if snapshotErr == nil {
+				_, recorded = registeredAuditEvidence(latest.State, evidenceID, envelopePath, envelopeSHA)
+				if recorded && currentAuditKind(latest.State) != kind {
+					return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s at %s is already received as %s; current cursor is %s. No evidence or completed exit was repeated.", kind, expected, evidenceID, lifecycleState(latest.State)))
+				}
+			}
+			if !recorded {
+				return reject(fmt.Errorf("register original S10 evidence: %w", err))
 			}
 		}
-		return reject(fmt.Errorf("register original S10 evidence: %w", err))
 	}
-	return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s manifest saved at %s and registered as %s. Runtime/Controller will evaluate the original gate; do not manually transition or publish.", kind, expected, evidenceID))
+	var unfinished []string
+	for _, item := range manifest.CoverageInventory {
+		if item.Disposition != "pass" && item.Disposition != "not_applicable" {
+			unfinished = append(unfinished, fmt.Sprintf("%s: %s; observation/reason=%q", strings.Join(item.SourceRefs, ", "), item.Disposition, item.Oracle))
+		}
+	}
+	for _, item := range manifest.Counterevidence {
+		if item.Outcome != "pass" && item.Outcome != "not_applicable" {
+			unfinished = append(unfinished, fmt.Sprintf("%s: %s", item.Question, item.Outcome))
+		}
+	}
+	for _, item := range manifest.AuditAreas {
+		if item.Conclusion != "pass" && item.Conclusion != "not_applicable" {
+			unfinished = append(unfinished, fmt.Sprintf("audit %s: %s", item.ID, item.Conclusion))
+		}
+	}
+	for _, item := range manifest.BlockingFindings {
+		unfinished = append(unfinished, fmt.Sprintf("reported blocker: %+v", item))
+	}
+	if len(unfinished) == 0 {
+		unfinished = append(unfinished, "none explicitly reported in this answer; this is not an independent certification")
+	}
+	progress := "Recorded only; continue the reported unfinished work in this same current answer."
+	negative := manifest.Outcome == "review_required" || manifest.Outcome == "blocked"
+	positive := manifest.Outcome == "pass" || manifest.Outcome == "approved" || manifest.Outcome == "approved_with_risk"
+	if negative || (positive && summary.UnknownCount == 0 && summary.BlockingFindingCount == 0) {
+		// An accepted decision still at this step can finish its original exit.
+		// Registration replay is read-only; drafts and unfinished positive reports do not advance.
+		result := runControlCycleForHook(root, request)
+		if result.QualityGate.TransitionCommitted {
+			progress = fmt.Sprintf("Committed %s; current cursor %s.", result.QualityGate.CandidateTransition, result.QualityGate.NextCursor)
+			if nextKind := currentAuditKind(result.Snapshot.State); nextKind != "" {
+				progress += " " + stageAuditQuestionnaireContext(root, request, result.Snapshot)
+			} else if result.QualityGate.CandidateTransition == "TR-017" {
+				progress += " " + stageHumanReleaseQuestionnaireContext(root, request, result.Snapshot)
+			}
+			if positive {
+				reportPath := strings.TrimSuffix(artifactPath, ".json") + ".md"
+				if err := os.WriteFile(reportPath, []byte(acceptance.RenderMarkdown(manifest, summary)), 0o644); err != nil {
+					progress += fmt.Sprintf(" Accepted decision and transition remain recorded, but readable report output %s failed: %v.", reportPath, err)
+				} else {
+					progress += " Readable report: " + reportPath + "."
+				}
+			}
+		} else {
+			progress = fmt.Sprintf("Decision recorded, but no transition committed; missing=%s; conflicts=%s.", strings.Join(result.QualityGate.Missing, "; "), strings.Join(result.QualityGate.Conflicts, "; "))
+		}
+		if result.Error != "" {
+			progress += fmt.Sprintf(" Original Controller error %s: %s.", result.ErrorCode, result.Error)
+		}
+		if len(result.Warnings) != 0 {
+			progress += " System wiring/output gap: " + strings.Join(result.Warnings, "; ") + "."
+		}
+	}
+	return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 %s recorded at %s as %s; outcome=%s. Current reported unfinished work: %s. %s", kind, expected, evidenceID, manifest.Outcome, strings.Join(unfinished, "; "), progress))
 }
 
 func validAuditOutcome(kind, outcome string) bool {

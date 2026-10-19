@@ -139,7 +139,11 @@ win.
    forbidden_side_effects — plus, for negative branches, rejection,
    expected_state, recovery)"; maintainer: "which rule will clash with
    module evolution?" Record the conclusion as one paragraph under a
-   `## Depth Self-Review` heading in the ADR package.
+   `## Depth Self-Review` heading in the ADR package. These are three views
+   of one semantic review, not three reports. Reference generated counts and
+   coverage instead of copying statistics into multiple documents; do not add
+   direct-AC or count proofs. Profile positive/negative ratios are risk
+   references, not quotas; retain every real required allow/reject branch.
 9. When a module behavior package is required, close it with
    `.claude/bin/loop-harness scenario generate --module <module> --root .`
    then `scenario validate --module <module> --root .`; this validates the
@@ -225,20 +229,23 @@ win.
 
 ## Planning Gate Reception（S2/S3/S4）
 
-The original planning judgment and quality gate stay authoritative. In a
-packet-enabled Runtime, the Hook automatically prepares the current S2/S3/S4
-Main questionnaire and gives the exact view and answer paths. Read that view,
-complete the professional work, fill only its answer fields, and save the exact
-answer file. The normal Write/Edit Hook passes it to the original Main consumer,
-which validates the answer and registers the original planning evidence through
-the existing Writer and stage gate.
+For S2, complete the actual applicable architecture/UI/service/ADR work. The
+original responsibility-start/binding completion supplies the exact current
+view/answer paths, full duties and conditional material pointers. Fill only the
+existing `architecture_path` and `conclusion`; empty conclusion is draft. Normal
+save records the original professional report and runs its original outlet.
+Already recorded but unfinished S2 work continues on the same save without
+re-registration; completed old-stage replay is read only. Ordinary Pre/Stop
+only remind from current facts, without preparation or source reproof. Missing
+actual material is reported precisely; pass alone cannot replace the design.
+Main/Architect labels, packet equality and source hashes do not qualify authors.
+Do not copy metadata, create envelopes, issue/consume or manually recover.
 
-Progress reminders include the actual answer path, remaining work, and next
-action. A missing view is restored without replacing an existing answer. Do not
-run issue/consume as part of normal work, guess a submissions directory, or
-create a second evidence envelope for the same questionnaire. If preparation
-fails, use the reported system diagnostic; professional completion still depends
-on the original gate.
+S3/S4 retain their existing questionnaires and professional duties. Read the
+supplied exact view/answer paths and concrete missing items, then save the
+professional answer through their original consumer; do not guess directories
+or duplicate an envelope. The compatibility envelope example below is not an
+S2 normal authoring obligation or a producer-name whitelist for S2.
 
 For S4, the Hook also supplies the current REQ index path, TASK candidate paths
 and templates, frozen source inputs, and the bound Git branch. Main decides the

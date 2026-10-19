@@ -8,11 +8,52 @@
 
 ## 0. 收缩后的实施决策（2026-10-18，优先于旧方案）
 
+<a id="当前优先实施契约2026-10-19本轮重验后固定尚未落地"></a>
+### 本轮重验后固定契约（2026-10-19，设计固定／实施待验证）
+
+本段优先于以下历史条款，保留所有原失败和证据；不更新全局通过。r96 是新 Runtime 复用真实设计的接续验收，非从零 S0；三路 S2/S3 已原接收，A/B/C 均在 S4 保存遇到预算失败且无 S4 持久接收记录，S4 原生接续仍待 r97，非全局 PASS；独立 Workers、后续职责与真实产品 oracle 尚未完整覆盖。限定修复如下，不新增字段、preflight、状态、proof、队列或更严准入：
+
+1. **条件资料按实际适用关系读取。** 以既有 Markdown 实际链接目标/现有 JSON 实际引用结构确定正向条件依赖；普通裸路径、inline-code 提及或围栏例子不单独声明依赖，不用否定词典。真实链接目标缺失照原错误，不按文件存在性吞缺项。保留原已有实际适用输入及真实缺项；同步 architecture-template 现有 model 段为条件性真实链接指引，不保默认强制 model 路径；旧 fixture 裸正向路径改正常链接，明确不作逐字兼容。无需补造不适用 model.md，沿既有原成功出口及监听接续交准确当前卷。
+2. **CASE 集合读取实际身份。** 生成物 CASE 集合取实际 id 字段，不全文扫描 FACT/BR/FX 子串充作 CASE；保留合法完整复合 CASE、真实合同引用及必要覆盖，作者真实简写错误仍提醒。
+3. **AC 混合引用逐项保义。** FR/NFR/A4 混合时存在 FR 就逐 FR 保留真实可达关系，补充 NFR/A4 不吞掉 FR；无 FR 才按原 N/A 语义处理。保现有 FR/NFR 缺项检查，不新增 A4 存在性资格。
+4. **amend 人意与入口相连。** 已明确批准的具体修订复用原决定，经既有准确参数入口与原 amendment 接收交现卷；manual 权威段源自 internal/transition/manual.go 的原 emitter（打包由 binary manual 生成），与 requirement-funnel 现有 amend 段相连，protocol 必要时仅链接该段。不索逐字命令或重复授权，不添第二清单/审批流程。
+5. **完成与准备失败分开呈现。** S2 已完成、S3 准备失败分别记录；已完成答卷不得标作当前待填卷。系统准备失败点明实际系统接续及责任，不一律让作者补材料；真实适用材料缺项仍具体提醒。沿原 pending/active/blocked/done/cancelled，不造状态层，也不据投影差异断言模型误判。
+
+**S2 本片减负边界：** 保五手写源与两派生载体及实际 allow/reject 语义覆盖；正负数量比改风险提示，不作硬门或凑数。统计只引用生成物，不手抄多份；实现者/测试者/维护者三视角合为一段真实语义自审，不另把 direct AC 或数量审计作证明。保留真实语义自审，删除无依据证明另审；不扩展全资料格式重构或新字段/预检。保留 persisted_effects 字段，真实无持久变化可填 []，不靠文字凑非空；真实效果由专业判断承担。非空校验与序列化已同片对齐；[r96 原生报告](/home/sebs/.cache/gsb-gap-closure-20261019T034632Z/R96-REVALIDATION-AND-GAPS.md)记录 B 真实 28 个空集合通过，C 原生 allow/reject 为 12/11、required allow/reject 23/23 并经 S2 原接收（[C 原报告](/home/sebs/.cache/gsb-gap-closure-20261019T034632Z/native-c-todo/CASE-REPORT.md)）。这些局部事实不代表 S4 原生或全局完成；S4 仍待 r97 验证，不预写尚在执行的定向机械重跑全部通过。
+
+**S4 本片固定、实施待验证：** [L3-S4 当前保存契约](l3-stages/L3-S4-task-split.md#s4-current-save-contract-20261019)与[S4 机制审查](global-optimization/S4-MECHANISM-REVIEW.md#s4-current-save-contract-20261019)限定一次专业检查、Writer 一次原子幂等记录、后续只投影原事实并由 TR-002 交独立 S5；禁止跨 Save/prepare/Authorize/followup/receipt 重复来源与身份 proof，非阻塞 advisory 不索 checker 格式证明。原生 A/B 8.113/8.129s 与一次外部 198 Git 诊断分别留证，不归并为 PASS 或纯 Git 主因。
+
+**S3 原误伤小修约束：** shared-model reason 仅要求真实专业说明非空，不增身份或来源资格。真实 JSON 的花括号不作为占位符拒收；保真实缺项，不添新识别规则或证明义务。
+
+限定验证先复现各原错并核原接收/当前卷；随后同版新装原生补未验职责与产品 oracle，才可更新全局验收。原失败、诊断、机械限定结果及原生业务验证分别保留。
+
+### 当前优先实施契约与限定验收（2026-10-19）
+
+本轮小片已实施并完成限定机械回归。r94 原生历史保留：A 到 S4 双卷，C 到 S3 空卷，B 首次 S3 接收仍因 8s Hook deadline 失败；插桩诊断不算 native PASS。r95 fresh 安装仅机械重放已完成的 S1/S2 原 consumer 前缀，随后 B 唯一 native S3 段一次 Edit 正常接收并实际 Read S4 view/answer，仍为空稿；原 Post 附件 8003ms、stderr 空，这是整条 Hook 平台计时，不证明内部超时或性能余量/根治。完整链仍 **0/3**，S4 实际履职、S5–S11、独立 Worker 与产品 oracle 未验。详见[本轮限定报告](/home/sebs/.cache/gsb-global-optimization-20261019T002858Z/R95-ROUND-REPORT.md)。本次三处顶部状态为打包后文档结果更新，r95 二进制及冻结源 manifest 未改，不声称当前全部文档仍逐字等同冻结快照。
+
+本段优先于下方历史落地结论及旧实现保留条款。以下 r91 为原完整链历史基线：本轮同 r91 包三题材 fresh S0–S11 重验 **完整链 0/3**：A 完成 S0–S2、S3 未接收；B/C 原 amendment 后缺当前 S2 卷，B 明示诊断恢复后也未完成 S3；S4–S11 未获本轮原生职责/产品 oracle 验收。旧局部通过不升级为本轮全局通过。证据见[本轮完整报告](/home/sebs/.cache/gsb-global-revalidation-20261018T143345Z/GLOBAL-REVALIDATION-REPORT.md)、[解析审查](/home/sebs/.cache/gsb-global-revalidation-20261018T143345Z/parser-code-review.md)及[预算调用链审查](/home/sebs/.cache/gsb-global-revalidation-20261018T143345Z/case-a-ticket-cli/timeout-code-review.md)。
+
+本轮先按以下边界解决已证阻塞，逐小片审查后实施，不顺带重写专业政策：
+
+合同索引只读取“合同清单”当前实际表的表头、分隔行与连续数据行，表结束后不把适用性或其它专业表当库存。原问卷 `applicability=not_applicable` 的展示行不要求虚构合同文档、locked 状态或版本，也不进入实际交付集合；required 合同的真实文档、状态版本与必要覆盖仍检查。类型展示文字不作精确枚举准入，按原合同 ID family、专业适用性及真实产物读取，不增同义词分类器或字段。
+
+S3 `planning_contract` 原 consumer 在同次接收中一次解析实际交付并生成机器 envelope；CAS 保当前 Runtime/generation/entry/REQ 关联、原 professional semantic 回调及原子提交，删除 CAS 重建已登记发行闭包、重复 `ContractArtifacts` 与 expected 整信封重建。保现存 `Files.Verify`、原 receipt 同答幂等、真实缺项与输出内容检查；机器失败的未接收记录按本次实际生成字节自动形成，不以旧同答 metadata 冲突让作者猜测，原已接收历史不覆盖。后置只读取本次已接收事实，不新增字段、状态、cache、API 或预算；不声称 sharedmodel 全流程只检查一次，transition 原全集 checker 仍保留。r94 限定证据：A 7.590s 到 S4 准确卷，B 8s 仍未接收；solo 诊断 6.655s 已到 S4 cursor，但 issuer 遇 6s deadline 未给卷，诊断不算 fresh 验收；r95 后续限定 S3 接收与 S4 双卷读取见顶部当前记录，不扩称性能根治或完整链通过。
+
+原S2履职结论与文档记录保留为历史事实；S3尚未发行时，按这些已登记design的身份、路径和版本读取当前已提交专业材料，由系统带出本次hash，历史design SHA不作为当前输入资格。真实REQ绑定、当前generation/entry、实际文件与必要覆盖、原Writer/CAS职责保留，不要求作者回滚说明、刷新登记或重新履职。后置门读取同次已验证的当前资料事实，不回拿S2历史hash作为S3资格。
+
+1. **原成功出口交当前责任。** amendment、恢复、返工等原成功入口复用原下一卷 issuer，一次准备真实当前卷并给准确路径；保留旧卷/已接收记录，不让作者手动 issue/consume/recover、猜 generation 目录。人的明确业务选择直接承接必要原事务，姓名仅记录，不要求逐字命令或同一决定的额外执行授权；真实未作的人意仍等待。
+2. **监听与实际变化分开。** S3/S4 普通 Pre/Stop 只读当前责任/已记录进度与真实缺项，不重算接收资格。普通只读工具不反复接收未变答案；准确当前答案保存、相关专业资料或真实 Git 输出确有变化时，仍自动交原 consumer 接续，不因工具叫 Bash/MCP 或无 file_path 漏接。沿已有当前答案/资料/输出事实定位，不新建缓存、receipt、状态或变化证明协议；同答已记而原出口未完仍复用原接续，跨 stage 回放不重推。
+3. **读取真实专业关联。** AC 可实际关联多个既有 FR，逐项保留必要可达关系；只读当前有效验收表，不把 fenced code、历史引用/样例中的旧 AC 当活义务。cross-matrix 允许同 fact×FR×story 下多个实际 branch，不迫作者为载体唯一键改故事归属。S3 正确读取 REQ 附注、自然 Markdown 合同链接及明确 CASE 范围，不能靠全篇偶然 token 代替当前覆盖。已有登记样例与 Schema 定义分类消费，样例不因未属于 Schema 集合被判为新 Schema；缺真实定义/样例或必要覆盖仍具体提醒，不凭自报 pass 跳过。
+4. **机器关联不转作者。** 原系统已知指纹/来源/登记关联由系统使用，清除模板人工组合或复制机器 fingerprint 的义务。专业问卷不新增 metadata、proof、preflight；反馈指明实际材料/条目与下一责任，不要求作者靠猜 parser 格式换接收。
+5. **性能只作有界定位。** 已证预算失败不等于已定位内部慢点；本次函数回放已测得写前与 CAS 内重复 prepare，其他未采样函数的耗时仍未知。仅允许原入口小诊断区分 worker、Pre 取材/QG、Save 前校验/CAS/followup，不增加时限、重试层或资格门。S2 负例比例配额、泛化双检/三角色方法及资料大重构只列后续审查，当前不一并修改专业政策。
+
+真实专业工作、完整必要观察/覆盖、实际 Git 与检查、独立 S5/S7 等职责和必要人意均保留，责任状态仍只有 `pending/active/blocked/done/cancelled`。先用本轮原错误作限定回归与实际接收/交接核对；随后补未覆盖职责、以明确前置边界复验，再同版三新装题材闭环及产品 oracle，才能更新全局验收结果。小片实施与限定机械回归不代表全局验收已完成。
+
 ### 目标与唯一当前规范
 
 Hook 帮助 Agent 按图完成工序：提前说清本人责任、资料、专业问题、答案形状、准确问卷路径和真实缺项。正常流转为 **展示要求和问卷 → 本人执行并填写 → 保存记录事实 → 提醒真实缺项或推进**。
 
-当前规范仅以本节及 [L3-S9 当前规则](l3-stages/L3-S9-repair.md#当前最小工作流2026-10-17重新固定减负设计)为准；具体逐入口职责见该规则与 [S9 机制审查](global-optimization/S9-MECHANISM-REVIEW.md)。下文含 §7 的旧门槛与历史实现不构成保留授权；文档固定契约不表示生产和宿主链已完成迁移。
+当前规范以本节、[S0–S2 当前契约与迁移](global-optimization/S0-S2-MECHANISM-REVIEW.md)、[L3-S9 当前规则](l3-stages/L3-S9-repair.md#当前最小工作流2026-10-17重新固定减负设计)及 [L3-S10 当前最小契约](l3-stages/L3-S10-acceptance-audit.md#当前最小契约2026-10-18设计已固定尚未实施)及 [L3-S11 当前最小契约](l3-stages/L3-S11-release-gate.md#当前最小契约2026-10-18)为准；具体逐入口职责见该规则与 [S9 机制审查](global-optimization/S9-MECHANISM-REVIEW.md)。下文含 §7 的旧门槛与历史实现不构成保留授权；文档固定契约不表示生产和宿主链已完成迁移。
 
 ### 作者做专业工作，系统带出已知事实
 
@@ -43,6 +84,14 @@ Plan/Result 的 fail、blocked、范围偏差可如实记录，不因 scope ACL 
 完整工序：Main 明确批准目标与分工 → 本人 Plan → 实施或测试、自检及本人 Result → 必要 Main 集成与真实检查 → 专业 Impact → 未参与对应实现与合并的独立复验者真实复验全部必要断言 → 正常图完成后自动交接 fresh S7。Handoff 无额外答卷或来源资格层。
 
 不新增模型、作者可见 API、字段/格式、缓存、协议、后台队列、状态层、重试或预算方案。验收看真实工作能否完成、缺项能否准确反馈；Hook exit0、机械 PASS 或历史上游不能替代真实 S9/独立 Targeted/fresh S7 验收。
+
+S10减负三片及作者文案已落地，保原S7当前clean事实与S11真人决定；限定原六函数经r10/r11分段机械验证及r85真实Main到S11待真人（一次人工continue），不是全局或发布完成。[S10-LANDING-REPORT.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s10-reduction-20261018/S10-LANDING-REPORT.md)区分机械/linux-only安装、r84失败与r85实测；不以metrics/fullvalidator代专业判断，不扩S11。
+
+S11本片正常保存自动消费与原退回责任交接已完成限定实施/回归/宿主scope：r88return退审补审再S11、最终r89defect交原S8问题包且监听无false-stale；分轮证据与真实边界见[S11-LANDING-REPORT.md](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s11-reduction-20261018/S11-LANDING-REPORT.md)，非最终同版全矩阵、Investigator执行/完整S8、真实发布或全局完成。
+
+S0–S2新返工契约已固定：原REQ承载专业判断与真实锁定，不新S0收卷；S1原四问题保存自动TR001，S2原两字段保存交原记录/出口，已知事实系统供给、普通Pre/Stop只读，不索重复身份/来源证明或正常命令手续。实际Git对象与专业设计工作保留；本次实施/限定回归done；r91有限宿主范围通过：MiniMax自然exit0、无外部timeout，639.243807714025s，原四题正常保存绑定develop/main准确目标，S2两字段正常保存经PTR-PLAN-01到rev6/planning.contracts/entry2并备S3卷；cross-matrix无null且未借读包外schema。[r91宿主审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/native-s012-r91-minimax-audit.md)。本次复用8份真实专业源，非从零全S0创作、全局完成、真实发布或性能提升；S0仅复用历史草稿/未授权等待与真实锁定交接边界及本轮机械证据，不泛化更宽业务。原20函数/7包编译构建与host-only包安装证据见[落地记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/S0-S2-LANDING-REPORT.md)。r3构建及原19函数通过、r90 linux/amd64包空安装清单0差异。[限定验证与包安装](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/verification-20261018T133235.172892Z/package-install-r90.json)；非全仓/全平台，旧证据不当新通过。见[S0–S2机制审查](global-optimization/S0-S2-MECHANISM-REVIEW.md)。
+
+当前r90宿主暴露两项待验修正：S1原四题的Git引用应逐字填写实际选择（如`main`），括注说明放原自由文本，未知目标留空，不加字段/归一化/资格门；cross-matrix模板可选string的branch/no_branch_reason未用项应省略，不写null，保持原schema/validator。到S3不代表此前错误目标记录已正确，r90场景不回改；两项修正已有r91限定机械证据，最新有限宿主复测已通过，范围见当前记录。
 
 ## 当前接续入口（2026-10-18）
 

@@ -1,5 +1,16 @@
 # S4 机制审查（2026-10-16）
 
+<a id="s4-current-save-contract-20261019"></a>
+### 当前保存契约（2026-10-19，设计固定／实施待验证）
+本段优先于下文历史方案；已证 A/B 原生 S4 保存 8.113/8.129s 超时且无接收，失败证据保留，不更新全局 PASS。
+准确定位现卷后，仅一次检查本人专业答案结构、实际任务覆盖、DAG 与必要责任语义；真实专业未完成不得推进。
+原 Writer 一次原子、幂等记录；Save/prepare/Authorize/followup/receipt 不重复 Rebuild/发行、来源/hash/envelope 重演或身份/权限/scope 资格证明。
+同答重放与后续监听只投影已记事实，由原 TR-002 接至独立 S5；不借“原门”兜底保留重复 proof，不增加字段、状态、cache、proof 或预算。
+S4 非阻塞 advisory 保留真实专业检查意图，不索可识别 checker 命令、不引导探查二进制；机器识别失败不构成补证明或阻流理由。
+198 次 Git 与相同 argv 最多 16 次支持重复工作假设；trace 最大 wait 含 outer-worker 重叠，不作纯 Git 超时主因结论。
+
+本轮证据：[A 原生停点与独立审计](/home/sebs/.cache/gsb-gap-closure-20261019T034632Z/native-a-expense/CASE-REPORT.md)、[一次外部机械诊断](/home/sebs/.cache/gsb-gap-closure-20261019T034632Z/s4-diagnostic/DIAGNOSTIC-RESULT.md)。机械重放不计 native PASS；以下 2026-10-16 记录保留为历史，不代表当前减负实现已落地。
+
 ## 结论与范围
 
 **原问卷、消费者、任务检查与 TR-002 主链可保留，S4 需要局部返工。**

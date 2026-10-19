@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/filelock"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/hook"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
+	"github.com/entroforge/go-system-builder/internal/transition"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -166,23 +168,39 @@ func projectMilestoneReadSources(sources map[string]string, remaining *int64, ro
 	return nil
 }
 
-func observeWorkProgress(root string, request policy.Input, stderr io.Writer) *hook.ProgressNotice {
+func observeWorkProgress(root string, request policy.Input, stderr io.Writer) (*hook.ProgressNotice, bool, bool) {
 	if request.Event != "PostToolUse" || request.SessionID == "" {
-		return nil
-	}
-	switch request.ToolName {
-	case "Read", "Glob", "Grep", "Bash", "Write", "Edit", "MultiEdit":
-	default:
-		return nil
+		return nil, false, false
 	}
 	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).ObservationSnapshot()
 	if err != nil {
-		return nil
+		return nil, false, false
+	}
+	life := mapFieldCLI(snap.State, "lifecycle")
+	planning := life["state"] == "planning" && (life["phase"] == "contracts" || life["phase"] == "tasks")
+	switch request.ToolName {
+	case "Read", "Glob", "Grep":
+		// These events do not run saved-answer consumers; do not consume a
+		// change observation that the next successful save/tool still needs.
+		if planning {
+			return nil, false, false
+		}
+	case "Bash", "Write", "Edit", "MultiEdit":
+	default:
+		if !planning {
+			return nil, false, false
+		}
+	}
+	if request.Error != "" {
+		return nil, false, false
+	}
+	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
+		return nil, false, false
 	}
 	facts, execution, err := projectWorkProgress(root, request, snap)
 	if err != nil {
 		fmt.Fprintf(stderr, "work progress coverage incomplete: %v\n", err)
-		return nil
+		return nil, false, false
 	}
 	event := hook.ProgressEvent{Action: request.ToolName}
 	switch request.ToolName {
@@ -203,11 +221,11 @@ func observeWorkProgress(root string, request policy.Input, stderr io.Writer) *h
 	case "Write", "Edit", "MultiEdit":
 		event.Known = true
 	}
-	notice, err := hook.ObserveWorkProgress(root, facts, event)
+	notice, known, changed, err := hook.ObserveWorkProgress(root, facts, event)
 	if err != nil {
 		fmt.Fprintf(stderr, "work progress diagnostic deferred: %v\n", err)
 	}
-	return notice
+	return notice, known && facts.Known && !facts.Waiting && planning, changed
 }
 
 func projectWorkProgress(root string, request policy.Input, snap runtime.Snapshot) (hook.ProgressFacts, *workspace.Execution, error) {
@@ -281,6 +299,63 @@ func projectWorkProgress(root string, request policy.Input, snap runtime.Snapsho
 	f.Binding = progressJSON([]any{snap.State["runtime_id"], workspace.Generation(snap.State), life["state"], life["phase"], life["phase_revision"], owner})
 	f.RecoveryOwner = "Main"
 	f.Known = true
+	if owner == "Main" && life["state"] == "planning" && (life["phase"] == "contracts" || life["phase"] == "tasks") {
+		// These professional inputs are read from the bound Git tree. Observe its
+		// commit and the disk answer, without rerunning checks or walking sources.
+		catalog, err := transition.LoadCatalog(root)
+		if err != nil {
+			return f, execution, err
+		}
+		for _, rule := range catalog.Definition.FileSources {
+			if rule.Source == "disk" && (rule.Path == "." || rule.Path == "docs" || strings.HasPrefix(rule.Path, "docs/")) {
+				f.Known = false
+				return f, execution, nil
+			}
+		}
+		ref, err := fileview.DevelopmentRef(snap.State)
+		if err != nil {
+			return f, execution, err
+		}
+		files, err := fileview.New(root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
+		if err != nil {
+			return f, execution, err
+		}
+		source, err := files.Source("docs")
+		if err != nil || source != "git_tree" {
+			f.Known = false
+			return f, execution, nil
+		}
+		row, err := registeredPlanningRow(snap.State)
+		if err != nil {
+			return f, execution, err
+		}
+		if row == nil {
+			f.Semantic = progressJSON([]any{"missing_packet", files.Commit})
+			return f, execution, nil
+		}
+		path := progressText(row["answer_path"])
+		if path == "" {
+			f.Semantic = progressJSON([]any{"missing_answer", files.Commit})
+			return f, execution, nil
+		}
+
+		data, err := workpacket.ReadFile(root, path, 256<<10)
+		answer := "missing"
+		if err == nil {
+			answer = workpacket.Digest(data)
+		} else if !os.IsNotExist(err) {
+			return f, execution, err
+		}
+		f.Binding += path
+		f.Semantic = progressJSON([]any{answer, files.Commit})
+		// Keep an already accepted answer on its original continuation path.
+		_, accepted, err := runtime.FindSubmission(snap.State, progressText(row["packet_id"]))
+		if err != nil {
+			return f, execution, err
+		}
+		f.Waiting = accepted
+		return f, execution, nil
+	}
 	if owner != "Main" && loaded.PolicyContext.Agent != nil && loaded.PolicyContext.Agent.ID == owner {
 		agent := loaded.PolicyContext.Agent
 		assignment := hook.AssignmentForAgent(loaded.Assignments, owner)

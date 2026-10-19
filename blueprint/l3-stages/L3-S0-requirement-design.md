@@ -2,7 +2,23 @@
 
 > 层：第三层 ｜ 上游：L2 §S0 ｜ 下游：S1 绑定 ｜ 机制事实经当前模板、skill、协议与实现核实
 >
-> 阅读顺序：先读 §1～§3 建立阶段主线；真正执行 S0 时再按 §4 逐步展开；§5～§8 供设计审计与遇错时查阅。本文先讲工作，再讲机制——工具只在它服务的步骤中出现。
+> 阅读顺序：先读顶部当前最小契约；后文旧主体仅供追溯，不作为恢复旧门或正常命令手续的依据。
+
+## 当前最小契约（2026-10-18）
+
+本节与[GLOBAL§0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-18优先于旧方案)为当前规范；三段迁移与验证边界见[S0–S2机制审查](../global-optimization/S0-S2-MECHANISM-REVIEW.md)。本次实施/限定回归done；r91有限宿主范围通过：MiniMax自然exit0、无外部timeout，639.243807714025s，原四题正常保存绑定develop/main准确目标，S2两字段正常保存经PTR-PLAN-01到rev6/planning.contracts/entry2并备S3卷；cross-matrix无null且未借读包外schema。[r91宿主审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/native-s012-r91-minimax-audit.md)。本次复用8份真实专业源，非从零全S0创作、全局完成、真实发布或性能提升；S0仅复用历史草稿/未授权等待与真实锁定交接边界及本轮机械证据，不泛化更宽业务。原20函数/7包编译构建与host-only包安装证据见[落地记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/S0-S2-LANDING-REPORT.md)。r3原19函数实际RUN/PASS、构建与linux/amd64评估包空安装通过。[限定验证与包安装](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/verification-20261018T133235.172892Z/package-install-r90.json)；不继承历史通过或宣称全仓/全平台验收。
+
+S0复用原 `docs/requirements/REQ-{实际编号}.md` 承载真实目标、约束、验收、未知与人的明确锁定；没有独立S0 Runtime phase，不新增S0收卷门、确认字段、证据登记、状态或问卷。Main做专业整理并记录实际人意，系统不认证人名/权限，不做需求语义鉴真。
+
+- 需求提案与实际必要的人决策保留，不把所有模板栏目/多轮确认变成机械完成门；不适用不造材料，下游设计栏目不让S0猜填。
+- 人已明确同时锁定并启动时，不机械再索一次相同批准；只锁定而未授权启动则等待真实绑定决定。Main依据真实锁定落原REQ与既有锁定记录，不从普通草稿、文件存在或沉默推定批准。
+- 初始SessionStart或真实责任开始可一次准备原REQ模板并给准确路径；普通Pre/Stop只读现稿和具体未决项，不反复准备。REQ锁定完成出口准确投递既有S1申请责任，不能要求另造S0回执/证明。
+
+人的决定、REQ文档生命周期与全局工作五态分开；不新建S0状态机。真实下一责任是已有S1绑定，S0不执行发布或替人猜Git目标。
+
+## 历史主体（以下原章节仅作设计与实现追溯）
+
+旧正文中的命令必需、逐层确认、身份/hash/发行证明、普通Pre准备、异答一概拒收或recover手续，不构成本次保留授权；与当前契约冲突时不得据此恢复。原专业目标与历史证据保留，本次实际验证范围见顶部，不从历史主体继承通过。
 
 ## 1. 第一层：S0 的立意与目标
 

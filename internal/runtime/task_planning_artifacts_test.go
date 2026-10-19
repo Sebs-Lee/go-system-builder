@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,7 @@ func TestTaskPlanningArtifactsReturnsExactREQBatchIncludingCancelled(t *testing.
 	}
 }
 
-func TestTaskPlanningArtifactsRejectsOmittedCancelledOrUnplannedTask(t *testing.T) {
+func TestTaskPlanningArtifactsDoesNotRepeatProfessionalBatchCheck(t *testing.T) {
 	root, state, files := taskPlanningRuntimeFixture(t)
 	inputs, err := runtime.ResolveTaskPlanningInputs(root, state, files)
 	if err != nil {
@@ -57,13 +58,13 @@ func TestTaskPlanningArtifactsRejectsOmittedCancelledOrUnplannedTask(t *testing.
 	writeTaskPlanningFile(t, root, "docs/dev/tasks/TASK-REQ-001-02.md", "> Status: cancelled\n> Source REQ refs: REQ-001\n")
 	writeTaskPlanningFile(t, root, "docs/dev/tasks/index-REQ-001.md", "# REQ-001 dispatch\n> REQ: REQ-001\n> Dispatch policy: waves-v1\n> Revision: 1\n> Status: complete\n\n## W1\n- [ ] [TASK-REQ-001-01](TASK-REQ-001-01.md)\n")
 	answer := workpacket.TaskPlanningAnswer{Conclusion: stringPtr("pass"), IndexPath: stringPtr("docs/dev/tasks/index-REQ-001.md"), TaskPaths: []string{"docs/dev/tasks/TASK-REQ-001-01.md"}}
-	if _, err := runtime.TaskPlanningArtifacts(root, state, p, answer, files); err == nil {
-		t.Fatal("an answer that omitted the cancelled TASK was accepted")
+	if refs, err := runtime.TaskPlanningArtifacts(root, state, p, answer, files); err != nil || len(refs) != 3 {
+		t.Fatalf("system omitted unlisted cancelled task: refs=%v err=%v", refs, err)
 	}
 	answer.TaskPaths = append(answer.TaskPaths, "docs/dev/tasks/TASK-REQ-001-02.md")
 	writeTaskPlanningFile(t, root, "docs/dev/tasks/index-REQ-001.md", "# REQ-001 dispatch\n> REQ: REQ-001\n> Dispatch policy: waves-v1\n> Revision: 1\n> Status: complete\n\n## W1\n")
-	if _, err := runtime.TaskPlanningArtifacts(root, state, p, answer, files); err == nil {
-		t.Fatal("an index that omits a complete TASK was accepted")
+	if _, err := runtime.TaskPlanningArtifacts(root, state, p, answer, files); err != nil {
+		t.Fatalf("artifact projection repeated dispatch-index check: %v", err)
 	}
 }
 
@@ -323,4 +324,66 @@ func mustContractAnswerDigest(t *testing.T, answer workpacket.ContractAnswer) st
 		t.Fatal(err)
 	}
 	return digest
+}
+
+// Only output-directory enumeration, no frozen input access or Verify, projects
+// the actual output bytes already professionally checked by the Service.
+type taskOutputReader struct {
+	fileview.Reader
+	reads map[string]int
+}
+
+func (f taskOutputReader) ReadFile(path string) ([]byte, error) {
+	f.reads[path]++
+	if f.reads[path] > 1 {
+		return nil, fmt.Errorf("repeated artifact read: %s", path)
+	}
+	return f.Reader.ReadFile(path)
+}
+func (f taskOutputReader) ReadDir(path string) ([]os.DirEntry, error) {
+	if path != "docs/dev/tasks" {
+		return nil, fmt.Errorf("unexpected source enumeration: %s", path)
+	}
+	return f.Reader.ReadDir(path)
+}
+func (f taskOutputReader) Verify() error { return fmt.Errorf("unexpected source proof") }
+
+func TestTaskPlanningArtifactsReadsOnlyActualOutputsOnce(t *testing.T) {
+	root, state, files := taskPlanningRuntimeFixture(t)
+	inputs, err := runtime.ResolveTaskPlanningInputs(root, state, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, _ := runtime.CurrentTaskPlanningBinding(state)
+	p, err := workpacket.BuildTaskPlanning(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, task := "docs/dev/tasks/index-REQ-001.md", "docs/dev/tasks/TASK-REQ-001-01.md"
+	writeTaskPlanningFile(t, root, index, "# Actual index\n")
+	writeTaskPlanningFile(t, root, task, "> Status: complete\n> Source REQ refs: REQ-001\n")
+	reader := taskOutputReader{Reader: files, reads: map[string]int{}}
+	answer := workpacket.TaskPlanningAnswer{Conclusion: stringPtr("pass"), IndexPath: &index, TaskPaths: []string{task}}
+	refs, err := runtime.TaskPlanningArtifacts(root, state, p, answer, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 2 || len(reader.reads) != 2 || reader.reads[index] != 1 || reader.reads[task] != 1 {
+		t.Fatalf("unexpected projection reads: %v", reader.reads)
+	}
+	envelope, err := workpacket.TaskPlanningEvidence(p, "E-S4", refs, answer, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(envelope)
+	// Inputs need not be rebuilt or re-proved to decode an existing record.
+	p.Inputs = workpacket.TaskPlanningInputs{}
+	if err := runtime.ValidateTaskPlanningEnvelope(p, "E-S4", answer, data); err != nil {
+		t.Fatal(err)
+	}
+	envelope["task_planning_answer"] = map[string]any{"conclusion": "pass"}
+	data, _ = json.Marshal(envelope)
+	if err := runtime.ValidateTaskPlanningEnvelope(p, "E-S4", answer, data); err == nil {
+		t.Fatal("unreadable professional record accepted")
+	}
 }

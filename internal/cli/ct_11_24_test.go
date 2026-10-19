@@ -186,6 +186,13 @@ func TestCT03915_S11StopsAutoAdvance(t *testing.T) {
 	req039fixtures.SeedAwaitingHumanRelease(t, root, state)
 	req039fixtures.WriteState(t, root, state)
 
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	beforeStateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeJournalBytes, _ := os.ReadFile(journalPath)
 	runner := &req039fixtures.CLIRunner{}
 	before := req039fixtures.ReadState(t, root)
 	beforeLC, beforePh := req039fixtures.Lifecycle(before)
@@ -198,9 +205,10 @@ func TestCT03915_S11StopsAutoAdvance(t *testing.T) {
 	if runner.ManualTransitionCalls != 0 {
 		t.Fatalf("CT-039-15 must not require manual transition CLI")
 	}
-	_, qg := req039fixtures.ParseQualityGate(t, stdout)
-	if committed, _ := qg["transition_committed"].(bool); committed {
-		t.Fatalf("CT-039-15 terminal state must not commit transition, qg=%v", qg)
+	afterStateBytes, _ := os.ReadFile(statePath)
+	afterJournalBytes, _ := os.ReadFile(journalPath)
+	if string(beforeStateBytes) != string(afterStateBytes) || string(beforeJournalBytes) != string(afterJournalBytes) {
+		t.Fatal("S11 ordinary Pre mutated Runtime or journal instead of observing the human wait")
 	}
 
 	after := req039fixtures.ReadState(t, root)

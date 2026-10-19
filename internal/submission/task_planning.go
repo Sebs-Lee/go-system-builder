@@ -91,9 +91,6 @@ func (s *Service) TaskPlanningForPath(path string) (workpacket.TaskPlanningPacke
 }
 
 func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, error) {
-	if err := workspace.RequireMain(s.Root); err != nil {
-		return Receipt{}, err
-	}
 	p, issued, err := s.TaskPlanningForPath(path)
 	if err != nil || !issued {
 		return Receipt{}, fmt.Errorf("S4 answer path has no original Main issuance: %v", err)
@@ -127,20 +124,20 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 		if prior.ContentHash != digest {
 			return s.rejectedTaskPlanning(snap, p, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
 		}
-		id = prior.EvidenceID
-		found := false
-		for _, ev := range evidenceRows(snap.State) {
-			if ev["id"] == id {
-				envelopePath = text(ev["path"])
-				found = true
-				break
+		life, _ := snap.State["lifecycle"].(map[string]any)
+		baseline, _ := snap.State["baseline"].(map[string]any)
+		if (prior.ControlStatus == "pending" || prior.ControlStatus == "no_transition") && snap.State["runtime_id"] == p.Binding.RuntimeID && number(baseline["generation"]) == p.Binding.Generation && life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
+			result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: prior.FollowupID, Files: s.Files})
+			if controlErr == nil && result.Error == "" {
+				snap = result.Snapshot
 			}
 		}
-		if !found {
-			return Receipt{}, fmt.Errorf("original planning evidence missing")
-		}
+		return s.taskPlanningReceipt(snap, p)
 	} else {
-		if err := runtime.ValidateIssuedTaskPlanningPacket(s.Root, snap.State, p, s.Files); err != nil {
+		life, _ := snap.State["lifecycle"].(map[string]any)
+		baseline, _ := snap.State["baseline"].(map[string]any)
+		if snap.State["runtime_id"] != p.Binding.RuntimeID || number(baseline["generation"]) != p.Binding.Generation || life["state"] != "planning" || life["phase"] != "tasks" || number(life["phase_revision"]) != p.Binding.StageEntry {
+			err := fmt.Errorf("S4 answer is not for the current task-planning responsibility")
 			return s.rejectedTaskPlanning(snap, p, err), err
 		}
 		if err := s.validateTaskPlanningChecks(snap.State, p); err != nil {
@@ -155,26 +152,15 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 			return Receipt{}, err
 		}
 		encoded, _ := json.MarshalIndent(envelope, "", "  ")
-		stored, err := workpacket.Publish(s.Root, envelopePath, append(encoded, '\n'))
+		_, err = workpacket.Publish(s.Root, envelopePath, append(encoded, '\n'))
 		if err != nil {
-			return Receipt{}, err
-		}
-		if err := runtime.ValidateTaskPlanningEnvelope(p, id, answer, stored); err != nil {
 			return Receipt{}, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return s.rejectedTaskPlanning(snap, p, err), err
 	}
-	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_task", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
-		if err := workspace.RequireMain(root); err != nil {
-			return err
-		}
-		if err := runtime.ValidateIssuedTaskPlanningPacket(root, state, p, s.Files); err != nil {
-			return err
-		}
-		return s.validateTaskPlanningChecks(state, p)
-	}}})
+	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_task", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files}})
 	if err != nil {
 		return rejected(snap, p.ID, err), err
 	}
@@ -258,50 +244,30 @@ func (s *Service) taskPlanningReceipt(snap runtime.Snapshot, p workpacket.TaskPl
 	if !found {
 		return rejected(snap, p.ID, fmt.Errorf("S4 answer not received")), nil
 	}
-	key := workpacket.Digest([]byte("submission:" + p.ID))
-	if record.Owner != "Main" || record.Key != key || record.FollowupID != workpacket.Digest([]byte(key+":after-domain")) || record.OriginState != "planning" || record.OriginPhase != "tasks" || record.OriginEntry != p.Binding.StageEntry {
-		return r, fmt.Errorf("S4 receipt original responsibility differs")
+	r.SubmissionKey = record.Key
+	r.Accepted = true
+	r.WorkComplete = true
+	r.ResponsibilityStatus = "accepted"
+	r.DomainRefs = []string{record.EvidenceID}
+	r.NextAction = "S4 本人任务拆分交付已接收；原 TR-002 门由系统继续处理。接收不代表 S5 审查通过。"
+	if baseline, ok := snap.State["baseline"].(map[string]any); !ok || snap.State["runtime_id"] != p.Binding.RuntimeID || number(baseline["generation"]) != p.Binding.Generation {
+		r.WorkComplete = false
+		r.ResponsibilityStatus = "replaced"
 	}
-	for _, ev := range evidenceRows(snap.State) {
-		if ev["id"] != record.EvidenceID {
-			continue
-		}
-		data, err := workpacket.ReadFile(s.Root, text(ev["path"]), 1<<20)
-		if err != nil || workpacket.Digest(data) != ev["sha256"] || ev["kind"] != "planning_task" {
-			return r, fmt.Errorf("original S4 evidence no longer matches")
-		}
-		var value map[string]json.RawMessage
-		json.Unmarshal(data, &value)
-		var answer workpacket.TaskPlanningAnswer
-		if err := json.Unmarshal(value["task_planning_answer"], &answer); err != nil {
-			return r, fmt.Errorf("original S4 professional answer malformed")
-		}
-		if err := runtime.ValidateTaskPlanningEnvelope(p, record.EvidenceID, answer, data); err != nil {
-			return r, err
-		}
-		digest, err := workpacket.TaskPlanningAnswerDigest(answer)
-		if err != nil || digest != record.ContentHash {
-			return r, fmt.Errorf("S4 receipt professional digest differs")
-		}
-		r.SubmissionKey = record.Key
-		r.Accepted = true
-		r.WorkComplete = true
-		r.ResponsibilityStatus = "accepted"
-		r.DomainRefs = []string{record.EvidenceID}
-		r.NextAction = "S4 本人任务拆分交付已接收；原 TR-002 门由系统继续处理。接收不代表 S5 审查通过。"
-		if baseline, ok := snap.State["baseline"].(map[string]any); !ok || snap.State["runtime_id"] != p.Binding.RuntimeID || number(baseline["generation"]) != p.Binding.Generation {
-			r.WorkComplete = false
-			r.ResponsibilityStatus = "replaced"
-		}
-		if _, err := runtime.SubmissionFollowup(snap.State, record.FollowupID); err == nil {
-			r.NextAction = "S4 本人交付已接收；原 TR-002 门和 system followup 仍待处理，Main 按正常监听流程继续；无需重交或手动 recover。"
-			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
-		} else if record.ControlStatus == "advanced" {
-			r.NextAction = "S4 本人交付已接收，TR-002 已推进至 S5；后续由 S5 独立审查。"
-		}
-		return r, nil
+	life, _ := snap.State["lifecycle"].(map[string]any)
+	if record.ControlStatus == "replaced" || ((record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && (life["state"] != "planning" || life["phase"] != "tasks" || number(life["phase_revision"]) != p.Binding.StageEntry)) {
+		r.WorkComplete = false
+		r.ResponsibilityStatus = "replaced"
 	}
-	return r, fmt.Errorf("S4 receipt original domain reference missing")
+	if !r.WorkComplete {
+		r.NextAction = "这是旧代或已替换的 S4 接收记录；按当前监听给出的问卷继续，不重交此旧卷。"
+	} else if r.WorkComplete && (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
+		r.NextAction = "S4 本人交付已接收；原 TR-002 门和 system followup 仍待处理，Main 按正常监听流程继续；无需重交或手动 recover。"
+		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
+	} else if record.ControlStatus == "advanced" {
+		r.NextAction = "S4 本人交付已接收，TR-002 已推进至 S5；后续由 S5 独立审查。"
+	}
+	return r, nil
 }
 
 func (s *Service) TaskPlanningReceipt(path, packetID string) (Receipt, error) {

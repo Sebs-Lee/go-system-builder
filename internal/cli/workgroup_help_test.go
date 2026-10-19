@@ -54,3 +54,31 @@ func TestS6HelpNamesSupportedStatusAndFlags(t *testing.T) {
 		t.Fatalf("s6 prepare help omits the existing Main workspace bind command: %s", out.String())
 	}
 }
+
+func TestLifecycleLeafHelpExposesOriginalFlagsWithoutRuntime(t *testing.T) {
+	for _, tc := range []struct{ args, flags []string }{
+		{[]string{"runtime", "pause"}, []string{"-root", "-approved-by", "-reason"}},
+		{[]string{"runtime", "resume"}, []string{"-root", "-approved-by"}},
+		{[]string{"req", "amend"}, []string{"-root", "-approved-by", "-req"}},
+	} {
+		for _, help := range []string{"--help", "-h", "help"} {
+			t.Run(strings.Join(tc.args, " ")+" "+help, func(t *testing.T) {
+				root := t.TempDir()
+				args := append(append([]string{}, tc.args...), "--root", root, help)
+				var out, errout bytes.Buffer
+				if code := cli.Run(args, nil, &out, &errout); code != 0 || errout.Len() != 0 {
+					t.Fatalf("help failed code=%d stdout=%s stderr=%s", code, out.String(), errout.String())
+				}
+				for _, flag := range tc.flags {
+					if !strings.Contains(out.String(), flag) {
+						t.Fatalf("help hides %s: %s", flag, out.String())
+					}
+				}
+				entries, err := os.ReadDir(root)
+				if err != nil || len(entries) != 0 {
+					t.Fatalf("help created artifacts: %v %v", entries, err)
+				}
+			})
+		}
+	}
+}

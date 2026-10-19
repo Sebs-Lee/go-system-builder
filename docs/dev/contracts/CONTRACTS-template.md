@@ -20,7 +20,7 @@
 | related | `docs/design/prototypes/{module}/` | UI impact = changed 时必填；模块当前真相包 |
 | downstream | `docs/dev/tasks/index-REQ-{id}.md` | 派生任务 |
 | evidence | `docs/reports/review/REV-{id}.md` | 文档审核 |
-| runtime | `.claude/loop-state.json` | 当前状态通过 Runtime identity、状态和指纹引用；commit revision 仅作可选审计元数据 |
+| runtime | `.claude/loop-state.json` | 当前状态通过 Runtime identity和状态读取；机器关联由 Runtime/consumer 带出，不要求作者复制指纹或 revision |
 
 ## 合同锁定声明
 
@@ -46,9 +46,11 @@
 服务 CASE 的验证来源是原服务入口的单元/集成检查；`browser_required:false` 只免除
 浏览器 spec，不允许删除 CASE。不能仅凭 none 把模块与验证来源填成 N/A。
 
-| REQ source_ref | UI impact | 模块当前真相包 | Fingerprint (SHA-256) | 合同影响 | E2E 来源 |
-|:---|:---|:---|:---|:---|:---|
-| REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cross-matrix.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | `{sha256}` / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |
+| REQ source_ref | UI impact | 模块当前真相包 | 合同影响 | E2E 来源 |
+|:---|:---|:---|:---|:---|
+| REQ-{id}/FR-{id} | none / changed / unknown | `docs/design/prototypes/{module}/` (index.html + stories.md + flows.md + scenario-model.json + cross-matrix.json + cases.json + scenario-coverage.json + fixture-contract.json + *.html) / N/A | FE / BE / SYNC / N/A | CASE/PATH → `web/e2e/{module}/` / N/A |
+
+模块输入的机器指纹/登记关联由 Runtime 与原 consumer 使用，作者只填写实际模块、合同影响和验证来源，不拼接或抄写 fingerprint。
 
 ## 需求覆盖矩阵
 

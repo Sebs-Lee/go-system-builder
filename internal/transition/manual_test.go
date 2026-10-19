@@ -133,3 +133,27 @@ func TestManualS10GuidanceNamesManifestAndClosedLoop(t *testing.T) {
 		}
 	}
 }
+
+func TestManualApprovedAmendmentUsesOriginalReceiverAndCurrentQuestionnaire(t *testing.T) {
+	def := &transition.LoopDefinition{Transitions: []transition.TransitionSpec{{ID: "TR-020", From: "paused", To: "planning", RequiredEvidence: []string{"human_decision_record", "req_lock_record"}}}}
+	manual := transition.RenderManual(def, transition.ManualOptions{})
+	for _, want := range []string{
+		"## Approved requirement amendment {#approved-requirement-amendment}",
+		"skip this step when already paused",
+		"runtime pause --root <project-root> --approved-by <actual-human> --reason <approved-correction>",
+		"same REQ ID", "raise its semantic version", "bound development branch",
+		"req amend --root <project-root> --req docs/requirements/REQ-<id>.md --approved-by <actual-human>",
+		"exact current S2 questionnaire view/answer paths", "do not ask for the same approval again",
+	} {
+		if !strings.Contains(manual, want) {
+			t.Fatalf("normal amendment guidance missing %q", want)
+		}
+	}
+	legacy := transition.RenderTransition(def, "TR-020")
+	if !strings.Contains(legacy, "Low-level diagnostic evidence slots only") || !strings.Contains(legacy, "#approved-requirement-amendment") || strings.Contains(legacy, "copy into `runtime transition`") || strings.Contains(legacy, "retry with the command above") {
+		t.Fatalf("TR020 still presented as normal evidence composition: %s", legacy)
+	}
+	if err := transition.ValidateManualEvidenceBindings(def, manual); err != nil {
+		t.Fatal(err)
+	}
+}

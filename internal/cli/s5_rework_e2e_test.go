@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/transition"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
@@ -85,6 +86,18 @@ func TestS5ReworkRetiresOriginalWorkersAndPreservesReceivedReplay(t *testing.T) 
 	after := stageSnapshot(t, root)
 	if after.State["lifecycle"].(map[string]any)["state"] != "planning" {
 		t.Fatalf("original finding did not route TR-004: %v", after.State["lifecycle"])
+	}
+	design, err := runtime.CurrentDesignPacket(after.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, issued, err := runtime.FindDesignPacket(after.State, design.ID); err != nil || !issued {
+		t.Fatalf("S5 save did not prepare the new S2 entry: %v", err)
+	}
+	for _, path := range []string{design.ViewPath, design.AnswerPath} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Fatalf("current S2 path unavailable %s: %v", path, err)
+		}
 	}
 	retired, err := workspace.Decode(after.State)
 	if err != nil || len(retired.Executions) != 0 || len(retired.History) != 2 {

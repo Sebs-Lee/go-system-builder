@@ -17,7 +17,7 @@ func progressFixture() ProgressFacts {
 }
 func observeProgress(t *testing.T, root string, f ProgressFacts, e ProgressEvent) *ProgressNotice {
 	t.Helper()
-	n, err := ObserveWorkProgress(root, f, e)
+	n, _, _, err := ObserveWorkProgress(root, f, e)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestWorkProgressBoundedRangeSaturationAndDamagedCache(t *testing.T) {
 	if err := os.WriteFile(path, []byte("damaged"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true}); err == nil || n != nil {
+	if n, _, _, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true}); err == nil || n != nil {
 		t.Fatal("damaged diagnostic gained authority", n, err)
 	}
 	if bytes, _ := os.ReadFile(path); string(bytes) != "damaged" {
@@ -123,7 +123,7 @@ func TestWorkProgressConcurrentOnceAndLockBound(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			n, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true})
+			n, _, _, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true})
 			if err != nil {
 				return
 			}
@@ -144,7 +144,31 @@ func TestWorkProgressConcurrentOnceAndLockBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	if n, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true}); err == nil || n != nil {
+	if n, _, _, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true}); err == nil || n != nil {
 		t.Fatal("busy cache bypassed bounded lock", n, err)
+	}
+}
+
+func TestWorkProgressReportsOnlyResponsibilityFactChanges(t *testing.T) {
+	root := t.TempDir()
+	facts := progressFixture()
+	event := ProgressEvent{Action: "status", Known: true}
+	for i, want := range []bool{true, false} {
+		_, known, changed, err := ObserveWorkProgress(root, facts, event)
+		if err != nil || !known || changed != want {
+			t.Fatalf("observation %d: known=%v changed=%v err=%v", i, known, changed, err)
+		}
+	}
+	read := ProgressEvent{Action: "Read", Known: true, Read: &ProgressRead{Path: "/necessary", Digest: "digest", Range: "1:2"}}
+	if _, known, changed, err := ObserveWorkProgress(root, facts, read); err != nil || !known || changed {
+		t.Fatalf("new read range became a changed answer/source: %v %v %v", known, changed, err)
+	}
+	facts.Semantic = "actual changed professional answer"
+	if _, known, changed, err := ObserveWorkProgress(root, facts, event); err != nil || !known || !changed {
+		t.Fatalf("changed fact lost: %v %v %v", known, changed, err)
+	}
+	facts.Known = false
+	if _, known, _, err := ObserveWorkProgress(root, facts, event); err != nil || known {
+		t.Fatalf("unknown facts became known: %v %v", known, err)
 	}
 }

@@ -34,7 +34,7 @@ func TestProgressPacketS9SkipsLegacyCoverageWithoutCache(t *testing.T) {
 		for _, tool := range []string{"Read", "Bash", "Write"} {
 			request := policy.Input{Event: "PostToolUse", ToolName: tool, AgentID: owner, SessionID: "s9-progress", CWD: f.root, ToolInput: map[string]any{"file_path": filepath.Join(f.root, ".claude/loop-state.json")}}
 			var diagnostic bytes.Buffer
-			if notice := observeWorkProgress(f.root, request, &diagnostic); notice != nil || diagnostic.Len() != 0 {
+			if notice, _, _ := observeWorkProgress(f.root, request, &diagnostic); notice != nil || diagnostic.Len() != 0 {
 				t.Fatalf("%s %s emitted legacy S9 coverage noise: notice=%+v stderr=%s", owner, tool, notice, diagnostic.String())
 			}
 		}

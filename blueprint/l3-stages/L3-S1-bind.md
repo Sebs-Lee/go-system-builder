@@ -2,9 +2,28 @@
 
 > 层：第三层 ｜ 上游：L2 §S1 + L2「REQ 授权生命周期」 ｜ 前置：S0 human-locked REQ ｜ 下游：S2 设计
 >
-> 阅读顺序：先读 §1～§3 理解一次绑定怎样成立；真正执行时按 §4 看每一步由谁和什么机制承载；§5 单独说明贯穿后续 stage 的授权控制面；§6～§8 供审计和遇错时查阅。S1 的主线是一笔一次性授权提交，不把暂停、修订、解绑等跨阶段动作混进正常绑定路径。
+> 阅读顺序：先读顶部当前最小契约；后文旧主体仅供追溯，不作为恢复旧门或正常命令手续的依据。
 
 > **Revision 口径**：Runtime `revision` 是 Writer 内部生成的提交序号，不是绑定授权、人类决策或 Agent 的正常输入。主会话提交候选 REQ、授权人、开发主分支、发布上游和业务意图；锁、原子写、journal、pending 及 revision 分配由 Runtime Writer 完成。详见 [L4 Runtime revision 使用与命令协调](../l4-mechanisms/L4-revision-usage.md)。
+
+## 当前最小契约（2026-10-18）
+
+本节与[GLOBAL§0](../GLOBAL-OPTIMIZATION-DESIGN.md#0-收缩后的实施决策2026-10-18优先于旧方案)为当前规范；三段迁移与验证边界见[S0–S2机制审查](../global-optimization/S0-S2-MECHANISM-REVIEW.md)。本次实施/限定回归done；r91有限宿主范围通过：MiniMax自然exit0、无外部timeout，639.243807714025s，原四题正常保存绑定develop/main准确目标，S2两字段正常保存经PTR-PLAN-01到rev6/planning.contracts/entry2并备S3卷；cross-matrix无null且未借读包外schema。[r91宿主审计](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/native-s012-r91-minimax-audit.md)。本次复用8份真实专业源，非从零全S0创作、全局完成、真实发布或性能提升；S0仅复用历史草稿/未授权等待与真实锁定交接边界及本轮机械证据，不泛化更宽业务。原20函数/7包编译构建与host-only包安装证据见[落地记录](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/S0-S2-LANDING-REPORT.md)。r3原19函数实际RUN/PASS、构建与linux/amd64评估包空安装通过。[限定验证与包安装](/home/sebs/.cache/gsb-adapter-work-mp771m5c/claude-closure-20261015T011245Z/diagnostics/s0-s2-reduction-20261018/verification-20261018T133235.172892Z/package-install-r90.json)；不继承历史通过或宣称全仓/全平台验收。
+
+本轮固定：题干说明不作答案匹配资格；短授权题干与既有长题干兼容，先剥旧完整说明再读实际授权记录，空稿不当批准。
+
+S1复用现 `requirement-binding.md` 的原四问题：选择哪个REQ、实际授权记录、开发分支、发布目标。系统预填当前已知事实及准确路径，只提示尚缺的真实选择，不添确认字段、身份凭证或提交协议。
+
+- 用户已同时明确锁定/启动的原意可直接承接，不机械双确认；未授权启动则原授权问题留空等待。姓名只是实际授权记录，不作身份认证；无决定不默认批准。
+- Main填写原四问题后正常保存，监听调用原TR001/Writer完成绑定与原S2责任投递，不要求执行命令、另交metadata或以工具权限作为第二确认。原 `req bind` 仅兼容/恢复入口。
+- 初始SessionStart、真实责任开始或原REQ lock完成出口一次准备；普通Pre/Stop只读。已消费旧申请不重新绑定，不能仅凭当前非inactive判断：unbind/rollover回到inactive时仍沿原Runtime/lifecycle当前entry及binding receipt定位本次申请，旧卷可读但不重绑。系统给准确路径：初次无归档用原requirement-binding.md，其后只从既有.claude/runtime-archive目录名的原时间后缀选最新归档basename，作为内部submissions路径段，不读历史state/hash；原unbind/rollover出口及SessionStart准备当前空授权，旧路径非当前不接。无需改变inactive坐标、新增attempt、确认flag或作者metadata。
+- 绑定保留真实Git开发/发布目标、已提交REQ对象的准确关联与原Writer/CAS/幂等；缺已提交对象或真实目标给具体路径/分支缺项，不自动commit、猜目标、push或发布，不反向索全源hash证明。
+
+人负责真实启动意图及必要业务选择，系统带出现成机器事实；同答不重复绑定，真实并发/当前责任冲突沿原边界。绑定与真正发布仍分开。
+
+## 历史主体（以下原章节仅作设计与实现追溯）
+
+旧正文中的命令必需、逐层确认、身份/hash/发行证明、普通Pre准备、异答一概拒收或recover手续，不构成本次保留授权；与当前契约冲突时不得据此恢复。原专业目标与历史证据保留，本次实际验证范围见顶部，不从历史主体继承通过。
 
 ## 1. 第一层：S1 的立意与目标
 

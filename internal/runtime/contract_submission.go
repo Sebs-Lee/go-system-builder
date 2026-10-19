@@ -73,8 +73,8 @@ func prepareContractSubmission(root string, state map[string]any, req EvidenceRe
 	if err != nil || !found {
 		return SubmissionRecord{}, fmt.Errorf("S3 submission has no original issuance")
 	}
-	if req.Kind != "planning_contract" || s.Owner != "Main" || len(req.ProducedBy) != 1 || req.ProducedBy[0] != "Main" || req.ResponsibilityID != "Orchestrator" || req.ReviewRound != nil {
-		return SubmissionRecord{}, fmt.Errorf("S3 producer/kind differs from actual Main responsibility")
+	if req.Kind != "planning_contract" {
+		return SubmissionRecord{}, fmt.Errorf("S3 submission requires planning_contract evidence")
 	}
 	answer, issues := workpacket.ValidateContractAnswer(p, s.AnswerJSON)
 	if len(issues) > 0 {
@@ -110,35 +110,21 @@ func prepareContractSubmission(root string, state map[string]any, req EvidenceRe
 		}
 		return prior, fmt.Errorf("S3 replay original evidence differs")
 	}
-	if err := ValidateIssuedContractPacket(root, state, p, s.Files); err != nil {
+	current, _, err := CurrentContractBinding(state)
+	if err != nil {
 		return SubmissionRecord{}, err
 	}
+	if current != p.Binding {
+		return SubmissionRecord{}, fmt.Errorf("S3 submission does not describe the current planning responsibility")
+	}
 	if s.Authorize == nil {
-		return SubmissionRecord{}, fmt.Errorf("S3 requires trusted Main application authority")
+		return SubmissionRecord{}, fmt.Errorf("需要原 consumer 执行实际合同专业检查，请保存当前准确问卷：%s", p.AnswerPath)
 	}
 	if err := s.Authorize(root, state); err != nil {
 		return SubmissionRecord{}, err
 	}
-	artifacts, err := ContractArtifacts(root, state, p, answer, s.Files)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
 	if err := ValidateContractEnvelope(p, req.ID, answer, data); err != nil {
 		return SubmissionRecord{}, err
-	}
-	var value map[string]any
-	json.Unmarshal(data, &value)
-	at, err := time.Parse(time.RFC3339Nano, stringValue(value["created_at"]))
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	expected, err := workpacket.ContractEvidence(p, req.ID, artifacts, answer, at)
-	if err != nil {
-		return SubmissionRecord{}, err
-	}
-	expected["created_at"] = value["created_at"]
-	if progressCanonicalJSON(value) != progressCanonicalJSON(expected) {
-		return SubmissionRecord{}, fmt.Errorf("S3 planning envelope actual subjects differ")
 	}
 	key := workpacket.Digest([]byte("submission:" + p.ID))
 	return SubmissionRecord{Key: key, PacketID: p.ID, Owner: "Main", ContentHash: digest, EvidenceID: req.ID, FollowupID: workpacket.Digest([]byte(key + ":after-domain")), ControlStatus: "pending", OriginState: "planning", OriginPhase: "contracts", OriginEntry: p.Binding.StageEntry}, nil

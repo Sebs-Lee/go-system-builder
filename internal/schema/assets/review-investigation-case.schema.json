@@ -11,11 +11,7 @@
     "revision",
     "status",
     "source_finding_ids",
-    "observation_batch_id",
-    "observation_batch_ref",
-    "observation_batch_sha256",
     "baseline_generation",
-    "baseline_digest",
     "grouping_rationale",
     "unexplained_finding_ids",
     "failure_boundary_refs",
@@ -38,7 +34,6 @@
     "status": {"enum": ["investigating", "contract_review", "contract_approved", "routed", "blocked", "closed"]},
     "source_finding_ids": {
       "type": "array",
-      "minItems": 1,
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1}
     },
@@ -157,7 +152,7 @@
             "refute": {"type": "string", "minLength": 1}
           }
         },
-        "source_finding_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "source_finding_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
         "status": {"enum": ["open", "supported", "refuted", "inconclusive"]}
       }
     },

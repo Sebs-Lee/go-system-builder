@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/entroforge/go-system-builder/internal/controller"
+	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
 )
@@ -25,7 +26,7 @@ func TestMainPlanningReadCycleConsumesAcceptedS2Followup(t *testing.T) {
 	ctx, cancel := pendingMainFollowupContext(s, packet.ID)
 	defer cancel()
 	receipt, err := s.SaveDesign(ctx, packet.AnswerPath)
-	if err != nil || !receipt.Accepted || !receipt.WorkComplete {
+	if err != nil || !receipt.Accepted || receipt.WorkComplete {
 		t.Fatalf("accept S2 before ordinary cycle: %+v %v", receipt, err)
 	}
 	assertReadCycleConsumesPlanningFollowup(t, s, packet.ID, "PTR-PLAN-01", "design", "contracts")
@@ -81,23 +82,77 @@ func assertReadCycleConsumesPlanningFollowup(t *testing.T, s *submission.Service
 		t.Fatalf("typed Main answer did not leave one pending followup: %+v found=%t err=%v", prior, found, err)
 	}
 
-	result, err := controller.RunControlCycle(context.Background(), controller.ControlRequest{
-		Root: s.Root, CWD: s.Root, Files: s.Files, Event: "PreToolUse", ToolName: "Read",
-	})
-	if err != nil || result.Error != "" {
-		t.Fatalf("ordinary PreToolUse/Read cycle: result=%+v err=%v", result, err)
+	if fromPhase != "design" {
+		journalBefore, err := os.ReadFile(filepath.Join(s.Root, ".claude/loop-events.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range []string{"PreToolUse", "Stop"} {
+			body, _ := json.Marshal(map[string]any{"hook_event_name": event, "tool_name": "Read", "cwd": s.Root})
+			var out, stderr bytes.Buffer
+			if code := cli.Run([]string{"hook", "--event", event, "--root", s.Root}, bytes.NewReader(body), &out, &stderr); code != 0 {
+				t.Fatalf("ordinary %s: %s %s", event, out.String(), stderr.String())
+			}
+			after := stageSnapshot(t, s.Root)
+			journalAfter, err := os.ReadFile(filepath.Join(s.Root, ".claude/loop-events.jsonl"))
+			if err != nil || after.Revision != before.Revision || !bytes.Equal(journalBefore, journalAfter) {
+				t.Fatalf("ordinary %s changed pending work: before=%d after=%d err=%v", event, before.Revision, after.Revision, err)
+			}
+		}
 	}
-	if !result.QualityGate.TransitionCommitted || result.QualityGate.CandidateTransition != transitionID {
-		t.Fatalf("ordinary Read did not commit original %s transition: %+v", transitionID, result.QualityGate)
+	var receipt submission.Receipt
+	switch fromPhase {
+	case "design":
+		packet, found, err := runtime.FindDesignPacket(before.State, packetID)
+		if err != nil || !found {
+			t.Fatalf("design packet: %v", err)
+		}
+		receipt, err = s.SaveDesign(context.Background(), packet.AnswerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	case "contracts":
+		packet, found, err := runtime.FindContractPacket(before.State, packetID)
+		if err != nil || !found {
+			t.Fatalf("contract packet: %v", err)
+		}
+		receipt, err = s.SaveContracts(context.Background(), packet.AnswerPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+	case "tasks":
+		// The answer and original reception already exist. A successful Post
+		// Read continues that followup without another edit or Save command.
+		body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": map[string]any{"file_path": "docs/project-map.md"}, "cwd": s.Root})
+		var out, stderr bytes.Buffer
+		if code := cli.Run([]string{"hook", "--event", "PostToolUse", "--root", s.Root}, bytes.NewReader(body), &out, &stderr); code != 0 {
+			t.Fatalf("pending PostRead: %s %s", out.String(), stderr.String())
+		}
+		var hook struct {
+			Output struct {
+				Context string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		for _, line := range bytes.Split(out.Bytes(), []byte("\n")) {
+			if json.Unmarshal(line, &hook) == nil && strings.HasPrefix(hook.Output.Context, "S4 SUBMISSION RECEIPT: ") {
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(hook.Output.Context, "S4 SUBMISSION RECEIPT: ")), &receipt); err != nil {
+					t.Fatal(err)
+				}
+				break
+			}
+		}
+
 	}
-	if result.Snapshot.State == nil {
-		t.Fatal("ordinary Read cycle returned no committed snapshot")
+	if !receipt.Accepted {
+		t.Fatalf("same saved report lost acceptance: %+v", receipt)
 	}
-	record, found, err := runtime.FindSubmission(result.Snapshot.State, packetID)
+	snapshot := stageSnapshot(t, s.Root)
+
+	record, found, err := runtime.FindSubmission(snapshot.State, packetID)
 	if err != nil || !found || record.ControlStatus != "advanced" || record.TransitionEventID == "" {
 		t.Fatalf("original Main followup was not stamped advanced with the transition: %+v found=%t err=%v", record, found, err)
 	}
-	lifecycle := result.Snapshot.State["lifecycle"].(map[string]any)
+	lifecycle := snapshot.State["lifecycle"].(map[string]any)
 	if lifecycle["state"] != "planning" && transitionID != "TR-002" {
 		t.Fatalf("planning route state = %v", lifecycle)
 	}
@@ -109,7 +164,23 @@ func assertReadCycleConsumesPlanningFollowup(t *testing.T, s *submission.Service
 		t.Fatalf("%s destination phase = %v, want %s", transitionID, lifecycle["phase"], toPhase)
 	}
 	assertPlanningTransitionJournalEvent(t, s.Root, record.TransitionEventID, transitionID, fromPhase)
-	return result.Snapshot
+	if fromPhase == "tasks" {
+		journalBefore, err := os.ReadFile(filepath.Join(s.Root, ".claude/loop-events.jsonl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Read", "cwd": s.Root})
+		var out, stderr bytes.Buffer
+		if code := cli.Run([]string{"hook", "--event", "PostToolUse", "--root", s.Root}, bytes.NewReader(body), &out, &stderr); code != 0 {
+			t.Fatalf("advanced PostRead: %s %s", out.String(), stderr.String())
+		}
+		after := stageSnapshot(t, s.Root)
+		journalAfter, err := os.ReadFile(filepath.Join(s.Root, ".claude/loop-events.jsonl"))
+		if err != nil || after.Revision != snapshot.Revision || !bytes.Equal(journalBefore, journalAfter) {
+			t.Fatalf("advanced PostRead repeated business write: %v", err)
+		}
+	}
+	return snapshot
 }
 
 func assertPlanningTransitionJournalEvent(t *testing.T, root, eventID, transitionID, fromPhase string) {
@@ -146,4 +217,27 @@ func assertPlanningTransitionJournalEvent(t *testing.T, root, eventID, transitio
 		t.Fatal(err)
 	}
 	t.Fatalf("journal does not contain followup's exact transition event %q", eventID)
+}
+
+func TestTaskPlanningPostReadDoesNotSubmitUnreceivedAnswer(t *testing.T) {
+	root, packet := newTaskPlanningAnswerFixture(t)
+	stageJSON(t, root, packet.AnswerPath, completedTaskPlanningDraft(packet))
+	before := stageSnapshot(t, root)
+	journalBefore, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Read", "cwd": root})
+	var out, stderr bytes.Buffer
+	if code := cli.Run([]string{"hook", "--event", "PostToolUse", "--root", root}, bytes.NewReader(body), &out, &stderr); code != 0 {
+		t.Fatalf("unreceived PostRead: %s %s", out.String(), stderr.String())
+	}
+	after := stageSnapshot(t, root)
+	journalAfter, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if err != nil || after.Revision != before.Revision || !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatalf("PostRead promoted unreceived content: %v", err)
+	}
+	if _, found, err := runtime.FindSubmission(after.State, packet.ID); err != nil || found {
+		t.Fatalf("Read created a new submission: found=%v err=%v", found, err)
+	}
 }

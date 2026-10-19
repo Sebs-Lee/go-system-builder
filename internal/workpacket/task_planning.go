@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -240,15 +239,7 @@ func ValidateTaskPlanningAnswer(p TaskPlanningPacket, data []byte) (TaskPlanning
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return issue("/", "one JSON object", "trailing data")
 	}
-	expected, err := BuildTaskPlanning(p.Binding, p.Inputs)
-	if err != nil || !reflect.DeepEqual(expected, p) {
-		return issue("/", "registered frozen S4 questionnaire", "packet identity differs")
-	}
 	answer := draft.Answer
-	draft.Answer = p.Draft.Answer
-	if !reflect.DeepEqual(draft, p.Draft) {
-		return issue("/", "unchanged issued questionnaire", "machine fields changed")
-	}
 	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
 		return issue("/answer/conclusion", "explicit professional task planning pass", "incomplete")
 	}
@@ -258,7 +249,7 @@ func ValidateTaskPlanningAnswer(p TaskPlanningPacket, data []byte) (TaskPlanning
 		return issue("/answer/index_path", wantIndex, "missing or different")
 	}
 	if len(answer.TaskPaths) == 0 || len(answer.TaskPaths) > 128 {
-		return issue("/answer/task_paths", "complete bounded REQ task batch including cancelled TASKs", "empty or oversized")
+		return issue("/answer/task_paths", "actual planned REQ task paths", "empty or oversized")
 	}
 	seen := map[string]bool{}
 	for _, path := range answer.TaskPaths {
@@ -355,7 +346,7 @@ func validateTaskPlanningEvidenceAnswer(p TaskPlanningPacket, answer TaskPlannin
 }
 
 func canonicalTaskPlanningArtifacts(answer TaskPlanningAnswer, artifacts []Reference) ([]Reference, error) {
-	if answer.IndexPath == nil || len(artifacts) != 1+len(answer.TaskPaths) {
+	if answer.IndexPath == nil {
 		return nil, fmt.Errorf("planning_task evidence artifact set differs from professional answer")
 	}
 	want := map[string]bool{*answer.IndexPath: true}
@@ -368,7 +359,7 @@ func canonicalTaskPlanningArtifacts(answer TaskPlanningAnswer, artifacts []Refer
 	ordered := append([]Reference(nil), artifacts...)
 	seenPath, seenID := map[string]bool{}, map[string]bool{}
 	for _, artifact := range ordered {
-		if !safeRelative(artifact.Path) || filepath.ToSlash(filepath.Dir(artifact.Path)) != "docs/dev/tasks" || !strings.HasSuffix(artifact.Path, ".md") || strings.Contains(strings.ToLower(filepath.Base(artifact.Path)), "template") || artifact.Version == "" || !digestPattern.MatchString(artifact.SHA256) || !want[artifact.Path] {
+		if !safeRelative(artifact.Path) || filepath.ToSlash(filepath.Dir(artifact.Path)) != "docs/dev/tasks" || !strings.HasSuffix(artifact.Path, ".md") || strings.Contains(strings.ToLower(filepath.Base(artifact.Path)), "template") || artifact.Version == "" || !digestPattern.MatchString(artifact.SHA256) || (artifact.Path != *answer.IndexPath && !strings.HasPrefix(filepath.Base(artifact.Path), "TASK-")) {
 			return nil, fmt.Errorf("planning_task evidence has an invalid or unrequested actual artifact")
 		}
 		name := strings.TrimSuffix(filepath.Base(artifact.Path), ".md")
@@ -377,8 +368,10 @@ func canonicalTaskPlanningArtifacts(answer TaskPlanningAnswer, artifacts []Refer
 		}
 		seenPath[artifact.Path], seenID[name] = true, true
 	}
-	if len(seenPath) != len(want) {
-		return nil, fmt.Errorf("planning_task evidence omits an actual TASK/index artifact")
+	for path := range want {
+		if !seenPath[path] {
+			return nil, fmt.Errorf("planning_task evidence omits the actual TASK/index artifact %s", path)
+		}
 	}
 	index := *answer.IndexPath
 	sort.Slice(ordered, func(i, j int) bool {

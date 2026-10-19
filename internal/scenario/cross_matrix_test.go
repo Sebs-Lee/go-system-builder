@@ -1,6 +1,7 @@
 package scenario_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,29 @@ func writeCrossMatrix(t *testing.T, root, module string, matrix map[string]any) 
 // TestCrossMatrixRequiredAndValidated pins the carrier: a module package
 // without cross-matrix.json is incomplete, and references must resolve.
 func TestCrossMatrixRequiredAndValidated(t *testing.T) {
+	// Exercise each shipped template entry unchanged in shape against real fixture values.
+	template, err := os.ReadFile(filepath.Join("..", "..", "docs/design/prototypes/cross-matrix-template.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	template = []byte(strings.NewReplacer("example-module", "investor-workbench", "FACT-EXAMPLE", "fact-investor", "REQ-<id>/FR-<id>", "REQ-INV-001", "S-002", "S-001", "branch-<id>", "branch-allow").Replace(string(template)))
+	var matrix map[string]any
+	if err := json.Unmarshal(template, &matrix); err != nil {
+		t.Fatal(err)
+	}
+	entries := matrix["entries"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("expected the two shipped example entries, got %d", len(entries))
+	}
+	for i, entry := range entries {
+		templateRoot := newScenarioRoot(t, "investor-workbench", "ordinary")
+		matrix["entries"] = []any{entry}
+		writeCrossMatrix(t, templateRoot, "investor-workbench", matrix)
+		if _, err := scenario.GenerateModule(templateRoot, "investor-workbench"); err != nil {
+			t.Fatalf("shipped template entry %d must generate with fixture references: %v", i, err)
+		}
+	}
+
 	root := newScenarioRoot(t, "investor-workbench", "ordinary")
 	if err := os.Remove(filepath.Join(root, "docs/design/prototypes", "investor-workbench", "cross-matrix.json")); err != nil {
 		t.Fatal(err)
@@ -172,4 +196,28 @@ func TestCrossMatrixCompletenessFloor(t *testing.T) {
 			t.Fatalf("unhunted fact must fail, got %v", err)
 		}
 	})
+}
+
+func TestCrossMatrixSameCellDifferentBranches(t *testing.T) {
+	for _, duplicate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "different branches", true: "same branch"}[duplicate], func(t *testing.T) {
+			root := newScenarioRoot(t, "investor-workbench", "ordinary")
+			second := "branch-reject"
+			if duplicate {
+				second = "branch-allow"
+			}
+			writeCrossMatrix(t, root, "investor-workbench", map[string]any{"module": "investor-workbench", "entries": []any{
+				map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001", "branch": "branch-allow"},
+				map[string]any{"fact": "fact-investor", "req_ref": "REQ-INV-001", "story": "S-001", "branch": second},
+			}})
+			_, err := scenario.GenerateModule(root, "investor-workbench")
+			if duplicate {
+				if err == nil || !strings.Contains(err.Error(), "duplicates") {
+					t.Fatalf("want duplicate error, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

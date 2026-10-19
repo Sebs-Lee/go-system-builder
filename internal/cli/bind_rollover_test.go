@@ -42,8 +42,12 @@ func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(
 		t.Fatalf("req bind must accept a controller-touched inactive runtime: code=%d stderr=%s", code, stderr.String())
 	}
 	bound := readJSONMap(t, statePath)
-	if got := bound["revision"]; got != float64(0) {
-		t.Fatalf("bound runtime revision = %v, want 0", got)
+	wantCurrentRevision := float64(0)
+	if runtime.PacketEnabled(bound) {
+		wantCurrentRevision = 1
+	}
+	if got := bound["revision"]; got != wantCurrentRevision {
+		t.Fatalf("current revision after original bind plus S2 preparation = %v, want %v", got, wantCurrentRevision)
 	}
 	if got := bound["runtime_id"]; got != "loop-REQ-099" {
 		t.Fatalf("bound runtime id = %v, want loop-REQ-099", got)
@@ -67,8 +71,12 @@ func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(journal) != 0 {
-		t.Fatalf("bound runtime journal must start empty, got %q", journal)
+	if runtime.PacketEnabled(bound) {
+		if lines := strings.Split(strings.TrimSpace(string(journal)), "\n"); len(lines) != 1 || !strings.Contains(lines[0], "PACKET-ISSUE") {
+			t.Fatalf("new Runtime journal should contain only its S2 preparation, not the archived source: %q", journal)
+		}
+	} else if len(journal) != 0 {
+		t.Fatalf("non-packet bind journal must start empty: %q", journal)
 	}
 	archives, err := filepath.Glob(filepath.Join(root, ".claude", "runtime-archive", "loop-inactive-r8-*"))
 	if err != nil {
@@ -469,8 +477,16 @@ func TestREQBindRecoversInterruptedRolloverBeforeBinding(t *testing.T) {
 		t.Fatalf("pending rollover marker still exists: %v", err)
 	}
 	journal := mustReadFile(t, journalPath)
-	if len(journal) != 0 {
-		t.Fatalf("journal = %q, want empty journal for the new bound runtime", journal)
+	bound := readJSONMap(t, statePath)
+	if bound["binding_receipt"].(map[string]any)["target_revision"] != float64(0) {
+		t.Fatal("original binding boundary no longer starts at zero")
+	}
+	if runtime.PacketEnabled(bound) {
+		if lines := strings.Split(strings.TrimSpace(string(journal)), "\n"); len(lines) != 1 || !strings.Contains(lines[0], "PACKET-ISSUE") {
+			t.Fatalf("new bound Runtime journal must contain only original S2 preparation: %q", journal)
+		}
+	} else if len(journal) != 0 {
+		t.Fatalf("non-packet new bound Runtime journal must be empty: %q", journal)
 	}
 }
 

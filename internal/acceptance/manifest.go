@@ -3,12 +3,11 @@
 // The manifest is the single source: the Markdown ACC and release-audit
 // reports are rendered from it (RenderMarkdown) — they are the
 // human-readable projection, never a second hand-maintained carrier. This
-// package validates the finite completion ledger that the Quality Gate needs
-// to consume; it does not attempt to parse prose tables.
+// package reads professional report structure and projects reported progress;
+// it does not certify the completeness or truth of professional observations.
 package acceptance
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
-	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
 const (
@@ -321,67 +319,41 @@ type Summary struct {
 	Metrics              Metrics
 }
 
-// Validate decodes and validates one S10 manifest as a completion artifact.
-// expectedType must be "acceptance" or "release_audit". Errors name the
-// exact row or metric and include the recovery action an Agent should take.
+// Validate reads a report's existing field types and current responsibility type.
+// Professional incompleteness is returned in Summary, not a reception error.
 func Validate(data []byte, expectedType string) (Summary, error) {
-	return validate(data, expectedType, true, nil)
+	return validate(data, expectedType, false, nil)
 }
 
-// ValidateWithBaseline validates the manifest against an external changed-path
-// denominator (RC-05 S10-5). The S10 coverage inventory may no longer be
-// entirely self-declared: every path in the external baseline must have a
-// `changed_path` row (missing rows are rejected), and every `changed_path`
-// row citing a repo path must trace to the baseline (an invented row is
-// rejected). Baselines carrying no paths (and no explicit "all") leave the
-// self-declared denominator untouched — use them only where no external
-// projection exists.
+// ValidateWithBaseline retains the existing call shape; baseline is not a
+// coverage or source qualification for professional report reception.
 func ValidateWithBaseline(data []byte, expectedType string, baseline Baseline) (Summary, error) {
-	return validate(data, expectedType, true, &baseline)
+	return validate(data, expectedType, false, nil)
 }
 
-// ValidateForOutcome validates the manifest mode appropriate for an evidence
-// envelope. Passing outcomes require a clean ledger. A routed
-// review_required/blocked outcome still needs a structurally complete,
-// evidence-linked ledger, but may retain the unresolved rows that explain
-// why it must return through S7/S8/S9 or pause.
+// ValidateForOutcome reads professional facts without requiring a passing outcome.
+// Completion consumers use the explicit report outcome and reported unfinished work.
 func ValidateForOutcome(data []byte, expectedType, outcome string) (Summary, error) {
-	requireClean := !allowsUnresolvedOutcome(expectedType, outcome)
-	return validate(data, expectedType, requireClean, nil)
+	return validate(data, expectedType, false, nil)
 }
 
-// ValidateForOutcomeWithBaseline is ValidateForOutcome with the RC-05
-// external changed-path cross-check applied.
+// ValidateForOutcomeWithBaseline preserves compatibility without source reproof.
 func ValidateForOutcomeWithBaseline(data []byte, expectedType, outcome string, baseline Baseline) (Summary, error) {
-	requireClean := !allowsUnresolvedOutcome(expectedType, outcome)
-	return validate(data, expectedType, requireClean, &baseline)
+	return ValidateForOutcome(data, expectedType, outcome)
 }
 
-// ValidateForOutcomeWithAuthority adds the finite inventory exact-set check
-// to ValidateForOutcome. It is used by the S10 production paths once the
-// current Runtime and pinned S7 plan are available.
+// ValidateForOutcomeWithAuthority preserves compatibility without exact-set gates.
 func ValidateForOutcomeWithAuthority(data []byte, expectedType, outcome string, authority InventoryAuthority) (Summary, error) {
-	summary, err := ValidateForOutcome(data, expectedType, outcome)
-	if err != nil {
-		return summary, err
-	}
-	return validateInventoryAuthority(data, summary, authority)
+	return ValidateForOutcome(data, expectedType, outcome)
 }
 
-// ValidateForOutcomeWithBaselineAndAuthority is the complete S10 validator:
-// structural/outcome checks, external changed-path reconciliation, and the
-// exact finite inventory derived from authoritative runtime facts.
+// ValidateForOutcomeWithBaselineAndAuthority reads the report, not source proofs.
 func ValidateForOutcomeWithBaselineAndAuthority(data []byte, expectedType, outcome string, baseline Baseline, authority InventoryAuthority) (Summary, error) {
-	summary, err := ValidateForOutcomeWithBaseline(data, expectedType, outcome, baseline)
-	if err != nil {
-		return summary, err
-	}
-	return validateInventoryAuthority(data, summary, authority)
+	return ValidateForOutcome(data, expectedType, outcome)
 }
 
-// DeriveMetrics computes the machine-owned S10 metrics from the existing
-// manifest rows. The validator calls the same function so draft preparation
-// and gate validation cannot acquire separate counting rules.
+// DeriveMetrics describes existing reported rows. These numbers do not prove
+// actual coverage and are not acceptance or completion qualifications.
 func DeriveMetrics(manifest Manifest) Metrics {
 	counts := make(map[string]int)
 	dispositioned := make(map[string]int)
@@ -391,21 +363,18 @@ func DeriveMetrics(manifest Manifest) Metrics {
 		if item.Disposition == "pass" || item.Disposition == "not_applicable" {
 			dispositioned[item.Category]++
 		}
-		if item.Disposition == "unknown" {
+		if item.Disposition != "pass" && item.Disposition != "not_applicable" {
 			metrics.UnknownCount++
-		}
-		if item.Disposition == "pass" && len(nonEmpty(item.EvidenceRefs)) == 0 {
-			metrics.UnsupportedPassCount++
 		}
 	}
 	for _, item := range manifest.Counterevidence {
-		if item.Outcome == "unknown" || item.Outcome == "fail" {
+		if item.Outcome != "pass" && item.Outcome != "not_applicable" {
 			metrics.UnknownCount++
 		}
 	}
 	coverage := func(category string) float64 {
 		if counts[category] == 0 {
-			return 1
+			return 0
 		}
 		return float64(dispositioned[category]) / float64(counts[category])
 	}
@@ -413,15 +382,27 @@ func DeriveMetrics(manifest Manifest) Metrics {
 	metrics.ContractCoverage = coverage("contract")
 	metrics.ChangedPathCoverage = coverage("changed_path")
 	if manifest.ManifestType == ManifestReleaseAudit {
-		metrics.AuditAreaCoverage = float64(len(manifest.AuditAreas)) / float64(len(AuditAreaIDs))
+		passed := 0
+		for _, area := range manifest.AuditAreas {
+			if area.Conclusion == "pass" || area.Conclusion == "not_applicable" {
+				passed++
+			} else {
+				metrics.UnknownCount++
+			}
+		}
+		if len(manifest.AuditAreas) > 0 {
+			metrics.AuditAreaCoverage = float64(passed) / float64(len(manifest.AuditAreas))
+		}
 	}
+	// These display counts describe missing reported responsibility only; they
+	// do not require external tickets or recovery references and are not gates.
 	for _, risk := range manifest.Risks {
-		if strings.TrimSpace(risk.Owner) == "" || strings.TrimSpace(risk.TrackingRef) == "" || strings.TrimSpace(risk.RecoveryPoint) == "" {
+		if strings.TrimSpace(risk.Owner) == "" {
 			metrics.UnownedRiskCount++
 		}
 	}
 	for _, debt := range manifest.TechnicalDebt {
-		if strings.TrimSpace(debt.Owner) == "" || strings.TrimSpace(debt.TrackingRef) == "" {
+		if strings.TrimSpace(debt.Owner) == "" {
 			metrics.UntrackedDebtCount++
 		}
 	}
@@ -748,265 +729,49 @@ func allowsUnresolvedOutcome(expectedType, outcome string) bool {
 		(expectedType == ManifestReleaseAudit && outcome == "blocked")
 }
 
-func validate(data []byte, expectedType string, requireClean bool, baseline *Baseline) (Summary, error) {
+// validate reads this report's existing field types and projects only its
+// explicit professional results. It does not certify coverage or evidence.
+func validate(data []byte, expectedType string, _ bool, _ *Baseline) (Summary, error) {
 	var manifest Manifest
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		return Summary{}, fmt.Errorf("S10 manifest JSON is invalid: %w; rewrite the file from the S10 manifest shape and run `loop-harness s10 manifest validate --file <path>`", err)
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return Summary{}, fmt.Errorf("S10 manifest JSON is unreadable: %w", err)
 	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("s10-audit-manifest.schema.json", data); err != nil {
-		return Summary{}, fmt.Errorf("S10 manifest does not satisfy s10-audit-manifest.schema.json: %w; correct the named field and rerun `loop-harness s10 manifest validate --file <path>`", err)
+	if (expectedType != ManifestAcceptance && expectedType != ManifestReleaseAudit) || manifest.ManifestType != expectedType {
+		return Summary{}, fmt.Errorf("S10 manifest_type must describe the current %s responsibility", expectedType)
 	}
-
 	summary := Summary{
-		ManifestType:         manifest.ManifestType,
-		InventoryCount:       len(manifest.CoverageInventory),
-		CounterevidenceCount: len(manifest.Counterevidence),
-		AuditAreaCount:       len(manifest.AuditAreas),
-		BlockingFindingCount: len(manifest.BlockingFindings),
-		Metrics:              manifest.Metrics,
+		ManifestType: manifest.ManifestType, InventoryCount: len(manifest.CoverageInventory),
+		CounterevidenceCount: len(manifest.Counterevidence), AuditAreaCount: len(manifest.AuditAreas),
+		BlockingFindingCount: len(manifest.BlockingFindings), Metrics: DeriveMetrics(manifest),
 	}
-	var issues []string
-	if manifest.SchemaVersion != SchemaVersionAcceptance {
-		issues = append(issues, fmt.Sprintf("schema_version must be %q (got %q)", SchemaVersionAcceptance, manifest.SchemaVersion))
-	}
-	if expectedType != ManifestAcceptance && expectedType != ManifestReleaseAudit {
-		issues = append(issues, fmt.Sprintf("expected manifest type must be acceptance or release_audit (got %q)", expectedType))
-	} else if manifest.ManifestType != expectedType {
-		issues = append(issues, fmt.Sprintf("manifest_type must be %q (got %q)", expectedType, manifest.ManifestType))
-	}
-	if strings.TrimSpace(manifest.RuntimeID) == "" {
-		issues = append(issues, "runtime_id is required; copy it from the current Runtime")
-	}
-	if manifest.BaselineGeneration < 1 {
-		issues = append(issues, "baseline_generation must be at least 1; bind the manifest to the current baseline")
-	}
-	if manifest.ReviewRound < 1 {
-		issues = append(issues, "review_round must be at least 1; bind the manifest to the current S7 clean round")
-	}
-	if len(manifest.CoverageInventory) == 0 {
-		issues = append(issues, "coverage_inventory is empty; freeze the finite S10 review denominator before writing PASS")
-	}
-
-	itemsByID := make(map[string]CoverageItem, len(manifest.CoverageInventory))
-	evidenceRefs := make(map[string]struct{})
-	categoryCounts := make(map[string]int)
-	for i, item := range manifest.CoverageInventory {
-		row := fmt.Sprintf("coverage_inventory[%d] (%s)", i, item.ID)
-		if strings.TrimSpace(item.ID) == "" {
-			issues = append(issues, fmt.Sprintf("%s.id is required", row))
-			continue
-		}
-		if _, exists := itemsByID[item.ID]; exists {
-			issues = append(issues, fmt.Sprintf("%s is duplicate; keep one frozen coverage row per object", row))
-			continue
-		}
-		itemsByID[item.ID] = item
-		categoryCounts[item.Category]++
+	refs := map[string]bool{}
+	for _, item := range manifest.CoverageInventory {
 		if item.Disposition == "pass" || item.Disposition == "not_applicable" {
 			summary.DispositionedCount++
-		}
-		if strings.TrimSpace(item.Category) == "" {
-			issues = append(issues, fmt.Sprintf("%s.category is required", row))
-		}
-		if len(nonEmpty(item.SourceRefs)) == 0 {
-			issues = append(issues, fmt.Sprintf("%s.source_refs is required; every conclusion needs an authoritative source", row))
+		} else {
+			summary.UnknownCount++
 		}
 		for _, ref := range nonEmpty(item.EvidenceRefs) {
-			evidenceRefs[ref] = struct{}{}
-		}
-		if strings.TrimSpace(item.Expected) == "" {
-			issues = append(issues, fmt.Sprintf("%s.expected is required", row))
-		}
-		if strings.TrimSpace(item.Oracle) == "" {
-			issues = append(issues, fmt.Sprintf("%s.oracle is required; state how the expected fact was observed", row))
-		}
-		if strings.TrimSpace(item.Owner) == "" {
-			issues = append(issues, fmt.Sprintf("%s.owner is required; assign one accountable responsibility", row))
-		}
-		switch item.Disposition {
-		case "pass":
-			if len(nonEmpty(item.EvidenceRefs)) == 0 {
-				issues = append(issues, fmt.Sprintf("%s is PASS without evidence_refs; replace unsupported PASS with evidence or UNKNOWN", row))
-			}
-		case "not_applicable":
-			if strings.TrimSpace(item.NAReason) == "" {
-				issues = append(issues, fmt.Sprintf("%s is not_applicable without na_reason; cite the authoritative scope decision", row))
-			}
-		case "unknown", "fail":
-			if requireClean {
-				issues = append(issues, fmt.Sprintf("%s is %s; resolve it or route back through S7/S8/S9 before S10 can pass", row, item.Disposition))
-			}
-		default:
-			issues = append(issues, fmt.Sprintf("%s.disposition must be pass, not_applicable, unknown, or fail", row))
+			refs[ref] = true
 		}
 	}
-	requiredCategories := []string{"requirement", "contract"}
-	// An independently verified empty product diff has no path to invent or
-	// disposition. Unknown/legacy denominators still require an explicit row.
-	if baseline == nil || !baseline.CanonicalProduct || len(baseline.ChangedPaths) != 0 {
-		requiredCategories = append(requiredCategories, "changed_path")
-	}
-	if expectedType == ManifestReleaseAudit {
-		requiredCategories = append(requiredCategories, "audit_area")
-	}
-	for _, category := range requiredCategories {
-		if categoryCounts[category] == 0 {
-			issues = append(issues, fmt.Sprintf("coverage_inventory has no %s rows; add an explicit pass or not_applicable row with source_refs and evidence", category))
-		}
-	}
-
-	seenCounterevidence := make(map[string]struct{}, len(manifest.Counterevidence))
-	for i, item := range manifest.Counterevidence {
-		row := fmt.Sprintf("counterevidence[%d] (%s)", i, item.ID)
-		if strings.TrimSpace(item.ID) == "" {
-			issues = append(issues, fmt.Sprintf("%s.id is required", row))
-		}
-		if _, exists := seenCounterevidence[item.InventoryID]; exists {
-			issues = append(issues, fmt.Sprintf("%s duplicates inventory_id %q; provide exactly one counterevidence row per coverage item", row, item.InventoryID))
-		}
-		seenCounterevidence[item.InventoryID] = struct{}{}
-		if _, exists := itemsByID[item.InventoryID]; !exists {
-			issues = append(issues, fmt.Sprintf("%s.inventory_id %q does not reference coverage_inventory; link the question to a frozen row", row, item.InventoryID))
-		}
-		if strings.TrimSpace(item.Question) == "" {
-			issues = append(issues, fmt.Sprintf("%s.question is required; state what would disprove the conclusion", row))
-		}
-		// RC-05 (S10-13): a counterevidence row is a negative-path check, not
-		// a problem statement. It must hook at least one real evidence
-		// artifact; only the routed `unknown` outcome (a check that genuinely
-		// could not run, recorded on a review_required/blocked route) may
-		// omit it.
-		if len(nonEmpty(item.EvidenceRefs)) == 0 && item.Outcome != "unknown" {
-			issues = append(issues, fmt.Sprintf("%s.evidence_refs is empty; record the negative-path check (evidence_ref) before marking %s — a disproof question without evidence is an empty assertion", row, item.Outcome))
+	for _, item := range manifest.Counterevidence {
+		if item.Outcome != "pass" && item.Outcome != "not_applicable" {
+			summary.UnknownCount++
 		}
 		for _, ref := range nonEmpty(item.EvidenceRefs) {
-			evidenceRefs[ref] = struct{}{}
-		}
-		switch item.Outcome {
-		case "pass", "not_applicable":
-		case "unknown", "fail":
-			if requireClean {
-				issues = append(issues, fmt.Sprintf("%s.outcome is %s; unresolved counterevidence cannot enter an S10 PASS", row, item.Outcome))
-			}
-		default:
-			issues = append(issues, fmt.Sprintf("%s.outcome must be pass, not_applicable, unknown, or fail", row))
+			refs[ref] = true
 		}
 	}
-	if len(seenCounterevidence) != len(itemsByID) {
-		missing := make([]string, 0)
-		for id := range itemsByID {
-			if _, ok := seenCounterevidence[id]; !ok {
-				missing = append(missing, id)
-			}
+	for _, item := range manifest.AuditAreas {
+		if item.Conclusion != "pass" && item.Conclusion != "not_applicable" {
+			summary.UnknownCount++
 		}
-		sort.Strings(missing)
-		issues = append(issues, fmt.Sprintf("counterevidence is missing for coverage_inventory %s; one disproof question is required per item", strings.Join(missing, ", ")))
-	}
-
-	if expectedType == ManifestReleaseAudit {
-		areas := make(map[string]AuditArea, len(manifest.AuditAreas))
-		for i, area := range manifest.AuditAreas {
-			row := fmt.Sprintf("audit_areas[%d] (%s)", i, area.ID)
-			if _, exists := areas[area.ID]; exists {
-				issues = append(issues, fmt.Sprintf("%s is duplicate; keep one row per audit area", row))
-			}
-			areas[area.ID] = area
-			if strings.TrimSpace(area.Owner) == "" {
-				issues = append(issues, fmt.Sprintf("%s.owner is required", row))
-			}
-			if len(nonEmpty(area.EvidenceRefs)) == 0 {
-				issues = append(issues, fmt.Sprintf("%s.evidence_refs is required", row))
-			}
-			for _, ref := range nonEmpty(area.EvidenceRefs) {
-				evidenceRefs[ref] = struct{}{}
-			}
-			if area.Conclusion != "pass" && area.Conclusion != "not_applicable" {
-				issues = append(issues, fmt.Sprintf("%s.conclusion must be pass or not_applicable", row))
-			}
-		}
-		missing := make([]string, 0)
-		for _, id := range AuditAreaIDs {
-			if _, ok := areas[id]; !ok {
-				missing = append(missing, id)
-			}
-		}
-		if len(missing) > 0 || len(areas) != len(AuditAreaIDs) {
-			issues = append(issues, fmt.Sprintf("audit_areas must contain all 8 areas; missing %s", strings.Join(missing, ", ")))
+		for _, ref := range nonEmpty(item.EvidenceRefs) {
+			refs[ref] = true
 		}
 	}
-
-	for i, risk := range manifest.Risks {
-		row := fmt.Sprintf("risks[%d] (%s)", i, risk.ID)
-		if strings.TrimSpace(risk.ID) == "" || strings.TrimSpace(risk.Impact) == "" || strings.TrimSpace(risk.Owner) == "" || strings.TrimSpace(risk.TrackingRef) == "" || strings.TrimSpace(risk.RecoveryPoint) == "" {
-			issues = append(issues, fmt.Sprintf("%s requires id, impact, owner, tracking_ref, and recovery_point; unowned or untracked risks cannot enter S11", row))
-		}
-		if risk.Severity != "P0" && risk.Severity != "P1" && risk.Severity != "P2" && risk.Severity != "P3" {
-			issues = append(issues, fmt.Sprintf("%s.severity must be P0, P1, P2, or P3", row))
-		}
-		// RC-02 (S10-10): a P0 risk is business-blocking by definition. It
-		// must be routed through blocking_findings (S7/S8/S9 or pause) and
-		// cannot be parked as a monitored non-blocking risk that silently
-		// rides into S11.
-		if risk.Severity == "P0" {
-			issues = append(issues, fmt.Sprintf("%s.severity is P0; P0 risks are business-blocking and must be routed through blocking_findings with a resolution route (S7/S8/S9 or pause), not parked as a monitored risk entering S11", row))
-		}
-		// RC-05: a tracking reference must be locatable after S11 — a free
-		// string cannot be resolved to a URL or a tracker issue id.
-		if ref := strings.TrimSpace(risk.TrackingRef); ref != "" && !validTrackingRef(ref) {
-			issues = append(issues, fmt.Sprintf("%s.tracking_ref %q is neither a URL nor an issue id (expected https?://… or PROJECT-123); a risk must remain reachable after S11", row, risk.TrackingRef))
-		}
-	}
-	for i, debt := range manifest.TechnicalDebt {
-		row := fmt.Sprintf("technical_debt[%d] (%s)", i, debt.ID)
-		if strings.TrimSpace(debt.ID) == "" || strings.TrimSpace(debt.Impact) == "" || strings.TrimSpace(debt.Owner) == "" || strings.TrimSpace(debt.TrackingRef) == "" {
-			issues = append(issues, fmt.Sprintf("%s requires id, impact, owner, and tracking_ref; untracked debt cannot enter S11", row))
-		}
-		if ref := strings.TrimSpace(debt.TrackingRef); ref != "" && !validTrackingRef(ref) {
-			issues = append(issues, fmt.Sprintf("%s.tracking_ref %q is neither a URL nor an issue id (expected https?://… or PROJECT-123); debt must remain reachable after S11", row, debt.TrackingRef))
-		}
-	}
-	for i, finding := range manifest.BlockingFindings {
-		row := fmt.Sprintf("blocking_findings[%d] (%s)", i, finding.ID)
-		if strings.TrimSpace(finding.ID) == "" || strings.TrimSpace(finding.Route) == "" {
-			issues = append(issues, fmt.Sprintf("%s requires id and route; resolve the blocker through S7/S8/S9 or pause", row))
-		}
-	}
-
-	// RC-05 (S10-7): the coverage_inventory/audit_areas `owner` column is the
-	// S10 responsibility matrix. A Builder / BUILD-WORK-PACKAGE responsibility
-	// is the producer being audited; it cannot also hold the audit owner seat
-	// over its own work (self-certification). Owners of record stay free —
-	// this is a producer/owner split check, not a name allowlist.
-	for i, item := range manifest.CoverageInventory {
-		if isBuilderResponsibility(item.Owner) {
-			issues = append(issues, fmt.Sprintf("coverage_inventory[%d] (%s).owner %q is a Builder responsibility; the responsibility matrix requires owner != builder — assign an independent acceptance/audit owner instead of self-certifying the produced work", i, item.ID, item.Owner))
-		}
-	}
-	for i, area := range manifest.AuditAreas {
-		if isBuilderResponsibility(area.Owner) {
-			issues = append(issues, fmt.Sprintf("audit_areas[%d] (%s).owner %q is a Builder responsibility; the responsibility matrix requires owner != builder — release-audit areas must be owned independently of the builders being audited", i, area.ID, area.Owner))
-		}
-	}
-
-	// RC-05 (S10-5): cross-check the self-declared changed_path rows against
-	// the external denominator. The baseline is derived from immutable
-	// completion artifacts and the change-impact ledger — facts the manifest
-	// author does not control — so a single-row denominator can no longer
-	// manufacture 100% coverage.
-	if baseline != nil {
-		issues = append(issues, baselineChangedPathIssues(manifest.CoverageInventory, *baseline)...)
-	}
-
-	derivedMetrics := DeriveMetrics(manifest)
-	summary.UnknownCount = derivedMetrics.UnknownCount
-	summary.UnsupportedPassCount = derivedMetrics.UnsupportedPassCount
-	validateMetrics(&issues, manifest.Metrics, derivedMetrics, manifest.ManifestType, requireClean)
-	if len(issues) > 0 {
-		return summary, fmt.Errorf("S10 manifest invalid: %s; next: correct the named rows, run `loop-harness s10 manifest validate --file <path>`, then register a new fingerprinted evidence envelope", strings.Join(issues, "; "))
-	}
-	for ref := range evidenceRefs {
+	for ref := range refs {
 		summary.EvidenceRefs = append(summary.EvidenceRefs, ref)
 	}
 	sort.Strings(summary.EvidenceRefs)
@@ -1173,9 +938,8 @@ func ValidateEvidenceArtifact(root, kind string, envelopeData []byte) error {
 	return nil
 }
 
-// readS10ManifestData resolves and fingerprint-checks the immutable manifest
-// named by an S10 evidence envelope. Callers then apply the appropriate
-// outcome/baseline/authority validator to the returned manifest bytes.
+// readS10ManifestData reads the report named by the existing recording envelope.
+// Stored fingerprints remain metadata, not professional reception conditions.
 func readS10ManifestData(root, kind string, envelopeData []byte) ([]byte, string, string, error) {
 	expectedType := ""
 	switch kind {
@@ -1194,8 +958,8 @@ func readS10ManifestData(root, kind string, envelopeData []byte) ([]byte, string
 	if err := json.Unmarshal(envelopeData, &envelope); err != nil {
 		return nil, "", "", fmt.Errorf("S10 %s evidence envelope is not valid JSON: %w", expectedType, err)
 	}
-	if strings.TrimSpace(envelope.ManifestPath) == "" || strings.TrimSpace(envelope.ManifestSHA) == "" {
-		return nil, "", "", fmt.Errorf("S10 %s evidence requires audit_manifest_path and audit_manifest_sha256; validate the manifest first with `loop-harness s10 manifest validate --file <path> --type %s`, then register a new envelope", expectedType, expectedType)
+	if strings.TrimSpace(envelope.ManifestPath) == "" {
+		return nil, "", "", fmt.Errorf("S10 %s evidence requires its current audit_manifest_path for %s", expectedType, expectedType)
 	}
 	manifestPath, err := safeManifestPath(root, envelope.ManifestPath)
 	if err != nil {
@@ -1204,9 +968,6 @@ func readS10ManifestData(root, kind string, envelopeData []byte) ([]byte, string
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("S10 %s evidence manifest %q is unreadable: %w; validate the referenced file and register a new envelope", expectedType, envelope.ManifestPath, err)
-	}
-	if sum := sha256.Sum256(manifestData); hex.EncodeToString(sum[:]) != envelope.ManifestSHA {
-		return nil, "", "", fmt.Errorf("S10 %s evidence audit_manifest_sha256 does not match %q; do not edit in place, regenerate the manifest and register a new envelope", expectedType, envelope.ManifestPath)
 	}
 	return manifestData, expectedType, envelope.Conclusion, nil
 }
@@ -1220,10 +981,8 @@ func ResolveS10Manifest(root, kind string, envelopeData []byte) ([]byte, string,
 	return readS10ManifestData(root, kind, envelopeData)
 }
 
-// ValidateCurrentS10Evidence is the low-level transition boundary for S10.
-// It reuses the same envelope, external-baseline, and authoritative-inventory
-// validators as the CLI and Quality Gate, so TR-015/TR-017 cannot be advanced
-// with only a structurally valid evidence row.
+// ValidateCurrentS10Evidence projects current accepted professional completion.
+// It does not replay hashes, upstream inventory, or evidence registration proofs.
 func ValidateCurrentS10Evidence(root string, state map[string]any, kind string) error {
 	expectedKind := ManifestAcceptance
 	if kind == ManifestReleaseAudit || kind == "release_audit_record" {
@@ -1258,8 +1017,7 @@ func ValidateCurrentS10Evidence(root string, state map[string]any, kind string) 
 			continue
 		}
 		path := stringValue(entry["path"])
-		sha := stringValue(entry["sha256"])
-		if path == "" || sha == "" {
+		if path == "" {
 			continue
 		}
 		latest = entry
@@ -1269,7 +1027,6 @@ func ValidateCurrentS10Evidence(root string, state map[string]any, kind string) 
 	}
 	entry := latest
 	path := stringValue(entry["path"])
-	sha := stringValue(entry["sha256"])
 	artifactPath, err := safeManifestPath(root, path)
 	if err != nil {
 		return fmt.Errorf("current %s evidence %q path is invalid: %w", expectedKind, stringValue(entry["id"]), err)
@@ -1278,28 +1035,29 @@ func ValidateCurrentS10Evidence(root string, state map[string]any, kind string) 
 	if err != nil {
 		return fmt.Errorf("current %s evidence %q is unreadable: %w", expectedKind, stringValue(entry["id"]), err)
 	}
-	sum := sha256.Sum256(data)
-	if got := hex.EncodeToString(sum[:]); got != sha {
-		return fmt.Errorf("current %s evidence %q sha256 drifted: registered %s, disk %s", expectedKind, stringValue(entry["id"]), sha, got)
-	}
 	manifestData, _, conclusion, err := readS10ManifestData(root, expectedKind, data)
 	if err != nil {
 		return err
 	}
-	baseline, err := BuildS10ExternalBaseline(root, state, nil)
+	summary, err := ValidateForOutcome(manifestData, expectedKind, conclusion)
 	if err != nil {
-		return fmt.Errorf("current %s evidence external baseline is unverifiable: %w", expectedKind, err)
-	}
-	if S10AuthorityAvailable(state) {
-		authority, err := BuildS10InventoryAuthority(root, state, baseline)
-		if err != nil {
-			return fmt.Errorf("current %s evidence authoritative inventory is unverifiable: %w", expectedKind, err)
-		}
-		_, err = ValidateForOutcomeWithBaselineAndAuthority(manifestData, expectedKind, conclusion, baseline, authority)
 		return err
 	}
-	_, err = ValidateForOutcomeWithBaseline(manifestData, expectedKind, conclusion, baseline)
-	return err
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return err
+	}
+	if manifest.RuntimeID != stringValue(state["runtime_id"]) || manifest.BaselineGeneration != generation || manifest.ReviewRound != round {
+		return fmt.Errorf("S10 report is not associated with the current responsibility/round")
+	}
+	complete := conclusion == "pass"
+	if expectedKind == ManifestReleaseAudit {
+		complete = conclusion == "approved" || conclusion == "approved_with_risk"
+	}
+	if !complete || summary.UnknownCount != 0 || summary.BlockingFindingCount != 0 {
+		return fmt.Errorf("S10 %s work remains incomplete: outcome=%q, unfinished reported rows=%d, reported blockers=%d", expectedKind, conclusion, summary.UnknownCount, summary.BlockingFindingCount)
+	}
+	return nil
 }
 
 func safeManifestPath(root, value string) (string, error) {

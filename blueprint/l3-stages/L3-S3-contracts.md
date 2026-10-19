@@ -4,6 +4,27 @@
 >
 > 阅读顺序：§1～§3 先从“为什么需要共同执行边界”推导契约任务和工作流；§4 才展开各模板、skill 和机器检查；§5～§8 用于职责审计、L1 映射、出口与遇错查阅。本文以当前模板、semantic check、planning phase machine 和 runtime 登记事实为准，不把模板里尚无消费者的字段或宽松检查写成强保证。
 
+## 本轮当前契约（2026-10-19，设计固定／实施待验证）
+
+以 [GLOBAL §0 本轮固定契约](../GLOBAL-OPTIMIZATION-DESIGN.md#本轮重验后固定契约2026-10-19设计固定实施待验证) 为先。条件资料以既有 Markdown 实际链接目标/现有 JSON 实际引用结构为正向关联，裸路径、inline-code 和围栏例子不单独声明依赖，不用否定词典；真实链接缺失照原错误，不因文件不存在而吞缺项。architecture-template 的 model 段同步为条件性真实链接，旧 fixture 裸正向路径改链接，不作逐字兼容；CASE 集合取实际 id，不全文扫 FACT/BR/FX 内嵌片段，合法完整 CASE 与真实合同覆盖保留。AC 混合引用逐项处理，有 FR 就逐 FR 可达，NFR/A4 不吞 FR，无 FR 才 N/A；不加 A4 存在性门。
+
+原成功出口继续交当前卷。S2 完成与 S3 准备失败分开反馈，旧完成卷不标当前待填，系统准备问题不统一转作者补料；沿原五态。已批准 amendment 复用原人意，经同一权威入口与现卷提示接续。以下历史失败/限定证据保留，不表示本片已实现或全局通过。
+
+## 当前实施约定（2026-10-19，已实施小片，r95限定S3原生接收）
+
+本轮小片已实施并完成限定机械回归。r94 原生历史保留：A 到 S4 双卷，C 到 S3 空卷，B 首次 S3 接收仍因 8s Hook deadline 失败；插桩诊断不算 native PASS。r95 fresh 安装仅机械重放已完成的 S1/S2 原 consumer 前缀，随后 B 唯一 native S3 段一次 Edit 正常接收并实际 Read S4 view/answer，仍为空稿；原 Post 附件 8003ms、stderr 空，这是整条 Hook 平台计时，不证明内部超时或性能余量/根治。完整链仍 **0/3**，S4 实际履职、S5–S11、独立 Worker 与产品 oracle 未验。详见[本轮限定报告](/home/sebs/.cache/gsb-global-optimization-20261019T002858Z/R95-ROUND-REPORT.md)。本次三处顶部状态为打包后文档结果更新，r95 二进制及冻结源 manifest 未改，不声称当前全部文档仍逐字等同冻结快照。
+
+本段与[GLOBAL 当前优先契约](../GLOBAL-OPTIMIZATION-DESIGN.md#当前优先实施契约2026-10-19本轮重验后固定尚未落地)优先于下方旧准备/原验证兜底条款。真实 S2 出口或原返工/恢复成功入口复用原 issuer 一次交当前 S3 卷；普通 Pre/Stop 只读准确卷/责任/缺项。只读 Bash 不重复消费未变答案；当前答案或相关专业资料/真实 Git 输出变化仍自动交原 consumer，同答已记未完成出口沿原接续，不新缓存/状态/证明。
+
+原问卷及实际合同工作保留，专业资料的 REQ 附注、Markdown 合同链接、明确 CASE 范围按真实关联读取，历史/样例 token 不充作当前覆盖；Schema 定义与已登记样例分别读其既有用途，不把样例反判为新 Schema。机器 fingerprint/来源关联由系统带出，不转成作者抄填义务；缺真实材料/必要覆盖须指出具体条目，不能靠删除专业责任换流转。实际人意不索逐字命令/重复姓名手续；不增字段、preflight、预算或状态。已实测本次重复 prepare 区间，不将其泛化为全部原生超时归因；r92 A 到 S4 卷、r93 B 首次 S3 保存仍失败，诊断接收不替代 native 验收。
+
+合同索引只读取“合同清单”当前实际表的表头、分隔行与连续数据行，表结束后不把适用性或其它专业表当库存。原问卷 `applicability=not_applicable` 的展示行不要求虚构合同文档、locked 状态或版本，也不进入实际交付集合；required 合同的真实文档、状态版本与必要覆盖仍检查。类型展示文字不作精确枚举准入，按原合同 ID family、专业适用性及真实产物读取，不增同义词分类器或字段。
+
+S3 `planning_contract` 原 consumer 在同次接收中一次解析实际交付并生成机器 envelope；CAS 保当前 Runtime/generation/entry/REQ 关联、原 professional semantic 回调及原子提交，删除 CAS 重建已登记发行闭包、重复 `ContractArtifacts` 与 expected 整信封重建。保现存 `Files.Verify`、原 receipt 同答幂等、真实缺项与输出内容检查；机器失败的未接收记录按本次实际生成字节自动形成，不以旧同答 metadata 冲突让作者猜测，原已接收历史不覆盖。后置只读取本次已接收事实，不新增字段、状态、cache、API 或预算；不声称 sharedmodel 全流程只检查一次，transition 原全集 checker 仍保留。r94 限定证据：A 7.590s 到 S4 准确卷，B 8s 仍未接收；solo 诊断 6.655s 已到 S4 cursor，但 issuer 遇 6s deadline 未给卷，诊断不算 fresh 验收；r95 后续限定 S3 接收与 S4 双卷读取见顶部当前记录，不扩称性能根治或完整链通过。
+
+
+原S2履职结论与文档记录保留为历史事实；S3尚未发行时，按这些已登记design的身份、路径和版本读取当前已提交专业材料，由系统带出本次hash，历史design SHA不作为当前输入资格。真实REQ绑定、当前generation/entry、实际文件与必要覆盖、原Writer/CAS职责保留，不要求作者回滚说明、刷新登记或重新履职。后置门读取同次已验证的当前资料事实，不回拿S2历史hash作为S3资格。
+
 ## 1. 第一层：S3 的立意与目标
 
 > 2026-10-16 全链审查：[S3 机制审查与局部返工范围](../global-optimization/S3-MECHANISM-REVIEW.md)。

@@ -10,6 +10,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workstate"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/builderbatch"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/verification"
 )
 
 // Status is an evaluator-owned Quality Gate state. Controller-only states
@@ -92,6 +94,19 @@ func NewEvaluator(registry *Registry) *Engine {
 // the current cursor. The Controller supplies these facts to the catalog
 // selector without re-implementing evidence qualification.
 func (e *Engine) RequestedEvents(input Input) []string {
+	state, phase := currentStatePhase(input.Snapshot.State)
+	if state == "planning" && phase == "design" {
+		// The design gate reads the accepted report and its actual material.
+		// Selecting this existing event does not qualify unrelated sources.
+		return []string{"planning_design_complete"}
+	}
+	if state == "acceptance" || state == "release_audit" {
+		id := latestS10EvidenceID(input, nil, state+"_record")
+		if envelope, ok := s10EnvelopeByID(input, id); ok && envelope.RequestedEvent != "" {
+			return []string{envelope.RequestedEvent}
+		}
+		return nil
+	}
 	documents, err := verifiedCurrentDocumentsWithS5Facts(input)
 	if err != nil {
 		return nil
@@ -148,6 +163,15 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 	}
 	result.CandidateTransition = spec.TransitionID
 	result.NextCursor = currentCursor(input.Snapshot.State)
+	if strings.HasPrefix(input.GateID, "GATE-ACCEPTANCE-") || strings.HasPrefix(input.GateID, "GATE-RELEASE-AUDIT-") {
+		result.Status = StatusSatisfied
+		applyS10ManifestGate(input, &result)
+		result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, input.Snapshot.State, nestedInt(input.Snapshot.State, "baseline", "generation"), nil, result.EvidenceRefs)
+		return result, nil
+	}
+	if input.GateID == "GATE-PLANNING-DESIGN-COMPLETE" {
+		return evaluatePlanningDesign(input, result, spec), nil
+	}
 	documents, err := verifiedCurrentDocumentsWithS5Facts(input)
 	if err != nil {
 		result.ErrorCode = ErrorGateUnknown
@@ -291,41 +315,82 @@ type envelopeCheck struct {
 func evaluatePlanningDesign(input Input, result Evaluation, spec GateSpec) Evaluation {
 	state := input.Snapshot.State
 	generation := nestedInt(state, "baseline", "generation")
-	documents := currentDocuments(state, generation)
-
-	requiredKinds := []string{"req", "design"}
-	relevant := make([]documentFact, 0, len(requiredKinds))
-	for _, kind := range requiredKinds {
-		document, ok := findCurrentDocument(documents, kind, input.Files)
-		if ok {
-			relevant = append(relevant, document)
+	entry := nestedInt(state, "lifecycle", "phase_revision")
+	rows, _ := state["evidence"].([]any)
+	var selected map[string]any
+	for i := len(rows) - 1; i >= 0; i-- {
+		row, _ := rows[i].(map[string]any)
+		if !evidenceKindsEqual("planning_design_record", stringValue(row["kind"])) || row["status"] != "valid" || intValue(row["baseline_generation"]) != generation {
 			continue
 		}
-		// Disk fallback (same family as the planning artifact
-		// gates): a locked REQ / ARCH document declared on disk satisfies
-		// the precondition — the registration into documents[] happens at
-		// PTR-PLAN-01's commit.
-		if diskFacts, listed := diskDeclaredArtifacts(input, kind, "locked"); listed {
-			for _, fact := range diskFacts {
-				if fact.Kind == kind {
-					relevant = append(relevant, fact)
-					ok = true
+		if runtime.PacketEnabled(state) {
+			entities, _ := state["entities"].(map[string]any)
+			submissions, _ := entities["submissions"].([]any)
+			current := false
+			for _, raw := range submissions {
+				r, _ := raw.(map[string]any)
+				if r["evidence_id"] == row["id"] && r["origin_state"] == "planning" && r["origin_phase"] == "design" && intValue(r["origin_entry"]) == entry {
+					current = true
 					break
 				}
 			}
+			if !current {
+				continue
+			}
 		}
-		if !ok {
-			result.Missing = append(result.Missing, "document:"+kind+":locked")
+		selected = row
+		break
+	}
+	if selected == nil {
+		result.Missing = append(result.Missing, "evidence:planning_design_record")
+	} else {
+		var envelope evidenceEnvelope
+		var data []byte
+		var err error
+		if input.Files != nil {
+			data, err = input.Files.ReadFile(stringValue(selected["path"]))
+		} else {
+			data, err = os.ReadFile(filepath.Join(input.Root, stringValue(selected["path"])))
+		}
+		if err != nil || json.Unmarshal(data, &envelope) != nil || envelope.RuntimeID != stringValue(state["runtime_id"]) || envelope.BaselineGeneration != generation {
+			result.Missing = append(result.Missing, "evidence:"+stringValue(selected["id"])+":readable_current_design")
+		} else {
+			result.EvidenceRefs = append(result.EvidenceRefs, stringValue(selected["id"]))
+			if envelope.Conclusion != "pass" {
+				result.Missing = append(result.Missing, "design:conclusion:pass")
+			}
+			architecture := false
+			for _, subject := range envelope.SubjectRefs {
+				if !strings.HasPrefix(filepath.Base(subject.Path), "ARCHITECTURE-") || strings.Contains(strings.ToLower(filepath.Base(subject.Path)), "template") {
+					continue
+				}
+				var material []byte
+				if input.Files != nil {
+					material, err = input.Files.ReadFile(subject.Path)
+				} else {
+					material, err = os.ReadFile(filepath.Join(input.Root, subject.Path))
+				}
+				if err == nil && parseMarkdownStatusField(string(material)) == "locked" {
+					architecture = true
+					break
+				}
+			}
+			if !architecture {
+				result.Missing = append(result.Missing, "document:design:locked")
+			}
 		}
 	}
+	bound, _ := state["bound_req"].(map[string]any)
+	if bound["status"] != "locked" || stringValue(bound["path"]) == "" {
+		result.Missing = append(result.Missing, "document:req:locked")
+	}
+	result.Status = StatusSatisfied
 	if len(result.Missing) > 0 {
-		sort.Strings(result.Missing)
 		result.Status = StatusNotReady
-		result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, relevant, nil)
-		return result
+		sort.Strings(result.Missing)
 	}
-
-	return evaluateRegisteredGate(input, result, spec, relevant)
+	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, nil, result.EvidenceRefs)
+	return result
 }
 
 func evaluatePlanningArtifact(
@@ -453,144 +518,129 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 		applyObservationBatchGate(input, &result)
 	}
 	if result.GateID == "GATE-ACCEPTANCE-COMPLETE" || result.GateID == "GATE-ACCEPTANCE-REVIEW-REQUIRED" || result.GateID == "GATE-RELEASE-AUDIT-APPROVED" || result.GateID == "GATE-RELEASE-AUDIT-BLOCKED" || result.GateID == "GATE-RELEASE-AUDIT-REVIEW-REQUIRED" {
-		// L3-S10 §1.2: a generic PASS/APPROVED envelope is not enough. The
-		// finite coverage inventory and counterevidence ledger are the
-		// machine-consumed anti-shortcut contract. RC-05 (S10-8): the blocked
-		// route re-checks too — a structurally incomplete ledger cannot enter
-		// TR-018 just because its conclusion says "blocked"; the blocked
-		// manifest itself must still be a complete, evidence-linked record.
-		// RC-16: the review_required acceptance route is under the same
-		// manifest re-hash gate — without it a tampered review_required
-		// manifest sails through the gate unverified.
+		// Read current professional conclusions and explicitly unfinished rows.
 		applyS10ManifestGate(input, &result)
 	}
 	result.Fingerprint = fingerprint(result.GateID, spec.SemanticVersion, state, generation, documents, result.EvidenceRefs)
 	return result
 }
 
-// latestS10EvidenceID returns the most recently registered qualifying record of
-// the required kind. S10 records accumulate (every correction registers a new
-// fingerprinted envelope), and evidence rows cannot be retired outside a
-// transition commit, so the gate must judge the current claim -- the latest
-// registration -- instead of the oldest id that happens to sort first.
-func latestS10EvidenceID(input Input, refs []string, kind string) string {
-	qualified := make(map[string]struct{}, len(refs))
-	for _, id := range refs {
-		qualified[id] = struct{}{}
-	}
-	raw, _ := input.Snapshot.State["evidence"].([]any)
+// latestS10EvidenceID selects the current responsibility's latest recorded fact.
+func latestS10EvidenceID(input Input, _ []string, kind string) string {
+	state := input.Snapshot.State
+	raw, _ := state["evidence"].([]any)
 	for i := len(raw) - 1; i >= 0; i-- {
-		index, _ := raw[i].(map[string]any)
-		if index == nil {
-			continue
-		}
-		id := stringValue(index["id"])
-		if _, ok := qualified[id]; !ok {
-			continue
-		}
-		if evidenceKindsEqual(kind, stringValue(index["kind"])) {
-			return id
+		entry, _ := raw[i].(map[string]any)
+		if evidenceKindsEqual(kind, stringValue(entry["kind"])) && stringValue(entry["status"]) == "valid" &&
+			intValue(entry["baseline_generation"]) == nestedInt(state, "baseline", "generation") &&
+			intValue(entry["review_round"]) == nestedInt(state, "review", "round") && entry["invalidated_by"] == nil {
+			return stringValue(entry["id"])
 		}
 	}
 	return ""
 }
 
 func applyS10ManifestGate(input Input, result *Evaluation) {
-	wanted := map[string]string{"acceptance": "acceptance_record"}
-	if result.GateID == "GATE-RELEASE-AUDIT-APPROVED" || result.GateID == "GATE-RELEASE-AUDIT-BLOCKED" {
-		wanted["release_audit"] = "release_audit_record"
+	wanted := []string{"acceptance"}
+	if result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+		wanted = append(wanted, "release_audit")
 	}
-	for manifestType, evidenceKind := range wanted {
-		evidenceID := latestS10EvidenceID(input, result.EvidenceRefs, evidenceKind)
-		if evidenceID == "" {
-			// The ordinary evidence requirements already explain a missing
-			// acceptance/audit envelope. Do not add a second, confusing
-			// manifest error when its parent evidence is absent.
+	if result.GateID == "GATE-RELEASE-AUDIT-BLOCKED" {
+		wanted = []string{"release_audit"}
+	}
+	for _, kind := range wanted {
+		id := latestS10EvidenceID(input, nil, kind+"_record")
+		if id == "" {
+			result.Missing = append(result.Missing, "current "+kind+" professional report")
 			continue
 		}
-		// The Controller must commit the same envelope whose manifest we check.
-		// Keeping older qualified refs here lets lexical ID ordering select a
-		// different record at commit time.
-		retained := make([]string, 0, len(result.EvidenceRefs))
-		for _, id := range result.EvidenceRefs {
-			envelope, ok := s10EnvelopeByID(input, id)
-			if id == evidenceID || !ok || !evidenceKindsEqual(evidenceKind, envelope.Kind) {
-				retained = append(retained, id)
-			}
-		}
-		result.EvidenceRefs = retained
-		envelope, _ := s10EnvelopeByID(input, evidenceID)
-		if strings.TrimSpace(envelope.AuditManifestPath) == "" || strings.TrimSpace(envelope.AuditManifestSHA256) == "" {
-			result.Missing = append(result.Missing, "s10:"+manifestType+"_manifest:"+evidenceID)
-			result.Status = StatusNotReady
+		envelope, ok := s10EnvelopeByID(input, id)
+		if !ok || envelope.AuditManifestPath == "" {
+			result.Missing = append(result.Missing, "read recorded "+kind+" questionnaire for "+id)
 			continue
 		}
-		if input.Files == nil {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, "s10:"+manifestType+"_manifest:"+evidenceID+":unreadable; next: restore the manifest file and register a new fingerprinted envelope")
-			continue
-		}
-		manifestData, err := input.Files.ReadFile(envelope.AuditManifestPath)
-		if err != nil {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:unreadable:%s; next: restore the manifest file and register a new fingerprinted envelope", manifestType, evidenceID, err))
-			continue
-		}
-		if sha256Hex(manifestData) != envelope.AuditManifestSHA256 {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:sha256_mismatch; next: do not edit in place, regenerate the manifest and register a new fingerprinted envelope", manifestType, evidenceID))
-			continue
-		}
-		// RC-16: outcome-aware validation. Passing/approved outcomes require a
-		// clean ledger; a routed review_required/blocked outcome keeps the
-		// unresolved rows that explain the route, but must still be a
-		// structurally complete, evidence-linked record. The conclusion/type
-		// pairing is fail-closed: allowsUnresolvedOutcome only relaxes the
-		// matching route (acceptance+review_required, release_audit+blocked).
-		baseline, baselineErr := s10ExternalBaseline(input)
-		if baselineErr != nil {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:external_baseline_unverifiable:%s; next: restore the current-generation completion artifacts so the changed-surface denominator can be re-derived, then re-run the gate", manifestType, evidenceID, baselineErr))
-			continue
-		}
-		var summary acceptance.Summary
-		if input.Root != "" && acceptance.S10AuthorityAvailable(input.Snapshot.State) {
-			authority, authorityErr := acceptance.BuildS10InventoryAuthority(input.Root, input.Snapshot.State, baseline)
-			if authorityErr != nil {
-				result.Status = StatusUnknown
-				result.ErrorCode = ErrorGateUnknown
-				result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:authoritative_inventory_unverifiable:%s; next: restore the current bound REQ, contract/TASK registrations, and pinned S7 ReviewPlan before re-running the gate", manifestType, evidenceID, authorityErr))
-				continue
-			}
-			summary, err = acceptance.ValidateForOutcomeWithBaselineAndAuthority(manifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline, authority)
+		result.EvidenceRefs = append(result.EvidenceRefs, id)
+		var data []byte
+		var err error
+		if input.Files != nil {
+			data, err = input.Files.ReadFile(envelope.AuditManifestPath)
 		} else {
-			summary, err = acceptance.ValidateForOutcomeWithBaseline(manifestData, manifestType, strings.TrimSpace(envelope.Conclusion), baseline)
+			file := filepath.FromSlash(envelope.AuditManifestPath)
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(input.Root, file)
+			}
+			data, err = os.ReadFile(file)
 		}
 		if err != nil {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:invalid:%s", manifestType, evidenceID, err))
+			result.Conflicts = append(result.Conflicts, envelope.AuditManifestPath+": "+err.Error())
 			continue
 		}
-		if missing := missingS10EvidenceRefs(input, evidenceID, summary.EvidenceRefs); len(missing) > 0 {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:evidence_ref_missing:%s; next: register the referenced current evidence first, then regenerate and re-register the manifest envelope (ids match runtime evidence verbatim — copy them from `.claude/loop-state.json` evidence[].id)", manifestType, evidenceID, strings.Join(missing, ",")))
+		var manifest acceptance.Manifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			result.Conflicts = append(result.Conflicts, envelope.AuditManifestPath+": "+err.Error())
 			continue
 		}
-		if summary.ManifestType != manifestType || !s10ManifestBindingMatches(input, envelope, manifestData) {
-			result.Status = StatusUnknown
-			result.ErrorCode = ErrorGateUnknown
-			result.Conflicts = append(result.Conflicts, fmt.Sprintf("s10:%s_manifest:%s:binding_mismatch; next: regenerate against the current runtime, baseline, and S7 round", manifestType, evidenceID))
+		if manifest.ManifestType != kind || !s10ManifestBindingMatches(input, envelope, data) {
+			result.Missing = append(result.Missing, envelope.AuditManifestPath+": another responsibility or review round")
+			continue
+		}
+		conclusion := strings.TrimSpace(envelope.Conclusion)
+		expected := conclusion == "pass"
+		switch result.GateID {
+		case "GATE-ACCEPTANCE-REVIEW-REQUIRED", "GATE-RELEASE-AUDIT-REVIEW-REQUIRED":
+			expected = conclusion == "review_required"
+		case "GATE-RELEASE-AUDIT-BLOCKED":
+			expected = conclusion == "blocked"
+		case "GATE-RELEASE-AUDIT-APPROVED":
+			if kind == "release_audit" {
+				expected = conclusion == "approved" || conclusion == "approved_with_risk"
+			}
+		}
+		if !expected {
+			result.Missing = append(result.Missing, fmt.Sprintf("%s: author conclusion %q", envelope.AuditManifestPath, conclusion))
+			continue
+		}
+		if conclusion == "blocked" || conclusion == "review_required" {
+			continue
+		}
+		for _, item := range manifest.CoverageInventory {
+			if item.Disposition != "pass" && item.Disposition != "not_applicable" {
+				result.Missing = append(result.Missing, fmt.Sprintf("%s: %s (%s) is %q", envelope.AuditManifestPath, item.Expected, item.ID, item.Disposition))
+			}
+		}
+		for _, item := range manifest.Counterevidence {
+			if item.Outcome != "pass" && item.Outcome != "not_applicable" {
+				result.Missing = append(result.Missing, envelope.AuditManifestPath+": "+item.Question+" is "+item.Outcome)
+			}
+		}
+		for _, item := range manifest.AuditAreas {
+			if item.Conclusion != "pass" && item.Conclusion != "not_applicable" {
+				result.Missing = append(result.Missing, envelope.AuditManifestPath+": "+item.ID+" is "+item.Conclusion)
+			}
+		}
+		for _, item := range manifest.BlockingFindings {
+			result.Missing = append(result.Missing, fmt.Sprintf("%s: reported blocker %+v", envelope.AuditManifestPath, item))
 		}
 	}
+	if result.GateID == "GATE-ACCEPTANCE-COMPLETE" || result.GateID == "GATE-RELEASE-AUDIT-APPROVED" {
+		if clean := verification.EvaluateCleanRound(input.Snapshot.State); !clean.Passed {
+			result.Missing = append(result.Missing, clean.Reasons...)
+		}
+		rows, _ := input.Snapshot.State["evidence"].([]any)
+		for _, raw := range rows {
+			entry, _ := raw.(map[string]any)
+			if evidenceKindsEqual("clean_round_record", stringValue(entry["kind"])) && stringValue(entry["status"]) == "valid" && entry["invalidated_by"] == nil && intValue(entry["review_round"]) == nestedInt(input.Snapshot.State, "review", "round") && intValue(entry["baseline_generation"]) == nestedInt(input.Snapshot.State, "baseline", "generation") {
+				result.EvidenceRefs = append(result.EvidenceRefs, stringValue(entry["id"]))
+			}
+		}
+	}
+	result.EvidenceRefs = sortedUnique(result.EvidenceRefs)
 	result.Missing = sortedUnique(result.Missing)
 	result.Conflicts = sortedUnique(result.Conflicts)
-	if len(result.Conflicts) == 0 && len(result.Missing) > 0 {
+	if len(result.Conflicts) > 0 {
+		result.Status = StatusUnknown
+		result.ErrorCode = ErrorGateUnknown
+	} else if len(result.Missing) > 0 {
 		result.Status = StatusNotReady
 	}
 }
@@ -789,7 +839,33 @@ func missingS10EvidenceRefs(input Input, selfID string, refs []string) []string 
 }
 
 func s10EnvelopeByID(input Input, id string) (evidenceEnvelope, bool) {
-	for _, envelope := range evidenceEnvelopesByID(input, []string{id}) {
+	if id == "" {
+		return evidenceEnvelope{}, false
+	}
+	raw, _ := input.Snapshot.State["evidence"].([]any)
+	for i := len(raw) - 1; i >= 0; i-- {
+		entry, _ := raw[i].(map[string]any)
+		if stringValue(entry["id"]) != id {
+			continue
+		}
+		var data []byte
+		var err error
+		if input.Files != nil {
+			data, err = input.Files.ReadFile(stringValue(entry["path"]))
+		} else {
+			file := filepath.FromSlash(stringValue(entry["path"]))
+			if !filepath.IsAbs(file) {
+				file = filepath.Join(input.Root, file)
+			}
+			data, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return evidenceEnvelope{}, false
+		}
+		var envelope evidenceEnvelope
+		if json.Unmarshal(data, &envelope) != nil {
+			return evidenceEnvelope{}, false
+		}
 		return envelope, true
 	}
 	return evidenceEnvelope{}, false

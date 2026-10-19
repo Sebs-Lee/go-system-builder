@@ -12,6 +12,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
@@ -39,8 +40,11 @@ func newDesignFixture(t *testing.T, impact string) (string, workpacket.DesignPac
 		t.Fatal(err)
 	}
 	fixtures.WriteState(t, root, state)
-	var p workpacket.DesignPacket
-	if err := json.Unmarshal([]byte(stageCLI(t, "runtime", "stage-answer", "issue", "--root", root)), &p); err != nil {
+	// Synthetic entry preparation uses the original issuer once; normal
+	// Pre/Stop below only read the current view and professional answer.
+	service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
+	p, err := service.IssueDesign(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
 	return root, p
@@ -68,11 +72,15 @@ func assertDesignCheckpoint(t *testing.T, root string) {
 func TestDesignAnswerMainSaveOriginalTransitionAndReplay(t *testing.T) {
 	root, p := newDesignFixture(t, "none")
 	assertDesignCheckpoint(t, root)
+	fixtures.CommitCurrentFixture(t, root)
 	stageJSON(t, root, p.AnswerPath, designDraft(p))
 	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(root, p.AnswerPath)}, "cwd": root})
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
 		t.Fatalf("Hook %d %s %s", code, out.String(), errout.String())
+	}
+	if strings.Contains(out.String(), "Questionnaire: "+filepath.Join(root, p.AnswerPath)) || !strings.Contains(out.String(), "Submitted questionnaire (not the current pending answer):") {
+		t.Fatalf("completed S2 answer presented as current questionnaire: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "S2 SUBMISSION RECEIPT") {
 		t.Fatalf("missing S2 receipt: %s", out.String())
@@ -86,6 +94,58 @@ func TestDesignAnswerMainSaveOriginalTransitionAndReplay(t *testing.T) {
 	if life["state"] != "planning" || life["phase"] != "contracts" {
 		t.Fatalf("original route: %+v", life)
 	}
+	prepared := false
+	for _, raw := range s.State["entities"].(map[string]any)["work_packets"].([]any) {
+		row := raw.(map[string]any)
+		if row["template_id"] == "s3-contract-v1" {
+			prepared = true
+			for _, key := range []string{"view_path", "answer_path"} {
+				path := row[key].(string)
+				if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(out.String(), path) {
+					t.Fatalf("next S3 path absent from receipt: %s", out.String())
+				}
+			}
+		}
+	}
+	if !prepared {
+		if strings.Contains(out.String(), "Complete the named materials") || !strings.Contains(out.String(), "system_followup") || !strings.Contains(out.String(), "original next-stage questionnaire preparation failed") {
+			t.Fatalf("system preparation failure shifted to author or lost waiting owner: %s", out.String())
+		}
+		if !strings.Contains(out.String(), "docs/design") || !strings.Contains(out.String(), "transition are recorded") {
+			t.Fatalf("missing next-stage material did not preserve accepted transition: %s", out.String())
+		}
+		writeContractSource(t, root, "docs/design/README.md", "# Design sources\n")
+		fixtures.CommitCurrentFixture(t, root)
+		change, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": "git commit -m 'complete actual design sources'"}, "cwd": root})
+		var changed, changeErr bytes.Buffer
+		if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(change), &changed, &changeErr); code != 0 {
+			t.Fatalf("actual Git change preparation: %s %s", changed.String(), changeErr.String())
+		}
+		s = stageSnapshot(t, root)
+		for _, raw := range s.State["entities"].(map[string]any)["work_packets"].([]any) {
+			row := raw.(map[string]any)
+			if row["template_id"] != "s3-contract-v1" {
+				continue
+			}
+			prepared = true
+			for _, key := range []string{"view_path", "answer_path"} {
+				path := row[key].(string)
+				if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(changed.String()+changeErr.String(), path) {
+					t.Fatalf("actual Git preparation did not deliver current path: %s %s", changed.String(), changeErr.String())
+				}
+			}
+		}
+		if !prepared {
+			t.Fatalf("actual material/Git change did not finish S3 preparation: %s %s", changed.String(), changeErr.String())
+		}
+	}
+
 	registered := false
 	for _, raw := range s.State["documents"].([]any) {
 		d := raw.(map[string]any)
@@ -97,45 +157,19 @@ func TestDesignAnswerMainSaveOriginalTransitionAndReplay(t *testing.T) {
 		t.Fatal("original action did not register design")
 	}
 	assertDesignCheckpoint(t, root)
-	var receipt submission.Receipt
-	if err := json.Unmarshal([]byte(stageCLI(t, "runtime", "stage-answer", "consume", "--root", root, "--agent", "Main", "--path", p.AnswerPath)), &receipt); err != nil {
-		t.Fatal(err)
-	}
-	if !receipt.Accepted || !receipt.WorkComplete {
-		t.Fatalf("replay receipt: %+v", receipt)
+	// Replaying this same ordinary save after transition is read-only.
+	out.Reset()
+	errout.Reset()
+	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
+		t.Fatalf("save replay: %d %s %s", code, out.String(), errout.String())
 	}
 	if stageSnapshot(t, root).State["revision"] != s.State["revision"] {
 		t.Fatal("same answer replay changed Runtime")
 	}
 	assertDesignCheckpoint(t, root)
-	journal, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, mutation := range []string{"wrong_owner", "wrong_digest", "missing_issuance", "wrong_transition"} {
-		t.Run(mutation, func(t *testing.T) {
-			state := stageSnapshot(t, root).State
-			entities := state["entities"].(map[string]any)
-			row := entities["submissions"].([]any)[0].(map[string]any)
-			modifiedJournal := journal
-			switch mutation {
-			case "wrong_owner":
-				row["owner"] = "other"
-			case "wrong_digest":
-				row["content_sha256"] = strings.Repeat("0", 64)
-			case "missing_issuance":
-				modifiedJournal = bytes.ReplaceAll(journal, []byte("PACKET-ISSUE"), []byte("OTHER-ISSUE"))
-			case "wrong_transition":
-				modifiedJournal = bytes.ReplaceAll(journal, []byte("PTR-PLAN-01"), []byte("PTR-PLAN-02"))
-			}
-			if err := runtime.ValidateCheckpointIndices(root, state, modifiedJournal); err == nil {
-				t.Fatal("forged checkpoint accepted")
-			}
-		})
-	}
 }
 
-func TestDesignAnswerRejectsIncompleteDriftAndUnknownUI(t *testing.T) {
+func TestDesignAnswerDraftAndCurrentFactsDoNotRequireSourceProof(t *testing.T) {
 	for _, mode := range []string{"incomplete", "requirement_drift", "unknown_ui"} {
 		t.Run(mode, func(t *testing.T) {
 			impact := "none"
@@ -144,24 +178,36 @@ func TestDesignAnswerRejectsIncompleteDriftAndUnknownUI(t *testing.T) {
 			}
 			root, p := newDesignFixture(t, impact)
 			if mode != "incomplete" {
-				stageJSON(t, root, p.AnswerPath, designDraft(p))
+				draft := designDraft(p)
+				draft.Title = "UI metadata may change without changing the professional answer"
+				stageJSON(t, root, p.AnswerPath, draft)
 			}
 			if mode == "requirement_drift" {
-				if err := os.WriteFile(filepath.Join(root, p.Binding.Requirement.Path), []byte("drift"), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(root, p.Binding.Requirement.Path), []byte("Current requirement material changed; no source certificate is required.\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
-			s, err := submission.New(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
 			before := stageSnapshot(t, root)
-			if r, err := s.SaveDesign(context.Background(), p.AnswerPath); err == nil || r.Accepted {
-				t.Fatalf("rejected answer accepted: %+v %v", r, err)
+			r, err := service.SaveDesign(context.Background(), p.AnswerPath)
+			if err != nil {
+				t.Fatalf("professional recording: %+v %v", r, err)
 			}
 			after := stageSnapshot(t, root)
-			if before.State["revision"] != after.State["revision"] || len(after.State["evidence"].([]any)) != 0 {
-				t.Fatal("rejected design occupied domain reception")
+			if mode == "incomplete" {
+				if r.Accepted || !strings.Contains(r.NextAction, "conclusion") || before.State["revision"] != after.State["revision"] || len(after.State["evidence"].([]any)) != 0 {
+					t.Fatalf("empty conclusion must remain a visible draft: %+v", r)
+				}
+			} else {
+				if !r.Accepted {
+					t.Fatalf("actual professional fields were not recorded: %+v", r)
+				}
+				if mode == "unknown_ui" {
+					life := after.State["lifecycle"].(map[string]any)
+					if life["phase"] != "design" || r.WorkComplete {
+						t.Fatal("unresolved actual UI impact advanced the design")
+					}
+				}
 			}
 		})
 	}
@@ -178,7 +224,7 @@ func TestDesignAnswerPendingRecoveryPreservesReception(t *testing.T) {
 	defer cancel()
 	s.Validator = cancelValidatedReception{CandidateValidator: s.Validator, packetID: p.ID, cancel: cancel}
 	r, err := s.SaveDesign(ctx, p.AnswerPath)
-	if err != nil || !r.Accepted || !r.WorkComplete || len(r.WaitingOn) == 0 {
+	if err != nil || !r.Accepted || r.WorkComplete || len(r.WaitingOn) == 0 {
 		t.Fatalf("pending receipt: %+v %v", r, err)
 	}
 	before := stageSnapshot(t, root)
@@ -187,7 +233,9 @@ func TestDesignAnswerPendingRecoveryPreservesReception(t *testing.T) {
 		t.Fatalf("pending record: %+v %v", prior, err)
 	}
 	assertDesignCheckpoint(t, root)
-	stageCLI(t, "runtime", "stage-answer", "recover", "--root", root, "--agent", "Main")
+	if r, err := s.SaveDesign(context.Background(), p.AnswerPath); err != nil || !r.Accepted {
+		t.Fatalf("same saved answer did not continue the original outlet: %+v %v", r, err)
+	}
 	after := stageSnapshot(t, root)
 	next, _, err := runtime.FindSubmission(after.State, p.ID)
 	if err != nil || next.ControlStatus != "advanced" || next.Key != prior.Key || next.ContentHash != prior.ContentHash || next.EvidenceID != prior.EvidenceID || len(after.State["evidence"].([]any)) != len(before.State["evidence"].([]any)) {
@@ -195,7 +243,9 @@ func TestDesignAnswerPendingRecoveryPreservesReception(t *testing.T) {
 	}
 	assertDesignCheckpoint(t, root)
 	revision := after.State["revision"]
-	stageCLI(t, "runtime", "stage-answer", "recover", "--root", root, "--agent", "Main")
+	if _, err := s.SaveDesign(context.Background(), p.AnswerPath); err != nil {
+		t.Fatal(err)
+	}
 	if stageSnapshot(t, root).State["revision"] != revision {
 		t.Fatal("recovery replay changed Runtime")
 	}

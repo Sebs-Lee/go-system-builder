@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -69,13 +71,21 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 			if err != nil {
 				continue
 			}
-			for _, pattern := range contractTokenPatterns {
-				for _, token := range pattern.FindAllString(string(data), -1) {
-					universe[token] = true
-					if file == "cases.json" && strings.HasPrefix(token, "CASE-") {
-						caseUniverse[token] = true
-					}
+			if file == "cases.json" {
+				ids, err := generatedCaseIDs(data)
+				if err != nil {
+					result.Problems = append(result.Problems, fmt.Sprintf("%s: cases.json unreadable: %v", module.Name(), err))
 				}
+				for id := range ids {
+					universe[id] = true
+					caseUniverse[id] = true
+				}
+			}
+			for _, token := range contractTokens(string(data)) {
+				if strings.HasPrefix(token, "CASE-") {
+					continue // CASE existence comes from actual generated/model IDs.
+				}
+				universe[token] = true
 			}
 		}
 		// The scenario-model's branch case_ids are the authoritative CASE
@@ -92,14 +102,7 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 				universe[id] = true
 			}
 			if casesData, err := files.ReadFile(filepath.Join(mpath, "cases.json")); err == nil {
-				generated := map[string]bool{}
-				for _, pattern := range contractTokenPatterns {
-					for _, token := range pattern.FindAllString(string(casesData), -1) {
-						if strings.HasPrefix(token, "CASE-") {
-							generated[token] = true
-						}
-					}
-				}
+				generated, _ := generatedCaseIDs(casesData)
 				for id := range modelCaseIDs {
 					if !generated[id] {
 						result.Problems = append(result.Problems, fmt.Sprintf("%s: cases.json is missing %s declared by scenario-model.json — regenerate (`scenario generate`) instead of hand-editing generated artifacts", module.Name(), id))
@@ -155,22 +158,26 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 			result.Problems = append(result.Problems, fmt.Sprintf("%s: unreadable: %v", id, err))
 			continue
 		}
-		content := string(data)
-		for _, pattern := range contractTokenPatterns {
-			for _, token := range pattern.FindAllString(content, -1) {
-				result.TokenRefs++
-				if strings.HasPrefix(token, "CASE-") {
-					citedCases[token] = true
+		content := currentContractText(string(data))
+		content = expandContractCaseRanges(content)
+		var unknownGroups []string
+		content, unknownGroups = expandContractCaseGroups(content, caseUniverse)
+		for _, group := range unknownGroups {
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: CASE group %s matches no known CASE", id, group))
+		}
+		for _, token := range contractTokens(content) {
+			result.TokenRefs++
+			if strings.HasPrefix(token, "CASE-") {
+				citedCases[token] = true
+			}
+			if strings.HasPrefix(token, "FR-") {
+				if !reqFRs[token] {
+					result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any REQ's FR table", id, token))
 				}
-				if strings.HasPrefix(token, "FR-") {
-					if !reqFRs[token] {
-						result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any REQ's FR table", id, token))
-					}
-					continue
-				}
-				if !universe[token] {
-					result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any module package (cases/stories/flows)", id, token))
-				}
+				continue
+			}
+			if !universe[token] {
+				result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any module package (cases/stories/flows)", id, token))
 			}
 		}
 		for _, cell := range contractClauseCellPattern.FindAllString(content, -1) {
@@ -223,6 +230,73 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 	return result, nil
 }
 
+// currentContractText keeps fenced examples out of current contract relations.
+func currentContractText(content string) string {
+	var lines []string
+	fence := ""
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if fence != "" {
+			if strings.HasPrefix(trimmed, fence) && strings.Trim(trimmed, string(fence[0])+" \t") == "" {
+				fence = ""
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			n := 0
+			for n < len(trimmed) && trimmed[n] == trimmed[0] {
+				n++
+			}
+			fence = trimmed[:n]
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+var contractCaseRangePattern = regexp.MustCompile(`\bCASE-([0-9]{3})\s*(?:~|–|至)\s*CASE-([0-9]{3})\b`)
+
+// Explicit numeric ranges enumerate every member of the current denominator.
+func expandContractCaseRanges(content string) string {
+	return contractCaseRangePattern.ReplaceAllStringFunc(content, func(ref string) string {
+		parts := contractCaseRangePattern.FindStringSubmatch(ref)
+		start, _ := strconv.Atoi(parts[1])
+		end, _ := strconv.Atoi(parts[2])
+		if end < start {
+			return ref
+		}
+		var ids []string
+		for n := start; n <= end; n++ {
+			ids = append(ids, fmt.Sprintf("CASE-%03d", n))
+		}
+		return strings.Join(ids, " ")
+	})
+}
+
+var contractCaseGroupPattern = regexp.MustCompile(`\bCASE-[A-Z0-9]+(?:-[A-Z0-9]+)*-\*`)
+
+// A group cites only matching CASEs already known during this check.
+func expandContractCaseGroups(content string, known map[string]bool) (string, []string) {
+	var unknown []string
+	expanded := contractCaseGroupPattern.ReplaceAllStringFunc(content, func(ref string) string {
+		prefix := strings.TrimSuffix(ref, "*")
+		var matched []string
+		for id := range known {
+			if strings.HasPrefix(id, prefix) {
+				matched = append(matched, id)
+			}
+		}
+		if len(matched) == 0 {
+			unknown = append(unknown, ref)
+			return ""
+		}
+		sort.Strings(matched)
+		return strings.Join(matched, " ")
+	})
+	return expanded, unknown
+}
+
 func isHex64(s string) bool {
 	if len(s) != 64 {
 		return false
@@ -267,6 +341,50 @@ func resolveContractFingerprintWithFiles(root, row string, files fileview.Reader
 func clauseNumberOf(cell string) string {
 	fields := strings.Fields(cell)
 	return strings.TrimPrefix(fields[len(fields)-1], "§")
+}
+
+// contractTokens keeps CASE references whole: a CASE fragment inside another
+// identifier (for example FACT-CATEGORY-CASE-VARIANTS) is not a CASE citation.
+func contractTokens(content string) []string {
+	var tokens []string
+	for _, pattern := range contractTokenPatterns {
+		for _, span := range pattern.FindAllStringIndex(content, -1) {
+			token := content[span[0]:span[1]]
+			if strings.HasPrefix(token, "CASE-") {
+				startsInsideIdentifier := span[0] > 0 && contractIdentifierByte(content[span[0]-1])
+				leadingDash := span[0] > 0 && content[span[0]-1] == '-' &&
+					(span[0] == 1 || !contractIdentifierByte(content[span[0]-2]))
+				endsInsideIdentifier := span[1] < len(content) && contractIdentifierByte(content[span[1]])
+				if startsInsideIdentifier && !leadingDash || endsInsideIdentifier {
+					continue
+				}
+			}
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
+}
+
+func contractIdentifierByte(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_'
+}
+
+func generatedCaseIDs(data []byte) (map[string]bool, error) {
+	var document struct {
+		Cases []struct {
+			ID string `json:"id"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for _, item := range document.Cases {
+		if item.ID != "" {
+			ids[item.ID] = true
+		}
+	}
+	return ids, nil
 }
 
 // modelCaseIDs extracts the branch case_id set from a module's

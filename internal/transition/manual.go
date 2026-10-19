@@ -37,6 +37,7 @@ func RenderManual(def *LoopDefinition, opts ManualOptions) string {
 	var b strings.Builder
 	writeHeader(&b, opts)
 	writeControlPlaneRecovery(&b)
+	writeRequirementAmendment(&b)
 	writeS11HumanGateway(&b)
 	writeTOC(&b, def)
 	writeTopLevelTransitions(&b, def)
@@ -44,6 +45,30 @@ func RenderManual(def *LoopDefinition, opts ManualOptions) string {
 	writeGlobalTransitions(&b, def)
 	writeLegacyPTRBUGSection(&b, def)
 	return b.String()
+}
+
+// writeRequirementAmendment is the single normal-path amendment guide shared
+// by the generated manual and the requirement-funnel link.
+func writeRequirementAmendment(b *strings.Builder) {
+	fmt.Fprint(b, `## Approved requirement amendment {#approved-requirement-amendment}
+
+Reuse the actual conversation decision approving the specific correction; do not ask for the same approval again or require the human to type a command verbatim. Record the actual decision attribution with --approved-by, not Git identity. An undecided amendment still waits for the human decision.
+
+If the bound Runtime is not already paused, record its checkpoint with the existing command (skip this step when already paused):
+
+`+"```sh"+`
+loop-harness runtime pause --root <project-root> --approved-by <actual-human> --reason <approved-correction>
+`+"```"+`
+
+Apply only the approved correction to the same REQ ID, keep its top status locked, raise its semantic version above the bound version, and commit the amended REQ on the bound development branch (for example develop). Then use the existing domain receiver:
+
+`+"```sh"+`
+loop-harness req amend --root <project-root> --req docs/requirements/REQ-<id>.md --approved-by <actual-human>
+`+"```"+`
+
+Read the exact current S2 questionnaire view/answer paths returned by the original amendment outlet and continue its professional work. The original transaction records the decision, new generation and downstream invalidation; do not assemble evidence bindings, hand-run TR-020, resume the old checkpoint after amendment, or guess a generation directory. If the transaction is recorded but questionnaire preparation fails, retain that fact and follow its actual preparation error and original listener continuation; do not resubmit an already accepted amendment or invent a path.
+
+`)
 }
 
 func writeS11HumanGateway(b *strings.Builder) {
@@ -279,7 +304,11 @@ func writeTransition(b *strings.Builder, t TransitionSpec) {
 
 func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
 	catalog := evidence.DefaultCatalog()
-	fmt.Fprintf(b, "Evidence bindings (copy into `runtime transition`):\n\n")
+	if t.ID == "TR-020" {
+		fmt.Fprint(b, "Low-level diagnostic evidence slots only; not the normal amendment entry. Follow [Approved requirement amendment](#approved-requirement-amendment); the original receiver binds these facts, not the author.\n\n")
+	} else {
+		fmt.Fprintf(b, "Evidence bindings (copy into `runtime transition`):\n\n")
+	}
 	for _, slot := range t.RequiredEvidence {
 		if generator, generated := catalog.Generator(slot); generated {
 			fmt.Fprintf(b, "- `%s`: `--evidence %s=%s` (%s)\n", slot, slot, generator.Reference, generator.Description)
@@ -288,7 +317,11 @@ func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
 		}
 		fmt.Fprintf(b, "  Accepted kinds: %s\n", joinBack(catalog.RegisteredAcceptedKinds(slot)))
 	}
-	fmt.Fprintf(b, "\nIf a binding is missing, retry with the command above; run `loop-harness explain %s` to inspect current candidates.\n\n", t.ID)
+	if t.ID == "TR-020" {
+		fmt.Fprint(b, "\nThese slots describe the original transaction for diagnosis; use the normal amendment entry above rather than composing or retrying a transition.\n\n")
+	} else {
+		fmt.Fprintf(b, "\nIf a binding is missing, retry with the command above; run `loop-harness explain %s` to inspect current candidates.\n\n", t.ID)
+	}
 }
 
 func writeS10ArtifactGuidance(b *strings.Builder, transitionID string) {

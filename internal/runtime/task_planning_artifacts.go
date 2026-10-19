@@ -202,74 +202,35 @@ func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.
 	return nil
 }
 
-// TaskPlanningArtifacts resolves the exact index and every current REQ TASK,
-// including cancelled files. The composition layer runs semantic.TasksCheck
-// in its trusted authorization callback; TR-002 retains the original guard.
+// TaskPlanningArtifacts projects actual index and current-REQ TASK bytes once.
+// Professional coverage, dispatch and DAG checks belong to the Service.
 func TaskPlanningArtifacts(root string, state map[string]any, p workpacket.TaskPlanningPacket, answer workpacket.TaskPlanningAnswer, files fileview.Reader) ([]workpacket.Reference, error) {
-	if err := ValidateTaskPlanningPacket(root, state, p, files); err != nil {
+	if files == nil {
+		return nil, fmt.Errorf("S4 artifact reader unavailable")
+	}
+	if err := validateStoredTaskPlanningAnswer(answer); err != nil {
 		return nil, err
 	}
-	answer, err := validateTaskPlanningAnswerProjection(p, answer)
+	entries, err := files.ReadDir(taskPlanningDirectory)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := files.ReadDir(filepath.Join(root, taskPlanningDirectory))
-	if err != nil {
-		return nil, fmt.Errorf("read S4 task directory through original source view: %w", err)
-	}
-	if err := verifyTaskPlanningDirectory(root, files, taskPlanningDirectory, entries); err != nil {
-		if outputErr := taskPlanningOutputDirectoryError(root, state, p, files, taskPlanningDirectory, entries); outputErr != nil {
-			return nil, outputErr
-		}
-		return nil, err
-	}
-	actualTasks, err := readCurrentTaskBatch(root, state, p, files, entries)
+	tasks, err := readCurrentTaskBatch(root, state, p, files, entries)
 	if err != nil {
 		return nil, err
 	}
-	if len(actualTasks) != len(answer.TaskPaths) {
-		return nil, fmt.Errorf("S4 answer task set is not the complete current REQ batch")
+	data, err := files.ReadFile(*answer.IndexPath)
+	if err != nil {
+		return nil, fmt.Errorf("read actual S4 index: %w", err)
 	}
-	taskByPath := map[string]taskPlanningArtifact{}
-	complete := 0
-	for _, task := range actualTasks {
-		taskByPath[task.ref.Path] = task
-		if task.status == "complete" {
-			complete++
-		}
-	}
-	if complete == 0 {
-		return nil, fmt.Errorf("S4 batch has no complete TASK")
-	}
-	for _, path := range answer.TaskPaths {
-		if _, ok := taskByPath[path]; !ok {
-			return nil, fmt.Errorf("S4 answer task set omits or invents %s", path)
-		}
-	}
-	indexPath := *answer.IndexPath
-	indexData, err := readTaskPlanningOutputFile(root, state, p, files, indexPath, nil)
+	index, err := taskPlanningArtifactRef(*answer.IndexPath, data)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateTaskDispatchIndex(root, files, p, indexPath, string(indexData), actualTasks); err != nil {
-		return nil, err
-	}
-	indexRef, err := taskPlanningArtifactRef(indexPath, indexData)
-	if err != nil {
-		return nil, err
-	}
-	refs := make([]workpacket.Reference, 0, 1+len(actualTasks))
-	refs = append(refs, indexRef)
-	taskRefs := make([]workpacket.Reference, 0, len(actualTasks))
-	for _, task := range actualTasks {
-		taskRefs = append(taskRefs, task.ref)
-	}
-	sort.Slice(taskRefs, func(i, j int) bool { return taskRefs[i].Path < taskRefs[j].Path })
-	refs = append(refs, taskRefs...)
-	if verified, ok := files.(interface{ Verify() error }); ok {
-		if err := verified.Verify(); err != nil {
-			return nil, fmt.Errorf("S4 source view moved: %w", err)
-		}
+	refs := make([]workpacket.Reference, 0, 1+len(tasks))
+	refs = append(refs, index)
+	for _, task := range tasks {
+		refs = append(refs, task.ref)
 	}
 	return refs, nil
 }
@@ -889,16 +850,6 @@ func readCurrentTaskBatch(root string, state map[string]any, p workpacket.TaskPl
 		}
 		if !docscope.Belongs(data, reqID) {
 			continue
-		}
-		data, err = readTaskPlanningOutputFile(root, state, p, files, path, data)
-		if err != nil {
-			return nil, err
-		}
-		if source, ok := files.(interface{ Source(string) (string, error) }); ok {
-			view, err := source.Source(path)
-			if err != nil || view != "git_tree" {
-				return nil, fmt.Errorf("S4 TASK must use committed git_tree input: %s", path)
-			}
 		}
 		if !taskPlanningIDRE.MatchString(id) || seenID[id] {
 			return nil, fmt.Errorf("S4 scoped TASK batch has invalid or duplicate task identity: %s", id)

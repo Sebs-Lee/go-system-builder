@@ -80,15 +80,22 @@ func ValidateContractPacket(root string, state map[string]any, p workpacket.Cont
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(binding, p.Binding) || !reflect.DeepEqual(designs, p.Inputs.Designs) {
+	if !reflect.DeepEqual(binding, p.Binding) || len(designs) != len(p.Inputs.Designs) {
 		return fmt.Errorf("S3 frozen Main/design binding differs")
+	}
+	// Compare the S2 document association, not its historical content hash.
+	for i, design := range designs {
+		actual := p.Inputs.Designs[i]
+		if design.ID != actual.ID || design.Path != actual.Path || design.Version != actual.Version {
+			return fmt.Errorf("S3 Main/design document association differs")
+		}
 	}
 	expected, err := workpacket.BuildContracts(binding, p.Inputs)
 	if err != nil || !reflect.DeepEqual(expected, p) {
 		return fmt.Errorf("S3 frozen template or inputs differ")
 	}
 	refs := []workpacket.Subject{{Path: binding.Requirement.Path, Version: binding.Requirement.Version, SHA256: binding.Requirement.SHA256}}
-	for _, ref := range designs {
+	for _, ref := range p.Inputs.Designs {
 		refs = append(refs, workpacket.Subject{Path: ref.Path, Version: ref.Version, SHA256: ref.SHA256})
 	}
 	refs = append(refs, p.Inputs.Sources...)

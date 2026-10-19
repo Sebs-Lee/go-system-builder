@@ -27,12 +27,19 @@ func testS10QuestionnaireSave(t *testing.T, tool string) {
 		"hook_event_name": "PreToolUse", "cwd": root, "tool_name": "Write",
 		"tool_input": map[string]any{"file_path": manifestPath},
 	}
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	beforePre, _ := os.ReadFile(statePath)
+	beforeDraft, _ := os.ReadFile(manifestPath)
 	out := callS10QuestionnaireHook(t, root, request)
 	if !strings.Contains(out, manifestPath) {
 		t.Fatalf("PreToolUse did not give the exact absolute manifest path: %s", out)
 	}
 
-	fillS10QuestionnaireAnswer(t, manifestPath, "acceptance", "pass")
+	afterPre, _ := os.ReadFile(statePath)
+	afterDraft, _ := os.ReadFile(manifestPath)
+	if !bytes.Equal(beforePre, afterPre) || !bytes.Equal(beforeDraft, afterDraft) {
+		t.Fatal("ordinary S10 Pre mutated Runtime or its existing draft")
+	}
 
 	request["hook_event_name"] = "PostToolUse"
 	request["tool_name"] = tool
@@ -40,12 +47,74 @@ func testS10QuestionnaireSave(t *testing.T, tool string) {
 	if tool != "Write" {
 		request["tool_input"] = map[string]any{"command": "script saved the prepared manifest; command text is not parsed"}
 	}
+	// Draft saves do not imply a negative route or an accepted professional conclusion.
 	out = callS10QuestionnaireHook(t, root, request)
-	if !strings.Contains(out, manifestPath) || !strings.Contains(out, "registered as") {
+	draftState, _ := os.ReadFile(statePath)
+	if !bytes.Equal(afterPre, draftState) || !strings.Contains(out, manifestPath) {
+		t.Fatalf("draft save changed Runtime or omitted the exact remaining answer: %s", out)
+	}
+	fillS10QuestionnaireAnswer(t, manifestPath, "acceptance", "pass")
+	answer := readS10QuestionnaireState(t, manifestPath)
+	first := answer["coverage_inventory"].([]any)[0].(map[string]any)
+	first["disposition"] = "unknown"
+	first["oracle"] = "Synthetic fixture: this observation is not finished yet."
+	pending, _ := json.MarshalIndent(answer, "", "  ")
+	if err := os.WriteFile(manifestPath, pending, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = callS10QuestionnaireHook(t, root, request)
+	pendingState := readS10QuestionnaireState(t, statePath)
+	if pendingState["lifecycle"].(map[string]any)["state"] != "acceptance" || !hasS10QuestionnaireEvidence(root, pendingState, "acceptance", "pass") {
+		t.Fatalf("explicitly unfinished observation was not recorded without completion: %s", out)
+	}
+	out = callS10QuestionnaireHook(t, root, request)
+	replayed := readS10QuestionnaireState(t, statePath)
+	if replayed["revision"] != pendingState["revision"] || len(replayed["evidence"].([]any)) != len(pendingState["evidence"].([]any)) {
+		t.Fatalf("current same-answer replay wrote: %s", out)
+	}
+	// A real professional supplement is recorded even while its original
+	// completion outlet waits for an actual clean-round condition. This is a
+	// synthetic fixture adjustment, not a budget failure or an author procedure.
+	fillS10QuestionnaireAnswer(t, manifestPath, "acceptance", "pass")
+	waiting := readS10QuestionnaireState(t, statePath)
+	waiting["review"].(map[string]any)["plan"].(map[string]any)["status"] = "running"
+	waitingBytes, err := json.MarshalIndent(waiting, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, waitingBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = callS10QuestionnaireHook(t, root, request)
+	recordedWaiting := readS10QuestionnaireState(t, statePath)
+	if recordedWaiting["lifecycle"].(map[string]any)["state"] != "acceptance" {
+		t.Fatalf("missing clean-round condition was bypassed: %s", out)
+	}
+	countBeforeContinuation := len(recordedWaiting["evidence"].([]any))
+	recordedWaiting["review"].(map[string]any)["plan"].(map[string]any)["status"] = "clean"
+	restoredBytes, err := json.MarshalIndent(recordedWaiting, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, restoredBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The same normal save finishes the pending original outlet without a
+	// second evidence registration or a separate progression command.
+	out = callS10QuestionnaireHook(t, root, request)
+	if got := len(readS10QuestionnaireState(t, statePath)["evidence"].([]any)); got != countBeforeContinuation {
+		t.Fatalf("same received report registered again: %d -> %d; %s", countBeforeContinuation, got, out)
+	}
+	if !strings.Contains(out, manifestPath) || !strings.Contains(out, "recorded at") {
 		t.Fatalf("valid S10 answer was not registered at its exact path: %s", out)
 	}
-	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	state := readS10QuestionnaireState(t, statePath)
+	if state["lifecycle"].(map[string]any)["state"] != "release_audit" {
+		t.Fatalf("acceptance save did not complete exactly its own TR-015: %#v; %s", state["lifecycle"], out)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(manifestPath), "release_audit-manifest.json")); err != nil {
+		t.Fatalf("TR-015 did not prepare the next exact questionnaire: %v", err)
+	}
 	var recorded map[string]any
 	for _, raw := range state["evidence"].([]any) {
 		entry, _ := raw.(map[string]any)
@@ -77,7 +146,7 @@ func s10QuestionnaireHookRoot(t *testing.T) (string, string) {
 	}
 	state := readS10QuestionnaireState(t, filepath.Join(root, ".claude", "loop-state.json"))
 	state["runtime_id"] = "loop-test"
-	state["lifecycle"] = map[string]any{"state": "acceptance", "phase": nil, "phase_revision": 0}
+	state["lifecycle"] = map[string]any{"state": "verification", "phase": "clean", "phase_revision": 0}
 	state["baseline"] = map[string]any{"generation": 1, "captured_at": "2026-10-15T00:00:00Z"}
 	reqPath := "docs/requirements/REQ-AC-001.md"
 	req := []byte("# REQ-AC-001\n")
@@ -169,6 +238,19 @@ func s10QuestionnaireHookRoot(t *testing.T) (string, string) {
 	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-state.json"), append(stateData, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Synthetic upstream only: the original clean-round producer/guard and
+	// original Controller transition prepare S10, not an S10 passive Pre.
+	callS10QuestionnaireHook(t, root, map[string]any{"hook_event_name": "PreToolUse", "cwd": root, "tool_name": "Read"})
+	unready := readS10QuestionnaireState(t, filepath.Join(root, ".claude", "loop-state.json"))
+	if unready["lifecycle"].(map[string]any)["state"] != "verification" {
+		t.Fatal("missing actual clean-round precondition was bypassed")
+	}
+	seedS10QuestionnaireCleanRound(t, root)
+	out := callS10QuestionnaireHook(t, root, map[string]any{"hook_event_name": "PreToolUse", "cwd": root, "tool_name": "Read"})
+	entered := readS10QuestionnaireState(t, filepath.Join(root, ".claude", "loop-state.json"))
+	if entered["lifecycle"].(map[string]any)["state"] != "acceptance" {
+		t.Fatalf("synthetic S7 clean round did not pass the original TR-009: %s", out)
+	}
 	return root, filepath.Join(root, "s10", "loop-test", "g1", "r1", "acceptance-manifest.json")
 }
 
@@ -230,10 +312,8 @@ func fillS10QuestionnaireAnswer(t *testing.T, path, kind, outcome string) {
 		if row == nil {
 			continue
 		}
-		row["expected"] = "the registered S10 source and implementation satisfy this scoped requirement"
-		row["oracle"] = "compare the exact registered source with current completion and review evidence"
-		row["owner"] = "Independent S10 Reviewer"
-		row["evidence_refs"] = []string{"ev:AUDIT-001"}
+		row["oracle"] = "Synthetic fixture observation: the supplied material is readable and its prior result is reused; this is not native product validation."
+		row["evidence_refs"] = []string{}
 		row["disposition"] = "pass"
 	}
 	counterevidence, _ := manifest["counterevidence"].([]any)
@@ -248,6 +328,9 @@ func fillS10QuestionnaireAnswer(t *testing.T, path, kind, outcome string) {
 		row["outcome"] = "pass"
 	}
 	if kind == "release_audit" {
+		if len(coverage) != 1 || coverage[0].(map[string]any)["id"] != "acceptance" {
+			t.Fatalf("audit copied the acceptance inventory or created eight required tasks: %#v", coverage)
+		}
 		areas, _ := manifest["audit_areas"].([]any)
 		if len(areas) != 0 {
 			t.Fatal("fresh release-audit questionnaire asks for duplicate audit summary answers")

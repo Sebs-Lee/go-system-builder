@@ -98,7 +98,7 @@ web/e2e/<module>/**/*.spec.ts
 - `polarity` 只能是 `positive` 或 `negative`。`witness` 的每个键必须引用现有
   fact，值必须引用该 fact 的 partition。
 - 所有 oracle 的公共字段必须包含 `visible`、`terminal_state`、
-  `persisted_effects`、`forbidden_side_effects`。
+  `persisted_effects`、`forbidden_side_effects`。真实无持久变化时 `persisted_effects` 可为 `[]`，字段仍须保留，不用填充“none”等文字。
 - negative oracle 必须同时包含上述四个公共字段，并额外包含 `rejection`、
   `expected_state`、`recovery`。
 - negative oracle 没有恢复路径时必须写 `recovery: "N/A"`，同时提供非空
@@ -128,15 +128,17 @@ case 来绕过缺口。生成器按 branch witness、稳定 ID、约束和 set-c
 
 ## 4. Positive / Negative Coverage
 
-正反比例是容量门，不替代分支门：
+正反数量比仅作风险参考，不是生成、校验或接收门槛；不得为达到比例凑分支，也不得删掉真实 allow/reject 分支。
 
-| `coverage_profile` | 最低 positive:negative 容量比 |
+| `coverage_profile` | positive:negative 风险参考比 |
 |:---|:---:|
 | `ordinary` | `1:1` |
 | `rule-dense` | `1:2` |
 | `critical` | `1:3` |
 
-同时必须满足：
+现有 counts/ratio 生成输出保留；`minimum_negative_to_positive` 为兼容字段名，表示上述参考值，不是拒收阈值。统计引用生成物，不另行手抄多份计数或数量证明。
+
+真实分支覆盖仍必须满足：
 
 - 每个 required allow branch 至少有一个 positive CASE；
 - 每个 required reject branch 至少有一个 negative CASE；

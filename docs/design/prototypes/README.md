@@ -67,3 +67,7 @@ When `UI impact = changed` in a REQ:
 
 Lightweight mode may skip standalone architecture/design docs, but it cannot
 skip this gate or the full-module regression for UI-impacting requirements.
+
+For each cross-matrix entry, supply the actual `branch` or `no_branch_reason` and omit the unused property; do not write `null` for these optional string fields.
+
+The same fact/req_ref/story combination may name several different real branches in separate entries; each branch must retain its actual rule reference.

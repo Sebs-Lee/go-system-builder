@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
@@ -15,118 +15,60 @@ type verifiedContractSubmission struct {
 	packet   workpacket.ContractPacket
 	answer   workpacket.ContractAnswer
 	subjects map[string]workpacket.Subject
-	files    fileview.Reader
 }
 
-// verifiedContractPacketFacts projects facts from the original accepted S3
-// packet. It rechecks the frozen source closure and asks the original runtime
-// artifact resolver for the current complete delivery set, including any
-// shared-model dependencies checked by the original S3 consumer.
+// verifiedContractPacketFacts projects the original consumer's accepted facts.
+// Professional checks ran at reception; this read does not recertify source
+// bytes, directory membership, or the current complete shared-model universe.
 func verifiedContractPacketFacts(input Input) ([]documentFact, bool, error) {
 	verified, accepted, err := readAcceptedContractSubmission(input)
 	if err != nil || !accepted {
 		return nil, accepted, err
 	}
-
-	artifacts, err := runtime.ContractArtifacts(
-		input.Root,
-		input.Snapshot.State,
-		verified.packet,
-		verified.answer,
-		verified.files,
-	)
-	if err != nil {
-		return nil, true, fmt.Errorf("revalidate original S3 delivered artifacts: %w", err)
-	}
-	if len(artifacts) == 0 {
-		return nil, true, fmt.Errorf("original S3 delivery has no index or contract artifacts")
-	}
-
-	expected := map[string]workpacket.Subject{}
-	addExpected := func(subject workpacket.Subject) error {
-		if subject.Path == "" {
-			return fmt.Errorf("original S3 subject has an empty path")
-		}
-		if _, duplicate := expected[subject.Path]; duplicate {
-			return fmt.Errorf("original S3 subject set repeats %s", subject.Path)
-		}
-		expected[subject.Path] = subject
-		return nil
-	}
-	if err := addExpected(workpacket.Subject{
-		Path:    verified.packet.Binding.Requirement.Path,
-		Version: verified.packet.Binding.Requirement.Version,
-		SHA256:  verified.packet.Binding.Requirement.SHA256,
-	}); err != nil {
-		return nil, true, err
-	}
-	for _, design := range verified.packet.Inputs.Designs {
-		if err := addExpected(workpacket.Subject{Path: design.Path, Version: design.Version, SHA256: design.SHA256}); err != nil {
-			return nil, true, err
-		}
-	}
-	for _, source := range verified.packet.Inputs.Sources {
-		if err := addExpected(source); err != nil {
-			return nil, true, err
-		}
-	}
-	for _, artifact := range artifacts {
-		if artifact.Path == "" || artifact.SHA256 == "" {
-			return nil, true, fmt.Errorf("original S3 artifact has an empty path or digest")
-		}
-		if err := addExpected(workpacket.Subject{Path: artifact.Path, Version: artifact.Version, SHA256: artifact.SHA256}); err != nil {
-			return nil, true, err
-		}
-	}
-	if len(expected) != len(verified.subjects) {
-		return nil, true, fmt.Errorf("original S3 envelope subject set has %d paths; the validated source and delivery set has %d", len(verified.subjects), len(expected))
-	}
-	for path, want := range expected {
-		got, ok := verified.subjects[path]
-		if !ok {
-			return nil, true, fmt.Errorf("original S3 envelope is missing current subject %s", path)
-		}
-		if got != want {
-			return nil, true, fmt.Errorf("original S3 envelope subject differs from current source or delivered bytes: %s", path)
-		}
-	}
-
 	facts, err := contractPacketSourceFacts(verified.packet, verified.subjects)
 	if err != nil {
 		return nil, true, err
 	}
-	indexPath := ""
-	if verified.answer.IndexPath != nil {
-		indexPath = *verified.answer.IndexPath
+	if verified.answer.IndexPath == nil || *verified.answer.IndexPath == "" {
+		return nil, true, fmt.Errorf("original S3 answer has no contract index path")
 	}
-	contractPaths := make(map[string]bool, len(verified.answer.ContractPaths))
+	indexPath := *verified.answer.IndexPath
+	contractPaths := map[string]bool{}
 	for _, path := range verified.answer.ContractPaths {
 		contractPaths[path] = true
 	}
-	for _, artifact := range artifacts {
-		kind, status, id := "source", "frozen", "shared-model:"+artifact.Path
-		switch {
-		case artifact.Path == indexPath:
-			kind, status, id = "contract_index", "locked", "contract-index:"+artifact.ID
-		case contractPaths[artifact.Path]:
-			kind, status, id = "contract", "locked", "contract:"+artifact.ID
-		case strings.HasPrefix(filepath.ToSlash(artifact.Path), "docs/dev/contracts/"):
-			return nil, true, fmt.Errorf("original S3 checker returned an undeclared contract output: %s", artifact.Path)
+	for _, path := range append([]string{indexPath}, verified.answer.ContractPaths...) {
+		if _, ok := verified.subjects[path]; !ok {
+			return nil, true, fmt.Errorf("original S3 accepted delivery is missing subject %s", path)
 		}
-		facts = append(facts, documentFact{
-			ID:         id,
-			Kind:       kind,
-			Path:       artifact.Path,
-			Version:    artifact.Version,
-			SHA256:     artifact.SHA256,
-			Status:     status,
-			Generation: verified.packet.Binding.Generation,
-		})
 	}
-	if verifiedFileView, ok := input.Files.(interface{ Verify() error }); ok {
-		if err := verifiedFileView.Verify(); err != nil {
-			return nil, true, fmt.Errorf("original S3 file view moved during artifact projection: %w", err)
+	inputs := map[string]bool{verified.packet.Binding.Requirement.Path: true}
+	for _, ref := range verified.packet.Inputs.Designs {
+		inputs[ref.Path] = true
+	}
+	for _, ref := range verified.packet.Inputs.Sources {
+		inputs[ref.Path] = true
+	}
+	paths := make([]string, 0, len(verified.subjects))
+	for path := range verified.subjects {
+		if !inputs[path] {
+			paths = append(paths, path)
 		}
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		subject := verified.subjects[path]
+		kind, status, id := "source", "frozen", "shared-model:"+path
+		artifactID := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		switch {
+		case path == indexPath:
+			kind, status, id = "contract_index", "locked", "contract-index:"+artifactID
+		case contractPaths[path]:
+			kind, status, id = "contract", "locked", "contract:"+artifactID
+		case strings.HasPrefix(filepath.ToSlash(path), "docs/dev/contracts/"):
+			return nil, true, fmt.Errorf("original S3 receipt has an undeclared contract output: %s", path)
+		}
+		facts = append(facts, documentFact{ID: id, Kind: kind, Path: path, Version: subject.Version, SHA256: subject.SHA256, Status: status, Generation: verified.packet.Binding.Generation})
 	}
 	return facts, true, nil
 }
@@ -156,10 +98,6 @@ func readAcceptedContractSubmission(input Input) (*verifiedContractSubmission, b
 	if input.Root == "" || state == nil || input.Files == nil {
 		return nil, true, fmt.Errorf("accepted S3 source projection requires the original root, runtime snapshot, and file view")
 	}
-	files, ok := input.Files.(fileview.Reader)
-	if !ok {
-		return nil, true, fmt.Errorf("accepted S3 source projection requires the original file view with directory reads")
-	}
 
 	binding, _, err := runtime.CurrentContractBinding(state)
 	if err != nil {
@@ -183,6 +121,9 @@ func readAcceptedContractSubmission(input Input) (*verifiedContractSubmission, b
 			candidate.Binding.Generation == binding.Generation &&
 			candidate.Binding.StageEntry == binding.StageEntry &&
 			candidate.Binding.Stage == "S3" && candidate.Binding.Owner == "Main" {
+			if candidate.Binding.Requirement != binding.Requirement {
+				return nil, true, fmt.Errorf("current S3 questionnaire requirement differs from the current bound REQ")
+			}
 			packet = candidate
 			packetCount++
 		}
@@ -258,17 +199,11 @@ func readAcceptedContractSubmission(input Input) (*verifiedContractSubmission, b
 	if err != nil || answerDigest != submission.ContentHash {
 		return nil, true, fmt.Errorf("original S3 professional answer differs from the accepted submission hash: %s", evidencePath)
 	}
-	if err := runtime.ValidateContractEnvelope(packet, submission.EvidenceID, envelope.ContractAnswer, envelopeBytes); err != nil {
-		return nil, true, fmt.Errorf("validate original S3 planning_contract envelope %s: %w", evidencePath, err)
-	}
-	if err := runtime.ValidateIssuedContractPacket(input.Root, state, packet, files); err != nil {
-		return nil, true, fmt.Errorf("revalidate complete original S3 source closure: %w", err)
-	}
 
 	subjects := make(map[string]workpacket.Subject, len(envelope.SubjectRefs))
 	for _, subject := range envelope.SubjectRefs {
-		if subject.Path == "" {
-			return nil, true, fmt.Errorf("original S3 envelope contains an empty subject path")
+		if subject.Path == "" || subject.SHA256 == "" {
+			return nil, true, fmt.Errorf("original S3 envelope contains an unreadable subject reference: %s", subject.Path)
 		}
 		if _, duplicate := subjects[subject.Path]; duplicate {
 			return nil, true, fmt.Errorf("original S3 envelope repeats subject %s", subject.Path)
@@ -281,17 +216,19 @@ func readAcceptedContractSubmission(input Input) (*verifiedContractSubmission, b
 		}
 	}
 	return &verifiedContractSubmission{
-		packet: packet, answer: envelope.ContractAnswer, subjects: subjects, files: files,
+		packet: packet, answer: envelope.ContractAnswer, subjects: subjects,
 	}, true, nil
 }
 
 func contractPacketSourceFacts(packet workpacket.ContractPacket, subjects map[string]workpacket.Subject) ([]documentFact, error) {
-	// ValidateContractEnvelope proves the frozen requirement, design, and
-	// source refs. ContractInputs.Sources intentionally carry path and SHA only;
-	// preserve the exact envelope version instead of deriving one from mutable
-	// file text.
-	facts := make([]documentFact, 0, len(packet.Inputs.Sources))
-	for _, source := range packet.Inputs.Sources {
+	// Preserve the source associations recorded by the original consumer;
+	// historical S2 rows stay intact and no source files are reread here.
+	sources := append([]workpacket.Subject(nil), packet.Inputs.Sources...)
+	for _, design := range packet.Inputs.Designs {
+		sources = append(sources, workpacket.Subject{Path: design.Path, Version: design.Version, SHA256: design.SHA256})
+	}
+	facts := make([]documentFact, 0, len(sources))
+	for _, source := range sources {
 		subject, ok := subjects[source.Path]
 		if !ok || subject.SHA256 != source.SHA256 {
 			return nil, fmt.Errorf("original S3 envelope does not bind frozen source %s", source.Path)

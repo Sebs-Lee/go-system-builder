@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
@@ -283,7 +285,7 @@ func TestMainPlanningNextNamesAutomaticQuestionnairePreparation(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			state := planningGuidanceState(stage, true)
 			next := buildNextProjection(state, stage, "specification-planning", "legacy action", t.TempDir())
-			if !strings.Contains(next.Action, "prepared by the Hook listener") || strings.Contains(next.Action, "runtime stage-answer issue") {
+			if !(strings.Contains(next.Action, "prepared by the Hook listener") || ((stage == "S2" && strings.Contains(next.Action, "system design-entry preparation")) || (stage != "S2" && strings.Contains(next.Action, "questionnaire is missing")))) || strings.Contains(next.Action, "runtime stage-answer issue") {
 				t.Fatalf("missing automatic questionnaire preparation: %s", next.Action)
 			}
 			if next.mainPlanning == nil || next.mainPlanning.IssueAction {
@@ -323,11 +325,17 @@ func TestMainPlanningNextRejectsOldEntryAndWrongBindings(t *testing.T) {
 				_, view, answer := planningGuidancePacketPaths(packet)
 				addPlanningGuidancePacket(t, state, mutatePlanningGuidancePacket(t, packet, mutation))
 				next := buildNextProjection(state, stage, "specification-planning", "legacy action", t.TempDir())
+				if mutation != "old_entry" {
+					if !strings.Contains(next.Action, answer) {
+						t.Fatalf("current S2 professional path hidden by source/owner qualification: %s", next.Action)
+					}
+					return
+				}
 				if strings.Contains(next.Action, view) || strings.Contains(next.Action, answer) {
 					t.Fatalf("stale or misbound packet path leaked: %s", next.Action)
 				}
 				if mutation == "old_entry" {
-					if !strings.Contains(next.Action, "prepared by the Hook listener") {
+					if !strings.Contains(next.Action, "prepared by the Hook listener") && !((stage == "S2" && strings.Contains(next.Action, "system design-entry preparation")) || (stage != "S2" && strings.Contains(next.Action, "questionnaire is missing"))) {
 						t.Fatalf("old entry should await current questionnaire preparation: %s", next.Action)
 					}
 					return
@@ -363,11 +371,11 @@ func TestWorkerGuidanceDoesNotReceiveMainPlanningIssueAction(t *testing.T) {
 func TestMainPlanningGuidanceUsesAutomaticQuestionnairePreparation(t *testing.T) {
 	state := planningGuidanceState("S2", true)
 	guidance := buildGuidance(t.TempDir(), state, "SessionStart", policy.Input{})
-	if !strings.Contains(guidance.Action, "prepared by the Hook listener") || strings.Contains(guidance.Action, "runtime stage-answer issue") {
+	if !strings.Contains(guidance.Action, "system design-entry preparation") || strings.Contains(guidance.Action, "runtime stage-answer issue") {
 		t.Fatalf("Main guidance still requires a manual issue: %q", guidance.Action)
 	}
 	joined := strings.Join(guidance.Automation, " ")
-	if !strings.Contains(joined, "automatically") || strings.Contains(joined, "issuance is not automatic") {
+	if !strings.Contains(joined, "does not prepare or restore") {
 		t.Fatalf("Main guidance lacks automatic questionnaire preparation: %#v", guidance.Automation)
 	}
 }
@@ -397,5 +405,23 @@ func TestS3DeliveryGuidanceNamesCommittedBranchOnlyForGitOutputs(t *testing.T) {
 		} else if !strings.Contains(guidance, "bound development branch guidance-development") || !strings.Contains(guidance, "S3 outputs can change in this entry") || !strings.Contains(guidance, "Before saving this answer") {
 			t.Fatal("Git output preparation is left implicit", guidance)
 		}
+	}
+}
+
+func TestPlanningReceiptLabelsCompletedAnswerWithoutGuessingCurrentPath(t *testing.T) {
+	for _, next := range []string{
+		"Current next-stage questionnaire: read /current/S3/view.md; answer /current/S3/answer.md.",
+		"The original next-stage questionnaire preparation failed: missing actual source.",
+	} {
+		var out bytes.Buffer
+		renderStageAnswerHook(&out, "/completed/S2/answer.md", submission.Receipt{Accepted: true, WorkComplete: true, CurrentStage: "S3", NextAction: next}, "S2")
+		if strings.Contains(out.String(), "Questionnaire: /completed/") || !strings.Contains(out.String(), "Submitted questionnaire (not the current pending answer): /completed/S2/answer.md") || !strings.Contains(out.String(), next) {
+			t.Fatalf("completed answer replaced or impersonated the current path: %s", out.String())
+		}
+	}
+	var out bytes.Buffer
+	renderStageAnswerHook(&out, "/current/S2/answer.md", submission.Receipt{CurrentStage: "S2"}, "S2")
+	if !strings.Contains(out.String(), "Questionnaire: /current/S2/answer.md") {
+		t.Fatalf("current unfinished answer path lost: %s", out.String())
 	}
 }

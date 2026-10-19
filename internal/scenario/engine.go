@@ -296,9 +296,6 @@ func validateSource(source sourcePackage, module string, root string) error {
 			}
 		}
 	}
-	if err := validateRatio(source.model.CoverageProfile, counts.Positive, counts.Negative); err != nil {
-		return err
-	}
 	if len(usedFixtures) != len(fixtureIDs) {
 		return fmt.Errorf("fixture contract contains unreferenced fixture")
 	}
@@ -387,19 +384,8 @@ func validateBranch(branch Branch, rule Rule, partitions map[string]map[string]s
 }
 
 func validateCommonOracle(oracle Oracle) error {
-	if len(oracle.Visible) == 0 || oracle.TerminalState == "" || len(oracle.PersistedEffects) == 0 || len(oracle.ForbiddenSideEffects) == 0 {
+	if len(oracle.Visible) == 0 || oracle.TerminalState == "" || oracle.PersistedEffects == nil || len(oracle.ForbiddenSideEffects) == 0 {
 		return fmt.Errorf("oracle requires visible, terminal_state, persisted_effects and forbidden_side_effects")
-	}
-	return nil
-}
-
-func validateRatio(profile string, positive, negative int) error {
-	if positive == 0 {
-		return fmt.Errorf("coverage ratio requires at least one positive branch")
-	}
-	minimum := minimumNegativeRatio(profile)
-	if float64(negative)/float64(positive) < minimum {
-		return fmt.Errorf("coverage ratio negative:positive %.2f is below required %.2f for %s", float64(negative)/float64(positive), minimum, profile)
 	}
 	return nil
 }

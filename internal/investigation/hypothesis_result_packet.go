@@ -295,11 +295,13 @@ func readCurrentInvestigationCase(root string, state map[string]any) (s8CurrentC
 		return s8CurrentCase{}, err
 	}
 	findings, err := stringSlice(document["source_finding_ids"], "InvestigationCase.source_finding_ids")
-	if err != nil || len(findings) == 0 {
+	if err != nil || (len(findings) == 0 && stringField(document["observation_batch_id"]) != "") {
 		return s8CurrentCase{}, errors.New("current InvestigationCase Finding set is invalid")
 	}
-	if err := validateFindingArtifacts(root, state, findings); err != nil {
-		return s8CurrentCase{}, err
+	if len(findings) > 0 {
+		if err := validateFindingArtifacts(root, state, findings); err != nil {
+			return s8CurrentCase{}, err
+		}
 	}
 	return s8CurrentCase{pointer: pointer, document: document, bytes: data, path: path, sha: sha, revision: revision, findings: findings}, nil
 }
@@ -488,14 +490,6 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 	if err != nil {
 		return workpacket.HypothesisResultPacket{}, err
 	}
-	batchRef, batchSHA := stringField(current.document["observation_batch_ref"]), stringField(current.document["observation_batch_sha256"])
-	batchBytes, err := workpacket.ReadFile(root, batchRef, hypothesisResultPacketReadLimit)
-	if err != nil || workpacket.Digest(batchBytes) != batchSHA {
-		return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 original ObservationBatch bytes/SHA differ: %v", err)
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("observation-batch.schema.json", batchBytes); err != nil {
-		return workpacket.HypothesisResultPacket{}, err
-	}
 	var batch struct {
 		ObservationBatchID string   `json:"observation_batch_id"`
 		RuntimeID          string   `json:"runtime_id"`
@@ -504,15 +498,28 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		SubjectDigest      string   `json:"subject_digest"`
 		FindingIDs         []string `json:"finding_ids"`
 	}
-	if err := json.Unmarshal(batchBytes, &batch); err != nil {
-		return workpacket.HypothesisResultPacket{}, err
+	batchRef, batchSHA := stringField(current.document["observation_batch_ref"]), stringField(current.document["observation_batch_sha256"])
+	if batchRef != "" {
+		batchBytes, err := workpacket.ReadFile(root, batchRef, hypothesisResultPacketReadLimit)
+		if err != nil || workpacket.Digest(batchBytes) != batchSHA {
+			return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 original ObservationBatch bytes/SHA differ: %v", err)
+		}
+		if err := schema.NewEmbeddedValidator().ValidateBytes("observation-batch.schema.json", batchBytes); err != nil {
+			return workpacket.HypothesisResultPacket{}, err
+		}
+		if err := json.Unmarshal(batchBytes, &batch); err != nil {
+			return workpacket.HypothesisResultPacket{}, err
+		}
+		if batch.ObservationBatchID != stringField(current.document["observation_batch_id"]) || batch.RuntimeID != stringField(state["runtime_id"]) || batch.ReviewRound != currentReviewRound(state) || batch.Generation != intFieldS8(s8Map(state["baseline"])["generation"]) || batch.SubjectDigest != stringField(current.document["baseline_digest"]) || !sameStringSet(batch.FindingIDs, current.findings) {
+			return workpacket.HypothesisResultPacket{}, errors.New("S8 ObservationBatch differs from current Case/source generation")
+		}
 	}
-	if batch.ObservationBatchID != stringField(current.document["observation_batch_id"]) || batch.RuntimeID != stringField(state["runtime_id"]) || batch.ReviewRound != currentReviewRound(state) || batch.Generation != intFieldS8(s8Map(state["baseline"])["generation"]) || batch.SubjectDigest != stringField(current.document["baseline_digest"]) || !sameStringSet(batch.FindingIDs, current.findings) {
-		return workpacket.HypothesisResultPacket{}, errors.New("S8 ObservationBatch differs from current Case/source generation")
-	}
-	findingRows, err := readS8FindingDocuments(root, state, current.findings)
-	if err != nil {
-		return workpacket.HypothesisResultPacket{}, err
+	findingRows := []workpacket.HypothesisResultFinding{}
+	if len(current.findings) > 0 {
+		findingRows, err = readS8FindingDocuments(root, state, current.findings)
+		if err != nil {
+			return workpacket.HypothesisResultPacket{}, err
+		}
 	}
 	allRefs := append([]string(nil), question.EvidenceRefs...)
 	for _, finding := range findingRows {
@@ -524,8 +531,10 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		}
 		allRefs = append(allRefs, doc.EvidenceRefs...)
 	}
-	if err := ValidateEvidenceRefs(allRefs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
-		return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 frozen evidence source closure: %w", err)
+	if batchRef != "" {
+		if err := ValidateEvidenceRefs(allRefs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
+			return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 frozen evidence source closure: %w", err)
+		}
 	}
 	evidenceRefs, err := buildS8EvidenceRefTuples(state, allRefs, question.EvidenceRefs, findingRows)
 	if err != nil {
@@ -544,8 +553,8 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		RuntimeID: stringField(state["runtime_id"]), BaselineGeneration: generation, ReviewRound: currentReviewRound(state),
 		CaseID: stringField(current.document["case_id"]), CaseRef: current.path, CaseSHA256: current.sha, CaseRevision: current.revision, CaseRouteSHA256: routeSHA,
 		ObservationBatchID: batch.ObservationBatchID, ObservationBatchRef: batchRef, ObservationBatchSHA256: batchSHA, BaselineDigest: stringField(current.document["baseline_digest"]),
-		SourceFindingIDs: append([]string(nil), current.findings...), HypothesisID: hypothesisID, HypothesisQuestionSHA256: questionSHA,
-		HypothesisSourceFindingIDs: append([]string(nil), question.SourceFindingIDs...), AssignmentID: dispatch.assignmentID,
+		SourceFindingIDs: append([]string{}, current.findings...), HypothesisID: hypothesisID, HypothesisQuestionSHA256: questionSHA,
+		HypothesisSourceFindingIDs: append([]string{}, question.SourceFindingIDs...), AssignmentID: dispatch.assignmentID,
 		AssignmentSHA256: workpacket.Digest(assignmentBytes), TeamID: dispatch.teamID, TaskID: dispatch.taskID, TaskRef: dispatch.taskRef, TaskSHA256: dispatch.taskSHA,
 		ManifestRef: dispatch.manifestRef, ManifestSHA256: dispatch.manifestSHA, OwnerAgentID: dispatch.owner,
 	}
@@ -899,6 +908,15 @@ func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string,
 			return nil
 		}
 		entry := byID[ref]
+		if entry == nil {
+			for _, raw := range entries {
+				row, _ := raw.(map[string]any)
+				if row["kind"] == "human_decision" && row["path"] == ref {
+					entry = row
+					break
+				}
+			}
+		}
 		if entry == nil {
 			return fmt.Errorf("S8 evidence %q has no Runtime index source", ref)
 		}

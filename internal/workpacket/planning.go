@@ -1,12 +1,8 @@
 package workpacket
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"reflect"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -69,7 +65,7 @@ func BuildDesign(binding PlanningBinding) (DesignPacket, error) {
 	}{binding, templateSHA})
 	id := "packet-" + Digest(identity)
 	base := fmt.Sprintf("%s/g%d/S2/e%d/%s", binding.RuntimeID, binding.Generation, binding.StageEntry, id)
-	p := DesignPacket{ID: id, TemplateID: "s2-design-v1", TemplateSHA: templateSHA, Binding: binding, ViewPath: ".claude/work-packets/" + base + ".json", AnswerPath: ".claude/submissions/" + base + "/Main/answer.json", Draft: DesignDraft{Title: template.Title, Instruction: template.Instruction, Read: []ReadItem{{Path: req.Path, Purpose: "Use this locked requirement to complete the original architecture and design self-review."}}, Questions: template.Questions}}
+	p := DesignPacket{ID: id, TemplateID: "s2-design-v1", TemplateSHA: templateSHA, Binding: binding, ViewPath: ".claude/work-packets/" + base + ".json", AnswerPath: ".claude/submissions/" + base + "/Main/answer.json", Draft: DesignDraft{Title: template.Title, Instruction: template.Instruction, Read: []ReadItem{{Path: req.Path, Purpose: "Current locked requirement: identify its actual commitments, UI impact and existing materials."}, {Path: "docs/architecture/ARCHITECTURE-template.md", Purpose: "Architecture output template: define actual boundaries, data/state/error/recovery and contract decisions."}, {Path: "docs/design/decisions/ADR-template.md", Purpose: "Record decisions, alternatives, risks and the actual human direction judgment when needed; do not infer approval from a label."}, {Path: "docs/design/prototypes/README.md", Purpose: "Find existing affected module truth. UI changed: update applicable UI/scenario package; no UI but service behavior affected: update applicable service behavior package; do not manufacture unrelated deliverables."}, {Path: "docs/rules/scenario-model.md", Purpose: "Use actual AC/FR/behavior relations, observations and oracles; complete applicable scenario checks as design work, not a second receipt."}, {Path: "docs/design/derivation/DERIVATION-template.md", Purpose: "For actual UI changes, derive the current module surface from the project design foundation and existing module materials."}, {Path: "docs/rules/design-foundation.md", Purpose: "Conditional UI design guidance; absent project-specific foundation is a concrete material gap, not permission to invent its contents."}}, Questions: template.Questions}}
 	return p, nil
 }
 
@@ -77,35 +73,18 @@ func ValidateDesignAnswer(p DesignPacket, data []byte) (DesignAnswer, []FieldErr
 	issue := func(pointer, expected, observed, repair string) (DesignAnswer, []FieldError) {
 		return DesignAnswer{}, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: repair}}
 	}
-	if len(data) > 256<<10 {
-		return issue("/", "JSON <= 256KiB", "oversized", "保留当前题干，只填写专业答案。")
+	var draft struct {
+		Answer DesignAnswer `json:"answer"`
 	}
-	if err := rejectDuplicateKeys(data); err != nil {
-		return issue("/", "unique JSON keys", err.Error(), "删除重复字段。")
-	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s2.schema.json", data); err != nil {
-		return issue("/", "registered S2 answer", err.Error(), "保留题干，只填写 answer。")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	var draft DesignDraft
-	if err := decoder.Decode(&draft); err != nil {
-		return issue("/", "one design questionnaire", err.Error(), "恢复已发行问卷。")
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return issue("/", "one JSON object", "trailing data", "删除后续内容。")
+	if err := json.Unmarshal(data, &draft); err != nil {
+		return issue("/answer", "readable original design answer fields", err.Error(), "填写现有 conclusion 和 architecture_path 字段。")
 	}
 	answer := draft.Answer
-	draft.Answer = p.Draft.Answer
-	if !reflect.DeepEqual(draft, p.Draft) {
-		return issue("/", "original issued questionnaire", "machine fields changed", "恢复题干与冻结来源。")
+	if answer.Conclusion != nil && *answer.Conclusion != "" && *answer.Conclusion != "pass" {
+		return issue("/answer/conclusion", "pass after actual design self-review, or empty while unfinished", *answer.Conclusion, "未完成时保留空结论，不要为了接收而填写 pass。")
 	}
-	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
-		return issue("/answer/conclusion", "explicit professional design self-review pass", "unanswered", "完成原设计自审后填写；不能用文件存在推断通过。")
-	}
-	if answer.ArchitecturePath == nil || !safeRelative(*answer.ArchitecturePath) {
-		return issue("/answer/architecture_path", "actual locked ARCHITECTURE path", "missing or escaping", "填写本次原设计产物的真实项目路径。")
+	if answer.ArchitecturePath != nil && *answer.ArchitecturePath != "" && !safeRelative(*answer.ArchitecturePath) {
+		return issue("/answer/architecture_path", "current project architecture path", *answer.ArchitecturePath, "填写实际设计文档路径。")
 	}
 	return answer, nil
 }
@@ -124,7 +103,7 @@ func ValidateUniqueJSON(data []byte) error { return rejectDuplicateKeys(data) }
 // DesignEvidence is the original planning_design envelope, not a transition
 // or a quality certificate. The adapter must validate the actual artifact first.
 func DesignEvidence(p DesignPacket, id string, architecture Reference, answer DesignAnswer, at time.Time) (map[string]any, error) {
-	if answer.Conclusion == nil || *answer.Conclusion != "pass" || answer.ArchitecturePath == nil || architecture.Path != *answer.ArchitecturePath || architecture.Version == "" || !digestPattern.MatchString(architecture.SHA256) {
+	if answer.Conclusion == nil || *answer.Conclusion != "pass" || answer.ArchitecturePath == nil || architecture.Path != *answer.ArchitecturePath {
 		return nil, fmt.Errorf("planning evidence differs from professional answer or actual architecture")
 	}
 	req := p.Binding.Requirement

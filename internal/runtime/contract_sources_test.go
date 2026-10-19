@@ -287,10 +287,24 @@ func TestCurrentContractBindingExcludesRegisteredS3SharedModelDocuments(t *testi
 }
 
 func TestResolveContractInputsRejectsUnacceptedADRForBoundREQ(t *testing.T) {
-	root, state := contractSourceFixture(t, false)
-	writeContractSourceFile(t, root, "docs/design/decisions/ADR-005.md", "> 状态: proposed\n> 关联需求: `docs/requirements/REQ-001.md`\n")
-	if _, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root}); err == nil || !strings.Contains(err.Error(), "still proposed") {
-		t.Fatalf("unaccepted current-REQ ADR did not block source closure: %v", err)
+	for _, fixture := range []struct{ status, want string }{{"proposed", "still proposed"}, {"locked", "unsupported status"}, {"", "no explicit status"}} {
+		t.Run(fixture.status, func(t *testing.T) {
+			root, state := contractSourceFixture(t, false)
+			header := ""
+			if fixture.status != "" {
+				header = "> 状态: " + fixture.status + "\n"
+			}
+			writeContractSourceFile(t, root, "docs/design/decisions/ADR-005.md", header+"> 关联需求: `docs/requirements/REQ-001.md`\n")
+			_, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root})
+			if err == nil {
+				t.Fatal("unaccepted ADR did not report the actual missing decision")
+			}
+			for _, want := range []string{fixture.want, "docs/design/decisions/ADR-005.md", "docs/design/decisions/ADR-template.md", "proposed / accepted / rejected / deprecated", "actual direction decision"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("ADR feedback omitted %q: %v", want, err)
+				}
+			}
+		})
 	}
 }
 
@@ -347,7 +361,7 @@ func contractSourceFixture(t *testing.T, withModule bool) (string, map[string]an
 	reqPath := "docs/requirements/REQ-001.md"
 	designPath := "docs/architecture/ARCHITECTURE-001.md"
 	req := []byte("# REQ-001\n> Status: locked\n> Version: v1.0.0\n")
-	design := []byte("# Architecture\n> Status: locked\n> Version: v1.0.0\n\nSee `docs/architecture/data-model/model.md`. [Decision](../design/decisions/ADR-001.md). [contract output](../dev/contracts/SYNC-001.md).\n")
+	design := []byte("# Architecture\n> Status: locked\n> Version: v1.0.0\n\nSee [model](data-model/model.md). [Decision](../design/decisions/ADR-001.md). [contract output](../dev/contracts/SYNC-001.md).\n")
 	writeContractSourceFile(t, root, reqPath, string(req))
 	writeContractSourceFile(t, root, designPath, string(design))
 	writeContractSourceFile(t, root, "docs/dev/contracts/SYNC-001.md", "# SYNC output\n")
@@ -431,4 +445,123 @@ func (p pinnedContractFiles) ReadFile(path string) ([]byte, error) {
 
 func (p pinnedContractFiles) ReadDir(path string) ([]os.DirEntry, error) {
 	return os.ReadDir(filepath.Join(p.root, filepath.FromSlash(path)))
+}
+
+func TestResolveContractInputsUsesCurrentDesignBeforeIssuanceWithoutRewritingS2(t *testing.T) {
+	root, state := contractSourceFixture(t, false)
+	_, historical, err := runtime.CurrentContractBinding(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := historical[0]
+	data, err := os.ReadFile(filepath.Join(root, original.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := append(data, []byte("\nThe already accepted ADR direction is recorded with status accepted.\n")...)
+	writeContractSourceFile(t, root, original.Path, string(current))
+	inputs, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.Designs[0].SHA256 != workpacket.Digest(current) || inputs.Designs[0].SHA256 == original.SHA256 {
+		t.Fatal("issuer did not project current professional design bytes")
+	}
+	binding, after, err := runtime.CurrentContractBinding(state)
+	if err != nil || after[0] != original {
+		t.Fatal("historical S2 document record was rewritten", after, err)
+	}
+	packet, err := workpacket.BuildContracts(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ValidateIssuedContractPacket(root, state, packet, fileview.Disk{Root: root}); err != nil {
+		t.Fatal("later original source validation restored a historical SHA gate:", err)
+	}
+}
+
+func TestResolveContractInputsConditionalReferences(t *testing.T) {
+	const missing = "docs/architecture/data-model/absent.md"
+	for _, tc := range []struct {
+		name, prose string
+		reject      bool
+	}{
+		{"negative mention", "因此不产出 `" + missing + "`。", false},
+		{"bare positive mention", "See " + missing + ".", false},
+		{"fenced example", "```markdown\n[model](data-model/absent.md)\n```", false},
+		{"tilde fenced example", "~~~\n[model](data-model/absent.md)\n~~~", false},
+		{"inline example", "`[model](data-model/absent.md)`", false},
+		{"positive missing link", "[model](data-model/absent.md)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, state := contractSourceFixture(t, false)
+			writeContractSourceFile(t, root, "docs/architecture/ARCHITECTURE-001.md", "# Architecture\n> Status: locked\n> Version: v1.0.0\n\n"+tc.prose)
+			_, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root})
+			if tc.reject {
+				if err == nil || !strings.Contains(err.Error(), missing) {
+					t.Fatalf("positive missing source not reported: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	t.Run("unfilled architecture template examples", func(t *testing.T) {
+		root, state := contractSourceFixture(t, false)
+		data, err := os.ReadFile(filepath.Join("..", "..", "docs", "architecture", "ARCHITECTURE-template.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeContractSourceFile(t, root, "docs/architecture/ARCHITECTURE-001.md", string(data))
+		inputs, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, source := range inputs.Sources {
+			if strings.HasPrefix(source.Path, "docs/architecture/data-model/") || strings.HasPrefix(source.Path, "docs/architecture/state/") {
+				t.Fatalf("template example became an input: %s", source.Path)
+			}
+		}
+	})
+	t.Run("bare and inline ADR references retain original discovery", func(t *testing.T) {
+		root, state := contractSourceFixture(t, false)
+		writeContractSourceFile(t, root, "docs/architecture/ARCHITECTURE-001.md", "# Architecture\n> Status: locked\n> Version: v1.0.0\n\nADR-BARE and `docs/design/decisions/ADR-INLINE.md`\n")
+		for _, id := range []string{"ADR-BARE", "ADR-INLINE"} {
+			writeContractSourceFile(t, root, "docs/design/decisions/"+id+".md", "# "+id+"\n")
+		}
+		inputs, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := map[string]bool{}
+		for _, source := range inputs.Sources {
+			found[source.Path] = true
+		}
+		for _, id := range []string{"ADR-BARE", "ADR-INLINE"} {
+			if !found["docs/design/decisions/"+id+".md"] {
+				t.Fatalf("original ADR discovery lost %s", id)
+			}
+		}
+	})
+	t.Run("module JSON example links are not dependencies", func(t *testing.T) {
+		root, state := contractSourceFixture(t, true)
+		writeContractSourceFile(t, root, "docs/design/prototypes/orders/fixture-contract.json", `{"module":"orders","note":"[model](docs/architecture/data-model/absent.md)","setup":["[state](docs/architecture/state/absent.md)"]}`)
+		if _, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("transitive negative and examples", func(t *testing.T) {
+		root, state := contractSourceFixture(t, false)
+		writeContractSourceFile(t, root, "docs/architecture/data-model/model.md", "# Model\n不产出 `"+missing+"`。\n```\n[missing](absent.md)\n```\n")
+		if _, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("transitive positive missing", func(t *testing.T) {
+		root, state := contractSourceFixture(t, false)
+		writeContractSourceFile(t, root, "docs/architecture/data-model/model.md", "# Model\n[missing](absent.md)\n")
+		if _, err := runtime.ResolveContractInputs(root, state, fileview.Disk{Root: root}); err == nil || !strings.Contains(err.Error(), missing) {
+			t.Fatalf("transitive missing source not reported: %v", err)
+		}
+	})
 }

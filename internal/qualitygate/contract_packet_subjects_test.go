@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -23,10 +24,14 @@ func TestVerifiedContractPacketSourcesProjectsAcceptedFrozenSources(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(facts) != len(fixture.packet.Inputs.Sources) {
-		t.Fatalf("projected %d source facts for %d frozen sources", len(facts), len(fixture.packet.Inputs.Sources))
+	expected := len(fixture.packet.Inputs.Sources) + len(fixture.packet.Inputs.Designs)
+	if len(facts) != expected {
+		t.Fatalf("projected %d source facts for %d current design/source refs", len(facts), expected)
 	}
-	want := make(map[string]workpacket.Subject, len(fixture.packet.Inputs.Sources))
+	want := make(map[string]workpacket.Subject, expected)
+	for _, design := range fixture.packet.Inputs.Designs {
+		want[design.Path] = workpacket.Subject{Path: design.Path, Version: design.Version, SHA256: design.SHA256}
+	}
 	for _, source := range fixture.packet.Inputs.Sources {
 		want[source.Path] = source
 	}
@@ -76,8 +81,8 @@ func TestVerifiedContractPacketSourcesProjectsAcceptedFrozenSources(t *testing.T
 	}
 }
 
-func TestVerifiedContractPacketFactsUsesOriginalDeliveryAndRefusesDrift(t *testing.T) {
-	fixture := newContractPacketSubjectFixture(t, false)
+func TestVerifiedContractPacketFactsUsesRecordedDeliveryWithoutRecheckingDisk(t *testing.T) {
+	fixture := newContractPacketSubjectFixture(t, false, true)
 	state := fixture.input.Snapshot.State
 	staleContract := []byte("previous registered bytes")
 	documents := state["documents"].([]any)
@@ -121,16 +126,20 @@ func TestVerifiedContractPacketFactsUsesOriginalDeliveryAndRefusesDrift(t *testi
 	}
 
 	writeContractPacketSubjectFile(t, fixture.root, "docs/dev/contracts/SYNC-001.md", "# Synchronization contract\n> 状态：locked\n> 版本：v1.0.0\n\n## Changed after acceptance\n")
-	_, accepted, err = verifiedContractPacketFacts(fixture.input)
-	if !accepted || err == nil || !strings.Contains(err.Error(), "docs/dev/contracts/SYNC-001.md") {
-		t.Fatalf("accepted stale S3 delivery bytes without naming the path: accepted=%v err=%v", accepted, err)
+	// Disk changes after acceptance do not replace the recorded delivery facts.
+	again, accepted, err := verifiedContractPacketFacts(fixture.input)
+	if err != nil || !accepted || !reflect.DeepEqual(again, facts) {
+		t.Fatalf("reproved accepted delivery from changed disk bytes: %v %v", accepted, err)
 	}
 	result, err = evaluator.Evaluate(context.Background(), evaluationInput)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || result.Status != StatusSatisfied {
+		t.Fatalf("recorded delivery stopped qualifying: %+v %v", result, err)
 	}
-	if result.Status != StatusUnknown || len(result.Conflicts) != 1 || !strings.Contains(result.Conflicts[0], "docs/dev/contracts/SYNC-001.md") {
-		t.Fatalf("accepted S3 source drift must be a path-specific unknown, not missing evidence: status=%q conflicts=%v missing=%v", result.Status, result.Conflicts, result.Missing)
+	for _, path := range []string{"docs/architecture/data-model/order.schema.json", "docs/architecture/data-model/order-example.json"} {
+		fact, ok := byPath[path]
+		if !ok || fact.ID != "shared-model:"+path || fact.Kind != "source" {
+			t.Fatalf("accepted shared-model definition/example omitted: %s %+v", path, fact)
+		}
 	}
 }
 
@@ -165,7 +174,7 @@ func TestPacketModeS3DoesNotUseUnacceptedLockedDiskOutputs(t *testing.T) {
 	}
 }
 
-func TestVerifiedContractPacketSourcesRejectsEnvelopeOnlySource(t *testing.T) {
+func TestVerifiedContractPacketSourcesRejectsChangedReceiptBytes(t *testing.T) {
 	fixture := newContractPacketSubjectFixture(t, true)
 	unknownPath := "docs/architecture/data-model/unregistered.json"
 	unknownBytes := []byte(`{"source":"not in original S3 closure"}`)
@@ -184,30 +193,29 @@ func TestVerifiedContractPacketSourcesRejectsEnvelopeOnlySource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fixture.root, filepath.FromSlash(fixture.evidencePath)), fixture.envelopeBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	fixture.evidenceRow["sha256"] = workpacket.Digest(fixture.envelopeBytes)
 
 	if _, err := verifiedContractPacketSources(fixture.input); err == nil || !strings.Contains(err.Error(), "envelope") {
-		t.Fatalf("accepted an envelope-only source with a matching rewritten evidence hash: %v", err)
+		t.Fatalf("accepted changed receipt bytes without its registered hash: %v", err)
 	}
 }
 
-func TestVerifiedContractPacketSourcesRechecksDirectoryMembership(t *testing.T) {
+func TestVerifiedContractPacketSourcesDoesNotRecheckRecordedDirectoryMembership(t *testing.T) {
 	t.Run("previously absent prototypes root", func(t *testing.T) {
 		fixture := newContractPacketSubjectFixture(t, false)
 		if _, ok := fixture.packet.Inputs.Directories["docs/design"]; !ok {
 			t.Fatal("source packet did not record bounded parent that proves prototypes absence")
 		}
 		writeContractPacketSubjectFile(t, fixture.root, "docs/design/prototypes/orders/scenario-model.json", `{"module":"orders"}`)
-		if _, err := verifiedContractPacketSources(fixture.input); err == nil {
-			t.Fatal("accepted new module package after original prototypes root was absent")
+		if _, err := verifiedContractPacketSources(fixture.input); err != nil {
+			t.Fatal("rechecked directory membership after reception:", err)
 		}
 	})
 
 	t.Run("new module under existing prototypes root", func(t *testing.T) {
 		fixture := newContractPacketSubjectFixture(t, true)
 		writeContractPacketSubjectFile(t, fixture.root, "docs/design/prototypes/refunds/scenario-model.json", `{"module":"refunds"}`)
-		if _, err := verifiedContractPacketSources(fixture.input); err == nil || !strings.Contains(err.Error(), "directory changed") {
-			t.Fatalf("accepted added source module: %v", err)
+		if _, err := verifiedContractPacketSources(fixture.input); err != nil {
+			t.Fatalf("rechecked added source module: %v", err)
 		}
 	})
 
@@ -216,13 +224,13 @@ func TestVerifiedContractPacketSourcesRechecksDirectoryMembership(t *testing.T) 
 		if err := os.RemoveAll(filepath.Join(fixture.root, "docs/design/prototypes/orders")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := verifiedContractPacketSources(fixture.input); err == nil {
-			t.Fatal("accepted deletion of an originally frozen module package")
+		if _, err := verifiedContractPacketSources(fixture.input); err != nil {
+			t.Fatal("rechecked a recorded module package:", err)
 		}
 	})
 }
 
-func TestVerifiedContractPacketSourcesNeedsAcceptedAnswerHashAndOriginalFileView(t *testing.T) {
+func TestVerifiedContractPacketSourcesNeedsAcceptedAnswerHashAndEnvelopeReader(t *testing.T) {
 	t.Run("answer hash", func(t *testing.T) {
 		fixture := newContractPacketSubjectFixture(t, true)
 		fixture.submissionRow["content_sha256"] = workpacket.Digest([]byte("different answer"))
@@ -231,11 +239,11 @@ func TestVerifiedContractPacketSourcesNeedsAcceptedAnswerHashAndOriginalFileView
 		}
 	})
 
-	t.Run("directory-capable original view", func(t *testing.T) {
+	t.Run("read-only original envelope view", func(t *testing.T) {
 		fixture := newContractPacketSubjectFixture(t, true)
 		fixture.input.Files = readOnlyContractSubjectView{root: fixture.root}
-		if _, err := verifiedContractPacketSources(fixture.input); err == nil || !strings.Contains(err.Error(), "directory reads") {
-			t.Fatalf("accepted a non-original or incomplete file view: %v", err)
+		if _, err := verifiedContractPacketSources(fixture.input); err != nil {
+			t.Fatalf("required directory scans for an accepted envelope: %v", err)
 		}
 	})
 }
@@ -250,7 +258,7 @@ type contractPacketSubjectFixture struct {
 	submissionRow map[string]any
 }
 
-func newContractPacketSubjectFixture(t *testing.T, withModule bool) *contractPacketSubjectFixture {
+func newContractPacketSubjectFixture(t *testing.T, withModule bool, acceptedModels ...bool) *contractPacketSubjectFixture {
 	t.Helper()
 	root := t.TempDir()
 	reqPath := "docs/requirements/REQ-001.md"
@@ -321,6 +329,13 @@ func newContractPacketSubjectFixture(t *testing.T, withModule bool) *contractPac
 		{Path: indexPath, Version: "v1.0.0", SHA256: workpacket.Digest(indexBytes)},
 		{Path: contractPath, Version: "v1.0.0", SHA256: workpacket.Digest(contractBytes)},
 	}
+	if len(acceptedModels) > 0 && acceptedModels[0] {
+		for path, data := range map[string]string{"docs/architecture/data-model/order.schema.json": `{"type":"object"}`, "docs/architecture/data-model/order-example.json": `{"id":"accepted-example"}`} {
+			writeContractPacketSubjectFile(t, root, path, data)
+			artifacts = append(artifacts, workpacket.Reference{Path: path, SHA256: workpacket.Digest([]byte(data))})
+		}
+	}
+
 	evidenceID := "evidence-s3-contract-sources"
 	evidenceValue, err := workpacket.ContractEvidence(packet, evidenceID, artifacts, answer, time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -435,4 +450,52 @@ type readOnlyContractSubjectView struct{ root string }
 
 func (v readOnlyContractSubjectView) ReadFile(path string) ([]byte, error) {
 	return os.ReadFile(filepath.Join(v.root, filepath.FromSlash(path)))
+}
+
+func TestVerifiedContractPacketFactsReportsMissingReceiptAndCurrentREQ(t *testing.T) {
+	for _, mode := range []string{"missing receipt", "registered hash mismatch", "different current REQ"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := newContractPacketSubjectFixture(t, false)
+			switch mode {
+			case "missing receipt":
+				if err := os.Remove(filepath.Join(fixture.root, fixture.evidencePath)); err != nil {
+					t.Fatal(err)
+				}
+			case "registered hash mismatch":
+				fixture.evidenceRow["sha256"] = workpacket.Digest([]byte("other receipt"))
+			case "different current REQ":
+				fixture.input.Snapshot.State["bound_req"].(map[string]any)["version"] = "v2.0.0"
+			}
+			if _, accepted, err := verifiedContractPacketFacts(fixture.input); !accepted || err == nil {
+				t.Fatalf("lost actual receipt/current responsibility mismatch: %v %v", accepted, err)
+			}
+		})
+	}
+}
+
+func TestVerifiedContractPacketFactsReportsActualGitRefMovement(t *testing.T) {
+	fixture := newContractPacketSubjectFixture(t, false)
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", fixture.root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("fixture git: %v %s", err, out)
+		}
+	}
+	git("init", "-q", "-b", "accepted")
+	git("add", "docs")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Accepted professional inputs")
+	view, err := fileview.New(fixture.root, "refs/heads/accepted", []fileview.Rule{{Path: ".", Source: "git_tree"}, {Path: ".claude", Source: "disk"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.input.Files = view
+	if _, accepted, err := verifiedContractPacketFacts(fixture.input); !accepted || err != nil {
+		t.Fatal("accepted record unavailable before ref movement", accepted, err)
+	}
+	writeContractPacketSubjectFile(t, fixture.root, "docs/changed.md", "# Actual later committed work\n")
+	git("add", "docs/changed.md")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Later committed professional work")
+	if _, accepted, err := verifiedContractPacketFacts(fixture.input); !accepted || err == nil || !strings.Contains(err.Error(), "file source moved: refs/heads/accepted") {
+		t.Fatalf("actual ref movement lost its original feedback: %v %v", accepted, err)
+	}
 }

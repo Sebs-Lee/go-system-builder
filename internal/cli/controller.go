@@ -55,11 +55,18 @@ func graphControlForHook(root string, request policy.Input) (controller.ControlR
 		return controller.ControlResult{}, false
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
-	if err != nil || !runtime.PacketEnabled(snapshot.State) {
+	if err != nil {
 		return controller.ControlResult{}, false
 	}
 	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+	if !runtime.PacketEnabled(snapshot.State) && lifecycle["state"] != "awaiting_human_release" && lifecycle["state"] != "inactive" {
+		return controller.ControlResult{}, false
+	}
 	switch lifecycle["state"] {
+	case "planning":
+		if lifecycle["phase"] != "contracts" && lifecycle["phase"] != "tasks" {
+			return controller.ControlResult{}, false
+		}
 	case "verification":
 		if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil {
 			switch ptr.Status {
@@ -67,6 +74,8 @@ func graphControlForHook(root string, request policy.Input) (controller.ControlR
 				return controller.ControlResult{}, false
 			}
 		}
+	case "inactive", "acceptance", "release_audit", "awaiting_human_release":
+		// S10 reports and the S11 human wait only project current facts.
 	case "bug_resolution":
 		if lifecycle["phase"] != "investigation" && !s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
 			return controller.ControlResult{}, false
@@ -236,6 +245,12 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		HumanRequired: next.HumanRequired,
 		Recovery:      []string{"continue from this packet's Stage and Next", "read " + next.ProtocolRef, "if blocked or unclear read " + loopManualRef},
 	}
+	if lifecycleState == "inactive" {
+		guidance.Missing = nil // Exact unanswered choices come from the current request.
+		guidance.DoneWhen = []string{"the actual locked/committed requirement and explicit startup choice are recorded by original TR-001, with current S2 paths supplied"}
+		guidance.Automation = []string{"SessionStart or the actual requirement lock save prepares the original entry questions once", "ordinary Pre/Stop only read current work; complete the actual four binding answers and save for automatic original TR-001", "ordinary Git commits and branch choices remain Main's real work; no Hook commit, branch creation, pushing or publication"}
+		guidance.Recovery = []string{"read the current exact draft or binding-request path below; report missing preparation/materials to Main, without hand-editing Runtime or issuing a binding command"}
+	}
 	if lifecycleState == "bug_resolution" && lifecyclePhase != "investigation" {
 		guidance.Automation = []string{
 			"ordinary S9 listening only reads current facts and exact questionnaires; save each professional answer once",
@@ -250,7 +265,9 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		guidance.Blocked = true
 		guidance.Blocker = pauseReason(state, lifecycleState)
 		if lifecycleState == "awaiting_human_release" {
-			guidance.Action = "present the current release request and evidence paths to the human; await the actual disposition and use the original human-decision entry; a saved Agent answer is not human approval"
+			guidance.Action = "present the current release materials and exact application to the human; after an actual explicit choice, faithfully fill disposition and optional reason in that application and save normally; the original listener records and follows its fixed exit automatically; empty disposition remains a waiting draft"
+			guidance.Automation = []string{"ordinary S11 Pre/Stop only read current materials and the exact decision application", "after the human's actual choice, save disposition and optional reason normally; the original listener records and executes its fixed exit without a command", "empty disposition remains a draft; do not invent the human choice or publish/deploy"}
+			guidance.Recovery = []string{"use the exact current application path shown below; missing material or application is a system preparation gap, not a manual registration step"}
 		} else {
 			guidance.Action = "stop automation and surface the human Gateway"
 		}
@@ -307,7 +324,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 			addDelegationPreflight(&guidance, input)
 		}
 	case "SubagentStop":
-		if runtime.PacketEnabled(state) && lifecycleState == "bug_resolution" && s9ProfessionalPhase(lifecyclePhase) {
+		if runtime.PacketEnabled(state) && ((lifecycleState == "bug_resolution" && s9ProfessionalPhase(lifecyclePhase)) || lifecycleState == "acceptance" || lifecycleState == "release_audit") {
 			break // The current professional consumer and listener supply S9 facts.
 		}
 		guidance.Integration = []string{
@@ -339,7 +356,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 			guidance.Action = "Worker: follow your original execution close-out and await the original consumer. Main: consume the report; review and integrate a completed subagent worktree into the current development branch then acknowledge and clean it via runtime task-integrate"
 		}
 	case "TeammateIdle":
-		if runtime.PacketEnabled(state) && lifecycleState == "bug_resolution" && s9ProfessionalPhase(lifecyclePhase) {
+		if runtime.PacketEnabled(state) && ((lifecycleState == "bug_resolution" && s9ProfessionalPhase(lifecyclePhase)) || lifecycleState == "acceptance" || lifecycleState == "release_audit") {
 			break // The current professional consumer and listener supply S9 facts.
 		}
 		guidance.Automation = append(guidance.Automation,
@@ -389,6 +406,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// on every normal recovery packet.
 	if lifecycleState == "acceptance" || lifecycleState == "release_audit" {
 		applyS10Guidance(&guidance)
+		guidance.Action = stageAuditQuestionnaireContext(root, input, runtime.Snapshot{State: state})
 	}
 
 	if lifecycleState == "building" {
@@ -411,29 +429,14 @@ func applyMainPlanningAutomation(guidance *policy.Guidance, planning *mainPlanni
 }
 
 func applyS10Guidance(guidance *policy.Guidance) {
-	guidance.Automation = append(guidance.Automation,
-		"S10 is read-only for product code, locked REQ, contracts, and TASKs; any product change invalidates the current S7 clean round and must return through S8→S9→fresh S7",
-		"do not treat a generic clean-round or overall PASS as acceptance; consume the finite coverage_inventory and counterevidence ledger",
-		"the shortest path to S11 is not a completion criterion; UNKNOWN must be resolved, not renamed N/A or non-blocking risk",
-	)
-	guidance.Recovery = append(guidance.Recovery,
-		"if the manifest gate names a missing row, correct that row and register a new immutable evidence artifact",
-		"if an audit finding changes product behavior, stop S10 and route S8→S9→fresh S7; never patch in S10",
-		"only after acceptance and release audit are complete should the Controller move to S11's human gateway",
-	)
-	if guidance.LifecycleState == "acceptance" {
-		guidance.Missing = appendUniqueStrings(guidance.Missing, "coverage_inventory", "counterevidence_ledger", "acceptance_manifest")
-		guidance.DoneWhen = append(guidance.DoneWhen,
-			"every coverage item has source, expected, oracle, owner, evidence, disposition, and one counterevidence result",
-			"acceptance manifest is valid, current, and bound to this runtime/baseline/review round",
-		)
-	} else {
-		guidance.Missing = appendUniqueStrings(guidance.Missing, "audit_areas:8", "counterevidence_ledger", "release_audit_manifest")
-		guidance.DoneWhen = append(guidance.DoneWhen,
-			"all 8 release-audit areas have an independent conclusion and evidence",
-			"release-audit manifest is valid, current, and bound to this runtime/baseline/review round",
-		)
+	guidance.Automation = []string{
+		"Use the current exact Manifest questionnaire; reuse applicable recorded S7 observations and add only actual gaps or this step's findings.",
+		"Save the professional report in that file; do not copy hashes, register another envelope or run a manual transition.",
+		"Drafts and unchanged replays only report visible unfinished items; a completed report's normal save outlet performs this step's original transition.",
 	}
+	guidance.Missing = nil // Actual empty/unknown/fail/blocker rows are reported with the current questionnaire.
+	guidance.Recovery = []string{"Main resolves the specific missing material or unfinished question shown with the exact current questionnaire; S11 remains a real human decision."}
+	guidance.DoneWhen = []string{"The author explicitly completes this professional step with no explicitly unfinished or blocked item; the original S7 round completion/invalidation facts still apply."}
 }
 
 func investigationNextAction(root string, state map[string]any) string {
@@ -446,7 +449,7 @@ func investigationNextAction(root string, state map[string]any) string {
 	reviewMap, _ := state["review"].(map[string]any)
 	casePointer, _ := reviewMap["investigation"].(map[string]any)
 	if casePointer == nil {
-		return "ingest the sealed ObservationBatch via `runtime investigation ingest --grouping-rationale <reason>`; do not create a BUG or reproduce the symptom"
+		return "form the InvestigationCase from its actual current source: sealed S7 observations or the human-reported problem; use the supplied current intake questionnaire, without inventing a Batch or Finding"
 	}
 	caseID := stringValue(casePointer["case_id"])
 	if caseID == "" {
@@ -857,7 +860,11 @@ func formatGuidanceInstruction(g policy.Guidance) string {
 		b.WriteString(g.Blocker)
 	}
 	if g.HumanRequired {
-		b.WriteString(" Human Gateway required; do not continue automation.")
+		if g.LifecycleState == "awaiting_human_release" {
+			b.WriteString(" Await the actual human choice; then save disposition/reason in the exact application for its automatic original exit. Empty disposition remains a draft.")
+		} else {
+			b.WriteString(" Human Gateway required; do not continue automation.")
+		}
 	}
 	return b.String()
 }
@@ -1022,7 +1029,7 @@ func reconcileGuidance(root, event string, input policy.Input) (policy.Guidance,
 // receives a Recovery packet rather than a silent miss.
 func reconcileSpecialGuidance(root string, snapshot runtime.Snapshot, event string, input policy.Input) (policy.Guidance, runtime.Snapshot, error) {
 	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
-	if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
+	if runtime.PacketEnabled(snapshot.State) && ((lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"]))) || lifecycle["state"] == "acceptance" || lifecycle["state"] == "release_audit") {
 		input.Event = event
 		return graphGuidance(root, snapshot.State, input), snapshot, nil
 	}
