@@ -470,7 +470,11 @@
           "minLength": 1
         },
         "persisted_effects": {
-          "$ref": "#/$defs/strings"
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "forbidden_side_effects": {
           "$ref": "#/$defs/strings"
@@ -497,7 +501,11 @@
           "minLength": 1
         },
         "persisted_effects": {
-          "$ref": "#/$defs/strings"
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "forbidden_side_effects": {
           "$ref": "#/$defs/strings"
@@ -567,7 +575,11 @@
           "minLength": 1
         },
         "persisted_effects": {
-          "$ref": "#/$defs/strings"
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "forbidden_side_effects": {
           "$ref": "#/$defs/strings"
