@@ -685,8 +685,11 @@ func TestResolveQualityCycleBudgetDefaultsToTwoSeconds(t *testing.T) {
 	if got := controller.ResolveQualityCycleBudget(nil, 0); got != controller.DefaultQualityCycleBudget {
 		t.Fatalf("default budget = %v, want %v", got, controller.DefaultQualityCycleBudget)
 	}
-	if controller.DefaultQualityCycleBudget != 2*time.Second {
-		t.Fatalf("DefaultQualityCycleBudget = %v, want 2s", controller.DefaultQualityCycleBudget)
+	// r99: S5 document gates verify the full locked source closure plus
+	// per-reviewer envelopes (~6s observed); the default covers that with
+	// headroom while keeping runaway evaluations bounded.
+	if controller.DefaultQualityCycleBudget != 15*time.Second {
+		t.Fatalf("DefaultQualityCycleBudget = %v, want 15s", controller.DefaultQualityCycleBudget)
 	}
 }
 
