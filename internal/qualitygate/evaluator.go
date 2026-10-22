@@ -257,7 +257,7 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 		}
 		return evaluatePlanningArtifact(input, result, spec, documents, "task", "complete", "document:task:complete"), nil
 	}
-	return evaluateRegisteredGate(input, result, spec, documents), nil
+	return evaluateRegisteredGate(input, result, spec, documents, ctx), nil
 }
 
 type documentFact struct {
@@ -441,7 +441,7 @@ func evaluatePlanningArtifact(
 	return evaluateRegisteredGate(input, result, spec, documents)
 }
 
-func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, documents []documentFact) Evaluation {
+func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, documents []documentFact, contexts ...context.Context) Evaluation {
 	state := input.Snapshot.State
 	generation := nestedInt(state, "baseline", "generation")
 	runtimeID, _ := state["runtime_id"].(string)
@@ -510,7 +510,7 @@ func evaluateRegisteredGate(input Input, result Evaluation, spec GateSpec, docum
 	if result.GateID == "GATE-VERIFY-CLEAN-ROUND-PASSED" {
 		// L3-S7 §10: recompute the machine CleanRound over the ReviewPlan's
 		// exact Claim set; an evidence-only pass is not sufficient.
-		applyCleanRoundGate(input, &result)
+		applyCleanRoundGate(input, &result, contexts...)
 	}
 	if result.GateID == "GATE-VERIFY-BLOCKING-FINDING" {
 		// L3-S7 §3.7: the sealed ObservationBatch must carry the exact

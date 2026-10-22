@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
@@ -9,7 +10,12 @@ import (
 // VerifyCurrentProductBaseline rechecks the current pinned product authority
 // when a persisted CleanRound is consumed. Legacy plans keep their original
 // gate rules; canonical plans cannot rely on an old state-only clean label.
-func VerifyCurrentProductBaseline(root string, state map[string]any) error {
+func VerifyCurrentProductBaseline(root string, state map[string]any, contexts ...context.Context) error {
+	if len(contexts) > 0 && contexts[0] != nil {
+		if err := contexts[0].Err(); err != nil {
+			return err
+		}
+	}
 	if !buildsurface.HasCanonical(state) {
 		// A pinned Plan that declares a ProductBaseline is positive evidence
 		// that this round was authored against canonical S6 authority. Do not
@@ -41,7 +47,7 @@ func VerifyCurrentProductBaseline(root string, state map[string]any) error {
 	if ptr.ReviewRound != currentReviewRound(state) || plan.ReviewRound != ptr.ReviewRound || plan.BaselineGeneration != baselineGeneration(state) {
 		return fmt.Errorf("CleanRound Plan is not the current round/generation")
 	}
-	return verifyFrozenSubjects(root, plan, state)
+	return verifyFrozenSubjects(root, plan, state, contexts...)
 }
 
 // FrozenSubjectsForProductBaseline is the existing pure machine projection,

@@ -1,6 +1,7 @@
 package qualitygate
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -12,8 +13,8 @@ import (
 // ReviewPlan's exact Claim set (L3-S7 §10). It runs unconditionally — like
 // the S6 builder-batch evaluation — so the missing matrix names each unproven
 // Claim instead of only the aggregate evidence token.
-func applyCleanRoundGate(input Input, result *Evaluation) {
-	if err := review.VerifyCurrentProductBaseline(input.Root, input.Snapshot.State); err != nil {
+func applyCleanRoundGate(input Input, result *Evaluation, contexts ...context.Context) {
+	if err := review.VerifyCurrentProductBaseline(input.Root, input.Snapshot.State, contexts...); err != nil {
 		result.Missing = append(result.Missing, "cleanround:product_baseline_invalid:"+err.Error())
 		result.Status = StatusNotReady
 		return

@@ -1,9 +1,11 @@
 package review
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,24 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 )
+
+func TestProductBaselineAndDriftHonorCanceledParent(t *testing.T) {
+	root := t.TempDir()
+	state := writePinnedProductGatePlan(t, root, Plan{
+		SchemaVersion: "1.0.0", ReviewPlanID: "review-plan-legacy", ReviewRound: 1, BaselineGeneration: 1,
+	})
+	if err := VerifyCurrentProductBaseline(root, state); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := VerifyCurrentProductBaseline(root, state, ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("baseline check ignored the parent's canceled budget: %v", err)
+	}
+	if _, err := detectUndeclaredProductDriftWithState(root, &Plan{}, state, root, ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Git drift scan replaced the parent's canceled budget: %v", err)
+	}
+}
 
 func TestVerifyCurrentProductBaselineDoesNotDowngradePinnedCanonicalPlan(t *testing.T) {
 	root := t.TempDir()

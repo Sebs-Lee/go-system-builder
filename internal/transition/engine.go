@@ -548,7 +548,7 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 		}
 	}
 	if spec.ID == "TR-009" {
-		if err := review.VerifyCurrentProductBaseline(root, state); err != nil {
+		if err := review.VerifyCurrentProductBaseline(root, state, request.Context); err != nil {
 			return fmt.Errorf("transition %s current product baseline: %w", spec.ID, err)
 		}
 	}

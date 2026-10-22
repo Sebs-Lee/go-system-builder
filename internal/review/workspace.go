@@ -308,9 +308,7 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	if len(contexts) > 0 && contexts[0] != nil {
 		parent = contexts[0]
 	}
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
+	if err := parent.Err(); err != nil {
 		return nil, err
 	}
 	controlPaths := map[string]bool{}
@@ -319,6 +317,9 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	// and unregistered decisions remain subject to the product drift check.
 	evidenceRows, _ := state["evidence"].([]any)
 	for _, raw := range evidenceRows {
+		if err := parent.Err(); err != nil {
+			return nil, err
+		}
 		row, _ := raw.(map[string]any)
 		path := stringField(row["path"])
 		// S10's original recorded reports remain control history when it
@@ -352,6 +353,9 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	entities, _ := state["entities"].(map[string]any)
 	rows, _ := entities["work_packets"].([]any)
 	for _, raw := range rows {
+		if err := parent.Err(); err != nil {
+			return nil, err
+		}
 		row, _ := raw.(map[string]any)
 		for _, key := range []string{"view_path", "answer_path"} {
 			path, _ := row[key].(string)
@@ -366,6 +370,9 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 			return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
 		}
 		for _, p := range packets {
+			if err := parent.Err(); err != nil {
+				return nil, err
+			}
 			if err := loopruntime.VerifyReviewResultPacketIssue(authorityRoot, state, p); err != nil {
 				return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
 			}
@@ -387,6 +394,11 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	for _, subject := range plan.FrozenSubjects {
 		frozen[normalizeGitStatusPath(subject.Path)] = true
 	}
+	// The local Git limit starts at the command, not before the independent
+	// control-artifact proofs. Preparation still consumes the parent request's
+	// budget; the subprocess gets at most its remainder and the same 3s cap.
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
 	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
 	if err != nil {
 		return nil, err
