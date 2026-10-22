@@ -703,10 +703,42 @@ in the Harness. Reusable methods and best practices live in the Skill catalog.
 ## 16. Verify
 
 ```bash
-make verify          # test + test-race + doctor + validate + build
+make ci-verify       # PR checks: static analysis, core tests, critical seams, focused race, doctor/validate/build
+make ci-verify-full  # complete tests/race plus release installation validation
+make verify          # alias for ci-verify-full
 .claude/bin/loop-harness doctor --root .
 .claude/bin/loop-harness validate --all --root .
 ```
+
+PR and main CI run `make ci-verify`. This runs all discovered packages except
+`internal/cli`, `internal/integration`, `internal/investigation`, and
+`tests/system/...` with `-short`. The three large scenario packages instead run
+the explicit critical-seam selections in `make test-ci-smoke`: native S5/S6/S7/S8/S9
+Start/Stop reception, malformed answer and source ownership, Hook tool freedom,
+S10/S11 handoff and human decision authority, integration failure/resume,
+checkpoint CAS, process cleanup and Case approval. The race selection covers
+Runtime, recovery, locks, schemas, check execution, controller, Hook, audit,
+submission and integration checkpoints. The separate Runtime portability workflow
+continues to check Linux, Windows and macOS.
+
+Full S0–S11 scenario matrices, compatibility launchers, recovery combinations,
+system suites and full race instrumentation run through `make ci-verify-full`.
+They are required by the release workflow. For a complete Actions run without
+publishing, manually run the **CI** workflow on the desired ref with **full**
+enabled; this uses a separate concurrency group from PR checks. A workflow on a
+new branch is available in the Actions UI after its definition reaches the
+default branch. Locally, initialize Runtime before either verification target
+with `go run ./cmd/loop-harness init --root .`.
+
+PR tests use a five-minute per-package limit and the job has a fifteen-minute
+limit; full tests retain the thirty-minute per-package limit and a manual full
+job has a two-hour limit. These are failure bounds, not expected durations. A
+local full run can override `TEST_TIMEOUT` when needed. No retries hide failures.
+When adding coverage, keep focused logic tests in the regular package suite and
+add a critical CLI/integration/Case seam to `test-ci-smoke` when appropriate;
+large scenario combinations belong in the complete suite. All existing tests
+remain enabled there. Packaged source and installed release graphs are both
+validated by `doctor-staged`, so full verification builds that archive once.
 
 ### Runtime and transitions
 

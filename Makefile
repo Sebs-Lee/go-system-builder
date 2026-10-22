@@ -6,8 +6,11 @@ TEST_TIMEOUT ?= 30m
 # Integration packages spawn their own Git/check processes. Bound package
 # concurrency to the configuration used by the complete regression run.
 TEST_PACKAGES ?= 2
+# PR checks have their own bounded budget. Full verification keeps TEST_TIMEOUT.
+CI_TEST_TIMEOUT ?= 5m
+CI_RACE_PACKAGES = ./internal/runtime ./internal/recovery ./internal/filelock ./internal/schema ./internal/checkexec ./internal/controller ./internal/hook ./internal/audit ./internal/submission
 
-.PHONY: build build-all manual fmt-check vet test test-race verify doctor health platform-smoke platform-smoke-required validate ci-verify release-graph release-graph-validate release release-checksum release-list clean-release
+.PHONY: build build-all manual fmt-check vet test test-race verify doctor health platform-smoke platform-smoke-required validate test-ci test-ci-core test-ci-smoke test-ci-race ci-verify ci-verify-full doctor-staged release-graph release-graph-validate release release-checksum release-list clean-release
 
 # Local dev build (host platform only). Used by `verify`, `ci-verify`, and
 # other targets that need a runnable binary on this host.
@@ -47,6 +50,33 @@ test:
 test-race:
 	$(GO) test -race -p $(TEST_PACKAGES) -timeout=$(TEST_TIMEOUT) ./...
 
+# No existing test is deleted or disabled in full verification. -short also
+# leaves the audit stress test to the complete run.
+test-ci: test-ci-core test-ci-smoke
+
+# Discover new packages automatically; the excluded scenario packages have
+# explicit critical-seam coverage below, and system suites run in full mode.
+test-ci-core:
+	@set -e; \
+	packages=$$($(GO) list ./...); \
+	packages=$$(printf '%s\n' "$$packages" | sed -E '\@/internal/(cli|integration|investigation)$$@d; \@/tests/system(/|$$)@d'); \
+	test -n "$$packages"; \
+	$(GO) test -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) $$packages
+
+# Keep real native Start/Stop reception, author/source failures, tool freedom,
+# human release authority, integration failure/resume and approval boundaries.
+# Use anchored names so a similarly named slow scenario is not added by accident.
+test-ci-smoke:
+	$(GO) test -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) ./internal/cli -run '^Test(BuildInfoDoesNotNeedProject|InitDerivesHookMetadataAndCreatesJournals|NativeS5.*|NativeS6StartStopReceivesWithoutActivationOrSaveHook|NativeS6ReceiverSourceFailureBelongsToMain|NativeS9ActualWorktreeStopReceivesWithoutLauncherOrPlatformIdentity|NativeS9MalformedProfessionalArtifactIsNotReceived|NativeReviewResume.*|BoundHookObservesWrongDirectoryWithoutToolACL|DryRunMissingRuntimeDoesNotInitialize|StageAnswerConsumeAcceptsIssuedS7AnswerWithoutAgent|SavedReviewResultHookRejectsUnissuedPathWithoutRuntimeWrite|S10QuestionnaireHookUsesPreparedManifestAndMainProducer|S11QuestionnaireHookDeliversVerifiableS10PackageAndKeepsDecisionHuman|HookBudgetTimeoutKeepsListenerNonBlocking)$$'
+	$(GO) test -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) ./internal/integration -run '^Test(CheckpointStore.*|Integrate.*|IntegrationPreservesChangesWrittenByChecksAndResumesWithoutRemerge|TimeoutKillsDescendants|SuccessfulShellCannotLeaveBackgroundWriter|IntegrationLocksGitCheckoutWhenEvidenceRootDiffers)$$'
+	$(GO) test -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) ./internal/investigation -run '^Test(ApproveContract.*|DelegatedApproval.*|TechnicalReviewCannotMasqueradeAsHumanApproval|NativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias)$$'
+
+# Instrument the shared-state/locking/process boundaries, rather than running
+# every serial CLI scenario again under race instrumentation.
+test-ci-race:
+	$(GO) test -race -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) $(CI_RACE_PACKAGES)
+	$(GO) test -race -short -p $(TEST_PACKAGES) -timeout=$(CI_TEST_TIMEOUT) ./internal/integration -run '^TestCheckpointStore.*$$'
+
 doctor:
 	$(GO) run ./cmd/loop-harness doctor --root .
 
@@ -76,12 +106,14 @@ release-graph-validate: build
 	$$stage/vibe-coding-loop-template-$$version/.claude/bin/loop-harness release-graph validate --root $$stage/vibe-coding-loop-template-$$version; \
 	rm -rf $$dist $$stage
 
-# ci-verify runs the full CI matrix used by .github/workflows/ci.yml:
-# format check, static analysis, unit tests (with race), the in-tree doctor
-# against the source tree, the doctor against the staged release tree, the
-# full validate --all, and the release-graph validator. Any failure
-# surfaces as a non-zero exit.
-ci-verify: fmt-check vet test test-race doctor doctor-staged validate release-graph-validate build
+# Default PR/main checks. Release packaging and exhaustive scenario/race
+# coverage are available through ci-verify-full and the manual CI full mode.
+ci-verify: fmt-check vet test-ci test-ci-race doctor validate build
+
+# Complete local/release verification. doctor-staged already validates the
+# source and installed release graphs; do not build the five-platform archive
+# again via release-graph-validate in the same run.
+ci-verify-full: fmt-check vet test test-race doctor doctor-staged validate build
 
 # doctor-staged builds the release tarball, extracts it to a tmpdir, and
 # installs with the packaged binary into a fresh target and verifies the
@@ -104,7 +136,7 @@ doctor-staged: build
 	$$stage_root/.claude/bin/loop-harness validate --all --root $$stage_root; \
 	rm -rf $$dist $$stage
 
-verify: fmt-check vet test test-race doctor validate doctor-staged
+verify: ci-verify-full
 
 # --- Release packaging ------------------------------------------------------
 #
