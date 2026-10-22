@@ -366,6 +366,11 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 			}
 		}
 	}
+	if questionnaire := PlanQuestionnairePath(root, state); questionnaire != "" {
+		if rel, err := filepath.Rel(root, strings.TrimSuffix(questionnaire, ".json")+".md"); err == nil {
+			controlPaths[filepath.ToSlash(rel)] = true
+		}
+	}
 	scope := pathscope.New(root)
 	frozen := make(map[string]bool, len(plan.FrozenSubjects))
 	for _, subject := range plan.FrozenSubjects {
@@ -516,13 +521,10 @@ func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPoi
 	return nil
 }
 
-// verifyRegressionAssetFingerprints proves that a regression_available plan
-// still points at the exact files it claims to reuse. Cold-start assets are
-// authored inside the pinned workspace and are checked by WorkspaceDigest.
+// verifyRegressionAssetFingerprints checks every selected reusable asset,
+// including partial reuse in cold_start. Newly authored workspace assets are
+// checked separately by WorkspaceDigest.
 func verifyRegressionAssetFingerprints(root string, plan *Plan) error {
-	if plan.E2ECoverageState != "regression_available" {
-		return nil
-	}
 	for _, asset := range sortE2EAssets(plan.E2EAssets) {
 		path, err := repositoryContainedPath(root, asset.Path)
 		if err != nil {

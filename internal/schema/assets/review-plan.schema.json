@@ -182,7 +182,7 @@
         "required": ["asset_id", "case_ref", "path", "sha256"],
         "properties": {
           "asset_id": {"type": "string", "minLength": 1},
-          "case_ref": {"type": "string", "minLength": 1},
+          "case_ref": {"type": "string", "minLength": 1, "description": "Exact docs/design/prototypes/<module>/cases.json#CASE reference. New submissions resolve legacy bare CASE IDs only when unique within the declared scenario sources."},
           "path": {"type": "string", "minLength": 1},
           "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
           "selector_ref": {"type": "string"},

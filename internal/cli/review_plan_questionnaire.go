@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/policy"
@@ -49,13 +48,21 @@ func stageReviewPlanQuestionnaireContext(root string, request policy.Input, snap
 		if err != nil {
 			return "S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + err.Error()
 		}
+		if err := prepareQuestionnaireText(reviewPlanGuidePath(path), reviewPlanGuide(notes)); err != nil {
+			return "S7 Main questionnaire was prepared at " + path + "; Main must restore its planning guidance: " + err.Error()
+		}
 	} else if err != nil {
 		if os.IsNotExist(err) {
 			return "S7 Main ReviewPlan questionnaire is not prepared at " + path + "; the next tool listener must prepare it. Main owns this system gap."
 		}
 		return "S7 Main ReviewPlan questionnaire is unavailable at " + path + ": " + err.Error()
 	}
-	return "S7 Main ReviewPlan questionnaire: " + path + ". For each Claim, name the actual target, a falsifiable assertion, observable pass/fail oracle and concrete review or execution method using its source refs. Complete assignments and applicable coverage; resolve TODO(planner)/PLANNER-REFINE with real professional facts, then save this exact file for the original ReviewPlan consumer. Keep the supplied baseline; missing source or environment belongs to Main preparation, not invented evidence. Reviewer answers remain independent responsibilities."
+	guide := reviewPlanGuidePath(path)
+	if _, err := os.Stat(guide); os.IsNotExist(err) && request.Event == "SessionStart" {
+		_, notes := review.DraftPlanForRoot(root, snapshot.State, round)
+		_ = prepareQuestionnaireText(guide, reviewPlanGuide(notes))
+	}
+	return "S7 Main ReviewPlan questionnaire: " + path + ". Planning sources/candidates and unresolved decisions: " + guide + " (diagnostic only; if missing, Main restores preparation, never rewrites the professional answer). For each Claim, name the actual target, a falsifiable assertion, observable pass/fail oracle and concrete review or execution method using its source refs. Complete assignments and applicable coverage; resolve TODO(planner)/PLANNER-REFINE with real professional facts, then save this exact file for the original ReviewPlan consumer. Keep the supplied baseline; missing source or environment belongs to Main preparation, not invented evidence. Reviewer answers remain independent responsibilities."
 }
 
 func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
@@ -79,8 +86,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		_, _, loadErr := review.LoadPlan(root, snapshot.State)
 		authored, readErr := os.ReadFile(path)
 		registered, registeredErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(ptr.Path)))
-		var a, b any
-		if loadErr != nil || readErr != nil || registeredErr != nil || json.Unmarshal(authored, &a) != nil || json.Unmarshal(registered, &b) != nil || !reflect.DeepEqual(a, b) {
+		if loadErr != nil || readErr != nil || registeredErr != nil || !review.SamePlanAnswer(authored, registered) {
 			code = 1
 			fmt.Fprintln(&output, "The current ReviewPlan is already registered; changed answers require the original named revision/rework path. Preserve the accepted plan.")
 		} else {
@@ -95,4 +101,15 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 	context := fmt.Sprintf("S7 Main ReviewPlan questionnaire saved at %s. Next: %s\n%s", path, next, output.String()+commandErr.String())
 	_ = json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": context}})
 	return true, 0
+}
+
+func reviewPlanGuidePath(path string) string { return strings.TrimSuffix(path, ".json") + ".md" }
+func reviewPlanGuide(notes []string) string {
+	var b strings.Builder
+	b.WriteString("# S7 planning sources and decisions\n\nThis is derived guidance, not an accepted Plan or an execution permit. Complete the original JSON and save once. A candidate is not a reusable-asset declaration or a passing result.\n\n")
+	for _, note := range notes {
+		b.WriteString("- " + note + "\n")
+	}
+	b.WriteString("\nChoose the existing E2E state from actual circumstances; unresolved discovery does not require rebuilding scripts. Select exact cases.json#CASE references and actual script paths; the original receiver fills omitted asset IDs/digests. Supply real selector, route and environment facts rather than generated labels. Keep cross-module consumers in the professional scope.\n")
+	return b.String()
 }

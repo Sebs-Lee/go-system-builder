@@ -281,9 +281,21 @@ func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
 	}
 	raw["e2e_coverage_state"] = "regression_available"
 	raw["verification_artifact_workspace"] = nil
+	casePath := "docs/design/prototypes/settings/cases.json"
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(casePath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, casePath), []byte(`{"cases":[{"id":"CASE-001"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range raw["claims"].([]any) {
+		claim := entry.(map[string]any)
+		if claim["lens"] == "e2e" {
+			claim["source_refs"] = []any{casePath + "#CASE-001"}
+		}
+	}
 	raw["e2e_assets"] = []any{map[string]any{
-		"asset_id": "asset-settings", "case_ref": "CASE-001", "path": "e2e/settings-save.spec.ts",
-		"sha256":       sha256Of(assetBytes),
+		"case_ref": casePath + "#CASE-001", "path": "e2e/settings-save.spec.ts",
 		"selector_ref": "testid:save-button", "route_ref": "settings/save",
 		"environment": "chromium/localhost:3000/profile=default",
 	}}
@@ -312,6 +324,10 @@ func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
 	// The asset changes after registration but before the E2E result arrives.
 	if err := os.WriteFile(assetPath, []byte("test('settings save', 'changed')"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	acceptedBytes, err := os.ReadFile(filepath.Join(root, snap.State["review"].(map[string]any)["plan"].(map[string]any)["path"].(string)))
+	if err != nil || !SamePlanAnswer(regressionBytes, acceptedBytes) {
+		t.Fatalf("original professional answer must replay after machine completion and later asset drift: %v", err)
 	}
 	resultPath := writeE2EResultFile(t, root, plan, "review-result-e2e-regression", "")
 	if _, err := SubmitResult(root, statePath, journalPath, SubmitRequest{

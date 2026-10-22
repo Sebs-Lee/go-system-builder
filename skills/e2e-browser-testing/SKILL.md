@@ -394,3 +394,7 @@ An e2e evidence bundle clears S7 when ALL hold:
 - [ ] Cross-REQ regression sweep results enumerated in the report (every `F-NNN` listed with PASS/FAIL)
 
 Failing any item is a QA finding; the bundle returns to S6 / S9 rework. No Clean Round without a passing e2e bundle.
+
+## Selecting existing assets
+
+Read the original ReviewPlan and its adjacent planning guidance. A script mentioning a CASE is only a candidate. Main selects the exact `cases.json#CASE` and script path with actual selector, route and environment facts; the original receiver fills omitted asset IDs and digests. Do not copy machine hashes or infer a usable browser environment from a module label. Unresolved planning remains a draft. Cold-start may reuse confirmed assets and author only missing scripts in its declared workspace; every selected reusable asset retains its original fingerprint checks.

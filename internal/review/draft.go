@@ -237,30 +237,14 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	default:
 		inventory, discoveryDiagnostics := discoverE2EInventory(root, state)
 		for _, diagnostic := range discoveryDiagnostics {
-			notes = append(notes, "E2E inventory: "+diagnostic+"; registration will reject an unverifiable asset and cold_start remains the safe fallback")
+			notes = append(notes, "E2E inventory: "+diagnostic+"; Main must resolve the preparation gap rather than assume assets must be rebuilt")
 		}
-		e2eAssets = sortE2EAssets(inventory.Assets)
-		assetByCase := make(map[string]bool, len(e2eAssets))
-		for _, asset := range e2eAssets {
-			assetByCase[asset.CaseRef] = true
+		e2eState = ""
+		notes = append(notes, "Main must decide e2e_coverage_state from actual assets and environment: regression_available reuses confirmed assets; cold_start prepares only missing assets in the original workspace; not_applicable requires the original justified N/A Claim. Discovery does not decide this field.")
+		for _, candidate := range inventory.Candidates {
+			notes = append(notes, fmt.Sprintf("Candidate script %s (observed sha256=%s), possible scenarios: %s. Text matches do not prove selectors, routes, environment or execution; resolve the actual binding in this ReviewPlan.", candidate.Path, candidate.SHA256, strings.Join(candidate.PossibleCases, ", ")))
 		}
 		if len(inventory.Cases) > 0 {
-			allMapped := true
-			for _, scenario := range inventory.Cases {
-				if !assetByCase[scenario.ID] {
-					allMapped = false
-					break
-				}
-			}
-			e2eState = "cold_start"
-			if allMapped {
-				e2eState = "regression_available"
-				e2eAssets = sortE2EAssets(e2eAssets)
-			} else {
-				workspace := fmt.Sprintf("e2e-workspace/review-plan-draft-r%d", round)
-				verificationWorkspace = &workspace
-				notes = append(notes, fmt.Sprintf("E2E cold start: %d required CASE(s) are not mapped to reusable specs; the draft created one behavior Assignment per CASE and an isolated workspace", len(inventory.Cases)))
-			}
 			for index, scenario := range inventory.Cases {
 				claimID := fmt.Sprintf("claim-e2e-case-%d", index+1)
 				claims = append(claims, Claim{
@@ -268,20 +252,17 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 					Target:    e2eScenarioTarget(scenario),
 					Assertion: fmt.Sprintf("%s (%s) follows the declared CASE oracle without forbidden side effects", scenario.ID, scenario.Title),
 					Oracle:    e2eScenarioOracle(scenario), Method: "real-browser execution",
-					Applicability: "required", SourceRefs: e2eScenarioSourceRefs(scenario), FocusKey: scenario.ID,
+					Applicability: "required", SourceRefs: e2eScenarioSourceRefs(scenario), FocusKey: scenarioRef(scenario),
 				})
 				assignments = append(assignments, PlanAssignment{
 					AssignmentID: fmt.Sprintf("assignment-e2e-case-%d", index+1), Lens: "e2e", ClaimIDs: []string{claimID},
-					FocusKeys:          []string{scenario.ID},
-					NonOverlapBoundary: "owns exactly " + scenario.ID + " and its declared PATH(s); do not repeat another CASE's oracle",
+					FocusKeys:          []string{scenarioRef(scenario)},
+					NonOverlapBoundary: "owns exactly " + scenarioRef(scenario) + " and its declared PATH(s); do not repeat another CASE's oracle",
 					ExecutionWave:      "behavior",
 				})
 			}
 		} else {
-			e2eState = "cold_start"
-			workspace := fmt.Sprintf("e2e-workspace/review-plan-draft-r%d", round)
-			verificationWorkspace = &workspace
-			notes = append(notes, "E2E cold start: no required browser CASE inventory was discoverable; author the module CASE/PATH matrix, then replace the fallback claim before registration")
+			notes = append(notes, "No required browser CASE inventory was discoverable; Main must restore the actual scenario sources or supply a justified applicability decision, not assume a blank test library")
 			id := nextClaim("e2e", "flows")
 			claims = append(claims, Claim{
 				ClaimID: id, Lens: "e2e", Target: "TODO(planner): which existing persona and CASE/PATH define this behavior? Name the actual entry; report missing scenario inputs to Main",
@@ -367,11 +348,14 @@ func e2eScenarioTarget(scenario e2eScenario) string {
 }
 
 func e2eScenarioSourceRefs(scenario e2eScenario) []string {
-	refs := []string{scenario.ID}
+	refs := []string{scenarioRef(scenario)}
 	for _, ref := range scenario.FlowRefs {
 		ref = strings.TrimSpace(ref)
 		if ref == "" || containsString(refs, ref) {
 			continue
+		}
+		if strings.HasPrefix(ref, "PATH-") {
+			ref = scenario.CasesPath + "#" + scenario.ID + "/" + ref
 		}
 		refs = append(refs, ref)
 	}

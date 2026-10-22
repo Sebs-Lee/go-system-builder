@@ -240,6 +240,11 @@ func ValidatePlan(plan *Plan) error {
 	}
 	switch plan.E2ECoverageState {
 	case "cold_start":
+		if len(plan.E2EAssets) > 0 {
+			if err := validateE2EAssetDeclarations(plan); err != nil {
+				return err
+			}
+		}
 		if plan.VerificationArtifactWorkspace == nil || strings.TrimSpace(*plan.VerificationArtifactWorkspace) == "" {
 			return s7GateError(
 				"S7_E2E_WORKSPACE_MISSING",

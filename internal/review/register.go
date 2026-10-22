@@ -58,13 +58,7 @@ func RegisterPlan(
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read ReviewPlan: %w", err)
 	}
-	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan schema: %w", err)
-	}
-	var plan Plan
-	if err := json.Unmarshal(data, &plan); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("decode ReviewPlan: %w", err)
-	}
+
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
@@ -72,6 +66,17 @@ func RegisterPlan(
 	var current map[string]any
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+	}
+	data, err = preparePlanAssets(root, data, current)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
+	}
+	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan schema: %w", err)
+	}
+	var plan Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("decode ReviewPlan: %w", err)
 	}
 	// The original CAS below checks the complete frozen baseline. Preflight
 	// retains professional coverage and regression assets without repeating it.
@@ -199,6 +204,9 @@ func RegisterPlan(
 			}
 			if err := verifyFrozenSubjects(root, &plan, state); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
+			}
+			if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
+				return err
 			}
 			return ApplyRegisteredPlanProjection(state, plan, planRel, planSHA, round, workspace, artifactDigest, occurredAt)
 		},

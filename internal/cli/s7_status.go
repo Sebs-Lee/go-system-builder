@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/review"
@@ -76,7 +77,7 @@ func runS7Command(args []string, stdout, stderr io.Writer) int {
 		if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
 			return 2
 		}
-		return runS7Draft(*root, *out, stdout)
+		return runS7Draft(*root, *out, stdout, stderr)
 	}
 	flags := flag.NewFlagSet("s7 status", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -535,12 +536,12 @@ func readLifecycleCursor(state map[string]any) (string, string) {
 // to fix the stage instead of the plan. We surface this disclosure with
 // the current stage, the legal entry path (TR-006/TR-012/TR-016), and one
 // next action so the agent does not invent a parallel lifecycle.
-func runS7Draft(root, out string, stdout io.Writer) int {
+func runS7Draft(root, out string, stdout, stderr io.Writer) int {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	snapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
-		fmt.Fprintf(stdout, "read runtime: %v\n", err)
+		fmt.Fprintf(stderr, "read runtime: %v\n", err)
 		return 1
 	}
 	round := 0
@@ -563,14 +564,18 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 		return 1
 	}
 	plan, notes := review.DraftPlanForRoot(root, snapshot.State, round)
+	if plan == nil {
+		fmt.Fprintln(stderr, "prepare S7 draft: "+strings.Join(notes, "; "))
+		return 1
+	}
 	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
-		fmt.Fprintf(stdout, "encode draft: %v\n", err)
+		fmt.Fprintf(stderr, "encode draft: %v\n", err)
 		return 1
 	}
 	if out != "" {
 		if err := os.WriteFile(out, append(data, '\n'), 0o644); err != nil {
-			fmt.Fprintf(stdout, "write draft: %v\n", err)
+			fmt.Fprintf(stderr, "write draft: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(stdout, "draft ReviewPlan written to %s\n", out)
@@ -578,9 +583,9 @@ func runS7Draft(root, out string, stdout io.Writer) int {
 		fmt.Fprintln(stdout, string(data))
 	}
 	for _, note := range notes {
-		fmt.Fprintf(stdout, "note: %s\n", note)
+		fmt.Fprintf(stderr, "note: %s\n", note)
 	}
-	fmt.Fprintln(stdout, "note: replace every TODO(planner) marker (target/assertion/oracle/method/na_rationale) with real facts before registration — the registration gate rejects the literal marker; if a whole lens ends up with zero required Claims, fill coverage_justification instead")
+	fmt.Fprintln(stderr, "note: replace every TODO(planner) marker (target/assertion/oracle/method/na_rationale) with real facts before registration — the registration gate rejects the literal marker; if a whole lens ends up with zero required Claims, fill coverage_justification instead")
 	return 0
 }
 

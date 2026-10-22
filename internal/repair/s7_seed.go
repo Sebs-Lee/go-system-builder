@@ -237,7 +237,9 @@ func prepareCanonicalS7ReviewPlanSeed(plan *reviewpkg.Plan, baseline buildsurfac
 			ExecutionWave:      "behavior",
 		})
 	}
-	if len(convertedE2E) > 0 {
+	// The immutable seed must keep the existing formal schema. This is a
+	// structural placeholder only: PLANNER-REFINE still prevents dispatch.
+	if len(convertedE2E) > 0 || plan.E2ECoverageState == "" {
 		plan.E2ECoverageState = "cold_start"
 		workspace := fmt.Sprintf("e2e-workspace/review-plan-s9-round-%d", round)
 		plan.VerificationArtifactWorkspace = &workspace

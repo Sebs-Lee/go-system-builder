@@ -22,6 +22,7 @@ func TestReviewPlanQuestionnaireAndPriorAnswersAreControlArtifacts(t *testing.T)
 	current := PlanQuestionnairePath(root, state)
 	paths := []string{
 		current,
+		strings.TrimSuffix(current, ".json") + ".md",
 		filepath.Join(root, ".claude/worktree-reminders", strings.Repeat("a", 64)+".txt"),
 		filepath.Join(root, ".claude/submissions/loop-test/g2/S3/contract-answer.json"),
 		filepath.Join(root, ".claude/submissions/loop-test/g2/S7/r2/review-plan.json"),

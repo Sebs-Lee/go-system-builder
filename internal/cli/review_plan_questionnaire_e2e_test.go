@@ -2,7 +2,9 @@ package cli_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +20,14 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 	if !strings.Contains(context, path) || strings.Contains(context, "s7 draft --out plan.json") {
 		t.Fatalf("Main did not receive exact automatic plan questionnaire: %s", context)
 	}
+	guide := strings.TrimSuffix(path, ".json") + ".md"
+	if !strings.Contains(context, guide) {
+		t.Fatalf("Main lost planning guidance: %s", context)
+	}
+	guideBytes, guideErr := os.ReadFile(guide)
+	if guideErr != nil || !strings.Contains(string(guideBytes), "candidate is not") {
+		t.Fatalf("missing planning guidance: %v %s", guideErr, guideBytes)
+	}
 	draft, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +40,41 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 	// Professional answers are deterministic test data; this is not a model review.
 	authored := minimalReviewPlan(t, t.TempDir(), "review-plan-questionnaire-save")
 	data, err := os.ReadFile(authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Select one real reusable asset without hand-copying machine fields.
+	casePath := "docs/design/prototypes/example/cases.json"
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(casePath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, casePath), []byte(`{"cases":[{"id":"CASE-001"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assetPath := filepath.Join(root, "example.spec.ts")
+	if err := os.WriteFile(assetPath, []byte("original executable script"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(data, &answer); err != nil {
+		t.Fatal(err)
+	}
+	e2e := answer["claims"].([]any)[2].(map[string]any)
+	e2e["applicability"] = "required"
+	e2e["source_refs"] = []string{casePath + "#CASE-001"}
+	delete(e2e, "na_rationale")
+	delete(e2e, "na_checklist_id")
+	answer["assignments"] = append(answer["assignments"].([]any), map[string]any{"assignment_id": "assignment-e2e-1", "lens": "e2e", "claim_ids": []string{"claim-e2e-na"}, "execution_wave": "behavior", "non_overlap_boundary": "actual browser journey"})
+	answer["e2e_coverage_state"] = "regression_available"
+	answer["e2e_assets"] = []any{map[string]any{"case_ref": casePath + "#CASE-001", "path": "example.spec.ts", "selector_ref": "button[name=Save]", "route_ref": "/example", "environment": "local test browser"}}
+	for _, source := range []string{casePath, "example.spec.ts"} {
+		body, err := os.ReadFile(filepath.Join(root, source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer["frozen_subjects"] = append(answer["frozen_subjects"].([]any), map[string]any{"path": source, "sha256": fmt.Sprintf("%x", sha256.Sum256(body)), "kind": "product_code"})
+	}
+	data, err = json.Marshal(answer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +97,9 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 	ptr, _ := state["review"].(map[string]any)["plan"].(map[string]any)
 	if ptr == nil || ptr["plan_id"] != "review-plan-questionnaire-save" {
 		t.Fatalf("original plan was not registered: %s", before)
+	}
+	if err := os.WriteFile(assetPath, []byte("later changed script"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	replay := entryQuestionnaireHook(t, root, "PostToolUse", path)
 	if !strings.Contains(replay, "already received") {

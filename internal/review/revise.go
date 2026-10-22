@@ -46,6 +46,19 @@ func RevisePlan(
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read revised ReviewPlan: %w", err)
 	}
+
+	stateData, err := os.ReadFile(statePath)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
+	}
+	var current map[string]any
+	if err := json.Unmarshal(stateData, &current); err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
+	}
+	data, err = preparePlanAssets(root, data, current)
+	if err != nil {
+		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
+	}
 	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan schema: %w", err)
 	}
@@ -57,14 +70,6 @@ func RevisePlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan coverage: %w", err)
 	}
 
-	stateData, err := os.ReadFile(statePath)
-	if err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
-	}
-	var current map[string]any
-	if err := json.Unmarshal(stateData, &current); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
-	}
 	if request.ExpectedRevision >= 0 && intField(current["revision"]) != request.ExpectedRevision {
 		return loopruntime.Snapshot{}, loopruntime.ErrStaleRevision
 	}
@@ -221,6 +226,9 @@ func RevisePlan(
 		Apply: func(state map[string]any) error {
 			if err := verifyFrozenSubjects(root, &next, state); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan revision commit: %w", err)
+			}
+			if err := verifyRegressionAssetFingerprints(root, &next); err != nil {
+				return err
 			}
 			reviewMap, ok := state["review"].(map[string]any)
 			if !ok {
