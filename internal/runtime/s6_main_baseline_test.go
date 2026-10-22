@@ -17,7 +17,7 @@ func s6StartFixture(t *testing.T) (map[string]any, productbaseline.S6MainStart, 
 	start, err := productbaseline.Seal(productbaseline.S6MainStart{
 		RuntimeID:               "loop-REQ-001",
 		BaselineGeneration:      1,
-		ProjectRoot:             "/workspace/project",
+		ProjectRoot:             t.TempDir(),
 		DevelopmentBranch:       "main",
 		StartCommit:             strings.Repeat("a", 40),
 		TransitionEventID:       "evt-tr-003-r2",

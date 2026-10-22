@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -51,7 +52,7 @@ func OpenParent(root, relative string, create bool) (*os.Root, string, error) {
 			return nil, "", fmt.Errorf("packet path changed while opening")
 		}
 		if create {
-			if err := syncRoot(r); err != nil {
+			if err := SyncDirectory(r); err != nil {
 				r.Close()
 				next.Close()
 				return nil, "", err
@@ -166,16 +167,26 @@ func PublishBounded(root, relative string, data []byte, limit int64) ([]byte, er
 	if err := p.Link(tmp, name); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
 	}
-	if err := syncRoot(p); err != nil {
+	if err := SyncDirectory(p); err != nil {
 		return nil, err
 	}
 	return readFromParent(p, name, limit)
 }
 
-func syncRoot(root *os.Root) error {
+// SyncDirectory syncs a pinned directory on POSIX. On Windows, ordinary
+// directory handles cannot be flushed; validate the handle while retaining
+// regular-file syncs and recovery markers, as in runtime's storage contract.
+func SyncDirectory(root *os.Root) error {
 	dir, err := root.Open(".")
 	if err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		info, statErr := dir.Stat()
+		if statErr == nil && !info.IsDir() {
+			statErr = fmt.Errorf("packet root is not a directory")
+		}
+		return errors.Join(statErr, dir.Close())
 	}
 	return errors.Join(dir.Sync(), dir.Close())
 }

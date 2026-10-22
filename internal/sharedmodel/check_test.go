@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -134,7 +133,7 @@ func TestConsumerProviderPilot(t *testing.T) {
 	c.UseLoader(&viewLoader{root: root, files: files, loaded: map[string][]byte{}})
 	compile := func(fragment string) *jsonschema.Schema {
 		t.Helper()
-		s, e := c.Compile((&url.URL{Scheme: "file", Path: filepath.Join(root, "docs/architecture/data-model/orders.schema.json"), Fragment: fragment}).String())
+		s, e := c.Compile(schemaFileURL(filepath.Join(root, "docs/architecture/data-model/orders.schema.json"), fragment))
 		if e != nil {
 			t.Fatal(e)
 		}

@@ -9,16 +9,16 @@ import (
 )
 
 type TaskAnalysisArtifact struct {
-	ConventionsResolverVersion string          `json:"conventions_resolver_version,omitempty"`
-	TaskConventions            json.RawMessage `json:"task_conventions,omitempty"`
-	SchemaVersion              string          `json:"schema_version"`
-	ParserVersion              string          `json:"parser_version"`
-	Inputs                     []Reference     `json:"inputs"`
-	TaskContexts               json.RawMessage `json:"task_contexts"`
-	GranularityAdvice          json.RawMessage `json:"granularity_advice"`
-	StructuralCheck             *TaskStructuralCheck `json:"structural_check,omitempty"`
-	BehaviorProjectionVersion  string          `json:"behavior_projection_version,omitempty"`
-	BehaviorExamples           json.RawMessage `json:"behavior_examples,omitempty"`
+	ConventionsResolverVersion string               `json:"conventions_resolver_version,omitempty"`
+	TaskConventions            json.RawMessage      `json:"task_conventions,omitempty"`
+	SchemaVersion              string               `json:"schema_version"`
+	ParserVersion              string               `json:"parser_version"`
+	Inputs                     []Reference          `json:"inputs"`
+	TaskContexts               json.RawMessage      `json:"task_contexts"`
+	GranularityAdvice          json.RawMessage      `json:"granularity_advice"`
+	StructuralCheck            *TaskStructuralCheck `json:"structural_check,omitempty"`
+	BehaviorProjectionVersion  string               `json:"behavior_projection_version,omitempty"`
+	BehaviorExamples           json.RawMessage      `json:"behavior_examples,omitempty"`
 }
 
 // TaskStructuralCheck is the structural portion of the original S4 checker

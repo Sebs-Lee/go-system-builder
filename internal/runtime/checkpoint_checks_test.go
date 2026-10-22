@@ -3,6 +3,7 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,15 +11,16 @@ import (
 )
 
 func TestCheckpointToolReceiptCannotInventReceptionOrForeignBinding(t *testing.T) {
+	root := t.TempDir()
 	if err := validateCheckpointToolReceipts(map[string]any{}, nil); err != nil {
 		t.Fatal("legacy checkpoint changed", err)
 	}
 	p := checkexec.Profile{ID: "CP-OWN", Version: "v1", Command: "true"}
 	b := checkexec.Binding{RuntimeID: "loop-checkpoint", Generation: 1, AssignmentID: "assignment", Owner: "builder", ExecutionGeneration: 1, Responsibility: "owned_check"}
-	ref := checkexec.ToolReceipt{Path: "/evidence/receipt.json", SHA256: checkexec.Hash([]byte("receipt")), ProfileDigest: p.Digest(), Command: p.Command, Binding: b, Checkout: "/worker"}
+	ref := checkexec.ToolReceipt{Path: filepath.Join(root, "evidence", "receipt.json"), SHA256: checkexec.Hash([]byte("receipt")), ProfileDigest: p.Digest(), Command: p.Command, Binding: b, Checkout: filepath.Join(root, "worker")}
 	// A rebind updates the execution worktree_path, while the receipt retains
 	// its canonical captured checkout from the original check run.
-	e := toolExecution{RuntimeID: b.RuntimeID, AssignmentID: b.AssignmentID, Owner: b.Owner, Generation: 1, ExecutionGeneration: 1, Path: "/worker/rebound", Profiles: []checkexec.Profile{p}, Receipts: []checkexec.ToolReceipt{ref}}
+	e := toolExecution{RuntimeID: b.RuntimeID, AssignmentID: b.AssignmentID, Owner: b.Owner, Generation: 1, ExecutionGeneration: 1, Path: filepath.Join(root, "worker", "rebound"), Profiles: []checkexec.Profile{p}, Receipts: []checkexec.ToolReceipt{ref}}
 	state := map[string]any{"workspace": map[string]any{"executions": map[string]toolExecution{"assignment": e}}}
 	if err := validateCheckpointToolReceipts(state, nil); err == nil {
 		t.Fatal("receipt file became reception without original journal")
@@ -40,12 +42,13 @@ func TestCheckpointToolReceiptCannotInventReceptionOrForeignBinding(t *testing.T
 }
 
 func TestCheckpointWorkspaceOwnedReceiptRequiresItsOriginalWriterEvent(t *testing.T) {
+	root := t.TempDir()
 	profile := checkexec.Profile{ID: "WORKER-0", Version: "1.0.0", CheckIndex: 0, Command: "true", Location: "worker"}
 	binding := checkexec.Binding{RuntimeID: "loop-checkpoint", Generation: 2, AssignmentID: "assignment-worker", Owner: "builder-worker", ExecutionGeneration: 3, Responsibility: "owned_check"}
-	receipt := checkexec.ToolReceipt{Path: "/evidence/receipt.json", SHA256: checkexec.Hash([]byte("receipt")), LogSHA256: checkexec.Hash([]byte("log")), Checkout: "/worker", Command: profile.Command, ProfileDigest: profile.Digest(), Binding: binding}
+	receipt := checkexec.ToolReceipt{Path: filepath.Join(root, "evidence", "receipt.json"), SHA256: checkexec.Hash([]byte("receipt")), LogSHA256: checkexec.Hash([]byte("log")), Checkout: filepath.Join(root, "worker"), Command: profile.Command, ProfileDigest: profile.Digest(), Binding: binding}
 	execution := toolExecution{
 		RuntimeID: binding.RuntimeID, AssignmentID: binding.AssignmentID, Owner: binding.Owner,
-		Generation: binding.Generation, ExecutionGeneration: binding.ExecutionGeneration, Path: "/worker/rebound",
+		Generation: binding.Generation, ExecutionGeneration: binding.ExecutionGeneration, Path: filepath.Join(root, "worker", "rebound"),
 		WorkerChecks:  []toolWorkerCheck{{Index: 0, Command: profile.Command, Profile: profile}},
 		OwnedReceipts: []toolOwnedCheckReceipt{{WorkerCheckIndex: 0, Receipt: receipt}},
 	}
@@ -81,11 +84,12 @@ func TestCheckpointWorkspaceOwnedReceiptRequiresItsOriginalWriterEvent(t *testin
 }
 
 func TestCheckpointNativeOwnedReceiptRequiresItsOriginalWriterEvent(t *testing.T) {
+	root := t.TempDir()
 	const runtimeID, assignmentID, owner = "loop-checkpoint", "assignment-native", "builder-native"
 	const baseline, recordRevision = 2, 4
 	profile := checkexec.Profile{ID: "WORKER-0", Version: "1.0.0", CheckIndex: 0, Command: "true", Location: "worker"}
 	binding := checkexec.Binding{RuntimeID: runtimeID, Generation: baseline, AssignmentID: assignmentID, Owner: owner, ExecutionGeneration: 0, Responsibility: "owned_check"}
-	receipt := checkexec.ToolReceipt{Path: "/evidence/native-receipt.json", SHA256: checkexec.Hash([]byte("native-receipt")), LogSHA256: checkexec.Hash([]byte("native-log")), Checkout: "/native-worker", Command: profile.Command, ProfileDigest: profile.Digest(), Binding: binding}
+	receipt := checkexec.ToolReceipt{Path: filepath.Join(root, "evidence", "native-receipt.json"), SHA256: checkexec.Hash([]byte("native-receipt")), LogSHA256: checkexec.Hash([]byte("native-log")), Checkout: filepath.Join(root, "native-worker"), Command: profile.Command, ProfileDigest: profile.Digest(), Binding: binding}
 	sha := func(value byte) string { return string(make([]byte, 0)) + fmt.Sprintf("%064x", value) }
 	row := map[string]any{
 		"check_index": 0, "command": profile.Command, "profile_digest": profile.Digest(),

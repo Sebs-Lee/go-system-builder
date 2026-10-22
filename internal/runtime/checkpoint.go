@@ -182,16 +182,12 @@ func (s *Store) publishCheckpointLocked() error {
 	if err := parent.Rename(tmp, name); err != nil {
 		return err
 	}
-	d, err := parent.Open(".")
-	if err != nil {
-		return err
-	}
-	if err := errors.Join(d.Sync(), d.Close()); err != nil {
+	if err := workpacket.SyncDirectory(parent); err != nil {
 		return err
 	}
 	// Also remove directories left by interrupted publication; at most the two
 	// indexed complete pairs survive a successful publication.
-	d, err = parent.Open(".")
+	d, err := parent.Open(".")
 	if err != nil {
 		return err
 	}
@@ -214,11 +210,7 @@ func (s *Store) publishCheckpointLocked() error {
 			}
 		}
 	}
-	d, err = parent.Open(".")
-	if err != nil {
-		return err
-	}
-	return errors.Join(d.Sync(), d.Close())
+	return workpacket.SyncDirectory(parent)
 }
 
 func isCheckpointID(id string) bool {

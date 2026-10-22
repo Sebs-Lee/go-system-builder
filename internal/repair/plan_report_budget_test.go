@@ -36,7 +36,7 @@ func TestPlanReportAnswerAndReceiptDoubleProjectionRejectedBeforePublication(t *
 		SchemaVersion: "1.0.0", RecordType: "repair_plan_report", ReportID: "repair-plan-report-budget",
 		SessionID: "repair-session-budget", PlanID: "repair-plan-budget", AssignmentID: "repair-assignment-budget",
 		AssertionIDs: []string{"symptom-1"}, AgentID: "builder-budget", Plan: planText,
-		RedChecks: []RepairCheck{{Name: "pre-fix", Command: "go test ./internal/example", Result: "fail", EvidenceRefs: []string{"test://pre-fix"}}},
+		RedChecks:     []RepairCheck{{Name: "pre-fix", Command: "go test ./internal/example", Result: "fail", EvidenceRefs: []string{"test://pre-fix"}}},
 		ProposedPaths: []string{"internal/example/example.go"}, Status: "reported", ReportedAt: "2026-10-14T00:00:00Z",
 		Receipt: &runtimepkg.RepairPlanReportReceipt{
 			Contract: "s9-plan-report-receipt-v1", PacketID: "packet-" + strings.Repeat("a", 64), PacketSHA256: strings.Repeat("a", 64),

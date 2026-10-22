@@ -236,7 +236,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 			compiler := jsonschema.NewCompiler()
 			compiler.UseLoader(loader)
 			compiler.DefaultDraft(jsonschema.Draft2020)
-			schemaURL := (&url.URL{Scheme: "file", Path: filepath.Join(root, p), Fragment: f}).String()
+			schemaURL := schemaFileURL(filepath.Join(root, p), f)
 			sch, err := compiler.Compile(schemaURL)
 			if err != nil {
 				fail(fmt.Errorf("schema %s: %w", key(p, f), err))
@@ -360,6 +360,16 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 	return r
 }
 
+// schemaFileURL preserves native absolute paths as URL paths, including
+// drive letters on Windows and escaped filename characters on every platform.
+func schemaFileURL(path, fragment string) string {
+	path = filepath.ToSlash(path)
+	if filepath.VolumeName(path) != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return (&url.URL{Scheme: "file", Path: path, Fragment: fragment}).String()
+}
+
 type viewLoader struct {
 	root       string
 	files      fileview.Reader
@@ -375,7 +385,13 @@ func (l *viewLoader) Load(raw string) (any, error) {
 	if u.Scheme != "file" || u.Host != "" {
 		return nil, fmt.Errorf("remote schema dependency is not pinned locally: %s", raw)
 	}
-	rel, err := filepath.Rel(l.root, filepath.FromSlash(u.Path))
+	path := filepath.FromSlash(u.Path)
+	// A drive-qualified file URL uses /C:/..., whereas filepath expects C:\...
+	// on Windows. UNC paths and POSIX paths retain their leading slash.
+	if len(u.Path) > 1 && u.Path[0] == '/' && filepath.VolumeName(filepath.FromSlash(u.Path[1:])) != "" {
+		path = filepath.FromSlash(u.Path[1:])
+	}
+	rel, err := filepath.Rel(l.root, path)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +472,7 @@ func schemaResourceIDs(root, rel string, data []byte) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := (&url.URL{Scheme: "file", Path: filepath.Join(root, filepath.FromSlash(rel))}).String()
+	base := schemaFileURL(filepath.Join(root, filepath.FromSlash(rel)), "")
 	ids := map[string]bool{}
 	collectSchemaResourceIDs(value, base, 2020, true, ids)
 	return ids, nil
@@ -662,7 +678,7 @@ func Reading(root, rel, content string, files fileview.Reader) []string {
 						compiler := jsonschema.NewCompiler()
 						compiler.UseLoader(&viewLoader{root: root, files: files, loaded: map[string][]byte{}})
 						abs, _ := filepath.Abs(filepath.Join(root, p))
-						_, err = compiler.Compile((&url.URL{Scheme: "file", Path: abs, Fragment: f}).String())
+						_, err = compiler.Compile(schemaFileURL(abs, f))
 					} else if !hasAnchor(string(b), f) {
 						err = fmt.Errorf("missing Markdown anchor %s#%s (use explicit stable anchors)", p, f)
 					}
