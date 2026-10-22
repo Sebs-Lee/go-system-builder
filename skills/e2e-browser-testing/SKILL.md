@@ -47,7 +47,8 @@ exceptions and produce idempotent re-runnable evidence. Required allow/reject
 branch coverage must be 100%.
 ## Outputs
 For `e2e_coverage_state=cold_start`, Playwright spec/fixture files belong only under the
-ReviewPlan's `verification_artifact_workspace/`; existing regression specs under
+ReviewPlan's `verification_artifact_workspace/`, a repository-relative surface under
+`e2e-workspace/` whose planning and preparation belong to Main; existing regression specs under
 `web/e2e/{module}/` are read/run-only during S7. Put the evidence bundle under
 `.claude/evidence/<runtime>/g<generation>/reviews/<agent>/` (the report projection may be
 under `docs/reports/`, but never under `docs/reports/bugs/`). Every failure becomes a

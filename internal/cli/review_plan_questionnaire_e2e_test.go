@@ -25,7 +25,7 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 		t.Fatalf("Main lost planning guidance: %s", context)
 	}
 	guideBytes, guideErr := os.ReadFile(guide)
-	if guideErr != nil || !strings.Contains(string(guideBytes), "candidate is not") {
+	if guideErr != nil || !strings.Contains(string(guideBytes), "candidate is not") || !strings.Contains(string(guideBytes), "verification_artifact_workspace") || !strings.Contains(string(guideBytes), "e2e-workspace/") {
 		t.Fatalf("missing planning guidance: %v %s", guideErr, guideBytes)
 	}
 	draft, err := os.ReadFile(path)
