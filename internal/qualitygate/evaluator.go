@@ -915,6 +915,12 @@ func qualifiedEvidence(
 	var valid []string
 	var conflicts []string
 	var mismatched []string
+	type aliasCandidate struct {
+		key, realID string
+		conflictAt  int
+	}
+	var aliases []aliasCandidate
+	qualified := map[string]map[string]bool{}
 	for _, item := range raw {
 		index, _ := item.(map[string]any)
 		if index == nil || !evidenceKindsEqual(requirement.Kind, stringValue(index["kind"])) {
@@ -950,7 +956,6 @@ func qualifiedEvidence(
 			continue
 		}
 		if envelope.SchemaVersion == "" ||
-			envelope.EvidenceID != stringValue(index["id"]) ||
 			!evidenceKindsEqual(requirement.Kind, envelope.Kind) ||
 			envelope.RuntimeID != runtimeID ||
 			envelope.BaselineGeneration != generation ||
@@ -959,6 +964,12 @@ func qualifiedEvidence(
 			!containsAny(index["produced_by"], envelope.ProducerAgentID) {
 			conflicts = append(conflicts, "evidence:"+stringValue(index["id"])+":schema")
 			continue
+		}
+		wrongID := envelope.EvidenceID != stringValue(index["id"])
+		aliasConflict := -1
+		if wrongID {
+			aliasConflict = len(conflicts)
+			conflicts = append(conflicts, "evidence:"+stringValue(index["id"])+":schema")
 		}
 		if requirement.CurrentReviewRound &&
 			(envelope.ReviewRound != currentRound || envelope.ReviewRound != intValue(index["review_round"])) {
@@ -992,13 +1003,49 @@ func qualifiedEvidence(
 		if !containsString(requirement.Responsibilities, envelope.ProducerResponsibility) {
 			continue
 		}
-		valid = append(valid, envelope.EvidenceID)
+		// A wrong ID is recoverable only when all remaining qualification
+		// checks passed and another exact registration qualified independently.
+		key := evidenceAliasKey(index, envelope)
+		if wrongID {
+			aliases = append(aliases, aliasCandidate{key, envelope.EvidenceID, aliasConflict})
+		} else {
+			valid = append(valid, envelope.EvidenceID)
+			if qualified[key] == nil {
+				qualified[key] = map[string]bool{}
+			}
+			qualified[key][envelope.EvidenceID] = true
+		}
 	}
+	ignore := map[int]bool{}
+	for _, alias := range aliases {
+		if alias.realID != "" && qualified[alias.key][alias.realID] {
+			ignore[alias.conflictAt] = true
+		}
+	}
+	kept := conflicts[:0]
+	for i, conflict := range conflicts {
+		if !ignore[i] {
+			kept = append(kept, conflict)
+		}
+	}
+	conflicts = kept
 	if len(valid) == 0 && len(mismatched) > 0 {
 		// Nothing qualified and naming errors exist — they are the reason.
 		conflicts = append(conflicts, mismatched...)
 	}
 	return sortedUnique(valid), sortedUnique(conflicts)
+}
+
+func evidenceAliasKey(index map[string]any, envelope evidenceEnvelope) string {
+	// JSON avoids delimiter ambiguity. Only the evidence ID is omitted; path,
+	// bytes, kind, generation/round and professional producer remain exact.
+	key, _ := json.Marshal([]any{
+		filepath.ToSlash(filepath.Clean(stringValue(index["path"]))), index["sha256"],
+		envelope.Kind, envelope.RuntimeID, envelope.BaselineGeneration,
+		intValue(index["review_round"]), envelope.ReviewRound,
+		envelope.ProducerAgentID, envelope.ProducerResponsibility,
+	})
+	return string(key)
 }
 
 func applyDocumentPassIndependence(input Input, result *Evaluation, documents []documentFact) {
