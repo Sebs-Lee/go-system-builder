@@ -1435,7 +1435,7 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 		case unissuedDispatchedHypothesis:
 			nextAction = "The Hook listener prepares the dispatched Investigator questionnaire and supplies its exact paths; queued Assignments wait for dispatch"
 		case issuedHypothesisResult:
-			nextAction = "the assigned Investigator reads its exact view_path and writes only answer_path from hypothesis_result_packets, then saves through the platform PostToolUse Hook; inspect the original receipt with its receipt_command"
+			nextAction = "Main passes the exact view_path and answer_path from hypothesis_result_packets into native Agent; the Investigator reads actual sources, saves the professional answer and returns its exact reference. SubagentStop invokes the original Case consumer; ordinary saves do not receive native results. Already registered frozen executions keep their original source/save consumer. Inspect the original receipt with its receipt_command"
 		}
 	}
 	if route := stringValue(document["route"]); route != "" && !issuedHypothesisResult && !unissuedDispatchedHypothesis && !packetProjectionProblem {

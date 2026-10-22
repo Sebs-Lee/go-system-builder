@@ -266,6 +266,14 @@ docs/reports/e2e/screenshots/{RUN_ID}-{step}.png     ← per-step screenshot
    forbidden side effects, evidence refs, and capture gaps; no root-cause or BUG claim
 9. **Idempotent re-execution instructions** — env vars, start commands, exact `pnpm playwright test` invocation
 
+### Bind dynamic observations to the service actually running
+
+In the existing stack-state table, identify the frontend/API URL and the build actually serving it, plus which database, queue and external dependencies are real or mocked. Reuse an existing build ID, version endpoint, container image identity, or controlled startup/build log that connects the running instance to the claimed product revision. A checkout's current HEAD, a spec digest or a successful HTTP response alone does not identify the running service. Read the existing evidence; do not add a mandatory endpoint, probe command or second provenance registry.
+
+If a run targets an older build, mark its result against that build; do not use it as proof of the new change. If the mapping cannot be established, state the evidence limitation and return the environment/source gap to Main before claiming the current behavior verified. Keep observations already obtained and any original receipt; do not silently relabel them or change hashes. After the intended service is available, repeat only the affected dynamic observations through their original responsibility.
+
+Mocked dependencies can support the boundary they actually exercise, but do not prove the omitted real integration. Distinguish real browser/server/persistence observations from fixtures, local stubs and static source checks in the existing narrative. This runtime-version check applies to browser/API/service execution; static review or schema checks do not require a service launch, network probe or health endpoint.
+
 ### JSONL event stream shape
 
 One JSON object per line:
@@ -276,6 +284,8 @@ One JSON object per line:
 ```
 
 `src` is `"cdp"` or `"pw"` so a reviewer can filter by source. `kind` names the event type. `ts` is ISO-8601 UTC.
+
+A complete witness → journey → persistence/forbidden-effects example, including the original RepairContract mapping, is in [S8/S9 examples](../../docs/examples/s7-s9/README.md#完整业务示例撤回后保留期间合法修订). Use the product's accepted rules rather than imposing the example's business policy.
 
 ## Full-Module Regression Sweep
 

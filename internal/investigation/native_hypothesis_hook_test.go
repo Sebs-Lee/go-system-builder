@@ -42,6 +42,18 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 	if receipt, code := query("--packet", p.ID, owner.ownerID); code != 0 || receipt.Accepted || receipt.WorkComplete {
 		t.Fatalf("an authored but unreceived answer became completion: %+v code=%d", receipt, code)
 	}
+	var boardOut, boardErr bytes.Buffer
+	if code := cli.Run([]string{"runtime", "investigation", "status", "--root", fixture.root, "--case-id", p.Binding.CaseID}, nil, &boardOut, &boardErr); code != 0 {
+		t.Fatalf("native S8 status: %d %s", code, &boardErr)
+	}
+	var board struct {
+		Board struct {
+			NextAction string `json:"next_action"`
+		} `json:"board"`
+	}
+	if err := json.Unmarshal(boardOut.Bytes(), &board); err != nil || !strings.Contains(board.Board.NextAction, "SubagentStop") || strings.Contains(board.Board.NextAction, "PostToolUse") {
+		t.Fatalf("status must guide the actual native receiver: %v %s", err, &boardOut)
+	}
 	active := false
 	call := func(event, actor, ref string) (int, string, string) {
 		body, _ := json.Marshal(map[string]any{"hook_event_name": event, "stop_hook_active": active, "agent_id": actor, "agent_type": "investigator", "session_id": "actual-native-parent", "cwd": fixture.root, "last_assistant_message": ref, "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(fixture.root, path)}})

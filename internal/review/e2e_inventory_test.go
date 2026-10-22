@@ -34,7 +34,7 @@ func TestDiscoverE2EInventoryOffersCandidatesWithoutAssetDeclarations(t *testing
 		t.Fatal(err)
 	}
 
-	inventory, diagnostics := discoverE2EInventory(root, map[string]any{})
+	inventory, diagnostics := discoverE2EInventory(root, map[string]any{"bound_req": caseScopeREQ(t, root, "docs/design/prototypes/settings/\n")})
 	if len(diagnostics) != 0 {
 		t.Fatalf("unexpected discovery diagnostics: %v", diagnostics)
 	}
@@ -135,7 +135,7 @@ func TestE2ECandidatesKeepCollidingModuleCASEsAndExactTokenBoundaries(t *testing
 			t.Fatal(err)
 		}
 	}
-	inventory, diagnostics := discoverE2EInventory(root, map[string]any{})
+	inventory, diagnostics := discoverE2EInventory(root, map[string]any{"bound_req": caseScopeREQ(t, root, "docs/design/prototypes/alpha/\ndocs/design/prototypes/beta/\n")})
 	if len(diagnostics) != 0 || len(inventory.Cases) != 2 || len(inventory.Candidates) != 1 {
 		t.Fatalf("lost or conflated source: %+v %v", inventory, diagnostics)
 	}

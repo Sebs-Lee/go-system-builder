@@ -1,9 +1,9 @@
 package review
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
@@ -59,53 +59,18 @@ var e2eSpecSuffixes = []string{".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx"}
 
 // Discovery offers source hints, never an executable-asset declaration.
 // The full cases path keeps module-local CASE/PATH identifiers distinct.
-func discoverE2EInventory(root string, state map[string]any) (e2eInventory, []string) {
+func discoverE2EInventory(root string, state map[string]any, plans ...*Plan) (e2eInventory, []string) {
 	var inventory e2eInventory
 	var diagnostics []string
-	moduleFilter := boundE2EModules(root, state)
-	prototypes := filepath.Join(root, "docs", "design", "prototypes")
-	entries, err := os.ReadDir(prototypes)
-	if os.IsNotExist(err) {
-		return inventory, nil
+	plan := &Plan{}
+	if len(plans) > 0 {
+		plan = plans[0]
 	}
+	cases, err := knownE2ECases(context.Background(), root, state, plan)
 	if err != nil {
-		return inventory, []string{fmt.Sprintf("read E2E prototype root: %v", err)}
+		return inventory, []string{err.Error()}
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() || (len(moduleFilter) > 0 && !moduleFilter[entry.Name()]) {
-			continue
-		}
-		path := filepath.Join(prototypes, entry.Name(), "cases.json")
-		data, readErr := workpacket.ReadFile(root, "docs/design/prototypes/"+entry.Name()+"/cases.json", 2<<20)
-		if os.IsNotExist(readErr) {
-			continue
-		}
-		if readErr != nil {
-			diagnostics = append(diagnostics, fmt.Sprintf("read %s: %v", filepath.ToSlash(filepath.Join("docs", "design", "prototypes", entry.Name(), "cases.json")), readErr))
-			continue
-		}
-		var document e2eCasesDocument
-		if err := json.Unmarshal(data, &document); err != nil {
-			diagnostics = append(diagnostics, fmt.Sprintf("decode %s: %v", filepath.ToSlash(filepath.Join("docs", "design", "prototypes", entry.Name(), "cases.json")), err))
-			continue
-		}
-		seen := map[string]bool{}
-		for _, item := range document.Cases {
-			if seen[item.ID] {
-				diagnostics = append(diagnostics, fmt.Sprintf("duplicate CASE %s in %s; Main must correct the scenario source", item.ID, filepath.ToSlash(path)))
-				continue
-			}
-			seen[item.ID] = true
-			if !item.Required || !item.BrowserRequired || strings.TrimSpace(item.ID) == "" {
-				continue
-			}
-			inventory.Cases = append(inventory.Cases, e2eScenario{
-				CasesPath: "docs/design/prototypes/" + entry.Name() + "/cases.json", Module: entry.Name(), ID: item.ID, Title: item.Title, Polarity: item.Polarity,
-				FlowRefs: append([]string(nil), item.FlowRefs...), Oracle: item.Oracle,
-				Required: item.Required, BrowserRequired: item.BrowserRequired,
-			})
-		}
-	}
+	inventory.Cases = cases
 	if len(inventory.Cases) == 0 {
 		return inventory, diagnostics
 	}
@@ -174,25 +139,6 @@ func hasSuffix(path string, suffixes []string) bool {
 }
 
 var e2eModuleRefPattern = regexp.MustCompile(`docs/design/prototypes/([a-z0-9]+(?:-[a-z0-9]+)*)/`)
-
-func boundE2EModules(root string, state map[string]any) map[string]bool {
-	bound, _ := state["bound_req"].(map[string]any)
-	path, _ := bound["path"].(string)
-	if strings.TrimSpace(path) == "" {
-		return nil
-	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(filepath.Clean(path))))
-	if err != nil {
-		return nil
-	}
-	modules := map[string]bool{}
-	for _, match := range e2eModuleRefPattern.FindAllStringSubmatch(string(data), -1) {
-		if len(match) == 2 {
-			modules[match[1]] = true
-		}
-	}
-	return modules
-}
 
 func scenarioRef(s e2eScenario) string { return s.CasesPath + "#" + s.ID }
 

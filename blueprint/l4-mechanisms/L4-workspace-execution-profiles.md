@@ -186,6 +186,8 @@ Main 必需集成检查、独立验证、新的判别假设及 fresh 要求均�
 
 已有 execution 保留 owner、generation、范围、base、原输入和 profile；bootstrap receipt 固定实际安装文件，原平台 session 与 launch 记录只定位该旧执行。exit 0 不代表任务完成，lease 也不代表工程批准。
 
+当前操作按[原生工作区指南](../../docs/workspace-integration.md)展开；已登记执行的具体命令与 runner 参数集中在[冻结执行恢复参考](../../docs/workspace-execution-recovery.md)。读取恢复命令前先确认原记录采用的协议，不凭某个旧章节或命令存在就要求新任务增加步骤。
+
 旧执行的准备、固定 session、launch lease 和恢复不得转用于新原生任务。S9 `native_delivery` 只在返回后记录实际 Git 来源，供原 Result／Main 集成消费，不具备这些旧启动能力。
 
 ### 10.2 安装中断只恢复可证明的原内容

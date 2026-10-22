@@ -124,4 +124,4 @@ identity, scope, locked-input and conflict inspection remains part of original
 integration; on failure preserve the merge and receipts, retry an environment
 failure, or use rework for code corrections. Never reset Main automatically
 or edit an active manifest's mode. Target projects use
-`docs/workspace-integration.md` for the runner and recovery contract.
+`docs/workspace-execution-recovery.md` for the runner and recovery contract.

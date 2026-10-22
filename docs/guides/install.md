@@ -33,9 +33,9 @@
 
 ## Runtime 版本与阶段答卷
 
-全新 install/init 默认使用 Runtime `1.3.0` 和阶段问卷；Agent、TASK 与 S7 ReviewAssignment 的工作状态采用共享五态。正常使用无需额外开关：listener 给当前准确填写路径，作者完成专业工作后填写并保存，由原消费者接收。初始化不会批准 REQ 或替代原人类决定。旧模式仅用于兼容，可在全新项目中显式选 `--packet=false`；不要修改 state JSON 或对活跃项目重复 init 切换模式。
+全新 install/init 默认使用 Runtime `1.3.0` 和阶段问卷；Agent、TASK 与 S7 ReviewAssignment 的工作状态采用共享五态。正常使用无需额外开关：listener 给当前准确填写路径，Main 规划答卷保存时由原消费者接收；原生子代理保存并返回实际产物，由 SubagentStop 调用原消费者。初始化不会批准 REQ 或替代原人类决定。旧模式仅用于兼容，可在全新项目中显式选 `--packet=false`；不要修改 state JSON 或对活跃项目重复 init 切换模式。
 
-S5/S7/S8 普通审查/调查直接使用本责任的专业问卷，无需另交相同职责的通用 PLAN。S6 保留真实构建计划与结果，显式审批仍按原图执行。独立 Worker、具名修订及终端 fallback 见[执行目录](../workspace-integration.md)。本轮全阶段与真实 Claude 验收状态见 blueprint 的全阶段重新验收清单；新默认已在候选代码中实施，不表示已发布或所有真实阶段通过。
+S5/S7/S8 使用本责任的专业问卷，S6/S9 使用原生 Agent/worktree 中的实际专业产物；不另交重复通用 PLAN，显式审批仍按原图执行。当前启动、返回、Main 集成与具名修订见[原生工作区指南](../workspace-integration.md)；已登记旧执行的 launcher、独立输入安装及目录迁移见[冻结执行恢复参考](../workspace-execution-recovery.md)。运行验收应说明实际版本、平台与执行范围，不能用安装成功或机制测试代替全阶段及产品验收。
 
 初始化回执 `.claude/runtime-initialization.json` 绑定最初的 Schema、optimization 配置与 state 摘要；当前状态仍以 `.claude/loop-state.json` 为准，回执不能替代审批或完成。中断初始化重试保留原 marker 的版本/模式；显式 `--packet` 与 marker 不一致时拒绝。已有 1.1/1.2 Runtime 的兼容读取及原格式恢复不做原地迁移；新 Runtime 1.3 不会覆盖或重签旧状态。
 

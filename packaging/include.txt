@@ -143,3 +143,4 @@ docs/runtime-batch-scope-repair.md
 docs/runtime-evidence-binding-repair.md
 docs/runtime-portability.md
 docs/workspace-integration.md
+docs/workspace-execution-recovery.md

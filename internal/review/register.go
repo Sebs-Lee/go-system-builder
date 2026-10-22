@@ -38,6 +38,9 @@ func ValidatePlanArtifactForRegistration(root string, plan *Plan, state map[stri
 	if err := verifyFrozenSubjects(root, plan, state); err != nil {
 		return fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
 	}
+	if err := validateKnownE2ECaseCoverage(nil, root, state, plan); err != nil {
+		return err
+	}
 	if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
 		return err
 	}
@@ -124,6 +127,9 @@ func RegisterPlan(
 	if err := validateCoverageInventory(root, current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
+	if err := validateKnownE2ECaseCoverage(request.Context, root, current, &plan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	if err := validateRepairRoundBaseline(root, current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
@@ -190,6 +196,9 @@ func RegisterPlan(
 			}
 			if err := verifyFrozenSubjects(root, &plan, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
+			}
+			if err := validateKnownE2ECaseCoverage(store.Context(), root, state, &plan); err != nil {
+				return err
 			}
 			if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
 				return err

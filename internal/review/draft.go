@@ -201,11 +201,8 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	}
 	notes = append(notes, "the six QA baseline Claims are independent quality questions; keep their plan-local claim_id values and merge Assignments only when the same-lens read set and non-overlap boundary remain truthful")
 
-	// E2E coverage state from the bound REQ's ui_impact (§4.2 step 6). The
-	// Planner consumes the actual S2 CASE catalog and the repository's
-	// Playwright spec mentions. A complete CASE→spec mapping is enough for
-	// regression_available; any missing required CASE conservatively falls
-	// back to cold_start while keeping one Assignment per CASE.
+	// Asset discovery is a source candidate projection. Main chooses the actual
+	// execution state; explicit known CASEs still need individual dispositions.
 	uiImpact := boundREQUIImpact(state)
 	if strings.TrimSpace(uiImpact) == "" {
 		// S7-9 (RC-07): a missing/mistyped ui_impact previously followed the
@@ -214,11 +211,15 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		// Planner: only an explicit "none" may produce the N/A claim.
 		return nil, append(notes, "bound REQ metadata.ui_impact is empty or missing; the E2E coverage state cannot be derived — bind the REQ with an explicit ui_impact value (none | changed | unknown) via the requirement bind path, or add the metadata.ui_impact field, then re-draft (S7-9/RC-07: an empty ui_impact is an error, not an implicit not_applicable)")
 	}
+	inventory, discoveryDiagnostics := discoverE2EInventory(root, state, &Plan{ProductBaseline: productBaseline})
+	for _, diagnostic := range discoveryDiagnostics {
+		notes = append(notes, "E2E inventory: "+diagnostic+"; Main must resolve the original source gap, not assume an empty test library")
+	}
 	var e2eAssets []E2EAsset
 	var verificationWorkspace *string
 	e2eState := "regression_available"
-	switch uiImpact {
-	case "none":
+	switch {
+	case uiImpact == "none" && len(inventory.Cases) == 0:
 		e2eState = "not_applicable"
 		claims = append(claims, Claim{
 			ClaimID: "claim-e2e-na-1", Lens: "e2e", Target: "n/a",
@@ -235,10 +236,6 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		})
 		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; keep the explicit claim-e2e-na-1 Claim with source_refs and na_rationale (it is not dispatched), then verify against the real required surfaces (§4.3) before registering")
 	default:
-		inventory, discoveryDiagnostics := discoverE2EInventory(root, state)
-		for _, diagnostic := range discoveryDiagnostics {
-			notes = append(notes, "E2E inventory: "+diagnostic+"; Main must resolve the preparation gap rather than assume assets must be rebuilt")
-		}
 		e2eState = ""
 		notes = append(notes, "Main must decide e2e_coverage_state from actual assets and environment: regression_available reuses confirmed assets; cold_start prepares only missing assets in the original workspace; not_applicable requires the original justified N/A Claim. Discovery does not decide this field.")
 		for _, candidate := range inventory.Candidates {

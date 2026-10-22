@@ -115,6 +115,9 @@ func RevisePlan(
 	if err := validateCoverageInventory(root, current, &next); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
+	if err := validateKnownE2ECaseCoverage(request.Context, root, current, &next); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	if err := validateRepairRoundBaseline(root, current, &next); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
@@ -228,6 +231,9 @@ func RevisePlan(
 		Apply: func(state map[string]any) error {
 			if err := verifyFrozenSubjects(root, &next, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan revision commit: %w", err)
+			}
+			if err := validateKnownE2ECaseCoverage(store.Context(), root, state, &next); err != nil {
+				return err
 			}
 			if err := verifyRegressionAssetFingerprints(root, &next); err != nil {
 				return err

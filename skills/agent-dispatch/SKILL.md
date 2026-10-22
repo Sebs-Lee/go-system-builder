@@ -53,7 +53,7 @@ Return real blockers and unfinished work honestly. Ended execution, accepted del
 
 After a native return or completion notification, Main checks the original consumer's current receipt or accepted delivery. A returned actor without a receipt is not proof that professional work is still running. Receiver preparation, source and concurrent-commit failures belong to Main: inspect the original failure and current responsibility first. If that same responsibility remains current and unreceived, resume the original native agent to return its already saved artifacts unchanged. Do not repeat the professional review, create another answer, or poll stage completion in place of reception recovery. Changed responsibility or input follows its original revision path.
 
-For S6/S9, an accepted delivery or candidate with pending Main integration/checks is already a Worker handoff; Main continues its own original action instead of resuming the Worker to wait for a Final.
+For S6/S9, an accepted delivery or candidate with pending Main integration/checks is already a Worker handoff; Main continues its own original action instead of resuming the Worker to wait for a Final. After checking that current original receipt, tell the user what this owner completed, what the named consumer still owes, the evidence scope and the concrete next action. Reuse work_complete/consumer_pending/waiting_on; do not request another report or call pending Main work a completed stage.
 
 ## Frozen compatibility
 

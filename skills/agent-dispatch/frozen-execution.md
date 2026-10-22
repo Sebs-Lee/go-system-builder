@@ -290,7 +290,7 @@ result. `runtime workspace pending` reconstructs outstanding deliveries from
 durable reports/checkpoints after a restart. An owner with multiple worktrees
 is acknowledged only after all of its deliveries are verified.
 
-Read docs/workspace-integration.md before using workspace prepare. It installs
+Read docs/workspace-execution-recovery.md before using workspace prepare. It installs
 the native Harness and trusted role/skill assets, freezes dispatch input hashes,
 and publishes a bootstrap receipt before ready. Main stays in its own checkout.
 Use the returned `check_commands` verbatim for declared Linux sandbox checks;
@@ -326,7 +326,7 @@ Main still integrates the candidate, runs Main-level checks and human decisions,
 and completes the original impact, independent targeted verification, handoff,
 and fresh S7 gates. If an exact answer path is missing, route it to Main/system
 preparation instead of guessing or switching to the compatibility CLI.
-See `docs/workspace-integration.md` for explicit adoption, replacement and relocation.
+See `docs/workspace-execution-recovery.md` for explicit adoption, replacement and relocation.
 
 
 ## Temporary worktrees and committed stage delivery
