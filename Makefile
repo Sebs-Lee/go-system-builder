@@ -1,5 +1,8 @@
 GO ?= go
 HARNESS_BIN ?= .claude/bin/loop-harness
+# Full CLI integration coverage exceeds Go's default ten-minute package limit
+# on slower hosts. Keep both normal and race runs complete and bounded.
+TEST_TIMEOUT ?= 30m
 
 .PHONY: build build-all manual fmt-check vet test test-race verify doctor health platform-smoke platform-smoke-required validate ci-verify release-graph release-graph-validate release release-checksum release-list clean-release
 
@@ -36,10 +39,10 @@ vet:
 	$(GO) vet ./...
 
 test:
-	$(GO) test ./...
+	$(GO) test -timeout=$(TEST_TIMEOUT) ./...
 
 test-race:
-	$(GO) test -race ./...
+	$(GO) test -race -timeout=$(TEST_TIMEOUT) ./...
 
 doctor:
 	$(GO) run ./cmd/loop-harness doctor --root .
