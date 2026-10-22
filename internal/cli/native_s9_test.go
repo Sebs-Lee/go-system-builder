@@ -231,7 +231,9 @@ func TestNativeS9MalformedProfessionalArtifactIsNotReceived(t *testing.T) {
 	before := repairDispatchRuntimeBytes(t, root)
 	input.Event = "SubagentStop"
 	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 2 || !strings.Contains(diagnostic.String(), "detection_gap_artifacts.0") {
+	// Go versions differ in whether UnmarshalTypeError.Field includes a slice
+	// index. Require the actual field and expected type, not that formatting.
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 2 || !strings.Contains(diagnostic.String(), "detection_gap_artifacts") || !strings.Contains(diagnostic.String(), "string") {
 		t.Fatalf("malformed professional field lacks exact feedback: %t %d %s", handled, code, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
