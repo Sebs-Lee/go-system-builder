@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -17,6 +18,7 @@ import (
 // ReviseRequest drives `runtime review-plan revise` — the one controlled
 // ReviewPlan revision per round (L3-S7 §3.2, §5.3).
 type ReviseRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	PlanPath         string
 	SourceRef        string
@@ -55,7 +57,7 @@ func RevisePlan(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
-	data, err = preparePlanAssets(root, data, current)
+	data, err = preparePlanAssets(root, data, current, request.Context)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
 	}
@@ -101,7 +103,7 @@ func RevisePlan(
 	if !reflect.DeepEqual(next.ProductBaseline, currentPlan.ProductBaseline) {
 		return loopruntime.Snapshot{}, fmt.Errorf("a ReviewPlan revision cannot replace or move the pinned S6 product baseline; start a new review round for a new Main commit")
 	}
-	if err := verifyFrozenSubjects(root, &next, current); err != nil {
+	if err := verifyFrozenSubjects(root, &next, current, request.Context); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan frozen subject baseline: %w", err)
 	}
 	if err := verifyRegressionAssetFingerprints(root, &next); err != nil {
@@ -210,7 +212,7 @@ func RevisePlan(
 	}
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-revise-%s-r%d", next.ReviewPlanID, commitRevision+1),
 		TransitionID:   "REVIEW-PLAN-REVISE",
@@ -224,7 +226,7 @@ func RevisePlan(
 			next.ReviewPlanID, len(changed), request.SourceRef),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
-			if err := verifyFrozenSubjects(root, &next, state); err != nil {
+			if err := verifyFrozenSubjects(root, &next, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan revision commit: %w", err)
 			}
 			if err := verifyRegressionAssetFingerprints(root, &next); err != nil {
@@ -400,7 +402,7 @@ func RevisePlan(
 		// marker. Cleanup must be serialized with Runtime writers and must
 		// retain the artifact whenever recovery could still publish a pointer
 		// to it.
-		cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+		cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 		if _, cleanupErr := cleanupStore.RemoveUnreferencedArtifact(loopruntime.ArtifactCleanupRequest{
 			ExpectedRevision: commitRevision,
 			ArtifactPath:     planRel,

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -1097,6 +1098,10 @@ func readRepairTargetedAnswer(path string) (repair.TargetedReverificationRequest
 }
 
 func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer) (bool, int) {
+	return saveRepairTargetedAnswerContext(context.Background(), root, snapshot, path, selection, answer, stdout)
+}
+
+func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer) (bool, int) {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	var err error
@@ -1144,7 +1149,7 @@ func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path strin
 	currentPointer := repairPointerCLI(currentSnapshot.State)
 	if blockedResume {
 		resumed, resumeErr := repair.ResumeTargetedReverification(root, statePath, journalPath, repair.ResumeTargetedRequest{
-			RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner, OccurredAt: answer.PerformedAt},
+			RuntimeRequest: repair.RuntimeRequest{Context: ctx, ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner, OccurredAt: answer.PerformedAt},
 			Reason:         answer.ContinuityReason,
 		})
 		if resumeErr != nil {
@@ -1168,7 +1173,7 @@ func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path strin
 	if createErr != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification request at %s did not create the original artifact: %v", path, createErr))
 	}
-	committed, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner}, Reverification: ref})
+	committed, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{Context: ctx, ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner}, Reverification: ref})
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 independent TargetedReverification %s at %s was created but original Runtime consumer did not commit it: %v. Preserve its immutable source and follow the specific consumer feedback.", value.ReverificationID, ref.Path, err))
 	}

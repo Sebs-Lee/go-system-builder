@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -159,7 +161,7 @@ func VerifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 // product drift — the plan is stale even though the hand-written list hashes
 // clean. Allowed write surfaces (.claude/, docs/reports/, e2e-workspace/) are
 // excluded from the drift scan.
-func verifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
+func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, contexts ...context.Context) error {
 	if plan == nil {
 		return fmt.Errorf("frozen subject verification requires a plan")
 	}
@@ -170,7 +172,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 		if err := verifyCanonicalFrozenSubjectFiles(root, plan); err != nil {
 			return err
 		}
-		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root)
+		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
 		if err != nil {
 			return fmt.Errorf("canonical frozen baseline drift scan: %w", err)
 		}
@@ -214,7 +216,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 		}
 	}
 	if root != "" {
-		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root)
+		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
 		if errors.Is(err, errResultPacketDriftProof) {
 			return err
 		}
@@ -301,7 +303,16 @@ func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
 
 var errResultPacketDriftProof = errors.New("S7 issued control artifact source cannot be verified")
 
-func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string) ([]string, error) {
+func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string, contexts ...context.Context) ([]string, error) {
+	parent := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		parent = contexts[0]
+	}
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	controlPaths := map[string]bool{}
 	// S11's consumed defect decision is an original control artifact, not a
 	// product change. Recognize only its exact current record; sibling files
@@ -376,7 +387,7 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	for _, subject := range plan.FrozenSubjects {
 		frozen[normalizeGitStatusPath(subject.Path)] = true
 	}
-	output, err := exec.Command("git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
+	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
 	if err != nil {
 		return nil, err
 	}

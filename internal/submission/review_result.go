@@ -23,6 +23,7 @@ const reviewResultAnswerLimit int64 = 20 << 20
 // packet at its assignment-relative path; the execution registry, not the
 // packet, remains the authority for that source root.
 func (s *Service) IssueReviewResults(ctx context.Context, ownerFilter string) ([]workpacket.ReviewResultPacket, error) {
+	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -30,7 +31,7 @@ func (s *Service) IssueReviewResults(ctx context.Context, ownerFilter string) ([
 	if err != nil {
 		return nil, err
 	}
-	packets, err := review.IssueResultPackets(s.Root, s.StatePath, s.JournalPath, snapshot.Revision, ownerFilter)
+	packets, err := review.IssueResultPacketsContext(ctx, s.Root, s.StatePath, s.JournalPath, snapshot.Revision, ownerFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +107,7 @@ func (s *Service) ReviewResultSourceForPath(path string) (workpacket.ReviewResul
 // consumer. The CLI's --agent value supplies no authority by itself; the
 // original consumer checks the persisted owner, packet and approval mode.
 func (s *Service) SaveReviewResult(ctx context.Context, owner, path string) (Receipt, error) {
+	s = s.WithContext(ctx)
 	return s.SaveReviewResultFrom(ctx, owner, path, s.Root, nil)
 }
 
@@ -114,6 +116,7 @@ func (s *Service) SaveReviewResult(ctx context.Context, owner, path string) (Rec
 // authorize remains an optional compatibility callback for older callers;
 // ordinary saves do not require Hook actor/session authorization.
 func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -155,6 +158,7 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 		return rejected(snapshot, packet.ID, err), err
 	}
 	next, submitErr := review.SubmitIssuedResult(s.Root, s.StatePath, s.JournalPath, review.IssuedSubmitRequest{
+		Context:          ctx,
 		ExpectedRevision: snapshot.Revision,
 		PacketID:         packet.ID,
 		AnswerPath:       packet.AnswerPath,

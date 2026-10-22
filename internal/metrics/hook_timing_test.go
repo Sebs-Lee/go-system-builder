@@ -19,7 +19,7 @@ func TestFormatDoctorReportsHookTimingPercentiles(t *testing.T) {
 		`{"decision_id":"hook-decision-2","hook_event":"PreToolUse","elapsed_ms":10}`,
 		`{"decision_id":"hook-decision-3","hook_event":"PreToolUse","elapsed_ms":20}`,
 		`{"decision_id":"hook-decision-4","hook_event":"PreToolUse","elapsed_ms":40}`,
-		`{"decision_id":"hook-decision-5","hook_event":"Stop","elapsed_ms":7}`,
+		`{"decision_id":"hook-decision-5","hook_event":"Stop","elapsed_ms":7,"call_phases":{"runtime/lock_wait":{"count":2,"sum_ms":3},"runtime/lock_hold/mutation":{"count":1,"sum_ms":4}}}`,
 	}
 	if err := os.WriteFile(filepath.Join(root, ".claude", "hook-decisions.jsonl"), []byte(strings.Join(records, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -32,6 +32,7 @@ func TestFormatDoctorReportsHookTimingPercentiles(t *testing.T) {
 	for _, want := range []string{
 		`loop_hook_evaluation_duration_ms{event="PreToolUse"} count=4 p95_ms=40 max_ms=40`,
 		`loop_hook_evaluation_duration_ms{event="Stop"} count=1 p95_ms=7 max_ms=7`,
+		`loop_hook_completed_phase_ms{event="Stop",phase="runtime/lock_wait"} count=2 sum_ms=3 (nested spans overlap)`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)

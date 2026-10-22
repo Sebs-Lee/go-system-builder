@@ -82,6 +82,7 @@ func workerAnswerAuthoringPath(state map[string]any, e workspace.Execution) (str
 }
 
 func (s *Service) source(ctx context.Context, state map[string]any, owner, path string) (workpacket.Packet, authoringSource, error) {
+	s = s.WithContext(ctx)
 	if !runtime.PacketEnabled(state) || owner == "" {
 		return workpacket.Packet{}, authoringSource{}, fmt.Errorf("saved answer has no enabled registered owner")
 	}
@@ -149,6 +150,7 @@ func (s *Service) source(ctx context.Context, state map[string]any, owner, path 
 }
 
 func (s *Service) validateSource(ctx context.Context, state map[string]any, p workpacket.Packet, source authoringSource) error {
+	s = s.WithContext(ctx)
 	e, declared, err := workspace.ReviewExecution(state, p)
 	if err != nil {
 		return err

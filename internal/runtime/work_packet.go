@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +49,11 @@ type SubmissionRequest struct {
 }
 
 func RecordWorkPacket(root, statePath, journalPath string, packet workpacket.Packet, files fileview.Reader, validator CandidateValidator) (Snapshot, error) {
-	store := NewWriter(statePath, journalPath, root, validator)
+	return RecordWorkPacketContext(context.Background(), root, statePath, journalPath, packet, files, validator)
+}
+
+func RecordWorkPacketContext(ctx context.Context, root, statePath, journalPath string, packet workpacket.Packet, files fileview.Reader, validator CandidateValidator) (Snapshot, error) {
+	store := NewWriter(statePath, journalPath, root, validator).WithContext(ctx)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read packet runtime: %w", err)

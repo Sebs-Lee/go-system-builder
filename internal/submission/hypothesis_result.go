@@ -17,6 +17,7 @@ import (
 // issuer. The packet registry and original PACKET-ISSUE event remain the only
 // durable issuance authority; the service adds no submissions or result rows.
 func (s *Service) IssueHypothesisResults(ctx context.Context, ownerFilter string) ([]workpacket.HypothesisResultPacket, error) {
+	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -24,7 +25,7 @@ func (s *Service) IssueHypothesisResults(ctx context.Context, ownerFilter string
 	if err != nil {
 		return nil, err
 	}
-	packets, err := investigation.IssueHypothesisResultPackets(s.Root, s.StatePath, s.JournalPath, snapshot.Revision, ownerFilter)
+	packets, err := investigation.IssueHypothesisResultPacketsContext(ctx, s.Root, s.StatePath, s.JournalPath, snapshot.Revision, ownerFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +62,7 @@ func (s *Service) HypothesisResultSourceForPath(path string) (workpacket.Hypothe
 // bind the owner and source; authorize is an optional compatibility callback,
 // not a normal Hook identity/session requirement.
 func (s *Service) SaveHypothesisResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -91,6 +93,7 @@ func (s *Service) SaveHypothesisResultFrom(ctx context.Context, owner, path, sou
 		return rejected(snapshot, packet.ID, err), err
 	}
 	next, submitErr := investigation.SubmitIssuedHypothesisResult(s.Root, s.StatePath, s.JournalPath, investigation.IssuedHypothesisResultRequest{
+		Context:          ctx,
 		ExpectedRevision: snapshot.Revision,
 		PacketID:         packet.ID,
 		AnswerPath:       packet.AnswerPath,

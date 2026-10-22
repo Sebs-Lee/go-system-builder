@@ -93,7 +93,7 @@ func (s *Store) RelocateWorkspace(before Snapshot, registry map[string]any, id, 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return Snapshot{}, err
 	}

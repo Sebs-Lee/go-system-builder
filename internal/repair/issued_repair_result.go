@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -75,7 +76,7 @@ func IssueRepairResultPackets(ctx context.Context, root, statePath, journalPath 
 		return nil, err
 	}
 	defer unlock()
-	current, writer, err := readIssuedRepairResultRuntime(root, statePath, journalPath)
+	current, writer, err := readIssuedRepairResultRuntime(ctx, root, statePath, journalPath)
 	if err != nil {
 		return nil, err
 	}
@@ -399,8 +400,8 @@ func sameRepairResultPacket(a, b workpacket.RepairResultPacket) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func readIssuedRepairResultRuntime(root, statePath, journalPath string) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
-	writer := runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+func readIssuedRepairResultRuntime(ctx context.Context, root, statePath, journalPath string) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
+	writer := runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return runtimepkg.Snapshot{}, nil, err
@@ -413,13 +414,14 @@ func readIssuedRepairResultRuntime(root, statePath, journalPath string) (runtime
 // Professional input never supplies source/check hashes, candidate identity,
 // or a completion bit; the source tree and runner receipts are captured here.
 func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, journalPath string, req AcceptIssuedRepairResultCandidateRequest) (runtimepkg.Snapshot, WorkspaceCandidate, ArtifactRef, error) {
+	defer metrics.Span(ctx, "reception/s9")()
 	lockedCtx, unlock, err := integration.LockWorkspace(ctx, root)
 	if err != nil {
 		return runtimepkg.Snapshot{}, WorkspaceCandidate{}, ArtifactRef{}, err
 	}
 	defer unlock()
 	ctx = lockedCtx
-	mainSnapshot, writer, err := readIssuedRepairResultRuntime(root, statePath, journalPath)
+	mainSnapshot, writer, err := readIssuedRepairResultRuntime(ctx, root, statePath, journalPath)
 	if err != nil {
 		return runtimepkg.Snapshot{}, WorkspaceCandidate{}, ArtifactRef{}, err
 	}
@@ -939,7 +941,7 @@ func SubmitIssuedRepairResult(ctx context.Context, root, statePath, journalPath 
 		return runtimepkg.Snapshot{}, RepairResult{}, ArtifactRef{}, err
 	}
 	defer unlock()
-	current, writer, err := readIssuedRepairResultRuntime(root, statePath, journalPath)
+	current, writer, err := readIssuedRepairResultRuntime(ctx, root, statePath, journalPath)
 	if err != nil {
 		return runtimepkg.Snapshot{}, RepairResult{}, ArtifactRef{}, err
 	}
@@ -1037,7 +1039,7 @@ func SubmitIssuedRepairResult(ctx context.Context, root, statePath, journalPath 
 		return cleanUnacceptedRepairResultStaging(root, writer, current, expected)
 	}
 	return SubmitRepairResultToRuntime(root, statePath, journalPath, SubmitResultRuntimeRequest{
-		RuntimeRequest: RuntimeRequest{ExpectedRevision: current.Revision, Actor: execution.AgentID, OccurredAt: proposal.OccurredAt},
+		RuntimeRequest: RuntimeRequest{Context: ctx, ExpectedRevision: current.Revision, Actor: execution.AgentID, OccurredAt: proposal.OccurredAt},
 		Result:         proposal, issued: capability,
 	})
 }

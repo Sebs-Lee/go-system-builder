@@ -20,13 +20,14 @@ const repairPlanReportAnswerLimit int64 = 20 << 20
 // IssueRepairPlanReports delegates publication to the original S9 packet
 // Writer. It adds no packet registry or receipt authority of its own.
 func (s *Service) IssueRepairPlanReports(ctx context.Context, ownerFilter string) ([]workpacket.RepairPlanReportPacket, error) {
+	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	// The original packet Issuer owns pending-marker recovery and its own CAS.
 	// Do not pre-read through the read-only service snapshot here: a pending
 	// original PACKET-ISSUE must be recoverable by this named mutation path.
-	packets, err := repair.IssueRepairPlanReportPackets(s.Root, s.StatePath, s.JournalPath, -1, ownerFilter)
+	packets, err := repair.IssueRepairPlanReportPacketsContext(ctx, s.Root, s.StatePath, s.JournalPath, -1, ownerFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +64,7 @@ func (s *Service) RepairPlanReportSourceForPath(path string) (workpacket.RepairP
 // RepairPlanReport Writer. The legacy authorization callback is not a save
 // qualification; the registered packet supplies the current responsibility.
 func (s *Service) SaveRepairPlanReportFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -81,6 +83,7 @@ func (s *Service) SaveRepairPlanReportFrom(ctx context.Context, owner, path, sou
 	owner = packet.Binding.OwnerAgentID
 	sourceRoot = actualRoot
 	next, report, submitErr := repair.SubmitIssuedRepairPlanReport(s.Root, s.StatePath, s.JournalPath, repair.IssuedPlanReportRequest{
+		Context:          ctx,
 		ExpectedRevision: snapshot.Revision,
 		PacketID:         packet.ID,
 		AnswerPath:       packet.AnswerPath,

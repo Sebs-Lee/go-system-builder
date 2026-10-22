@@ -29,6 +29,7 @@ const hypothesisResultPacketReadLimit int64 = 20 << 20
 // answer. The original Runtime packet binds OwnerAgentID and SourceRoot;
 // AuthorizeSource remains an optional integration callback.
 type IssuedHypothesisResultRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	PacketID         string
 	AnswerPath       string
@@ -42,7 +43,11 @@ type IssuedHypothesisResultRequest struct {
 // open Investigator assignments through the existing Runtime work_packets
 // index and original PACKET-ISSUE writer.
 func IssueHypothesisResultPackets(root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.HypothesisResultPacket, error) {
-	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	return IssueHypothesisResultPacketsContext(context.Background(), root, statePath, journalPath, expectedRevision, ownerFilter)
+}
+
+func IssueHypothesisResultPacketsContext(ctx context.Context, root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.HypothesisResultPacket, error) {
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return nil, err
@@ -726,7 +731,11 @@ func publishHypothesisResultPacket(root string, state map[string]any, packet wor
 	return nil
 }
 
-func hypothesisResultSourceRoot(root string, state map[string]any, packet workpacket.HypothesisResultPacket, validateLive bool) (string, bool, error) {
+func hypothesisResultSourceRoot(root string, state map[string]any, packet workpacket.HypothesisResultPacket, validateLive bool, contexts ...context.Context) (string, bool, error) {
+	parent := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		parent = contexts[0]
+	}
 	main, err := workspace.Canonical(root)
 	if err != nil {
 		return "", false, err
@@ -752,7 +761,7 @@ func hypothesisResultSourceRoot(root string, state map[string]any, packet workpa
 		return "", true, errors.New("S8 original execution owner/status/root differs")
 	}
 	if validateLive {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 		defer cancel()
 		if err := registry.ValidateExecution(ctx, execution, false); err != nil {
 			return "", true, err

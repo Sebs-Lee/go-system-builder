@@ -50,7 +50,7 @@ func EvaluateReady(ctx context.Context, root string) (ReadyReport, error) {
 		return ReadyReport{}, fmt.Errorf("read runtime: %w", err)
 	}
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
-	store := runtime.NewStore(statePath, journalPath)
+	store := runtime.NewStore(statePath, journalPath).WithContext(ctx)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return ReadyReport{}, fmt.Errorf("read runtime: %w", err)
@@ -88,7 +88,7 @@ func EvaluateReady(ctx context.Context, root string) (ReadyReport, error) {
 	}
 
 	req := ControlRequest{Root: root, Event: "PreToolUse"}
-	files, fileErr := productionFiles(root, snapshot.State, catalog)
+	files, fileErr := productionFiles(ctx, root, snapshot.State, catalog)
 	if fileErr != nil {
 		report.Status = string(StatusUnknown)
 		report.Instruction = readyInstructionUnknown

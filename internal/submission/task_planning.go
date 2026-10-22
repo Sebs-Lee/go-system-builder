@@ -17,6 +17,7 @@ import (
 )
 
 func (s *Service) IssueTaskPlanning(ctx context.Context) (workpacket.TaskPlanningPacket, error) {
+	s = s.WithContext(ctx)
 	if err := workspace.RequireMain(s.Root); err != nil {
 		return workpacket.TaskPlanningPacket{}, err
 	}
@@ -91,6 +92,7 @@ func (s *Service) TaskPlanningForPath(path string) (workpacket.TaskPlanningPacke
 }
 
 func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, error) {
+	s = s.WithContext(ctx)
 	p, issued, err := s.TaskPlanningForPath(path)
 	if err != nil || !issued {
 		return Receipt{}, fmt.Errorf("S4 answer path has no original Main issuance: %v", err)

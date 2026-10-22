@@ -64,6 +64,7 @@ func repairResultResolutionForPath(root string, state map[string]any, inputPath 
 // path. The packet, accepted blocker, typed resolution and Agent lifecycle CAS
 // own domain acceptance; authorizeMain remains optional for compatibility.
 func (s *Service) SaveRepairResultResolutionFrom(ctx context.Context, path string, authorizeMain func(string, map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	ctx, unlock, err := integration.LockWorkspace(ctx, s.Root)
 	if err != nil {
 		return Receipt{}, err

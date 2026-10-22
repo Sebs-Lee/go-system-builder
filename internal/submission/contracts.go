@@ -16,6 +16,7 @@ import (
 )
 
 func (s *Service) IssueContracts(ctx context.Context) (workpacket.ContractPacket, error) {
+	s = s.WithContext(ctx)
 	if err := workspace.RequireMain(s.Root); err != nil {
 		return workpacket.ContractPacket{}, err
 	}
@@ -106,6 +107,7 @@ func (s *Service) ContractForPath(path string) (workpacket.ContractPacket, bool,
 }
 
 func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, error) {
+	s = s.WithContext(ctx)
 	if err := workspace.RequireMain(s.Root); err != nil {
 		return Receipt{}, err
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -31,13 +32,14 @@ type HypothesisResultReceipt = loopruntime.HypothesisResultReceipt
 // original InvestigationCase Writer. It does not create a second result
 // store or require Hook actor/session authorization.
 func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request IssuedHypothesisResultRequest) (loopruntime.Snapshot, error) {
+	defer metrics.Span(request.Context, "reception/s8")()
 	if strings.TrimSpace(root) == "" {
 		return loopruntime.Snapshot{}, errors.New("S8 repository root is required")
 	}
 	if request.PacketID == "" || request.OwnerAgentID == "" {
 		return loopruntime.Snapshot{}, errors.New("S8 packet and trusted owner are required")
 	}
-	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return loopruntime.Snapshot{}, err
@@ -62,7 +64,7 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 	if receiptErr != nil {
 		return snapshot, receiptErr
 	}
-	sourceRoot, _, err := hypothesisResultSourceRoot(root, snapshot.State, packet, !accepted)
+	sourceRoot, _, err := hypothesisResultSourceRoot(root, snapshot.State, packet, !accepted, request.Context)
 	if err != nil {
 		return snapshot, err
 	}
@@ -181,7 +183,7 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 		if err := loopruntime.VerifyHypothesisResultPacketIssue(lockedRoot, state, packet); err != nil {
 			return err
 		}
-		lockedSourceRoot, _, err := hypothesisResultSourceRoot(lockedRoot, state, packet, true)
+		lockedSourceRoot, _, err := hypothesisResultSourceRoot(lockedRoot, state, packet, true, request.Context)
 		if err != nil {
 			return err
 		}
@@ -203,6 +205,7 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 		return validateS8AnswerEvidence(lockedRoot, state, packet, answer)
 	}
 	requestToOriginal := HypothesisResultRequest{
+		Context:          request.Context,
 		ExpectedRevision: snapshot.Revision, ExpectedCaseRevision: current.revision, ExpectedCaseSHA256: current.sha,
 		CaseID: packet.Binding.CaseID, HypothesisID: packet.Binding.HypothesisID, AssignmentID: packet.Binding.AssignmentID,
 		Method: answer.Method, EvidenceRefs: append([]string(nil), answer.EvidenceRefs...), SourceBoundaryRefs: append([]string(nil), answer.SourceBoundaryRefs...),

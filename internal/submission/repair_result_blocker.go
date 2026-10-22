@@ -17,6 +17,7 @@ import (
 // the original workspace lock through prepare and CAS keeps the source tuple
 // stable; this adapter owns no additional Runtime transaction.
 func (s *Service) saveRepairResultBlocker(ctx context.Context, packet workpacket.RepairResultPacket, owner, sourceRoot, verdict string, authorize func(string, map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	ctx, unlock, err := integration.LockWorkspace(ctx, s.Root)
 	if err != nil {
 		return Receipt{}, err

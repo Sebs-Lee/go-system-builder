@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 
 // SubmitRequest drives `runtime review-result submit`.
 type SubmitRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	AssignmentID     string
 	ResultPath       string
@@ -45,6 +47,7 @@ func SubmitResult(
 	root, statePath, journalPath string,
 	request SubmitRequest,
 ) (loopruntime.Snapshot, error) {
+	defer metrics.Span(request.Context, "reception/s7")()
 	snapshot, err := submitResult(root, statePath, journalPath, request)
 	var siteLostBlocked *SiteLostBlockedError
 	switch {
@@ -132,7 +135,7 @@ func submitResult(
 		if err != nil {
 			return loopruntime.Snapshot{}, err
 		}
-		store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+		store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 		earlySnapshot, err = store.Snapshot()
 		if err != nil {
 			return loopruntime.Snapshot{}, fmt.Errorf("recover/read Runtime before typed ReviewResult: %w", err)
@@ -203,7 +206,7 @@ func submitResult(
 	plan, ptr, err := LoadPlan(root, current)
 	if err != nil {
 		if PlanPointerFromState(current) != nil {
-			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
+			return staleReviewPlanAfterDrift(request.Context, root, statePath, journalPath, current, err)
 		}
 		return loopruntime.Snapshot{}, err
 	}
@@ -218,8 +221,8 @@ func submitResult(
 			return loopruntime.Snapshot{}, err
 		}
 	}
-	if err := verifyFrozenSubjects(root, plan, current); err != nil {
-		return staleReviewPlanAfterDrift(root, statePath, journalPath, current, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err))
+	if err := verifyFrozenSubjects(root, plan, current, request.Context); err != nil {
+		return staleReviewPlanAfterDrift(request.Context, root, statePath, journalPath, current, fmt.Errorf("ReviewPlan frozen subject baseline: %w", err))
 	}
 	round := currentReviewRound(current)
 	generation := baselineGeneration(current)
@@ -325,7 +328,7 @@ func submitResult(
 	artifactRels := []string{}
 	artifactSHAs := map[string]string{}
 	casAttempted := false
-	cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	cleanupArtifacts := func() []string {
 		latest, snapshotErr := cleanupStore.Snapshot()
 		if snapshotErr != nil {
@@ -451,7 +454,7 @@ func submitResult(
 			sealRoot = request.issuedSourceRoot
 		}
 		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result), current, assignment.AssignmentID, sealRoot); err != nil {
-			return staleReviewPlanAfterDrift(root, statePath, journalPath, current, err)
+			return staleReviewPlanAfterDrift(request.Context, root, statePath, journalPath, current, err)
 		}
 	}
 	if sealNow {
@@ -503,7 +506,7 @@ func submitResult(
 		idempotencyKey = receipt.IdempotencyKey
 	}
 
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	casAttempted = true
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
 		EventID:            eventID,
@@ -531,7 +534,7 @@ func submitResult(
 				journal, _ := state["journal"].(map[string]any)
 				receipt.AcceptedSequence = intField(journal["last_sequence"]) + 1
 			}
-			if err := verifyFrozenSubjects(root, plan, state); err != nil {
+			if err := verifyFrozenSubjects(root, plan, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewResult commit: %w", err)
 			}
 			if request.issuedPacket != nil {
@@ -1634,6 +1637,7 @@ func setPlanStatus(reviewMap, lifecycleMap map[string]any, status string) {
 // phase remains the last valid verification phase and the scheduler's plan
 // status is the admission gate.
 func staleReviewPlanAfterDrift(
+	ctx context.Context,
 	root, statePath, journalPath string,
 	current map[string]any,
 	driftErr error,
@@ -1652,7 +1656,7 @@ func staleReviewPlanAfterDrift(
 	}
 	runtimeID, _ := current["runtime_id"].(string)
 	commitRevision := currentCommitRevision(-1, current)
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := updateRuntime(store, -1, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-plan-stale-%s-r%d", plan.PlanID, commitRevision+1),
 		TransitionID:   "REVIEW-PLAN-STALE",

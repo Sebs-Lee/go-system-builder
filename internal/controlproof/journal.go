@@ -6,6 +6,7 @@ package controlproof
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +65,10 @@ func InspectJournalSegmentData(data []byte) (JournalInspection, error) {
 // validator. Keep its Scanner limits, embedded schema check, sequence rules,
 // and identity checks aligned with the Writer's established contract.
 func InspectJournalSegmentDataFrom(data []byte, firstSequence int) (JournalInspection, error) {
+	return InspectJournalSegmentDataFromContext(context.Background(), data, firstSequence)
+}
+
+func InspectJournalSegmentDataFromContext(ctx context.Context, data []byte, firstSequence int) (JournalInspection, error) {
 	inspection := JournalInspection{
 		Events:     make([]map[string]any, 0),
 		EventIndex: make(map[string]int),
@@ -74,6 +79,9 @@ func InspectJournalSegmentDataFrom(data []byte, firstSequence int) (JournalInspe
 	validator := schema.NewEmbeddedValidator()
 	expectedSequence := firstSequence
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return JournalInspection{}, err
+		}
 		line := scanner.Bytes()
 		var event map[string]any
 		if err := json.Unmarshal(line, &event); err != nil {

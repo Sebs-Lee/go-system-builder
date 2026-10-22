@@ -23,6 +23,7 @@ import (
 )
 
 type Service struct {
+	ctx                          context.Context
 	Root, StatePath, JournalPath string
 	Files                        fileview.Reader
 	Validator                    runtime.CandidateValidator
@@ -32,17 +33,17 @@ type Service struct {
 // New uses the same declared Git/disk source contract as production gates.
 // Legacy runtimes are observed without resolving or upgrading their schema.
 func New(root string) (*Service, error) {
-	return newService(root, false)
+	return NewContext(context.Background(), root, false)
 }
 
 // NewReadOnly builds a query service whose Runtime snapshots never recover a
 // pending write. Receipt/status callers can report the pending boundary
 // without turning a read into a mutation path.
 func NewReadOnly(root string) (*Service, error) {
-	return newService(root, true)
+	return NewContext(context.Background(), root, true)
 }
 
-func newService(root string, readOnly bool) (*Service, error) {
+func NewContext(ctx context.Context, root string, readOnly bool) (*Service, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -51,7 +52,7 @@ func newService(root string, readOnly bool) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{Root: abs, StatePath: filepath.Join(abs, ".claude/loop-state.json"), JournalPath: filepath.Join(abs, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}, readOnly: readOnly}
+	s := &Service{ctx: ctx, Root: abs, StatePath: filepath.Join(abs, ".claude/loop-state.json"), JournalPath: filepath.Join(abs, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}, readOnly: readOnly}
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return nil, err
@@ -79,24 +80,25 @@ func newService(root string, readOnly bool) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.Files, err = fileview.New(abs, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
+	s.Files, err = fileview.NewContext(s.Context(), abs, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
 	return s, err
 }
 
 func (s *Service) snapshot() (runtime.Snapshot, error) {
 	if s.readOnly {
-		return runtime.NewStore(s.StatePath, s.JournalPath).Snapshot()
+		return runtime.NewStore(s.StatePath, s.JournalPath).WithContext(s.Context()).Snapshot()
 	}
-	return runtime.NewWriter(s.StatePath, s.JournalPath, s.Root, s.Validator).Snapshot()
+	return runtime.NewWriter(s.StatePath, s.JournalPath, s.Root, s.Validator).WithContext(s.Context()).Snapshot()
 }
 
 // Issue publishes only registered current packets. Existing authoring bytes
 // are preserved, including incomplete drafts and already accepted answers.
 func (s *Service) Issue(owner string) ([]workpacket.Packet, error) {
-	return s.IssueContext(context.Background(), owner)
+	return s.IssueContext(s.Context(), owner)
 }
 
 func (s *Service) IssueContext(ctx context.Context, owner string) ([]workpacket.Packet, error) {
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return nil, err
@@ -119,7 +121,7 @@ func (s *Service) IssueContext(ctx context.Context, owner string) ([]workpacket.
 			}
 			packets[i] = p
 		}
-		if _, err := runtime.RecordWorkPacket(s.Root, s.StatePath, s.JournalPath, p, s.Files, s.Validator); err != nil {
+		if _, err := runtime.RecordWorkPacketContext(ctx, s.Root, s.StatePath, s.JournalPath, p, s.Files, s.Validator); err != nil {
 			return nil, err
 		}
 		view, err := json.MarshalIndent(p, "", "  ")
@@ -160,6 +162,8 @@ func (s *Service) IssueContext(ctx context.Context, owner string) ([]workpacket.
 // Save accepts an exact issued authoring path for its packet-bound owner. It
 // freezes the bytes once before calling the original domain Writer.
 func (s *Service) Save(ctx context.Context, owner, path string) (Receipt, error) {
+	defer metrics.Span(ctx, "reception/s5")()
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -247,7 +251,7 @@ func (s *Service) Save(ctx context.Context, owner, path string) (Receipt, error)
 	if err := ctx.Err(); err != nil {
 		return rejected(snapshot, p.ID, err), err
 	}
-	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "document_review", Path: envelopePath, ProducedBy: []string{owner}, ResponsibilityID: p.Binding.Responsibility, Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: owner, AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
+	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{Context: ctx, ExpectedRevision: -1, ID: id, Kind: "document_review", Path: envelopePath, ProducedBy: []string{owner}, ResponsibilityID: p.Binding.Responsibility, Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: owner, AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
 		if err := s.validateSource(ctx, state, p, source); err != nil {
 			return err
 		}
@@ -326,6 +330,7 @@ func validateS5ApprovalMode(root string, state map[string]any, owner string) err
 }
 
 func (s *Service) control(ctx context.Context, event, owner string) (controller.ControlResult, error) {
+	s = s.WithContext(ctx)
 	result, err := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, CWD: s.Root, Event: "PostToolUse", ToolName: "Write", AgentID: owner, SubmissionFollowupID: event, Files: s.Files})
 	life, _ := result.Snapshot.State["lifecycle"].(map[string]any)
 	if err == nil && result.Error == "" && result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" && life["state"] == "planning" && life["phase"] == "design" && runtime.PacketEnabled(result.Snapshot.State) {
@@ -355,3 +360,18 @@ func evidenceRows(state map[string]any) []map[string]any {
 	return rows
 }
 func text(value any) string { s, _ := value.(string); return s }
+
+func (s *Service) Context() context.Context {
+	if s.ctx != nil {
+		return s.ctx
+	}
+	return context.Background()
+}
+func (s *Service) WithContext(ctx context.Context) *Service {
+	copy := *s
+	copy.ctx = ctx
+	if v, ok := copy.Files.(*fileview.View); ok {
+		copy.Files = v.WithContext(ctx)
+	}
+	return &copy
+}

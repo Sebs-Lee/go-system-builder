@@ -1,6 +1,7 @@
 package transition
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,7 @@ type LockedREQ struct {
 }
 
 type Request struct {
+	Context          context.Context `json:"-"`
 	Files            fileview.Reader
 	TransitionID     string
 	ExpectedRevision int
@@ -104,6 +106,7 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	if request.RecoveryWriter.Enabled() {
 		store = loopruntime.NewOfflineRecoveryWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}, request.RecoveryWriter)
 	}
+	store = store.WithContext(request.Context)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
@@ -146,7 +149,7 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 			if err := fileview.ValidateAuthority(root, current); err != nil {
 				return loopruntime.Snapshot{}, err
 			}
-			view, err := fileview.New(root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
+			view, err := fileview.NewContext(store.Context(), root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
 			if err != nil {
 				return loopruntime.Snapshot{}, err
 			}

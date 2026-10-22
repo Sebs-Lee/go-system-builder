@@ -27,6 +27,7 @@ import (
 // execution. AuthorizeSource is an optional compatibility callback; it is not
 // required by the normal Hook questionnaire save path.
 type IssuedSubmitRequest struct {
+	Context                            context.Context `json:"-"`
 	ExpectedRevision                   int
 	PacketID, AnswerPath, OwnerAgentID string
 	SourceRoot                         string
@@ -37,7 +38,11 @@ type IssuedSubmitRequest struct {
 // IssueResultPackets appends only questions to the original Runtime registry.
 // The Main adapter supplies issuance authority; no Reviewer verdict is filled.
 func IssueResultPackets(root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.ReviewResultPacket, error) {
-	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	return IssueResultPacketsContext(context.Background(), root, statePath, journalPath, expectedRevision, ownerFilter)
+}
+
+func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.ReviewResultPacket, error) {
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return nil, err
@@ -324,7 +329,7 @@ func verifyResultPacketIssue(root string, state map[string]any, p workpacket.Rev
 // SubmitIssuedResult projects professional JSON into the existing Result and
 // calls the same original consumer. It introduces no second accepting Writer.
 func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmitRequest) (loopruntime.Snapshot, error) {
-	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return loopruntime.Snapshot{}, err
@@ -350,7 +355,7 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 	// SubmitResult idempotency check can compare AnswerDigest and the full
 	// machine tuple. Replay only skips revalidating mutable checkout/Git state;
 	// receipt-only recovery is available through IssuedResultReceipt.
-	sourceRoot, _, err := registeredResultPacketSourceRoot(root, snapshot.State, p, !isReplay)
+	sourceRoot, _, err := registeredResultPacketSourceRoot(root, snapshot.State, p, !isReplay, request.Context)
 	if err != nil {
 		return snapshot, err
 	}
@@ -421,7 +426,7 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 	if err != nil {
 		return snapshot, err
 	}
-	return SubmitResult(root, statePath, journalPath, SubmitRequest{ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: CaptureFile(root, b.RuntimeID, b.BaselineGeneration, b.AssignmentID), OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
+	return SubmitResult(root, statePath, journalPath, SubmitRequest{Context: request.Context, ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: CaptureFile(root, b.RuntimeID, b.BaselineGeneration, b.AssignmentID), OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
 }
 
 // Bind only the local path references consumed by the original evidence validator.
@@ -569,7 +574,7 @@ func validateIssuedResultRequest(root string, state map[string]any, request Subm
 	if ptr == nil || ptr.PlanID != p.Binding.ReviewPlanID || repositoryPath(root, ptr.Path) != p.Binding.ReviewPlanRef || ptr.SHA256 != p.Binding.ReviewPlanSHA256 || ptr.Revision != p.Binding.ReviewPlanRevision || currentReviewRound(state) != p.Binding.ReviewRound || baselineGeneration(state) != p.Binding.BaselineGeneration {
 		return errors.New("S7 issued answer is stale after Plan/round/generation revision")
 	}
-	sourceRoot, _, err := registeredResultPacketSourceRoot(root, state, p, !replay)
+	sourceRoot, _, err := registeredResultPacketSourceRoot(root, state, p, !replay, request.Context)
 	if err != nil {
 		return err
 	}
@@ -636,7 +641,11 @@ func resultPacketSourceRoot(root string, state map[string]any, p workpacket.Revi
 // checkout from the current original Runtime registry. validateLive is used
 // for a new save. Receipt replay passes false so it checks the persisted tuple
 // and path identity without touching a Worker's live checkout.
-func registeredResultPacketSourceRoot(root string, state map[string]any, p workpacket.ReviewResultPacket, validateLive bool) (string, bool, error) {
+func registeredResultPacketSourceRoot(root string, state map[string]any, p workpacket.ReviewResultPacket, validateLive bool, contexts ...context.Context) (string, bool, error) {
+	parent := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		parent = contexts[0]
+	}
 	main, err := workspace.Canonical(root)
 	if err != nil {
 		return "", false, err
@@ -659,7 +668,7 @@ func registeredResultPacketSourceRoot(root string, state map[string]any, p workp
 		return "", true, errors.New("S7 original execution owner/status/root differs")
 	}
 	if validateLive {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 		defer cancel()
 		if err := b.ValidateExecution(ctx, e, false); err != nil {
 			return "", true, err

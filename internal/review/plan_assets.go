@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -14,7 +15,14 @@ import (
 
 // preparePlanAssets fills only omitted asset machine fields. Unknown fields
 // stay in the original JSON for the formal schema to reject. It never writes.
-func preparePlanAssets(root string, data []byte, state map[string]any) ([]byte, error) {
+func preparePlanAssets(root string, data []byte, state map[string]any, contexts ...context.Context) ([]byte, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(data) > 20<<20 {
 		return nil, &PlanAnswerError{fmt.Errorf("ReviewPlan exceeds 20 MiB")}
 	}
@@ -32,7 +40,7 @@ func preparePlanAssets(root string, data []byte, state map[string]any) ([]byte, 
 	if len(plan.E2EAssets) == 0 {
 		return data, nil
 	}
-	read, err := planAssetReader(root, &plan, state)
+	read, err := planAssetReader(ctx, root, &plan, state)
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +49,9 @@ func preparePlanAssets(root string, data []byte, state map[string]any) ([]byte, 
 		return nil, err
 	}
 	for i, asset := range plan.E2EAssets {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		ref, err := resolveAssetCase(asset.CaseRef, &plan, read)
 		if err != nil {
 			return nil, fmt.Errorf("E2E asset %s: %w", asset.Path, err)
@@ -69,8 +80,13 @@ func preparePlanAssets(root string, data []byte, state map[string]any) ([]byte, 
 
 // Canonical plans use the original source declaration at the pinned Main
 // commit. Historical disk-mode plans keep their existing contained disk view.
-func planAssetReader(root string, plan *Plan, state map[string]any) (func(string) ([]byte, error), error) {
-	disk := func(p string) ([]byte, error) { return workpacket.ReadFile(root, p, 2<<20) }
+func planAssetReader(ctx context.Context, root string, plan *Plan, state map[string]any) (func(string) ([]byte, error), error) {
+	disk := func(p string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return workpacket.ReadFile(root, p, 2<<20)
+	}
 	if plan.ProductBaseline == nil {
 		return disk, nil
 	}
@@ -85,7 +101,7 @@ func planAssetReader(root string, plan *Plan, state map[string]any) (func(string
 	if err := json.Unmarshal(data, &declaration); err != nil {
 		return nil, err
 	}
-	view, err := fileview.New(root, plan.ProductBaseline.FinalCommit, declaration.FileSources)
+	view, err := fileview.NewContext(ctx, root, plan.ProductBaseline.FinalCommit, declaration.FileSources)
 	if err != nil {
 		return nil, err
 	}

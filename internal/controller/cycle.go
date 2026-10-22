@@ -91,10 +91,11 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		ctx = context.Background()
 	}
 
+	req.callContext = ctx
 	statePath, journalPath := controlRuntimePaths(req)
 
 	// --- Step 2: read snapshot revision N ---
-	store := runtime.NewStore(statePath, journalPath)
+	store := runtime.NewStore(statePath, journalPath).WithContext(ctx)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		result.Error = fmt.Sprintf("read runtime: %v", err)
@@ -112,7 +113,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		_, followupErr := runtime.SubmissionFollowup(snapshot.State, req.SubmissionFollowupID)
 		if errors.Is(followupErr, runtime.ErrSubmissionFollowupProcessed) || errors.Is(followupErr, runtime.ErrSubmissionFollowupOriginChanged) {
 			if errors.Is(followupErr, runtime.ErrSubmissionFollowupOriginChanged) {
-				latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{})
+				latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{}, ctx)
 				if err != nil {
 					result.Error, result.ErrorCode = err.Error(), CodeRuntimeInval
 					return result, nil
@@ -140,7 +141,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		return result, nil
 	}
 	if cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") && req.Files == nil && len(catalog.Definition.MutableEvidenceKinds) > 0 {
-		if view, viewErr := productionFiles(req.Root, snapshot.State, catalog); viewErr == nil {
+		if view, viewErr := productionFiles(ctx, req.Root, snapshot.State, catalog); viewErr == nil {
 			req.Files = view // refresh and evaluation share the same pinned input snapshot
 			kinds := map[string]bool{}
 			for _, k := range catalog.Definition.MutableEvidenceKinds {
@@ -150,7 +151,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 			if req.recoveryWriter.Enabled() {
 				refreshWriter = runtime.NewOfflineRecoveryWriter(statePath, journalPath, req.Root, semantic.RuntimeCandidateValidator{}, req.recoveryWriter)
 			}
-			_, refreshErr := refreshWriter.RefreshEvidenceFingerprints(req.Root, kinds, view.ReadFile, func(path string) bool { source, err := view.Source(path); return err == nil && source == "disk" })
+			_, refreshErr := refreshWriter.WithContext(ctx).RefreshEvidenceFingerprints(req.Root, kinds, view.ReadFile, func(path string) bool { source, err := view.Source(path); return err == nil && source == "disk" })
 			if refreshErr != nil {
 				result.Warnings = append(result.Warnings, "evidence fingerprint refresh: "+refreshErr.Error())
 			} else if refreshed, readErr := store.Snapshot(); readErr == nil {
@@ -190,7 +191,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 	}
 	files := req.Files
 	if files == nil && cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") {
-		view, viewErr := productionFiles(req.Root, snapshot.State, catalog)
+		view, viewErr := productionFiles(ctx, req.Root, snapshot.State, catalog)
 		if viewErr != nil {
 			result.Error = viewErr.Error()
 			result.ErrorCode = CodeGateUnknown
@@ -302,7 +303,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		next, applyErr := transition.Apply(req.Root, statePath, journalPath, autoTransitionRequest(req, registry, snapshot, candidate, gateID, evaluation))
 		if applyErr != nil {
 			if req.SubmissionFollowupID != "" && (errors.Is(applyErr, runtime.ErrSubmissionFollowupProcessed) || errors.Is(applyErr, runtime.ErrSubmissionFollowupOriginChanged)) {
-				latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{})
+				latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{}, ctx)
 				if err != nil {
 					result.Error, result.ErrorCode = err.Error(), CodeRuntimeInval
 					return result, nil
@@ -361,7 +362,7 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 		result.QualityGate.NextCursor = cursorString(cursorState, cursorPhase)
 	}
 	if req.SubmissionFollowupID != "" && !result.QualityGate.TransitionCommitted && gateStatus != StatusUnknown {
-		latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{})
+		latest, err := runtime.RecordSubmissionEvaluation(req.Root, statePath, journalPath, req.SubmissionFollowupID, semantic.RuntimeCandidateValidator{}, ctx)
 		if err != nil {
 			result.QualityGate.Status = StatusUnknown
 			result.Error, result.ErrorCode = err.Error(), CodeRuntimeInval
@@ -461,7 +462,7 @@ func recomputeAfterStale(
 	}
 	files := req.Files
 	if files == nil && cursorState != "acceptance" && cursorState != "release_audit" && !(cursorState == "planning" && cursorPhase == "design") {
-		view, viewErr := productionFiles(req.Root, refreshed.State, catalog)
+		view, viewErr := productionFiles(ctx, req.Root, refreshed.State, catalog)
 		if viewErr != nil {
 			return ControlResult{Snapshot: refreshed, Decision: allowDecision(), Error: viewErr.Error(), ErrorCode: CodeGateUnknown, QualityGate: QualityGateResult{Status: StatusUnknown, ErrorCode: CodeGateUnknown, Missing: []string{viewErr.Error()}}}, 1, nil
 		}
@@ -1051,6 +1052,7 @@ func autoTransitionRequest(
 ) transition.Request {
 	runtimeIdentity, _ := snapshot.State["runtime_id"].(string)
 	return transition.Request{
+		Context:                req.callContext,
 		TransitionID:           candidate.ID,
 		Files:                  transitionFiles(req.Files),
 		ExpectedRevision:       -1,
@@ -1281,7 +1283,7 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func productionFiles(root string, state map[string]any, catalog *transition.Catalog) (*fileview.View, error) {
+func productionFiles(ctx context.Context, root string, state map[string]any, catalog *transition.Catalog) (*fileview.View, error) {
 	if err := fileview.ValidateAuthority(root, state); err != nil {
 		return nil, err
 	}
@@ -1289,7 +1291,7 @@ func productionFiles(root string, state map[string]any, catalog *transition.Cata
 	if err != nil {
 		return nil, err
 	}
-	return fileview.New(root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
+	return fileview.NewContext(ctx, root, "refs/heads/"+strings.TrimPrefix(ref, "refs/heads/"), catalog.Definition.FileSources)
 }
 func transitionFiles(files qualityGateFiles) fileview.Reader {
 	view, _ := files.(fileview.Reader)

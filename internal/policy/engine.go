@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/classifier"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
@@ -1636,28 +1637,29 @@ func (artifact LockedArtifact) complete() bool {
 }
 
 type DecisionEnvelope struct {
-	SchemaVersion           string    `json:"schema_version"`
-	DecisionID              string    `json:"decision_id"`
-	PolicyID                string    `json:"policy_id"`
-	PolicyVersion           string    `json:"policy_version"`
-	PolicySHA256            string    `json:"policy_sha256"`
-	HookEvent               string    `json:"hook_event"`
-	SessionID               string    `json:"session_id"`
-	RuntimeID               *string   `json:"runtime_id"`
-	ObservedRuntimeRevision *int      `json:"observed_runtime_revision"`
-	AgentID                 *string   `json:"agent_id"`
-	TargetID                *string   `json:"target_id"`
-	MatchedRuleIDs          []string  `json:"matched_rule_ids"`
-	Decision                string    `json:"decision"`
-	RuleID                  *string   `json:"rule_id"`
-	Reason                  string    `json:"reason"`
-	Missing                 []string  `json:"missing"`
-	Recovery                []string  `json:"recovery"`
-	Retry                   string    `json:"retry"`
-	HumanRequired           bool      `json:"human_required"`
-	EvaluatedAt             string    `json:"evaluated_at"`
-	ElapsedMS               int64     `json:"elapsed_ms"`
-	Guidance                *Guidance `json:"guidance,omitempty"`
+	SchemaVersion           string                           `json:"schema_version"`
+	DecisionID              string                           `json:"decision_id"`
+	PolicyID                string                           `json:"policy_id"`
+	PolicyVersion           string                           `json:"policy_version"`
+	PolicySHA256            string                           `json:"policy_sha256"`
+	HookEvent               string                           `json:"hook_event"`
+	SessionID               string                           `json:"session_id"`
+	RuntimeID               *string                          `json:"runtime_id"`
+	ObservedRuntimeRevision *int                             `json:"observed_runtime_revision"`
+	AgentID                 *string                          `json:"agent_id"`
+	TargetID                *string                          `json:"target_id"`
+	MatchedRuleIDs          []string                         `json:"matched_rule_ids"`
+	Decision                string                           `json:"decision"`
+	RuleID                  *string                          `json:"rule_id"`
+	Reason                  string                           `json:"reason"`
+	Missing                 []string                         `json:"missing"`
+	Recovery                []string                         `json:"recovery"`
+	Retry                   string                           `json:"retry"`
+	HumanRequired           bool                             `json:"human_required"`
+	EvaluatedAt             string                           `json:"evaluated_at"`
+	ElapsedMS               int64                            `json:"elapsed_ms"`
+	CallPhases              map[string]metrics.DurationStats `json:"call_phases,omitempty"`
+	Guidance                *Guidance                        `json:"guidance,omitempty"`
 }
 
 func (e *Engine) Envelope(input Input, decision Decision, evaluatedAt time.Time) DecisionEnvelope {
@@ -1723,6 +1725,7 @@ func (e *Engine) Envelope(input Input, decision Decision, evaluatedAt time.Time)
 		HumanRequired:           humanRequired,
 		EvaluatedAt:             evaluatedAt.UTC().Format(time.RFC3339Nano),
 		ElapsedMS:               decision.ElapsedMS,
+		CallPhases:              metrics.CompletedSpans(input.Context),
 		// Guidance is supplied by the Loop Controller, not the policy engine;
 		// the minimal safety engine only emits a Decision.
 	}

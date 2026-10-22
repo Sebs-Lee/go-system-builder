@@ -18,6 +18,7 @@ import (
 // grants new responsibility/activation. Publication is recoverable after the
 // original issuance transaction; its presence is not authority.
 func (s *Service) Revise(ctx context.Context, previous, reason string) (workpacket.Packet, error) {
+	s = s.WithContext(ctx)
 	if err := workspace.RequireMain(s.Root); err != nil {
 		return workpacket.Packet{}, err
 	}

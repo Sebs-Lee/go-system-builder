@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 )
 
 type RuntimeRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	Actor            string
 	OccurredAt       time.Time
@@ -86,7 +88,7 @@ func updateRuntime(writer *runtimepkg.Store, expected int, mutation runtimepkg.M
 }
 
 func OpenRepairSession(root, statePath, journalPath string, req OpenSessionRequest) (runtimepkg.Snapshot, RepairSession, ArtifactRef, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, RepairSession{}, ArtifactRef{}, err
 	}
@@ -186,7 +188,7 @@ func OpenRepairSession(root, statePath, journalPath string, req OpenSessionReque
 }
 
 func CompileRepairPlan(root, statePath, journalPath string, req CompilePlanRequest) (runtimepkg.Snapshot, RepairPlan, ArtifactRef, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, RepairPlan{}, ArtifactRef{}, err
 	}
@@ -223,7 +225,7 @@ func CompileRepairPlan(root, statePath, journalPath string, req CompilePlanReque
 // SubmitRepairPlanReportToRuntime records a Builder's implementation plan.
 // Other Builders may already be implementing their recorded plans.
 func SubmitRepairPlanReportToRuntime(root, statePath, journalPath string, req SubmitPlanReportRequest) (runtimepkg.Snapshot, PlanReport, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, PlanReport{}, err
 	}
@@ -353,7 +355,7 @@ func appendablePlanReportRefs(pointer map[string]any) ([]ArtifactRef, error) {
 
 // BeginRepairExecution records normal work startup after a Builder PlanReport.
 func BeginRepairExecution(root, statePath, journalPath string, req BeginRepairExecutionRequest) (runtimepkg.Snapshot, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
@@ -395,7 +397,7 @@ func BeginRepairExecution(root, statePath, journalPath string, req BeginRepairEx
 }
 
 func SubmitRepairResultToRuntime(root, statePath, journalPath string, req SubmitResultRuntimeRequest) (runtimepkg.Snapshot, RepairResult, ArtifactRef, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, RepairResult{}, ArtifactRef{}, err
 	}
@@ -861,7 +863,7 @@ func requiredReverificationIDs(impact ChangeImpact) []any {
 // CommitChangeImpact records the current professional impact judgment and
 // projects the existing next responsibility from already recorded work facts.
 func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactRequest) (runtimepkg.Snapshot, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
@@ -1102,7 +1104,7 @@ func dispatchSlugCompat(value string) string {
 }
 
 func CommitTargetedReverification(root, statePath, journalPath string, req CommitTargetedRequest) (runtimepkg.Snapshot, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return current, err
 	}
@@ -1246,7 +1248,7 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 // only a blocked targeted result may use it, and the next step remains an
 // independent TargetedReverification create/commit.
 func ResumeTargetedReverification(root, statePath, journalPath string, req ResumeTargetedRequest) (runtimepkg.Snapshot, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
@@ -1335,7 +1337,7 @@ func checkS9HandoffBudget(state map[string]any) error {
 }
 
 func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffRequest) (runtimepkg.Snapshot, error) {
-	current, writer, err := readRepairRuntime(root, statePath, journalPath)
+	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
 	}
@@ -1454,13 +1456,17 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	}()
 }
 
-func readRepairRuntime(root, statePath, journalPath string) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
-	store := runtimepkg.NewStore(statePath, journalPath)
+func readRepairRuntime(root, statePath, journalPath string, contexts ...context.Context) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	store := runtimepkg.NewStore(statePath, journalPath).WithContext(ctx)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return runtimepkg.Snapshot{}, nil, err
 	}
-	return snapshot, runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}), nil
+	return snapshot, runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx), nil
 }
 
 // repairAllowedTransitions lists every Loop Definition transition the repair

@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -783,6 +784,17 @@ func TestRecoverPendingOperationsCompletesValidCommitBeforeArtifactRecovery(t *t
 	}
 	if err := os.Chmod(journalPath, 0o644); err != nil {
 		t.Fatal(err)
+	}
+
+	markerPath := statePath + ".commit-pending.json"
+	markerBefore := mustRead(t, markerPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := writer.WithContext(ctx).RecoverPendingOperations(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled recovery started new work: %v", err)
+	}
+	if !bytes.Equal(markerBefore, mustRead(t, markerPath)) {
+		t.Fatal("cancellation discarded durable recovery material")
 	}
 
 	completed, err := writer.RecoverPendingOperations()

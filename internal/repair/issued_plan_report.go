@@ -2,6 +2,7 @@ package repair
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ const repairPlanReportAnswerLimit int64 = 20 << 20
 const repairPlanReportReceiptContract = "s9-plan-report-receipt-v1"
 
 type SubmitIssuedRepairPlanReportRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	PacketID         string
 	AnswerPath       string
@@ -80,7 +82,11 @@ func bytesEqualRepairPlanReportAnswer(left, right []byte) bool {
 // Assignments; the packet is an input contract, not authority to write or to
 // begin execution.
 func IssueRepairPlanReportPackets(root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.RepairPlanReportPacket, error) {
-	current, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
+	return IssueRepairPlanReportPacketsContext(context.Background(), root, statePath, journalPath, expectedRevision, ownerFilter)
+}
+
+func IssueRepairPlanReportPacketsContext(ctx context.Context, root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.RepairPlanReportPacket, error) {
+	current, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +487,7 @@ func containsStringForRepairReport(values []string, wanted string) bool {
 // evidence (work_complete=false); the same original Writer submission records
 // the Builder work-start fact without a second Begin permission transaction.
 func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req SubmitIssuedRepairPlanReportRequest) (runtimepkg.Snapshot, PlanReport, error) {
-	snapshot, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
+	snapshot, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, PlanReport{}, err
 	}
@@ -575,7 +581,7 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 		occurredAt = time.Now().UTC()
 	}
 	next, committed, err := SubmitRepairPlanReportToRuntime(root, statePath, journalPath, SubmitPlanReportRequest{
-		RuntimeRequest: RuntimeRequest{ExpectedRevision: snapshot.Revision, Actor: req.OwnerAgentID, OccurredAt: occurredAt},
+		RuntimeRequest: RuntimeRequest{Context: req.Context, ExpectedRevision: snapshot.Revision, Actor: req.OwnerAgentID, OccurredAt: occurredAt},
 		Report:         ref, issued: capability,
 	})
 	if err != nil {
@@ -899,7 +905,7 @@ type recoveredRepairPlanReport struct {
 }
 
 func recoverAcceptedRepairPlanReport(root, statePath, journalPath string, packet workpacket.RepairPlanReportPacket, req SubmitIssuedRepairPlanReportRequest, answerSHA, sourceRoot string) (bool, recoveredRepairPlanReport, error) {
-	snapshot, _, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
+	snapshot, _, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return false, recoveredRepairPlanReport{}, err
 	}
@@ -935,8 +941,12 @@ func recoverAcceptedRepairPlanReport(root, statePath, journalPath string, packet
 // Runtime lock before this path reads author bytes or attempts receipt lookup.
 // A recovered write is still accepted only after the exact original receipt,
 // packet issue, answer bytes, owner, and source/session proof below verify.
-func readIssuedRepairPlanReportRuntime(root, statePath, journalPath string) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
-	writer := runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+func readIssuedRepairPlanReportRuntime(root, statePath, journalPath string, contexts ...context.Context) (runtimepkg.Snapshot, *runtimepkg.Store, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	writer := runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return runtimepkg.Snapshot{}, nil, err

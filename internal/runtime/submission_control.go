@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -171,8 +172,12 @@ func validNoTransitionPlanningStamp(state map[string]any, packetID string) bool 
 // RecordSubmissionEvaluation records a completed, non-transitioning gate
 // evaluation or an obsolete origin. Unknown/failed gate evaluations call
 // neither this function nor a transition and retain the pending checkpoint.
-func RecordSubmissionEvaluation(root, statePath, journalPath, eventID string, validator CandidateValidator) (Snapshot, error) {
-	store := NewWriter(statePath, journalPath, root, validator)
+func RecordSubmissionEvaluation(root, statePath, journalPath, eventID string, validator CandidateValidator, contexts ...context.Context) (Snapshot, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	store := NewWriter(statePath, journalPath, root, validator).WithContext(ctx)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return Snapshot{}, err

@@ -2,6 +2,7 @@ package investigation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ const caseWorkflowNext = "runtime investigation status --case-id <case>"
 // Case; the source Finding set and identity fields are checked again before
 // the immutable next revision is written.
 type CaseRevisionRequest struct {
+	Context              context.Context `json:"-"`
 	ExpectedRevision     int
 	ExpectedCaseRevision int
 	ExpectedCaseSHA256   string
@@ -44,6 +46,7 @@ type CaseRevisionRequest struct {
 // or replace a source Finding. EvidenceRefs must carry at least one content
 // reference: an evidence-free hypothesis cannot be dispatched or falsified.
 type HypothesisRequest struct {
+	Context              context.Context `json:"-"`
 	ExpectedRevision     int
 	ExpectedCaseRevision int
 	ExpectedCaseSHA256   string
@@ -62,6 +65,7 @@ type HypothesisRequest struct {
 // HypothesisResultRequest records read-only evidence for a registered
 // hypothesis. It is not a routing or root-cause authority by itself.
 type HypothesisResultRequest struct {
+	Context              context.Context `json:"-"`
 	ExpectedRevision     int
 	ExpectedCaseRevision int
 	ExpectedCaseSHA256   string
@@ -99,6 +103,7 @@ type EvidenceReference struct {
 // closed causal chain; investigate_more is the deterministic fallback while
 // any source Finding remains unexplained or a current question is unanswered.
 type RouteRequest struct {
+	Context                        context.Context `json:"-"`
 	ExpectedRevision               int
 	ExpectedCaseRevision           int
 	ExpectedCaseSHA256             string
@@ -155,11 +160,12 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot()
+	snapshot, serr := runtime.NewStore(statePath, journalPath).WithContext(request.Context).Snapshot()
 	if serr != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for Hypothesis.evidence_refs: %v", serr)
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
+		Context:              request.Context,
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
 		ExpectedCaseSHA256:   request.ExpectedCaseSHA256,
@@ -241,7 +247,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	snapshot, serr := runtime.NewStore(statePath, journalPath).Snapshot()
+	snapshot, serr := runtime.NewStore(statePath, journalPath).WithContext(request.Context).Snapshot()
 	if serr != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "read Runtime for HypothesisResult.evidence_refs attestation: %v", serr)
 	}
@@ -286,6 +292,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
+		Context:              request.Context,
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
 		ExpectedCaseSHA256:   request.ExpectedCaseSHA256,
@@ -448,7 +455,7 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 	// caller is routed to the blocked/duplicate decision instead of another
 	// silent re-entry.
 	if strings.TrimSpace(request.Route) == "investigate_more" {
-		if snapshot, readErr := runtime.NewStore(statePath, journalPath).Snapshot(); readErr == nil {
+		if snapshot, readErr := runtime.NewStore(statePath, journalPath).WithContext(request.Context).Snapshot(); readErr == nil {
 			if pointer, pointerErr := mutableCasePointer(snapshot.State, request.CaseID, "case_routed"); pointerErr == nil {
 				if document, docErr := readCaseDocument(root, stringField(pointer["path"])); docErr == nil {
 					if history, histErr := objectArrayAllowEmpty(document["route_history"], "InvestigationCase.route_history"); histErr == nil {
@@ -477,6 +484,7 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 		}
 	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
+		Context:              request.Context,
 		ExpectedRevision:     request.ExpectedRevision,
 		ExpectedCaseRevision: request.ExpectedCaseRevision,
 		ExpectedCaseSHA256:   request.ExpectedCaseSHA256,
@@ -725,7 +733,7 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	if err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "resolve repository root: %v", err)
 	}
-	current, err := runtime.NewStore(statePath, journalPath).Snapshot()
+	current, err := runtime.NewStore(statePath, journalPath).WithContext(request.Context).Snapshot()
 	if err != nil {
 		return runtime.Snapshot{}, fmt.Errorf("read Runtime before Case revision: %w", err)
 	}
@@ -859,7 +867,7 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 		// The same lock/pending protocol as the original Runtime writer must
 		// guard cleanup. If an interrupted CAS may still publish this artifact,
 		// retain it for recovery instead of racing a raw unlink against state.
-		_, _ = runtime.NewStore(statePath, journalPath).RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{
+		_, _ = runtime.NewStore(statePath, journalPath).WithContext(request.Context).RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{
 			ExpectedRevision: current.Revision,
 			ArtifactPath:     nextRel,
 			ArtifactSHA256:   nextSHA,
@@ -875,7 +883,7 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	if status == "" {
 		status = "investigating"
 	}
-	writer := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	writer := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := updateRuntime(writer, request.ExpectedRevision, runtime.Mutation{
 		EventID:                fmt.Sprintf("evt-investigation-case-%s-r%d", request.CaseID, commitRevision+1),
 		TransitionID:           "INVESTIGATION-CASE-REVISION-UPDATED",

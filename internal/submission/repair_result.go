@@ -21,6 +21,7 @@ const repairResultAnswerLimit int64 = 20 << 20
 // original Repair Writer. This adapter only publishes the canonical view and
 // answer draft into each exact registered Worker checkout.
 func (s *Service) IssueRepairResults(ctx context.Context, ownerFilter string) ([]workpacket.RepairResultPacket, error) {
+	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -64,6 +65,7 @@ func (s *Service) RepairResultSourceForPath(path string) (workpacket.RepairResul
 // registered Worker source is selected again inside the original CAS. Empty owner
 // and sourceRoot hints use the responsibility selected by the exact answer path.
 func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
+	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return Receipt{}, err
 	}

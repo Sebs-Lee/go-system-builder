@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 // so it participates in the same revision CAS and journal contract as every
 // other Runtime mutation.
 type EvidenceRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	ID               string
 	Kind             string
@@ -107,7 +109,7 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 		}
 	}
 
-	store := NewWriter(statePath, journalPath, root, request.Validator)
+	store := NewWriter(statePath, journalPath, root, request.Validator).WithContext(request.Context)
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read runtime: %w", err)

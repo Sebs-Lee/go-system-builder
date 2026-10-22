@@ -18,6 +18,7 @@ import (
 )
 
 func (s *Service) IssueDesign(ctx context.Context) (workpacket.DesignPacket, error) {
+	s = s.WithContext(ctx)
 	snap, err := s.snapshot()
 	if err != nil {
 		return workpacket.DesignPacket{}, err
@@ -77,6 +78,7 @@ func (s *Service) designForPath(snap runtime.Snapshot, path string) (workpacket.
 }
 
 func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) {
+	s = s.WithContext(ctx)
 	snap, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -257,6 +259,7 @@ func (s *Service) DesignReceipt(path, packetID string) (Receipt, error) {
 // preparePlanningOutlet completes only the next responsibility of an actual
 // committed planning transition. Old-answer replay never calls this outlet.
 func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.ControlResult) (string, []Waiting) {
+	s = s.WithContext(ctx)
 	if !result.QualityGate.TransitionCommitted || !runtime.PacketEnabled(result.Snapshot.State) {
 		return "", nil
 	}

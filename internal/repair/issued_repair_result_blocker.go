@@ -69,7 +69,7 @@ func PrepareIssuedRepairResultBlocker(
 	defer unlock()
 	ctx = lockedCtx
 
-	snapshot, _, err := readIssuedRepairResultRuntime(root, statePath, journalPath)
+	snapshot, _, err := readIssuedRepairResultRuntime(ctx, root, statePath, journalPath)
 	if err != nil {
 		return nil, nil, err
 	}

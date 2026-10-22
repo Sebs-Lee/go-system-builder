@@ -71,7 +71,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 	if !saved {
 		return false, 0
 	}
-	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(request)).Snapshot()
 	if err != nil {
 		return false, 0
 	}
@@ -96,7 +96,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 			fmt.Fprintln(&output, "The same ReviewPlan was already received; no Runtime write or duplicate registration was performed.")
 		}
 	} else {
-		received, err := review.RegisterPlan(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), review.PlanRequest{ExpectedRevision: -1, PlanPath: path})
+		received, err := review.RegisterPlan(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), review.PlanRequest{Context: contextForHook(request), ExpectedRevision: -1, PlanPath: path})
 		if err != nil {
 			var author *review.PlanAnswerError
 			if errors.As(err, &author) {

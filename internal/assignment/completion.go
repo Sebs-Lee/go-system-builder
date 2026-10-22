@@ -1,6 +1,7 @@
 package assignment
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 // CompletionRequest drives the canonical S6 Builder Result registration.
 type CompletionRequest struct {
+	Context         context.Context `json:"-"`
 	NativeAgentID   string
 	NativeSessionID string
 	// NativePlanPath is supplied by the native Stop receiver, never an activation.
@@ -213,7 +215,7 @@ func completeTaskLegacy(
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
 
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	mutation := loopruntime.Mutation{
 		EventID:            fmt.Sprintf("evt-complete-%s-%s-r%d", request.AgentID, message.TaskID, commitRevision+1),
 		TransitionID:       "BUILDER-RESULT",

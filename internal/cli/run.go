@@ -3035,6 +3035,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		ctx, cancel := context.WithDeadline(context.Background(), evaluationStarted.Add(hookWorkBudget))
 		defer cancel()
 		request.Context = ctx
+		request.Context, _ = metrics.WithCallTimings(request.Context)
 	}
 	// Resolve a registered Worker to its sole control Runtime without chdir.
 	rootContext, rootCancel := context.WithTimeout(contextForHook(request), 3*time.Second)
@@ -3242,7 +3243,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		// Automatic questionnaire preparation can publish the current path.
 		// Render Next from that snapshot instead of asking the author to issue it.
 		if stageAnswerContext != "" && !s6ObservationReused && !graphPlanning {
-			if latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); err == nil {
+			if latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(request)).Snapshot(); err == nil {
 				var guidance policy.Guidance
 				if graphObserved {
 					guidance = graphGuidance(root, latest.State, request)
@@ -3941,6 +3942,7 @@ func buildEnvelopeFromController(root string, request policy.Input, decision pol
 			HumanRequired: decision.HumanRequired,
 			EvaluatedAt:   evaluatedAt.UTC().Format(time.RFC3339Nano),
 			ElapsedMS:     decision.ElapsedMS,
+			CallPhases:    metrics.CompletedSpans(request.Context),
 		}
 		if decision.Guidance != nil {
 			envelope.Guidance = decision.Guidance

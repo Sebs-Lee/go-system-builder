@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -253,7 +252,7 @@ func nativeS6ControlRoot(root string, in policy.Input) string {
 	if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); err == nil {
 		return root
 	}
-	listing, err := workspace.Git(context.Background(), root, "worktree", "list", "--porcelain")
+	listing, err := workspace.Git(contextForHook(in), root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return root
 	}
@@ -266,7 +265,7 @@ func nativeS6ControlRoot(root string, in policy.Input) string {
 		if _, err := os.Stat(filepath.Join(candidate, ".claude/loop-state.json")); err != nil {
 			continue
 		}
-		snap, err := runtime.NewStore(filepath.Join(candidate, ".claude/loop-state.json"), filepath.Join(candidate, ".claude/loop-events.jsonl")).Snapshot()
+		snap, err := runtime.NewStore(filepath.Join(candidate, ".claude/loop-state.json"), filepath.Join(candidate, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
 		if err != nil || fileview.ValidateAuthority(candidate, snap.State) != nil || len(nativeS6Records(snap.State)) == 0 && !nativeS9Available(candidate, snap.State) && nativeReviewStage(snap.State) == "" {
 			continue
 		}
@@ -285,7 +284,7 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); err != nil {
 		return false, 0
 	}
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
 	if err != nil {
 		return false, 0
 	}
@@ -298,9 +297,13 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if in.Event == "SubagentStart" || in.Event == "SubagentStop" {
 		if engine, err := policy.Load(filepath.Join(root, "docs/control/hook-policy.json")); err == nil {
 			observed := policy.Decision{Decision: "audit", RuleID: "native_s6_lifecycle_observed", Reason: "native S6 lifecycle observed", MatchedRuleIDs: []string{"native_s6_lifecycle_observed"}, Retry: "not_applicable"}
-			if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
-				fmt.Fprintln(diagnostic, "Native lifecycle audit unavailable: "+err.Error())
-			}
+			auditStarted := time.Now()
+			defer func() {
+				observed.ElapsedMS = time.Since(auditStarted).Milliseconds()
+				if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
+					fmt.Fprintln(diagnostic, "Native lifecycle audit unavailable: "+err.Error())
+				}
+			}()
 		}
 	}
 	if in.Event == "SubagentStart" {
@@ -364,7 +367,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 		return err
 	}
 	// An explicit absolute output reference can identify the actual native worktree.
-	listing, err := workspace.Git(context.Background(), root, "worktree", "list", "--porcelain")
+	listing, err := workspace.Git(contextForHook(in), root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return err
 	}
@@ -448,7 +451,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 		return err
 	}
 	result["occurred_at"] = plan["occurred_at"]
-	head, err := workspace.Git(context.Background(), source, "rev-parse", "HEAD")
+	head, err := workspace.Git(contextForHook(in), source, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
@@ -474,10 +477,10 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	}
 	if base, _ := coordinate["base_commit"].(string); base == "" {
 		return fmt.Errorf("missing original source commit")
-	} else if _, err := workspace.Git(context.Background(), source, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+	} else if _, err := workspace.Git(contextForHook(in), source, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
 		return fmt.Errorf("native worktree does not contain the declared source commit")
 	}
-	branch, err := workspace.Git(context.Background(), source, "branch", "--show-current")
+	branch, err := workspace.Git(contextForHook(in), source, "branch", "--show-current")
 	if err != nil || branch == "" {
 		return fmt.Errorf("native worktree requires a real source branch")
 	}
@@ -487,7 +490,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	if err := os.WriteFile(coordinatePath, updated, 0600); err != nil {
 		return err
 	}
-	_, _, err = assignment.CompleteTaskWithReceipt(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), assignment.CompletionRequest{ExpectedRevision: -1, AgentID: r.OwnerAgentID, MessagePath: filepath.Join(root, resultRef), NativePlanPath: planRef, NativeAgentID: in.AgentID, NativeSessionID: in.SessionID})
+	_, _, err = assignment.CompleteTaskWithReceipt(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), assignment.CompletionRequest{Context: contextForHook(in), ExpectedRevision: -1, AgentID: r.OwnerAgentID, MessagePath: filepath.Join(root, resultRef), NativePlanPath: planRef, NativeAgentID: in.AgentID, NativeSessionID: in.SessionID})
 	return err
 }
 

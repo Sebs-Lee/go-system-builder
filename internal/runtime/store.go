@@ -23,6 +23,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workstate"
 
 	"github.com/entroforge/go-system-builder/internal/filelock"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
@@ -219,6 +220,7 @@ type runtimeSemanticDefinition struct {
 }
 
 type Store struct {
+	ctx                  context.Context
 	statePath            string
 	journalPath          string
 	root                 string
@@ -418,6 +420,10 @@ func currentCursor(state map[string]any) (map[string]any, error) {
 }
 
 func (s *Store) validateCandidate(state map[string]any) error {
+	defer metrics.Span(s.Context(), "runtime/lock_hold/mutation/validate")()
+	if err := s.Context().Err(); err != nil {
+		return err
+	}
 	if err := s.validateWriteAuthority(state); err != nil {
 		return err
 	}
@@ -645,7 +651,7 @@ func (s *Store) ObservationSnapshot() (Snapshot, error) {
 }
 
 func (s *Store) snapshotWithLockBudget(budget time.Duration) (Snapshot, error) {
-	release, err := acquireLock(s.statePath+".lock", budget)
+	release, err := s.acquireLock(s.statePath+".lock", budget)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -709,7 +715,7 @@ func (s *Store) RemoveUnreferencedArtifact(request ArtifactCleanupRequest) (bool
 		return false, fmt.Errorf("validate artifact cleanup path: %w", err)
 	}
 
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return false, err
 	}
@@ -803,7 +809,7 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 		occurredAt = time.Now().UTC()
 	}
 
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return RolloverRecord{}, err
 	}
@@ -923,7 +929,7 @@ func (s *Store) RefreshEvidenceFingerprints(root string, kinds map[string]bool, 
 	return s.refreshFingerprints(root, kinds, read, writable...)
 }
 func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, read func(string) ([]byte, error), writable ...func(string) bool) (FingerprintResult, error) {
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return FingerprintResult{}, err
 	}
@@ -936,7 +942,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 	if err != nil {
 		return FingerprintResult{}, err
 	}
-	inspection, err := inspectJournal(s.journalPath)
+	inspection, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return FingerprintResult{}, fmt.Errorf("inspect runtime journal before fingerprint refresh: %w", err)
 	}
@@ -1104,7 +1110,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 		if err := s.validateCandidate(state); err != nil {
 			return FingerprintResult{}, fmt.Errorf("post-refresh snapshot invalid: %w", err)
 		}
-		inspection, err = inspectJournal(s.journalPath)
+		inspection, err = inspectJournalContext(s.Context(), s.journalPath)
 		if err != nil {
 			return FingerprintResult{}, fmt.Errorf("inspect runtime journal after fingerprint refresh: %w", err)
 		}
@@ -1135,6 +1141,9 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 			StateSHA256:         stateSHA256,
 			State:               state,
 		}
+		if err := s.Context().Err(); err != nil {
+			return FingerprintResult{}, err
+		}
 		if err := atomicWriteJSON(s.fingerprintMarkerPath(), pending); err != nil {
 			return FingerprintResult{}, fmt.Errorf("record pending fingerprint refresh: %w", err)
 		}
@@ -1151,7 +1160,7 @@ func (s *Store) refreshFingerprints(root string, evidenceKinds map[string]bool, 
 		if err != nil {
 			return FingerprintResult{}, fmt.Errorf("read refreshed runtime state: %w", err)
 		}
-		writtenInspection, err := inspectJournal(s.journalPath)
+		writtenInspection, err := inspectJournalContext(s.Context(), s.journalPath)
 		if err != nil {
 			return FingerprintResult{}, fmt.Errorf("inspect runtime journal after refreshed state write: %w", err)
 		}
@@ -1263,7 +1272,7 @@ func (s *Store) Update(expectedRevision int, mutation Mutation) (Snapshot, error
 	if expectedRevision < 0 {
 		return s.UpdateCurrent(mutation)
 	}
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1280,7 +1289,7 @@ func (s *Store) Update(expectedRevision int, mutation Mutation) (Snapshot, error
 // explicit Update method remains available for integrations that deliberately
 // want a stale-snapshot assertion.
 func (s *Store) UpdateCurrent(mutation Mutation) (Snapshot, error) {
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -1303,7 +1312,7 @@ func (s *Store) Reconcile() (bool, error) {
 	if !s.mutationCapable {
 		return false, fmt.Errorf("%w: Reconcile requires a mutation-capable writer", ErrCandidateValidatorRequired)
 	}
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return false, err
 	}
@@ -1324,7 +1333,7 @@ func (s *Store) Reconcile() (bool, error) {
 	if eventID == "" {
 		return false, errors.New("last transition has no event_id")
 	}
-	inspection, err := inspectJournal(s.journalPath)
+	inspection, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return false, fmt.Errorf("inspect runtime journal for reconcile: %w", err)
 	}
@@ -1401,7 +1410,7 @@ func (s *Store) RecoverPendingOperations() (bool, error) {
 	if !s.mutationCapable {
 		return false, fmt.Errorf("%w: RecoverPendingOperations requires a mutation-capable writer", ErrCandidateValidatorRequired)
 	}
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return false, err
 	}
@@ -1427,7 +1436,7 @@ func (s *Store) RecoverPendingOperations() (bool, error) {
 // design|contracts|tasks phase machine based on artifact presence. It is
 // explicit-only (CLI migrate-planning); StageFor never scans artifacts.
 func (s *Store) MigrateLegacyPlanning(root string) (bool, error) {
-	release, err := acquireLock(s.statePath+".lock", 5*time.Second)
+	release, err := s.acquireLock(s.statePath+".lock", 5*time.Second)
 	if err != nil {
 		return false, err
 	}
@@ -1503,6 +1512,10 @@ func (s *Store) MigrateLegacyPlanning(root string) (bool, error) {
 }
 
 func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot, error) {
+	if err := s.Context().Err(); err != nil {
+		return Snapshot{}, err
+	}
+	defer metrics.Span(s.Context(), "runtime/lock_hold/mutation")()
 	state, err := s.read()
 	if err != nil {
 		return Snapshot{}, err
@@ -1522,7 +1535,7 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err != nil {
 		return Snapshot{}, err
 	}
-	existingJournal, err := inspectJournal(s.journalPath)
+	existingJournal, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("inspect existing runtime journal before mutation: %w", err)
 	}
@@ -1633,6 +1646,11 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err := validatePendingCommitCoherence(pending); err != nil {
 		return Snapshot{}, fmt.Errorf("pending runtime commit coherence: %w", err)
 	}
+	if err := s.Context().Err(); err != nil {
+		return Snapshot{}, err
+	}
+	endCommit := metrics.Span(s.Context(), "runtime/lock_hold/mutation/persist")
+	defer endCommit()
 	if err := atomicWriteJSON(s.commitMarkerPath(), pending); err != nil {
 		return Snapshot{}, fmt.Errorf("record pending runtime commit: %w", err)
 	}
@@ -1793,7 +1811,7 @@ func (s *Store) commitJournalOnlyLocked(state map[string]any, event map[string]a
 	if err := validateJournalEvent(event); err != nil {
 		return fmt.Errorf("journal-only commit event invalid: %w", err)
 	}
-	existingJournal, err := inspectJournal(s.journalPath)
+	existingJournal, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return err
 	}
@@ -1826,6 +1844,9 @@ func (s *Store) commitJournalOnlyLocked(state map[string]any, event map[string]a
 	}
 	if err := validatePendingCommitCoherence(pending); err != nil {
 		return fmt.Errorf("journal-only commit coherence: %w", err)
+	}
+	if err := s.Context().Err(); err != nil {
+		return err
 	}
 	if err := atomicWriteJSON(s.commitMarkerPath(), pending); err != nil {
 		return fmt.Errorf("record pending journal-only commit: %w", err)
@@ -2121,7 +2142,7 @@ func (s *Store) recoverPendingFingerprintLocked() error {
 	if err := s.validateCandidate(pending.State); err != nil {
 		return fmt.Errorf("pending fingerprint refresh state is invalid: %w", err)
 	}
-	pendingJournal, err := inspectJournal(s.journalPath)
+	pendingJournal, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return fmt.Errorf("inspect runtime journal for fingerprint recovery: %w", err)
 	}
@@ -2178,7 +2199,7 @@ func (s *Store) recoverPendingFingerprintLocked() error {
 	if err != nil {
 		return fmt.Errorf("read recovered fingerprint refresh state: %w", err)
 	}
-	recoveredJournal, err := inspectJournal(s.journalPath)
+	recoveredJournal, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return fmt.Errorf("inspect runtime journal after fingerprint recovery: %w", err)
 	}
@@ -2255,7 +2276,7 @@ func (s *Store) recoverPendingCommitLocked() error {
 	if eventID == "" {
 		return errors.New("pending runtime commit has no event_id")
 	}
-	journal, err := inspectJournal(s.journalPath)
+	journal, err := inspectJournalContext(s.Context(), s.journalPath)
 	if err != nil {
 		return fmt.Errorf("inspect runtime journal during commit recovery: %w", err)
 	}
@@ -2918,7 +2939,7 @@ func (s *Store) recoverPendingJournalRotationLocked() error {
 	if _, err := os.Stat(s.statePath); err == nil {
 		state, err := s.read()
 		if err == nil {
-			inspection, err := inspectJournal(s.journalPath)
+			inspection, err := inspectJournalContext(s.Context(), s.journalPath)
 			if err != nil {
 				return fmt.Errorf("pending journal rotation journal invalid after recovery: %w", err)
 			}
@@ -3301,12 +3322,23 @@ func validateStateJournalCursor(cursor map[string]any, inspection journalInspect
 // file) before commit recovery makes a decision. A missing journal is an empty
 // tail.
 func inspectJournal(path string) (journalInspection, error) {
+	return inspectJournalContext(context.Background(), path)
+}
+
+func inspectJournalContext(ctx context.Context, path string) (journalInspection, error) {
+	defer metrics.Span(ctx, "runtime/lock_hold/journal_scan")()
+	if err := ctx.Err(); err != nil {
+		return journalInspection{}, err
+	}
 	segments, err := journalSegmentPaths(path)
 	if err != nil {
 		return journalInspection{}, err
 	}
 	var combined []byte
 	for _, seg := range segments {
+		if err := ctx.Err(); err != nil {
+			return journalInspection{}, err
+		}
 		data, err := os.ReadFile(seg)
 		if err != nil {
 			return journalInspection{}, fmt.Errorf("read journal archive %s: %w", seg, err)
@@ -3329,7 +3361,7 @@ func inspectJournal(path string) (journalInspection, error) {
 	if len(combined) == 0 {
 		return journalInspection{Events: []map[string]any{}, EventIndex: map[string]int{}}, nil
 	}
-	return inspectJournalData(combined)
+	return controlproof.InspectJournalSegmentDataFromContext(ctx, combined, 1)
 }
 
 func inspectJournalData(data []byte) (journalInspection, error) {
@@ -3385,17 +3417,21 @@ func journalFileContains(path, eventID string) (bool, error) {
 }
 
 func acquireLock(path string, timeout time.Duration) (func(), error) {
+	return acquireLockContext(context.Background(), path, timeout)
+}
+
+func acquireLockContext(parent context.Context, path string, timeout time.Duration) (func(), error) {
 	// Fence current binaries with an OS-owned lock before the compatibility
 	// sentinel. A slow live writer can never be evicted by sentinel age.
 	// The sentinel remains for legacy lock diagnostics during uniform upgrades.
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	releaseProcess, err := filelock.Acquire(ctx, path+".process")
-	cancel()
+	defer cancel()
 	if err != nil {
 		return nil, err
 	}
-	releaseLegacy, err := acquireLegacyLock(path, timeout-time.Since(started))
+	releaseLegacy, err := acquireLegacyLockContext(ctx, path, timeout-time.Since(started))
 	if err != nil {
 		releaseProcess()
 		return nil, err
@@ -3404,9 +3440,16 @@ func acquireLock(path string, timeout time.Duration) (func(), error) {
 }
 
 func acquireLegacyLock(path string, timeout time.Duration) (func(), error) {
+	return acquireLegacyLockContext(context.Background(), path, timeout)
+}
+
+func acquireLegacyLockContext(ctx context.Context, path string, timeout time.Duration) (func(), error) {
 	deadline := time.Now().Add(timeout)
 	owner := strconv.Itoa(os.Getpid()) + ":" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			if _, writeErr := file.WriteString(owner); writeErr != nil {
@@ -3438,7 +3481,13 @@ func acquireLegacyLock(path string, timeout time.Duration) (func(), error) {
 		if time.Now().After(deadline) {
 			return nil, errors.New("runtime lock timeout")
 		}
-		time.Sleep(5 * time.Millisecond)
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

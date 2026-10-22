@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"io"
 	"os"
 	"path"
@@ -196,6 +197,7 @@ func completeCanonicalTaskWithReceipt(
 	request CompletionRequest,
 	data []byte,
 ) (loopruntime.Snapshot, ResultAcceptanceReceipt, error) {
+	defer metrics.Span(request.Context, "reception/s6")()
 	var empty loopruntime.Snapshot
 	var noReceipt ResultAcceptanceReceipt
 	if request.AgentID == "" {
@@ -223,7 +225,8 @@ func completeCanonicalTaskWithReceipt(
 		return empty, noReceipt, fmt.Errorf("canonical Result message_id exceeds the key budget")
 	}
 
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
+	ctx := store.Context()
 	snapshot, err := store.Snapshot()
 	if err != nil {
 		return empty, noReceipt, fmt.Errorf("read runtime: %w", err)
@@ -231,7 +234,7 @@ func completeCanonicalTaskWithReceipt(
 	if _, err := commitRevision(request.ExpectedRevision, snapshot.State); err != nil {
 		return empty, noReceipt, err
 	}
-	binding, err := resolveCanonicalResultBinding(root, snapshot, request.AgentID, message, request.NativePlanPath)
+	binding, err := resolveCanonicalResultBinding(ctx, root, snapshot, request.AgentID, message, request.NativePlanPath)
 	if err != nil {
 		return empty, noReceipt, err
 	}
@@ -270,7 +273,6 @@ func completeCanonicalTaskWithReceipt(
 		}
 	}
 	var closureDigest string
-	ctx := context.Background()
 	if binding.Record.ClosingContract != nil && len(binding.Record.ClosingContract.WorkerChecks) > 0 {
 		var unlock func()
 		ctx, unlock, err = integration.LockWorkspace(ctx, root)
@@ -286,7 +288,7 @@ func completeCanonicalTaskWithReceipt(
 		if _, err := commitRevision(request.ExpectedRevision, snapshot.State); err != nil {
 			return empty, noReceipt, err
 		}
-		binding, err = resolveCanonicalResultBinding(root, snapshot, request.AgentID, message, request.NativePlanPath)
+		binding, err = resolveCanonicalResultBinding(ctx, root, snapshot, request.AgentID, message, request.NativePlanPath)
 		if err != nil {
 			return empty, noReceipt, err
 		}
@@ -326,7 +328,7 @@ func completeCanonicalTaskWithReceipt(
 			}
 		}
 	}
-	binding.View, binding.Execution, err = resolveResultExecutionView(root, snapshot.State, binding.Record)
+	binding.View, binding.Execution, err = resolveResultExecutionView(ctx, root, snapshot.State, binding.Record)
 	if err != nil {
 		return empty, noReceipt, err
 	}
@@ -407,7 +409,7 @@ func completeCanonicalTaskWithReceipt(
 				return err
 			}
 			currentSnapshot := loopruntime.Snapshot{Revision: currentRevision, State: state}
-			current, err := resolveCanonicalResultBinding(root, currentSnapshot, request.AgentID, message, request.NativePlanPath)
+			current, err := resolveCanonicalResultBinding(ctx, root, currentSnapshot, request.AgentID, message, request.NativePlanPath)
 			if err != nil {
 				return err
 			}
@@ -438,7 +440,7 @@ func completeCanonicalTaskWithReceipt(
 			if err := assignmentresult.ValidateClosingAssessment(current.Record, current.Plan.Assertions, answer); err != nil {
 				return fmt.Errorf("canonical Result closing assessment: %w", err)
 			}
-			current.View, current.Execution, err = resolveResultExecutionView(root, state, current.Record)
+			current.View, current.Execution, err = resolveResultExecutionView(ctx, root, state, current.Record)
 			if err != nil {
 				return err
 			}
@@ -633,7 +635,7 @@ type canonicalResultBinding struct {
 	Execution *workspace.Execution
 }
 
-func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, agentID string, message canonicalCompletionMessage, nativePlanPath string) (canonicalResultBinding, error) {
+func resolveCanonicalResultBinding(ctx context.Context, root string, snapshot loopruntime.Snapshot, agentID string, message canonicalCompletionMessage, nativePlanPath string) (canonicalResultBinding, error) {
 	var binding canonicalResultBinding
 	record, found, err := assignmentrecord.ForOwner(snapshot.State, agentID)
 	if err != nil {
@@ -737,7 +739,7 @@ func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, a
 	return canonicalResultBinding{Record: record, RecordSHA: recordSHA, PlanRef: planRef, PlanSHA: planSHA, Plan: plan, View: view}, nil
 }
 
-func resolveResultExecutionView(root string, state map[string]any, record assignmentrecord.Record) (resultExecutionView, *workspace.Execution, error) {
+func resolveResultExecutionView(ctx context.Context, root string, state map[string]any, record assignmentrecord.Record) (resultExecutionView, *workspace.Execution, error) {
 	var empty resultExecutionView
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
@@ -757,7 +759,7 @@ func resolveResultExecutionView(root string, state map[string]any, record assign
 		if err != nil || mainRoot != rootReal {
 			return empty, nil, fmt.Errorf("current Workspace authority root differs from CompleteTask Main root")
 		}
-		if err := registry.Validate(context.Background(), rootReal); err != nil {
+		if err := registry.Validate(ctx, rootReal); err != nil {
 			return empty, nil, fmt.Errorf("validate current Workspace authority: %w", err)
 		}
 		if exec, found := registry.Execution(record.AssignmentID, record.RuntimeID, record.BaselineGeneration); found {
@@ -767,7 +769,7 @@ func resolveResultExecutionView(root string, state map[string]any, record assign
 			if err := workspace.ValidateAssignmentRecord(state, exec); err != nil {
 				return empty, nil, fmt.Errorf("validate Workspace Assignment binding: %w", err)
 			}
-			if err := registry.ValidateExecution(context.Background(), exec, false); err != nil {
+			if err := registry.ValidateExecution(ctx, exec, false); err != nil {
 				return empty, nil, fmt.Errorf("validate current Workspace checkout: %w", err)
 			}
 			if err := registry.ValidateInputs(exec); err != nil {
@@ -792,7 +794,7 @@ func resolveResultExecutionView(root string, state map[string]any, record assign
 	if err := requireBoundMainRoot(state, rootReal); err != nil {
 		return empty, nil, err
 	}
-	coordinate, err := resolveLegacyWorktreeCoordinate(rootReal, state, record)
+	coordinate, err := resolveLegacyWorktreeCoordinate(ctx, rootReal, state, record)
 	if err != nil {
 		return empty, nil, err
 	}
@@ -828,7 +830,7 @@ type legacyWorktreeCoordinates struct {
 	BaseCommit   string `json:"base_commit"`
 }
 
-func resolveLegacyWorktreeCoordinate(root string, state map[string]any, record assignmentrecord.Record) (string, error) {
+func resolveLegacyWorktreeCoordinate(ctx context.Context, root string, state map[string]any, record assignmentrecord.Record) (string, error) {
 	bound, _ := state["bound_req"].(map[string]any)
 	workspaceBinding, _ := bound["workspace"].(map[string]any)
 	devBranch, _ := workspaceBinding["dev_branch"].(string)
@@ -927,7 +929,7 @@ func resolveLegacyWorktreeCoordinate(root string, state map[string]any, record a
 	if sidecarHasPath && (strings.TrimPrefix(sidecar.TargetBranch, "refs/heads/") != devBranch || devBranch == "") {
 		return "", fmt.Errorf("registered worktree target is not the current REQ development branch")
 	}
-	branch, err := workspace.Git(context.Background(), checkout, "branch", "--show-current")
+	branch, err := workspace.Git(ctx, checkout, "branch", "--show-current")
 	if err != nil {
 		return "", err
 	}
@@ -935,7 +937,7 @@ func resolveLegacyWorktreeCoordinate(root string, state map[string]any, record a
 		return "", fmt.Errorf("registered worktree branch differs from its stored coordinates")
 	}
 	if coordinates.BaseCommit != "" {
-		if _, err := workspace.Git(context.Background(), checkout, "merge-base", "--is-ancestor", coordinates.BaseCommit, "HEAD"); err != nil {
+		if _, err := workspace.Git(ctx, checkout, "merge-base", "--is-ancestor", coordinates.BaseCommit, "HEAD"); err != nil {
 			return "", fmt.Errorf("registered worktree history differs from its stored baseline")
 		}
 	}

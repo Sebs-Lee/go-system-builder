@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 // PlanRequest drives `runtime review-plan` registration.
 type PlanRequest struct {
+	Context          context.Context `json:"-"`
 	ExpectedRevision int
 	PlanPath         string
 	OccurredAt       time.Time
@@ -67,7 +69,7 @@ func RegisterPlan(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
-	data, err = preparePlanAssets(root, data, current)
+	data, err = preparePlanAssets(root, data, current, request.Context)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
 	}
@@ -179,7 +181,7 @@ func RegisterPlan(
 		occurredAt = time.Now().UTC()
 	}
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-plan-%s-r%d", plan.ReviewPlanID, commitRevision+1),
 		TransitionID:   "REVIEW-PLAN",
@@ -202,7 +204,7 @@ func RegisterPlan(
 					return fmt.Errorf("original S9 seed changed before first professional registration")
 				}
 			}
-			if err := verifyFrozenSubjects(root, &plan, state); err != nil {
+			if err := verifyFrozenSubjects(root, &plan, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
 			}
 			if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {

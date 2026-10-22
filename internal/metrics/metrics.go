@@ -408,6 +408,7 @@ func healthDegraded(snap Snapshot, timing map[string]hookTimingStats) bool {
 
 type hookTimingStats struct {
 	samples []int64
+	phases  map[string]DurationStats
 }
 
 // readHookTiming reads the durable Hook decision outbox without adding a
@@ -431,8 +432,9 @@ func readHookTiming(root string) (map[string]hookTimingStats, error) {
 			continue
 		}
 		var record struct {
-			HookEvent string `json:"hook_event"`
-			ElapsedMS *int64 `json:"elapsed_ms"`
+			HookEvent string                   `json:"hook_event"`
+			ElapsedMS *int64                   `json:"elapsed_ms"`
+			Phases    map[string]DurationStats `json:"call_phases"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 			return nil, fmt.Errorf("decode Hook timing outbox: %w", err)
@@ -445,6 +447,18 @@ func readHookTiming(root string) (map[string]hookTimingStats, error) {
 		}
 		event := normalizeLabel(record.HookEvent, "unknown")
 		stats := timing[event]
+		if stats.phases == nil {
+			stats.phases = map[string]DurationStats{}
+		}
+		for name, span := range record.Phases {
+			if span.Count < 0 || span.SumMS < 0 {
+				return nil, fmt.Errorf("invalid completed Hook phase %s", name)
+			}
+			total := stats.phases[name]
+			total.Count += span.Count
+			total.SumMS += span.SumMS
+			stats.phases[name] = total
+		}
 		const maxSamples = 256
 		if len(stats.samples) == maxSamples {
 			copy(stats.samples, stats.samples[1:])
@@ -486,6 +500,16 @@ func writeHookTimingStats(b *strings.Builder, timing map[string]hookTimingStats)
 		p95 := samples[index]
 		max := samples[len(samples)-1]
 		fmt.Fprintf(b, "  loop_hook_evaluation_duration_ms{event=%q} count=%d p95_ms=%d max_ms=%d\n", event, len(samples), p95, max)
+		names := make([]string, 0, len(timing[event].phases))
+		for name := range timing[event].phases {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			span := timing[event].phases[name]
+			fmt.Fprintf(b, "  loop_hook_completed_phase_ms{event=%q,phase=%q} count=%d sum_ms=%d (nested spans overlap)\n", event, name, span.Count, span.SumMS)
+		}
+
 		if p95 >= hookTimingWarningThresholdMS || max >= hookTimingWarningThresholdMS {
 			fmt.Fprintf(b, "  WARNING: Hook event %q is at or above %d%% of the %dms timeout; a platform timeout can bypass PreToolUse enforcement\n", event, hookTimingWarningThresholdMS*100/defaultHookTimeoutMS, defaultHookTimeoutMS)
 		}

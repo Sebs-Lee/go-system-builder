@@ -40,7 +40,7 @@ func nativeReviewStage(state map[string]any) string {
 // Original packets and domain consumers own all responsibility and result facts;
 // there is no native actor registry, launcher, queue, activation or new Result.
 func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (bool, int) {
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
 	if err != nil {
 		return false, 0
 	}
@@ -69,9 +69,13 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 	}
 	if engine, err := policy.Load(filepath.Join(root, "docs/control/hook-policy.json")); err == nil {
 		observed := policy.Decision{Decision: "audit", RuleID: "native_review_lifecycle_observed", Reason: stage + " native professional lifecycle observed", Retry: "not_applicable"}
-		if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
-			fmt.Fprintln(diagnostic, err)
-		}
+		auditStarted := time.Now()
+		defer func() {
+			observed.ElapsedMS = time.Since(auditStarted).Milliseconds()
+			if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
+				fmt.Fprintln(diagnostic, err)
+			}
+		}()
 	}
 	if in.Event == "SubagentStart" {
 		_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": stage + " native professional work: follow the exact original questionnaire view and answer references in Main's task prompt. Read its actual frozen subjects, perform your independent review/investigation and save the professional answer at the supplied path. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate or receive work. Claude Code owns execution/resume; no Team, platform ID lookup, workspace launcher or generic report is required. Real domain approval and independence remain. Unrelated native work follows its own task; do not infer a formal responsibility from your role."}})
@@ -173,7 +177,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		return true, 0
 	}
 	if sourceErr == nil {
-		service, err := submission.NewReadOnly(root)
+		service, err := submission.NewContext(contextForHook(in), root, true)
 		if err != nil {
 			sourceErr = err
 		} else {

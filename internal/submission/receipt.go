@@ -48,6 +48,7 @@ func (s *Service) Receipt(owner, path string) (Receipt, error) {
 }
 
 func (s *Service) ReceiptContext(ctx context.Context, owner, path string) (Receipt, error) {
+	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -270,6 +271,7 @@ func receipt(root string, snapshot runtime.Snapshot, p workpacket.Packet, r runt
 // consume drafts or infer authorization, and never asks the author to retry
 // work that already has a durable reception.
 func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Receipt, error) {
+	s = s.WithContext(ctx)
 	if limit < 1 || limit > 2 {
 		return nil, fmt.Errorf("S5 recovery limit must be 1 or 2")
 	}
