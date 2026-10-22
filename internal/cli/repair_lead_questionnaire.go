@@ -17,6 +17,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // stageRepairLeadQuestionnaireContext gives Main or the dispatched independent
@@ -144,6 +145,7 @@ func repairLeadAnswerHelp(root string, state map[string]any, targeted bool) stri
 	b.WriteString("\nFill professional fields only; system supplies machine bindings, IDs, times and known artifacts. Examples show shape, not executed evidence or a suggested verdict.\n")
 	if targeted {
 		b.WriteString(`Targeted fields: assertion_results=[{"assertion_id":"<supplied slot>","result":"blocked","evidence_refs":["logs/actual-blocker.txt"]}]; result=pass|fail|blocked|scope_changed. Record actual observations and evidence for every necessary supplied Contract assertion; identify each unfinished observation or blocker honestly. failure_class for a non-pass result is fail_same_cause|fail_new_cause|blocked|scope_changed|stale; keep it empty for pass. Assertion result choices are pass|fail|blocked. continuity_reason and scope_compliance are optional legacy metadata, not additional required reports. Select only actual results and real evidence locations; no unsupported PASS or fabricated observation.`)
+		b.WriteString(repairStopConditionsContext(root, state))
 	} else {
 		b.WriteString(`This is the original flat ChangeImpact request: professional fields stay at the top level, without an answer wrapper or invented questions. Correct an unreceived draft at its exact supplied path; never overwrite a registered immutable artifact. Impact fields: change_types=[requirement|design|contract|task|implementation|test|configuration|database|dependency|documentation_only]; escalation_level=assignment|workgroup|review_round|baseline; invalidated_evidence_ids, superseded_evidence_ids and retained_evidence_ids are references to actual evidence (or []). decisions is an array of complete objects. source_id identifies the actual change/source being analyzed (such as the supplied Case or changed artifact); target_id identifies its affected consumer, assertion or evidence; relation describes that dependency, not the disposition. decision is invalidate|supersede|retain|reverify. rule_id must match IM-[A-Z0-9-]+; responsibility_id is supplied by the system or null. Example shape: {"source_id":"<actual source>","target_id":"<actual affected target>","relation":"invalidates","rule_id":"IM-DEPENDENCY","decision":"reverify","responsibility_id":null,"scope":["<actual changed path>"],"rationale":"<actual dependency and disposition basis>","recovery_evidence":["test://actual-run"]}. Do not copy placeholders or invent evidence. Use an IM- rule label for the actual dependency judgment; it needs no extra registration. Cite real evidence from the supplied sources. An accepted whole batch can have changed_artifacts=[] and change_types=[]; decisions must still explain the actual Case/Contract impact and retained or required observations. Independent Contract reverification and fresh S7 remain necessary.`)
 	}
@@ -224,6 +226,33 @@ func repairLeadAnswerHelp(root string, state map[string]any, targeted bool) stri
 			fmt.Fprintf(&b, "%s-%d: %s#/%s/%d = %s\n", group.prefix, index+1, contractPath, group.field, index, assertion)
 		}
 	}
+	return b.String()
+}
+
+// Conditions remain professional Contract text, not another mandatory answer
+// array or machine assertion slot. Read the original pinned source once.
+func repairStopConditionsContext(root string, state map[string]any) string {
+	pointer := repairPointerCLI(state)
+	ref := repair.ArtifactRef{Path: stringValue(pointer["contract_ref"]), SHA256: stringValue(pointer["contract_sha256"])}
+	var contract struct {
+		Conditions []string `json:"stop_escalation_conditions"`
+	}
+	body, err := workpacket.ReadFile(root, ref.Path, 2<<20)
+	if err == nil && ref.SHA256 != "" && workpacket.Digest(body) != ref.SHA256 {
+		err = fmt.Errorf("approved Contract source changed at %s", ref.Path)
+	}
+	if err == nil {
+		err = json.Unmarshal(body, &contract)
+	}
+	if err != nil {
+		return "\nApproved Contract stop/escalation conditions unavailable; Main restores the original source, never invents conditions or asks the verifier to rewrite valid work: " + err.Error() + "\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nApproved Contract stop/escalation conditions from %s:\n", resolveRootPath(root, ref.Path))
+	for _, condition := range contract.Conditions {
+		fmt.Fprintf(&b, "- %s\n", condition)
+	}
+	b.WriteString("Evaluate these original conditions alongside the necessary assertions. If observations require scope/Contract changes, report scope_changed with actual evidence through the original Targeted result for S8 reassessment/approval; environmental inability is blocked. Explain the triggered condition in the existing result/reason/evidence, never hide it as residual risk or manufacture PASS. No condition IDs, Contract hashes or second assessment array need to be authored.\n")
 	return b.String()
 }
 

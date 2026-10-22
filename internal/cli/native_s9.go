@@ -164,7 +164,9 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		}()
 	}
 	if in.Event == "SubagentStart" {
-		_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": "Follow the exact S9 professional brief or independent Targeted answer reference in your native prompt. Save professional artifacts and continue without activation or per-tool receipts. Return those exact references. Main owns integration/checks; actual native execution and resume belong to Claude Code. Unrelated native work keeps its own task."}})
+		context := "Follow the exact S9 professional brief or independent Targeted answer reference in your native prompt. Save professional artifacts and continue without activation or per-tool receipts. Return those exact references. Main owns integration/checks; actual native execution and resume belong to Claude Code. Unrelated native work keeps its own task."
+		context += nativeS9TargetedStartContext(root, snap.State, in)
+		_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": context}})
 		return true, 0
 	}
 	packets := nativeS9PlanPackets(root, snap.State)
@@ -223,6 +225,30 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		return true, nativeStopFailure("Native S9", in.StopHookActive, err, diagnostic)
 	}
 	return true, 0
+}
+
+func nativeS9TargetedStartContext(root string, state map[string]any, in policy.Input) string {
+	status := stringValue(repairPointerCLI(state)["status"])
+	if status != "targeted_reverification" && status != "blocked" {
+		return ""
+	}
+	selections, err := repairTargetedSelections(root, state)
+	if err != nil {
+		return ""
+	}
+	var paths []string
+	for _, selection := range selections {
+		if path, err := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID); err == nil {
+			paths = append(paths, path)
+		}
+	}
+	text := nativeReviewTaskText(in, paths)
+	for _, path := range paths {
+		if nativeS6ExactReference(text, path) {
+			return repairStopConditionsContext(root, state)
+		}
+	}
+	return ""
 }
 
 func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, p workpacket.RepairPlanReportPacket, text string, diagnostic io.Writer) error {

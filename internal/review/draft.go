@@ -18,9 +18,9 @@ type taskDoc struct {
 // (L3-S7 §4.2 claim generation order, planner assist): every
 // current-generation TASK yields a delivery traceability claim; the union of
 // Builder-changed paths yields one independently dispatchable QA Assignment
-// per baseline focus; the E2E state is derived from the current CASE→spec
-// inventory (not_applicable only when the bound REQ explicitly has no UI
-// impact). The draft is still a scaffold when no stable CASE input exists —
+// per baseline focus; CASE/script discovery offers candidates while Main
+// chooses actual reuse. A no-UI REQ produces a sourced N/A candidate. The
+// draft is still a scaffold when no stable CASE input exists —
 // its remaining TODO markers are intentionally rejected by registration.
 func DraftPlan(state map[string]any, round int) (*Plan, []string) {
 	return draftPlanForRoot("", state, round)

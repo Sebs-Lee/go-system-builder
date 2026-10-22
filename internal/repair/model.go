@@ -34,16 +34,17 @@ type RepairUnit struct {
 }
 
 type ApprovedContract struct {
-	ContractID             string
-	CaseID                 string
-	Revision               int
-	Status                 string
-	SourceFindingIDs       []string
-	Units                  []RepairUnit
-	ProspectiveScope       []string
-	ForbiddenScope         []string
-	CompatibilityMigration string
-	Ref                    ContractRef
+	ContractID               string
+	CaseID                   string
+	Revision                 int
+	Status                   string
+	SourceFindingIDs         []string
+	Units                    []RepairUnit
+	ProspectiveScope         []string
+	ForbiddenScope           []string
+	CompatibilityMigration   string
+	StopEscalationConditions []string
+	Ref                      ContractRef
 }
 
 type SessionRequest struct {

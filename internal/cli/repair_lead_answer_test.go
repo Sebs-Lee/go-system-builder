@@ -105,7 +105,7 @@ func TestS9RepairLeadAnswerShapeUsesActualSources(t *testing.T) {
 	result := "results/accepted.json"
 	second := "results/accepted-second.json"
 	evidence := ".claude/evidence/observed.json"
-	writeRepairLeadFile(t, root, contract, `{"symptom_assertions":["actual symptom text"],"root_invariant_assertions":["actual root text"],"detection_gap_assertions":[{"description":"actual gap text"}]}`)
+	writeRepairLeadFile(t, root, contract, `{"symptom_assertions":["actual symptom text"],"root_invariant_assertions":["actual root text"],"detection_gap_assertions":[{"description":"actual gap text"}],"stop_escalation_conditions":["consumer scope exceeds the approved Contract"]}`)
 	writeRepairLeadFile(t, root, result, `{"checks":[{"evidence_refs":["test://actual-original-check"]}]}`)
 	writeRepairLeadFile(t, root, second, `{"checks":[{"evidence_refs":["test://second-original-check"]}]}`)
 	state := map[string]any{
@@ -132,6 +132,7 @@ func TestS9RepairLeadAnswerShapeUsesActualSources(t *testing.T) {
 		var fields []string
 		if targeted {
 			fields = []string{"continuity_reason and scope_compliance are optional legacy metadata", "assertion_results", "assertion_id", "evidence_refs", "result=pass|fail|blocked|scope_changed", "fail_same_cause|fail_new_cause|blocked|scope_changed|stale"}
+			fields = append(fields, "consumer scope exceeds the approved Contract", "environmental inability is blocked", "No condition IDs")
 		} else {
 			fields = []string{"change_types", "source_id", "target_id", "relation", "rule_id", "decision", "responsibility_id", "scope", "rationale", "recovery_evidence", "IM-[A-Z0-9-]+", "invalidate|supersede|retain|reverify", "invalidated_evidence_ids", "superseded_evidence_ids", "retained_evidence_ids"}
 		}

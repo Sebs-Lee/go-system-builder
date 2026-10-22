@@ -328,3 +328,7 @@ Hook listening adds no tool/identity/scope ACL; actual checks, independence,
 actual pending user decisions under their existing authorization and the original
 Writer’s atomicity/CAS/idempotency remain. Candidate, Main integration and Final
 are distinct real steps; removing duplicate proof does not remove integration.
+
+## Contract stop conditions in independent verification
+
+Read the original approved Contract stop/escalation conditions in the supplied Targeted context. Judge them against actual observations alongside the necessary symptom/root/gap assertions. Record a triggered scope or Contract change as `scope_changed` with real reason/evidence through the original S8 reassessment and approval route; an environmental inability is `blocked`. Residual-risk wording cannot replace required authority or justify PASS. Use the existing Targeted fields; do not author stop IDs, hashes or another assessment array. Missing or changed Contract material belongs to Main preparation.

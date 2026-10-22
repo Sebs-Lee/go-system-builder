@@ -49,15 +49,16 @@ func ResolveWorkspaceAuthority(root string, state map[string]any, id, owner stri
 	}
 	contractRef := ContractRef{Path: stringField(p["contract_ref"]), SHA256: stringField(p["contract_sha256"])}
 	var contract struct {
-		ContractID             string       `json:"repair_contract_id"`
-		CaseID                 string       `json:"case_id"`
-		Revision               int          `json:"revision"`
-		Status                 string       `json:"status"`
-		SourceFindingIDs       []string     `json:"source_finding_ids"`
-		Units                  []RepairUnit `json:"repair_units"`
-		ProspectiveScope       []string     `json:"prospective_scope"`
-		ForbiddenScope         []string     `json:"forbidden_scope"`
-		CompatibilityMigration string       `json:"compatibility_migration"`
+		ContractID               string       `json:"repair_contract_id"`
+		CaseID                   string       `json:"case_id"`
+		Revision                 int          `json:"revision"`
+		Status                   string       `json:"status"`
+		SourceFindingIDs         []string     `json:"source_finding_ids"`
+		Units                    []RepairUnit `json:"repair_units"`
+		ProspectiveScope         []string     `json:"prospective_scope"`
+		ForbiddenScope           []string     `json:"forbidden_scope"`
+		CompatibilityMigration   string       `json:"compatibility_migration"`
+		StopEscalationConditions []string     `json:"stop_escalation_conditions"`
 	}
 	if err := read(contractRef.Path, &contract); err != nil {
 		return out, err
@@ -65,7 +66,7 @@ func ResolveWorkspaceAuthority(root string, state map[string]any, id, owner stri
 	out.Contract = ApprovedContract{ContractID: contract.ContractID, CaseID: contract.CaseID,
 		Revision: contract.Revision, Status: contract.Status, SourceFindingIDs: contract.SourceFindingIDs,
 		Units: contract.Units, ProspectiveScope: contract.ProspectiveScope, ForbiddenScope: contract.ForbiddenScope,
-		CompatibilityMigration: contract.CompatibilityMigration, Ref: contractRef}
+		CompatibilityMigration: contract.CompatibilityMigration, StopEscalationConditions: append([]string(nil), contract.StopEscalationConditions...), Ref: contractRef}
 	sessionPath := stringField(p["path"])
 	if err := read(sessionPath, &out.Session); err != nil {
 		return out, err

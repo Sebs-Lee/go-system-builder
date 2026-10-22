@@ -122,6 +122,6 @@ func reviewPlanGuide(notes []string) string {
 	for _, note := range notes {
 		b.WriteString("- " + note + "\n")
 	}
-	b.WriteString("\nChoose the existing E2E state from actual circumstances; unresolved discovery does not require rebuilding scripts. Select exact cases.json#CASE references and actual script paths; the original receiver fills omitted asset IDs/digests. Supply real selector, route and environment facts rather than generated labels. Keep cross-module consumers in the professional scope.\n")
+	b.WriteString("\nChoose the existing E2E state from actual circumstances; unresolved discovery does not require rebuilding scripts. Select exact cases.json#CASE references and actual script paths; the original receiver fills omitted asset IDs/digests. Supply real selector, route and environment facts rather than generated labels.\n\nREQ prototype links bound automatic discovery hints, not the professional regression boundary. Follow the actual changed providers and consumers through approved architecture/contracts, shared models, API/event/auth/configuration and journey/data paths. When removing a dependency or changing its owner, inspect the previously known consumers as well. Use existing declared sources and identify missing relationship/environment material for Main; no mandatory module graph or whole-project fallback is implied. Explain scope from actual dependencies and keep each scenario's exact source.\n")
 	return b.String()
 }

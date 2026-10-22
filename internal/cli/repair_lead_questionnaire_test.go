@@ -130,6 +130,18 @@ func TestS9RepairLeadTargetedPathUsesRegisteredIndependentAssignment(t *testing.
 	if err != nil || legacyDraft.ReverificationID == "" || legacyDraft.OriginalAssignmentID != assignmentID || legacyDraft.PerformingAssignmentID != verifierID || legacyDraft.ImpactID != impact.ImpactID {
 		t.Fatalf("original Targeted DTO lost its current source responsibility: %+v err=%v", legacyDraft, err)
 	}
+	if legacyDraft.Result != "" {
+		t.Fatal("independent verdict was prefilled")
+	}
+	start := policy.Input{Event: "SubagentStart", AgentID: "opaque-verifier", LastAssistantMessage: want}
+	context := nativeS9TargetedStartContext(root, state, start)
+	if !strings.Contains(context, "the approved scope expands") || !strings.Contains(context, "scope_changed") {
+		t.Fatalf("native Targeted start lost original stop conditions: %s", context)
+	}
+	start.LastAssistantMessage = "unrelated native work"
+	if got := nativeS9TargetedStartContext(root, state, start); got != "" {
+		t.Fatalf("unrelated actor acquired guessed responsibility: %s", got)
+	}
 	repeatedPath, repeated, err := prepareRepairTargetedQuestionnaire(root, state, selections[0])
 	if err != nil || repeatedPath != want || repeated.ReverificationID != legacyDraft.ReverificationID {
 		t.Fatalf("same actual Targeted responsibility changed identity on retry: %+v %v", repeated, err)
