@@ -255,7 +255,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 					continue
 				}
 				base := filepath.Base(cp)
-				if filepath.Dir(cp) != projectlayout.Contracts || !strings.HasSuffix(base, ".md") || !(strings.HasPrefix(base, "FE-") || strings.HasPrefix(base, "BE-") || strings.HasPrefix(base, "SYNC-")) {
+				if filepath.ToSlash(filepath.Dir(cp)) != projectlayout.Contracts || !strings.HasSuffix(base, ".md") || !(strings.HasPrefix(base, "FE-") || strings.HasPrefix(base, "BE-") || strings.HasPrefix(base, "SYNC-")) {
 					fail(fmt.Errorf("consumer must be a FE/BE/SYNC contract: %s", cp))
 					continue
 				}

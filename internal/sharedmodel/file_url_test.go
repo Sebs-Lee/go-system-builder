@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/fileview"
@@ -35,5 +36,19 @@ func TestNativeSchemaFileURLsPreservePathsAndLocalReferences(t *testing.T) {
 	reading := "## Document Manifest\n| 1 | model | MODEL-1 | [read](../../architecture/data-model/orders.schema.json#/$defs/request) | all | request | required |"
 	if problems := Reading(root, "docs/dev/tasks/TASK-1.md", reading, files); len(problems) != 0 {
 		t.Fatalf("native schema reading failed: %v", problems)
+	}
+}
+
+func TestSharedModelConsumerMustRemainInContractDirectory(t *testing.T) {
+	root := pilot(t)
+	const index = "docs/dev/contracts/CONTRACTS-001.md"
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(index)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, index, strings.ReplaceAll(string(data), "[BE](BE-001.md)", "[BE](../other/BE-001.md)"))
+	result := Check(root, fileview.Disk{Root: root})
+	if !strings.Contains(strings.Join(result.Problems, "\n"), "consumer must be a FE/BE/SYNC contract: docs/dev/other/BE-001.md") {
+		t.Fatalf("consumer outside the canonical directory was accepted: %+v", result)
 	}
 }
