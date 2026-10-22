@@ -97,7 +97,7 @@ type EvidenceReference struct {
 
 // RouteRequest records the one Case-level disposition. s9_repair requires a
 // closed causal chain; investigate_more is the deterministic fallback while
-// any source Finding remains unexplained or a result is inconclusive.
+// any source Finding remains unexplained or a current question is unanswered.
 type RouteRequest struct {
 	ExpectedRevision               int
 	ExpectedCaseRevision           int
@@ -172,22 +172,12 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 			}
 			refsToValidate := evidenceRefs
 			if stringField(document["observation_batch_id"]) == "" {
-				// A human intake Case carries the actual consumed decision as
-				// source material, not as a fabricated Finding or execution receipt.
-				boundaries := stringSliceValues(document["failure_boundary_refs"])
-				refsToValidate = nil
-				for _, ref := range evidenceRefs {
-					matched := false
-					for _, boundary := range boundaries {
-						if ref == boundary {
-							matched = true
-							break
-						}
-					}
-					if !matched {
-						refsToValidate = append(refsToValidate, ref)
-					}
+				source, err := humanCaseSource(root, snapshot.State, document)
+				if err != nil {
+					return err
 				}
+				refsToValidate = withoutHumanSource(evidenceRefs, source)
+
 			}
 			if len(refsToValidate) > 0 {
 				if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{
@@ -209,7 +199,7 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 			}
 			for _, raw := range hypotheses {
 				if stringField(raw["hypothesis_id"]) == request.HypothesisID {
-					return fmt.Errorf("hypothesis %q is already registered; revise the Case or submit its result", request.HypothesisID)
+					return fmt.Errorf("hypothesis %q is already registered; keep its original question and result, and add a distinct falsifiable question for further work", request.HypothesisID)
 				}
 			}
 			hypotheses = append(hypotheses, map[string]any{
@@ -258,13 +248,30 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	if err := validateHypothesisSubmissionBinding(snapshot.State, request); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	if err := ValidateEvidenceRefs(evidenceRefs, EvidenceAttestationOptions{
-		State:              snapshot.State,
-		Root:               root,
-		RequireSHA:         true,
-		RequireReviewRound: currentReviewRound(snapshot.State),
-	}); err != nil {
-		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", err)
+	refsToValidate := evidenceRefs
+	if stringField(s8Map(s8Map(snapshot.State["review"])["investigation"])["observation_batch_id"]) == "" {
+		current, err := readCurrentInvestigationCase(root, snapshot.State)
+		if err != nil {
+			return runtime.Snapshot{}, err
+		}
+		if stringField(current.document["observation_batch_id"]) == "" {
+			source, err := humanCaseSource(root, snapshot.State, current.document)
+			if err != nil {
+				return runtime.Snapshot{}, err
+			}
+			refsToValidate = withoutHumanSource(evidenceRefs, source)
+		}
+	}
+
+	if len(refsToValidate) > 0 {
+		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{
+			State:              snapshot.State,
+			Root:               root,
+			RequireSHA:         true,
+			RequireReviewRound: currentReviewRound(snapshot.State),
+		}); err != nil {
+			return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "HypothesisResult.evidence_refs: %v", err)
+		}
 	}
 	boundaryRefs, err := nonEmptyStrings(request.SourceBoundaryRefs, "HypothesisResult.source_boundary_refs")
 	if err != nil {
@@ -322,7 +329,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 			}
 			for _, result := range results {
 				if stringField(result["hypothesis_id"]) == request.HypothesisID && stringField(result["assignment_id"]) == request.AssignmentID {
-					return fmt.Errorf("HypothesisResult for %s/%s already exists; submit a new assignment or revise the Case", request.HypothesisID, request.AssignmentID)
+					return fmt.Errorf("HypothesisResult for %s/%s already exists; preserve that accepted result and receipt; Main adds a distinct question for further investigation", request.HypothesisID, request.AssignmentID)
 				}
 			}
 			resultRow := map[string]any{
@@ -368,7 +375,6 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 			}
 			document["hypotheses"] = hypothesesToAny(hypotheses)
 			document["hypothesis_results"] = hypothesesToAny(results)
-			document["unexplained_finding_ids"] = stringSliceAny(difference(caseIDs, supportedExplainedFindingIDs(document)))
 			if len(request.NewHypotheses) > 0 {
 				registeredIDs := make(map[string]struct{}, len(hypotheses))
 				registeredAssignments := make(map[string]struct{}, len(hypotheses))
@@ -590,17 +596,18 @@ type canonicalCaseReference struct {
 }
 
 // routeHasNewEvidence compares the current immutable Case board with the
-// last investigate_more route. The freshness gate is content-based, not
-// count-based (S8-7): the route history records a fingerprint of the
-// evidence_ref set at the checkpoint and a new route is allowed only when a
-// new evidence_ref (hash-differentiated content) has appeared since.
+// last investigate_more route. A new evidence ref or an actual newly accepted
+// result can advance that checkpoint. Adding questions or editing the route
+// reason alone cannot turn the same evidence into new observed work.
 func routeHasNewEvidence(document map[string]any) bool {
 	history, _ := objectArrayAllowEmpty(document["route_history"], "InvestigationCase.route_history")
 	lastFingerprint := ""
+	previousResultCount := 0
 	found := false
 	for index := len(history) - 1; index >= 0; index-- {
 		if stringField(history[index]["to"]) == "investigate_more" {
 			lastFingerprint = stringField(history[index]["evidence_fingerprint"])
+			previousResultCount = integerValueOrZero(history[index]["hypothesis_result_count"])
 			found = true
 			break
 		}
@@ -608,7 +615,22 @@ func routeHasNewEvidence(document map[string]any) bool {
 	if !found {
 		return false
 	}
-	return evidenceFingerprint(document) != lastFingerprint
+	if evidenceFingerprint(document) != lastFingerprint {
+		return true
+	}
+	all, _ := objectArrayAllowEmpty(document["hypothesis_results"], "InvestigationCase.hypothesis_results")
+	if previousResultCount < 0 || previousResultCount >= len(all) {
+		return false
+	}
+	current, _ := currentHypothesisResults(document)
+	for _, appended := range all[previousResultCount:] {
+		for _, result := range current {
+			if hypothesisResultIdentity(appended) == hypothesisResultIdentity(result) {
+				return true // Original results append once per registered tuple.
+			}
+		}
+	}
+	return false
 }
 
 // evidenceFingerprint hashes the sorted set of evidence refs carried by the
@@ -780,6 +802,10 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	} else if err := exactFindingSetWithDetails(caseIDs, nextIDs); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "source Finding exact set is immutable: %v", err)
 	}
+	// This existing field is a projection of the current questions/results,
+	// never a second authority that can retain historical support after a
+	// legitimate Case revision changes the current responsibility.
+	nextDocument["unexplained_finding_ids"] = stringSliceAny(difference(caseIDs, supportedExplainedFindingIDs(nextDocument)))
 	// RC-18 S8-H3: the Case pins the digest of the S7 frozen baseline it was
 	// ingested from. Recompute that digest on every revision so a subject
 	// tampering between intake and investigation becomes observable instead of
@@ -999,8 +1025,7 @@ func driftWarningPointer(driftWarning string) any {
 }
 
 func deterministicCaseRoute(document map[string]any) string {
-	unexplained, _ := stringSlice(document["unexplained_finding_ids"], "unexplained_finding_ids")
-	if len(unexplained) > 0 || hasInconclusiveResult(document) {
+	if requireCurrentHypothesisResults(document) != nil {
 		return "investigate_more"
 	}
 	caseIDs, _ := stringSlice(document["source_finding_ids"], "source_finding_ids")
@@ -1043,6 +1068,9 @@ func validateRoute(route string, document map[string]any, request RouteRequest, 
 // causalClosureDefect reports the first missing S8 causal-material element.
 // It returns nil when the Case document satisfies the closure contract.
 func causalClosureDefect(document map[string]any) error {
+	if err := requireCurrentHypothesisResults(document); err != nil {
+		return err
+	}
 	caseIDs, _ := stringSlice(document["source_finding_ids"], "source_finding_ids")
 	explained := supportedExplainedFindingIDs(document)
 	if len(difference(caseIDs, explained)) != 0 {
@@ -1160,7 +1188,7 @@ func retireSupersededRepairPointer(state map[string]any, caseID string) error {
 }
 
 func supportedExplainedFindingIDs(document map[string]any) []string {
-	results, _ := objectArray(document["hypothesis_results"], "hypothesis_results")
+	results, _ := currentHypothesisResults(document)
 	var ids []string
 	for _, result := range results {
 		if stringField(result["result"]) == "supported" {
@@ -1189,14 +1217,44 @@ func supportedExplainedFindingIDs(document map[string]any) []string {
 	return sortedStrings(out)
 }
 
-func hasInconclusiveResult(document map[string]any) bool {
-	results, _ := objectArray(document["hypothesis_results"], "hypothesis_results")
+type hypothesisResultKey struct{ hypothesis, assignment string }
+
+func hypothesisResultIdentity(row map[string]any) hypothesisResultKey {
+	return hypothesisResultKey{stringField(row["hypothesis_id"]), stringField(row["assignment_id"])}
+}
+
+// Match only the unique result for each exact current question/Assignment.
+// Historical rows remain readable, but cannot answer a different responsibility.
+// An inconclusive row is received work; it supplies neither support nor refutation.
+func currentHypothesisResults(document map[string]any) (effective []map[string]any, pending []string) {
+	hypotheses, _ := objectArrayAllowEmpty(document["hypotheses"], "InvestigationCase.hypotheses")
+	results, _ := objectArrayAllowEmpty(document["hypothesis_results"], "InvestigationCase.hypothesis_results")
+	byQuestion := make(map[hypothesisResultKey][]map[string]any, len(results))
 	for _, result := range results {
-		if stringField(result["result"]) == "inconclusive" {
-			return true
-		}
+		byQuestion[hypothesisResultIdentity(result)] = append(byQuestion[hypothesisResultIdentity(result)], result)
 	}
-	return false
+	identities := make(map[string]int, len(hypotheses))
+	for _, hypothesis := range hypotheses {
+		identities[stringField(hypothesis["hypothesis_id"])]++
+	}
+	for _, hypothesis := range hypotheses {
+		key := hypothesisResultIdentity(hypothesis)
+		matched := byQuestion[key]
+		if key.hypothesis == "" || key.assignment == "" || identities[key.hypothesis] != 1 || len(matched) != 1 {
+			pending = append(pending, key.hypothesis)
+			continue
+		}
+		effective = append(effective, matched[0])
+	}
+	return effective, sortedStrings(pending)
+}
+
+func requireCurrentHypothesisResults(document map[string]any) error {
+	_, pending := currentHypothesisResults(document)
+	if len(pending) != 0 {
+		return fmt.Errorf("current hypotheses have no unique accepted result: %v; Main must finish those exact questions before repair, or choose the original non-repair disposition", pending)
+	}
+	return nil
 }
 
 func validateNewHypothesis(hypothesis map[string]any, caseIDs []string) error {
@@ -1290,7 +1348,7 @@ func validateDetectionGap(detectionGap map[string]any) error {
 // It is satisfied either by at least one refuted hypothesis result or by the
 // explicit no_competing_hypothesis declaration on the Case.
 func competingHypothesisState(document map[string]any) (refuted int, declaredNone bool) {
-	results, _ := objectArrayAllowEmpty(document["hypothesis_results"], "hypothesis_results")
+	results, _ := currentHypothesisResults(document)
 	for _, result := range results {
 		if stringField(result["result"]) == "refuted" {
 			refuted++
@@ -1316,6 +1374,9 @@ func requireCompetingHypothesisClosure(document map[string]any) error {
 // validateCausalClosure composes the structural S8 causal-material checks
 // shared by the deterministic s9_repair route and Contract approval.
 func validateCausalClosure(document map[string]any) error {
+	if err := requireCurrentHypothesisResults(document); err != nil {
+		return err
+	}
 	if err := requireCompetingHypothesisClosure(document); err != nil {
 		return err
 	}

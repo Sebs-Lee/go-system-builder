@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/cli"
-	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
@@ -20,7 +19,7 @@ import (
 // This denial-only fixture uses the original S9 approval/dispatch/PlanReport
 // and workspace prepare paths. Its authored red command is mechanical test
 // input; it is not a claim that a model or Worker completed professional work.
-func TestS9WorkerPrepareFailsClosedWhenOriginalIsolationProbeIsUnavailable(t *testing.T) {
+func TestS9WorkerIsolationPreflightRequiresExplicitChecksNotProfessionalRedChecks(t *testing.T) {
 	fixture, plan, owners := prepareS9RepairPlanReportHookFixtureWithSetup(t, installS9WorkerBootstrapInputs)
 	if len(plan.Assignments) != 2 || len(owners) != 2 {
 		t.Fatalf("original S9 fixture assignments/owners = %d/%d, want two", len(plan.Assignments), len(owners))
@@ -87,114 +86,42 @@ func TestS9WorkerPrepareFailsClosedWhenOriginalIsolationProbeIsUnavailable(t *te
 	}
 	t.Logf("original isolation capability probe refused: %v", probeErr)
 
-	// Public prepare may stage ignored Main-side assignment context before its
-	// preflight. The contract starts its zero-write assertion at the Runtime
-	// boundary: no preparing/ready CAS, Worker execution/worktree/bootstrap, or
-	// product write may result from a denied isolation capability.
+	// The configured execution is denied before any Writer, worktree or product
+	// mutation. A professional precheck is not implicit execution configuration.
 	stateBefore := mustRead(t, fixture.statePath)
 	journalBefore := mustRead(t, fixture.journalPath)
 	headBefore, err := workspace.Git(context.Background(), fixture.root, "rev-parse", "HEAD")
-	if err != nil || headBefore == "" {
-		t.Fatalf("read Main HEAD before denied prepare: head=%q err=%v", headBefore, err)
-	}
-	productStatusBefore, err := workspace.GitBytes(context.Background(), fixture.root,
-		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).claude/**")
 	if err != nil {
-		t.Fatalf("capture product-tree status before denied prepare: %v", err)
+		t.Fatal(err)
 	}
-	productPath := filepath.Join(fixture.root, "internal", "api", "payload.go")
-	if _, err := os.Lstat(productPath); !os.IsNotExist(err) {
-		t.Fatalf("red-check product file should still be absent before prepare; stat err=%v", err)
+	if err := registry.PreflightChecks(context.Background(), probeExecution, fixture.root); err == nil {
+		t.Fatal("explicitly configured Worker checks bypassed unavailable isolation")
 	}
-	if packets, err := runtime.RepairResultPackets(bound.State); err != nil || len(packets) != 0 {
-		t.Fatalf("unexpected S9 candidate/result packet before prepare: count=%d err=%v", len(packets), err)
+	assertS9RuntimeBytesUnchanged(t, fixture, stateBefore, journalBefore, "denied actual Worker check preflight")
+	if head, err := workspace.Git(context.Background(), fixture.root, "rev-parse", "HEAD"); err != nil || head != headBefore {
+		t.Fatalf("denied preflight changed Main HEAD: %q %v", head, err)
 	}
-
-	// Plan is local-only and gives the precise worker path the original CLI
-	// would materialize after successful preflight. It does not register an
-	// Execution or create a worktree.
-	loaded, err := hookctx.LoadFull(fixture.root, owner.agentID)
-	if err != nil {
-		t.Fatalf("load original registered S9 owner context: %v", err)
-	}
-	var assignment *hookctx.AssignmentContext
-	for i := range loaded.Assignments {
-		candidate := &loaded.Assignments[i]
-		if candidate.AssignmentID == owner.manifestAssignmentID && candidate.OwnerAgentID == owner.agentID {
-			assignment = candidate
-			break
-		}
-	}
-	if assignment == nil {
-		t.Fatalf("original Hook context omitted registered S9 owner %s", owner.agentID)
-	}
-	inputs := []string{"docs/control/loop-definition.json", "docs/control/hook-policy.json"}
-	for _, ref := range []string{assignment.ManifestRef, assignment.AgentDefinitionRef} {
-		path, _, _ := strings.Cut(ref, "#")
-		if path != "" {
-			inputs = append(inputs, path)
-		}
-	}
-	inputs = append(inputs, authority.Inputs...)
-	planned, err := registry.Plan(context.Background(), bound.State, owner.manifestAssignmentID, owner.agentID,
-		authority.Assignment.Scope, checks, inputs)
-	if err != nil {
-		t.Fatalf("construct side-effect-free original S9 prepare plan: %v", err)
-	}
-	if planned.Path == "" {
-		t.Fatal("original S9 prepare plan has no Worker worktree path")
-	}
-	if _, err := os.Lstat(planned.Path); !os.IsNotExist(err) {
-		t.Fatalf("Worker worktree exists before the original preflight gate: path=%s err=%v", planned.Path, err)
-	}
-
 	var prepareOut, prepareErr bytes.Buffer
 	code := cli.Run([]string{"runtime", "workspace", "prepare", "--root", fixture.root,
 		"--assignment", owner.manifestAssignmentID, "--agent", owner.agentID, "--check-location", "worker"},
 		nil, &prepareOut, &prepareErr)
-	if code == 0 {
-		t.Fatalf("original Worker prepare unexpectedly passed an unavailable-isolation host gate: stdout=%s stderr=%s", prepareOut.String(), prepareErr.String())
+	if code != 0 {
+		t.Fatalf("prepare without configured commands must not invent a Worker check: %d %s", code, prepareErr.String())
 	}
-	combined := prepareErr.String() + prepareOut.String()
-	if !strings.Contains(combined, "Worker check capability unavailable") {
-		t.Fatalf("original Worker prepare did not preserve its named capability error: code=%d stdout=%s stderr=%s; probe=%v", code, prepareOut.String(), prepareErr.String(), probeErr)
+	var response struct {
+		Execution workspace.Execution `json:"execution"`
 	}
-	t.Logf("original S9 Worker prepare refused at capability gate: %s", combined)
-	if !strings.Contains(combined, "Bubblewrap") && !strings.Contains(combined, "user namespaces") && !strings.Contains(combined, "isolated Worker checks are unavailable") {
-		t.Fatalf("original prepare error is not an explicit isolation capability refusal: %s", combined)
+	if err := json.Unmarshal(prepareOut.Bytes(), &response); err != nil {
+		t.Fatal(err)
 	}
-	if !bytes.Equal(stateBefore, mustRead(t, fixture.statePath)) || !bytes.Equal(journalBefore, mustRead(t, fixture.journalPath)) {
-		t.Fatal("denied Worker prepare changed the bound Runtime state or journal")
+	execution := response.Execution
+	if execution.AssignmentID != owner.manifestAssignmentID || len(execution.Checks) != 0 || len(execution.CheckProfiles) != 0 || len(execution.ToolCheckReceipts) != 0 || len(execution.OwnedCheckReceipts) != 0 {
+		t.Fatalf("professional red checks became configured or allegedly executed checks: %+v", execution)
 	}
-	if _, err := os.Lstat(planned.Path); !os.IsNotExist(err) {
-		t.Fatalf("denied Worker prepare materialized a worktree: path=%s err=%v", planned.Path, err)
+	if _, err := os.Stat(filepath.Join(execution.Path, "internal/api/payload.go")); !os.IsNotExist(err) {
+		t.Fatalf("prepare performed product work: %v", err)
 	}
-	if _, err := os.Lstat(productPath); !os.IsNotExist(err) {
-		t.Fatalf("denied Worker prepare changed red-check product content; stat err=%v", err)
-	}
-	productStatusAfter, err := workspace.GitBytes(context.Background(), fixture.root,
-		"status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ".", ":(exclude).claude/**")
-	if err != nil || !bytes.Equal(productStatusBefore, productStatusAfter) {
-		t.Fatalf("denied Worker prepare changed product-tree status: err=%v before=%q after=%q", err, productStatusBefore, productStatusAfter)
-	}
-	after := currentS9Snapshot(t, fixture)
-	afterRegistry, err := workspace.Decode(after.State)
-	if err != nil || afterRegistry == nil {
-		t.Fatalf("decode workspace after denied prepare: registry=%v err=%v", afterRegistry, err)
-	}
-	if _, exists := afterRegistry.Executions[owner.manifestAssignmentID]; exists {
-		t.Fatalf("denied Worker prepare published an Execution lease: %+v", afterRegistry.Executions[owner.manifestAssignmentID])
-	}
-	if packets, err := runtime.RepairResultPackets(after.State); err != nil || len(packets) != 0 {
-		t.Fatalf("denied Worker prepare created a candidate/result packet: count=%d err=%v", len(packets), err)
-	}
-	if after.Revision != bound.Revision {
-		t.Fatalf("denied Worker prepare Runtime revision=%d, want unchanged bound revision %d", after.Revision, bound.Revision)
-	}
-	if afterHead, err := workspace.Git(context.Background(), fixture.root, "rev-parse", "HEAD"); err != nil || afterHead != headBefore {
-		t.Fatalf("denied Worker prepare changed Main HEAD: before=%q after=%q err=%v", headBefore, afterHead, err)
-	}
-	if after.State["runtime_id"] != bound.State["runtime_id"] {
-		t.Fatal("denied Worker prepare changed Runtime identity")
+	if packets, err := runtime.RepairResultPackets(currentS9Snapshot(t, fixture).State); err != nil || len(packets) == 0 {
+		t.Fatalf("prepare should supply only the next professional Result questionnaire: %d %v", len(packets), err)
 	}
 }

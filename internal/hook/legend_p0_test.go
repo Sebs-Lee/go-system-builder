@@ -44,7 +44,11 @@ func TestNotReadyBuilderPacketCarriesTokenLegend(t *testing.T) {
 	}
 	for _, want := range []string{
 		"MISSING TOKENS:",
-		"fill its Result questionnaire at the exact path shown in this Hook, then save",
+		"evidence:completion_report:TASK-039-02",
+		"integration_checkpoint:TASK-039-02",
+		"its assigned Builder implements the TASK",
+		"fills and saves its own exact Result questionnaire",
+		"at the path shown in this Hook",
 		"Main integrates the named Assignment and runs its required checks",
 	} {
 		if !strings.Contains(payload.Specific.Context, want) {

@@ -408,6 +408,9 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 			return true, renderStageAnswerHook(stdout, path, r, "S2")
 		}
 	}
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Main cannot receive a delegated S5 answer through an ordinary save.
+	}
 	owner, found, err := registeredS5PacketOwnerForPath(root, path)
 	if err != nil {
 		fmt.Fprintf(stderr, "stage-answer not accepted: %v\n", err)
@@ -564,6 +567,9 @@ func isS7ReviewResultPath(path string) bool {
 }
 
 func saveReviewResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Native professional reception belongs to SubagentStop.
+	}
 	service, err := submission.New(root)
 	if err != nil {
 		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S7")
@@ -604,6 +610,9 @@ func isS9RepairResultPath(path string) bool {
 }
 
 func saveRepairResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Native professional reception belongs to SubagentStop.
+	}
 	ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
 	defer cancel()
 	service := &submission.Service{
@@ -622,6 +631,9 @@ func saveRepairResultHook(root string, request policy.Input, path string, stdout
 }
 
 func saveRepairPlanReportHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Native professional reception belongs to SubagentStop.
+	}
 	ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
 	defer cancel()
 	service := &submission.Service{
@@ -640,6 +652,9 @@ func saveRepairPlanReportHook(root string, request policy.Input, path string, st
 }
 
 func saveHypothesisResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Native professional reception belongs to SubagentStop.
+	}
 	service, err := submission.New(root)
 	if err != nil {
 		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: err.Error()}, "S8")
@@ -915,7 +930,11 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 			fmt.Fprintf(&b, "S5 Reviewer %s/%s work_complete=true; questionnaire %s; answer %s; %s\n", p.Binding.Owner, p.Binding.Responsibility, viewPath, answerPath, r.NextAction)
 			continue
 		}
-		fmt.Fprintf(&b, "S5 Reviewer %s/%s: read %s; fill the professional answer in %s and save it. The original domain consumer returns the receipt.\n", p.Binding.Owner, p.Binding.Responsibility, viewPath, answerPath)
+		if !declared {
+			fmt.Fprintf(&b, "S5 Reviewer %s/%s: Main carries exact view %s and private answer %s into a separate native Agent context. Reviewer reads the actual frozen inputs, fills its professional answer, saves and returns that reference; SubagentStop invokes the original domain consumer. No workspace prepare/launch or generic activation is required.\n", p.Binding.Owner, p.Binding.Responsibility, viewPath, answerPath)
+		} else {
+			fmt.Fprintf(&b, "S5 Reviewer %s/%s: read %s; fill the professional answer in %s and save it. The frozen execution's original domain consumer returns the receipt.\n", p.Binding.Owner, p.Binding.Responsibility, viewPath, answerPath)
+		}
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -926,7 +945,7 @@ func stageS5PreparationGuidance(root string, state map[string]any) string {
 	reqID, _ := bound["id"].(string)
 	entry := stageAnswerEntry(life["phase_revision"])
 	manifest := filepath.Join(root, ".claude/workgroups", reqID, fmt.Sprintf("review-e%d", entry), "manifest.json")
-	return fmt.Sprintf("S5 entry %d: the current independent reviewers are not registered yet. Main: read %s; prepare this entry's manifest at %s for DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY with distinct reviewers. Use current accepted S4 sources and new entry-specific team/agent/assignment/output paths; preserve historical manifests and receipts. The original runtime register-workgroup and workspace prepare entries issue the exact view/answer paths; do not run stage-answer issue or copy old hashes. Reviewers then fill only conclusion/findings and save once.", entry, filepath.Join(root, ".claude/skills/team-planning/SKILL.md"), manifest)
+	return fmt.Sprintf("S5 entry %d: the current independent reviewers are not registered yet. Main: read %s; prepare this entry's professional manifest at %s for DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY with distinct reviewers. Use current accepted S4 sources and entry-specific engineering responsibility/output references; preserve historical manifests and receipts. Original register-workgroup and Main questionnaire preparation supply the exact view/answer paths. Carry each person's exact references into a separate Claude Code native Agent; no platform Team, opaque ID or workspace prepare/launch is required. Reviewers fill only conclusion/findings, save the original answer and return its reference; SubagentStop receives it. Frozen old executions keep their original recovery.", entry, filepath.Join(root, ".claude/skills/team-planning/SKILL.md"), manifest)
 }
 
 // stageDesignQuestionnaireContext projects current work, not issuance proof.
@@ -1183,6 +1202,9 @@ func projectS6BuilderQuestionnaires(root, owner string, snapshot runtime.Snapsho
 	loaded, err := hookctx.FromSnapshot(root, lookupOwner, snapshot)
 	if err == nil && loaded != nil {
 		for _, a := range loaded.Assignments {
+			if record, found, _ := assignmentrecord.ForOwner(snapshot.State, a.OwnerAgentID); found && record.Contract == assignmentrecord.NativeDeliveryContract {
+				continue
+			}
 			if (!mainSession && a.OwnerAgentID != owner) || workspaceAssignments[a.AssignmentID] {
 				continue
 			}
@@ -1222,7 +1244,15 @@ func stageBuilderQuestionLifecycleContext(root string, request policy.Input, sna
 	owner := request.EffectiveAgentID()
 	mainSession := owner == "" || owner == "Main"
 	questions, notices := projectS6BuilderQuestionnaires(root, owner, snapshot)
+	if mainSession && len(questions) == 0 && len(nativeS6Records(snapshot.State)) > 0 {
+		return nativeS6MainGuidance(root, snapshot.State)
+	}
 	var b strings.Builder
+	if mainSession {
+		if native := nativeS6MainGuidance(root, snapshot.State); native != "" {
+			fmt.Fprintln(&b, native)
+		}
+	}
 	for _, notice := range notices {
 		fmt.Fprintln(&b, notice)
 	}
@@ -1547,7 +1577,7 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 					fmt.Fprintf(&b, "S7 %s/%s: questionnaire preparation gap at %s (missing or unreadable regular file: %v).\n", packet.Binding.OwnerAgentID, assignmentID, path, err)
 				}
 				if ready {
-					fmt.Fprintf(&b, "S7 Reviewer %s assignment=%s: read %s; fill the professional ReviewResult answer in %s and save it through the original consumer.\n", packet.Binding.OwnerAgentID, assignmentID, view, answer)
+					fmt.Fprintf(&b, "S7 Reviewer %s assignment=%s: Main carries exact view %s and private answer %s into native Agent. Reviewer performs its actual independent Claim/lens work, saves the original professional answer and returns its reference; SubagentStop invokes the original consumer. Frozen registered sources keep their original recovery.\n", packet.Binding.OwnerAgentID, assignmentID, view, answer)
 				}
 			}
 			for assignmentID, raw := range assignments {
@@ -1752,7 +1782,7 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path, manually issue or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage))
 	}
 	view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
-	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Complete its original professional questions and save normally. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer))
+	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer))
 	for _, path := range []string{view, answer} {
 		if path == "" {
 			message += " Current registered questionnaire path is missing; Main must finish entry preparation."
@@ -1764,10 +1794,14 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 	}
 	if record, found, err := runtime.FindSubmission(snapshot.State, stringValue(row["packet_id"])); err == nil && found {
 		if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
-			message += " The professional answer is already recorded; its original outlet is pending. Resolve the actual material gaps and save the same answer or changed professional material to continue; no duplicate report."
+			message += " The professional answer is already recorded; do not resubmit it. Main owns the original outlet " + record.FollowupID + ": inspect the actual gate/material failure, repair genuine material gaps through the original save path; technical interruption uses the existing runtime stage-answer recover. Do not create saves or tools just to trigger progress."
 		} else {
 			message += " This answer is already received; follow the current stage responsibility without resubmitting it."
 		}
+	} else if err != nil {
+		message += " Main must inspect the original reception record: " + err.Error()
+	} else {
+		message += " Complete its original professional questions and save normally."
 	}
 	return message
 }

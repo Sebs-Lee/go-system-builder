@@ -430,7 +430,7 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			phase:     "planning",
 			wantStage: "S9",
 			wantSkill: "bug-resolution",
-			wantText:  "exact supplied PlanReport questionnaire",
+			wantText:  "private professional PlanReport",
 			forbidden: []string{"runtime repair dispatch", "runtime repair execution begin"},
 		},
 		{
@@ -446,7 +446,7 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			phase:     "fixing",
 			wantStage: "S9",
 			wantSkill: "bug-resolution",
-			wantText:  "exact RepairResult questionnaire",
+			wantText:  "SubagentStop receives them",
 			forbidden: []string{"--check-location", "completion_report"},
 		},
 		{
@@ -454,7 +454,7 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			phase:     "targeted_reverification",
 			wantStage: "S9",
 			wantSkill: "bug-resolution",
-			wantText:  "exact TargetedReverification questionnaire path supplied by the listener",
+			wantText:  "exact TargetedReverification answer for SubagentStop",
 			forbidden: []string{"runtime repair status", "commit ChangeImpact"},
 		},
 		{
@@ -942,21 +942,22 @@ func copyDir(src, dst string) error {
 }
 
 // TestDryRunObservesFirstWriteWithoutToolDenial verifies that dry-run
-// reports graph progress without enforcing a per-tool first-write rule.
+// reuses read-only ready diagnostics without enforcing a first-write rule.
 func TestDryRunObservesFirstWriteWithoutToolDenial(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	root := factory.Clone(t, filepath.Join("..", ".."))
+	stageCLI(t, "init", "--root", root)
 	fixture := filepath.Join(root, "tests", "fixtures", "hook", "pretool-unactivated-write.json")
 
 	code := cli.Run([]string{"dry-run", "--root", root, "--fixture", fixture}, strings.NewReader(""), &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("dry-run always returns 0 (envelope-only), code=%d stderr=%s", code, stderr.String())
+		t.Fatalf("dry-run must return read-only diagnostics, code=%d stderr=%s", code, stderr.String())
 	}
 	if strings.Contains(stdout.String(), "HOOK_ASSIGNMENT_WRITE_BEFORE_PLAN") || strings.Contains(stdout.String(), `"decision":"deny"`) {
 		t.Fatalf("dry-run must not turn a product write into a tool denial: %s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "quality_gate") {
-		t.Fatalf("dry-run must retain the graph progress projection: %s", stdout.String())
+		t.Fatalf("dry-run must retain quality-gate diagnostics: %s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "HOOK_AGENT_NOT_ACTIVATED") {
 		t.Fatalf("legacy predicate HOOK_AGENT_NOT_ACTIVATED must not appear: %s", stdout.String())

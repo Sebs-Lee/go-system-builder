@@ -71,8 +71,8 @@ func TestRuntimeRepairDispatchBindsBuilderToAssignment(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("dispatch code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "generic PLAN_REPORT") || !strings.Contains(stderr.String(), "domain") {
-		t.Fatalf("dispatch must expose both plan-report layers: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "PlanReport") || strings.Contains(stderr.String(), "generic PLAN_REPORT") {
+		t.Fatalf("dispatch must use its original domain PlanReport without a generic plan prerequisite: %s", stderr.String())
 	}
 	var response map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &response); err != nil {

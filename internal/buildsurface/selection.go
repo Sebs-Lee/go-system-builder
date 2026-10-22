@@ -23,8 +23,11 @@ func SelectCanonical(root string, state map[string]any) (bool, error) {
 			continue
 		}
 		data, err := workpacket.ReadFile(root, textField(row["path"]), 20<<20)
-		if err != nil || hashBytes(data) != row["sha256"] {
-			return false, fmt.Errorf("current completion source is missing or changed")
+		if err != nil {
+			return false, fmt.Errorf("read current completion source %q (%s): %w; Main must inspect its original registered contribution", textField(row["path"]), textField(row["id"]), err)
+		}
+		if hashBytes(data) != row["sha256"] {
+			return false, fmt.Errorf("current completion source %q (%s) changed; Main must inspect its original registered contribution", textField(row["path"]), textField(row["id"]))
 		}
 		var declaration map[string]json.RawMessage
 		if err := json.Unmarshal(data, &declaration); err != nil {

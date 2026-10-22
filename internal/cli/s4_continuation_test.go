@@ -304,7 +304,7 @@ func TestS4UncommittedDescriptionAcceptsUnchangedProfessionalAnswer(t *testing.T
 	}
 }
 
-func TestS4AcceptedDescriptionChangeKeepsRecordedCompletionAndOriginalFollowup(t *testing.T) {
+func TestS4AcceptedDescriptionChangeKeepsCompletionButCannotRegisterChangedMaterials(t *testing.T) {
 	root, p := newTaskPlanningAnswerFixture(t)
 	stageJSON(t, root, p.AnswerPath, completedTaskPlanningDraft(p))
 	s, err := submission.New(root)
@@ -341,15 +341,30 @@ func TestS4AcceptedDescriptionChangeKeepsRecordedCompletionAndOriginalFollowup(t
 		t.Fatalf("description-only change retroactively invalidated completion: %+v", result)
 	}
 	before := stageSnapshot(t, root)
+	original, found, err := runtime.FindSubmission(before.State, p.ID)
+	if err != nil || !found || original.FollowupID == "" {
+		t.Fatalf("original accepted followup is missing: %+v %v", original, err)
+	}
 	beforeAnswer, err := os.ReadFile(filepath.Join(root, p.AnswerPath))
 	if err != nil {
 		t.Fatal(err)
 	}
 	replayed, err := s.SaveTaskPlanning(context.Background(), p.AnswerPath)
-	if err != nil || !replayed.Accepted || replayed.SubmissionKey != receipt.SubmissionKey || replayed.CurrentStage != "S5" {
-		t.Fatalf("original pending followup did not continue: %+v %v", replayed, err)
+	if err != nil || !replayed.Accepted || !replayed.WorkComplete || replayed.SubmissionKey != receipt.SubmissionKey || !replayed.ConsumerPending || replayed.ConsumerOwner != "main" || replayed.CurrentStage != "S4" {
+		t.Fatalf("historical completion or pending Main registration was lost: %+v %v", replayed, err)
 	}
 	after := stageSnapshot(t, root)
+	current, found, err := runtime.FindSubmission(after.State, p.ID)
+	if err != nil || !found || current.FollowupID != original.FollowupID || current.ControlStatus == "advanced" {
+		t.Fatalf("changed TASK replaced or advanced the original followup: %+v %v", current, err)
+	}
+	_, err = transition.Apply(root, s.StatePath, s.JournalPath, transition.Request{
+		TransitionID: "TR-002", Actor: "orchestrator", ExpectedRevision: after.Revision,
+		SubmissionFollowupID: current.FollowupID, Files: s.Files,
+	})
+	if err == nil || !strings.Contains(err.Error(), path) || stageSnapshot(t, root).Revision != after.Revision {
+		t.Fatalf("original registration must reject the exact changed TASK without a write: %v", err)
+	}
 	beforeEntities := before.State["entities"].(map[string]any)
 	afterEntities := after.State["entities"].(map[string]any)
 	if len(beforeEntities["submissions"].([]any)) != len(afterEntities["submissions"].([]any)) || len(before.State["evidence"].([]any)) != len(after.State["evidence"].([]any)) {

@@ -93,7 +93,7 @@
               "invariant": {"type": "string", "maxLength": 8192},
               "discriminator": {"type": "string", "maxLength": 8192},
               "expected_outcomes": {"$ref": "#/$defs/expected_outcomes"},
-              "source_finding_ids": {"type": "array", "minItems": 1, "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "pattern": "^finding-[A-Za-z0-9._-]+$"}},
+              "source_finding_ids": {"type": "array", "minItems": 0, "maxItems": 512, "uniqueItems": true, "items": {"type": "string", "pattern": "^finding-[A-Za-z0-9._-]+$"}},
               "evidence_refs": {"type": "array", "minItems": 1, "maxItems": 4096, "items": {"type": "string", "minLength": 1, "maxLength": 4096}}
             }
           }

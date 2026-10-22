@@ -1257,7 +1257,7 @@
               }
             },
             "assignment_record_contract": {
-              "const": "s6-v1.2"
+              "enum": ["s6-v1.2", "s6-native-v1"]
             },
             "assignment_record_sha256": {
               "type": "string",
@@ -1393,7 +1393,7 @@
               "minimum": 1
             },
             "assignment_record_contract": {
-              "const": "s6-v1.2"
+              "enum": ["s6-v1.2", "s6-native-v1"]
             },
             "assignment_record_sha256": {
               "type": "string",

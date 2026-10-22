@@ -13,73 +13,79 @@ import (
 	req039fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 )
 
-// TestHOOK_PreCompact_PersistsMilestoneViaHookCLI covers HOOK-PreCompact at
-// L3: real Hook CLI persists a resumable milestone checkpoint (FR-014).
-func TestHOOK_PreCompact_PersistsMilestoneViaHookCLI(t *testing.T) {
+// PreCompact has no professional input and must not invent recovery facts.
+func TestHOOK_PreCompact_IsSilentAndPreservesOriginalFactsViaHookCLI(t *testing.T) {
 	root := freshRoot(t)
 	state := systemPlanningState(t, root, "design", 3)
 	writeSystemState(t, root, state)
-	beforeRev := req039fixtures.Revision(state)
-
-	code, stdout, stderr := runHook(t, root, "PreCompact",
-		`{"hook_event_name":"PreCompact","session_id":"session-hook-precompact"}`)
+	before := readSystemRuntimePair(t, root)
+	code, stdout, stderr := runHook(t, root, "PreCompact", `{"hook_event_name":"PreCompact","session_id":"session-hook-precompact"}`)
 	if code != 0 {
 		t.Fatalf("PreCompact Hook failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
 	if strings.TrimSpace(stdout) != "" {
-		t.Fatalf("PreCompact must persist without discarded output, got %s", stdout)
+		t.Fatalf("PreCompact emitted discarded recovery instructions: %s", stdout)
 	}
-
-	after := req039fixtures.ReadState(t, root)
-	ms, _ := after["milestone"].(map[string]any)
-	if ms == nil {
-		t.Fatal("PreCompact must leave a milestone on disk")
-	}
-	if obj, _ := ms["objective"].(string); obj == "" {
-		t.Fatalf("PreCompact milestone must carry objective: %v", ms)
-	}
-	if event, _ := ms["event"].(string); event != "PreCompact" {
-		t.Fatalf("milestone.event want PreCompact, got %q", event)
-	}
-	if rev := req039fixtures.Revision(after); rev < beforeRev {
-		t.Fatalf("PreCompact must not regress revision: before=%v after=%v", beforeRev, rev)
-	}
+	assertSystemRuntimePairUnchanged(t, before)
 }
 
-// TestHOOK_PostCompact_SessionStartFallback covers HOOK-PostCompact via the
-// contract fallback (REQ-039 D-011): when PostCompact is unavailable, the
-// next SessionStart restores the same PreCompact-persisted milestone.
+// SessionStart reconstructs the current responsibility without replaying an
+// old milestone as the execution authority. No native PostCompact is invented.
 func TestHOOK_PostCompact_SessionStartFallback(t *testing.T) {
 	root := freshRoot(t)
 	state := systemPlanningState(t, root, "contracts", 5)
+	state["milestone"].(map[string]any)["objective"] = "STALE-CACHED-OBJECTIVE"
 	writeSystemState(t, root, state)
-
-	code, _, stderr := runHook(t, root, "PreCompact",
-		`{"hook_event_name":"PreCompact","session_id":"session-hook-postcompact-pre"}`)
+	before := readSystemRuntimePair(t, root)
+	code, stdout, stderr := runHook(t, root, "PreCompact", `{"hook_event_name":"PreCompact","session_id":"session-hook-postcompact-pre"}`)
+	if code != 0 || strings.TrimSpace(stdout) != "" {
+		t.Fatalf("PreCompact changed its silent boundary: %d %s %s", code, stdout, stderr)
+	}
+	assertSystemRuntimePairUnchanged(t, before)
+	code, stdout, stderr = runHook(t, root, "SessionStart", `{"hook_event_name":"SessionStart","session_id":"session-hook-postcompact-recover"}`)
 	if code != 0 {
-		t.Fatalf("PreCompact failed: code=%d stderr=%s", code, stderr)
+		t.Fatalf("SessionStart fallback failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	persisted := req039fixtures.ReadState(t, root)
-	ms, _ := persisted["milestone"].(map[string]any)
-	wantObjective, _ := ms["objective"].(string)
-	if wantObjective == "" {
-		t.Fatal("PreCompact must persist objective for PostCompact fallback")
+	for _, want := range []string{"S3 planning.contracts", "docs/control/agent-protocol.md#s3"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("recovery lost the current responsibility %q: %s", want, stdout)
+		}
 	}
+	if strings.Contains(stdout, "STALE-CACHED-OBJECTIVE") {
+		t.Fatalf("recovery repeated stale execution instructions: %s", stdout)
+	}
+	req039fixtures.AssertLifecycle(t, req039fixtures.ReadState(t, root), "planning", "contracts")
+}
 
-	// Host lacks PostCompact: SessionStart is the recovery path.
-	code, stdout, stderr := runHook(t, root, "SessionStart",
-		`{"hook_event_name":"SessionStart","session_id":"session-hook-postcompact-recover"}`)
-	if code != 0 {
-		t.Fatalf("SessionStart fallback failed: code=%d stderr=%s", code, stderr)
+// Byte snapshots distinguish a silent observation from an unseen Writer event.
+func readSystemRuntimePair(t *testing.T, root string) map[string]*string {
+	t.Helper()
+	pair := map[string]*string{}
+	for _, name := range []string{"loop-state.json", "loop-events.jsonl"} {
+		path := filepath.Join(root, ".claude", name)
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			pair[path] = nil
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		value := string(data)
+		pair[path] = &value
 	}
-	if !strings.Contains(stdout, wantObjective) {
-		t.Fatalf("PostCompact→SessionStart fallback must surface objective %q, got %s", wantObjective, stdout)
-	}
-	after := req039fixtures.ReadState(t, root)
-	afterMS, _ := after["milestone"].(map[string]any)
-	gotObjective, _ := afterMS["objective"].(string)
-	if gotObjective != wantObjective {
-		t.Fatalf("fallback milestone objective want %q got %q", wantObjective, gotObjective)
+	return pair
+}
+func assertSystemRuntimePairUnchanged(t *testing.T, pair map[string]*string) {
+	t.Helper()
+	for path, want := range pair {
+		data, err := os.ReadFile(path)
+		if want == nil && os.IsNotExist(err) {
+			continue
+		}
+		if want == nil || err != nil || string(data) != *want {
+			t.Fatalf("observation changed original Runtime/journal %s: %v", path, err)
+		}
 	}
 }
 

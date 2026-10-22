@@ -32,9 +32,16 @@ func TestS9RepairLeadExistingImpactReminderSkipsPreparation(t *testing.T) {
 	// A new indexed source changes the deterministic answer path; the old
 	// authoring bytes survive even when original preparation cannot proceed.
 	repairPointerCLI(state)["plan_sha256"] = strings.Repeat("b", 64)
+	currentPath, err := repairLeadQuestionnairePath(root, state, "change-impact.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	context = stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
-	if !strings.Contains(context, "could not be prepared") || !strings.Contains(context, "Source binding changed") || !strings.Contains(context, path) {
-		t.Fatalf("missing current answer did not use original preparation/preserve old binding: %s", context)
+	if currentPath == path || !strings.Contains(context, currentPath) || !strings.Contains(context, "not prepared") || !strings.Contains(context, "Main/system") {
+		t.Fatalf("missing current answer did not identify its actual path and preparation owner: %s", context)
+	}
+	if _, err := os.Stat(currentPath); !os.IsNotExist(err) {
+		t.Fatalf("ordinary reminder prepared a replacement answer: %v", err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
 		t.Fatal("source change overwrote the old draft")
@@ -69,10 +76,12 @@ func TestS9RepairLeadTargetedReminderUsesIndexedProjection(t *testing.T) {
 	if len(paths) != 1 || paths[0] != path || !strings.Contains(context, path) || strings.Contains(context, "questionnaire preparation failed") || strings.Contains(context, "source is unavailable") {
 		t.Fatalf("reminder ran full domain source validation: paths=%v context=%s", paths, context)
 	}
-	writeRepairLeadFile(t, root, "plan.json", plan+"\n") // Break its indexed SHA.
+	// Reminders do not re-certify all historical Plan bytes. This remains
+	// a read-only display, not acceptance or a source-integrity guarantee.
+	writeRepairLeadFile(t, root, "plan.json", plan+"\n")
 	context = stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse", AgentID: "verifier"}, runtime.Snapshot{State: state})
-	if !strings.Contains(context, "indexed source changed") || !strings.Contains(context, path) {
-		t.Fatalf("changed source did not preserve the exact answer/recovery path: %s", context)
+	if !strings.Contains(context, path) || !strings.Contains(context, "independent verifier verifier") {
+		t.Fatalf("reminder lost the registered current responsibility: %s", context)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
 		t.Fatal("changed indexed source rewrote the original answer")
@@ -122,7 +131,7 @@ func TestS9RepairLeadAnswerShapeUsesActualSources(t *testing.T) {
 		}
 		var fields []string
 		if targeted {
-			fields = []string{"continuity_reason", "assertion_results", "assertion_id", "evidence_refs", "scope_compliance=pass|fail", "result=pass|fail|blocked|scope_changed", "fail_same_cause|fail_new_cause|blocked|scope_changed|stale"}
+			fields = []string{"continuity_reason and scope_compliance are optional legacy metadata", "assertion_results", "assertion_id", "evidence_refs", "result=pass|fail|blocked|scope_changed", "fail_same_cause|fail_new_cause|blocked|scope_changed|stale"}
 		} else {
 			fields = []string{"change_types", "source_id", "target_id", "relation", "rule_id", "decision", "responsibility_id", "scope", "rationale", "recovery_evidence", "IM-[A-Z0-9-]+", "invalidate|supersede|retain|reverify", "invalidated_evidence_ids", "superseded_evidence_ids", "retained_evidence_ids"}
 		}

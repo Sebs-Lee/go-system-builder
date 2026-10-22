@@ -144,6 +144,28 @@ type FieldError struct {
 	Repair   string `json:"repair"`
 }
 
+// AnswerError preserves the original validator's concrete field diagnostics.
+// Consumers can distinguish a correctable answer from a source/Writer failure
+// without re-reading and re-validating the professional artifact.
+type AnswerError struct {
+	Label  string
+	Fields []FieldError
+	Cause  error
+}
+
+func (e *AnswerError) Unwrap() error { return e.Cause }
+
+func (e *AnswerError) Error() string {
+	if e.Cause != nil {
+		return e.Label + ": " + e.Cause.Error()
+	}
+	if len(e.Fields) == 0 {
+		return e.Label
+	}
+	f := e.Fields[0]
+	return fmt.Sprintf("%s %s: %s (%s)", e.Label, f.Pointer, f.Expected, f.Observed)
+}
+
 func BuildS5(binding Binding, inputs []Reference) (Packet, error) {
 	data, err := schema.ReadAsset("stage-form-s5-template.json")
 	if err != nil {

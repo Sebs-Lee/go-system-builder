@@ -100,7 +100,13 @@ func RegisterPlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan declares baseline_generation %d but the runtime is at generation %d", plan.BaselineGeneration, generation)
 	}
 	if existing := PlanPointerFromState(current); existing != nil && existing.ReviewRound == round {
-		return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan %s is already registered for round %d (status %s); revise it via `runtime review-plan revise` (one controlled revision per round, L3-S7 §5.3) or start a new round", existing.PlanID, round, existing.Status)
+		seed, err := canRegisterS9Seed(root, current, &plan)
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+		if !seed {
+			return loopruntime.Snapshot{}, fmt.Errorf("ReviewPlan %s is already registered for round %d (status %s); revise it via `runtime review-plan revise` (one controlled revision per round, L3-S7 §5.3) or start a new round", existing.PlanID, round, existing.Status)
+		}
 	}
 	// Coverage diff at registration (L3-S7 §4.4): every current-generation
 	// TASK must be claimed by at least one Claim's source_refs.
@@ -182,6 +188,15 @@ func RegisterPlan(
 			plan.ReviewPlanID, round, len(plan.Claims), len(plan.Assignments), plan.E2ECoverageState),
 		OccurredAt: occurredAt,
 		Apply: func(state map[string]any) error {
+			if existing := PlanPointerFromState(state); existing != nil && existing.ReviewRound == round {
+				seed, err := canRegisterS9Seed(root, state, &plan)
+				if err != nil {
+					return err
+				}
+				if !seed {
+					return fmt.Errorf("original S9 seed changed before first professional registration")
+				}
+			}
 			if err := verifyFrozenSubjects(root, &plan, state); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
 			}

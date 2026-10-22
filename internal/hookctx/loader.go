@@ -1545,6 +1545,13 @@ func (r *assignmentRecordResolver) projectRecord(agent buildAgentRow, idx loaded
 	if err := projectCanonicalExecutionCoordinates(r.state, record, row); err != nil {
 		return nil, true, err
 	}
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		row.WorktreePath, row.Branch, row.TargetBranch = "", "", ""
+		if coords, ok := loadAssignmentSidecar(r.root, row.AssignmentID); ok && coords.AssignmentRevision == record.Revision {
+			applyAssignmentCoords(row, coords.WorktreePath, coords.Branch, coords.TargetBranch)
+		}
+	}
+
 	return row, true, nil
 }
 
@@ -1555,7 +1562,7 @@ func (r *assignmentRecordResolver) projectRecord(agent buildAgentRow, idx loaded
 // non-ready execution clears the manifest's planned values. Legacy unbound
 // projects retain the manifest projection.
 func projectCanonicalExecutionCoordinates(state map[string]any, record assignmentrecord.Record, row *AssignmentContext) error {
-	if row == nil {
+	if row == nil || record.Contract == assignmentrecord.NativeDeliveryContract {
 		return nil
 	}
 	binding, err := workspace.Decode(state)
@@ -1917,6 +1924,7 @@ func enrichAssignmentCoords(root string, row *AssignmentContext) {
 	if row == nil || row.AssignmentID == "" {
 		return
 	}
+
 	// Bound runtimes have a single coordinate authority. Missing/stale
 	// execution records must not fall back to an old sidecar or checkpoint.
 	if binding, state, err := workspace.Load(root); err == nil && binding != nil {
@@ -1941,9 +1949,10 @@ func enrichAssignmentCoords(root string, row *AssignmentContext) {
 }
 
 type assignmentCoordFile struct {
-	WorktreePath string `json:"worktree_path"`
-	Branch       string `json:"branch"`
-	TargetBranch string `json:"target_branch"`
+	AssignmentRevision int    `json:"assignment_revision"`
+	WorktreePath       string `json:"worktree_path"`
+	Branch             string `json:"branch"`
+	TargetBranch       string `json:"target_branch"`
 }
 
 // assignmentWritePaths resolves the write-scope binding for a manifest

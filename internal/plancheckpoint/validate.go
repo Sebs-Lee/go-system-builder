@@ -214,7 +214,7 @@ func validateCanonicalPlan(root string, record assignmentrecord.Record, message 
 	if err != nil {
 		return err
 	}
-	if message["assignment_record_contract"] != assignmentrecord.AssignmentRecordContract || message["assignment_record_sha256"] != sha || message["assignment_id"] != record.AssignmentID || intValue(message["assignment_revision"]) != record.Revision {
+	if message["assignment_record_contract"] != record.Contract || message["assignment_record_sha256"] != sha || message["assignment_id"] != record.AssignmentID || intValue(message["assignment_revision"]) != record.Revision {
 		return fmt.Errorf("S6 PLAN does not bind the current Assignment identity, revision and digest")
 	}
 	if message["team_id"] != record.TeamID || message["task_id"] != record.Task.ID || message["agent_definition_ref"] != record.AgentDefinition.Ref {

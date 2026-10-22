@@ -222,7 +222,7 @@ func (capability *IssuedRepairResultBlockerCapability) AcceptedReplay(ctx contex
 		!blockerRequestPathMatches(root, capability.messageRef, messagePath) || receipt.ArtifactRef != capability.artifactRef.Path ||
 		receipt.Artifact.ExecutionGeneration != capability.artifact.ExecutionGeneration ||
 		!sameAbsolutePath(receipt.Artifact.ExecutionRoot, capability.sourceRoot) ||
-		string(receipt.Artifact.SubmittedAnswer) != string(capability.answer) {
+		!bytesEqualRepairPlanReportAnswer(receipt.Artifact.SubmittedAnswer, capability.answer) {
 		return false, runtimepkg.ErrSubmissionConflict
 	}
 	return true, nil
@@ -276,6 +276,13 @@ func (capability *IssuedRepairResultBlockerCapability) ApplyLifecycleCAS(
 	if !reflect.DeepEqual(messageBytes, capability.messageBytes) {
 		return runtimepkg.ErrSubmissionConflict
 	}
+	answer, digest, err := readIssuedRepairResultBlockerAnswer(capability.sourceRoot, packet)
+	if err != nil {
+		return err
+	}
+	if digest != capability.artifact.AnswerSHA256 || !bytesEqualRepairPlanReportAnswer(answer, capability.answer) {
+		return runtimepkg.ErrSubmissionConflict
+	}
 	return appendRepairResultBlockerEvidence(state, packet, capability.artifactRef)
 }
 
@@ -298,18 +305,8 @@ func verifyAcceptedBlockerBytes(ctx context.Context, root string, state map[stri
 	if err != nil || execution.AssignmentID != receipt.Artifact.ExecutionAssignmentID || execution.Generation != receipt.Artifact.ExecutionGeneration {
 		return runtimepkg.ErrSubmissionConflict
 	}
-	data, err := workpacket.ReadFile(sourceRoot, packet.AnswerPath, repairResultAnswerLimit)
-	if err != nil {
-		return err
-	}
-	var document struct {
-		Answer json.RawMessage `json:"answer"`
-	}
-	if err := json.Unmarshal(data, &document); err != nil {
-		return err
-	}
-	answer, err := canonicalRuntimeFacts(document.Answer)
-	if err != nil || string(answer) != string(expectedAnswer) || string(answer) != string(receipt.Artifact.SubmittedAnswer) {
+	answer, answerSHA, err := readIssuedRepairResultBlockerAnswer(sourceRoot, packet)
+	if err != nil || answerSHA != receipt.Artifact.AnswerSHA256 || !bytesEqualRepairPlanReportAnswer(answer, expectedAnswer) || !bytesEqualRepairPlanReportAnswer(answer, receipt.Artifact.SubmittedAnswer) {
 		return runtimepkg.ErrSubmissionConflict
 	}
 	return nil
@@ -372,7 +369,7 @@ func readIssuedRepairResultBlockerAnswer(sourceRoot string, packet workpacket.Re
 	}
 	answer, problems := workpacket.ValidateRepairResultAnswer(packet, data)
 	if len(problems) != 0 {
-		return nil, "", fmt.Errorf("S9 blocker answer %s: %s (%s)", problems[0].Pointer, problems[0].Expected, problems[0].Observed)
+		return nil, "", &workpacket.AnswerError{Label: "S9 blocker answer", Fields: problems}
 	}
 	var professional workpacket.RepairResultProfessionalAnswer
 	if err := json.Unmarshal(answer, &professional); err != nil {

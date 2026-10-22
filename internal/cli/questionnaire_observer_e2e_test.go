@@ -18,9 +18,14 @@ import (
 
 func observedQuestionnaireHook(t *testing.T, root, tool string, input, response map[string]any) string {
 	t.Helper()
+	return observedQuestionnaireHookAs(t, root, "", tool, input, response)
+}
+
+func observedQuestionnaireHookAs(t *testing.T, root, owner, tool string, input, response map[string]any) string {
+	t.Helper()
 	body, _ := json.Marshal(map[string]any{
 		"hook_event_name": "PostToolUse", "tool_name": tool, "cwd": root,
-		"tool_input": input, "tool_response": response,
+		"agent_id": owner, "tool_input": input, "tool_response": response,
 	})
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
@@ -73,7 +78,7 @@ func TestQuestionnaireObserverSkipsUnchangedDraftAndFailedTool(t *testing.T) {
 	}
 }
 
-func TestS6ObserverSkipsMachineOnlyResultAndRoutesMainCorrectionToBuilder(t *testing.T) {
+func TestS6MainObservationKeepsBuilderAnswersPrivateAndOwnerSaveUsesOriginalConsumer(t *testing.T) {
 	fixture := readyS6CanonicalResultCLI(t)
 	beforeState, beforeJournal := s6CanonicalRuntimePair(t, fixture.root)
 	observed := observedQuestionnaireHook(t, fixture.root, "Bash", map[string]any{"command": "true"}, map[string]any{})
@@ -93,10 +98,17 @@ func TestS6ObserverSkipsMachineOnlyResultAndRoutesMainCorrectionToBuilder(t *tes
 	draft["summary"] = "A partial answer that still needs the registered Builder's evidence."
 	stageJSON(t, fixture.root, fixture.resultPath, draft)
 	observed = observedQuestionnaireHook(t, fixture.root, "Bash", map[string]any{"command": "true"}, map[string]any{})
-	if !strings.Contains(observed, fixture.record.OwnerAgentID) || !strings.Contains(observed, fixture.resultPath) ||
-		!strings.Contains(observed, "owns correcting this answer") || strings.Contains(observed, "Main should fill") {
-		t.Fatalf("Main's observer did not route the incomplete Result correction to its registered Builder: %s", observed)
+	if strings.Contains(observed, "SUBMISSION RECEIPT") || strings.Contains(observed, "questionnaire saved") {
+		t.Fatalf("Main's observation received a delegated partial answer: %s", observed)
 	}
+
+	// This frozen consumer returns the owner's actual professional error;
+	// Main's unrelated tools do not inspect or submit the partial answer.
+	correction := observedQuestionnaireHookAs(t, fixture.root, fixture.record.OwnerAgentID, "Bash", map[string]any{"command": "true"}, map[string]any{})
+	if !strings.Contains(correction, fixture.resultPath) || !strings.Contains(correction, "Correct the specific validation feedback") || !strings.Contains(correction, "assertion_evidence") || strings.Contains(correction, "Main should fill") {
+		t.Fatalf("the registered Builder lost its own precise validation feedback: %s", correction)
+	}
+
 	s6AssertCanonicalRuntimePair(t, fixture.root, beforeState, beforeJournal)
 
 	evidence := []byte("The registered Builder's actual Result evidence.\n")
@@ -117,6 +129,13 @@ func TestS6ObserverSkipsMachineOnlyResultAndRoutesMainCorrectionToBuilder(t *tes
 	}
 	stageJSON(t, fixture.root, fixture.resultPath, draft)
 	observed = observedQuestionnaireHook(t, fixture.root, "Bash", map[string]any{"command": "true"}, map[string]any{})
+	if strings.Contains(observed, "questionnaire saved") {
+		t.Fatalf("Main swept an authored Builder answer: %s", observed)
+	}
+	s6AssertCanonicalRuntimePair(t, fixture.root, beforeState, beforeJournal)
+	// This fixture is a named frozen S6 responsibility, whose original save
+	// adapter remains available; a new native delivery uses Start/Stop.
+	observed = observedQuestionnaireHookAs(t, fixture.root, fixture.record.OwnerAgentID, "Bash", map[string]any{"command": "true"}, map[string]any{})
 	if !strings.Contains(observed, "S6 Completion questionnaire saved") || !strings.Contains(observed, fixture.resultPath) {
 		t.Fatalf("professional script save did not reach the original Result consumer: %s", observed)
 	}

@@ -182,7 +182,11 @@ func s8HypothesisQuestionnaireContext(ctx context.Context, root string, request 
 		if !s8QuestionnaireFileExists(view) || !s8QuestionnaireFileExists(answer) {
 			missing = " Questionnaire preparation is pending; the next Main tool listener must restore this original view/answer without replacing professional work."
 		}
-		lines = append(lines, fmt.Sprintf("S8 Investigator %s assignment=%s: read the exact issued question %s; questionnaire: %s. Complete the professional HypothesisResult and save it through the original Case consumer.%s", packet.Binding.OwnerAgentID, packet.Binding.AssignmentID, view, answer, missing))
+		if main {
+			lines = append(lines, fmt.Sprintf("S8 Investigator %s assignment=%s: Main carries exact question %s and private questionnaire answer %s into native Agent. Investigator performs the actual discriminator without product writes, saves the original HypothesisResult and returns its reference; SubagentStop invokes the original Case consumer. No opaque ID lookup, workspace launcher or generic activation is required.%s", packet.Binding.OwnerAgentID, packet.Binding.AssignmentID, view, answer, missing))
+		} else {
+			lines = append(lines, fmt.Sprintf("S8 Investigator %s assignment=%s: read the exact issued question %s; questionnaire: %s. Complete the professional HypothesisResult and save it through the original Case consumer.%s", packet.Binding.OwnerAgentID, packet.Binding.AssignmentID, view, answer, missing))
+		}
 	}
 	if !main && len(lines) == 0 {
 		return fmt.Sprintf("S8 Investigator %s has no current prepared questionnaire. Main owns the original Case dispatch and questionnaire preparation; do not guess an answer path.", owner)

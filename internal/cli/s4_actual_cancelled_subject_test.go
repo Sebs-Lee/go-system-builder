@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
@@ -57,4 +59,47 @@ func TestTaskPlanningSaveKeepsActualCancelledTaskWithoutAuthorListProof(t *testi
 	if !found {
 		t.Fatal("actual cancelled task fact lost from received record")
 	}
+	if snap.State["lifecycle"].(map[string]any)["state"] != "document_verification" {
+		t.Fatal("S4 did not reach S5", receipt)
+	}
+	formal, err := runtime.S5FormalInputs(root, snap.State, fileview.Disk{Root: root})
+	if err != nil {
+		t.Fatalf("S4 accepted the actual batch but S5 demanded another author list: %v", err)
+	}
+	activeFound := false
+	for _, ref := range formal.References {
+		if ref.Path == cancelled {
+			t.Fatal("cancelled TASK entered the active S5 subject denominator")
+		}
+		if ref.Path == draft.Answer.TaskPaths[0] {
+			activeFound = true
+		}
+	}
+	if !activeFound {
+		t.Fatal("the active TASK disappeared from S5")
+	}
+	original, err := os.ReadFile(filepath.Join(root, cancelled))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, cancelled), append(original, []byte("changed cancellation source\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.S5FormalInputs(root, snap.State, fileview.Disk{Root: root}); err == nil {
+		t.Fatal("cancelled history source drift was silently accepted")
+	}
+	if err := os.WriteFile(filepath.Join(root, cancelled), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	packets := registerAcceptedS5Reviewers(t, root, "TASK-039-01", draft.Answer.TaskPaths[0])
+	for _, packet := range packets {
+		stageJSON(t, root, packet.AnswerPath, completedDraft(packet, "pass"))
+		if code, _, diagnostic := nativeReviewEvent(t, root, "SubagentStop", "actual-native-reviewer", filepath.Join(root, packet.ViewPath)); code != 0 {
+			t.Fatal(diagnostic)
+		}
+	}
+	if stageSnapshot(t, root).State["lifecycle"].(map[string]any)["state"] != "building" {
+		t.Fatal("original S5 pair did not advance the active batch to S6")
+	}
+
 }

@@ -191,7 +191,7 @@ func TestS8ListenerPreparesOnlyMissingUnacceptedQuestionnaires(t *testing.T) {
 	}
 }
 
-func TestS8ObservedAcceptedAnswerSkipsOnlySameCanonicalProfessionalContent(t *testing.T) {
+func TestS8ObserverKeepsMainQuietAndAdapterDetectsCanonicalChanges(t *testing.T) {
 	f := newS8ListenerFixture(t)
 	var draft map[string]any
 	data, _ := json.Marshal(f.packet.Draft)
@@ -207,6 +207,7 @@ func TestS8ObservedAcceptedAnswerSkipsOnlySameCanonicalProfessionalContent(t *te
 	if len(issues) != 0 {
 		t.Fatalf("test authored answer invalid: %+v", issues)
 	}
+	sameAnswer := append([]byte(nil), data...)
 	f.accept(t, workpacket.Digest(canonical))
 	path := filepath.Join(f.root, filepath.FromSlash(f.packet.AnswerPath))
 	if err := os.WriteFile(path, data, 0600); err != nil {
@@ -214,11 +215,43 @@ func TestS8ObservedAcceptedAnswerSkipsOnlySameCanonicalProfessionalContent(t *te
 	}
 	var out, errout bytes.Buffer
 	request := policy.Input{Event: "PostToolUse", ToolName: "Bash", CWD: f.root}
+	statePath := filepath.Join(f.root, ".claude/loop-state.json")
+	casePath := filepath.Join(f.root, filepath.FromSlash(f.packet.Binding.CaseRef))
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caseBefore, err := os.ReadFile(casePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if handled, _ := runObservedQuestionnaireSaves(f.root, request, &out, &errout); handled || out.Len() != 0 {
 		t.Fatalf("unchanged accepted answer was resubmitted: %s", out.String())
 	}
 	answer["observed"] = "Different professional observation"
 	data, _ = json.Marshal(draft)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if handled, _ := runObservedQuestionnaireSaves(f.root, request, &out, &errout); handled || out.Len() != 0 {
+		t.Fatalf("Main's passive event received a changed delegated answer: %s %s", &out, &errout)
+	}
+	request.ToolName = "Write"
+	request.ToolInput = map[string]any{"file_path": path}
+	if handled, _ := receiveSavedQuestionnaire(f.root, request, &out, &errout); handled || out.Len() != 0 {
+		t.Fatalf("Main's explicit save received a delegated answer: %s %s", &out, &errout)
+	}
+	// The synthetic receipt/Case fixture tests the internal canonical filter,
+	// not real acceptance. Native original-consumer conflict/recovery is
+	// verified by the actual Case/Writer chain in investigation's native test.
+	request.AgentID = f.packet.Binding.OwnerAgentID
+	request.ToolName, request.ToolInput = "Bash", nil
+	if err := os.WriteFile(path, sameAnswer, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if handled, _ := runObservedQuestionnaireSaves(f.root, request, &out, &errout); handled || out.Len() != 0 {
+		t.Fatalf("canonical adapter replay was resubmitted: %s %s", &out, &errout)
+	}
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +265,15 @@ func TestS8ObservedAcceptedAnswerSkipsOnlySameCanonicalProfessionalContent(t *te
 	if handled, _ := receiveSavedQuestionnaire(f.root, request, &out, &errout); !handled || !strings.Contains(out.String(), "S8 SUBMISSION RECEIPT") {
 		t.Fatalf("explicit save was skipped: %s %s", out.String(), errout.String())
 	}
+	for path, before := range map[string][]byte{statePath: stateBefore, casePath: caseBefore} {
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("filter/error feedback changed authority %s: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(f.root, ".claude/loop-events.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("synthetic adapter fixture invented an accepted journal: %v", err)
+	}
 }
 
 func TestS8NativeLifecycleDeliversExactQuestionnaireInHookEnvelope(t *testing.T) {
@@ -244,8 +286,11 @@ func TestS8NativeLifecycleDeliversExactQuestionnaireInHookEnvelope(t *testing.T)
 		if code := evaluate(f.root, event, bytes.NewReader(data), &out, &errout, true); code != 0 {
 			t.Fatalf("%s exit=%d stdout=%s stderr=%s", event, code, out.String(), errout.String())
 		}
-		if !strings.Contains(out.String(), answer) || !strings.Contains(out.String(), "original Case consumer") {
-			t.Fatalf("%s replaced professional delivery: %s", event, out.String())
+		if event == "SessionStart" && out.Len() != 0 {
+			t.Fatalf("ordinary Worker session managed native work: %s", out.String())
+		}
+		if event == "SubagentStart" && (!strings.Contains(out.String(), "exact original questionnaire") || strings.Contains(out.String(), answer)) {
+			t.Fatalf("Start guessed a responsibility from actor/role: %s", out.String())
 		}
 	}
 }

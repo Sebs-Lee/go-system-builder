@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -213,6 +214,9 @@ func runSavedHumanReleaseQuestionnaire(root string, request policy.Input, stdout
 		Params: map[string]any{"decision_id": id, "decision_path": path, "disposition": answer.Disposition, "reason": answer.Reason},
 	})
 	if err != nil {
+		if errors.Is(err, runtime.ErrStaleRevision) {
+			return feedback("The Runtime changed during decision reception. Main must inspect the original decision receipt and the current S11 application before continuing the original transition: " + err.Error() + ". Preserve the human's answer; a changed release scope requires renewed human judgment, not a guessed revision or an automatic retry.")
+		}
 		return feedback("No successful transition was confirmed: " + err.Error() + ". The original Writer reports the actual recording result; do not guess another path or repeat already accepted work.")
 	}
 	message := fmt.Sprintf("Recorded and consumed %s through %s; current cursor %s. Actual reason: %s.", answer.Disposition, transitionID, lifecycleState(next.State), answer.Reason)

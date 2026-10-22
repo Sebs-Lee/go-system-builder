@@ -36,6 +36,7 @@ issuance/oracle isolation adapters are still pending. It does not silently run
 mechanism tests. `public-inputs.json` omits the oracle and fixture paths; this
 separation is not a claim that a live host filesystem sandbox exists.
 
-The remaining design, live host adapters, twelve actual business project inputs,
-oracle isolation, repeated A/B/holdouts and production metrics/stall are tracked
-in [G08](../../blueprint/global-optimization/G08-evaluation-and-observability.md).
+Live host adapters, actual business project inputs, oracle isolation, repeated
+A/B evaluations and production metrics remain outside the current runner. The
+shared observation and validation boundaries are defined in the
+[L4 runtime control plane](../../blueprint/l4-mechanisms/L4-runtime-control-plane.md#7-错误观测与成本).

@@ -10,7 +10,7 @@ import (
 )
 
 // RepairResultResumeBinding reads the current owner's recorded resolution.
-// Historical journal acceptance coordinates are not needed to prepare work.
+// The successor retains the original resolution acceptance coordinates.
 func RepairResultResumeBinding(root string, state map[string]any, base workpacket.RepairResultBinding) (*workpacket.RepairResultResume, error) {
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
@@ -80,11 +80,15 @@ func RepairResultResumeBinding(root string, state map[string]any, base workpacke
 	if execution == nil || !hypothesisJSONEqual(execution["execution_generation"], issued["execution_generation"]) || execution["worktree_path"] != issued["worktree_path"] {
 		return nil, nil
 	}
-	return &workpacket.RepairResultResume{
-		PredecessorPacketID: prior.ID, PredecessorPacketSHA256: message.Resolution.PacketSHA,
-		BlockerRef: message.Resolution.BlockerRef, BlockerSHA256: message.Resolution.BlockerSHA,
-		ResolutionMessageRef: messageRef, ResolutionMessageSHA256: stringValue(index["sha256"]),
-	}, nil
+	receipt, found, err := VerifiedRepairResultResolutionReceipt(root, state, prior.ID, base.Sources.OwnerAgentID)
+	if err != nil || !found {
+		return nil, fmt.Errorf("S9 current resolution receipt unavailable: %v", err)
+	}
+	journal, err := repairResultResumeJournal(root, state)
+	if err != nil {
+		return nil, err
+	}
+	return repairResultResumeFromReceipt(prior, receipt, journal, message.Resolution.PacketSHA)
 }
 
 // VerifyRepairResultResume verifies a packet's full predecessor chain against

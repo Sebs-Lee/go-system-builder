@@ -111,8 +111,12 @@ win.
      are your hunting judgment, **not** a cartesian-product requirement);
    - a branch cell must be a branch whose rule actually cites the cell's
      `REQ-<id>/FR-<id>` in `source_refs` (the matrix joins the model, it
-     does not assert alongside it); `req_ref` may only reference the bound
-     REQ;
+     does not assert alongside it). Preserve each original `req_ref` across
+     requirements in the complete current module. Only current-REQ references
+     join the current FR table; the AC bridge checks this REQ's obligations
+     separately. An older REQ with the same FR number cannot supply them.
+     A REQ-level matrix cell may join that REQ's actual FR-level rule source;
+     do not rewrite sources or remove old required branches to fit a new bind;
    - a `no_branch_reason` is a rationale: name the why — at least 8
      characters including a letter (a bare "不需要"/"." is rejected;
      free-word escapes are not endorsed N/A).
@@ -314,7 +318,7 @@ The missing tokens remain `evidence:planning_design_record`,
 
 ## Exit Conditions
 - The planning checkpoint is committed and the Loop transitioned to `document_verification`.
-- Next (NOT your job): dispatch two document-verifier subagents per `docs/control/agent-protocol.md #s5` — planning does not continue into S5; the activation envelopes should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
+- Next (NOT your job): dispatch two document-verifier subagents per `docs/control/agent-protocol.md #s5` — planning does not continue into S5; the exact native review task should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
 
 ## Stop Conditions
 Stop immediately and surface to the human if any of:

@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testing.T) {
+func TestWorkspaceCandidateFreezesAttemptAndPreservesHistoricalReads(t *testing.T) {
 	root := req039fixtures.FreshRoot(t)
 	ctx := context.Background()
 	for _, args := range [][]string{{"init", "-b", "test2"}, {"config", "user.name", "Test"}, {"config", "user.email", "test@example.invalid"}} {
@@ -153,8 +153,14 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	}
 	badProposal := proposal
 	badProposal.Checks = nil
-	if _, _, err := repair.CreateWorkspaceCandidate(ctx, root, started.State, e, badProposal); err == nil {
-		t.Fatal("invalid final result shape accepted before merge")
+	// Missing Main check facts do not make the Builder's candidate unreadable.
+	// Recording this draft must not promote it to an accepted Final.
+	pending, _, err := repair.CreateWorkspaceCandidate(ctx, root, started.State, e, badProposal)
+	if err != nil || len(pending.Proposal.Checks) != 0 {
+		t.Fatalf("candidate invented Main checks or rejected truthful missing work: %+v %v", pending, err)
+	}
+	if _, exists, err := repair.RegisteredWorkspaceResult(root, started.State, pending); err != nil || exists {
+		t.Fatalf("candidate without Main checks promoted itself to Final: %t %v", exists, err)
 	}
 	c, ref, err := repair.CreateWorkspaceCandidate(ctx, root, started.State, e, proposal)
 	if err != nil {
@@ -238,7 +244,16 @@ func TestWorkspaceCandidateFreezesSourceAndRejectsDirtyOrStaleAuthority(t *testi
 	e.Generation--
 	pointer := started.State["review"].(map[string]any)["repair"].(map[string]any)
 	pointer["status"] = "planning"
+	if _, err = repair.ValidateWorkspaceCandidate(root, started.State, e, ref); err != nil {
+		t.Fatalf("a phase label erased the existing candidate history: %v", err)
+	}
+	// Actual replacement of the recorded execution attempt retires this
+	// candidate's current association. A phase word alone grants no work ACL.
+	replacement := e
+	replacement.Generation++
+	b.Executions[e.AssignmentID] = replacement
+	started.State["workspace"] = workspace.Encode(b)
 	if _, err = repair.ValidateWorkspaceCandidate(root, started.State, e, ref); err == nil {
-		t.Fatal("revoked execution authority accepted")
+		t.Fatal("candidate borrowed a replacement execution attempt")
 	}
 }

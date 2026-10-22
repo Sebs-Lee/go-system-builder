@@ -53,6 +53,17 @@ type reqTableRow struct {
 
 var reqIDCellPattern = regexp.MustCompile(`^(FR|AC|NFR)-[A-Z0-9]+(-[A-Z0-9]+)*$`)
 
+// DeclaredFRIDs shares the original current-section/fenced-example parser;
+// callers retain responsibility for selecting the exact requirement source.
+func DeclaredFRIDs(content string) map[string]bool {
+	rows, _, _ := parseREQTables(content)
+	ids := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		ids[row.ID] = true
+	}
+	return ids
+}
+
 // parseREQTables extracts FR/AC/NFR table rows from the funnel REQ
 // template's §C tables (pipe tables whose first cell is a typed id).
 func parseREQTables(content string) (fr, ac, nfr []reqTableRow) {

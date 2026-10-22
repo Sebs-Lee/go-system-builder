@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
@@ -44,6 +45,10 @@ func EvaluateReady(ctx context.Context, root string) (ReadyReport, error) {
 		ctx = context.Background()
 	}
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	// Do not create a lock directory/file while diagnosing an uninitialized root.
+	if _, err := os.Stat(statePath); err != nil {
+		return ReadyReport{}, fmt.Errorf("read runtime: %w", err)
+	}
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	store := runtime.NewStore(statePath, journalPath)
 	snapshot, err := store.Snapshot()

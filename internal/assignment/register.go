@@ -453,8 +453,10 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 					// two-round approval is the exception for high-risk work.
 					dispatchMode = "plan_checkpoint"
 				}
+				// Native registration records a pending engineering responsibility,
+				// never proof that Claude Code has started or read anything.
 				agentState := "reading"
-				if reviewAssignmentQueued(state, item.AssignmentID, item.AgentID) {
+				if value.AssignmentRecordContract == assignmentrecord.NativeDeliveryContract || reviewAssignmentQueued(state, item.AssignmentID, item.AgentID) {
 					agentState = "queued"
 				}
 				agent := map[string]any{
@@ -513,6 +515,9 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 				registeredRecords = records
 			}
 			for _, item := range value.Assignments {
+				if value.AssignmentRecordContract == assignmentrecord.NativeDeliveryContract {
+					continue // Native delivery records engineering responsibility, never activation.
+				}
 				dispatchMode := item.DispatchMode
 				if dispatchMode == "" {
 					dispatchMode = "plan_checkpoint"
@@ -1059,7 +1064,7 @@ func manifestSchemaHint(err error) string {
 
 func manifestSemanticsHint(err error) string {
 	return manifestHint(err, []struct{ needle, hint string }{
-		{"planned_agent_count", "the two reviewer Agent IDs must be distinct actual platform identities"},
+		{"planned_agent_count", "the two reviewer engineering owner IDs must be distinct; Claude Code assigns native platform actor IDs"},
 		{"separation edge", "both DV assignments must exist with different agent_ids so the independence edge resolves"},
 		{"missing mandatory responsibility", "a document_verifier manifest needs both DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY assignments"},
 		{"requires skill", "reviewer skill_refs come from the registered responsibility profile: DV-SPEC-CONSISTENCY needs document-verification/specification-planning/api-contracts, DV-TASK-EXECUTABILITY needs document-verification/specification-planning/testing-strategy"},

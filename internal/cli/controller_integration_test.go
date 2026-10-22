@@ -12,46 +12,10 @@ import (
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
 
-func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T) {
-	sourceRoot := filepath.Join("..", "..")
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "docs", "reports", "release-audits"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, relative := range []string{
-		"docs/control/loop-definition.json",
-		"docs/control/hook-policy.json",
-		"docs/control/protected-commands.json",
-	} {
-		data, err := os.ReadFile(filepath.Join(sourceRoot, relative))
-		if err != nil {
-			t.Fatal(err)
-		}
-		target := filepath.Join(root, relative)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	state, err := schema.ReadAsset("loop-state.example.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-state.json"), state, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-events.jsonl"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "hook-decisions.jsonl"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+// Recover a real issued responsibility; a cached milestone or invented
+// SubagentStop facts cannot stand in for native delivery reception.
+func TestSessionStartRecoversCurrentResponsibilityWithoutPreCompactWrites(t *testing.T) {
+	root, packet := newDesignFixture(t, "none")
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"hook", "--event", "SessionStart", "--root", root}, strings.NewReader(`{"hook_event_name":"SessionStart","session_id":"session-039"}`), &stdout, &stderr)
 	if code != 0 {
@@ -62,79 +26,33 @@ func TestSessionStartHookEmitsRecoveryGuidanceAndPersistsMilestone(t *testing.T)
 		t.Fatalf("hook output is not JSON: %v; output=%s", err, stdout.String())
 	}
 	message, _ := hookContextValue(payload).(string)
-	for _, expected := range []string{
-		"LOOP RECOVERY",
-		"docs/control/agent-protocol.md#s2",
-		"loop-harness.md",
-		"Next:",
-	} {
+	if strings.Contains(message, "S8 intake pending") || strings.Contains(message, "S8 current ObservationBatch") {
+		t.Fatalf("S2 recovery assigned an unrelated S8 responsibility: %s", message)
+	}
+	for _, expected := range []string{"docs/control/agent-protocol.md#s2", filepath.Join(root, packet.ViewPath), filepath.Join(root, packet.AnswerPath)} {
 		if !strings.Contains(message, expected) {
-			t.Fatalf("recovery message missing %q: %s", expected, message)
+			t.Fatalf("current S2 recovery missing %q: %s", expected, message)
 		}
 	}
-	updated, err := os.ReadFile(filepath.Join(root, ".claude", "loop-state.json"))
-	if err != nil {
-		t.Fatal(err)
+	before := map[string][]byte{}
+	for _, name := range []string{"loop-state.json", "loop-events.jsonl"} {
+		path := filepath.Join(root, ".claude", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[path] = data
 	}
-	if !strings.Contains(string(updated), `"milestone"`) {
-		t.Fatalf("SessionStart must persist milestone: %s", updated)
-	}
-
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.Run([]string{"hook", "--event", "PreCompact", "--root", root}, strings.NewReader(`{"hook_event_name":"PreCompact","session_id":"session-039"}`), &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("PreCompact hook failed: code=%d stderr=%s", code, stderr.String())
+	if code != 0 || strings.TrimSpace(stdout.String()) != "" {
+		t.Fatalf("PreCompact must stay silent: %d %s %s", code, &stdout, &stderr)
 	}
-	if strings.TrimSpace(stdout.String()) != "" {
-		t.Fatalf("PreCompact must persist recovery without emitting discarded messages: %s", stdout.String())
-	}
-
-	// A role-bearing spawn is a controller event before the subagent exists. The
-	// settings matcher must reach this path and emit the delegation questions.
-	current, err := os.ReadFile(filepath.Join(root, ".claude", "loop-state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var runtimeState map[string]any
-	if err := json.Unmarshal(current, &runtimeState); err != nil {
-		t.Fatal(err)
-	}
-	runtimeState["lifecycle"] = map[string]any{"state": "building", "phase": nil, "phase_revision": 0}
-	current, err = json.Marshal(runtimeState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "loop-state.json"), current, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = cli.Run([]string{"hook", "--event", "PreToolUse", "--root", root}, strings.NewReader(`{"hook_event_name":"PreToolUse","session_id":"session-039","tool_name":"Agent","tool_input":{"subagent_type":"backend-builder","team_name":"loop-team"}}`), &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("delegation preflight hook failed: code=%d stderr=%s", code, stderr.String())
-	}
-	for _, expected := range []string{
-		"Preflight questions",
-		"professional work and checks",
-		"supplied source and answer paths",
-		"Main performs the original integration and required checks",
-		"LOOP RECOVERY",
-	} {
-		if !strings.Contains(stdout.String(), expected) {
-			t.Fatalf("delegation preflight output missing %q: %s", expected, stdout.String())
-		}
-	}
-
-	stdout.Reset()
-	stderr.Reset()
-	code = cli.Run([]string{"hook", "--event", "SubagentStop", "--root", root}, strings.NewReader(`{"hook_event_name":"SubagentStop","session_id":"session-039","facts":{"agent_report_complete":true}}`), &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("SubagentStop hook failed: code=%d stderr=%s", code, stderr.String())
-	}
-	for _, expected := range []string{"SubagentStop", "REQ-bound development branch", "completion_ack"} {
-		if !strings.Contains(stdout.String(), expected) {
-			t.Fatalf("allowed SubagentStop must emit integration guidance %q: %s", expected, stdout.String())
+	for path, want := range before {
+		data, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(data, want) {
+			t.Fatalf("PreCompact changed original Runtime/journal %s: %v", path, err)
 		}
 	}
 }

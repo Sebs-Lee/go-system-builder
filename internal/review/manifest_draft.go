@@ -337,7 +337,7 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	}
 	notes = append(notes, "write_paths describe the Reviewer questionnaire/evidence responsibility and the registered verification_artifact_workspace; they are not a tool ACL")
 
-	agentID := fmt.Sprintf("TODO(planner):agent-id-for-%s", suffix)
+	agentID := fmt.Sprintf("TODO(planner): choose an engineering owner label for %s, not a platform agent_id", suffix)
 	notes = append(notes, "agent_id is this Reviewer dispatch name string, chosen by Main (for example s7-r1-qa); no opaque platform ID lookup is required")
 
 	roleFamily := lensToRoleFamily(planned.Lens)

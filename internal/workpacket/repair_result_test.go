@@ -206,9 +206,12 @@ func TestRepairResultResumeIsOptionalForLegacyIdentityAndClosedWhenPresent(t *te
 	}
 
 	bad := *binding.Resume
-	bad.ResolutionEventID = "evt-agent-" + binding.Sources.OwnerAgentID + "-blocker_resolved-r12"
-	if err := ValidateRepairResultResume(binding.Sources.OwnerAgentID, &bad); err == nil {
-		t.Fatal("Resume event ID not matching its accepted revision was accepted")
+	bad.ResolutionEventID = "opaque-original-resolution-event"
+	if err := ValidateRepairResultResume(binding.Sources.OwnerAgentID, &bad); err != nil {
+		t.Fatalf("a shape reader inferred authority from event-name spelling: %v", err)
+	}
+	if changed, err := RepairResultResumeSHA256(&bad); err != nil || changed == digest {
+		t.Fatalf("actual Resume association change lost its frozen identity: %q %v", changed, err)
 	}
 	var wire map[string]any
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -310,12 +313,16 @@ func TestValidateRepairResultAnswerRejectsInvalidProfessionalFields(t *testing.T
 	}
 }
 
-func TestBuildRepairResultRejectsSourceAndExecutionProjectionDrift(t *testing.T) {
+func TestBuildRepairResultSeparatesDraftIdentityFromSourceAuthority(t *testing.T) {
 	binding, inputs := repairResultTestFixture(t)
+	original, err := BuildRepairResult(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
 	wrongDigest := binding
 	wrongDigest.ExecutionSHA256 = strings.Repeat("0", 64)
-	if _, err := BuildRepairResult(wrongDigest, inputs); err == nil {
-		t.Fatal("Execution raw bytes inconsistent with the bound digest were accepted")
+	if changed, err := BuildRepairResult(wrongDigest, inputs); err != nil || changed.ID == original.ID {
+		t.Fatalf("draft did not freeze its actual supplied association: %+v %v", changed.Binding, err)
 	}
 
 	var execution map[string]any
@@ -325,9 +332,11 @@ func TestBuildRepairResultRejectsSourceAndExecutionProjectionDrift(t *testing.T)
 	execution["status"] = "ready"
 	inputs.Execution = json.RawMessage(mustJSON(t, execution))
 	binding.ExecutionSHA256, _ = canonicalDigest(inputs.Execution)
-	if _, err := BuildRepairResult(binding, inputs); err == nil {
-		t.Fatal("mutable status field in closed Execution definition was accepted")
+	if _, err := BuildRepairResult(binding, inputs); err == nil || !strings.Contains(err.Error(), "registered schema") {
+		t.Fatalf("mutable status entered the closed Execution definition: %v", err)
 	}
+	// The closed shape is a draft-format guarantee. The original Runtime getter
+	// separately compares the supplied association with the registered source.
 
 	binding, inputs = repairResultTestFixture(t)
 	var planReport map[string]any
@@ -344,6 +353,46 @@ func TestBuildRepairResultRejectsSourceAndExecutionProjectionDrift(t *testing.T)
 	inputs.ReworkReceipt = nil
 	if _, err := BuildRepairResult(binding, inputs); err == nil {
 		t.Fatal("missing explicit first-attempt Rework null was accepted")
+	}
+}
+
+func TestRepairResultNativeDeliveryCannotRequireBootstrapOrCreateSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, purpose, location  string
+		bootstrap, session, want bool
+	}{
+		{"observed native Git source", "native_delivery", "main", false, false, true},
+		{"legacy still needs bootstrap", "", "main", false, false, false},
+		{"native forbids bootstrap", "native_delivery", "main", true, false, false},
+		{"native forbids session", "native_delivery", "main", false, true, false},
+		{"native retains Main checks", "native_delivery", "worker", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binding, inputs := repairResultTestFixture(t)
+			var source map[string]any
+			if err := json.Unmarshal(inputs.Execution, &source); err != nil {
+				t.Fatal(err)
+			}
+			delete(source, "bootstrap_sha256")
+			delete(source, "platform_session_id")
+			delete(source, "purpose")
+			if tc.purpose != "" {
+				source["purpose"] = tc.purpose
+			}
+			source["check_location"] = tc.location
+			if tc.bootstrap {
+				source["bootstrap_sha256"] = strings.Repeat("b", 64)
+			}
+			if tc.session {
+				source["platform_session_id"] = "reserved-session"
+			}
+			inputs.Execution, _ = json.Marshal(source)
+			binding.ExecutionSHA256 = Digest(inputs.Execution)
+			_, err := BuildRepairResult(binding, inputs)
+			if (err == nil) != tc.want {
+				t.Fatalf("native source boundary: accepted=%t want=%t err=%v", err == nil, tc.want, err)
+			}
+		})
 	}
 }
 

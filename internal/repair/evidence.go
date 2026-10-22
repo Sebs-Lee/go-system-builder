@@ -19,15 +19,15 @@ func CreateChangeImpact(root string, request ChangeImpactRequest) (ChangeImpact,
 	if strings.TrimSpace(request.ImpactID) == "" {
 		return ChangeImpact{}, ArtifactRef{}, errors.New("impact record identity is required")
 	}
-	if len(request.ChangeTypes) == 0 || len(request.Decisions) == 0 {
-		return ChangeImpact{}, ArtifactRef{}, errors.New("record actual change types and professional impact decisions")
+	if (len(request.ChangedArtifacts) > 0 && len(request.ChangeTypes) == 0) || len(request.Decisions) == 0 {
+		return ChangeImpact{}, ArtifactRef{}, errors.New("record professional impact decisions and actual change types for any changed artifacts")
 	}
 	for _, decision := range request.Decisions {
 		if strings.TrimSpace(decision.Rationale) == "" {
 			return ChangeImpact{}, ArtifactRef{}, errors.New("impact decisions require the actual professional reason")
 		}
 	}
-	changed := append([]ArtifactRef(nil), request.ChangedArtifacts...)
+	changed := append([]ArtifactRef{}, request.ChangedArtifacts...)
 	for i := range changed {
 		if changed[i].ID == "" {
 			changed[i].ID = "changed-" + strings.NewReplacer("/", "-", "\\", "-").Replace(changed[i].Path)

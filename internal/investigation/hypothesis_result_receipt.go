@@ -90,7 +90,7 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 	}
 	answerJSON, issues := workpacket.ValidateHypothesisResultAnswer(packet, authoringBytes)
 	if len(issues) != 0 {
-		return snapshot, fmt.Errorf("S8 answer %s: %s (%s)", issues[0].Pointer, issues[0].Expected, issues[0].Observed)
+		return snapshot, &workpacket.AnswerError{Label: "S8 answer", Fields: issues}
 	}
 	answerSHA := workpacket.Digest(answerJSON)
 	var answer workpacket.HypothesisResultAnswer
@@ -129,7 +129,7 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 		return snapshot, errors.New("S8 packet no longer has the exact current registered Investigator dispatch")
 	}
 	if err := verifyHypothesisResultPacketCurrent(root, snapshot.State, current, dispatch, packet); err != nil {
-		return snapshot, err
+		return snapshot, fmt.Errorf("S8 packet %s for Case %s: %w; Main must inspect the original receipt and current Case/dispatch before resuming reception; preserve the professional answer at %s", packet.ID, packet.Binding.CaseID, err, packet.AnswerPath)
 	}
 	if err := ensureHypothesisResultNotAlreadyOnCase(current.document, packet); err != nil {
 		return snapshot, err
@@ -222,6 +222,9 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 		if verifyErr == nil && ok && committed.AnswerSHA256 == answerSHAHex && committed.ExecutionRoot == sourceRoot {
 			return latest, nil
 		}
+	}
+	if errors.Is(submitErr, loopruntime.ErrStaleRevision) {
+		return loopruntime.Snapshot{}, fmt.Errorf("S8 packet %s for Case %s: %w; Main must inspect the original receipt and current Case/dispatch before resuming the original reception; preserve the professional answer at %s", packet.ID, packet.Binding.CaseID, submitErr, packet.AnswerPath)
 	}
 	return loopruntime.Snapshot{}, submitErr
 }
@@ -322,11 +325,43 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 	for _, question := range answer.NewHypotheses {
 		refs = append(refs, question.EvidenceRefs...)
 	}
-	if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
-		return fmt.Errorf("S8 answer evidence references: %w", err)
-	}
-	if err := validateS8SourceBoundaryRefs(root, packet, answer.SourceBoundaryRefs); err != nil {
-		return err
+	if packet.Binding.ObservationBatchRef == "" {
+		data, err := workpacket.ReadFile(root, packet.Binding.CaseRef, hypothesisResultPacketReadLimit)
+		if err != nil || workpacket.Digest(data) != packet.Binding.CaseSHA256 {
+			return fmt.Errorf("S8 original human Case bytes/SHA differ: %v", err)
+		}
+		var document map[string]any
+		if err := json.Unmarshal(data, &document); err != nil {
+			return err
+		}
+		source, err := humanCaseSource(root, state, document)
+		if err != nil {
+			return err
+		}
+		remaining := withoutHumanSource(refs, source)
+		if len(remaining) > 0 {
+			if err := ValidateEvidenceRefs(remaining, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
+				return fmt.Errorf("S8 answer evidence references: %w", err)
+			}
+		}
+		boundaryError := func(ref string) error {
+			return &workpacket.AnswerError{Label: "S8 human source boundary", Fields: []workpacket.FieldError{{Pointer: "/answer/source_boundary_refs", Expected: "the frozen original human report", Observed: ref, Repair: "Cite the supplied original human decision ID or exact path; do not invent a Finding or Batch."}}}
+		}
+		if len(answer.SourceBoundaryRefs) == 0 {
+			return boundaryError("empty")
+		}
+		for _, ref := range answer.SourceBoundaryRefs {
+			if !humanSourceRef(ref, source) {
+				return boundaryError(ref)
+			}
+		}
+	} else {
+		if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
+			return fmt.Errorf("S8 answer evidence references: %w", err)
+		}
+		if err := validateS8SourceBoundaryRefs(root, packet, answer.SourceBoundaryRefs); err != nil {
+			return err
+		}
 	}
 	return nil
 }

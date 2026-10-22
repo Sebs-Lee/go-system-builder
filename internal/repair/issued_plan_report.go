@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,7 +68,11 @@ func validateIssuedPlanReportCapability(root string, state map[string]any, req S
 }
 
 func bytesEqualRepairPlanReportAnswer(left, right []byte) bool {
-	return string(left) == string(right)
+	var a, b bytes.Buffer
+	if json.Compact(&a, left) != nil || json.Compact(&b, right) != nil {
+		return false
+	}
+	return bytes.Equal(a.Bytes(), b.Bytes())
 }
 
 // IssueRepairPlanReportPackets is the S9 adapter to the original runtime
@@ -476,7 +481,7 @@ func containsStringForRepairReport(values []string, wanted string) bool {
 // evidence (work_complete=false); the same original Writer submission records
 // the Builder work-start fact without a second Begin permission transaction.
 func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req SubmitIssuedRepairPlanReportRequest) (runtimepkg.Snapshot, PlanReport, error) {
-	snapshot, _, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
+	snapshot, writer, err := readIssuedRepairPlanReportRuntime(root, statePath, journalPath)
 	if err != nil {
 		return runtimepkg.Snapshot{}, PlanReport{}, err
 	}
@@ -529,9 +534,9 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	if err := checkRevision(req.ExpectedRevision, snapshot.Revision, "runtime S9 issued PlanReport answer"); err != nil {
 		return snapshot, PlanReport{}, err
 	}
-	issueAt := req.OccurredAt
-	if issueAt.IsZero() {
-		issueAt = time.Now().UTC()
+	issueAt, err := repairPlanReportIssueTime(root, snapshot.State, packet)
+	if err != nil {
+		return snapshot, PlanReport{}, err
 	}
 	var professional workpacket.RepairPlanReportProfessionalAnswer
 	if err := json.Unmarshal(answer, &professional); err != nil {
@@ -543,6 +548,9 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	}
 	receipt, err := newRepairPlanReportReceipt(root, snapshot, packet, answer, answerSHA, actualSource, issueAt)
 	if err != nil {
+		return snapshot, PlanReport{}, err
+	}
+	if err := cleanupUnacceptedIssuedPlanReport(root, writer, snapshot, packet, receipt, professional, issueAt); err != nil {
 		return snapshot, PlanReport{}, err
 	}
 	var assignment struct {
@@ -580,11 +588,10 @@ func newRepairPlanReportReceipt(root string, snapshot runtimepkg.Snapshot, packe
 	journal, _ := snapshot.State["journal"].(map[string]any)
 	sequence, _ := integerForRepairReport(journal["last_sequence"])
 	commitRevision := snapshot.Revision + 1
-	packetBytes, err := json.Marshal(packet)
+	packetSHA, err := workpacket.RepairPlanReportPacketDigest(packet)
 	if err != nil {
 		return runtimepkg.RepairPlanReportReceipt{}, err
 	}
-	packetSHA := workpacket.Digest(packetBytes)
 	b := packet.Binding
 	return runtimepkg.RepairPlanReportReceipt{
 		Contract: repairPlanReportReceiptContract, PacketID: packet.ID,

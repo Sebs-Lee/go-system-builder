@@ -3,7 +3,6 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -116,8 +115,16 @@ func CurrentRepairResultPackets(root string, state map[string]any, owner string)
 	return currentRepairResultPackets(root, state, owner, all)
 }
 
-func currentRepairResultPackets(_ string, state map[string]any, owner string, all []workpacket.RepairResultPacket) ([]workpacket.RepairResultPacket, error) {
-	return currentRepairResultCandidates(state, owner, all), nil
+func currentRepairResultPackets(root string, state map[string]any, owner string, all []workpacket.RepairResultPacket) ([]workpacket.RepairResultPacket, error) {
+	candidates := currentRepairResultCandidates(state, owner, all)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	journal, err := repairResultResumeJournal(root, state)
+	if err != nil {
+		return nil, err
+	}
+	return currentRepairResultPacketsWithJournal(root, state, owner, all, candidates, journal)
 }
 
 func currentRepairResultCandidates(state map[string]any, owner string, all []workpacket.RepairResultPacket) []workpacket.RepairResultPacket {
@@ -128,7 +135,6 @@ func currentRepairResultCandidates(state map[string]any, owner string, all []wor
 	owners, _ := pointer["assignment_owners"].(map[string]any)
 	workspace, _ := state["workspace"].(map[string]any)
 	executions, _ := workspace["executions"].(map[string]any)
-	entities, _ := state["entities"].(map[string]any)
 	candidates := make([]workpacket.RepairResultPacket, 0, len(all))
 	for _, p := range all {
 		b := p.Binding.Sources
@@ -146,30 +152,7 @@ func currentRepairResultCandidates(state map[string]any, owner string, all []wor
 			execution["worktree_path"] != issued["worktree_path"] || stringValue(execution["rework_ref"]) != p.Binding.ReworkRef {
 			continue
 		}
-		// Resolution and successor pointers are already recorded Runtime facts.
-		// Reading them does not require replaying their journal or source chain.
-		retired := false
-		messageDir := path.Join(".claude/evidence", b.RuntimeID, fmt.Sprintf("g%d", b.BaselineGeneration), "S9", "blocker-messages", p.ID)
-		for _, agent := range objectRows(entities["agents"]) {
-			ref := stringValue(agent["blocker_resolved_ref"])
-			if agent["id"] == b.OwnerAgentID && (ref == messageDir || strings.HasPrefix(ref, messageDir+"/")) {
-				retired = true
-			}
-		}
-		for _, row := range objectRows(state["evidence"]) {
-			refs, _ := checkpointStringSlice(row["scope_refs"])
-			if row["kind"] == "repair_result_resolution" && containsStringRuntime(refs, p.ID) {
-				retired = true
-			}
-		}
-		for _, successor := range all {
-			if successor.Binding.Sources.RuntimeID == b.RuntimeID && successor.Binding.Sources.SessionID == b.SessionID && successor.Binding.Resume != nil && successor.Binding.Resume.PredecessorPacketID == p.ID {
-				retired = true
-			}
-		}
-		if !retired {
-			candidates = append(candidates, p)
-		}
+		candidates = append(candidates, p)
 	}
 	return candidates
 }

@@ -32,6 +32,11 @@ type ExecutionRegistry struct {
 	BoundHead  string               `json:"bound_head"`
 	Executions map[string]Execution `json:"executions"`
 }
+
+// NativeDeliveryPurpose marks a Git source observed at native SubagentStop.
+// It is a delivery fact for original consumers, never a prepared Worker/session.
+const NativeDeliveryPurpose = "native_delivery"
+
 type Execution struct {
 	AssignmentRecord       *assignmentrecord.RecordReference `json:"assignment_record,omitempty"`
 	AssignmentRecordSHA256 string                            `json:"assignment_record_sha256,omitempty"`

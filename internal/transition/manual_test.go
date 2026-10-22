@@ -79,19 +79,20 @@ func TestManualS7RecoveryGuidanceNamesRepairFactsAndTypedEvidence(t *testing.T) 
 	}
 }
 
-func TestManualQuestionnairePathIsTheNormalS6S7S9Flow(t *testing.T) {
+func TestManualNativeS6AndQuestionnaireS7S9Flow(t *testing.T) {
 	manual := transition.RenderManual(&transition.LoopDefinition{}, transition.ManualOptions{})
 
 	for _, want := range []string{
 		"docs/examples/s6-builder/README.md",
-		"runtime workspace prepare --root <authority-root> --assignment <id> --agent <owner>",
-		"exact PLAN and Result paths",
-		"runtime workspace launch",
-		"Do not run `runtime task-complete`",
+		"s6 prepare --root <authority-root> --task <TASK> --role <Builder-role>",
+		"SubagentStop invokes the original Result consumer",
+		"Ordinary save hooks do not receive native S6 delivery",
+		"Main explicitly runs `runtime task-integrate --assignment-id <id>`",
+		"s6 prepare --revise-assignment <id> --revision-intent-key <stable-key>",
 		"exact Hook-supplied ReviewPlan path",
 		"Do not run `runtime review-result submit`",
-		"one independent TargetedReverification per approved Contract",
-		"no author-filled Handoff is needed",
+		"independent Targeted verification per approved Contract",
+		"no extra Handoff report",
 	} {
 		if !strings.Contains(manual, want) {
 			t.Fatalf("normal questionnaire path must contain %q, got:\n%s", want, manual)
@@ -114,20 +115,20 @@ func TestManualS10GuidanceNamesManifestAndClosedLoop(t *testing.T) {
 	manual := transition.RenderManual(&transition.LoopDefinition{}, transition.ManualOptions{})
 
 	for _, want := range []string{
-		"exact acceptance or release-audit manifest answer path",
-		"coverage/counterevidence row once",
-		"eight audit-area rows",
-		"original consumer validates the saved manifest and derives its envelope and metrics",
-		"Do not hand-run manifest validate/render",
-		"zero UNKNOWN",
-		"S8 → S9 → a fresh complete S7",
+		"actual acceptance or release-audit Manifest at the supplied exact path",
+		"Explain requirement dispositions, applicable observations, counterevidence",
+		"Eight audit themes are relevance prompts, not a row quota",
+		"original consumer derives its envelope and metrics",
+		"do not run a second validate/render/evidence submission",
+		"Unknowns and blockers remain unfinished",
+		"Actual human choice remains in S11",
 		"runtime human-decision",
 	} {
 		if !strings.Contains(manual, want) {
 			t.Fatalf("S10 manual guidance must contain %q, got:\n%s", want, manual)
 		}
 	}
-	for _, stale := range []string{"audit_manifest_path", "audit_manifest_sha256", "loop-harness s10 manifest validate"} {
+	for _, stale := range []string{"audit_manifest_path", "audit_manifest_sha256", "loop-harness s10 manifest validate", "must include all eight", "exactly one counterevidence row per item"} {
 		if strings.Contains(manual, stale) {
 			t.Fatalf("normal S10 guidance must not ask the author to copy or submit %q", stale)
 		}

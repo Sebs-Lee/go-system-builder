@@ -295,6 +295,11 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		Message:                fmt.Sprintf("repair_contract_approved: %s for %s; next: S9 consume the approved Contract", contractID, request.CaseID),
 		OccurredAt:             approvedAt,
 		Apply: func(state map[string]any) error {
+			if stringField(caseDocument["observation_batch_id"]) == "" {
+				if err := validateContractBaseline(root, state, caseDocument); err != nil {
+					return err
+				}
+			}
 			// Revalidate reusable authority and budget inside the Writer CAS.
 			if delegation != nil {
 				if _, err := validateDelegatedApproval(root, state, draft, request); err != nil {
@@ -363,6 +368,25 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 // approval must independently re-read the sealed ObservationBatch and any
 // current ReviewPlan pointer before it can transfer authority to S9.
 func validateContractBaseline(root string, state, caseDocument map[string]any) error {
+	if stringField(caseDocument["observation_batch_id"]) == "" {
+		if _, err := humanCaseSource(root, state, caseDocument); err != nil {
+			return err
+		}
+		digest, err := humanBaselineDigest(root, state)
+		if err != nil {
+			return err
+		}
+		if pin := stringField(caseDocument["baseline_digest"]); pin == "" || pin != digest {
+			return errors.New("human Case baseline_digest is missing or drifted; Main must restore/reassess the original frozen product baseline, not create an ObservationBatch")
+		}
+		if warning := stringField(s8Map(state["review"])["investigation_baseline_drift"]); warning != "" {
+			return errors.New(warning)
+		}
+		return nil
+	}
+	if len(stringSliceValues(caseDocument["source_finding_ids"])) == 0 {
+		return errors.New("a Batch repair contract requires its original non-empty Finding set")
+	}
 	pinnedDigest := strings.TrimSpace(stringField(caseDocument["baseline_digest"]))
 	if pinnedDigest == "" {
 		return errors.New("Case baseline_digest is missing; re-ingest from a sealed ObservationBatch")
@@ -542,11 +566,11 @@ func activeCasePointer(state map[string]any, caseID string) (map[string]any, err
 }
 
 func exactFindingSetWithDetails(caseIDs, contractIDs []string) error {
-	left, err := normalizeSet(caseIDs, "InvestigationCase.source_finding_ids")
+	left, err := normalizeOptionalSet(caseIDs, "InvestigationCase.source_finding_ids")
 	if err != nil {
 		return err
 	}
-	right, err := normalizeSet(contractIDs, "RepairContract.source_finding_ids")
+	right, err := normalizeOptionalSet(contractIDs, "RepairContract.source_finding_ids")
 	if err != nil {
 		return err
 	}

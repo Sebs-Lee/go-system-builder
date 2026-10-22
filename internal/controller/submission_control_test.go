@@ -53,6 +53,39 @@ func submissionControlFixture(t *testing.T, ready bool) (string, string, *filevi
 	entities["submissions"] = []any{map[string]any{
 		"submission_key": key, "packet_id": packet.ID, "owner": "dv-spec", "content_sha256": strings.Repeat("b", 64), "evidence_id": "ev-dv-spec", "followup_event_id": event, "control_status": "pending", "origin_state": "document_verification", "origin_phase": "", "origin_entry": 0,
 	}}
+	// This test starts after domain reception. Both independent reviews must
+	// have current received packets; naked PASS envelopes cannot replace them.
+	taskPacket, err := workpacket.BuildS5(workpacket.Binding{RuntimeID: state["runtime_id"].(string), Generation: 1, StageEntry: 0, Owner: "dv-task", AssignmentID: "assignment-task", AssignmentSHA: strings.Repeat("c", 64), Responsibility: "DV-TASK-EXECUTABILITY", Attempt: 1}, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskData, err := json.Marshal(taskPacket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskRow map[string]any
+	if err := json.Unmarshal(taskData, &taskRow); err != nil {
+		t.Fatal(err)
+	}
+	entities["work_packets"] = append(entities["work_packets"].([]any), taskRow)
+	entities["submissions"] = append(entities["submissions"].([]any), map[string]any{
+		"submission_key": workpacket.Digest([]byte("submission:" + taskPacket.ID)), "packet_id": taskPacket.ID,
+		"owner": "dv-task", "content_sha256": strings.Repeat("d", 64), "evidence_id": "ev-dv-task",
+		"followup_event_id": workpacket.Digest([]byte(workpacket.Digest([]byte("submission:"+taskPacket.ID)) + ":after-domain")),
+		"control_status":    "no_transition", "origin_state": "document_verification", "origin_phase": "", "origin_entry": 0,
+	})
+	// Existing Runtime responsibility metadata; no platform Team is launched.
+	entities["teams"] = append(entities["teams"].([]any), map[string]any{
+		"id": "document-review-current", "platform_team_id": "native-review", "kind": "document_verifier", "status": "active",
+		"manifest_ref": ".claude/teams/document-review.json", "review_round": nil,
+		"packet_generation": 1, "packet_stage_entry": 0,
+		"agent_ids": []string{"dv-spec", "dv-task"}, "responsibility_ids": []string{"DV-SPEC-CONSISTENCY", "DV-TASK-EXECUTABILITY"},
+	})
+	for _, id := range []string{"ev-dv-spec", "ev-dv-task"} {
+		if (ready || id == "ev-dv-spec") && !runtime.CurrentDocumentReviewEvidence(state, id) {
+			t.Fatalf("fixture did not establish its claimed current S5 reception: %s", id)
+		}
+	}
 	req039fixtures.WriteState(t, root, state)
 	catalog, err := transition.LoadCatalog(root)
 	if err != nil {

@@ -381,7 +381,11 @@ func projectWorkProgress(root string, request policy.Input, snap runtime.Snapsho
 	var current *workpacket.Packet
 	for _, raw := range packets {
 		row, _ := raw.(map[string]any)
-		if row["template_id"] == "s2-design-v1" || row["template_id"] == "s3-contract-v1" || row["template_id"] == "s4-task-planning-v1" {
+		// FindWorkPacket is the original S5 lookup, not a decoder for the
+		// S7/S8/S9 typed packets retained in this shared history. Their original
+		// consumers own those responsibilities; optional sampling does not
+		// reclassify an unsupported type as missing professional work.
+		if row["template_id"] != "s5-document-review-v1" {
 			continue
 		}
 		p, ok, err := runtime.FindWorkPacket(snap.State, progressText(row["packet_id"]))

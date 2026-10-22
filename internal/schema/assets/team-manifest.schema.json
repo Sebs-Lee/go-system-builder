@@ -143,7 +143,7 @@
       "description": "Timestamp of the workgroup dispatch (register-workgroup). Serves as the dispatch-time fact for recovery and audit; the angle machinery that consumed it is retired (L3-S7). Null until dispatch fires."
     },
     "assignment_record_contract": {
-      "const": "s6-v1.2"
+      "enum": ["s6-v1.2", "s6-native-v1"]
     }
   },
   "$defs": {
@@ -795,7 +795,7 @@
         ],
         "properties": {
           "assignment_record_contract": {
-            "const": "s6-v1.2"
+            "enum": ["s6-v1.2", "s6-native-v1"]
           },
           "workgroup_kind": {
             "const": "builder"

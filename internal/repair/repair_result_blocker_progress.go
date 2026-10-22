@@ -33,6 +33,13 @@ func RepairResultBlockerExecutionMayEnd(root string, state map[string]any, packe
 	if stringField(agent["work_blocked_ref"]) != receipt.Artifact.MessageRef {
 		return false, nil
 	}
+	if !currentRepairResultBlockerEvidence(state, receipt.ArtifactRef) || repairResultBlockerResolved(state, packet.ID, receipt.ArtifactRef) {
+		return false, nil
+	}
+	answer, sha, err := readIssuedRepairResultBlockerAnswer(receipt.Artifact.ExecutionRoot, packet)
+	if err != nil || sha != receipt.Artifact.AnswerSHA256 || !bytesEqualRepairPlanReportAnswer(answer, receipt.Artifact.SubmittedAnswer) {
+		return false, nil
+	}
 	execution, _, err := verifyIssuedRepairResultBlockerSource(context.Background(), root, state, packet, receipt.Artifact.ExecutionRoot, "")
 	if err != nil {
 		return false, err

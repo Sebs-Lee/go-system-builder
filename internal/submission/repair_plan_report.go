@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -97,9 +98,15 @@ func (s *Service) SaveRepairPlanReportFrom(ctx context.Context, owner, path, sou
 	if err != nil {
 		return receipt, err
 	}
-	receipt.NextAction = fmt.Sprintf("本人 S9 PlanReport 已记录；Main 正常准备实际工作位置：runtime workspace prepare --root %q --assignment %q --agent %q --check-location main。受支持宿主需要 Worker 隔离检查时可选择 --check-location worker。准备完成后提供本人的准确 RepairResult 卷，无需重复提交 Plan 或分工卷。", s.Root, packet.Binding.ManifestAssignmentID, owner)
-	if next.State["workspace"] == nil {
-		receipt.NextAction = fmt.Sprintf("Main 先执行 runtime workspace bind --root %q；", s.Root) + receipt.NextAction
+	receipt.NextAction = "本人 S9 PlanReport 已记录；原生 Builder 继续原专业修复、自检并返回实际工作树中的 Result，由 Stop 接收。Main 单独完成原集成与必要检查，无需重复提交 Plan 或分工卷；已冻结旧执行保留原恢复路径。"
+	// A frozen pre-migration Plan has no prepared native brief. Preserve its
+	// original workspace recovery instead of redirecting it into a new Agent.
+	brief := filepath.Join(s.Root, filepath.Dir(packet.ViewPath), packet.ID, "native", "brief.md")
+	if _, err := os.Stat(brief); err != nil {
+		receipt.NextAction = fmt.Sprintf("本人 S9 PlanReport 已记录；Main 正常准备实际工作位置：runtime workspace prepare --root %q --assignment %q --agent %q --check-location main。受支持宿主需要 Worker 隔离检查时可选择 --check-location worker。准备完成后提供本人的准确 RepairResult 卷，无需重复提交 Plan 或分工卷。", s.Root, packet.Binding.ManifestAssignmentID, owner)
+		if next.State["workspace"] == nil {
+			receipt.NextAction = fmt.Sprintf("Main 先执行 runtime workspace bind --root %q；", s.Root) + receipt.NextAction
+		}
 	}
 	return receipt, nil
 }

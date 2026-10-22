@@ -470,7 +470,7 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	}
 	answer, problems := workpacket.ValidateRepairResultAnswer(packet, answerBytes)
 	if len(problems) != 0 {
-		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("S9 answer %s: %s (%s)", problems[0].Pointer, problems[0].Expected, problems[0].Observed)
+		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, &workpacket.AnswerError{Label: "S9 answer", Fields: problems}
 	}
 	answerSHA := workpacket.Digest(answer)
 	if acceptedOK {
@@ -1195,6 +1195,12 @@ func repairResultMainChecks(root string, packet workpacket.RepairResultPacket, p
 		if err := json.Unmarshal(data, &executed); err != nil {
 			return nil, err
 		}
+		// Target advancement can legitimately require another Main check
+		// before Final reception. Older tested commits remain history rather
+		// than becoming unfinished checks for this newly verified commit.
+		if checkpoint.TestedHead != "" && (executed.Before != checkpoint.TestedHead || executed.After != checkpoint.TestedHead) {
+			continue
+		}
 		if executed.Status != "pass" || executed.Exit != 0 || executed.Before != checkpoint.TestedHead || executed.After != checkpoint.TestedHead || checkpoint.TestedHead == "" {
 			return nil, errors.New("S9 Main checks remain pending: a necessary check did not pass at the tested commit")
 		}
@@ -1205,7 +1211,11 @@ func repairResultMainChecks(root string, packet workpacket.RepairResultPacket, p
 		if strings.TrimSpace(executed.Command) == "" || cwd == "" || !sameAbsolutePath(cwd, root) {
 			return nil, errors.New("S9 Main check lacks its actual command or Main checkout")
 		}
-		check := RepairCheck{Name: "verified Main integration", Command: executed.Command, Result: "pass", EvidenceRefs: []string{filepath.ToSlash(path)}}
+		relative, err := filepath.Rel(root, path)
+		if err != nil || !filepath.IsLocal(relative) {
+			return nil, errors.New("S9 Main check receipt escaped the Main root")
+		}
+		check := RepairCheck{Name: "verified Main integration", Command: executed.Command, Result: "pass", EvidenceRefs: []string{"path:" + filepath.ToSlash(relative) + "#sha256=" + workpacket.Digest(data)}}
 		if index, exists := byCommand[executed.Command]; exists {
 			out[index] = check
 		} else {

@@ -309,7 +309,7 @@ func TestRepairPlanReportPacketIssueSourceClosureAndCheckpointFiltering(t *testi
 	}
 }
 
-func TestRepairPlanReportPacketLookupRejectsDuplicateAndDisabledContract(t *testing.T) {
+func TestRepairPlanReportPacketLookupRejectsMalformedRecordsWithoutLegacyFlagRequirement(t *testing.T) {
 	f := newRepairPlanReportRuntimeFixture(t)
 	entities := f.state["entities"].(map[string]any)
 	rows := entities["work_packets"].([]any)
@@ -320,9 +320,25 @@ func TestRepairPlanReportPacketLookupRejectsDuplicateAndDisabledContract(t *test
 	}
 
 	f = newRepairPlanReportRuntimeFixture(t)
+	issued, err := RepairPlanReportPackets(f.state)
+	if err != nil || len(issued) != 1 {
+		t.Fatalf("original issued record is not readable: %v", err)
+	}
 	f.state["configuration"].(map[string]any)["optimization"].(map[string]any)["packet"] = false
-	if _, err := RepairPlanReportPackets(f.state); err == nil || !strings.Contains(err.Error(), "explicit v1.2 packet contract") {
-		t.Fatalf("S9 packet without explicit packet mode accepted: %v", err)
+	before, _ := json.Marshal(f.state)
+	recorded, err := RepairPlanReportPackets(f.state)
+	want, _ := json.Marshal(issued)
+	got, _ := json.Marshal(recorded)
+	after, _ := json.Marshal(f.state)
+	if err != nil || string(want) != string(got) || string(before) != string(after) {
+		t.Fatalf("legacy mode change erased issued facts or lookup changed state: %v", err)
+	}
+	// Closed typed structure remains mandatory; reading history grants no
+	// authority to add an unsupported contract field or issue new work.
+	rows = f.state["entities"].(map[string]any)["work_packets"].([]any)
+	rows[0].(map[string]any)["unsupported_contract_field"] = true
+	if _, err := RepairPlanReportPackets(f.state); err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("unknown contract field accepted by the original typed reader: %v", err)
 	}
 }
 

@@ -41,7 +41,7 @@ func TestS9RepairLeadStopAndIdleDoNotGuessPathWithoutAuthority(t *testing.T) {
 	mapFieldCLI(ready, "review")["repair"] = map[string]any{"status": "ready_for_full_review", "required_reverification_ids": []any{}}
 	for _, event := range []string{"Stop", "Idle"} {
 		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, runtime.Snapshot{State: ready})
-		if !strings.Contains(context, "no remaining professional Main answer") || !strings.Contains(context, "read-only") {
+		if !strings.Contains(context, "no remaining professional Main answer") || !strings.Contains(context, "this reminder only reads current facts") || !strings.Contains(context, "original Handoff and fresh S7 seed") {
 			t.Fatalf("%s did not report read-only automatic handoff: %s", event, context)
 		}
 	}
@@ -127,8 +127,12 @@ func TestS9RepairLeadTargetedPathUsesRegisteredIndependentAssignment(t *testing.
 		t.Fatalf("legacy single obligation source did not resolve one selection: selections=%#v err=%v", selections, err)
 	}
 	_, legacyDraft, err := prepareRepairTargetedQuestionnaire(root, state, selections[0])
-	if err != nil || legacyDraft.ReverificationID != "reverify-lead-path" {
-		t.Fatalf("legacy single ID was not preserved through the original Targeted DTO: id=%q err=%v", legacyDraft.ReverificationID, err)
+	if err != nil || legacyDraft.ReverificationID == "" || legacyDraft.OriginalAssignmentID != assignmentID || legacyDraft.PerformingAssignmentID != verifierID || legacyDraft.ImpactID != impact.ImpactID {
+		t.Fatalf("original Targeted DTO lost its current source responsibility: %+v err=%v", legacyDraft, err)
+	}
+	repeatedPath, repeated, err := prepareRepairTargetedQuestionnaire(root, state, selections[0])
+	if err != nil || repeatedPath != want || repeated.ReverificationID != legacyDraft.ReverificationID {
+		t.Fatalf("same actual Targeted responsibility changed identity on retry: %+v %v", repeated, err)
 	}
 }
 
@@ -425,7 +429,8 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		writeRepairLeadJSON(t, targetPath, targetAnswer)
 		feedback.Reset()
-		if handled, _ := runSavedRepairLeadQuestionnaire(root, targetSaves[index], &feedback, &bytes.Buffer{}); !handled || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
+		nativeReturn := policy.Input{Event: "SubagentStop", AgentID: "opaque-targeted-native-id", SessionID: "native-parent", CWD: root, LastAssistantMessage: targetPath}
+		if handled, code := nativeS9Hook(root, nativeReturn, &bytes.Buffer{}, &feedback); !handled || code != 0 || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
 			t.Fatalf("blocked Targeted answer for %s did not reach original Runtime consumer: handled=%v feedback=%s", verifierOwners[index], handled, feedback.String())
 		}
 		blockedSnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
@@ -489,7 +494,8 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		writeRepairLeadJSON(t, targetPath, persistedBlocked)
 		feedback.Reset()
-		if handled, _ := runSavedRepairLeadQuestionnaire(root, targetSaves[index], &feedback, &bytes.Buffer{}); !handled || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
+		nativeReturn.AgentID = "opaque-targeted-id-after-native-resume"
+		if handled, code := nativeS9Hook(root, nativeReturn, &bytes.Buffer{}, &feedback); !handled || code != 0 || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
 			t.Fatalf("resolved blocker did not resume/create/commit the pass result: handled=%v feedback=%s", handled, feedback.String())
 		}
 		handoffContext = feedback.String()
@@ -501,6 +507,11 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		afterTarget, err := runtime.NewStore(statePath, journalPath).Snapshot()
 		if err != nil || stringValue(repairPointerCLI(afterTarget.State)["status"]) != "closed" {
 			t.Fatalf("resumed Targeted consumer did not reach handoff status: status=%q err=%v", stringValue(repairPointerCLI(afterTarget.State)["status"]), err)
+		}
+		var mainOut bytes.Buffer
+		mainInput := policy.Input{Event: "PostToolUse", ToolName: "Agent", CWD: root, ToolInput: map[string]any{"prompt": targetPath}}
+		if handled, code := nativeMainReturnHook(root, mainInput, &mainOut); !handled || code != 0 || !strings.Contains(mainOut.String(), "Original Targeted records") || !strings.Contains(mainOut.String(), "result=pass") {
+			t.Fatalf("Main missed closed Targeted reception: %t %d %s", handled, code, &mainOut)
 		}
 		resumedRefs := repairArtifactRefs(repairPointerCLI(afterTarget.State), "targeted_reverification_artifacts", "", "")
 		if len(resumedRefs) != 2 {

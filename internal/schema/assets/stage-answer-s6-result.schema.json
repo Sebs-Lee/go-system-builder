@@ -31,7 +31,7 @@
     "baseline_generation": {"type": "integer", "minimum": 1},
     "assignment_id": {"type": "string", "pattern": "^assignment-[A-Za-z0-9._-]+$"},
     "assignment_revision": {"type": "integer", "minimum": 1},
-    "assignment_record_contract": {"const": "s6-v1.2"},
+    "assignment_record_contract": {"enum": ["s6-v1.2", "s6-native-v1"]},
     "assignment_record_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
     "agent_id": {"type": "string", "minLength": 1},
     "agent_definition_ref": {"type": "string", "minLength": 1},

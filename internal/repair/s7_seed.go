@@ -17,7 +17,7 @@ import (
 // wording is deliberate: rejectPlannerPlaceholders (internal/review) rejects
 // the literal "TODO(planner)" token, so the seed uses an explicit instruction
 // instead while staying equally unmistakable as unfinished content.
-const seedMarker = "PLANNER-REFINE (S9 seed): the S7 Planner must replace this field via `runtime review-plan revise` before dispatch —"
+const seedMarker = "PLANNER-REFINE (S9 seed): answer this professional question in the supplied current ReviewPlan and save before dispatch; only an already registered Plan needs its named revision —"
 
 // createS7ReviewPlanSeed stages the post-repair S7 ReviewPlan seed at the
 // TR-012 handoff. Canonical S6 generations use the normal S7 draft and keep
@@ -54,6 +54,12 @@ func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact C
 	for _, artifact := range impact.ChangedArtifacts {
 		frozen = append(frozen, map[string]any{"path": artifact.Path, "sha256": artifact.SHA256, "kind": "post_repair_changed_artifact"})
 		coverage = append(coverage, map[string]any{"id": "coverage-" + safeSeedID(artifact.Path), "kind": "post_repair_change", "source_ref": artifact.Path, "target": artifact.Path, "lens": "qa"})
+	}
+	if len(frozen) == 0 {
+		// Legacy runtimes lack the canonical product baseline above. Pin the
+		// actual approved spec already verified here; do not invent a changed
+		// product or turn the unrefined seed into a clean verification round.
+		frozen = append(frozen, map[string]any{"path": contractRef.Path, "sha256": contractRef.SHA256, "kind": "repair_contract"})
 	}
 	changedPaths := make([]string, 0, len(impact.ChangedArtifacts))
 	for _, artifact := range impact.ChangedArtifacts {

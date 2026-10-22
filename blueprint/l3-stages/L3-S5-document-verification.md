@@ -1,405 +1,394 @@
-# L3-S5 — 文档验证（Document Verification）
+# L3-S5 文档验证
 
-> 层：第三层 ｜ 上游：L2 §S5 ｜ 前置：S4 registered TASK batch + 整体派发计划 ｜ 下游：S6 构建
->
-> 阅读顺序：§1～§3 先建立“为什么审、审什么、如何分流”的完整漏斗；§4 再映射 reviewer、REV 信封、quality gate 和 transition；§5～§8 审计职责、真实强制边界、出口和易错点。本文把“审查者应做的判断”与“当前代码已经强制的事实”分开表述。
+S5 在实现开始前，对 S2～S4 形成的规格链进行独立审查。它分别判断“这些材料是否表达同一套正确承诺”和“执行者能否按任务实际交付”，将发现返回有权修正它的责任，并在两项判断都成立后建立准确的执行基线。
 
-## 1. 第一层：S5 的立意与目标
+本阶段承接 [S4 任务与整体派发计划](L3-S4-task-split.md)，通过后交给 [S6 构建](L3-S6-build.md)。其依据是 [L1](../l1-principles/L1-design-principles.md)的权威外置、引导思考和独立背书，以及 [L2](../l2-lifecycle/L2-lifecycle-plan.md)对规划、实现、验证和人类决定的分工。
 
-### 本轮固定：S5 最小履职与返工接续
+## 1. 为什么需要一次独立的规格审查
 
-Main 沿原 team-planning/登记/准备入口，为当前 S5 entry 安排两个不同 reviewer。
-系统提供当前批次的准确 manifest 候选位置、冻结资料、各自 view/answer 路径、责任与缺项；
-返工后的 manifest、team、agent、assignment 和工作目录使用新批次的唯一位置/身份，
-不覆盖旧清单、不复制旧指纹。当前资料由最新已接收 S4 的原来源闭包重建。
-问卷直接说明三个结论的边界：`pass` 表示本责任未发现问题；`fix_required` 表示 REQ
-含义明确，修正设计、合同或 TASK 即可满足；`req_change_required` 表示 REQ 本身存在
-歧义、冲突或缺失，须由人类明确或变更需求，不表示已获变更授权。
-通过时问题清单保持预填 `[]`；有问题才填写具体位置、应有内容和实际缺口，不复述身份、
-指纹或机检汇总。新题干用于后续发行，已发行的冻结问卷和原回执保留原版本。
-Reviewer 只读冻结资料，完成上述明确问题，在原 `answer` 中选择结论、按需补充问题并保存一次；原 Writer 生成
-证据与回执，原门负责分流。已提供的结构机检与 task analysis 直接消费，手动检查仅作
-具体诊断；系统缺资料或路径须明确报告，不能改走手写信封或要求重复 PLAN。
+### 1.1 作者自审与结构正确还不够
 
-TR-004 在原事务中结束本次 S5 批次：使其当前 review evidence 失效、取消旧责任、
-将 document-review execution 移入已有历史并保留原目录。只复用已有批次/执行登记字段
-和全局五态，不新建状态机；本人已接收的原答案、信封和回执仍保留历史事实。
-第一名 reviewer 已接收后等待另一责任，不等于全阶段完成，也不因此取消当前批次。
+S2 形成系统设计与行为依据，S3 形成共同模型、协议和分端承诺，S4 将承诺变成具体任务。它们大多出自连续的规划过程，容易共享同一组未经说明的前提：作者知道入口在哪里，就误以为任务已经写清；作者认为拒绝行为显然，就漏掉实际错误协议；作者为了便于安排，把可并行的工作串成一条链。
 
-旧 manifest 保留结构、Runtime 归属、可达性及原发行字节一致性检查；已确定被返工取代
-的历史批次不再与当前专业文件比指纹。当前/无法证明已过期的清单保持严格来源检查。
-旧实例已有 entry 绑定时可据原 generation/entry 辨认历史，不能靠手改状态或刷旧 hash 消错。
-同一 generation 再进 S5 用新 entry 区分，不为返工另增 generation。
+结构检查可以发现缺字段、覆盖遗漏、失效引用和依赖环，却不能判断文字之间是否真的一致、必要接线是否有人承担、收尾判据是否能被证伪。若这些问题到实现或集成才暴露，多位执行者已经各自解释了规格，返工会同时扰动代码和设计。
 
-原门与 TR-003 原事务都须取得当前 S5 entry 的两项独立、已接收 PASS；旧 PASS 即使
-文件未变化也不能代替新批次责任。`fix_required` 走原 TR-004，`req_change_required`
-保留原人闸；旧答卷重放只返回原回执，不推进新 entry。验收到 S6 出口即止，不开展 S6。
+S5 将这类不确定性留在仍可低成本修订的阶段。它不重新编写一套规格，而是让两个独立责任从不同方向检查同一批材料，再把结论与准确来源一起交给下游。
 
-### 1.1 为什么需要 S5
+### 1.2 两个问题必须分别回答
 
-S2～S4 已经形成设计、契约和任务链，但这些文档大多来自同一轮规划过程。作者很容易把自己的默认前提当成已写明事实；结构检查也只能证明字段、覆盖和 DAG 成立，不能证明规格真的自洽、Builder 拿到 TASK 真的做得完。
+| 问题 | 责任 | 典型缺陷 |
+| --- | --- | --- |
+| 规格链是否一致 | `DV-SPEC-CONSISTENCY`，规格一致性审查 | REQ 要求越权拒绝，SYNC 与 BE 的错误语义不同，TASK 却只写成功路径 |
+| 当前任务是否可执行 | `DV-TASK-EXECUTABILITY`，任务可执行性审查 | 条款一致，但无人注册真实入口，必需文件不在 Scope，自检依赖未来他人报告 |
 
-S5 因而不是再写一层规格，而是在写第一行实现代码前，用两个相互分离的职责回答两个问题：
+一致的规格可能无法照单执行，可执行的任务也可能准确实现错误承诺。两项判断不能互相替代，也不能让一个“总体看起来不错”的结论覆盖它们。
 
-1. **规格链是否一致**：REQ、设计、FE/BE/SYNC 契约与 TASK 是否指向同一件事；
-2. **任务是否可执行**：范围、依赖、完成判据和证据要求是否足以让 Builder 在一个受控上下文内交付。
+两路都阅读完整批次，允许阅读重叠，但各自保留问题意识、专业结论和私人答案。发现彼此影响的缺陷时，Main 按原材料及责任处理，不能要求另一位配合改成相同结论。
 
-只有两个问题都得到当前版本的 PASS，系统才允许建立 execution batch 并进入 S6。S5 的价值是把纸面缺陷留在仍可低成本修改的阶段，并为后续锁定建立可追溯签字。
+### 1.3 审查完成与进入构建分别成立
 
-### 1.2 阶段目标与完成定义
+| 事实 | 成立条件 | 后续责任 |
+| --- | --- | --- |
+| 一位审查者交付完成 | 本人完成指定审查，专业答案被原消费者接收 | 可以结束本人责任；Main 处理同事、系统接续或发现 |
+| 两项结论具备 | 当前两责任各有有效结论及准确对象 | 原门判断通过、文档返工或需求人闸 |
+| S5 通过 | 当前两路独立 PASS、来源及原阶段条件有效，TR-003 提交 | 准确任务与计划进入 S6 执行批次 |
+| 实现完成 | S6 的真实实现、自检、接收和集成成立 | 后续独立验证判断产品质量 |
 
-| 项目 | 定义 |
-|:--|:--|
-| 输入 | runtime `documents[]` 中当前登记的 REQ、design、contracts、TASK 与整体派发计划指纹；已接收 S3/S4 冻结源闭包及其中对 S2 模块当前真相包的原始 document refs；当前 S5 packet 冻结的 `task_analysis.structural_check`（原 S4 checker）与 task contexts；`document_verification` cursor |
-| 要搞清楚 | 规格链有没有断裂/矛盾；TASK 能否按声明范围完成且编排能有效并行；哪些风险专项被触发；两份结论签的是不是同一批当前文档 |
-| 核心工作 | 组建双职责 → 锚定被审对象 → 两路独立审查 → 保存两份专业答卷 → 原 Writer 生成证据并由 gate 聚合分流 |
-| 输出 | 两份独立专业答卷；原 Writer 派生两条 `document_review` 证据；双 PASS 时原子锁定的派发计划与 execution batch，或明确的修文档/改需求路由 |
-| 完成 | `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY` 均由不同 producer 给出当前轮 PASS；subject 精确匹配且已登记文档无漂移；TR-003 进入 building |
-| 下一阶段 | S6 只在已签收的执行基线上任命 Builder、激活 scope 并产出实现证据 |
+`fix_required` 与 `req_change_required` 都可以是完整、有效的审查交付。发现问题不等于审查者没干完；接收一份 PASS 也不等于整个 S5 已通过。
 
-### 1.3 Overview：输入、主步骤与输出
+## 2. 审查对象、参与者与交付形态
 
-```mermaid
-flowchart LR
-    subgraph INPUT["Input"]
-        I1["registered REQ + design"]
-        I2["registered contracts + TASK batch"]
-        I3["tasks check result"]
-        I4["accepted S3/S4 frozen module-package refs"]
-        I5["document_verification cursor"]
-    end
+### 2.1 从当前 S4 交付进入
 
-    subgraph S5["S5 Document Verification"]
-        T1["T1 组建双职责与独立关系"] --> T2["T2 锚定 subject 并激活审查者"]
-        T2 --> T3["T3 审规格一致性"]
-        T2 --> T4["T4 审任务可执行性"]
-        T3 --> T5["T5 登记证据、聚合与分流"]
-        T4 --> T5
-    end
+正常运行位置为 `document_verification`。S4 的实际任务与计划已经接收并登记，等待独立审查；它们尚未因此成为实现通过证明。
 
-    subgraph OUTPUT["Output"]
-        O1["2 independently authored answers<br/>original Writer derives document_review envelopes"]
-        O2["located findings in each professional answer"]
-        O3["PASS: execution batch"]
-        O4["FIX: return planning"]
-        O5["REQ change: human pause"]
-    end
+| 材料 | 要回答的问题 | 读取要求 |
+| --- | --- | --- |
+| 当前锁定 REQ | 价值、范围、验收、非功能和负空间是什么 | 读取本周期授权的准确版本 |
+| 架构、规则及适用决定 | 系统职责、状态、不变量和取舍怎样支撑需求 | 与当前来源及 accepted 决定对齐 |
+| 当前模块行为包 | 哪些角色、操作、分支、输入和判据必须成立 | 消费从上游接受记录承接的准确来源 |
+| CONTRACTS、FE/BE/SYNC | 承诺如何分端，接口、失败与恢复是否统一 | 读取实际适用契约及条款宇宙 |
+| 共享模型及样例 | 各端是否引用同一结构，业务含义是否合适 | 包括实际传递定义，不另抄字段表 |
+| 当前整批 TASK | 目标、读序、条款、改动和本人完成如何闭合 | 包括取消对覆盖和依赖的影响 |
+| REQ 整体派发计划 | 成员、并行、真实前置与资源顺序是否合理 | 与 TASK 同批审查，不当作附属看板 |
+| 冻结任务分析 | 已有结构结果、上下文、行为及惯例建议是什么 | 保留原分析字节、来源和解析版本 |
 
-    I1 --> T2
-    I2 --> T2
-    I3 --> T4
-    I4 --> T3
-    I5 --> T1
-    T5 --> O1
-    T5 --> O2
-    T5 --> O3
-    T5 --> O4
-    T5 --> O5
-    O3 --> NEXT["S6 Building"]
+不是所有材料都逐份登记为 Runtime 文档。当前正式对象由已登记材料与经原已接受 S4 交付证明的输入、输出闭包合并形成，继承 S3/S2 的实际来源。缺少 `documents[]` 条目，不等于场景包可以被任意 live 文件替换。
+
+### 2.2 模块行为仍是共同分母
+
+只要验收指向功能要求或本次改变服务行为，两路审查都需要查看相应模块的行为依据。无界面变化不免除七文件服务包：五个手写源 `scenario-model.json`、`fixture-contract.json`、`cross-matrix.json`、`stories.md`、`flows.md`，以及生成的 `cases.json`、`scenario-coverage.json`。
+
+服务 CASE 的 `browser_required:false` 只免除浏览器材料，不减少功能、分支、fixture 或判据。需要界面的 CASE 还要检查 PATH、原型和后续真实交互验证安排。不能为了审查容易通过而创建每 REQ、每轮的场景副本，或将既有模块回归范围缩成当前修改的几个 CASE。
+
+### 2.3 责任由谁承担
+
+| 参与者 | 责任 |
+| --- | --- |
+| Main | 确认本批材料就绪，登记两项专业分工，派入两个独立原生上下文，处理发现、修订和阶段接续 |
+| 规格一致性审查者 | 沿需求、设计、场景、契约和 TASK 双向核对承诺，记录真实矛盾与缺项 |
+| 任务可执行性审查者 | 代入 Builder 检查范围、上下文、依赖、自检、收尾和整体编排，判断适用风险专项 |
+| 原生平台 | 创建、执行、传递消息、恢复和结束子代理 |
+| Hook、领域消费者与 Writer | 关联准确责任和实际答案，校验并保存来源、证据、回执及原接续 |
+| 阶段门与事务 | 聚合当前结论，执行锁定、返工或人类决定边界 |
+| 人类负责人 | 决定真实需求澄清、变更，以及既有授权不能派生的取舍 |
+
+审查者只读产品规格，写自己的专业答案，不在审查中顺手修复被审文档或实现代码。Main 也不能代填另一责任的结论。普通审查无需人逐项批准，真正的需求变化或显式审批按原责任处理。
+
+## 3. 先建立独立分工，再交给原生平台
+
+### 3.1 工程责任与平台身份分开
+
+Main 使用现有专业登记入口，为本次 S5 建立两份 `document-verifier` 分工，使用不同工程 owner，并声明 `independence` 分离关系。当前清单使用 `workgroup_kind=document_verifier`，批次与当前 generation、阶段入口关联；具体结构见 [分工方法](../../skills/team-planning/SKILL.md)。
+
+清单中的 `agent_id` 是工程 owner 名称，不要求等于 Claude Code 返回的平台 agent_id。保留的 `platform_team_id` 也只是现有登记结构中的逻辑分组字段，不要求创建一个真实平台 Team 来取得它。
+
+登记让系统知道谁承担哪项工程责任，不代表平台已经启动成功。Main 仍须把各自准确的问卷引用交给两个独立原生上下文，不能用两个 owner 名称在同一个实际审查上下文中双签。
+
+### 3.2 两项分工都覆盖整批材料
+
+| 项目 | 规格一致性责任 | 任务可执行性责任 |
+| --- | --- | --- |
+| 主要问题 | 整条规格链是否忠实、一致、完整 | 任务与整体计划是否可实际交付 |
+| 默认专业方法 | `document-verification`、`specification-planning`、`api-contracts` | `document-verification`、`specification-planning`、`testing-strategy` |
+| 审查范围 | 本批完整规格链及适用来源 | 本批全部 TASK、计划及所需上游 |
+| 产品改动 | 无 | 无 |
+| 本人输出 | 当前私人答卷 | 另一份当前私人答卷 |
+
+登记需要一个真实 TASK 关联点，当前使用 S4 整体计划的首个任务。这个关联点不缩小审查范围；两位都审完整批次，不是只审该 TASK。实际标识和路径由当前材料确定，不把 REQ ID 当 TASK ID，也不照抄示例身份。
+
+### 3.3 独立性的实际含义
+
+机器可检查规定责任是否分别存在、分离约束是否有效、当前接收 owner 和 producer 是否不同。它不能仅凭两个字符串证明真实作者未参与自审，更不能证明两个上下文没有共享同一种认识偏差。
+
+Main 应安排不同独立上下文，审查者发现自己实际参与了本范围的作者工作，应报告独立性冲突并交 Main 重新安排。不能通过换一个工程名称继续签字。读取同一事实是必要的，复制另一位的判断或让作者指导其给出 PASS 则破坏独立背书。
+
+## 4. 固定准确输入，交付当前问卷
+
+### 4.1 冻结的是审查对象
+
+每份问卷关联 Runtime、需求代际、S5 入口、责任、工程 owner、原分工及本次 attempt，引用准确材料路径、版本和内容摘要。系统提供这些机器关联；审查者的任务是读懂并判断这些材料，不是手抄一份指纹清单。
+
+“冻结”表示本次结论只能背书这组准确输入，不表示每个输入都复制到一个新目录。新原生只读责任可以读取 Main 提供的实际资料，私人答卷也可以位于 Main 下不同的准确路径；已经登记的独立执行则继续使用其原冻结来源。两种布局不能互相猜测替换。
+
+系统给出完整 view/answer 位置后，Main 原样带入相应原生 Agent 任务。相同角色、返回顺序、一个未关联的文件名或当前看起来像 PASS 的文件，都不能决定责任归属。
+
+### 4.2 先确认材料可读，再开始专业判断
+
+审查者先读 view，确认本责任、实际资料、答案位置与适用要求，再读取指定版本。路径与来源缺失、内容漂移、原分析丢失，应按具体缺项报告 Main/system；不能从 live Glob 换一份同名材料后继续签原版本。
+
+当前输入闭包不代表已经机械证明所有业务材料都充分。比如上游遗漏一个必须的服务 CASE，完整读取已提供文件仍可能缺少需求判据。来源是否准确与规格是否完整是两项检查，后者正是专业审查的职责。
+
+### 4.3 分析资料减少重复劳动
+
+`task_analysis` 提供原结构检查、任务读集、粒度建议，以及实际存在的行为和惯例投影。两路读取同一准确基础，任务可执行性审查重点使用它，避免再次手算覆盖和 DAG。
+
+读集字节不是 token、困难程度或拆分阈值；目录未展开、锚点未解析、条件未知都需要具体判断。CASE 样例仅限 TASK 清单明确引用且源包有效的条目，不代表已执行产品验证。惯例默认及例外须有原规范来源，候选或冲突内容不能冒充已决定规则；没有惯例索引不自动构成缺陷。
+
+新问卷的分析应按原字节和解析版本消费。只有明确的旧资料缺少摘要且原冻结输入可用时，才按原指引作兼容补充。诊断命令可以用于调查具体问题，不是每位审查者必须重跑全部 S4 检查的第二道流程。
+
+## 5. 规格一致性：把同一承诺追到最后一公里
+
+### 5.1 双向阅读，避免只确认文件存在
+
+先从 TASK 向上读主契约、共同模型或协议、REQ 和设计，检查本地工作是否有完整依据；再从关键验收向下追到任务和收尾判据，检查有没有无人兑现的承诺。
+
+```text
+AC / NFR
+  → 架构、规则与业务状态
+  → CASE 的输入、分支和判据
+  → 契约条款、操作和失败语义
+  → TASK 交付条款与实际改动
+  → 本人完成判据及后续独立验证
 ```
 
-S5 必须读取随已接收 S3/S4 冻结源闭包交付的原始 document refs。模块当前真相包不是可忽略的临时补充：只要 AC 指向 FR 或服务行为真相变化，即使 UI impact 为 `none`，reviewer 仍须核对七文件服务行为包（五个手写源 `scenario-model.json`、`fixture-contract.json`、`cross-matrix.json`、`stories.md`、`flows.md`，以及生成的 `cases.json`、`scenario-coverage.json`）。现有 FR 分母和 AC→CASE bridge 保持完整。服务分支使用 `browser_required:false`，因此无需 HTML、PATH 或浏览器 spec。reviewer 只读冻结闭包及其 refs 指向的版本；缺 ref、缺文件或摘要不符都应作为来源/规格 finding 处理，不能用本地 Glob 找到的同路径 live 文件替换被审 subject。Formal subject set = Runtime.document refs + 经原已接收 S4 packet/envelope/journal 证明的当前源闭包；不是 live 读取就能登记。
+这不是要求所有关系都重复抄成一张新表。审查者要能够指明实际路径、条款、CASE 和可观察结果。引用存在而语义接不上，仍应作为发现。
 
-### 1.4 S5 的边界与当前保证
+### 5.2 三类恒常深查
 
-- **负责**：独立文档审查、风险触发深挖、当前指纹签收、结论证据和失败分流；
-- **不负责**：改文档、改 REQ、实现代码或在审查中顺手修复；发现问题只定位并选择路由；
-- **机器能保证**：两个规定职责都存在；显式 separation edge 不允许同一 agent 承担两职；两条 PASS 的 producer 不同；`subject_refs` 精确匹配当前登记文档；登记文档磁盘指纹未漂移；
-- **机器不能保证**：两名 reviewer 的判断在认识论上独立；真实作者没有参与自审；finding 深度足够；触发式专项全部被执行；原 S3/S4 冻结源闭包是否在语义上包含了所需模块包和 refs；
-- **锁定时序**：S5 仍允许通过 TR-004 返回规划修文档；TR-003 进入 building 后，当前执行基线的阶段感知写保护才生效。
+| 角度 | 审查动作 | 需要防止的误判 |
+| --- | --- | --- |
+| 验收到完成条件 | 抽取关键 AC，逐跳走到契约、TASK 和收尾判据，点明最后一公里 | AC 已有 CASE 就误以为必有实现与验证责任 |
+| 非功能与负空间 | 逐项找架构、契约或任务落点，核对阈值、边界及验证安排 | NFR 仍在 REQ 表里，却没有任何实际兑现路径 |
+| 负向、权限与错误 | 对账规则拒绝分支、CASE、SYNC/本端错误以及真实调用结果 | 三个文档都写“拒绝”，但状态、错误码或副作用彼此矛盾 |
 
-## 2. 第二层：S5 的任务分解
+还应检查同一模型、字段、状态、操作和恢复语义是否同源。Schema 正样例通过，只证明结构合法，不证明其字段含义正确；业务拒绝输入也可能完全符合 Schema，不能拿结构负例代替权限或状态拒绝。
 
-| 任务 | 要解决的问题 | 主要动作 | 阶段产出 |
-|:--|:--|:--|:--|
-| T1 组建双职责与独立关系 | 谁分别回答“一致吗”和“做得完吗”；如何避免同人双签 | 建 team manifest；任命两个 document-verifier；声明 independence separation edge；按文档特征标记触发专项 | 两个不同 agent 的职责分配 |
-| T2 锚定 subject 并交付审查问卷 | 每个人究竟审哪一版、承担什么职责 | 原 manifest 登记双职责与独立性；Hook 给出准确冻结 view/answer 路径，系统绑定 subjects 和来源闭包；只有显式 `plan_approval_required` 才走原读回审批 | 两份独立专业答案 |
-| T3 审规格一致性 | REQ→设计→合同→TASK 是否语义闭合 | 核验引用和版本；走查 AC/NFR/错误路径；对账 FE/BE/SYNC 边界；参考场景包 | `DV-SPEC-CONSISTENCY` 结论与 findings |
-| T4 审任务可执行性 | Builder 是否能在范围、依赖和证据约束下完成 | 消费冻结结构摘要；逐 TASK 做五问 + 整体编排审查；执行迁移、集成、critical 风险等触发审查 | `DV-TASK-EXECUTABILITY` 结论与 findings |
-| T5 保存、聚合与分流 | 两个结论能否共同授权构建；失败回哪里 | Reviewer 保存准确 answer；原 Writer 派生/登记 REV envelope 并运行 document gate；按 PASS/FIX/REQ-change 走 TR-003/004/005 | execution batch，或受控返工/人闸 |
+### 5.3 延续订单导出示例
 
-这五项任务形成一个漏斗：先确定谁审，再固定审查对象，然后各自回答正交问题，最后才聚合结论。不能先看结果再补 `subject_refs`，也不能让一个 reviewer 代另一个 reviewer 签字。
+沿 S4 示例，若 REQ 与 CASE 要求越权请求被拒绝、订单保持不变，BE 条款承担授权和订单保护，SYNC 承担拒绝协议，则需要核对：
 
-## 3. 从候选规格链到执行基线的完整工作流
+1. CASE 是否有真实的越权输入、预期拒绝及状态判据。
+2. BE 与 SYNC 是否约定同一拒绝语义，是否遗漏部分成功或错误映射。
+3. TASK-017-01 是否承担服务行为及本人自检，02 是否承担正式入口接线，03 的回归是否验证副作用。
+4. 命令端 04 是否正确处理该结果，而不是把拒绝当成功下载。
+
+若 SYNC 明确说不需要鉴权，不能因为四张 TASK 的字段齐全而 PASS；若规格一致但缺入口文件，则还需由任务可执行性视角确认交付缺口。两路允许发现同一因果链，不由 Main 为消除重复而压掉真实问题。
+
+## 6. 任务可执行性：代入真实执行者
+
+### 6.1 五问检查每张任务
+
+| 问题 | 怎样审 | 机器帮助及其限度 |
+| --- | --- | --- |
+| 单一交付 | 是否有一个可解释的结果，多个步骤是否共同维护它 | 不能从句子短、文件少推断职责单一 |
+| 上下文与耦合 | 必要读集是否有限充分，未知条件是否解决，写域是否真实 | 字节和共享读写分析提供调查方向，不自动决定拆分 |
+| 依赖语义 | 实际产物是否先于消费者，是否漏边、假边或循环等待 | 无环只能证明结构，不能证明每条边必要 |
+| 自包含交接 | 入口、路径、条款、改动和本人输出是否明确 | 不让 Builder 重做规划，也不要求预先写完实现方案 |
+| 可测性前向 | 每个完成条件能否在实际范围、环境和后续验证中得到依据 | `assert` 文本存在不表示命令可执行或判据充分 |
+
+特别检查调用者、入口注册、服务/事务、持久化及结果回传是否分别有 owner；同一原子变化不能被人为拆到互相等待的任务。Scope 必须容纳本人实现、测试、必要接线和实际证据，未来独立 QA/E2E 不能被冒充为 Builder 输出。
+
+### 6.2 整体编排必须审查
+
+<a id="dispatch-review"></a>
+
+批次节奏是五问之外的整体视角，也是当前整体计划的必审内容，不能因为早期称为“附加半问”而省略。
+
+规格一致性责任检查 REQ、契约、任务及计划成员闭合；任务可执行性责任检查同波是否真能并行、是否漏真实前置或资源、公共改动是否有 owner、串行理由是否成立，以及前置集成后能否持续释放消费者。具体机制见 [整体派发计划](../l4-mechanisms/L4-agent-dispatch-governance.md#dispatch-plan)。
+
+共享只读模型不要求等待提供方实现。不可隔离的写入或资源冲突需要明确顺序；当前同波重叠诊断可能只是警告，不能以无硬错误证明安全。波次也不是等待前一整批结束的屏障，不能把无关任务的迟到变成消费者前置。
+
+### 6.3 根据实际输入开展风险专项
+
+| 触发条件 | 必须查清的问题 |
+| --- | --- |
+| 数据模型、Schema 或持久化变化 | 迁移和破坏性影响是否有人承担；兼容或断裂选择是否明确；若保留兼容，理由、责任、移除路径和债务记录是否齐备 |
+| SYNC 或外部依赖 | 适用调用的超时、重试、降级及外部错误翻译是否声明，失败能否验证 |
+| critical 场景配置或高风险需求 | 额外验证维度是否有责任、判据与实际入口；服务 CASE 使用服务验证，无浏览器不虚构 PATH |
+
+触发由审查者根据冻结资料及[审查方法](../../skills/document-verification/SKILL.md)判断，问卷不自动替每个任务分类。专项产生的发现写入同一专业答案，不新增第三份 PASS 或一套平行报告。
+
+## 7. 用一份专业答案交付判断与发现
+
+### 7.1 三种结论表达三种不同问题
+
+| 结论 | 判断依据 | 不表示什么 |
+| --- | --- | --- |
+| `pass` | 已完成本责任审查，未发现需处置问题 | 不表示另一责任通过，更不表示产品已实现 |
+| `fix_required` | REQ 含义明确，修正设计、契约、TASK 或计划即可满足 | 不授权修改需求，也不要求审查者亲自修文档 |
+| `req_change_required` | REQ 本身歧义、冲突或缺少必要决定，无法形成一致解释 | 不代表已经取得变更批准，也不自动完成暂停或修订事务 |
+
+结论由问题所在层决定，不以修复工作量大小决定。一个很小的字段若涉及业务含义取舍，也可能需要人；一个影响多张任务的错误依赖，若需求清楚，仍可以是文档修正。
+
+答案以 `null` 起草时尚未完成。PASS 保留预填的 `findings: []`；另外两种结论至少有一项可定位发现。不写“无问题”报告，不为了让答案更长复述系统已给出的身份或机检统计。
+
+### 7.2 发现要让修订者能够行动
+
+每项发现只填 `path`、`expected`、`observed`：指出被审对象中的具体位置，解释按已有依据应有的内容，以及实际缺口。下例只展示 `answer` 值；实际保留已发行问卷的外层题干和阅读清单：
+
+```json
+{
+  "conclusion": "fix_required",
+  "findings": [
+    {
+      "path": "docs/dev/tasks/TASK-017-02.md#scope",
+      "expected": "正式 HTTP 入口的交付范围包含实际路由注册位置，并有本入口的完成检查。",
+      "observed": "任务要求接通正式入口，但 Scope 只有处理器和测试文件，未指明由谁完成路由注册。"
+    }
+  ]
+}
+```
+
+该发现不替实现者预先决定函数或算法，而是补齐必须有人承担的责任。若问题是需求未决定导出权限，应定位 REQ 的现有授权条款或相关段落，解释缺哪个决定及其影响，选择 `req_change_required`，不能以“先实现任意一种”绕开。
+
+当前 `path` 必须对应本问卷正式输入中的文件，可以附锚点；锚点的真实定位与内容仍需专业核对。机器分析文件虽然可能出现在阅读清单中，不一定属于正式被审对象。系统缺资料时应报告准确缺项，不能编造一条允许路径来提交。
+
+### 7.3 保留当前题干，只填写本人答案
+
+当前 S5 校验会核对已发行问卷的题干、阅读清单和问题结构，只编辑 `answer`。这与 S4 的现有校验边界不同，不能因上一阶段允许某种题干改动就在本阶段照用。
+
+问卷的机器部分由系统形成，专业结论与观察由审查者形成；完成答案后保存到准确私人位置，返回原 view/answer 引用。普通流程不另交 Markdown REV、通用 PLAN、手工证据信封或副本。只有原责任明确要求审批时，才履行该领域批准；保存专业答案不产生批准。
+
+## 8. 原生返回怎样成为可追溯的审查事实
+
+### 8.1 Start 给出提示，Stop 接收实际交付
+
+`SubagentStart` 提醒审查者遵循 Main 带入的准确原问卷，读取实际材料、完成独立判断并返回引用。Start 本身没有完整任务 prompt，不能按角色名、启动顺序或平台 ID 猜哪份责任属于它。
+
+审查者正常保存自己的专业答案，Claude Code 负责执行与恢复。`SubagentStop` 从实际任务和返回中的准确引用定位唯一当前责任，再交原 S5 消费者。工程 owner 从原问卷取得，不要求平台 agent_id 与它相等。
+
+若引用未知或同时命中多个当前责任，不能抢收任意一份。Main 需澄清准确交接；没有接收就不能声称已经完成。消费失败返回具体诊断，对本人可补的错误允许继续补齐，并遵守 `stop_hook_active`，避免无限 Stop 循环。
+
+普通 Worker 工具、Main 的读取或消息，以及 Main 看见某个已填文件，都不是本原生责任的接收事件。平台异步启动也不是专业答案已返回。完整跨阶段接线见 [L4 原生子代理](../l4-mechanisms/L4-agent-dispatch-governance.md)。
+
+### 8.2 原消费者和 Writer 保存什么
+
+```text
+独立审查并保存私人答案
+  → 原生返回中的准确责任引用
+  → SubagentStop 调原 S5 消费者
+  → 核对专业答案、当前分工、来源及适用审批
+  → Writer 接收答案，派生 document_review 证据与原 followup
+  → 原控制流程评估阶段门
+```
+
+Writer 将专业答案与原来源、责任和接收身份关联，产生 `document_review` 领域证据及回执。原证据信封中的 subjects、producer、摘要和请求事件由机器投影，审查者不复制它们，也不自己选择证据 ID。
+
+当前接收会校验准确 S5 材料、分工清单、冻结分析和读取来源；关键检查在原 Writer 内再次成立，避免保存与登记之间被换源。文件存在、已经发布一份 envelope 或打印一句 PASS 都不足以代替持久接收。
+
+### 8.3 回执把本人完成与等待项分开
+
+合法 PASS 或 finding 被接收后，本人责任可以结束。另一位未交、Main 尚未处理发现、原阶段接续 pending 或需求等待人类决定，分别由对应 owner 接手，不让已交付审查者无限续跑。
+
+相同专业答案重放复用原接收，不再添加一份证据或重复转换。原接续中断时保留原事件，Main 按当前回执给出的恢复入口处理；已推进时不再重跑。不能把 generic recover 当成每位审查者的正常交付步骤。
+
+历史交付保留，不等于历史证据永远有资格推动当前门。返工、代际变化或具名修订可使它失去当前适用性，原答案和接收事实仍可追溯。
+
+## 9. 聚合结论，沿原三路出口处理
 
 ```mermaid
 flowchart TD
-    IN["document_verification<br/>registered candidate documents"] --> TEAM["T1 建双职责 manifest<br/>声明 separation_edges"]
-    TEAM --> VALID{"required responsibilities<br/>与显式独立关系有效？"}
-    VALID -->|否| REPLAN["重派 agent / 修 manifest"]
-    REPLAN --> TEAM
-    VALID -->|是| READ["T2 Hook 给出各自冻结 view/answer 路径"]
-    READ --> SUBJECT["系统绑定当前 documents[] 与 S3/S4 冻结源闭包<br/>Reviewer 读取精确 subject"]
-    SUBJECT --> A["T3 DV-SPEC-CONSISTENCY<br/>规格一致性 + 风险深挖"]
-    SUBJECT --> B["T4 DV-TASK-EXECUTABILITY<br/>五问 + 整体编排审查 + 触发专项"]
-    A --> CA{"A conclusion"}
-    B --> CB{"B conclusion"}
-    CA --> AGG["T5 完成并登记 document_review"]
-    CB --> AGG
-    AGG --> DECIDE{"聚合结论"}
-    DECIDE -->|both pass| GATE["GATE-DOCUMENT-PASS<br/>双职责 + distinct producer<br/>exact subjects + drift screen"]
-    GATE -->|not_ready / conflict| RECHECK["修证据、重签或处理漂移"]
-    RECHECK --> SUBJECT
-    GATE -->|satisfied| TR3["TR-003<br/>register execution batch"]
-    TR3 --> LOCK["building<br/>执行基线写保护生效"]
-    DECIDE -->|fix_required| TR4["TR-004<br/>invalidate consumed fix evidence"]
-    TR4 --> PLAN["planning.design<br/>修文档并重新登记/重审"]
-    PLAN --> SUBJECT
-    DECIDE -->|req_change_required| TR5["TR-005 human boundary"]
-    TR5 --> PAUSE["paused<br/>等待 amendment 或终止"]
+    IN[同批准确规格与任务] --> A[规格一致性独立审查]
+    IN --> B[任务可执行性独立审查]
+    A --> RECEIVE[原生返回与原消费者接收]
+    B --> RECEIVE
+    RECEIVE --> OUTCOME{原门聚合当前结论}
+    OUTCOME -->|双 PASS 且条件满足| LOCK[TR-003 锁定执行批次]
+    LOCK --> BUILD[S6 实现与集成]
+    OUTCOME -->|文档需要修正| REWORK[TR-004 返回规划]
+    REWORK --> REVIEW[修正材料后重新进入 S5]
+    REVIEW --> IN
+    OUTCOME -->|需求需要人决定| HUMAN[提交明确歧义与影响]
+    HUMAN --> PAUSE[按原人闸暂停和处置需求]
 ```
 
-正常路径不要求 reviewer 手工调用 transition。证据登记后，后续自然工具调用触发 gate 和 transition。若文档修复改变任一登记指纹，两份旧 PASS 都不再精确覆盖当前 subject 集，因此不能只让“发现问题的人”沿用旧签字；应按当前指纹重新签收。
+### 9.1 双 PASS 建立准确执行批次
 
-## 4. 第三层：每项任务如何被引导和承载
+原 `GATE-DOCUMENT-PASS` 检查两项规定责任、不同 producer、准确对象、当前入口及来源资格。当前已发行责任都需要实际接收的 PASS；仅引用一条看起来有效的历史证据，不能绕过另一份当前问卷。
 
-### 4.1 T1 — 组建双职责与独立关系
+门满足后，TR-003 原事务核对当前准确任务、派发计划和共享模型等条件，锁定计划与非空任务批次，进入 `building`。转换条件和动作都成功提交，才成立 S6 入口；不能仅凭两条消息或领域门的 satisfied 提前实现。
 
-| 维度 | 设计 |
-|:--|:--|
-| 固定职责 | `DV-SPEC-CONSISTENCY` 与 `DV-TASK-EXECUTABILITY` |
-| 角色卡 | `agents/document-verifier.md`；两者使用相同角色类型、不同 assignment 与上下文 |
-| 编排方法 | `team-planning` 生成 manifest；为两职责声明 reason=`independence` 的 separation edge |
-| 事前检查 | team validator 检查 required responsibilities、agent 绑定、显式 separation edge 和内部依赖合法性 |
-| 事后检查 | GATE-DOCUMENT-PASS 再检查两条证据 producer 不同 |
-| 触发信息 | 问卷明确本责任检查项；reviewer 按冻结输入和 Skill 中的条件判断迁移、外部集成、critical risk 专项，系统不自动判定命中条件 |
+冻结基线是实际材料登记事实。TASK 的 `Status: complete` 仍表示任务书完成，契约自己的 `locked` 也不由审查者改写成运行进度。普通工具并不会因此变成全面物理写锁；后续变更、检查和集成仍按实际来源约束。
 
-两层检查证明“不是同一个 agent ID 双签”，并不证明两个 agent 没有共享模型偏差，也不证明它们真的独立完成了全部思考。当前 team validator 也没有检查 workgroup 成员的 prospective write-path overlap；S5 依靠两个 reviewer 写各自证据路径的任务约定，而不是这项尚不存在的机器能力。
+### 9.2 文档问题回到规划
 
-### 4.2 T2 — 锚定 subject 与交付问卷
+`fix_required` 沿原 `GATE-DOCUMENT-FIX-REQUIRED` 和 TR-004 返回 `planning.design`。需求基线必须保持原授权，不能把已经改变的 REQ 当作普通文档修正。
 
-阶段答卷路径按 [L4 阶段答卷 §13](../l4-mechanisms/L4-stage-form.md)治理：packet-enabled 普通 `plan_checkpoint` 下，Hook 交付冻结 view 和准确 answer 路径，reviewer 直接完成独立专业判断并保存；原 Writer 派生领域信封，不抄机器身份、subjects 或 hash。显式 `plan_approval_required` 仍走原人工批准。下述手工信封细节只适用于明确 unpacketized 的旧实例；packet-enabled 缺路径由 Main/system 恢复，不改走旧入口。
+Main 沿准确 finding 修正实际所属材料：任务问题在 S4 收敛，契约问题回 S3，设计问题回 S2。Runtime 的统一返工入口不意味着必须把所有正确产物从头重写；应处理实际影响，并让重新形成的上游交付和来源成立。
 
-旧的 unpacketized 兼容流程才使用下列手工信封说明；它不是新流程步骤。packet-enabled 普通路径不要求 reviewer 先写 generic PLAN_REPORT、readback 或复制 JSON envelope 骨架。若显式审批模式适用，Main 仍按原审批链处理，不能由问卷或保存替代。
+审查者不直接改被审文件，也不因发现问题就获得更改既有设计决定的授权。修正若实际要求重新决定需求或架构，应回相应有权责任，不能偷偷扩大成另一套方案。
 
-关键字段的分工是：
+### 9.3 需求问题交回人的决定
 
-| 字段 | 回答的问题 |
-|:--|:--|
-| `producer_agent_id` / `producer_responsibility` | 旧信封字段；当前 Writer 从真实责任绑定 |
-| `conclusion` | `pass`、`fix_required`、`req_change_required` 三选一；作者仍须作专业判断 |
-| `subject_refs` | 旧信封字段；当前发行绑定精确冻结 subjects，作者不复制 version/hash |
-| `requested_event` | 旧信封字段；fix 与 REQ 人闸由原门路由 |
-| evidence ID / path | 旧信封字段；当前接收身份和路径由原 Writer 产生 |
+`req_change_required` 被接收后，Main 向人说明明确歧义、互相冲突的承诺及其影响。TR-005 是人类边界，按原路径记录暂停和需求处置；选择这个结论不会自行取得需求修订授权，也不能伪造暂停记录或改写 REQ。
 
-旧模板的 `review_round=0`、subject refs 手工复制规则只服务 unpacketized 兼容入口。正常问卷由系统冻结并投影 subject/source refs；reviewer 仍要阅读这些精确来源，发现闭包缺项或来源不一致时报告 finding，不得以 live 文件代替冻结来源。
+人的决定可能澄清原含义、批准修订或结束本周期，分别按实际授权生命周期处理。没有答复不能作为批准；也不能为让 S5 前进而把需求问题降格为普通文档修复。
 
-S5 普通 `plan_checkpoint` 只走当前专业问卷，不另交 generic PLAN_REPORT、readback 或 activation；显式 `plan_approval_required` 保留原人工审批。Hook 提供准确 view/answer 路径并提示进度和缺项，不作为写权限屏障；原 S5 consumer/gate 继续检查真实 owner、来源、专业结论与独立性。
+不同责任出现不同结论时，不能平均、投票或强行改成双 PASS。原选择器和门决定当前可用路由；遇到互相冲突或无法确定的结果，Main 先解释实际问题及责任，不手动拨动阶段跳过它。
 
-### 4.3 T3 — 规格一致性审查
+## 10. 返工重审与具名修订分别使用
 
-`DV-SPEC-CONSISTENCY` 沿整条规格链回答以下问题：
+### 10.1 材料改变后，旧签字不覆盖新规格
 
-1. REQ 的 AC 能否沿设计决策、合同条款和 TASK Closing Contract 走到可验证事实；
-2. NFR 是否真正进入架构、合同或任务，而非停留在需求表；
-3. FE、BE、SYNC 对同一字段、错误码、状态和外部边界的表述是否一致；
-4. 负向路径、权限拒绝、异常状态是否在 REQ、场景与契约之间对得上；
-5. 引用的路径、版本和 clause 是否是当前登记对象。
+TR-004 在原事务中结束当前 S5 批次，处置其当前审查证据与责任；存在独立执行登记时，将其移入原历史并保留来源目录。取消的是旧批次的当前适用性，不抹除已发生的专业交付。
 
-建议从 TASK 向上反查到合同和 REQ，再从关键 AC 向下抽样到 Closing Contract，避免只做单向“存在性浏览”。NFR、权限/API 负向分支是恒常或条件深挖；有 FR/service behavior subject 时还须审冻结闭包中的模块当前真相包。当前 `subject_refs` 精确匹配 runtime `documents[]`；它不授权 reviewer 从 live 工作树替代 S3/S4 闭包中缺失或漂移的模块包来源。
+同一需求代际重新进入 S5，用新的阶段入口区分，重新准备两项分工及准确材料。新批次的清单、责任、路径不得覆盖旧批次，不通过刷新旧摘要把历史改造成当前。即使部分文件字节未变，旧入口的 PASS 也不能完成新入口责任。
 
-### 4.4 T4 — 任务可执行性审查
+当前未交的旧同事责任可随返工被取消，已经接收的人保留原回执；Main 应明确通知平台上的实际执行者范围已经更换。工程责任退役不会凭空终止 Claude Code 进程，不能把 Runtime 状态变化当作平台停止事实。
 
-`DV-TASK-EXECUTABILITY` 先消费 packet 冻结 `task_analysis.structural_check` 中的 S4 结构结果，不重复运行机检或手算 coverage 和 DAG；注意该结果只证明结构地板。明确缺少摘要的旧 packet 才可按原入口补读可用的冻结检查资料，缺源则报告 Main/system。每个 TASK 继续回答五问 + 整体编排审查：
+### 10.2 输入未变，但确需重新审查同一判断
 
-| 问题 | 判定焦点 | 当前机器帮助 |
-|:--|:--|:--|
-| 1. 单一职责 | 能否用一句话说完交付物；是否混装 FE/BE/SYNC 或多个独立结果 | 无语义检查 |
-| 2. 单窗口可行 | 必读、触碰路径和预计改动会不会使 Builder 中途丢失任务上下文 | required-reading KB、write-path count 仅供参考 |
-| 3. 依赖语义 | 地基是否先于消费者；有没有缺失边、假边或单链瓶颈 | 只查引用/取消目标/环 |
-| 4. 自包含 | 路径、条款、scope 是否足够精确，不要求 Builder 重做全仓探索 | 无语义检查 |
-| 5. 可测性前向 | Closing Contract 的命令和证据能否在 S6 产出、S7 复验 | 只查出现 Closing Contract 和至少一条 `assert` |
-| 整体编排（必审） | 同波边界是否兼容；是否缺前置、存在假串行或共享资源遗漏；下游能否及时释放 | waves-v1 对账成员、波次和联合环；资源/写域重叠给诊断，语义仍需审查 |
+若材料和本次入口未变，Main 因具体观察要求重新检查一个已接收判断，使用原具名修订流程：关联前驱接收、明确原因，发行下一 attempt。它不是直接覆盖已接收答案，也不是因想要 PASS 而反复重试。
 
-按条件增加三类专项：数据模型变化时检查迁移/破坏性决策；存在 SYNC/外部依赖时检查 timeout、retry、degrade 与错误翻译；critical coverage 时检查 S7 风险维度是否已有落点。问卷提醒这些检查要求；reviewer 根据冻结输入和 Skill 中的条件判断适用项。原 gate 不替代 reviewer 完成这些专业检查。
+修订发行时旧证据立即暂停当前资格，防止等待新答案期间原 PASS 继续放行。新责任保留准确输入和审查维度，审查者读取具体修订原因，独立判断并交新答案；接收后形成明确替代链。不同原因不能为同一前驱并行生成多条互相竞争的有效后继。
 
-### 4.5 T5 — 专业答卷、自动证据登记、聚合 gate 与三路分流
+Main 可以让原生上下文恢复并交付新准确引用，Start/Stop 不按旧 prompt 或旧答案认领新责任。已经登记的旧独立执行继续按其原退役和准备流程恢复。来源已经改变时，不能用具名修订保留旧输入来规避真实返工。
 
-每名 reviewer 的最终领域工作是一份专业 answer：已发行答卷由原 Writer 派生并登记 JSON evidence envelope；`answer.findings` 已承载普通 packet 流程的定位与证据，不另写重复 Markdown REV 报告。无 packet 且 Runtime 明确 unpacketized 的旧实例才按原兼容契约手工登记信封/报告。合法 finding 同样完成本人交付；原门的资格、返工和人工需求决定分别判断。
+### 10.3 历史来源按历史责任保留
 
-packet-enabled 正常流程保存 answer 后由原 Writer 自动登记；作者不运行 `runtime evidence add`，不手填 ID、path、producer 或 hash。明确 unpacketized 的旧实例才按 REV template 登记；原 gate 仍拒绝重复 ID 和过期 subjects。随后：
-
-| 结论 | 当前机制 | 去向 |
-|:--|:--|:--|
-| 双 PASS | GATE-DOCUMENT-PASS 查两职责、当前轮、distinct producer、exact subjects、registered-document drift；TR-003 登记 execution batch | S6 building |
-| 任一 `fix_required` | 对应 envelope 请求 `document_fix_required`；TR-004 使已消费的 fix evidence 失效并回 planning | 修文档、更新登记指纹、两路重新签收 |
-| 任一 `req_change_required` | 不伪造自动修文档事件；TR-005 是 human boundary | paused，等待 amendment/终止 |
+已确定被返工替代的历史分工，仍需保留原清单结构、Runtime 归属、可达性及原发行字节关联；但不能要求它永远匹配当前已经修正的产品文档，否则每次正确修复都会被历史卡死。
 
-gate 中存在 reviewer-vs-author 检查逻辑，但当前有机登记普遍把 `author_agent_id` 记为 `hook_controller`，而不是真实文档作者；因此这项检查实际上休眠。真正能工作的独立性保障是 assignment separation、producer distinct 和 reviewer 自觉上浮利益冲突。
+当前或无法确认已过期的分工继续严格检查来源。Main 不删除历史文件、不手改 Runtime、不刷新旧清单哈希消除错误。新原生责任不需要预建旧式 execution；已有旧执行缺源也不能擅自回落到共享 Main 答案。
 
-## 5. 职责分布与覆盖审计
+## 11. S6 从 S5 得到什么
 
-### 5.1 职能落点
-
-| 职能 | 主责 | 承载位置 | 消费者 |
-|:--|:--|:--|:--|
-| 双职责组队与触发项识别 | Orchestrator | 原 team manifest + Hook 问卷 | team validator、reviewer |
-| 规格链语义审查 | DV-SPEC-CONSISTENCY | 专业 answer；原 Writer 派生 REV envelope | document gate、修复者 |
-| TASK 可执行性审查 | DV-TASK-EXECUTABILITY | 专业 answer；原 Writer 派生 REV envelope | document gate、S4 planner |
-| 结构覆盖与 DAG 算术 | 原 S4 checker | packet 冻结的 `task_analysis.structural_check`；`tasks check` 保留为诊断 | task reviewer、TR-002 |
-| subject 精确签收与漂移检查 | quality gate | evidence index + runtime documents | TR-003 |
-| 失败分类与路由 | reviewer + protocol | conclusion / requested event / TR-004/005 | planner、人 |
-| 执行批次建立与写保护切换 | protocol/store/policy | TR-003 + building state | S6 Builder/hook |
-
-### 5.2 重叠是怎样被控制的
-
-- 两名 reviewer 故意读取同一条规格链，但问题不同：A 判断“语义一致”，B 判断“照单可做”；同读不是职责重复；
-- `tasks check` 与 B 的审查也不重复：前者算存在性、覆盖和无环，后者判断粒度、语义依赖、自包含与可测性；
-- Orchestrator 只组队、指名触发项和等待结论，不代写 reviewer 的判断；
-- 原 Writer 派生的 `document_review` JSON 是机器证据；普通 packet 答卷中的 findings 同时承载定位与修复依据，不要求再复制成 Markdown；明确 unpacketized 的旧契约仍按其原要求处理；
-- subject exactness 与 drift screen 分别回答“签了哪些登记对象”和“登记后磁盘是否变过”，两道检查互补。
-
-### 5.3 如实现状与未闭合缺口
-
-1. **冻结闭包连续性**：模块包的来源由原 S3/S4 冻结源闭包及其 document refs 承接；若 S5 输入丢失这些 refs，reviewer 必须报告来源缺陷，不能靠 live glob 继续签收。legacy `subject_refs`/registered-document drift 仍只覆盖 runtime `documents[]`，不得把它描述成对闭包外文件的机器校验；
-2. **作者独立性校验休眠**：`author_agent_id=hook_controller` 不能代表真实作者，reviewer-vs-author check 当前没有实际区分力；
-3. **独立性仅是程序性的**：不同 agent ID、上下文和职责透镜优于自审，但不是双盲，也不能消除同模型偏差；
-4. **manifest 不检查写路径重叠**：team validator 检查职责、separation、skill 和内部依赖，不检查 prospective write-path overlap；
-5. **显式审批也不是工具权限锁**：`plan_approval_required` 保留原人工读回与批准；PreToolUse 只提示 graph/缺项，不拒绝普通工具调用；
-6. **专项深挖是流程要求**：目前没有结构化字段或 gate 证明 NFR/迁移/外部集成/critical risk 的触发项逐项完成；
-7. **历史手工 subject 规则已由当前问卷路径取代**：新流程不让 reviewer 复制 subject/hash；如果 exact view 缺失或来源漂移，交 Main/原门处理，不得自行补抄；
-8. **TasksCheck 能力有限**：没有 TASK write-path overlap 检查，也不验证 Closing Contract 四类语义；S5 必须如实补判断层。
-
-### 5.4 关键取舍
-
-| 问题 | 当前选择 | 代价与边界 |
-|:--|:--|:--|
-| reviewer 数量 | 两人两职责 | 控制时滞；没有第三方仲裁，分歧只能转 fix/人闸 |
-| 审查对象 | 对 runtime 当前 `documents[]` 精确签收，并按原 S3/S4 冻结源闭包 refs 审查适用的模块当前真相包 | `subject_refs`/registered-document drift 的机器保证仅覆盖 runtime `documents[]`；缺失闭包 refs 必须阻断该 subject 的签收 |
-| 审查交付 | PASS 与 finding 均只填一份专业答卷 | 原 Writer 派生机器证据，findings 同时供 Main 定位修复 |
-| subject 构造 | 原 S5 packet/Writer 绑定精确 subjects；reviewer 阅读冻结来源并作专业判断 | 作者不抄机器元数据；gate 校验原绑定与来源 |
-| 任务规模 | info-only 数字 + 人工五问 | 避免硬阈值诱导，却保留判断差异 |
-| 失败路由 | 文档问题自动回 planning；REQ 问题停在人闸 | 不允许 reviewer 越权改需求 |
-| 写保护 | PASS 进入 S6 后生效 | S5 可修复；同时要求所有重签指纹真实更新 |
-
-## 6. L1 准则如何嵌入 S5
-
-| L1 准则 | S5 中的实际落点 |
-|:--|:--|
-| D1 权威外置 | 两个结论、producer、subject 指纹和 findings 落盘并登记 evidence index |
-| D2 自然路径观测 | 证据登记后的正常工具调用触发 gate/transition；不依赖人工口头宣布 PASS |
-| D3 门是顾问 | 缺职责、producer 重合、subject 不匹配、document drift 分别给出可定位原因 |
-| D4 引导性产物 | Hook 问卷提供冻结来源与 answer 路径；作者填写结论和 findings，原 Writer 投影身份、subjects、receipt 与 envelope |
-| D5 三级强制 | skill/五问引导判断；manifest/gate 强制可算事实；REQ 变化交人裁决 |
-| D6 三方收敛 | agent 审查、机器验签和分流、人只处理需求级决策 |
-| D7 收敛可观测 | 两个责任槽、每条 evidence 状态和 gate conflict 显示离出口还缺什么 |
-| 公理一 原型 | 对应真实的独立设计审查、签字和 baseline freeze |
-| 公理二 分工 | planner/author 不自证；两个 reviewer 问正交问题；machine 不伪装语义判断 |
-| 公理三 消费 | 同一份答卷经原 Writer 形成 gate 证据；其中 findings 供修复者消费 |
-| 公理四 成本 | 两路并行、结构算术复用 S4 结果、风险专项按触发升级 |
-| 公理五 传达 | findings 指向文档/条款/观察与预期；failure route 与问题层级一致 |
+S6 得到准确锁定的任务与派发计划、共同规格及来源，以及说明这批材料已经通过两项独立文档责任的事实。它得到的是可信的开工依据，不是已经实现或已经验证的产品。
 
-## 7. 产出、出口门槛与失败路由
+Main 按实际依赖和容量选择就绪任务，用当前原生 brief 派发。Builder 仍需读任务、形成专业计划、实现和本人自检；Main 仍需实际集成。S5 的 PASS 不代替这些工作，也不授权执行者更改需求、跳过拒绝分支或减少回归分母。
 
-### 7.1 正式产出
+若 S6 发现规格仍有缺口，保留具体观察，按原规划与影响路径处理。独立审查降低了不确定性，不保证规格从此绝无错误。新的执行事实可以指出设计或审查漏检，不能因已有 PASS 就压掉它。
 
-- 两份不同真实 producer 的专业结论；原 Writer 产生两份 `document_review` JSON envelope；
-- 普通 packet 路径的定位 findings 保存在专业答卷内；明确 unpacketized 的旧契约才要求其原 REV 报告；
-- 系统生成的 exact subjects；reviewer 读取并核对对应文档，不手工复制 path/version/SHA；
-- 双 PASS 时由 TR-003 建立 execution batch 并进入 building；
-- 非 PASS 时留下可追溯的 fix 或 req-change 证据与路由。
+## 12. 观察什么，怎样恢复
 
-### 7.2 出口判定
+| 观察位置 | 要回答的问题 | 处理归属 |
+| --- | --- | --- |
+| 当前入口与分工投影 | 本次是否已安排两项责任，准确清单和问卷在哪里 | Main 准备或修复当前登记 |
+| 输入及分析引用 | 两位是否看同一批准确材料，缺的是文件、来源还是业务判据 | system 恢复来源；专业缺口由审查记录 |
+| 原生 Start/Stop 和交接诊断 | 平台是否实际返回，引用是否唯一，消费者是否接受 | 执行者补本人缺项；Main 澄清交接 |
+| submission、领域证据与回执 | 哪份答案已接收、是否当前、等待谁 | 不重做已接受工作，交对应 owner |
+| 原 followup 与阶段门 | 缺第二路、来源漂移、结论冲突，还是转换动作未提交 | Main 沿原接续诊断和恢复 |
+| 修订链和批次历史 | 当前是哪次入口、哪个 attempt，旧判断为何失去资格 | 使用当前原问卷，不拼接旧 PASS |
+| TR-003 及执行批次 | 准确锁定是否实际完成，S6 能否开始 | 转换成功后才派实现 |
 
-| 判定 | 必须满足 |
-|:--|:--|
-| 职责完整 | 当前 review round 同时存在 SPEC-CONSISTENCY 与 TASK-EXECUTABILITY PASS |
-| 程序独立 | 两职责 assignment 分离，最终 evidence producer 不同 |
-| 版本精确 | 两条 evidence 的 subject 集精确等于当前 `documents[]` |
-| 无登记漂移 | 当前登记路径的磁盘 sha 与 runtime sha 一致 |
-| 语义签收 | A 认为规格链一致；B 认为 TASK 可执行；触发风险已被说明 |
-| protocol 出口 | GATE-DOCUMENT-PASS satisfied，TR-003 成功登记非空 execution batch |
+观测必须能关联到真实责任、材料和事件，不能只显示“两个代理结束了”。Hook 中的生命周期审计用于定位交接，不证明审查深度；缺失来源或消费失败要给具体错误，不能通过反复 Stop 掩盖。
 
-### 7.3 失败路由
+普通 Main 读取不能发行或抢收 Worker 工作，普通原生工具事件保持安静。原接收中断后的 pending 由既有恢复机制接续；系统维护问题不应被包装成 reviewer 需要再交一套专业报告。必要的恢复命令只在原回执或明确旧执行恢复中使用。
 
-| 情况 | 去向 |
-|:--|:--|
-| 缺一职责、同 producer、证据未登记 | 留 S5，补正确 reviewer/evidence |
-| subject 漏项或当前登记文档漂移 | 当前责任不得 PASS；Main 按原登记/重发流程恢复来源并让本轮责任重签；不手工刷新历史 packet 或已接受证据的 hash |
-| 规格或 TASK 可修复，但不改变需求立意 | `fix_required` → TR-004 → planning.design，按影响回 S2/S3/S4 |
-| 只有任务粒度/依赖/判据问题 | 回 S4 修 TASK；仍需完整重签当前 subject |
-| 合同/设计矛盾 | 回 S3/S2 修正确层级，不在审查答卷中发明新规则 |
-| 必须改变 REQ | `req_change_required` → TR-005 → paused → amendment/终止 |
-| execution batch 为空或 TR-003 失败 | 留 S5/回 S4 修登记事实，不绕 gate 直接进 S6 |
+## 13. 实现落点与能力边界
 
-## 8. 易错点与渐进披露
+### 13.1 入口与消费者
 
-### 8.1 易错点
+| 设计责任 | 主要落点 | 要核对的实际关系 |
+| --- | --- | --- |
+| 专业分工与原生派发 | [分工方法](../../skills/team-planning/SKILL.md)、[角色](../../agents/document-verifier.md) | 两责任、独立上下文、完整批次和准确引用 |
+| 审查方法与问题 | [专业方法](../../skills/document-verification/SKILL.md)、[题干模板](../../internal/schema/assets/stage-form-s5-template.json) | 语义追踪、可执行性、整体计划和条件专项 |
+| 当前对象及问卷 | [正式输入](../../internal/runtime/s5_formal_inputs.go)、[责任投影](../../internal/runtime/work_packet_issuer.go)、[问卷结构](../../internal/workpacket/packet.go) | 登记材料与原 S4 闭包合并、当前责任和字段约束 |
+| 原分析冻结 | [分析准备](../../internal/submission/task_analysis.go) | 字节、解析版本、结构检查和有来源的建议 |
+| 原生 Start/Stop | [接线](../../internal/cli/native_review_hooks.go) | 短提示、准确引用、实际专业消费及安静工具事件 |
+| 原接收及来源校验 | [接收服务](../../internal/submission/service.go)、[答案来源](../../internal/submission/source.go)、[当前输入校验](../../internal/runtime/work_packet_authority.go) | 专业答案、来源、适用审批和 Writer 接收 |
+| 领域证据与回执 | [证据投影](../../internal/workpacket/document_review.go)、[Writer](../../internal/runtime/work_packet.go)、[回执](../../internal/submission/receipt.go) | 本人接收、当前资格、原 followup 和等待 owner |
+| 原门与执行锁定 | [领域门](../../internal/qualitygate/evaluator.go)、[闭包事实](../../internal/qualitygate/s5_formal_subjects.go)、[转换动作](../../internal/transition/actions.go) | 准确当前双 PASS、来源及 TR-003/004 实际提交 |
+| 判断修订与当前资格 | [具名修订](../../internal/runtime/document_review_revision.go) | 原前驱、唯一后继、暂停旧资格及当前入口 |
 
-- “两个 agent”只证明程序分离，不等于双盲或真实作者隔离；
-- S3/S4 冻结源闭包或其 document refs 缺失时，不能用 reviewer 的 live Glob 结果替代；`subject_refs` 的范围仍以 runtime `documents[]` 为准；
-- packet-enabled PASS 与 finding 都只保存一份专业 answer，原 Writer 登记 envelope；明确 unpacketized 的旧实例按原契约保留信封/报告；
-- packet-enabled 路径只有原 Writer 已接收的答卷才进入 gate；缺卷由 Main/system 恢复，不能据此认定是旧实例；
-- 已接收判断不可覆盖；重审由 Main 走原返工或具名修订入口，系统给出新路径并保留旧签字；
-- `fix_required` 与 `req_change_required` 不可混用：前者回规划，后者必须停在人闸；
-- 一份文档改动会改变当前 subject 集，两条旧 PASS 都不能代表新版本；
-- `tasks check` 绿不代表单职责、无 overlap、assert 可执行或依赖语义正确；
-- reviewer 发现问题不能顺手改受审文档，否则审查与作者职责重新混合；
-- author machine check 当前休眠，不能把它写成第三层有效防线。
+### 13.2 不能把专业要求写成已有机器保证
 
-### 8.2 阅读预算
+- 不同工程 owner、producer 与分离关系可被核对，但原生平台 actor 与 owner 不强绑定；它们不证明真实上下文独立。真实作者登记常记录提交 actor，不能据此声称已可靠排除作者自审。
+- 精确来源校验覆盖正式输入集合，不证明上游在语义上没有漏掉必需材料。风险条件和专项深度仍由审查者判断，没有自动证明每项都审过的字段。
+- TASK 结构、覆盖与无环不等于可执行；同波重叠诊断可能只是警告，收尾自然语言不会自动执行。S5 必须补足专业层。
+- 当前 S5 首次接收仍重建准确来源，并在 Writer 内重复关键检查；它不是只读取一个 PASS 的轻量路径，也不能把函数存在或某条测试通过扩大成全部恢复情形都有效。
+- S4 接收和 S5 输入重建共用真实任务批次枚举，取消项保留在原 S4 证据中，退出 S5 活动任务分母；作者答案中的产物引用不是第二份机器批次清单，不要求再抄取消项路径。S5 仍核对原 S3／S4 来源闭包、真实任务与派发索引、原输出摘要和活动文档登记；取消源漂移或把取消项登记成活动 TASK 仍会拒绝，不通过改写已接收答案或刷新摘要恢复。
+- 同一工作区能保存两份私人答案，不表示磁盘会自动隔离或保护所有路径。独立执行布局也不能自行证明审查判断质量；普通工具写入不由本机制授予权限。
+- TR-005 保留真实人类边界，专业发现本身不会自动生成需求批准或暂停完成事实。TR-003 成功也只建立执行基线，不是质量验收或发布授权。
 
-| 角色/时机 | 最小阅读集 | 按需加载 | 不需要背诵 |
-|:--|:--|:--|:--|
-| Orchestrator 组队 | 两个职责定义、team-planning、触发表、当前 documents | 复杂 team/DAG 方法 | 审查细节全文 |
-| 两名 reviewer 开工 | 当前 Assignment、agent-dispatch、专业问卷、冻结 subject 集 | 按冻结输入适用的专项规则；明确旧实例的 REV template | transition 实现 |
-| 规格 reviewer | REQ、design、contracts、TASK coverage；适用的模块当前真相包（按原 S3/S4 冻结 refs） | NFR/权限/API 深挖 | S4 覆盖算法 |
-| TASK reviewer | TASK、contracts、tasks check 输出 | 迁移、外部集成、critical 风险规则 | 全仓实现代码 |
-| gate 收口 | 两条 evidence、runtime documents、drift/conflict | 对应错误诊断 | 人工重做语义审查 |
-
-S5 的最小心智模型应始终是：**两个正交问题、同一批精确对象、两份独立签字、三种明确去向**。其余深挖只在文档特征触发时展开。
-
-
-## 共享模型与合同依赖（2026-09-19）
-
-审查 subjects 包含共同模型、传递 Schema 及样例；冻结前比对 S3 登记内容。新批次必须明确模型策略，legacy 诊断不是新设计已验证的证明。独立审查模型是否符合 REQ/S2。 机制权威见 [L4 共享模型与合同治理](../l4-mechanisms/L4-shared-model-contract-governance.md)。
-
-
-<a id="dispatch-review"></a>
-## 整体派发计划审签契约（2026-09-19）
-
-S5 必须显式审查 [S4 整体派发计划](L3-S4-task-split.md#9-整体派发计划交付契约)，不再将批次节奏视为可选半问。机制规则见 [L4 整体派发计划](../l4-mechanisms/L4-agent-dispatch-governance.md#dispatch-plan)；waves-v1 首版已完成计划注册与 exact-subject 接线；语义编排审查仍由既有两路 Reviewer 负责。
-
-| 既有职责 | 对整体计划的责任 |
-|:--|:--|
-| DV-SPEC-CONSISTENCY | 同一 REQ、合同与 TASK 集合闭合；未遗漏交付；共享设计输入未被错误转为实现依赖 |
-| DV-TASK-EXECUTABILITY | 同波能否真正并行；是否漏真实前置或可变资源；公共修改是否有 owner；是否假串行；是否可在前置集成后及时补位 |
-
-保留两路独立审查，不新增第三份 PASS。finding 精确链接波次、TASK 或资源例外；通过结论明确覆盖计划，不要求逐任务复制审查表。机器提供成员、链接、环与版本结果，Reviewer 负责语义。
-
-计划进入两路适用的精确 subjects，TR-003 原子锁定该计划指纹与同一精确 TASK 集合。计划身份独立于 TASK 和架构设计，不得改变 S6 任务分母或充当 S2 设计。审签后更改成员、波次、资源顺序、依赖或 scope 必须走已有规划返工和重新审签；不能通过 mutable evidence SHA 刷新追认。
-
-容量调整、运行进度及按真实依赖提前释放不改变静态计划，不重做 S5。审查后的入口为 [S6 持续派发](L3-S6-build.md#dispatch-execution)。
-
-修订记录：2026-09-19 · dispatch-plan-v1，将计划交付、审签和持续派发纳入正式设计；首版适配边界见 [L4 §17.7](../l4-mechanisms/L4-agent-dispatch-governance.md#177-首版适配边界)。
-
-## 9. 确定交付的阶段消费契约（2026-10-13）
-
-当前正常入口消费 [L4阶段答卷§13](../l4-mechanisms/L4-stage-form.md#13-生产实施契约2026-10-13)：T1 仍由原 manifest 登记两个独立 reviewer；责任进入时，PreToolUse 图监听器从原 S5 packet/当前执行登记给出准确 view 与 answer 路径。S5 是审查工作，不另要求 reviewer 交 generic `PLAN_REPORT`；Reviewer 打开该 view 后直接完成专属 answer。恢复、填写与保存时不运行 `stage-answer issue/consume`，也不另抄 subject、造 REV envelope 或发送同内容总结。未启用 packet 的旧 Runtime 才保留旧兼容入口。
-
-| 责任 | 问卷中的专业工作 | 最少需作者保存 | 原消费者与本人完成 |
-|:--|:--|:--|:--|
-| `DV-SPEC-CONSISTENCY` | 对冻结 REQ→design→contracts→TASK 及适用的 S3/S4 冻结源闭包，核对语义、引用、负向路径和服务行为真相；只报告可定位矛盾 | `conclusion`（PASS/FIX/REQ-change）及每项 finding 的位置、证据和请求路由；packet 已绑定的 owner/subject/ref 不抄入答案 | PostToolUse 保存 Hook 调用原 S5 Writer 派生 `document_review` envelope 并接收；本人完成是该责任 receipt 已接收，不代表 S5 已过门 |
-| `DV-TASK-EXECUTABILITY` | 对同一精确 subjects 与 S4 派发计划逐 TASK 做五问，核对 scope、依赖、Closing Contract、检查与真实并行冲突 | 同上，写自己的结论及可定位 findings，不另交计划摘要 | 同一原 Writer/receipt；不能替另一 reviewer 签字 |
-
-两份 receipt 均到齐后，`GATE-DOCUMENT-PASS` 继续核对不同真实 producer、exact subjects、当前登记文档漂移和结论。双 PASS 才由原 TR-003 锁定批次；FIX 保持 TR-004 返规划；REQ-change 保持 TR-005 原人闸，保存本身不代表授权。S5 stage done 还要求 TR-003 成功登记非空 execution batch。
-
-答案只含专业结论与可定位 findings。具名 S5 adapter 从冻结 documents/真实责任生成原 document_review envelope 并同事务接收；手工 `runtime evidence add`/`stage-answer consume` 不是 packet-enabled 正常步骤。Main 处理未交责任、系统恢复和 gate 反馈，不能代替 reviewer 的专业结论。
-
-历史差距记录（旧接线状态，已由本节当前正常入口取代）：当时 S5 上下文仍提示 PLAN_REPORT/activation，派发/停止路径也可能以 generic checkpoint 表示责任开始。该记录不描述当前 packet-enabled 正常流程，也不要求新增前置项；专业 reviewer、不同真实 owner、exact subject、冻结输入、原 S5 Writer 与原 gate 均保留。
-
-原 Writer 回执记录本人 `work_complete` 与仍待处理的真实责任 owner；reviewer 不填写 peer 身份或系统状态。Main 处理剩余派发/系统恢复，不能替另一个 reviewer 签字。新基线/重入重新发行；同一 attempt 不同内容冲突，重签须 Main 明确原因及原前驱接收，按 L4 具名修订事务。
-
-验收必须覆盖共享checkout两人并行、最后Write/Edit、官方additionalContext、双PASS原门、FIX/REQ-change、路径/身份/冻结漂移、重复与并发、domain提交后与transition提交后中断、旧卷及已完成者Stop。fixture与真实Claude分别留证。
-
-当前接线入口：PreToolUse 准备当前 S5 packet 的绝对 view/answer 路径；成功保存该精确 answer 后的 PostToolUse 调用原消费者。现有重点回归为 `TestStageAnswerLastSaveReceivesAndRoutesOriginalS5`、`TestIndependentStageAnswerFrozenSourceAndReceipt`、`TestConcurrentIndependentReviewersDoNotLoseAnswersOrDoubleAdvance` 与 `TestLastS5ReviewerControlInterruptionRecoversOriginalTR003WithoutResubmission`。真实宿主仍需由实际 Claude Hook 保存驱动；上述 fixture 不替代双 reviewer 的真实专业核查与 TR-003 原门。
-## 已接收末份答卷的有界控制接续（2026-10-14）
-
-原领域 Writer 提交责任结果后，Controller 预算耗尽可留下原 pending followup。
-work_complete 只说明本人交付已接收，不保证同一 Hook 内已完成阶段转换。
-Main 只有在原回执明确 `control_status=pending`、`waiting_on=Main` 且
-`next_action` 指示系统接续时，才沿原 stage-answer recover/恢复检查点重新评估原门。
-若回执已 `advanced`，不再运行 recover；不重交专业答卷、不复用旧门 PASS、
-不调弱预算/权限。S6 作业须等原 TR-003 实际提交后开始。
-集成测试遇到明确 system_followup 应验证这个真实恢复路径，并保持对缺失
-结果、原门拒绝、未记录延迟及恢复后仍未转换的失败断言。
+S5 将 D1 的准确来源、D4 的专业问题和 D6 的独立背书落在实际交付上。判断是否完成，应能解释谁审了哪批材料、各自得出什么结论、发现交给谁，以及准确执行批次是否真正建立；不能以报告数量或平台退出替代这些事实。

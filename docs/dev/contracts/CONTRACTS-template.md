@@ -56,6 +56,8 @@
 
 条款列每条款一个 `{id} §{n}` 记号，可并列多个（如 `BE-001 §2, BE-001 §3`）——本矩阵是条款宇宙唯一居所；每个 `§n` 必须与目标契约正文任一「本合同条款」列声明的条款号一致（contracts check 机检，数字精确匹配）；任务侧覆盖声明（TASK §3）由 `tasks check` 对此聚合对账。
 
+目标声明使用带表头、分隔行的普通 Markdown 管道表格；「本合同条款」列可写 `§2` 或目标自身的 `BE-001 §2`。其他列、正文提及和代码围栏示例不能补声明。机检只核编号结构，承诺含义和覆盖充分性仍需 S3 作者及 S5 独立审查，不另填条款证明。
+
 | REQ source_ref | Rule → CASE → Story → PATH → Spec | FE 合同条款 | BE 合同条款 | SYNC 条款 |
 |:---|:---|:---|:---|:---|
 | REQ-{id}/FR-{id} | BR-{id} → CASE-{id} → S-{id} → F-{id} → PATH-{id} → `web/e2e/{module}/*.spec.ts` | FE-{id} §{n} | BE-{id} §{n} | SYNC-{id} §{n} |

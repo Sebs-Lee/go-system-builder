@@ -122,7 +122,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		claims = append(claims, Claim{
 			ClaimID: id, Lens: "delivery", Target: task.path,
 			Assertion:     task.id + " is delivered as locked: every acceptance obligation lands in the implementation",
-			Oracle:        "TODO(planner): the observable fact proving delivery for " + task.id,
+			Oracle:        "TODO(planner): for " + task.id + ", read its Closing Contract and name the observable postcondition, forbidden side effect and source evidence that distinguish pass from fail",
 			Method:        "requirement traceability review",
 			Applicability: "required",
 			SourceRefs:    []string{task.id, task.path},
@@ -178,13 +178,13 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			// (registration will reject a literal `TODO(planner)` literal
 			// with "TODO marker must be replaced"; surfacing it in `target`
 			// as well makes the gap visible at draft time).
-			target = "TODO(planner): path(s) to review for " + focus.key
-			method = "TODO(planner): the QA method (e.g. static code review, design walk) for " + focus.key
+			target = "TODO(planner): which actual changed paths and dependencies require " + focus.key + " review? Use the supplied baseline; report missing inputs to Main"
+			method = "TODO(planner): how will " + focus.key + " be inspected or exercised, and what observation would expose a violation? Use an actual review method or runnable check"
 		}
 		claims = append(claims, Claim{
 			ClaimID: id, Lens: "qa", Target: target,
 			Assertion:     focus.assertion,
-			Oracle:        "TODO(planner): the observable fact proving " + focus.key,
+			Oracle:        "TODO(planner): what observable condition makes " + focus.key + " pass or fail, and which source defines that condition?",
 			Method:        method,
 			Applicability: "required",
 			SourceRefs:    qaSourceRefs,
@@ -284,9 +284,9 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			notes = append(notes, "E2E cold start: no required browser CASE inventory was discoverable; author the module CASE/PATH matrix, then replace the fallback claim before registration")
 			id := nextClaim("e2e", "flows")
 			claims = append(claims, Claim{
-				ClaimID: id, Lens: "e2e", Target: "TODO(planner): persona/flow surface",
+				ClaimID: id, Lens: "e2e", Target: "TODO(planner): which existing persona and CASE/PATH define this behavior? Name the actual entry; report missing scenario inputs to Main",
 				Assertion: "declared entry points produce the expected user-observable behavior",
-				Oracle:    "TODO(planner): the flow-level oracle with console/network evidence",
+				Oracle:    "TODO(planner): after the declared fixture and actions, what visible/terminal state, persisted or forbidden effects and recovery distinguish pass from fail? Cite actual scenario evidence",
 				Method:    "real-browser execution", Applicability: "required", SourceRefs: taskIDs(tasks), FocusKey: "user-flow",
 			})
 			assignments = append(assignments, PlanAssignment{

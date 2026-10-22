@@ -40,8 +40,29 @@ func TestWorkerFrozenContextQuestionnaireUsesActualDispatchAndOriginalConsumer(t
 	if c.PlanPath != "" || c.PlanDraft != nil || c.PlanQuestions != nil || c.AnswerPath != workspace.AnswerDraftPath {
 		t.Fatalf("S5 must expose its domain answer without a generic PLAN: %+v", c)
 	}
-	if !reflect.DeepEqual(c.Selection.AuthorizationSkillRefs, []string{"document-verification"}) {
-		t.Fatal("selection changed activation source")
+	// This compatibility field carries registered methodology references;
+	// its name does not create a generic activation requirement.
+	manifestBytes, err := os.ReadFile(filepath.Join(f.root, ".claude/workgroups/REQ-039/review/manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Assignments []struct {
+			Owner  string   `json:"agent_id"`
+			Skills []string `json:"skill_refs"`
+		} `json:"assignments"`
+	}
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	var registeredSkills []string
+	for _, item := range manifest.Assignments {
+		if item.Owner == e.AgentID {
+			registeredSkills = item.Skills
+		}
+	}
+	if len(registeredSkills) == 0 || !reflect.DeepEqual(c.Selection.AuthorizationSkillRefs, registeredSkills) {
+		t.Fatalf("selection changed original registered skill references: got=%v want=%v", c.Selection.AuthorizationSkillRefs, registeredSkills)
 	}
 	for _, skill := range c.Selection.Selected {
 		actual, err := os.ReadFile(filepath.Join(e.Path, skill.Source))

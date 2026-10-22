@@ -287,10 +287,16 @@ func (s *Service) Save(ctx context.Context, owner, path string) (Receipt, error)
 		r.NextAction = "完成本轮实际设计后保存当前S2答卷：" + filepath.Join(s.Root, designAnswerPath)
 	}
 	if controlErr != nil || result.Error != "" {
-		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
-		r.NextAction = "本人交付已接收；由 Main 恢复系统接续。"
-		if result.QualityGate.TransitionCommitted && result.QualityGate.CandidateTransition == "TR-004" {
-			r.NextAction = result.Error
+		if !r.ConsumerPending {
+			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
+			r.NextAction = "本人交付已接收，可以结束本责任；Main 检查原接续 " + record.FollowupID + " 与后继准备，无需重交已接收答案。"
+		}
+		r.ConsumerOwner, r.ConsumerPending = "main", true
+		if controlErr != nil {
+			r.NextAction += " 原因：" + controlErr.Error()
+		}
+		if result.Error != "" {
+			r.NextAction += " 原因：" + result.Error
 		}
 	}
 	if result.QualityGate.Status == controller.StatusNotReady && len(r.WaitingOn) == 0 {

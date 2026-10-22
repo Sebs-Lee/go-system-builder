@@ -378,7 +378,7 @@ func RevisePlan(
 				}
 				if id, _ := entry["id"].(string); invalidate[id] && entry["status"] == "valid" {
 					entry["status"] = "invalid"
-					entry["invalidated_by"] = next.ReviewPlanID + "@r2"
+					entry["invalidated_by"] = fmt.Sprintf("%s@r%d", next.ReviewPlanID, nextRevision)
 					entry["invalidation_reason"] = "plan_revision"
 					entry["invalidation_rule"] = "review_plan_revision"
 				}

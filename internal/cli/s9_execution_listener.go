@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/entroforge/go-system-builder/internal/policy"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // These are the existing S9 lifecycle phases. Unknown and legacy BUG phases
@@ -20,7 +21,7 @@ func s9ProfessionalPhase(phase string) bool {
 func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.Input) []string {
 	owner := request.EffectiveAgentID()
 	main := mainQuestionnaireViewer(request) && (owner != "" || request.AgentType == "" && request.AgentTranscriptPath == "")
-	if owner == "" && (!main || request.Event == "SubagentStop" || request.Event == "TeammateIdle") {
+	if owner == "" && (!main || request.Event == "SubagentStart" || request.Event == "SubagentStop" || request.Event == "TeammateIdle") {
 		return nil
 	}
 	var paths []string
@@ -44,6 +45,29 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 	packetPhase := phase == "planning" || phase == "reproducing" || phase == "fixing" && (status == "repairing" || status == "blocked")
 	if packets, err := s9CurrentQuestionnaires(root, state, owner, result); err == nil && packetPhase {
 		for _, packet := range packets {
+			fact, factErr := s9ListenerAcceptance(root, state, packet)
+			if main || fact.kind != "" {
+				// Main reads accepted professional artifacts, not the Worker's
+				// private authoring cache. An accepted Worker also has no further
+				// questionnaire duty; its original artifact remains the read source.
+				if fact.ref != "" {
+					appendPath(resolveRootPath(root, fact.ref))
+				}
+				if main && fact.kind == "blocker" && packet.result != nil {
+					if path, err := workpacket.RepairResultResolutionAuthoringPath(workpacket.RepairResultPacket{AnswerPath: packet.answer, Binding: *packet.result}); err == nil {
+						appendPath(resolveRootPath(root, path))
+					}
+				}
+				if main && factErr == nil && fact.kind == "" {
+					for _, native := range nativeS9PlanPackets(root, state) {
+						if native.Binding.RepairAssignmentID == packet.binding.RepairAssignmentID && native.Binding.OwnerAgentID == packet.binding.OwnerAgentID {
+							brief, _, _ := nativeS9Paths(native)
+							appendPath(resolveRootPath(root, brief))
+						}
+					}
+				}
+				continue
+			}
 			source, _, _ := s9ListenerResultSource(root, state, packet)
 			if source != "" {
 				appendPath(resolveRootPath(source, packet.answer))
@@ -52,6 +76,16 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 		}
 	}
 	pointer := repairPointerCLI(state)
+	if main {
+		for _, ref := range repairArtifactRefs(pointer, "result_refs", "result_ref", "result_sha256") {
+			appendPath(resolveRootPath(root, ref.Path))
+		}
+		for _, key := range []string{"impact_ref", "handoff_ref"} {
+			if ref := stringValue(pointer[key]); ref != "" {
+				appendPath(resolveRootPath(root, ref))
+			}
+		}
+	}
 	for _, key := range []string{"contract_ref", "path", "plan_ref"} {
 		if ref := stringValue(pointer[key]); ref != "" {
 			appendPath(resolveRootPath(root, ref))

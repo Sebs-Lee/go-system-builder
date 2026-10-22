@@ -81,8 +81,8 @@ func TestS9ResumedSuccessorCompletesThroughOriginalCandidateWithResumeProvenance
 	if accepted.candidateReceipt.Provenance.ResumeSHA256 != wantResumeSHA {
 		t.Fatalf("candidate Resume digest=%q, want canonical %q", accepted.candidateReceipt.Provenance.ResumeSHA256, wantResumeSHA)
 	}
-	if accepted.candidateReceipt.Provenance.CompletionReportRef == "" || accepted.candidateReceipt.Provenance.CompletionReportSHA256 == "" || accepted.candidateReceipt.Provenance.CompletionReportEventID == "" {
-		t.Fatal("resumed candidate lacks its original accepted completion-report binding")
+	if accepted.candidateReceipt.Provenance.AnswerSHA256 == "" || accepted.candidateReceipt.Provenance.SourceHead == "" {
+		t.Fatal("resumed candidate lacks its professional answer and actual product commit")
 	}
 	if err := runtime.VerifyRepairResultPacketCurrent(accepted.fixture.root, accepted.acceptedSnapshot.State, accepted.packet); err != nil {
 		t.Fatalf("completed resumed packet is not the current accepted attempt: %v", err)
@@ -99,7 +99,7 @@ func TestS9ResumedSuccessorCompletesThroughOriginalCandidateWithResumeProvenance
 	}
 
 	var integratedOut, integratedErr bytes.Buffer
-	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", accepted.fixture.root, "--assignment", accepted.owner.manifestAssignmentID, "--agent", accepted.owner.agentID}, nil, &integratedOut, &integratedErr); code != 0 {
+	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", accepted.fixture.root, "--assignment", accepted.owner.manifestAssignmentID, "--agent", accepted.owner.agentID, "--check-command", "test -f internal/api/payload.go"}, nil, &integratedOut, &integratedErr); code != 0 {
 		t.Fatalf("original Main integration rejected the resumed candidate: code=%d stdout=%s stderr=%s", code, integratedOut.String(), integratedErr.String())
 	}
 	final := currentS9Snapshot(t, accepted.fixture)

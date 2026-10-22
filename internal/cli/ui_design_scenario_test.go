@@ -179,9 +179,10 @@ func writeCompleteUIDesignPackageForTest(root, module string) error {
 		}}},
 	}
 	fixture := map[string]any{"module": module, "fixtures": []any{map[string]any{"id": "fixture", "persona": "operator", "synthetic": true, "setup": []any{"seed"}, "cleanup": []any{"cleanup"}}}}
-	crossMatrix := map[string]any{"module": module, "entries": []any{map[string]any{
-		"fact": "fact-investor", "req_ref": "REQ-001", "story": "S-001", "branch": "branch-allow",
-	}}}
+	crossMatrix := map[string]any{"module": module, "entries": []any{
+		map[string]any{"fact": "fact-investor", "req_ref": "REQ-001", "story": "S-001", "branch": "branch-allow"},
+		map[string]any{"fact": "fact-investor", "req_ref": "REQ-001", "story": "S-001", "branch": "branch-reject"},
+	}}
 	for name, value := range map[string]any{"scenario-model.json": model, "fixture-contract.json": fixture, "cross-matrix.json": crossMatrix} {
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {

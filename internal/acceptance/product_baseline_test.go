@@ -36,11 +36,11 @@ func TestCanonicalEmptyProductBaselineDoesNotDemandInventedPath(t *testing.T) {
 	if _, err := ValidateWithBaseline(data, ManifestAcceptance, Baseline{CanonicalProduct: true, ChangedPaths: []string{}}); err != nil {
 		t.Fatalf("verified empty product diff cannot invent a path to pass S10: %v", err)
 	}
-	if _, err := Validate(data, ManifestAcceptance); err == nil {
-		t.Fatal("unknown denominator silently became verified empty")
+	if _, err := Validate(data, ManifestAcceptance); err != nil {
+		t.Fatalf("report reader must not demand invented denominator rows: %v", err)
 	}
-	if _, err := ValidateWithBaseline(data, ManifestAcceptance, Baseline{CanonicalProduct: true, ChangedPaths: []string{"internal/product.go"}}); err == nil {
-		t.Fatal("actual changed path disappeared from coverage")
+	if _, err := ValidateWithBaseline(data, ManifestAcceptance, Baseline{CanonicalProduct: true, ChangedPaths: []string{"internal/product.go"}}); err != nil {
+		t.Fatalf("report projection must not recertify the upstream product denominator: %v", err)
 	}
 }
 

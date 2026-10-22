@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/acceptance"
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/impact"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/review"
@@ -356,4 +357,41 @@ func canonicalEvidenceIDForPath(t *testing.T, state map[string]any, path string)
 	}
 	t.Fatalf("accepted Result ref %s has no original evidence index row", path)
 	return ""
+}
+
+// Scope invalidation removes current quality authority, not the original Git
+// delivery history needed to review a fresh post-repair product baseline.
+func TestCanonicalSurfaceKeepsScopeInvalidatedMainContribution(t *testing.T) {
+	fixture := newCanonicalMainFixtureWithSetup(t, canonicalSourceFile, true, false, seedCanonicalS5AndApplyTR003)
+	integrated, err := integration.Integrate(context.Background(), integration.IntegrateRequest{Inspection: fixture.inspect(t, "")}, fixture.integrateConfig())
+	if err != nil || integrated.Checkpoint.State != integration.StateVerified {
+		t.Fatalf("Main integration: %v", err)
+	}
+	current := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
+	before, err := buildsurface.Read(fixture.root, current.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected := impact.ComputeImpact(current.State, []string{canonicalSourceFile})
+	ids := impact.InvalidateEvidence(current.State, affected, "impact-original-repair")
+	if len(ids) == 0 {
+		t.Fatal("fixture did not invalidate original completion")
+	}
+	after, err := buildsurface.Read(fixture.root, current.State)
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatalf("scope invalidation erased proven contribution: %v", err)
+	}
+	for _, raw := range current.State["evidence"].([]any) {
+		row := raw.(map[string]any)
+		if row["path"] == fixture.result.ResultRef && row["status"] != "invalid" {
+			t.Fatal("historical reader restored current evidence validity")
+		}
+	}
+	logRef := integrated.Checkpoint.CanonicalMainFacts.Checks[0].LogRef
+	if err := os.WriteFile(logRef, []byte("tampered check"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := buildsurface.Read(fixture.root, current.State); err == nil {
+		t.Fatal("historical contribution bypassed actual Main check proof")
+	}
 }

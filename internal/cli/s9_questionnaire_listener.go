@@ -35,6 +35,9 @@ func s9PacketQuestionnaireLifecycleContext(root string, request policy.Input, sn
 		return "", false
 	}
 	result := life["phase"] == "fixing"
+	if mainQuestionnaireViewer(request) && repairDispatchCurrent(snapshot.State) {
+		return stageRepairDispatchContext(root, request, snapshot), true
+	}
 	if !result && life["phase"] != "planning" && life["phase"] != "reproducing" {
 		return "", false
 	}

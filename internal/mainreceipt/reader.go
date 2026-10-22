@@ -39,7 +39,7 @@ var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var ErrNotVerified = errors.New("preserved Main merge has not completed verification")
 
 // Input contains data already resolved by the original authority layer. In
-// particular, Accepted must be the result of LoadAccepted or
+// particular, Accepted must be the result of LoadAccepted, LoadContribution or
 // LoadSupersededAccepted, ExecutionGeneration must come from the caller's
 // current or historical Runtime execution registry, AuthorizedMainRoots must
 // come from caller-validated Runtime relocation state, and FinalTargetHead
@@ -182,6 +182,11 @@ func Verify(ctx context.Context, in Input) (VerifiedContribution, error) {
 	if bindingErr != nil && !errors.Is(bindingErr, ErrNotVerified) {
 		return out, bindingErr
 	}
+	if bindingErr != nil && cp.CanonicalMainFacts == nil {
+		// A precisely bound pre-merge failure has no Main proof to read.
+		// Historical callers may omit it; current callers still reject it.
+		return out, bindingErr
+	}
 	facts := *cp.CanonicalMainFacts
 	if err := validateAuthorizedMainRoots(root, in.AuthorizedMainRoots, cp.PreviousMainRoots, facts.MainRoot); err != nil {
 		return out, err
@@ -223,6 +228,14 @@ func validateCheckpointBinding(cp checkpoint, in Input, recordSHA string) error 
 	record := in.Record
 	if cp.AssignmentRecord == nil && cp.AssignmentRecordSHA256 != "" || cp.AssignmentRecord != nil && (*cp.AssignmentRecord != record.Reference() || cp.AssignmentRecordSHA256 != recordSHA) {
 		return fmt.Errorf("checkpoint Record reference or digest differs from the supplied Record")
+	}
+	if cp.CanonicalMainFacts == nil && cp.AssignmentRecord != nil &&
+		cp.TaskID == record.Task.ID && cp.AssignmentID == record.AssignmentID && cp.Generation == record.BaselineGeneration &&
+		cp.TargetBranch == in.ExpectedTargetBranch && cp.State == "preserved" && cp.Revision > 0 &&
+		cp.MergeCommit == "" && cp.TestedHead == "" && cp.VerifiedAt == "" && cp.ReportPath == "" && cp.ReportSHA == "" &&
+		cp.ChangedPaths == nil && cp.ChangedPathsSHA256 == "" && len(cp.CheckReceipts) == 0 && len(cp.ToolCheckReceipts) == 0 &&
+		fullObjectID(cp.SourceHead) && fullObjectID(cp.TargetHead) && fullObjectID(cp.MergeBase) {
+		return ErrNotVerified // Original pre-merge failure; never a verified contribution.
 	}
 	if cp.CanonicalMainFacts == nil || cp.TaskID != record.Task.ID || cp.AssignmentID != record.AssignmentID || cp.Generation != record.BaselineGeneration || cp.TargetBranch != in.ExpectedTargetBranch || cp.SourceHead != cp.CanonicalMainFacts.SourceHead || cp.MergeBase != cp.CanonicalMainFacts.MergeBase || cp.TestedHead != cp.CanonicalMainFacts.TestedHead || cp.MergeCommit != cp.CanonicalMainFacts.MergeCommit || cp.CanonicalMainFacts.TargetBranch != cp.TargetBranch || cp.ChangedPaths != nil || cp.ChangedPathsSHA256 != "" {
 		return fmt.Errorf("checkpoint does not preserve the exact canonical Result and MainFacts coordinates")

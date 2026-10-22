@@ -149,45 +149,28 @@ func TestS9RepairResultFinalCASSealedPendingRecoveryBeforeOriginalAckCleanup(t *
 
 	})
 
-	// A verified typed Result may not silently re-run Main checks if the target
-	// branch advanced after the Result was accepted. Verify this with a real
-	// empty commit, then reset only this isolated test repository to its original
-	// tested head before exercising pending-pair recovery.
+	// Acceptance freezes the exact Main facts. A real later contribution must
+	// survive sealed-pair recovery and cleanup without rerunning those checks,
+	// rewriting the accepted Final, or resetting the isolated Main target.
 	checkpointPath := integration.DefaultCheckpointStore().Path(fixture.root, packet.Binding.Sources.RuntimeID, packet.Binding.Sources.BaselineGeneration, prepared.execution.AssignmentID)
 	checkpointBytesBefore := mustRead(t, checkpointPath)
 	var verifiedCheckpoint integration.Checkpoint
 	if err := json.Unmarshal(checkpointBytesBefore, &verifiedCheckpoint); err != nil || verifiedCheckpoint.State != integration.StateVerified || verifiedCheckpoint.TestedHead == "" {
-		t.Fatalf("load verified S9 checkpoint before target-drift guard: checkpoint=%+v err=%v", verifiedCheckpoint, err)
+		t.Fatalf("load original verified S9 checkpoint: checkpoint=%+v err=%v", verifiedCheckpoint, err)
 	}
-	targetBefore, err := workspace.Git(context.Background(), fixture.root, "rev-parse", verifiedCheckpoint.TargetBranch)
-	if err != nil || targetBefore != verifiedCheckpoint.TestedHead {
-		t.Fatalf("verified S9 target head before drift probe = %q, tested=%q err=%v", targetBefore, verifiedCheckpoint.TestedHead, err)
+	laterPath := filepath.Join(fixture.root, "internal/api/later-recovery.go")
+	if err := os.WriteFile(laterPath, []byte("package api\n\nconst LaterRecoveryContribution = true\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	stateBeforeDrift, journalBeforeDrift := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
-	resultBeforeDrift := mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(acceptedResult.ResultRef)))
-	if _, err := workspace.Git(context.Background(), fixture.root, "commit", "--allow-empty", "-m", "S9 accepted Result target drift negative fixture"); err != nil {
-		t.Fatalf("advance only the isolated Main target with an empty commit: %v", err)
+	if _, err := workspace.Git(context.Background(), fixture.root, "add", "internal/api/later-recovery.go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.Git(context.Background(), fixture.root, "commit", "-m", "Later synthetic Main contribution before Final recovery"); err != nil {
+		t.Fatal(err)
 	}
 	targetAdvanced, err := workspace.Git(context.Background(), fixture.root, "rev-parse", verifiedCheckpoint.TargetBranch)
 	if err != nil || targetAdvanced == verifiedCheckpoint.TestedHead {
-		t.Fatalf("empty-commit drift probe did not advance the verified target: head=%q tested=%q err=%v", targetAdvanced, verifiedCheckpoint.TestedHead, err)
-	}
-	var driftStdout, driftStderr bytes.Buffer
-	if code := cli.Run([]string{"runtime", "workspace", "integrate", "--root", fixture.root, "--assignment", owner.manifestAssignmentID, "--agent", owner.agentID}, nil, &driftStdout, &driftStderr); code == 0 || !strings.Contains(driftStderr.String(), "Main target HEAD moved after the accepted S9 Result") {
-		t.Fatalf("original S9 integration must refuse Main target drift before re-verifying accepted facts: code=%d stderr=%s stdout=%s", code, driftStderr.String(), driftStdout.String())
-	}
-	if !bytes.Equal(stateBeforeDrift, mustRead(t, fixture.statePath)) || !bytes.Equal(journalBeforeDrift, mustRead(t, fixture.journalPath)) || !bytes.Equal(checkpointBytesBefore, mustRead(t, checkpointPath)) || !bytes.Equal(resultBeforeDrift, mustRead(t, filepath.Join(fixture.root, filepath.FromSlash(acceptedResult.ResultRef)))) {
-		t.Fatal("rejected S9 Main target drift changed Runtime, verified checkpoint, or immutable Result bytes")
-	}
-	if _, err := os.Stat(fixture.statePath + ".commit-pending.json"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rejected target-drift probe unexpectedly left a Runtime pending marker: %v", err)
-	}
-	if _, err := workspace.Git(context.Background(), fixture.root, "reset", "--hard", verifiedCheckpoint.TestedHead); err != nil {
-		t.Fatalf("restore isolated Main test repository to its verified target head: %v", err)
-	}
-	targetRestored, err := workspace.Git(context.Background(), fixture.root, "rev-parse", verifiedCheckpoint.TargetBranch)
-	if err != nil || targetRestored != verifiedCheckpoint.TestedHead {
-		t.Fatalf("restore isolated Main target head = %q, want %q err=%v", targetRestored, verifiedCheckpoint.TestedHead, err)
+		t.Fatalf("later contribution did not advance the verified target: head=%q tested=%q err=%v", targetAdvanced, verifiedCheckpoint.TestedHead, err)
 	}
 
 	// The public original integrate command must recover the sealed pair itself.
@@ -241,6 +224,9 @@ func TestS9RepairResultFinalCASSealedPendingRecoveryBeforeOriginalAckCleanup(t *
 	mainFacts, err := runtime.ProjectRepairResultMainFacts(checkpointBytes)
 	if err != nil || !bytes.Equal(mainFacts, acceptedResult.MainProof.VerifiedFacts) {
 		t.Fatalf("public pending recovery and ACK/cleanup changed immutable S9 Main facts: err=%v", err)
+	}
+	if head, err := workspace.Git(context.Background(), fixture.root, "rev-parse", verifiedCheckpoint.TargetBranch); err != nil || head != targetAdvanced {
+		t.Fatalf("accepted Final recovery lost the later Main contribution: head=%s want=%s err=%v", head, targetAdvanced, err)
 	}
 	registry, err := workspace.Decode(finalSnapshot.State)
 	if err != nil || registry == nil {
@@ -373,16 +359,24 @@ func withS9VerifiedMainCheckpoint(
 		t.Fatalf("original S9 Inspect rejected the accepted candidate: ready=%t blockers=%v err=%v", inspection.Ready, inspection.Blockers, err)
 	}
 
+	// Main chooses an actual fixture check; professional red_checks are not
+	// execution configuration and no longer create checks implicitly.
+	mainChecks := append([]string(nil), execution.Checks...)
+	checkRunner := integration.ProfileCheckRunner(execution.CheckProfiles, checkexec.Binding{
+		RuntimeID: execution.RuntimeID, Generation: execution.BaselineGeneration,
+		AssignmentID: execution.AssignmentID, Owner: execution.AgentID,
+		ExecutionGeneration: execution.Generation, Responsibility: "main_required_integration",
+	})
+	if len(mainChecks) == 0 {
+		mainChecks = []string{"test -f internal/api/payload.go"}
+		checkRunner = integration.CommandCheckRunner
+	}
 	integrateConfig := integration.IntegrateConfig{
 		Root:           fixture.root,
 		GitRoot:        fixture.root,
 		RuntimeID:      execution.RuntimeID,
-		RequiredChecks: execution.Checks,
-		CheckRunner: integration.ProfileCheckRunner(execution.CheckProfiles, checkexec.Binding{
-			RuntimeID: execution.RuntimeID, Generation: execution.BaselineGeneration,
-			AssignmentID: execution.AssignmentID, Owner: execution.AgentID,
-			ExecutionGeneration: execution.Generation, Responsibility: "main_required_integration",
-		}),
+		RequiredChecks: mainChecks,
+		CheckRunner:    checkRunner,
 	}
 	merged, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: inspection}, integrateConfig)
 	if err != nil || merged.Checkpoint.State != integration.StateVerified {

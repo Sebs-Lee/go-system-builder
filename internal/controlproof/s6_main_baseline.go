@@ -22,6 +22,12 @@ func ReadJournalForState(root string, state map[string]any) ([]byte, error) {
 		return nil, errors.New("journal read requires the Runtime authority root")
 	}
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	return ReadJournalForStateAt(journalPath, state)
+}
+
+// ReadJournalForStateAt uses the same complete-journal proof at an explicit
+// Store coordinate. Lifecycle writers already hold their original state lock.
+func ReadJournalForStateAt(journalPath string, state map[string]any) ([]byte, error) {
 	segments, err := JournalSegmentPaths(journalPath)
 	if err != nil {
 		return nil, err

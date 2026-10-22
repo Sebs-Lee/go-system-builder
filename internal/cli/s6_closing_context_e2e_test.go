@@ -86,7 +86,7 @@ func TestS6ClosingContractCLISeparatesOwnedCompletionFromMain(t *testing.T) {
 	s6AssertCanonicalRuntimePair(t, root, stateBeforePlan, journalBeforePlan)
 	assertionEntry["done_when_indexes"] = []any{0}
 	stageJSON(t, root, view.PlanPath, plan)
-	s6SaveQuestionnaireHook(t, root, root, filepath.Join(root, filepath.FromSlash(view.PlanPath)))
+	s6SaveQuestionnaireHook(t, root, root, record.OwnerAgentID, filepath.Join(root, filepath.FromSlash(view.PlanPath)))
 	proofRef := "src/pkg/closing-proof.txt"
 	s6WriteRecordContextFile(t, root, proofRef, []byte("original owned delivery evidence\n"))
 	resultBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(view.ResultPath)))
@@ -138,7 +138,7 @@ func TestS6ClosingContractCLISeparatesOwnedCompletionFromMain(t *testing.T) {
 	message["closing_assessment"] = assessment
 	stageJSON(t, root, view.ResultPath, message)
 	fixture := s6CanonicalResultCLIFixture{root: root, record: record}
-	firstOutput, firstFeedback := s6SaveQuestionnaireHookFeedback(t, root, root, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
+	firstOutput, firstFeedback := s6SaveQuestionnaireHookFeedback(t, root, root, record.OwnerAgentID, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
 	first := s6DecodeCanonicalTaskCompleteOutput(t, firstOutput)
 	if first.Acceptance.ResultRevision != 1 {
 		t.Fatalf("first closing Result: %+v", first.Acceptance)
@@ -173,7 +173,7 @@ func TestS6ClosingContractCLISeparatesOwnedCompletionFromMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayedOutput := s6SaveQuestionnaireHook(t, root, root, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
+	replayedOutput := s6SaveQuestionnaireHook(t, root, root, record.OwnerAgentID, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
 	replayed := s6DecodeCanonicalTaskCompleteOutput(t, replayedOutput)
 	if !replayed.Acceptance.Replayed || replayed.Acceptance.ResultRef != first.Acceptance.ResultRef {
 		t.Fatalf("same empty-check closing answer did not replay its accepted Result: first=%+v replay=%+v", first.Acceptance, replayed.Acceptance)
@@ -210,7 +210,7 @@ func TestS6ClosingContractCLISeparatesOwnedCompletionFromMain(t *testing.T) {
 	assessment["disposition"] = "complete"
 	condition["judgment"], condition["rationale"] = "satisfied", "The referenced implementation evidence supports the condition, subject to the stated risk."
 	stageJSON(t, root, view.ResultPath, message)
-	thirdOutput, thirdFeedback := s6SaveQuestionnaireHookFeedback(t, root, root, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
+	thirdOutput, thirdFeedback := s6SaveQuestionnaireHookFeedback(t, root, root, record.OwnerAgentID, filepath.Join(root, filepath.FromSlash(view.ResultPath)))
 	third := s6DecodeCanonicalTaskCompleteOutput(t, thirdOutput)
 	if third.Acceptance.ResultRevision != 3 || third.Acceptance.AnswerDigest == second.Acceptance.AnswerDigest {
 		t.Fatalf("complete disposition with a risk must be a distinct accepted Result: %+v", third.Acceptance)

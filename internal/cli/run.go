@@ -51,10 +51,10 @@ import (
 // convention already enforced for hook payloads in
 // `internal/hook/adapter.go` `message()`.
 //
-// A `runtime.ErrStaleRevision` (or any error wrapping it) is enriched with a
-// concrete next-action for callers that deliberately supplied an explicit
-// revision assertion. Normal stage commands leave that assertion omitted and
-// let the Writer consume the current Runtime under its lock.
+// ErrStaleRevision can come from either an explicit caller assertion or an
+// internal snapshot protecting a business object. The shared renderer cannot
+// infer which one occurred. Main checks the original receipt and responsibility
+// before deciding whether an uncommitted request is still valid.
 //
 // Recognized rule-id sources (in order of preference):
 //   - `guard <NAME> failed: ...`         → id = NAME.
@@ -67,7 +67,7 @@ func formatFailure(cmd string, err error) string {
 		return fmt.Sprintf("%s: %s See %s#%s.", cmd, msg, transition.ManualTargetPath(), strings.ToLower(id))
 	}
 	if errors.Is(err, runtime.ErrStaleRevision) {
-		return fmt.Sprintf("%s: %s. The command used an explicit revision assertion; normal stage retries should omit it. If an integration intentionally keeps the assertion, run `loop-harness status --root <root>` and retry with `--expected-revision <N>`; repeated integrity divergence may require `loop-harness runtime reconcile`.", cmd, msg)
+		return fmt.Sprintf("%s: %s. Main must inspect the original receipt and current responsibility (`loop-harness status --root <root>`), then continue only an uncommitted request whose original scope still holds. Preserve completed professional answers. A caller deliberately using CAS must refresh its own business snapshot; do not guess or increment revision numbers.", cmd, msg)
 	}
 	if errors.Is(err, runtime.ErrStaleRuntimeIdentity) {
 		return fmt.Sprintf("%s: %s. The runtime identity changed at a lifecycle boundary; reread status and rebuild the transition request against the current runtime.", cmd, msg)
@@ -122,7 +122,7 @@ func printTopLevelUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  next        Render next transition + missing preconditions (coarse)")
 	fmt.Fprintln(stdout, "  ready       Dry-run current Quality Gate checklist (diagnostics)")
 	fmt.Fprintln(stdout, "  validate    Validate runtime + journal against schema")
-	fmt.Fprintln(stdout, "  dry-run     Render an applied transition without writing")
+	fmt.Fprintln(stdout, "  dry-run     Read-only quality-gate diagnostics (ready compatibility; no Hook simulation)")
 	fmt.Fprintln(stdout, "  hook        Hook adapter entrypoints (PreToolUse, Stop, etc.)")
 	fmt.Fprintln(stdout, "  version     Executable platform and build identity")
 	fmt.Fprintln(stdout, "  install     Install a release into a fresh empty project (--source, --root)")
@@ -465,32 +465,6 @@ func runREQList(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// controlPlaneDrift compares the runtime-recorded definition/policy
-// fingerprints with the on-disk files; empty string means consistent.
-func controlPlaneDrift(root string, state map[string]any) string {
-	checks := []struct {
-		stateKey, rel string
-	}{
-		{"definition", projectlayout.Definition},
-		{"hook_control", projectlayout.Policy},
-	}
-	for _, check := range checks {
-		block, _ := state[check.stateKey].(map[string]any)
-		recorded, _ := block["sha256"].(string)
-		if recorded == "" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(check.rel)))
-		if err != nil {
-			return fmt.Sprintf("%s unreadable (%v) — run doctor", check.rel, err)
-		}
-		if actual := fmt.Sprintf("%x", sha256.Sum256(data)); actual != recorded {
-			return fmt.Sprintf("%s changed since the runtime was initialized — run `loop-harness doctor --root .` first; if it reports a policy_ref drift, reconcile with `runtime reconcile-policy-ref`, otherwise the control-plane change must be re-baselined (bind preflight refuses stale fingerprints)", check.rel)
-		}
-	}
-	return ""
-}
-
 func markdownField(content string, names ...string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), ">"))
@@ -594,7 +568,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "planned":
 			return "S7", PrimarySkillS7, "fill the original ReviewPlan questionnaire at the exact path supplied by the listener, including real Claim assertions, oracles and required coverage, then save for original registration"
 		case "running", "cannot_clean", "discovery_draining":
-			return "S7", "team-planning", "complete the current dispatched review questionnaire at the exact path supplied by the listener and save; Main owns dispatch, queue release and original round evaluation"
+			return "S7", "team-planning", "perform the assigned review using the current questionnaire at the exact path supplied by the listener; fill and save the answer, then return its exact reference for SubagentStop reception. Main owns dispatch, queue release and original round evaluation"
 		case "observation_sealed":
 			return "S7", "bug-resolution", "ObservationBatch sealed; the next PreToolUse auto-commits TR-008 to hand the batch to S8 — do not call the transition CLI"
 		case "clean":
@@ -610,13 +584,13 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "repair_readback":
 			return "S9", "bug-resolution", "the next writable Main Hook prepares the original RepairSession and Contract-derived RepairPlan; Main owns Assignment dispatch, and the listeners supply each Builder's exact PlanReport questionnaire path"
 		case "planning":
-			return "S9", "bug-resolution", "Main dispatches the original RepairAssignments; each Builder fills and saves its exact supplied PlanReport questionnaire with the professional plan and genuine pre-fix checks; the original consumer advances S9 when its requirements are met"
+			return "S9", "bug-resolution", "Main actually dispatches native Builders with exact prepared briefs; each saves a private professional PlanReport and real prechecks before implementation, continues without a save receipt, then returns its private Result for SubagentStop reception"
 		case "reproducing":
-			return "S9", "bug-resolution", "complete each dispatched Builder's exact supplied PlanReport questionnaire and save it for the original consumer; follow the updated Hook checkpoint when the required reports are accepted"
+			return "S9", "bug-resolution", "each native Builder saves its private PlanReport before implementation, continues repair/self-checks, then returns its private Result; Stop invokes the original consumers without a separate plan checkpoint exchange"
 		case "fixing":
-			return "S9", "bug-resolution", "complete the dispatched Contract work and actual required checks; fill and save each exact RepairResult questionnaire supplied by the listener. The original consumer records completion; Main uses the current listener/status command for typed `runtime workspace integrate`, with its actual root, assignment and owner, and selects real necessary checks through --check-command; do not substitute generic task-integrate"
+			return "S9", "bug-resolution", "native Builders use the supplied brief and save their private professional Plan/Result in the actual worktree; SubagentStop receives them. When the candidate is recorded, Main immediately follows the supplied `runtime workspace integrate` command with the actual root, assignment and owner and repeatable --check-command for necessary real Main checks. Do not redispatch an accepted native candidate for another RepairResult questionnaire or wait for Final before Main integration. Existing frozen executions retain their exact original RepairResult questionnaire and recovery path"
 		case "targeted_reverification":
-			return "S9", "bug-resolution", "the registered independent verifier fills and saves the exact TargetedReverification questionnaire path supplied by the listener; the original consumer checks the Contract assertions, and Main retains the original integration and Handoff work"
+			return "S9", "bug-resolution", "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and Handoff"
 		case "ready_for_full_review":
 			return "S9", "bug-resolution", "S9 has no author-filled Handoff form; completing the necessary professional work through its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. Follow any recorded actual missing work; do not wait for another Hook"
 		}
@@ -2648,25 +2622,15 @@ func packetPlanningEvidenceAddRefusal(root, statePath, journalPath, kind string)
 	if err != nil {
 		return "", true, err
 	}
-	if phase == "design" {
-		if !verified {
-			return "Current S2 questionnaire association is ambiguous or unavailable; Main must resolve the actual entry record, not register a parallel envelope.", true, nil
-		}
-		if !issued {
-			return "The current S2 responsibility has no registered questionnaire. Its real stage-entry preparation is missing; Main must resolve that system gap, not manually issue or consume.", true, nil
-		}
-		return "Use the current S2 answer at " + resolveRootPath(root, answerPath) + ". Save the professional answer normally; the original listener records and advances it without a command or parallel envelope.", true, nil
-	}
+
+	stage := map[string]string{"design": "S2", "contracts": "S3", "tasks": "S4"}[phase]
 	if !verified {
-		status := renderExecCommand([]string{"loop-harness", "status", "--root", root})
-		return fmt.Sprintf("packet-mode Main %s packet binding cannot be verified; do not register planning evidence directly. Inspect the current Runtime with %s", phase, status), true, nil
+		return fmt.Sprintf("Current %s questionnaire association is ambiguous or unavailable; Main must resolve the actual entry record, not register a parallel envelope.", stage), true, nil
 	}
 	if !issued {
-		issue := renderExecCommand([]string{"loop-harness", "runtime", "stage-answer", "issue", "--root", root})
-		return fmt.Sprintf("packet-mode Main %s evidence must pass through its issued typed answer; no current packet is registered. Run %s, then save the exact answer through its typed consumer", phase, issue), true, nil
+		return fmt.Sprintf("The current %s responsibility has no registered questionnaire. Its real stage-entry preparation is missing; Main must resolve that system gap, not manually issue or consume.", stage), true, nil
 	}
-	consume := renderExecCommand([]string{"loop-harness", "runtime", "stage-answer", "consume", "--root", root, "--agent", "Main", "--path", answerPath})
-	return fmt.Sprintf("packet-mode Main %s evidence must pass through the current issued typed answer. Save it with %s", phase, consume), true, nil
+	return fmt.Sprintf("Use the current %s answer at %s. Save the professional answer normally; the original listener records and advances it without a command or parallel envelope.", stage, resolveRootPath(root, answerPath)), true, nil
 }
 
 // currentIssuedPlanningAnswerPath only returns a path after the current
@@ -2866,7 +2830,7 @@ func runDryRun(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	bindUsage(flags, "dry-run")
 	root := flags.String("root", ".", "repository root")
-	fixture := flags.String("fixture", "", "Hook input fixture")
+	fixture := flags.String("fixture", "", "Hook fixture used only to label read-only quality-gate diagnostics")
 	if err := parseWorkspaceFlags(flags, args); err != nil {
 		return 2
 	}
@@ -2880,7 +2844,35 @@ func runDryRun(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer file.Close()
-	return evaluate(*root, "", file, stdout, stderr, false)
+	var request policy.Input
+	if err := json.NewDecoder(file).Decode(&request); err != nil {
+		fmt.Fprintf(stderr, "decode fixture: %v\n", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	controlRoot, err := workspace.ResolveControl(ctx, *root)
+	cancel()
+	if err != nil {
+		fmt.Fprintf(stderr, "dry-run root: %v\n", err)
+		return 1
+	}
+	controlRoot = nativeS6ControlRoot(controlRoot, request)
+	report, err := controller.EvaluateReady(context.Background(), controlRoot)
+	if err != nil {
+		fmt.Fprintf(stderr, "dry-run: %v\n", err)
+		return 1
+	}
+	gate := struct {
+		controller.ReadyReport
+		TransitionCommitted bool `json:"transition_committed"`
+	}{ReadyReport: report}
+	return encodeJSON(stdout, map[string]any{
+		"hook_event":       request.Event,
+		"hook_simulated":   false,
+		"evaluation_scope": report.EvaluationScope,
+		"instruction":      "Read-only ready diagnostics. The fixture only labels the event; no Hook, answer reception, audit, recovery or transition is executed. This does not predict Hook results or transition commitability.",
+		"quality_gate":     gate,
+	})
 }
 
 func runHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -3039,8 +3031,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "Hook argument event %q does not match input event %q\n", expectedEvent, request.Event)
 		return 1
 	}
+	if renderHook {
+		ctx, cancel := context.WithDeadline(context.Background(), evaluationStarted.Add(hookWorkBudget))
+		defer cancel()
+		request.Context = ctx
+	}
 	// Resolve a registered Worker to its sole control Runtime without chdir.
-	rootContext, rootCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	rootContext, rootCancel := context.WithTimeout(contextForHook(request), 3*time.Second)
 	controlRoot, rootErr := workspace.ResolveControl(rootContext, root)
 	rootCancel()
 	if rootErr != nil {
@@ -3048,7 +3045,19 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 
 		return 0
 	}
-	root = controlRoot
+	root = nativeS6ControlRoot(controlRoot, request)
+	if handled, code := nativeMainReturnHook(root, request, stdout); handled {
+		return code
+	}
+	if handled, code := nativeS6Hook(root, request, stdout, stderr); handled {
+		return code
+	}
+	if handled, code := nativeS9Hook(root, request, stdout, stderr); handled {
+		return code
+	}
+	if handled, code := nativeReviewHook(root, request, stdout, stderr); handled {
+		return code
+	}
 	// Session boundaries maintain the diagnostic spool. This runs under the
 	// native outer Hook deadline; interrupted compaction is exactly-once on retry.
 	// Mutating PreToolUse never performs this maintenance.
@@ -3059,10 +3068,16 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			}
 		}()
 	}
+	if renderHook && request.Event == "PreCompact" {
+		// Professional facts are already owned by their original Writers.
+		// Do not receive private drafts, run a control cycle or emit context
+		// as a substitute for persistence. SessionStart reads current facts.
+		return 0
+	}
 	// A separately launched top-level Claude session has no native agent_id.
 	// Resolve only its durable session/root pair; never impersonate nested agents.
 	if request.AgentID == "" && request.TeammateName == "" && request.SessionID != "" && request.CWD != "" {
-		ownerCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ownerCtx, cancel := context.WithTimeout(contextForHook(request), 2*time.Second)
 		owner, err := workspace.SessionOwner(ownerCtx, root, request.CWD, request.SessionID)
 		cancel()
 		if err == nil {
@@ -3118,6 +3133,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return runNativeObserverHook(root, request, stdout, stderr, evaluationStarted)
 	}
 	controlResult, graphObserved := graphControlForHook(root, request)
+	graphPlanning := graphObserved && lifecycleState(controlResult.Snapshot.State) == "planning"
 	if graphObserved {
 		request.Runtime = controllerRuntimeContext(controlResult.Snapshot.State, root, request.Runtime)
 		request.Runtime.PacketMode = true
@@ -3216,12 +3232,16 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		if handoff, handled := sessionStartS7QuestionnaireHandoff(root, request, controlResult); handled {
 			stageAnswerContext = handoff
 		} else {
-			stageAnswerContext = currentQuestionnaireLifecycleContext(root, request)
+			if graphObserved {
+				stageAnswerContext = currentQuestionnaireLifecycleContextFromSnapshot(root, request, controlResult.Snapshot)
+			} else {
+				stageAnswerContext = currentQuestionnaireLifecycleContext(root, request)
+			}
 		}
 		decision.AdditionalContext = stageAnswerContext
 		// Automatic questionnaire preparation can publish the current path.
 		// Render Next from that snapshot instead of asking the author to issue it.
-		if stageAnswerContext != "" && !s6ObservationReused {
+		if stageAnswerContext != "" && !s6ObservationReused && !graphPlanning {
 			if latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); err == nil {
 				var guidance policy.Guidance
 				if graphObserved {
@@ -3359,6 +3379,14 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	// (PreToolUseWithQualityGate) so the wire envelope carries the
 	// quality-gate facts inside official additionalContext. Lifecycle events
 	// use the corresponding official event-specific output envelope.
+	if controlResult.Error != "" {
+		// Keep the original transition/Writer failure visible even when a
+		// current questionnaire replaces coarse guidance. Unknown is not a
+		// useful recovery action without the actual failing condition.
+		message := "Original control handoff: " + controlResult.Error
+		decision.AdditionalContext += "\n" + message
+		fmt.Fprintln(stderr, message)
+	}
 	deliveredReminder := func() {}
 	if request.Event == "PreToolUse" || request.Event == "SessionStart" {
 		if request.Event == "PreToolUse" && stageAnswerContext == "" && controlResult.QualityGate.Status == controller.StatusNotReady {
@@ -3745,11 +3773,15 @@ func runControlCycleForHook(root string, request policy.Input) controller.Contro
 }
 
 func contextForHook(request policy.Input) context.Context {
+	ctx := request.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if request.SessionID == "" {
-		return context.Background()
+		return ctx
 	}
 	type sessionKey struct{}
-	return context.WithValue(context.Background(), sessionKey{}, request.SessionID)
+	return context.WithValue(ctx, sessionKey{}, request.SessionID)
 }
 
 // projectControlDecision folds a ControlResult back into a policy.Decision

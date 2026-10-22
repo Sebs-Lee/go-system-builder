@@ -131,7 +131,7 @@ func TestBuildGuidanceS7RecoveryProjectionDraining(t *testing.T) {
 	if !strings.Contains(automation, "status=discovery_draining") {
 		t.Fatalf("draining round must surface its plan status, got:\n%s", automation)
 	}
-	if !strings.Contains(guidance.Action, "fill and save") {
+	if !strings.Contains(guidance.Action, "fill and save") || !strings.Contains(guidance.Action, "SubagentStop") {
 		t.Fatalf("draining round must keep consuming pending Results, got %q", guidance.Action)
 	}
 }
@@ -381,17 +381,12 @@ func TestBuildGuidanceS8EntryProjectionFromTR008(t *testing.T) {
 			guidance := buildGuidance(root, state, event, policy.Input{})
 
 			automation := strings.Join(guidance.Automation, "\n")
-			want := "S8 entered via TR-008 with observation_batch observation-batch-r2 (2 findings, drain_policy=complete_required_claims)"
-			if !strings.Contains(automation, want) {
-				t.Fatalf("S8 entry must carry the TR-008 observation_batch source line, got:\n%s", automation)
-			}
-			// Recovery block must mirror the source fact so PreCompact (which
-			// may drop Automation) still preserves it.
-			if len(guidance.Recovery) == 0 || !strings.Contains(guidance.Recovery[0], want) {
-				t.Fatalf("S8 Recovery must lead with the TR-008 source line, got %#v", guidance.Recovery)
-			}
-			if !strings.Contains(guidance.Instruction, want) {
-				t.Fatalf("rendered instruction must carry the S8 entry source line, got %q", guidance.Instruction)
+			// Test the renderer's original source facts. Actual PreCompact is
+			// silent; SessionStart recovers these from the durable Runtime.
+			for _, want := range []string{"ObservationBatch observation-batch-r2", "2 findings", "drain_policy=complete_required_claims"} {
+				if !strings.Contains(automation, want) || len(guidance.Recovery) == 0 || !strings.Contains(guidance.Recovery[0], want) || !strings.Contains(guidance.Instruction, want) {
+					t.Fatalf("recovery lost original batch fact %q: %+v", want, guidance)
+				}
 			}
 		})
 	}

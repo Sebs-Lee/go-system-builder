@@ -24,11 +24,13 @@ Do not silently extend locked contracts.
 
 ## Inlined Methodology
 
-When work arrives through an Assignment, use that Assignment's read-back,
-approval and activation flow. Read `TASK -> CONTRACTS -> REQ -> UI DESIGN
-PACKAGE/DESIGN -> RULES`; repair work starts with its approved repair context.
-Keep the same Agent context through read-back and implementation, and follow
-the Assignment's duties and stop conditions.
+For implementation, read the exact native task brief, its TASK and linked
+contract clauses, shared definitions and applicable design/rules. Repair work uses
+the approved repair context. Form your professional plan, then implement and
+self-check within that responsibility. Save the supplied professional outputs and
+return their exact references for SubagentStop reception; Main owns integration.
+An explicit domain approval remains required when the task names one. Existing
+registered frozen executions use their original [recovery contract](../agent-dispatch/frozen-execution.md).
 
 For S3 Main, follow the frozen REQ/S2 input view and
 [S3 stage instructions](../../docs/control/agent-protocol.md#s3).
@@ -41,6 +43,15 @@ S3 outputs can change during this entry; REQ/S2 inputs remain frozen.
 The original consumer captures model dependencies and
 runs checks and registration. S3 needs no Assignment, second envelope or
 repeated manual checks.
+
+Keep the current REQ's original index and complete applicable contract set.
+Module behavior spans requirements; retain historical CASEs and real sources.
+Another REQ's contract text cannot close a missing current CASE mapping.
+Bare FR IDs refer to the current REQ; use the existing explicit `REQ/FR` form
+when citing another requirement. Do not copy or relabel a source to satisfy the
+check. Missing or ambiguous original sources belong to Main recovery. The normal
+consumer uses the original delivery paths; no second scope file or manual check
+is required. An unbound all-project diagnostic does not prove this batch complete.
 
 PreToolUse observes graph progress and supplies the current questionnaire's
 exact path, missing duties and next action. It does not authorize or deny tools.

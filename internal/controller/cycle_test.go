@@ -240,7 +240,7 @@ func TestRunControlCycleReportsSatisfiedGateGuardFailure(t *testing.T) {
 	if !strings.HasPrefix(diagnostic, "transition:PTR-PLAN-02:") || !strings.Contains(diagnostic, "guard contracts_checked failed:") {
 		t.Fatalf("wire diagnostic lost transition or original guard identity: %q", diagnostic)
 	}
-	if !strings.Contains(diagnostic, "contracts_checked: no contracts found") {
+	if !strings.Contains(diagnostic, result.Error) {
 		t.Fatalf("wire diagnostic lost the actual guard reason: %q", diagnostic)
 	}
 	after, err := store.Snapshot()

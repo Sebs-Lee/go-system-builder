@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 	"path/filepath"
 	"reflect"
@@ -531,8 +532,16 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		}
 		allRefs = append(allRefs, doc.EvidenceRefs...)
 	}
-	if batchRef != "" {
-		if err := ValidateEvidenceRefs(allRefs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
+	refsToValidate := allRefs
+	if batchRef == "" {
+		source, err := humanCaseSource(root, state, current.document)
+		if err != nil {
+			return workpacket.HypothesisResultPacket{}, err
+		}
+		refsToValidate = withoutHumanSource(allRefs, source)
+	}
+	if len(refsToValidate) > 0 {
+		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
 			return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 frozen evidence source closure: %w", err)
 		}
 	}
@@ -903,11 +912,15 @@ func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string,
 	// Resolve each tuple from its owning source rather than treating the ref
 	// string as self-authenticating.
 	appendTuple := func(ref, origin, sourceFinding string) error {
-		if strings.Contains(ref, "://") {
+		id, indexed, err := evidence.ReferenceID(ref)
+		if err != nil {
+			return err
+		}
+		if !indexed {
 			result = append(result, workpacket.HypothesisEvidenceRef{Ref: ref, Origin: origin, SourceFindingID: sourceFinding, Attestation: "execution_anchor"})
 			return nil
 		}
-		entry := byID[ref]
+		entry := byID[id]
 		if entry == nil {
 			for _, raw := range entries {
 				row, _ := raw.(map[string]any)

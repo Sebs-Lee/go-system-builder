@@ -172,6 +172,10 @@ func TestS9RepairVerifierDispatchQuestionnaireOriginalPhasesAndResponsibility(t 
 	root, snapshot, _, _ := repairDispatchFixture(t)
 	before := repairDispatchRuntimeBytes(t, root)
 	path := repairVerifierDispatchPaths(root, snapshot.State)[0]
+	// Exercise the missing-draft case after the normal entry prepared one.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	for _, request := range []policy.Input{{Event: "PreToolUse", AgentID: "worker"}, {Event: "SubagentStart"}} {
 		if context := stageRepairVerifierDispatchContext(root, request, snapshot); context != "" {
 			t.Fatalf("Main verifier division delivered to Worker: %s", context)
@@ -179,7 +183,7 @@ func TestS9RepairVerifierDispatchQuestionnaireOriginalPhasesAndResponsibility(t 
 	}
 	for _, event := range []string{"PreCompact", "Stop", "Idle"} {
 		context := stageRepairVerifierDispatchContext(root, policy.Input{Event: event}, snapshot)
-		if !strings.Contains(context, path) || !strings.Contains(context, "missing draft") {
+		if !strings.Contains(context, path) || !strings.Contains(context, "must prepare this draft") {
 			t.Fatalf("%s omitted exact preparation gap: %s", event, context)
 		}
 	}

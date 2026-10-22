@@ -68,6 +68,11 @@ func Pending(root string, loaded *hookctx.LoadedContext) ([]PendingIntegration, 
 			if b := loaded.PolicyContext.Workspace; b != nil {
 				e, ok := b.Execution(a.AssignmentID, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration)
 				projected = ok && e.Status == "complete"
+				if state, err := readCanonicalRuntimeState(root); err == nil {
+					if current, found, err := assignmentrecord.ForOwner(state, a.OwnerAgentID); err == nil && found && current.Contract == assignmentrecord.NativeDeliveryContract {
+						projected = true
+					}
+				}
 			}
 			currentReport := true
 			if cp.CompletionReportSHA256 != "" {
@@ -174,6 +179,9 @@ func canonicalRevisionCommand(root string, loaded *hookctx.LoadedContext, assign
 	}
 	if digest != assignment.AssignmentRecordSHA256 || record.Task.ID != assignment.TaskID || record.Task.Ref == "" {
 		return nil, fmt.Errorf("current owner Record TASK or digest differs from the pending Assignment")
+	}
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		return []string{"loop-harness", "s6", "prepare", "--root", root, "--task", record.Task.ID, "--role", record.RoleFamily, "--revise-assignment", record.AssignmentID, "--revision-intent-key", "<new-key>"}, nil
 	}
 	return []string{
 		"loop-harness", "runtime", "register-workgroup", "--root", root,

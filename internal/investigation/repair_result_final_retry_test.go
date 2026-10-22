@@ -210,8 +210,15 @@ func TestS9RepairResultStagingRebuildAfterOriginalSiblingWorkspaceCAS(t *testing
 		"--assignment", siblingAssignmentID, "--agent", siblingOwnerID, "--check-location", "main",
 	)
 	var siblingExecution workspace.Execution
-	if err := json.Unmarshal(preparedBytes, &siblingExecution); err != nil || siblingExecution.AssignmentID != siblingAssignmentID || siblingExecution.AgentID != siblingOwnerID || siblingExecution.Status != "ready" || siblingExecution.CheckLocation != "main" || siblingExecution.BootstrapSHA256 == "" {
-		t.Fatalf("original sibling workspace prepare did not publish its real ready execution: execution=%+v err=%v output=%s", siblingExecution, err, preparedBytes)
+	var response struct {
+		Execution workspace.Execution `json:"execution"`
+	}
+	if err := json.Unmarshal(preparedBytes, &response); err != nil {
+		t.Fatal(err)
+	}
+	siblingExecution = response.Execution
+	if siblingExecution.AssignmentID != siblingAssignmentID || siblingExecution.AgentID != siblingOwnerID || siblingExecution.Status != "ready" || siblingExecution.CheckLocation != "main" || siblingExecution.BootstrapSHA256 == "" {
+		t.Fatalf("original sibling workspace prepare did not publish its real ready execution: execution=%+v output=%s", siblingExecution, preparedBytes)
 	}
 	postPrepare := currentS9Snapshot(t, prepared.fixture)
 	if postPrepare.Revision <= input.snapshot.Revision {

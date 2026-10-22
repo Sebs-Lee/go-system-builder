@@ -64,7 +64,7 @@ func ValidateEvidenceRefs(refs []string, opts EvidenceAttestationOptions) error 
 			if ref == "" {
 				return fmt.Errorf("evidence_ref is empty")
 			}
-			if !strings.Contains(ref, "://") {
+			if strings.HasPrefix(ref, "runtime:") || !strings.Contains(ref, "://") {
 				return fmt.Errorf("evidence_ref %q is not an execution anchor (expected a scheme:// form)", ref)
 			}
 		}

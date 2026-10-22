@@ -84,7 +84,7 @@ func newStageAnswerFixtureMode(t *testing.T, packet bool, configure ...func(stri
 	state["evidence"] = []any{}
 	state["schema_version"] = "1.2.0"
 	state["configuration"].(map[string]any)["optimization"] = map[string]any{"packet": packet}
-	for _, rel := range []string{"agents/document-verifier.md", "skills/document-verification/SKILL.md", "skills/agent-dispatch/SKILL.md"} {
+	for _, rel := range []string{"agents/document-verifier.md", "skills/document-verification/SKILL.md", "skills/agent-dispatch/SKILL.md", "skills/specification-planning/SKILL.md", "skills/api-contracts/SKILL.md", "skills/testing-strategy/SKILL.md"} {
 		data, err := os.ReadFile(filepath.Join(fixtures.RepoRoot(t), rel))
 		if err != nil {
 			t.Fatal(err)
@@ -180,6 +180,11 @@ func newStageAnswerFixtureMode(t *testing.T, packet bool, configure ...func(stri
 		a["assignment_id"], a["agent_id"], a["responsibility_id"] = id, owner, resp
 		a["role_family"], a["agent_definition_ref"] = "document-verifier", ".claude/agents/document-verifier.md"
 		a["skill_refs"] = []string{"document-verification"}
+		if resp == "DV-SPEC-CONSISTENCY" {
+			a["skill_refs"] = []string{"document-verification", "specification-planning", "api-contracts"}
+		} else {
+			a["skill_refs"] = []string{"document-verification", "specification-planning", "testing-strategy"}
+		}
 		a["read_paths"] = []string{f.taskPath}
 		a["write_paths"] = []string{}
 		a["output_paths"] = []string{"docs/reports/review/" + owner + ".json"}
@@ -256,10 +261,11 @@ func (f stageAnswerFixture) begin(t *testing.T, p workpacket.Packet, worker *wor
 	}
 }
 
+// Frozen teammate save compatibility; native delivery uses nativeReviewEvent/Stop.
 func saveStageHook(t *testing.T, root, cwd, owner, path string, answer workpacket.Draft) submission.Receipt {
 	t.Helper()
 	stageJSON(t, cwd, path, answer)
-	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(cwd, path)}, "agent_id": owner, "cwd": cwd})
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(cwd, path)}, "teammate_name": owner, "cwd": cwd})
 	return saveStageHookPayload(t, root, body)
 }
 
@@ -391,10 +397,26 @@ func TestS5SavedAnswerUsesRegisteredOwnerWithoutHookIdentityOrCWD(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			r := saveStageHookPayload(t, f.root, body)
-			record, found, lookupErr := runtime.FindSubmission(stageSnapshot(t, f.root).State, p.ID)
-			if !r.Accepted || !r.WorkComplete || lookupErr != nil || !found || record.Owner != p.Binding.Owner {
-				t.Fatalf("exact registered S5 path did not use its packet owner without Hook identity/CWD metadata: %+v", r)
+			{
+				// Actual native actor metadata selects the lifecycle boundary,
+				// not the logical owner or a per-save reception callback.
+				before := stageSnapshot(t, f.root)
+				var out, diagnostic bytes.Buffer
+				if code := cli.Run([]string{"hook", "--root", f.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &diagnostic); code != 0 || strings.Contains(out.String(), "SUBMISSION RECEIPT") || tc.metadata && out.Len() != 0 || stageSnapshot(t, f.root).Revision != before.Revision {
+					t.Fatalf("ordinary save received a native answer before Stop: %d %s %s", code, &out, &diagnostic)
+				}
+				payload["hook_event_name"] = "SubagentStop"
+				payload["agent_id"] = "actual-native-reviewer"
+				payload["last_assistant_message"] = filepath.Join(f.root, p.AnswerPath)
+				body, _ = json.Marshal(payload)
+				if code := cli.Run([]string{"hook", "--root", f.root, "--event", "SubagentStop"}, bytes.NewReader(body), &out, &diagnostic); code != 0 {
+					t.Fatalf("native Stop: %d %s %s", code, &out, &diagnostic)
+				}
+				record, found, err := runtime.FindSubmission(stageSnapshot(t, f.root).State, p.ID)
+				if err != nil || !found || record.Owner != p.Binding.Owner {
+					t.Fatalf("native Stop did not preserve original packet owner: %+v %v", record, err)
+				}
+				return
 			}
 		})
 	}
@@ -768,16 +790,16 @@ func TestStageAnswerDomainCommitSurvivesInterruptedFollowup(t *testing.T) {
 	defer cancel()
 	s.Files = &cancelLockedReceptionRead{Reader: s.Files, at: 3 * len(p.Inputs), cancel: cancel}
 	r, err := s.Save(ctx, p.Binding.Owner, p.AnswerPath)
-	if err != nil || !r.Accepted || !r.WorkComplete {
+	if err != nil || !r.Accepted || !r.WorkComplete || !r.ConsumerPending || r.ConsumerOwner != "main" {
 		t.Fatalf("interrupted followup lost durable owner completion: %+v %v", r, err)
 	}
 	snap := stageSnapshot(t, f.root)
 	record, ok, err := runtime.FindSubmission(snap.State, p.ID)
-	if err != nil || !ok || record.ControlStatus != "pending" {
+	if err != nil || !ok || record.ControlStatus != "pending" || !strings.Contains(r.NextAction, record.FollowupID) {
 		t.Fatalf("interruption did not leave the original durable pending event: %+v %v", record, err)
 	}
 	recovered, err := s.Recover(context.Background(), p.Binding.Owner, 2)
-	if err != nil || len(recovered) != 1 || !recovered[0].WorkComplete {
+	if err != nil || len(recovered) != 1 || !recovered[0].WorkComplete || recovered[0].ConsumerPending {
 		t.Fatalf("pending reception was not recovered: %+v %v", recovered, err)
 	}
 	first := stageSnapshot(t, f.root)

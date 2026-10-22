@@ -85,6 +85,16 @@ S11 handoff. The current complete S7 clean-round condition still applies; the
 normal completion exit does not wait for another Pre to repeat source proofs.
 The existing `review_required`/`blocked` routes preserve actual unfinished work.
 
+An explicit acceptance `review_required` returns to a complete S7 round through
+TR-016. The system derives its original impact input from the received decision
+and the current ReviewPlan's frozen scope; this does not assert product changes.
+Do not create a Changeset, RepairSession, Finding or duplicate impact report to
+obtain a return. Main restores any specifically reported missing original plan
+or scope. The received acceptance stays received; normal Main completion resumes
+that original consumer after source recovery. Do not refill or resave unchanged
+acceptance. The original full-review budget still applies, and the new S7 plan
+requires actual professional judgment and independent review.
+
 ## Non-Goals
 
 S11 reuses accepted S10 readable reports, real residual risks and exact paths; no duplicate human package or metadata form. TR-017 prepares materials once; ordinary Pre/Stop only reads. The human explicitly chooses one of the six dispositions. Main faithfully fills the supplied application’s original `disposition` and optional `reason` and saves; PostToolUse automatically records/consumes through the existing Writer and fixed outlet. Without a real human choice leave disposition empty and wait: drafts do not write Runtime or default to approval. The Hook does not authenticate identity or demand extra confirmation/proof fields; the system supplies metadata/caller attribution. The original human-decision command is compatibility/recovery, not normal author work or a second submission. Return routes carry actual reason/paths to S8/S10; retain observations but clear the returned S10 step’s old final conclusion. No consumed old application is reused. S10 does not merge, publish, deploy or formally release

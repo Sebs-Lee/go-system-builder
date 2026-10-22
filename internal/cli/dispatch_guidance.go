@@ -17,6 +17,14 @@ func applyDispatchGuidance(root string, state map[string]any, event string, inpu
 	if !dispatchGuidanceCheckpoint(event, input) {
 		return
 	}
+	if mapFieldCLI(state, "lifecycle")["state"] != "building" {
+		return
+	}
+	// Native S6 already supplies task briefs and original integration facts.
+	// Legacy slot/capacity advice must not become a second dispatch protocol.
+	if len(nativeS6Records(state)) > 0 {
+		return
+	}
 	board, err := dispatch.Load(root, state, 0)
 	if err != nil {
 		guidance.Automation = append(guidance.Automation, "S6 dispatch projection unavailable; inspect `loop-harness s6 status` before choosing another TASK")

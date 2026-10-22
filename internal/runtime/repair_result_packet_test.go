@@ -173,6 +173,42 @@ func TestRepairResultPacketIssueAndCurrentUsesBothProofs(t *testing.T) {
 	})
 }
 
+func TestRepairResultExecutionRejectsDraftDigestAndMutableProjection(t *testing.T) {
+	for _, variant := range []string{"execution digest", "mutable status"} {
+		t.Run(variant, func(t *testing.T) {
+			f := newRepairResultRuntimeFixture(t)
+			if _, err := RepairResultExecution(f.plan.state, f.packet); err != nil {
+				t.Fatalf("original registered definition is not valid: %v", err)
+			}
+			before, err := json.Marshal(f.plan.state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if variant == "execution digest" {
+				f.packet.Binding.ExecutionSHA256 = strings.Repeat("0", 64)
+			} else {
+				var definition map[string]any
+				if err := json.Unmarshal(f.packet.Inputs.Execution, &definition); err != nil {
+					t.Fatal(err)
+				}
+				definition["status"] = "ready"
+				f.packet.Inputs.Execution, err = json.Marshal(definition)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.packet.Binding.ExecutionSHA256 = workpacket.Digest(f.packet.Inputs.Execution)
+			}
+			if _, err := RepairResultExecution(f.plan.state, f.packet); err == nil || !strings.Contains(err.Error(), "registered execution definition differs") {
+				t.Fatalf("%s borrowed original execution authority: %v", variant, err)
+			}
+			after, err := json.Marshal(f.plan.state)
+			if err != nil || string(before) != string(after) {
+				t.Fatalf("source lookup changed Runtime: %v", err)
+			}
+		})
+	}
+}
+
 func TestRepairResultCurrentRejectsExecutionSourceAndAttemptDrift(t *testing.T) {
 	for _, variant := range []string{"owner", "phase", "base", "profile", "bootstrap", "attempt", "report_index"} {
 		t.Run(variant, func(t *testing.T) {

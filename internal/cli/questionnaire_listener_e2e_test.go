@@ -52,14 +52,14 @@ func TestQuestionnaireListenerReportsMissingViewReadOnlyAndPreservesAnswer(t *te
 
 // Observe a successful platform save and return the existing lifecycle API's
 // JSON result. The Hook adds guidance, not another completion authority.
-func s6SaveQuestionnaireHook(t *testing.T, root, cwd, path string) string {
-	result, _ := s6SaveQuestionnaireHookFeedback(t, root, cwd, path)
+func s6SaveQuestionnaireHook(t *testing.T, root, cwd, owner, path string) string {
+	result, _ := s6SaveQuestionnaireHookFeedback(t, root, cwd, owner, path)
 	return result
 }
 
-func s6SaveQuestionnaireHookFeedback(t *testing.T, root, cwd, path string) (string, string) {
+func s6SaveQuestionnaireHookFeedback(t *testing.T, root, cwd, owner, path string) (string, string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "cwd": cwd, "tool_input": map[string]any{"file_path": path}})
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "agent_id": owner, "cwd": cwd, "tool_input": map[string]any{"file_path": path}})
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
 		t.Fatalf("saved questionnaire Hook failed: %d %s %s", code, &out, &errout)

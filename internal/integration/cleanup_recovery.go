@@ -45,6 +45,16 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 		if err != nil {
 			return fmt.Errorf("revalidate Main-pinned Worker bootstrap before cleanup: %w", err)
 		}
+		native, err := nativeDeliveryProjection(root, path, true)
+		if err != nil {
+			return err
+		}
+		if projection == nil {
+			projection = map[string]string{}
+		}
+		for rel, digest := range native {
+			projection[rel] = digest
+		}
 		clean, err = worktreeCleanWithProjection(ctx, path, projection)
 		if err != nil {
 			return err
@@ -114,6 +124,9 @@ func restorePinnedBootstrap(ctx context.Context, root string, projection map[str
 	paths = append(paths, ".claude/loop-bootstrap.json", ".claude/loop-workspace.json")
 	for _, rel := range paths {
 		expected := projection[rel]
+		if expected == "" {
+			continue
+		}
 		status, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "--untracked-files=all", "--", rel)
 		if err != nil {
 			return err
@@ -247,9 +260,14 @@ func RecoveryBaseForCheckpoint(ctx context.Context, root string, cp Checkpoint) 
 	return base, nil
 }
 
-// Only the exact two-parent merge at current HEAD proves response loss.
-// Anything ambiguous is preserved for inspection; no reflog guessing.
-func recoverUnrecordedMerge(ctx context.Context, root string, cp Checkpoint) (string, error) {
+const readyMergeHistoryLimit = 256
+
+// RecoverUnrecordedMerge observes the original ready intent in bounded
+// first-parent history. It writes nothing and grants no check/ACK authority.
+func RecoverUnrecordedMerge(ctx context.Context, root string, cp Checkpoint) (string, error) {
+	if cp.State != StateReady || cp.MergeCommit != "" || cp.TargetHead == "" || cp.SourceHead == "" || cp.SourceBranch == "" || cp.TargetBranch == "" {
+		return "", fmt.Errorf("merge response recovery requires the original ready checkpoint and exact source/target coordinates")
+	}
 	head, err := revParse(ctx, root, "HEAD")
 	if err != nil {
 		return "", err
@@ -261,13 +279,31 @@ func recoverUnrecordedMerge(ctx context.Context, root string, cp Checkpoint) (st
 	if err != nil || strings.TrimSpace(branch) != cp.TargetBranch {
 		return "", fmt.Errorf("ready checkpoint recovery requires original target branch")
 	}
-	parents, err := defaultRunner.Run(ctx, root, "rev-list", "--parents", "-n", "1", head)
+	source, err := revParse(ctx, root, cp.SourceBranch)
+	if err != nil || source != cp.SourceHead {
+		return "", fmt.Errorf("Main must reconcile source %s with ready source %s before merge recovery; preserve the Worker", cp.SourceBranch, cp.SourceHead)
+	}
+	parents, err := defaultRunner.Run(ctx, root, "rev-list", "--first-parent", "--parents", "--max-count="+strconv.Itoa(readyMergeHistoryLimit+1), head, "^"+cp.TargetHead)
 	if err != nil {
 		return "", err
 	}
-	parts := strings.Fields(parents)
-	if len(parts) != 3 || parts[1] != cp.TargetHead || parts[2] != cp.SourceHead {
-		return "", fmt.Errorf("target moved after ready checkpoint; no exact recorded-parent merge to recover")
+	rows := strings.Split(strings.TrimSpace(parents), "\n")
+	if len(rows) > readyMergeHistoryLimit {
+		return "", fmt.Errorf("merge recovery exceeds %d first-parent commits; Main must inspect ready target %s/source %s and target history, preserve the checkpoint and Worker, and avoid another merge", readyMergeHistoryLimit, cp.TargetHead, cp.SourceHead)
 	}
-	return head, nil
+	merge := ""
+	for _, row := range rows {
+		parts := strings.Fields(row)
+		if len(parts) != 3 || parts[1] != cp.TargetHead || parts[2] != cp.SourceHead {
+			continue
+		}
+		if merge != "" {
+			return "", fmt.Errorf("multiple exact ready-parent merges observed; Main must preserve and inspect the original checkpoint")
+		}
+		merge = parts[0]
+	}
+	if merge == "" {
+		return "", fmt.Errorf("no exact two-parent merge for ready target %s/source %s in %d first-parent commits; Main must inspect original target history and preserve the Worker without merging again", cp.TargetHead, cp.SourceHead, readyMergeHistoryLimit)
+	}
+	return merge, nil
 }

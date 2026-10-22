@@ -6,6 +6,11 @@ version: 2.2.0
 ---
 # Document Verification
 
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+
 ## Authority
 You produce an independent professional review; the original S5 consumer and gate evaluate it. Runtime authority lives in `docs/control/loop-definition.json`; the S5 stage contract lives in `docs/control/agent-protocol.md #s5`. The REV template remains a legacy/unpacketized report reference, not the packet-enabled normal answer.
 
@@ -38,9 +43,9 @@ found by Glob.
 
 ## Procedure — 3 mandatory, 1 triggered
 
-先检查 Hook 是否给出当前责任的准确 view/answer 路径。有卷时：读冻结资料 → 做第 2 步专业审查 → 只填写并保存该卷 answer → 阅读保存反馈。普通 `plan_checkpoint` 不另写 generic PLAN_REPORT、readback 或 begin，也不复制 subject/hash 或手工 issue/consume；原 Writer 从登记责任/冻结输入生成 envelope 和 receipt。`plan_approval_required` 仍走原审批。只有 Runtime 明确 unpacketized 时才用下述 legacy envelope 步骤；packet-enabled Runtime 缺路径时报告 Main/system，不改走 legacy。
+先检查 Hook 是否给出当前责任的准确 view/answer 路径。有卷时：读冻结资料 → 做第 2 步专业审查 → 只填写并保存该卷 answer → 返回准确引用，由 SubagentStop 接原消费者。普通 `plan_checkpoint` 不另写 generic PLAN_REPORT、readback 或 begin，也不复制 subject/hash 或手工 issue/consume；原 Writer 从登记责任/冻结输入生成 envelope 和 receipt。`plan_approval_required` 仍走原审批。只有 Runtime 明确 unpacketized 时才用下述 legacy envelope 步骤；packet-enabled Runtime 缺路径时报告 Main/system，不改走 legacy。
 
-独立 S5 execution 的 view 是 `.claude/inputs/work-packet.json`，`read[].path` 从该 view 的 `frozen_input_root` 下读取。普通 `plan_checkpoint` 只完成该责任的专业答卷，不另写 generic PLAN_REPORT 或执行 begin。只有当前 Runtime 明确走旧兼容入口且其原登记上下文提供相应步骤时，才遵循那些旧步骤；它们不是普通 S5 的前置项。答卷只用 view 的 `authoring_path`，保存自动消费；无宿主保存 Hook 时执行提供的 `answer_command`。不要向共享 Main 答卷、其他执行目录或 Builder commit/report/deliver 路径回退。
+独立 S5 execution 的 view 是 `.claude/inputs/work-packet.json`，`read[].path` 从该 view 的 `frozen_input_root` 下读取。普通 `plan_checkpoint` 只完成该责任的专业答卷，不另写 generic PLAN_REPORT 或执行 begin。只有当前 Runtime 明确走旧兼容入口且其原登记上下文提供相应步骤时，才遵循那些旧步骤；它们不是普通 S5 的前置项。答卷只用 view 的 `authoring_path`；新原生责任保存后返回准确引用，由 SubagentStop 调原消费者。只有冻结旧独立执行按其原保存消费者或提供的 `answer_command` 恢复。不要向共享 Main 答卷、其他执行目录或 Builder commit/report/deliver 路径回退。
 
 1. **Legacy only — envelope skeleton**: for a genuinely unpacketized compatibility instance, use `docs/reports/review/REV-template.md` §0 as the old envelope shape. Do not do this in packet-enabled normal work: the Hook's frozen view and the original S5 Writer supply the bound subjects and machine metadata.
 2. **审查（按职责）**：
@@ -57,7 +62,7 @@ found by Glob.
      4. **自包含**：任务单给的是精确锚点（路径+条款号）还是"自己去理解模块"？builder 要 grep 找活干 = 任务书写得不合格；
      5. **可测性前向**：收尾契约要求的证据在 S7 三角度（DV/QA/E2E）下真的能产出吗？验收标准本身可判定吗——"响应快""体验好"这类无指标的表述，到 S7 只能靠猜，finding；
      批次节奏（附加半问）：DAG 机器已判无环——再看一眼关键路径：有没有一串任务全是单链依赖（串行瓶颈拖死并行分派）？有没有本可并行的任务被假依赖串起来了？
-3. **Save the domain answer.** In packet-enabled normal work, choose the conclusion in the exact answer path, add findings only when needed, then save. Choose `pass` when this responsibility finds no issue and keep the prefilled `findings: []`. Choose `fix_required` when the locked REQ is clear and correcting design, contracts or TASKs can satisfy it. Choose `req_change_required` when the REQ itself is ambiguous, conflicting or missing a necessary decision; a human must clarify or change it, and this answer does not authorize that change. For each issue, fill only `path` (a supplied reviewed source, optionally with an anchor), `expected` (what should be present), and `observed` (the actual gap). Do not copy identity, fingerprints or machine-check summaries. Those structured findings are the normal finding record; do not create a second Markdown report. The original S5 Writer creates and registers the `document_review` envelope and receipt. Do not hand-create an envelope, choose/copy evidence IDs, or run `runtime evidence add`/`stage-answer issue/consume`. In an explicitly unpacketized legacy instance only, retain the old envelope registration and revision-ID rules from the REV template; do not invoke transition commands manually.
+3. **Save the domain answer.** In packet-enabled normal work, choose the conclusion in the exact answer path, add findings only when needed, then save and return that exact reference for SubagentStop reception. Choose `pass` when this responsibility finds no issue and keep the prefilled `findings: []`. Choose `fix_required` when the locked REQ is clear and correcting design, contracts or TASKs can satisfy it. Choose `req_change_required` when the REQ itself is ambiguous, conflicting or missing a necessary decision; a human must clarify or change it, and this answer does not authorize that change. For each issue, fill only `path` (a supplied reviewed source, optionally with an anchor), `expected` (what should be present), and `observed` (the actual gap). Do not copy identity, fingerprints or machine-check summaries. Those structured findings are the normal finding record; do not create a second Markdown report. The original S5 Writer creates and registers the `document_review` envelope and receipt. Do not hand-create an envelope, choose/copy evidence IDs, or run `runtime evidence add`/`stage-answer issue/consume`. In an explicitly unpacketized legacy instance only, retain the old envelope registration and revision-ID rules from the REV template; do not invoke transition commands manually.
 4. **Legacy only — separate REV report:** packet-enabled answers already carry their findings; do not duplicate them in Markdown. Only if an explicitly unpacketized legacy Runtime's original contract requires it, use `REV-template.md` §1-§5 and retain its finding, priority, evidence, and N/A rules.
 
 ## Triggered Deep-Dives（按冻结输入的适用条件审查）
@@ -74,9 +79,9 @@ found by Glob.
 
 ## Outputs
 
-有已发行的 S5 packet 时，只在该 owner 的确切答卷路径填写 `answer.conclusion`/`answer.findings`，保留机器题干；普通 `plan_checkpoint` 不另交 generic PLAN_REPORT、readback 或 activation。显式 `plan_approval_required` 仍等待原审批。保存由原领域 Writer 派生和登记信封；现有回执 `work_complete=true` 是兼容投影，只有原答卷接收有效且当前，才把本人审查责任投影为全局 `done`。合法 finding 不会撤销本人的已接收交付；同事未交、系统 pending 或需求人闸归回执指定 owner，不重新打开本人的责任。此模式不另抄 subjects、选择 evidence ID、写重复 Markdown 或手工登记第二份信封；已接收判断不能就地覆盖，修订或规格变化由 Main 走相应原路由。仅当 Runtime 明确 unpacketized 时采用旧信封流程；packet-enabled 缺卷应交 Main/system，不得手改 Runtime 启用。
+有已发行的 S5 packet 时，只在该 owner 的确切答卷路径填写 `answer.conclusion`/`answer.findings`，保留机器题干；普通 `plan_checkpoint` 不另交 generic PLAN_REPORT、readback 或 activation。显式 `plan_approval_required` 仍等待原审批。新原生责任在 Stop 由原领域 Writer 派生和登记信封；现有回执 `work_complete=true` 是兼容投影，只有原答卷接收有效且当前，才把本人审查责任投影为全局 `done`。合法 finding 不会撤销本人的已接收交付；同事未交、系统 pending 或需求人闸归回执指定 owner，不重新打开本人的责任。此模式不另抄 subjects、选择 evidence ID、写重复 Markdown 或手工登记第二份信封；已接收判断不能就地覆盖，修订或规格变化由 Main 走相应原路由。仅当 Runtime 明确 unpacketized 时采用旧信封流程；packet-enabled 缺卷应交 Main/system，不得手改 Runtime 启用。
 
-具名修订必须读取当前 packet 的 `binding.revision_reason`，重新审查具体观察及完整冻结资料；旧回执 `replaced` 不完成新 attempt。新答案只保存到当前派发的确切路径。独立修订由 Main 退役旧 execution、prepare 新目录，旧答案/view 保留；未 ready 时不得借 Main 路径或手工 evidence add 提交。
+具名修订必须读取当前 packet 的 `binding.revision_reason`，重新审查具体观察及完整冻结资料；旧回执 `replaced` 不完成新 attempt。新答案只保存到当前派发的确切路径。新原生修订由 Main 将新的原问卷引用交原生上下文，旧答案/view 保留；只有已登记旧独立 execution 按原退役/prepare 恢复，缺失旧来源不能借 Main 路径或手工 evidence add 提交。
 
 - packet-enabled 必产物：Hook 答卷路径中的专业答案；原 Writer 派生/登记证据信封和 receipt。
 - legacy/unpacketized 必产物：旧 `REV-{runid}-{resp}.json` 证据信封及原 Runtime 登记（只走兼容路径）。

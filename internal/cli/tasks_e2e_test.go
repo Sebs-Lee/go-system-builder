@@ -355,6 +355,7 @@ func TestTasksCheckAcceptsNumericSubSuffix(t *testing.T) {
 		t.Fatalf("canonical batch must report ready, got: %s", stdout.String())
 	}
 }
+
 // TestContractsCheckFlagsClauseNumberDrift verifies that an index cell
 // citing a §n the target contract never declares must be flagged.
 func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
@@ -368,11 +369,23 @@ func TestContractsCheckFlagsClauseNumberDrift(t *testing.T) {
 		}
 	}
 	write("docs/dev/contracts/BE-810.md", "# BE-810\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §1 | — |\n")
-	write("docs/dev/contracts/CONTRACTS-810.md", "# CONTRACTS-810\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-810/FR-811 | — | BE-810 §2 | — |\n")
+	write("docs/dev/contracts/CONTRACTS-810.md", cliContractBatchFixture("REQ-810", "BE-810", "v1.0.0")+"| REQ-810/FR-811 | — | BE-810 §2 | — |\n")
+	if err := os.MkdirAll(filepath.Join(root, "docs/requirements"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	write("docs/requirements/REQ-810.md", "# REQ-810\n> 状态：locked\n> 版本：v1.0.0\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:---|:---|:---|:---|:---|\n| FR-811 | fixture | Original behavior | A1 | Must |\n")
+
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
-	if code == 0 || !strings.Contains(stderr.String(), "never declares that clause number") {
+	if code == 0 || (!strings.Contains(stderr.String(), "BE-810 §2") || !strings.Contains(stderr.String(), "本合同条款") || !strings.Contains(stderr.String(), "does not declare that clause")) {
 		t.Fatalf("clause number drift must be flagged, got: %s", stderr.String())
+	}
+	index := "docs/dev/contracts/CONTRACTS-810.md"
+	write(index, strings.Replace(readFile(t, root, index), "BE-810 §2", "BE-810 §1", 1))
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("the actual declared clause must pass after correcting only its citation: %d %s", code, &stderr)
 	}
 }
 
@@ -391,11 +404,23 @@ func TestContractsCheckClauseNumberPrecision(t *testing.T) {
 	// Target declares only §10; the index cites §1 — substring matching
 	// used to let this pass.
 	write("docs/dev/contracts/BE-820.md", "# BE-820\n\n> 状态：locked\n> 版本：v1.0.0\n\n### 需求条款映射\n\n| REQ source_ref | Rule / CASE | 本合同条款 | 验收标准 |\n|---|---|---|---|\n| — | — | §10 | — |\n")
-	write("docs/dev/contracts/CONTRACTS-820.md", "# CONTRACTS-820\n\n> 状态：locked\n> 版本：v1.0.0\n\n## 需求覆盖矩阵\n\n| REQ source_ref | FE 合同条款 | BE 合同条款 | SYNC 条款 |\n|:--|:--|:--|:--|\n| REQ-820/FR-821 | — | BE-820 §1 | — |\n")
+	write("docs/dev/contracts/CONTRACTS-820.md", cliContractBatchFixture("REQ-820", "BE-820", "v1.0.0")+"| REQ-820/FR-821 | — | BE-820 §1 | — |\n")
+	if err := os.MkdirAll(filepath.Join(root, "docs/requirements"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	write("docs/requirements/REQ-820.md", "# REQ-820\n> 状态：locked\n> 版本：v1.0.0\n\n| 编号 | 模块 | 需求 | 服务于 | 优先级 |\n|:---|:---|:---|:---|:---|\n| FR-821 | fixture | Original behavior | A1 | Must |\n")
+
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr)
-	if code == 0 || !strings.Contains(stderr.String(), "never declares that clause number") {
+	if code == 0 || (!strings.Contains(stderr.String(), "BE-820 §1") || !strings.Contains(stderr.String(), "本合同条款") || !strings.Contains(stderr.String(), "does not declare that clause")) {
 		t.Fatalf("§1-vs-§10 precision must flag the drift, got: %s", stderr.String())
+	}
+	index := "docs/dev/contracts/CONTRACTS-820.md"
+	write(index, strings.Replace(readFile(t, root, index), "BE-820 §1", "BE-820 §10", 1))
+	stdout.Reset()
+	stderr.Reset()
+	if code := cli.Run([]string{"contracts", "check", "--root", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("the actual declared clause must pass after correcting only its citation: %d %s", code, &stderr)
 	}
 }
 

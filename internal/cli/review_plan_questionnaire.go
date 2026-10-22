@@ -55,7 +55,7 @@ func stageReviewPlanQuestionnaireContext(root string, request policy.Input, snap
 		}
 		return "S7 Main ReviewPlan questionnaire is unavailable at " + path + ": " + err.Error()
 	}
-	return "S7 Main ReviewPlan questionnaire: " + path + ". Complete the original Claim assertions/oracles/methods, assignments and required coverage; resolve every TODO(planner), then save this exact file. The original ReviewPlan consumer validates and registers it. Reviewer answers remain independent responsibilities."
+	return "S7 Main ReviewPlan questionnaire: " + path + ". For each Claim, name the actual target, a falsifiable assertion, observable pass/fail oracle and concrete review or execution method using its source refs. Complete assignments and applicable coverage; resolve TODO(planner)/PLANNER-REFINE with real professional facts, then save this exact file for the original ReviewPlan consumer. Keep the supplied baseline; missing source or environment belongs to Main preparation, not invented evidence. Reviewer answers remain independent responsibilities."
 }
 
 func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
@@ -72,7 +72,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		return false, 0
 	}
 	var output, commandErr bytes.Buffer
-	next := "Main dispatches the registered review assignments; each Reviewer fills and saves its own exact questionnaire."
+	next := "Main dispatches native Agents with the registered exact view/answer paths; each Reviewer saves and returns its own answer for SubagentStop reception."
 	code := 0
 	roundFacts, _ := snapshot.State["review"].(map[string]any)
 	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) {

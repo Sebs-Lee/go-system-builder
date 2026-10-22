@@ -2,6 +2,7 @@ package req039_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"github.com/entroforge/go-system-builder/internal/cli"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entroforge/go-system-builder/internal/dispatch"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
@@ -37,8 +39,20 @@ func TestNativeWorkerAdapterChain(t *testing.T) {
 				if runtime.GOOS != "linux" {
 					t.Skip("Worker isolation requires native Linux acceptance")
 				}
-				if _, err := exec.LookPath("bwrap"); err != nil {
+				bwrap, err := exec.LookPath("bwrap")
+				if err != nil {
 					t.Skip("Bubblewrap not installed")
+				}
+				// This namespace probe only checks host availability; it does
+				// not certify the Worker execution or isolation assertions.
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				probe := exec.CommandContext(ctx, bwrap, "--unshare-all", "--share-net", "--die-with-parent", "--new-session", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--", "/bin/true")
+				if output, err := probe.CombinedOutput(); err != nil {
+					if ctx.Err() == nil && strings.Contains(string(output), "bwrap: setting up uid map: Permission denied") {
+						t.Skipf("host denies Bubblewrap UID mapping; Worker adapter chain not executed: %s", output)
+					}
+					t.Fatalf("Bubblewrap namespace preflight: %v; output=%s", err, output)
 				}
 			}
 			nativeWorkerAdapterChain(t, binary, location)

@@ -112,6 +112,32 @@ func findRepairResultCandidateReceipt(root string, state map[string]any, p workp
 	return receipt, true, nil
 }
 
+// ValidateRepairResultProvenanceBinding checks the original automatic source
+// tuple only. It grants no approval, reception or completion. The original
+// consumer still validates the schema, professional answer, checks and receipt.
+func ValidateRepairResultProvenanceBinding(p workpacket.RepairResultPacket, r RepairResultCandidateProvenance) error {
+	b := p.Binding.Sources
+	digest, err := workpacket.RepairResultPacketContentDigest(p)
+	if err != nil {
+		return err
+	}
+	var execution map[string]any
+	if json.Unmarshal(p.Inputs.Execution, &execution) != nil {
+		return fmt.Errorf("S9 frozen execution invalid")
+	}
+	if r.Contract != "s9-repair-result-candidate-v1" || r.PacketID != p.ID || r.PacketSHA256 != digest || r.IssuanceEventID != p.IssuanceEventID || r.OwnerAgentID != b.OwnerAgentID || r.RuntimeID != b.RuntimeID || r.BaselineGeneration != b.BaselineGeneration || r.ReviewRound != b.ReviewRound || r.ExecutionSHA256 != p.Binding.ExecutionSHA256 || r.ExecutionAssignmentID != execution["assignment_id"] || !hypothesisJSONEqual(execution["execution_generation"], r.ExecutionGeneration) || r.ExecutionRoot != execution["worktree_path"] || r.BaseCommit != execution["base_commit"] || r.PlanReportRef != p.Binding.PlanReportRef || r.PlanReportSHA256 != p.Binding.PlanReportSHA256 || r.ReworkRef != p.Binding.ReworkRef || r.ReworkSHA256 != p.Binding.ReworkSHA256 || r.SourceHead == "" {
+		return fmt.Errorf("S9 candidate provenance identity differs")
+	}
+	resumeSHA, err := workpacket.RepairResultResumeSHA256(p.Binding.Resume)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(r.Resume, p.Binding.Resume) || r.ResumeSHA256 != resumeSHA {
+		return fmt.Errorf("S9 candidate provenance Resume tuple/digest differs from its issued packet")
+	}
+	return nil
+}
+
 func verifyRepairResultProvenance(root string, p workpacket.RepairResultPacket, r RepairResultCandidateProvenance) (map[string]any, error) {
 	encoded, err := json.Marshal(r)
 	if err != nil {
@@ -120,24 +146,8 @@ func verifyRepairResultProvenance(root string, p workpacket.RepairResultPacket, 
 	if err := schema.NewEmbeddedValidator().ValidateBytes("repair-result-candidate-provenance.schema.json", encoded); err != nil {
 		return nil, err
 	}
-	b := p.Binding.Sources
-	digest, err := workpacket.RepairResultPacketContentDigest(p)
-	if err != nil {
+	if err := ValidateRepairResultProvenanceBinding(p, r); err != nil {
 		return nil, err
-	}
-	var execution map[string]any
-	if json.Unmarshal(p.Inputs.Execution, &execution) != nil {
-		return nil, fmt.Errorf("S9 frozen execution invalid")
-	}
-	if r.Contract != "s9-repair-result-candidate-v1" || r.PacketID != p.ID || r.PacketSHA256 != digest || r.IssuanceEventID != p.IssuanceEventID || r.OwnerAgentID != b.OwnerAgentID || r.RuntimeID != b.RuntimeID || r.BaselineGeneration != b.BaselineGeneration || r.ReviewRound != b.ReviewRound || r.ExecutionSHA256 != p.Binding.ExecutionSHA256 || r.ExecutionAssignmentID != execution["assignment_id"] || !hypothesisJSONEqual(execution["execution_generation"], r.ExecutionGeneration) || r.ExecutionRoot != execution["worktree_path"] || r.BaseCommit != execution["base_commit"] || r.PlanReportRef != p.Binding.PlanReportRef || r.PlanReportSHA256 != p.Binding.PlanReportSHA256 || r.ReworkRef != p.Binding.ReworkRef || r.ReworkSHA256 != p.Binding.ReworkSHA256 || r.SourceHead == "" {
-		return nil, fmt.Errorf("S9 candidate provenance identity differs")
-	}
-	resumeSHA, err := workpacket.RepairResultResumeSHA256(p.Binding.Resume)
-	if err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(r.Resume, p.Binding.Resume) || r.ResumeSHA256 != resumeSHA {
-		return nil, fmt.Errorf("S9 candidate provenance Resume tuple/digest differs from its issued packet")
 	}
 	draft := p.Draft
 	draft.Answer = r.SubmittedAnswer

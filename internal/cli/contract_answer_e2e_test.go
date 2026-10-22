@@ -23,6 +23,11 @@ import (
 func newContractAnswerFixture(t *testing.T, configure ...func(string)) (string, workpacket.ContractPacket) {
 	t.Helper()
 	root, design := newDesignFixture(t, "none")
+	return contractAnswerFromDesignFixture(t, root, design, configure...)
+}
+
+func contractAnswerFromDesignFixture(t *testing.T, root string, design workpacket.DesignPacket, configure ...func(string)) (string, workpacket.ContractPacket) {
+	t.Helper()
 	stageJSON(t, root, design.AnswerPath, designDraft(design))
 	stageCLI(t, "runtime", "stage-answer", "consume", "--root", root, "--agent", "Main", "--path", design.AnswerPath)
 	settleMainPlanningFollowups(t, root)

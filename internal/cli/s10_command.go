@@ -86,14 +86,14 @@ func runS10Manifest(args []string, stdout, stderr io.Writer) int {
 			ManifestType string `json:"manifest_type"`
 		}
 		if err := json.Unmarshal(data, &header); err != nil {
-			fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
+			fmt.Fprintf(stderr, "s10 manifest validate %s: %v; next: correct the reported fields in this file; normal submission uses the exact current Hook Manifest and its save receiver\n", *file, err)
 			return 1
 		}
 		manifestType = header.ManifestType
 	}
 	summary, err := validateS10ManifestForRepository(*root, data, manifestType, strings.TrimSpace(*outcome))
 	if err != nil {
-		fmt.Fprintf(stderr, "s10 manifest validate: %v\n", err)
+		fmt.Fprintf(stderr, "s10 manifest validate %s: %v; next: correct the reported fields in this file; normal submission uses the exact current Hook Manifest and its save receiver\n", *file, err)
 		return 1
 	}
 	next := "This diagnostic did not submit a report or choose its conclusion. Fill the existing fields at the exact Manifest path supplied by the current Hook and save it; the system records the professional report and handles this step. Do not create or manually register an envelope."

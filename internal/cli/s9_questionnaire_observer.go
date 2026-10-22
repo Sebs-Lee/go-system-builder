@@ -14,7 +14,9 @@ import (
 // second acceptance ledger. Only actual saves run the original consumers.
 func s9ObservableQuestionnaires(root string, state map[string]any, request policy.Input) []observedQuestionnaire {
 	var out []observedQuestionnaire
-	add := func(path, kind string) { out = append(out, observedQuestionnaire{path: path, s9Kind: kind}) }
+	add := func(path, kind string) {
+		out = append(out, observedQuestionnaire{path: path, s9Kind: kind, professionalWorker: kind == "targeted"})
+	}
 	owner := request.EffectiveAgentID()
 	main := mainQuestionnaireViewer(request) && (owner != "" || request.AgentType == "" && request.AgentTranscriptPath == "")
 	// A registered Worker checkout locates question paths, not the caller's
@@ -94,7 +96,7 @@ func s9ObservableQuestionnaires(root string, state map[string]any, request polic
 						draft = row["draft"]
 					}
 				}
-				out = append(out, observedQuestionnaire{path: resolveRootPath(source, packet.answer), draft: draft, s9Kind: "packet", s9Packet: &p})
+				out = append(out, observedQuestionnaire{path: resolveRootPath(source, packet.answer), draft: draft, s9Kind: "packet", s9Packet: &p, professionalWorker: true})
 			}
 			if main && packet.result != nil && s9ObservedBlockerCurrent(state, packet) {
 				p := workpacket.RepairResultPacket{AnswerPath: packet.answer, Binding: *packet.result}

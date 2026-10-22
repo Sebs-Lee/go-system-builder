@@ -153,7 +153,7 @@ func bindResultSubmissionAlias(root string, store *loopruntime.Store, snapshot l
 		OccurredAt: when, Message: "Bind a deduplicated Result submission key to its original receipt without changing the Result or current pointer.",
 		Apply: func(state map[string]any) error {
 			currentSnapshot := loopruntime.Snapshot{Revision: snapshot.Revision, State: state}
-			current, err := resolveCanonicalResultBinding(root, currentSnapshot, request.AgentID, message)
+			current, err := resolveCanonicalResultBinding(root, currentSnapshot, request.AgentID, message, request.NativePlanPath)
 			if err != nil {
 				return err
 			}

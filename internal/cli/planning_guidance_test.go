@@ -70,8 +70,13 @@ func TestS5PreparationGuidanceNamesCurrentEntryManifestAndOriginalSkill(t *testi
 			t.Fatalf("S5 preparation omitted exact path %s: %s", path, guidance)
 		}
 	}
-	if !strings.Contains(guidance, "new entry-specific") || !strings.Contains(guidance, "DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY") || strings.Contains(guidance, "review-e4/") {
-		t.Fatal("S5 preparation lost the current independent batch boundary", guidance)
+	for _, want := range []string{"S5 entry 8", "entry-specific", "DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY", "distinct reviewers", "current accepted S4 sources"} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("S5 preparation lost %q: %s", want, guidance)
+		}
+	}
+	if strings.Contains(guidance, "review-e4/") {
+		t.Fatal("S5 preparation borrowed an earlier entry", guidance)
 	}
 }
 

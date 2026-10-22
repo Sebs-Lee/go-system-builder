@@ -837,6 +837,13 @@ func TestTypedResultReceiptUntouchedAssignmentReplaysAcrossPlanRevision(t *testi
 }
 
 func TestTypedResultReceiptMovedClaimToNewAssignmentRequiresFreshAnswer(t *testing.T) {
+	MovedClaimRevisionFixtureForTest(t)
+}
+
+// Test-only original Writer chain for the external CleanRound consumer test.
+// Reuse its source/receipt/ownership assertions without a production fixture API.
+func MovedClaimRevisionFixtureForTest(t *testing.T) (string, string, string, loopruntime.Snapshot) {
+	t.Helper()
 	root, statePath, journalPath, snapshot, initialPlan := packetModeFixture(t)
 	oldPath := writeResultFile(t, root, initialPlan, "assignment-dv-1", "review-result-moved-old", "agent-dv-1", "pass",
 		map[string]string{"claim-dv-1": "pass"}, nil)
@@ -921,6 +928,7 @@ func TestTypedResultReceiptMovedClaimToNewAssignmentRequiresFreshAnswer(t *testi
 	if PlanPointerFromState(final.State).Status != "clean" {
 		t.Fatalf("round did not close after the fresh moved-Claim result: %+v", PlanPointerFromState(final.State))
 	}
+	return root, statePath, journalPath, final
 }
 
 func TestReviewResultInputRejectsOversizeWithoutWrites(t *testing.T) {

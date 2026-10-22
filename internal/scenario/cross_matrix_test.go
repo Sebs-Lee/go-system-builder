@@ -168,7 +168,7 @@ func TestCrossMatrixJoinsBoundREQ(t *testing.T) {
 		wantErr string
 	}{
 		{"undeclared FR", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-INV-001/FR-999"}), "does not declare"},
-		{"foreign REQ", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-OTHER/FR-001"}), "bound REQ"},
+		{"foreign REQ not cited by this branch", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-OTHER/FR-001"}), "never cites"},
 		{"branch rule never cites the cell", cell(map[string]any{"branch": "branch-allow", "req_ref": "REQ-INV-001/FR-001"}), "never cites"},
 		{"trivial no-branch reason", cell(map[string]any{"no_branch_reason": "."}), "not a rationale"},
 	}

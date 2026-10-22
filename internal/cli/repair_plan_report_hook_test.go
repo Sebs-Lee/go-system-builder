@@ -3,6 +3,7 @@ package cli_test
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/cli"
 )
 
-func TestSavedRepairPlanReportHookRejectsUnissuedPathWithoutRuntimeWrite(t *testing.T) {
+func TestUnissuedNativeWorkerSaveIsQuietAndCreatesNoS9Reception(t *testing.T) {
 	f := newStageAnswerFixture(t)
 	before := stageSnapshot(t, f.root)
 	path := filepath.Join(f.root, ".claude", "submissions", "runtime-test", "g0", "S9-plan", "r1", "repair-assignment-demo", "packet-forged", "builder-demo", "answer.json")
@@ -28,16 +29,30 @@ func TestSavedRepairPlanReportHookRejectsUnissuedPathWithoutRuntimeWrite(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	originalAnswer, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalState, originalJournal := s6CanonicalRuntimePair(t, f.root)
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", f.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
 		t.Fatalf("PostToolUse exit=%d stderr=%s stdout=%s", code, errout.String(), out.String())
 	}
-	if !strings.Contains(out.String(), "S9 SUBMISSION RECEIPT") || !strings.Contains(out.String(), "no current registered issuance") {
-		t.Fatalf("unissued S9 path did not receive a fail-closed S9 receipt: %s", out.String())
+
+	if strings.TrimSpace(out.String()) != "" {
+		t.Fatalf("ordinary native save created a receipt/protocol: %s", &out)
 	}
+
 	if after := stageSnapshot(t, f.root); after.Revision != before.Revision {
 		t.Fatalf("unissued path changed Runtime revision %d -> %d", before.Revision, after.Revision)
 	}
+	s6AssertCanonicalRuntimePair(t, f.root, originalState, originalJournal)
+	afterAnswer, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(originalAnswer, afterAnswer) {
+		t.Fatal("ordinary save rewrote private answer", err)
+	}
+
 }
 
 func TestStageAnswerTerminalConsumeRejectsUnissuedS9Path(t *testing.T) {

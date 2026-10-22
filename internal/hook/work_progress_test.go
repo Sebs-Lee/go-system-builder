@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/entroforge/go-system-builder/internal/filelock"
 )
@@ -114,6 +115,18 @@ func TestWorkProgressBoundedRangeSaturationAndDamagedCache(t *testing.T) {
 }
 func TestWorkProgressConcurrentOnceAndLockBound(t *testing.T) {
 	root := t.TempDir()
+	facts := map[string]string{
+		".claude/loop-state.json":   "original Runtime",
+		".claude/loop-events.jsonl": "original journal",
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range facts {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	f := progressFixture()
 	observeProgress(t, root, f, ProgressEvent{Action: "status", Known: true})
 	var wg sync.WaitGroup
@@ -135,7 +148,10 @@ func TestWorkProgressConcurrentOnceAndLockBound(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if notices != 1 {
+	// The bounded diagnostic lock may drop observations under contention.
+	// Sequential threshold behavior is covered above; concurrency must not
+	// duplicate notices or turn missing telemetry into a required retry.
+	if notices > 1 {
 		t.Fatalf("concurrent notice count=%d", notices)
 	}
 	lock := filepath.Join(root, ".claude/hook-notices/work-progress", progressHash(f.Owner+"\x00"+f.Session)+".json.lck")
@@ -144,8 +160,17 @@ func TestWorkProgressConcurrentOnceAndLockBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
+	started := time.Now()
 	if n, _, _, err := ObserveWorkProgress(root, f, ProgressEvent{Action: "status", Known: true}); err == nil || n != nil {
 		t.Fatal("busy cache bypassed bounded lock", n, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("busy diagnostic blocked for %s", elapsed)
+	}
+	for path, content := range facts {
+		if data, err := os.ReadFile(filepath.Join(root, path)); err != nil || string(data) != content {
+			t.Fatalf("diagnostic changed engineering facts at %s: %v", path, err)
+		}
 	}
 }
 

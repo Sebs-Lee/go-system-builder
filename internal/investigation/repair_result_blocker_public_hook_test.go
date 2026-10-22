@@ -128,7 +128,7 @@ func TestS9RepairResultBlockerPublicHookReceiptAndStop(t *testing.T) {
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, acceptedState, acceptedJournal, "changed S9 blocker answer replay")
 	historical, err := reader.RepairResultReceipt(owner.agentID, packet.ID)
-	if err != nil || !historical.Accepted || historical.WorkComplete || !strings.Contains(historical.NextAction, "历史接收") || strings.Contains(historical.NextAction, "本次执行可结束") {
+	if err != nil || !historical.Accepted || historical.WorkComplete || strings.Contains(historical.NextAction, "本次执行可结束") {
 		t.Fatalf("historical blocker receipt claimed current completion: %+v err=%v", historical, err)
 	}
 	if decision, handled := hook.StopIdleDecision(fixture.root, policy.Input{

@@ -17,6 +17,13 @@ import (
 )
 
 func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(t *testing.T) {
+	for _, rotated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rotated=%t", rotated), func(t *testing.T) { testREQBindArchivesInactiveRuntime(t, rotated) })
+	}
+}
+
+func testREQBindArchivesInactiveRuntime(t *testing.T, rotated bool) {
+	t.Helper()
 	root := newBindTestRoot(t)
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
@@ -28,8 +35,21 @@ func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(
 		"last_event_id": "evt-milestone-r8",
 	}
 	writeJSONMap(t, statePath, state)
-	if err := os.WriteFile(journalPath, validArchiveJournalForCLI("loop-inactive", 8, "evt-milestone-r8"), 0o644); err != nil {
+	completeJournal := validArchiveJournalForCLI("loop-inactive", 8, "evt-milestone-r8")
+	if err := os.WriteFile(journalPath, completeJournal, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if rotated {
+		lines := bytes.SplitAfter(completeJournal, []byte("\n"))
+		for path, data := range map[string][]byte{
+			journalPath + ".archive.3.jsonl": bytes.Join(lines[:3], nil),
+			journalPath + ".archive.6.jsonl": bytes.Join(lines[3:6], nil),
+			journalPath:                      bytes.Join(lines[6:], nil),
+		} {
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -89,8 +109,12 @@ func TestREQBindArchivesControllerTouchedInactiveRuntimeAndStartsAtRevisionZero(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(archivedJournal), "evt-milestone-r8") {
-		t.Fatalf("bind archive did not preserve pre-bind journal: %s", archivedJournal)
+	if !bytes.Equal(archivedJournal, completeJournal) || receipt["source_journal_sha256"] != sha256Hex(completeJournal) {
+		t.Fatalf("bind archive/receipt did not preserve the complete pre-bind journal: receipt=%v journal=%s", receipt, archivedJournal)
+	}
+	segments, err := runtime.JournalSegmentPaths(journalPath)
+	if err != nil || len(segments) != 0 {
+		t.Fatalf("bound Runtime inherited bootstrap segments: %v err=%v", segments, err)
 	}
 }
 

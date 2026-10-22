@@ -14,6 +14,9 @@ import (
 	"github.com/entroforge/go-system-builder/internal/processtree"
 )
 
+const hookProcessBudget = 8 * time.Second
+const hookWorkBudget = hookProcessBudget - 2*time.Second
+
 // RunWithHookBudget is the native entrypoint. The outer process owns a deadline
 // independent of nested Runtime, Git and metric waits. Buffer decisions until
 // the worker exits; a timed-out partial allow can never reach Claude.
@@ -29,7 +32,7 @@ func RunWithHookBudget(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), hookProcessBudget)
 	defer cancel()
 	return runBudgetedHook(ctx, executable, args[1:], stdin, stdout, stderr)
 }
@@ -59,7 +62,11 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	var input policy.Input
 	decodeErr := json.Unmarshal(data, &input)
 	fail := func(err error) int {
-		fmt.Fprintf(stderr, "Harness Hook did not complete within its internal budget: %v; preserve Runtime and retry after checking the external terminal.\n", err)
+		reason := "Harness Hook did not complete"
+		if ctx.Err() != nil {
+			reason += " within its internal budget"
+		}
+		fmt.Fprintf(stderr, "%s: %v. Main must inspect the original receipt, current responsibility and remaining handoff before retrying. A missing response does not prove no commit; preserve professional answers and do not repeat accepted work.\n", reason, err)
 		if input.Event == "PreToolUse" {
 			return 0
 		}
@@ -85,6 +92,7 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 			// Exit 1 is a non-blocking platform error. Convert incomplete mutable
 			// evaluations to feedback, while retaining Stop/Idle continuation.
 			if exit.ExitCode() != 2 {
+				_, _ = stderr.Write(errout.Bytes())
 				return fail(err)
 			}
 			if _, writeErr := stdout.Write(out.Bytes()); writeErr != nil {

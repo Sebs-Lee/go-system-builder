@@ -37,8 +37,8 @@ func ValidateApprovedContractRef(root string, ref ContractRef) (ApprovedContract
 	if strings.TrimSpace(document.ApprovedBy) == "" || strings.TrimSpace(document.ApprovedAt) == "" || strings.TrimSpace(document.ApprovalHash) == "" {
 		return ApprovedContract{}, fmt.Errorf("approved RepairContract %q lacks approval provenance; require approved_by, approved_at, and approval_hash", ref.Path)
 	}
-	if len(document.Units) == 0 || len(document.SourceFindingIDs) == 0 {
-		return ApprovedContract{}, fmt.Errorf("approved RepairContract %q has no repair units or source Findings", ref.Path)
+	if len(document.Units) == 0 {
+		return ApprovedContract{}, fmt.Errorf("approved RepairContract %q has no repair units", ref.Path)
 	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes("repair-contract.schema.json", data); err != nil {
 		return ApprovedContract{}, err

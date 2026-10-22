@@ -98,6 +98,39 @@
                     }
                   }
                 }
+              },
+              {
+                "if": {
+                  "required": [
+                    "purpose"
+                  ],
+                  "properties": {
+                    "purpose": {
+                      "const": "native_delivery"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "check_location": {
+                      "const": "main"
+                    }
+                  },
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "bootstrap_sha256"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "platform_session_id"
+                        ]
+                      }
+                    ]
+                  }
+                }
               }
             ],
             "required": [
@@ -117,7 +150,10 @@
             ],
             "properties": {
               "purpose": {
-                "const": "document_review"
+                "enum": [
+                  "document_review",
+                  "native_delivery"
+                ]
               },
               "work_packet_id": {
                 "type": "string",
@@ -6190,7 +6226,10 @@
           "const": "1.0.0"
         },
         "contract": {
-          "const": "s6-v1.2"
+          "enum": [
+            "s6-v1.2",
+            "s6-native-v1"
+          ]
         },
         "runtime_id": {
           "type": "string",

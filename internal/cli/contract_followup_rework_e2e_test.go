@@ -33,7 +33,7 @@ func TestS3DirectTransitionCannotSkipCurrentQuestionnaire(t *testing.T) {
 	_, err = transition.Apply(root, s.StatePath, s.JournalPath, transition.Request{
 		TransitionID: "PTR-PLAN-02", Actor: "orchestrator", ExpectedRevision: before.Revision, Files: s.Files,
 	})
-	if err == nil || !strings.Contains(err.Error(), "current S3 questionnaire") {
+	if err == nil || (!strings.Contains(err.Error(), "received current contract questionnaire") || !strings.Contains(err.Error(), "save its existing answer")) {
 		t.Fatalf("direct transition bypassed original S3 reception, or failed for the wrong reason: %v", err)
 	}
 	if data, _ := os.ReadFile(s.StatePath); string(data) != string(stateBytes) {

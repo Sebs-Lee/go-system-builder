@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 func prepareNativeBinding(t *testing.T, f stageAnswerFixture, owner string, extra ...string) map[string]any {
@@ -43,34 +44,45 @@ func TestNativeContextBindingFreezesAcrossWorkingStateAndRejectsSourceDrift(t *t
 	if !bytes.Equal(data, retried) || stageSnapshot(t, f.root).Revision != revision {
 		t.Fatal("binding retry consumed another generation/commit")
 	}
-	actual, _ := nativeContextRead(t, f, p.Binding.Owner)
+	actual, initialCapture := explicitContextRead(t, f, p.Binding.Owner)
 	if actual.Path != ref["path"] || actual.SHA256 != ref["sha256"] {
 		t.Fatal("lifecycle did not consume frozen binding")
 	}
 	f.begin(t, p, nil)
-	actual, _ = nativeContextRead(t, f, p.Binding.Owner)
+	actual, _ = explicitContextRead(t, f, p.Binding.Owner)
 	if actual.Path != ref["path"] || actual.SHA256 != ref["sha256"] {
 		t.Fatal("working state silently rebuilt captured profile")
 	}
-	context, _, _ := nativeContextHook(t, f, p.Binding.Owner)
-	if !strings.Contains(context, "Live Agent status=active") {
-		t.Fatalf("frozen capture was mistaken for live authority: %s", context)
+
+	_, capture := explicitContextRead(t, f, p.Binding.Owner)
+	snap := stageSnapshot(t, f.root)
+	var live workstate.EntityProjection
+	for _, raw := range snap.State["entities"].(map[string]any)["agents"].([]any) {
+		row := raw.(map[string]any)
+		if row["id"] == p.Binding.Owner {
+			var err error
+			live, err = workstate.AgentProjection(row, snap.State["schema_version"].(string))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
+	if live.Status != workstate.Active || live.Activity != "working" || capture["agent_state"] != initialCapture["agent_state"] {
+		t.Fatalf("historical capture was mistaken for live authority: live=%+v capture=%v", live, capture["agent_state"])
+	}
+
 	source := filepath.Join(f.root, ".claude/skills/document-verification/SKILL.md")
 	original, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(source, append(original, []byte("\nchanged installed source\n")...), 0600)
-	context, _, _ = nativeContextHook(t, f, p.Binding.Owner)
-	if strings.Contains(context, "first Read ") || !strings.Contains(context, "unavailable") {
-		t.Fatalf("bound source drift fell back to today's projection: %s", context)
-	}
+
 	var out, errout bytes.Buffer
 	before := stageSnapshot(t, f.root).Revision
 	code := cli.Run([]string{"runtime", "assignment-context", "prepare", "--root", f.root, "--agent-id", p.Binding.Owner}, nil, &out, &errout)
-	if code == 0 || stageSnapshot(t, f.root).Revision != before {
-		t.Fatal("source drift overwrote original binding")
+	if code == 0 || stageSnapshot(t, f.root).Revision != before || !strings.Contains(errout.String(), "document-verification") {
+		t.Fatalf("source drift did not preserve binding with accurate source feedback: %d %s", code, &errout)
 	}
 	os.WriteFile(source, original, 0600)
 	restored := prepareNativeBinding(t, f, p.Binding.Owner)
@@ -95,10 +107,14 @@ func TestNativeContextBindingNamedRevisionUsesExactReceivedPredecessor(t *testin
 	var next workpacket.Packet
 	issued := stageCLI(t, "runtime", "stage-answer", "revise", "--root", f.root, "--previous", receipt.SubmissionKey, "--reason", "Re-evaluate the original frozen dependency finding")
 	json.Unmarshal([]byte(issued), &next)
-	context, _, _ := nativeContextHook(t, f, p.Binding.Owner)
-	if strings.Contains(context, "first Read ") || !strings.Contains(context, "replace-generation") {
-		t.Fatalf("revision silently replaced fixed context: %s", context)
+
+	out.Reset()
+	errout.Reset()
+	staleRevision := stageSnapshot(t, f.root).Revision
+	if code := cli.Run([]string{"runtime", "assignment-context", "prepare", "--root", f.root, "--agent-id", p.Binding.Owner}, nil, &out, &errout); code == 0 || !strings.Contains(errout.String(), "replace-generation") || stageSnapshot(t, f.root).Revision != staleRevision {
+		t.Fatalf("explicit preparation silently replaced fixed context: %d %s %s", code, &out, &errout)
 	}
+
 	replacement := prepareNativeBinding(t, f, p.Binding.Owner, "--replace-generation", "1")
 	if replacement["generation"] != float64(2) || replacement["profile_sha256"] != b["profile_sha256"] || replacement["profile_version"] != b["profile_version"] {
 		t.Fatal("named revision changed frozen profile")
@@ -110,13 +126,19 @@ func TestNativeContextBindingNamedRevisionUsesExactReceivedPredecessor(t *testin
 	if !bytes.Equal(want, got) || stageSnapshot(t, f.root).Revision != committed {
 		t.Fatal("context revision response-loss retry committed another binding")
 	}
-	_, view := nativeContextRead(t, f, p.Binding.Owner)
+	_, view := explicitContextRead(t, f, p.Binding.Owner)
 	if view["answer_path"] != next.AnswerPath {
 		t.Fatal("new binding did not follow the original issued revision")
 	}
-	if !saveStageHook(t, f.root, f.root, p.Binding.Owner, next.AnswerPath, completedDraft(next, "pass")).WorkComplete {
-		t.Fatal("binding revision replaced original answer admission")
+
+	stageJSON(t, f.root, next.AnswerPath, completedDraft(next, "pass"))
+	if code, out, diagnostic := nativeReviewEvent(t, f.root, "SubagentStop", "opaque-revised-source-reviewer", filepath.Join(f.root, next.AnswerPath)); code != 0 {
+		t.Fatalf("revised original Stop: %d %s %s", code, out, diagnostic)
 	}
+	if _, received, err := runtime.FindSubmission(stageSnapshot(t, f.root).State, next.ID); err != nil || !received {
+		t.Fatalf("fixed context revision replaced original answer admission: %v", err)
+	}
+
 }
 
 func TestNativeContextBindingConcurrentPrepareCommitsOnceAndCannotFallbackToMain(t *testing.T) {

@@ -159,6 +159,9 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	if workpacket.Digest(data) != ref.SHA256 {
+		return fail(fmt.Errorf("candidate bytes differ from the original registered delivery SHA256"))
+	}
 	var candidate repair.WorkspaceCandidate
 	if err := json.Unmarshal(data, &candidate); err != nil {
 		return fail(err)
@@ -208,17 +211,6 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if registered && !found {
 		return fail(fmt.Errorf("registered candidate result has no integration checkpoint"))
 	}
-	if registered && typedResult {
-		if cp.State == integration.StateVerified {
-			targetHead, headErr := workspace.Git(ctx, *root, "rev-parse", cp.TargetBranch)
-			if headErr != nil {
-				return fail(fmt.Errorf("cannot verify Main target HEAD for an accepted S9 Result: %w", headErr))
-			}
-			if targetHead != cp.TestedHead {
-				return fail(fmt.Errorf("Main target HEAD moved after the accepted S9 Result; preserve its verified checkpoint, inspect runtime repair status and runtime workspace integration-status, and arrange a new authorized verification attempt"))
-			}
-		}
-	}
 	mainCommands, err := workspaceMainCheckCommands(e.Checks, checkCommands, cp)
 	if err != nil {
 		return fail(err)
@@ -230,6 +222,12 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if found && (cp.State == integration.StateVerified || cp.State == integration.StateAcknowledged || cp.State == integration.StateCleanupPending || cp.State == integration.StateComplete) {
 		if _, err := verifiedDomainChecks(*root, mainExecution, cp); err != nil {
 			return fail(fmt.Errorf("selected Main checks have not passed at the checkpoint tested HEAD: %w", err))
+		}
+	}
+	if registered && typedResult {
+		cp, err = acknowledgeAcceptedRepairResult(ctx, *root, snap, typedPacket, e, cp)
+		if err != nil {
+			return fail(err)
 		}
 	}
 	config := integration.IntegrateConfig{Root: *root, GitRoot: *root, RuntimeID: e.RuntimeID, RequiredChecks: mainCommands, CheckRunner: integration.CommandCheckRunner}
@@ -269,6 +267,9 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 			}
 			return nil
 		}}
+		if typedResult && e.Purpose == workspace.NativeDeliveryPurpose && candidate.SourceHead == candidate.BaseCommit && len(candidate.Proposal.ChangedArtifacts) == 0 {
+			inspectCfg.ReceivedSourceHead = candidate.SourceHead
+		}
 		if found && cp.MergeCommit != "" {
 			inspectCfg.RecoveryBase, err = integration.RecoveryBaseForCheckpoint(ctx, *root, cp)
 			if err != nil {
@@ -345,6 +346,12 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 	}
+	if typedResult {
+		cp, err = acknowledgeAcceptedRepairResult(ctx, *root, snap, typedPacket, e, cp)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	finished, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: integration.InspectionFromCheckpoint(cp), Acknowledge: true, Cleanup: true}, config)
 	if err != nil {
 		return fail(err)
@@ -373,6 +380,26 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	return encodeJSON(stdout, map[string]any{"checkpoint": finished.Checkpoint, "result_ref": resultRef, "revision": snap.Revision, "next": next})
 }
 
+// Final reception is the S9 domain acknowledgement. Complete that original
+// checkpoint step after its Writer commit, including recovery between the two
+// writes. Keep the accepted verified facts; later Main work has its own checks.
+func acknowledgeAcceptedRepairResult(ctx context.Context, root string, snapshot runtime.Snapshot, packet workpacket.RepairResultPacket, execution workspace.Execution, checkpoint integration.Checkpoint) (integration.Checkpoint, error) {
+	if checkpoint.State != integration.StateVerified {
+		return checkpoint, nil
+	}
+	if _, found, err := runtime.VerifiedRepairResultReceipt(root, snapshot.State, packet.ID, execution.AgentID); err != nil || !found {
+		return checkpoint, fmt.Errorf("S9 Final acknowledgement requires its original accepted Result and unchanged Main proof; Main must inspect the original receipt and checkpoint without resubmitting Worker work: found=%t: %v", found, err)
+	}
+	// A rewritten target is a current Main problem. Detect it before the
+	// generic failure path could retire the accepted checkpoint's proof.
+	if _, err := integration.RecoveryBaseForCheckpoint(ctx, root, checkpoint); err != nil {
+		return checkpoint, fmt.Errorf("S9 Final remains accepted; Main must reconcile the original merge with its target before cleanup: %w", err)
+	}
+	next := checkpoint
+	next.State = integration.StateAcknowledged
+	return integration.DefaultCheckpointStore().CompareAndSwap(workspaceExecutionCheckpointPath(root, execution), checkpoint, next)
+}
+
 // currentRepairResultPacketForDelivery identifies an issued typed S9 packet
 // from immutable candidate provenance. If no provenance exists, any issued
 // packet for this Assignment still prevents fallback to the legacy Writer.
@@ -384,9 +411,17 @@ func currentRepairResultPacketForDelivery(root string, state map[string]any, exe
 	if err != nil || !found {
 		return workpacket.RepairResultPacket{}, false, fmt.Errorf("current candidate packet is unavailable: %v", err)
 	}
+	selected, err := runtime.RepairResultExecution(state, packet)
+	if err != nil || selected["assignment_id"] != execution.AssignmentID {
+		return packet, false, fmt.Errorf("candidate original registered execution differs: %v", err)
+	}
+	packetSHA, err := workpacket.RepairResultPacketDigest(packet)
+	if err != nil {
+		return packet, false, fmt.Errorf("candidate original packet differs: %w", err)
+	}
 	b := packet.Binding.Sources
 	pointer := repairPointerCLI(state)
-	if !repairResultCandidateMatchesPacketExecution(candidate, packet, execution, "") ||
+	if !repairResultCandidateMatchesPacketExecution(candidate, packet, execution, packetSHA) ||
 		pointer["session_id"] != b.SessionID || pointer["plan_ref"] != b.PlanRef ||
 		candidate.Proposal.AssignmentID != b.RepairAssignmentID ||
 		stringMapCLI(pointer["assignment_owners"])[b.RepairAssignmentID] != execution.AgentID {
@@ -395,32 +430,19 @@ func currentRepairResultPacketForDelivery(root string, state map[string]any, exe
 	return packet, true, nil
 }
 
-// Match only the recorded execution attempt. Source mirrors and packet digests
-// are not qualifications for normal Main integration.
-func repairResultPacketMatchesExecution(packet workpacket.RepairResultPacket, execution workspace.Execution) (bool, error) {
-	b := packet.Binding.Sources
-	if b.OwnerAgentID != execution.AgentID || b.RuntimeID != execution.RuntimeID || b.BaselineGeneration != execution.BaselineGeneration {
-		return false, nil
-	}
-	var attempt struct {
-		AssignmentID string `json:"assignment_id"`
-		Generation   int    `json:"execution_generation"`
-		Path         string `json:"worktree_path"`
-	}
-	if err := json.Unmarshal(packet.Inputs.Execution, &attempt); err != nil {
-		return false, err
-	}
-	return attempt.AssignmentID == execution.AssignmentID && attempt.Generation == execution.Generation && filepath.Clean(attempt.Path) == filepath.Clean(execution.Path), nil
-}
-
+// The registered execution is checked by the original Runtime projection at
+// the caller. Share the original consumer's tuple predicate instead of keeping
+// a second, weaker list of provenance fields before Git integration.
 func repairResultCandidateMatchesPacketExecution(candidate repair.WorkspaceCandidate, packet workpacket.RepairResultPacket, execution workspace.Execution, packetSHA string) bool {
-	matches, err := repairResultPacketMatchesExecution(packet, execution)
-	return err == nil && matches && candidate.Provenance != nil && candidate.Provenance.PacketID == packet.ID &&
+	return candidate.Provenance != nil && packetSHA != "" && candidate.Provenance.PacketSHA256 == packetSHA &&
+		runtime.ValidateRepairResultProvenanceBinding(packet, *candidate.Provenance) == nil &&
 		candidate.RuntimeID == execution.RuntimeID && candidate.BaselineGeneration == execution.BaselineGeneration &&
 		candidate.ExecutionGeneration == execution.Generation && candidate.AssignmentID == execution.AssignmentID &&
-		candidate.BaseCommit == execution.BaseCommit && candidate.SourceHead != "" &&
+		candidate.BaseCommit == execution.BaseCommit && candidate.SourceHead == candidate.Provenance.SourceHead &&
 		candidate.SessionID == packet.Binding.Sources.SessionID && candidate.PlanID == packet.Binding.Sources.PlanID &&
-		candidate.Proposal.ResultID == packet.ResultID && candidate.Proposal.ProducerAgentID == execution.AgentID
+		candidate.ContractSHA256 == packet.Binding.Sources.ContractSHA256 &&
+		candidate.Proposal.ResultID == packet.ResultID && candidate.Proposal.AssignmentID == packet.Binding.Sources.RepairAssignmentID &&
+		candidate.Proposal.ProducerAgentID == execution.AgentID
 }
 
 func repairResultMainProof(root string, execution workspace.Execution, checkpoint integration.Checkpoint) (runtime.RepairResultMainProof, error) {
@@ -491,7 +513,7 @@ func workspaceMainCheckCommands(configured, selected []string, cp integration.Ch
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("S9 Main checks remain pending: select necessary checks with --check-command during integration; no final PASS is recorded")
+		return nil, fmt.Errorf("S9 Main check selection is unavailable: select necessary checks with --check-command for unfinished work; for an accepted Final, Main must recover its original checkpoint check receipts before cleanup, without resubmitting Worker work")
 	}
 	return out, nil
 }

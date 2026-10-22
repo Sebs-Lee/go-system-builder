@@ -28,7 +28,7 @@ func TestSavedReviewResultHookRejectsUnissuedPathWithoutRuntimeWrite(t *testing.
 		"hook_event_name": "PostToolUse",
 		"tool_name":       "Write",
 		"tool_input":      map[string]any{"file_path": path},
-		"agent_id":        "reviewer-spec",
+		"teammate_name":   "reviewer-spec",
 		"cwd":             f.root,
 	})
 	if err != nil {
@@ -138,6 +138,8 @@ func TestStageAnswerConsumeAcceptsIssuedS7AnswerWithoutAgent(t *testing.T) {
 		t.Fatalf("issue S7 questionnaire: code=%d stderr=%s stdout=%s", code, errout.String(), out.String())
 	}
 	var issued []struct {
+		ID         string         `json:"packet_id"`
+		ViewPath   string         `json:"view_path"`
 		AnswerPath string         `json:"answer_path"`
 		Draft      map[string]any `json:"draft"`
 	}
@@ -157,6 +159,31 @@ func TestStageAnswerConsumeAcceptsIssuedS7AnswerWithoutAgent(t *testing.T) {
 	out.Reset()
 	errout.Reset()
 	answerPath := filepath.Join(root, filepath.FromSlash(issued[0].AnswerPath))
+	beforeNative := stageSnapshot(t, root).Revision
+	for _, event := range []string{"SubagentStart", "PreToolUse", "PostToolUse"} {
+		if code, _, diagnostic := nativeReviewEvent(t, root, event, "opaque-native-reviewer", answerPath); code != 0 {
+			t.Fatalf("native S7 %s: %d %s", event, code, diagnostic)
+		}
+		if stageSnapshot(t, root).Revision != beforeNative {
+			t.Fatalf("native S7 %s changed Runtime", event)
+		}
+	}
+	if code, _, diagnostic := nativeReviewEvent(t, root, "PostToolUse", "", answerPath); code != 0 || stageSnapshot(t, root).Revision != beforeNative {
+		t.Fatalf("Main received S7 answer before native Stop: %d %s", code, diagnostic)
+	}
+	if code, output, diagnostic := nativeReviewEvent(t, root, "SubagentStop", "opaque-native-reviewer", answerPath); code != 0 || output != "" || !strings.Contains(diagnostic, "original consumer") {
+		t.Fatalf("native S7 Stop did not receive actual professional answer: %d %s %s", code, output, diagnostic)
+	}
+	if context := mainNativeReturn(t, root, filepath.Join(root, issued[0].ViewPath)); !strings.Contains(context, `"accepted":true`) || !strings.Contains(context, issued[0].ID) {
+		t.Fatalf("Main missed original S7 reception: %s", context)
+	}
+	received := stageSnapshot(t, root).Revision
+	if code, _, diagnostic := nativeReviewEvent(t, root, "SubagentStop", "different-native-actor-after-resume", answerPath); code != 0 {
+		t.Fatalf("native S7 replay: %d %s", code, diagnostic)
+	}
+	if stageSnapshot(t, root).Revision != received {
+		t.Fatal("native S7 replay changed Runtime")
+	}
 	if code := cli.Run([]string{"runtime", "stage-answer", "consume", "--root", root, "--path", answerPath}, nil, &out, &errout); code != 0 {
 		t.Fatalf("consume exact issued S7 answer without --agent: code=%d stderr=%s stdout=%s", code, errout.String(), out.String())
 	}

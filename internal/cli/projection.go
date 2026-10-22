@@ -32,14 +32,14 @@ const PrimarySkillS7 = "loop-orchestration"
 var projectionContracts = map[string]stageContract{
 	"S0":                 {"produce one human-locked requirement (draft via requirement-funnel; binding is the S1 action)", []string{"docs/requirements/"}, []string{"human_locked_req"}, []string{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"}},
 	"S2":                 {"complete architecture and any required UI design package", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/rules/"}, []string{"architecture_record"}, []string{"architecture decisions cover the contract boundary", "any UI-impacting module has a complete target design package"}},
-	"S3":                 {"complete the development contract set", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/"}, []string{"locked_contract_set"}, []string{"at least one contract set is locked and traces to the REQ"}},
-	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"complete_task_batch"}, []string{"at least one TASK is complete and every contract clause has TASK coverage"}},
+	"S3":                 {"complete the development contract set", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/"}, []string{"locked_contract_set"}, []string{"the current bound REQ applicable locked contract batch and shared sources are accepted"}},
+	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"complete_task_batch"}, []string{"the complete current TASK batch is accepted, with clause coverage and executable dependencies"}},
 	"S5":                 {"independently verify and atomically lock the specification chain", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"joint_document_pass"}, []string{"document-verification responsibilities pass with current fingerprints"}},
 	"S6":                 {"implement the locked TASK batch", []string{"bound REQ", "locked contracts", "locked TASKs", "docs/control/agent-protocol.md#s6"}, []string{"builder_completion_reports", "verified_integration_checkpoints"}, []string{"every TASK in the TR-003 batch has a Builder Result with passing checks and no unapproved scope deviations, saved at the exact Result path supplied by the listener for the original Result consumer; Main verifies the required integration checkpoints"}},
 	"S7":                 {"complete one current full verification round", []string{"bound REQ", "locked specification chain", "Builder evidence", "docs/control/agent-protocol.md#s7"}, []string{"review_plan"}, []string{"every required Claim of the registered ReviewPlan has a consumed pass Result; findings seal into the ObservationBatch (TR-008), otherwise the machine CleanRound closes the round (TR-009)"}},
 	"S8":                 {"investigate the current reported problem and actual observations to form an evidence-backed InvestigationCase disposition", []string{"actual current source: sealed S7 observations or the human-reported problem", "locked specification chain", "implementation"}, []string{"investigation_case", "causal_model_or_route"}, []string{"the current reported problem has a Case disposition; actual Findings, when present, are covered by the Case route; every s9_repair Case has an approved RepairContract"}},
 	"S9":                 {"execute approved RepairContracts and target-reverify them", []string{"approved RepairContract", "locked specification chain", "implementation"}, []string{"targeted_reverification"}, []string{"repair evidence is current and the Contract assertions pass"}},
-	"S10":                {"complete acceptance and release audit", []string{"bound REQ", "current clean round", "docs/reports/acceptance/ACC-template.md", projectlayout.ReleaseAudits + "/TEMPLATE.md", "docs/rules/release-architecture-audit.md", ".claude/skills/acceptance-and-handoff/SKILL.md"}, []string{"coverage_inventory", "counterevidence_ledger", "acceptance_record", "release_audit"}, []string{"coverage inventory is frozen and 100% dispositioned", "counterevidence is recorded for every coverage item", "UNKNOWN, unsupported PASS, unowned risk, untracked debt, and blocking finding are all zero", "S9 changes have returned through a fresh S7 clean round; no S9→S10 shortcut"}},
+	"S10":                {"complete acceptance and release audit", []string{"bound REQ", "current clean round", "docs/reports/acceptance/ACC-template.md", projectlayout.ReleaseAudits + "/TEMPLATE.md", "docs/rules/release-architecture-audit.md", ".claude/skills/acceptance-and-handoff/SKILL.md"}, []string{"acceptance_record", "release_audit"}, []string{"the current Manifest explains actual requirement dispositions, applicable observations and counterevidence", "unknowns and blocking findings are resolved; remaining risks have actual owners and dispositions", "S9 changes have returned through a fresh S7 clean round; no S9→S10 shortcut"}},
 	"S11":                {"present the release-ready package to the human and record one explicit decision", []string{"acceptance record", "release audit", "release-ready package"}, []string{"human_decision"}, []string{"one explicit S11 decision is recorded or the Gateway remains awaiting a decision"}},
 	"release_authorized": {"S11 human-authorized terminal", []string{"human decision record"}, []string{}, []string{"human authorization is recorded; Harness performs no merge, publication, deployment, or formal release"}},
 	"aborted":            {"aborted terminal Runtime", []string{"human decision record"}, []string{}, []string{"automation remains stopped and only an eligible human-authorized rollover may start a new Runtime"}},
@@ -102,6 +102,13 @@ func buildNextProjection(state map[string]any, stage, skill, action, root string
 		Action: action, Read: resolveBoundREQRead(contract.Read, state), PrimarySkill: skill,
 		Missing: contract.Missing, DoneWhen: contract.DoneWhen, Then: "recompute",
 		HumanRequired: stage == "S11" || stage == "paused" || stage == "aborted",
+	}
+	if stage == "S6" && len(nativeS6Records(state)) > 0 {
+		projection.Action = nativeS6MainGuidance(root, state)
+		projection.DoneWhen = []string{
+			"each assigned Builder saves its own professional plan, implements its reviewed TASK, runs real self-checks and returns the Result through native SubagentStop",
+			"Main explicitly integrates the original delivery, runs required Main checks, records ACK and completes cleanup; the full reviewed batch Gate remains required",
+		}
 	}
 	showMainPlanning := len(mainViewer) == 0 || mainViewer[0]
 	if showMainPlanning {
@@ -201,9 +208,9 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 	case "S10":
 		switch lifecycleState(state) {
 		case "acceptance":
-			contract.Missing = []string{"coverage_inventory", "counterevidence_ledger", "acceptance_manifest"}
+			contract.Missing = []string{"current_acceptance_manifest"}
 		case "release_audit":
-			contract.Missing = []string{"audit_areas:8", "counterevidence_ledger", "release_audit_manifest", "s11_handoff"}
+			contract.Missing = []string{"current_release_audit_manifest"}
 		}
 	case "S11":
 		if lifecycleState(state) == "awaiting_human_release" {

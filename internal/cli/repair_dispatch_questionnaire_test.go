@@ -100,7 +100,7 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 	before := repairDispatchRuntimeBytes(t, root)
 	context := stageRepairDispatchContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main"}, snapshot)
 	contractPath := resolveRootPath(root, stringValue(repairPointerCLI(snapshot.State)["contract_ref"]))
-	for _, want := range []string{path, contractPath, "awaiting Main", "backend-builder, frontend-builder or test-builder", "restore first authority", "check-location", "Main root", "platform launch"} {
+	for _, want := range []string{path, contractPath, "awaiting Main", "backend-builder, frontend-builder or test-builder", "restore first authority", "native Agent", "engineering responsibility name", "check_location"} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("normal empty-owner context lacks %q: %s", want, context)
 		}
@@ -142,7 +142,7 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 	if owner == "" || owners[plan.Assignments[1].AssignmentID] != "" {
 		t.Fatalf("selected row must register while blank row stays pending: %#v", owners)
 	}
-	for _, want := range []string{owner, "TASK", "Manifest:", "platform", "Main-root PlanReport"} {
+	for _, want := range []string{owner, "TASK", "Manifest:", "platform", "private PlanReport output relative to the actual native worktree"} {
 		if !strings.Contains(feedback, want) {
 			t.Fatalf("real dispatch feedback lacks %q: %s", want, feedback)
 		}
@@ -159,7 +159,7 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 		t.Fatalf("packet Builder TASK: %v", taskErr)
 	}
 	instruction := stringValue(taskDocument["instruction"]) + " " + stringValue(taskDocument["next_action"])
-	if !strings.Contains(instruction, "Fill and save") || !strings.Contains(instruction, "without waiting for sibling Plans") || strings.Contains(instruction, "PLAN_REPORT") || strings.Contains(instruction, "runtime repair plan-report") {
+	if !strings.Contains(instruction, "before implementation") || !strings.Contains(instruction, "SubagentStop") || !strings.Contains(instruction, "native worktree isolation") || strings.Contains(instruction, "PLAN_REPORT") || strings.Contains(instruction, "runtime repair plan-report") {
 		t.Fatalf("packet Builder TASK retained manual/double plan submission: %s", instruction)
 	}
 	for _, ref := range []string{stringValue(team["manifest_ref"]), stringValue(task["path"])} {
@@ -220,6 +220,11 @@ func TestS9RepairDispatchQuestionnairePartialRecoveryAndConflicts(t *testing.T) 
 
 func TestS9RepairDispatchQuestionnaireResponsibilityAndS8Isolation(t *testing.T) {
 	root, snapshot, _, path := repairDispatchFixture(t)
+	// Entry preparation already created this draft. Remove it deliberately
+	// to test that subsequent read-only Worker reminders do not recreate it.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
 	before := repairDispatchRuntimeBytes(t, root)
 	for _, request := range []policy.Input{{Event: "PreToolUse", AgentID: "builder-unselected"}, {Event: "SubagentStart"}} {
 		if got := stageRepairDispatchContext(root, request, snapshot); got != "" {
@@ -246,7 +251,7 @@ func TestS9RepairDispatchQuestionnaireResponsibilityAndS8Isolation(t *testing.T)
 	}
 }
 
-func TestS9RepairDispatchExplicitSaveImmediatelyIssuesOwnPlanReport(t *testing.T) {
+func TestS9RepairDispatchExplicitSavePreparesNativeBriefAndPreservesOriginalSources(t *testing.T) {
 	root, plan, _, _, path := repairExecutionPlanningFixture(t)
 	rows := []repairDispatchChoice{
 		{AssignmentID: plan.Assignments[0].AssignmentID, RoleFamily: "backend-builder"},
@@ -259,7 +264,8 @@ func TestS9RepairDispatchExplicitSaveImmediatelyIssuesOwnPlanReport(t *testing.T
 		t.Fatalf("same explicit division save did not issue the first original PlanReport without an execution: packets=%d err=%v feedback=%s", len(packets), err, feedback)
 	}
 	firstPacket := packets[0]
-	for _, want := range []string{firstPacket.Binding.OwnerAgentID, resolveRootPath(root, firstPacket.ViewPath), resolveRootPath(root, firstPacket.AnswerPath), "Native task brief", "genuine pre-fix red checks only", "personally save", "original execution begin AND Main's actual prepared Worker root", "Professional questionnaires and actual evidence are separate from product implementation scope", "Main must not save your answer on your behalf"} {
+	brief, _, _ := nativeS9Paths(firstPacket)
+	for _, want := range []string{firstPacket.Binding.OwnerAgentID, resolveRootPath(root, firstPacket.ViewPath), resolveRootPath(root, brief), firstPacket.AnswerPath, "private PlanReport output relative to the actual native worktree", "exact S9 brief", "worktree isolation", "SubagentStop", "No workspace prepare/launch", "Main does not write professional answers"} {
 		if !strings.Contains(feedback, want) {
 			t.Fatalf("same-callback native brief lacks %q: %s", want, feedback)
 		}
@@ -292,9 +298,17 @@ func TestS9RepairDispatchExplicitSaveImmediatelyIssuesOwnPlanReport(t *testing.T
 		if err := runtime.VerifyRepairPlanReportCurrent(root, complete.State, packet); err != nil {
 			t.Fatalf("original source binding differs: %v", err)
 		}
+		// Main retains the original issued source/draft. The actual isolated
+		// Worker receives its private output relative to its own worktree.
 		for _, ref := range []string{packet.ViewPath, packet.AnswerPath} {
-			if _, err := os.Stat(resolveRootPath(root, ref)); err != nil || !strings.Contains(feedback, resolveRootPath(root, ref)) {
-				t.Fatalf("exact Main-root questionnaire missing or not delivered: %s %v", ref, err)
+			if _, err := os.Stat(resolveRootPath(root, ref)); err != nil {
+				t.Fatalf("original issued metadata artifact missing: %s %v", ref, err)
+			}
+		}
+		brief, _, _ := nativeS9Paths(packet)
+		for _, ref := range []string{resolveRootPath(root, packet.ViewPath), resolveRootPath(root, brief), packet.AnswerPath} {
+			if !strings.Contains(feedback, ref) {
+				t.Fatalf("native handoff omitted the original precise reference %s: %s", ref, feedback)
 			}
 		}
 	}

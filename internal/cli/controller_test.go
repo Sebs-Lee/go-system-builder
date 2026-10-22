@@ -70,7 +70,7 @@ func TestBuildGuidanceForSessionStartUsesCanonicalNextProjection(t *testing.T) {
 	if guidance.PrimarySkill != "team-planning" {
 		t.Fatalf("unexpected primary skill: %q", guidance.PrimarySkill)
 	}
-	if !strings.Contains(guidance.Action, "questionnaire") || !strings.Contains(guidance.Action, "exact path") || strings.Contains(guidance.Action, "review-result submit") {
+	if !strings.Contains(guidance.Action, "questionnaire") || !strings.Contains(guidance.Action, "exact path") || !strings.Contains(guidance.Action, "SubagentStop") || strings.Contains(guidance.Action, "review-result submit") {
 		t.Fatalf("unexpected next action: %q", guidance.Action)
 	}
 	if !strings.Contains(guidance.Instruction, "docs/control/agent-protocol.md#s7") {
@@ -89,11 +89,11 @@ func TestBuildGuidanceS9UsesOriginalQuestionnairesAndLifecycle(t *testing.T) {
 		want   string
 	}{
 		{name: "approved contract prepares session", phase: "repair_readback", want: "next writable Main Hook"},
-		{name: "planning uses PlanReport answer", phase: "planning", status: "planning", want: "PlanReport questionnaire"},
+		{name: "planning uses private PlanReport", phase: "planning", status: "planning", want: "private professional PlanReport"},
 		{name: "reproduction follows saved reports", phase: "reproducing", status: "reproducing", want: "original consumer"},
 		{name: "repair result records completion", phase: "fixing", status: "repairing", want: "RepairResult questionnaire"},
 		{name: "impact uses supplied form", phase: "targeted_reverification", status: "impact_reconciliation", want: "ChangeImpact questionnaire"},
-		{name: "independent targeted result", phase: "targeted_reverification", status: "targeted_reverification", want: "TargetedReverification questionnaire"},
+		{name: "independent targeted result", phase: "targeted_reverification", status: "targeted_reverification", want: "TargetedReverification answer for SubagentStop"},
 		{name: "handoff has no author form", phase: "ready_for_full_review", status: "ready_for_full_review", want: "no author-filled Handoff form"},
 		{name: "fresh S7 follows original seed", phase: "ready_for_full_review", status: "closed", want: "fresh S7 round"},
 	}
@@ -121,7 +121,7 @@ func TestBuildGuidanceS9UsesOriginalQuestionnairesAndLifecycle(t *testing.T) {
 				"runtime repair session open", "runtime repair dispatch", "runtime repair execution begin",
 				"runtime repair status", "runtime review-plan --file", "--check-location",
 				"compute session-wide Changeset and commit ChangeImpact", "create and commit the complete RepairHandoff",
-				"genuine completion_report",
+				"genuine completion_report", "Main runs the supplied normal workspace bind/prepare",
 			} {
 				if strings.Contains(combined, stale) {
 					t.Fatalf("S9 guidance still requires duplicate command %q: %s", stale, combined)
@@ -155,7 +155,7 @@ func TestPlanCheckpointSubagentStartDoesNotWaitForSecondTurn(t *testing.T) {
 	}
 }
 
-func TestBuildGuidanceDefinesRecoveryReadOrderAndNoCliNormalPath(t *testing.T) {
+func TestBuildGuidanceDefinesRecoveryReadOrderAndScopedMainCommands(t *testing.T) {
 	root := filepath.Join("..", "..")
 	state := map[string]any{
 		"runtime_id": "loop-REQ-039",
@@ -183,8 +183,10 @@ func TestBuildGuidanceDefinesRecoveryReadOrderAndNoCliNormalPath(t *testing.T) {
 	if !strings.Contains(strings.Join(guidance.ReadOrder, " -> "), "docs/control/agent-protocol.md#s7") {
 		t.Fatalf("read order must point to current protocol anchor, got %#v", guidance.ReadOrder)
 	}
-	if !containsString(guidance.Automation, "do not call loop-harness for normal continuation") {
-		t.Fatalf("normal continuation must be Hook-driven, got %#v", guidance.Automation)
+	for _, want := range []string{"do not repeat professional submissions", "CLI as per-tool permission", "Main uses the exact preparation, dispatch, integration or recovery command", "not an opening ritual"} {
+		if !strings.Contains(strings.Join(guidance.Automation, "\n"), want) {
+			t.Fatalf("recovery lost the real Main responsibility boundary %q: %#v", want, guidance.Automation)
+		}
 	}
 	if !strings.Contains(guidance.Instruction, "Read in order") {
 		t.Fatalf("instruction must make read order visible: %q", guidance.Instruction)
@@ -1819,5 +1821,54 @@ func TestPostMergeModeChecksCandidateThroughController(t *testing.T) {
 	}
 	if strings.Contains(joined, "cleanup") && !strings.Contains(joined, "acknowledge") {
 		t.Fatalf("SubagentStop must not claim cleanup happened in this call (Acknowledge=false, Cleanup=false), got %#v", guidance.Integration)
+	}
+}
+
+func TestS9RepairNextActionKeepsNativeCandidateWithMain(t *testing.T) {
+	state := map[string]any{"review": map[string]any{"investigation": map[string]any{"status": "contract_approved"}, "repair": map[string]any{"status": "repairing"}}}
+	next := repairNextAction(state, "fixing")
+	for _, want := range []string{"private professional Plan/Result", "SubagentStop", "Main immediately", "Do not redispatch", "Existing frozen executions"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("missing native recovery instruction %q: %s", want, next)
+		}
+	}
+}
+
+func TestGraphRecoveryProjectsS8SourcesOnlyInCurrentInvestigation(t *testing.T) {
+	cases := []struct {
+		name, state, phase string
+		human, want        bool
+	}{
+		{name: "S2", state: "planning", phase: "design"},
+		{name: "S3", state: "planning", phase: "contracts"},
+		{name: "S4", state: "planning", phase: "tasks"},
+		{name: "S10 acceptance", state: "acceptance"},
+		{name: "S10 audit", state: "release_audit"},
+		{name: "S11", state: "awaiting_human_release"},
+		{name: "S8 sealed observations", state: "bug_resolution", phase: "investigation", want: true},
+		{name: "S8 human problem", state: "bug_resolution", phase: "investigation", human: true, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Preserve a real-shaped historical batch outside S8; history must not
+			// assign an investigation responsibility in another current stage.
+			state := s8EntryFixtureState()
+			state["lifecycle"] = map[string]any{"state": tc.state, "phase": tc.phase}
+			if tc.human {
+				state["review"].(map[string]any)["observation_batch"] = nil
+			}
+			guidance := graphGuidance(t.TempDir(), state, policy.Input{Event: "SessionStart"})
+			rendered := strings.Join(guidance.Automation, "\n") + "\n" + strings.Join(guidance.Recovery, "\n")
+			hasSource := strings.Contains(rendered, "S8 intake pending") || strings.Contains(rendered, "S8 current ObservationBatch")
+			if hasSource != tc.want {
+				t.Fatalf("current %s.%s received wrong S8 source responsibility: %s", tc.state, tc.phase, rendered)
+			}
+			if tc.want && !tc.human && !strings.Contains(rendered, "observation-batch-r2") {
+				t.Fatal("S8 lost its actual sealed source", rendered)
+			}
+			if tc.human && strings.Contains(rendered, "ObservationBatch") {
+				t.Fatal("human intake invented a batch", rendered)
+			}
+		})
 	}
 }

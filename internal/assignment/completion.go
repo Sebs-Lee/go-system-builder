@@ -19,6 +19,10 @@ import (
 
 // CompletionRequest drives the canonical S6 Builder Result registration.
 type CompletionRequest struct {
+	NativeAgentID   string
+	NativeSessionID string
+	// NativePlanPath is supplied by the native Stop receiver, never an activation.
+	NativePlanPath   string
 	ExpectedRevision int
 	AgentID          string
 	MessagePath      string

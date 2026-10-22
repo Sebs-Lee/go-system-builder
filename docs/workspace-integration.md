@@ -1,5 +1,11 @@
 # 工作区绑定、执行与恢复
 
+> 新 S5/S7/S8 只读责任由 Main 将原问卷准确 view/answer 交 Claude Code 原生 Agent。独立上下文完成专业审查/调查，保存私人答卷并返回引用，SubagentStop 调用原消费者；普通 Worker 工具不接收、不激活。不要求 workspace prepare、bootstrap、平台 Team 或 actor/owner 相等。已登记独立来源继续使用原路径，丢失时不得回落 Main。真实批准、独立性、波次与原 Gate 保留。
+
+> 新 S9 Builder/Targeted 同样交给 Claude Code 原生执行。Main 携带准确 brief；Start/Stop 衔接专业资料与结果。新责任不执行 workspace prepare/launch。Stop 返回后保存在原来源记录中的 `purpose=native_delivery` 仅供原 Result、Main integrate/checks/cleanup 消费，不包含 bootstrap、平台 session、启动租约，也不能被 launcher 启动。下文预建 Worker 与 session 操作仅适用于已冻结的旧 S9 执行；独立 Targeted 的专业独立性与原消费者保留。
+
+> 新 S6 使用 Claude Code 原生 Agent/worktree 和 `s6-native-v1`；参见 [S6 协议](control/agent-protocol.md#s6)。本文 workspace prepare/launch/session/Bootstrap 路径服务已登记旧执行，不再是新 S6 的普通派发入口。不要为同一责任启动两名 Builder。
+
 责任进度按 [`docs/rules/state-machine.md`](rules/state-machine.md#21-loop-responsibility-status)
 使用 `pending/active/blocked/done/cancelled`。本文出现的 Runtime lifecycle、
 `ready` execution、CLI/receipt 字段和 platform session 值均是当前兼容协议，
@@ -416,7 +422,7 @@ loop-harness runtime workspace pending --root /project
 
 未指定 `integration_check_mode` 时保留 Worker 预检与 Main 合并后检查；普通任务不默认选择 `post_merge`。新 S6 closing contract 的首个空本人集合路径要求原 manifest 显式选择 `post_merge`，并把 Main profile 固定为 `location: main`；不把 Main 命令复制成 Worker checks。两种模式都检查工作区身份、范围和冻结文档，并且都必须完成 Main 合并后的必需检查。closing 未闭合时，原 Main Inspect/Integrate 保全检查点并阻止 ACK；canonical Result 的路径与 SHA256 一起绑定到回执，Result 改变须重新验证，不能复用旧 PASS。首次接收确认前目标 HEAD 改变也须重验；已经确认后的纯清理重试保留原验证回执。
 
-SubagentStop/SessionStart/PreCompact 提示 Main 消费显式待办，不在 Hook 中同步跑长合并。pending 从原报告/checkpoint 生成命令，不建立第二套调度状态。
+Main 从原生返回回执及 SessionStart 的当前职责提示消费显式待办，不在 Hook 中同步跑长合并。PreCompact 保持静默，不代收答卷或另外创建阶段 checkpoint。pending 从原报告/checkpoint 生成命令，不建立第二套调度状态。
 
 RepairResult 被原 consumer 接收后，Main 用原集成和必需检查完成候选接收；TargetedReverification 每个获批 Contract 一份，之后原 Handoff 返回 S7。canonical S6 generation 的 TR-012 会按原链路提供 S7 seed，Planner 仍须完成专业 Claim review；Session 累计差异、独立复验和 fresh S7 门禁继续生效。未发行 typed Result packet 的 legacy Runtime 保留原 `repair-result.json` / `s9_delivery_command` 契约。自动投影不代表 Main 集成、独立复验或人类发布授权通过；完整 canonical S9 fresh round 尚未验收。
 
@@ -758,65 +764,19 @@ install 接受相同两个参数。max 至少 1；resume 必须小于 max，缺�
 
 ## S7 已发行专业答卷
 
-在启用问卷的 Runtime（新 install/init 默认启用）中，Main 在原 Reviewer 注册后由 Hook 自动确保
-每个 dispatched Assignment 的 `s7-review-result-v1` 问卷。queued 作业仍由原调度释放；
-当前 PreToolUse 向 Reviewer 提供准确的 view/answer 绝对路径。
-普通 `plan_checkpoint` Reviewer 不另交 generic PLAN/activation：保持题干，只填写 `answer` 中的专业结论与证据，保存
-确切文件。显式 `plan_approval_required` 仍等待原审批。保存 Hook 调用原 `review.SubmitResult`；未答、错 owner、旧 Plan/round、题干
-编辑和漏 Claim 不构成接收。
+Main 完成原 ReviewPlan 与专业登记，原准备入口确保当前 dispatched Assignment 的 `s7-review-result-v1` 问卷。波次和依赖保留；未就绪责任不提前取得专业结论。Main 将准确 view/answer 路径带入原生 Agent，Reviewer 阅读真实冻结材料，独立执行其 Claims/lens，填写原 `answer` 并返回准确引用。SubagentStop 调用原 `review.SubmitIssuedResult`，校验当前 Plan/round、owner、来源、Claim exact set、证据与原批准模式。普通工具事件不提供逐保存回执，不要求 generic PLAN/activation。
 
-手工 `stage-answer issue`/`consume` 仅作为显式诊断或兼容入口，正常 Reviewer 流程不运行它们；
-平台保存 Hook 仍执行原领域接收校验，原 Gate 决定后续阶段。
+新只读责任可直接使用原 Main 根下私人问卷，不创建 execution。已登记独立 Worker 使用其确切来源，缺失时不能回落 Main；cold-start E2E 必须如实填写实际执行 workspace 的 `verification_artifact_digest`，原消费者仍验证来源及摘要。显式 `plan_approval_required` 等待原审批。
 
-独立 Worker 在原 ready execution 根下使用问卷给出的准确路径；Main 的共享答案入口退休。
-PostToolUse 保存 consumer 沿用原 execution/session 绑定与领域校验，再冻结磁盘字节；
-失败只返回具体接收原因，不撤销已经完成的文件保存。cold-start E2E
-的 `answer.verification_artifact_digest` 声明实际执行的 workspace 摘要，由原消费者
-验证；发卷不会把空 workspace 摘要固定成随后 spec/fixture 的执行证明。
-
-`runtime stage-answer receipt --agent <owner> --path <issued-path> --root <Main>`
-从原 Assignment receipt、Result bytes/index 与 journal 重建回执。本人已接收即可结束，
-不等另一 Reviewer 或全局 CleanRound。相同已接受答卷重放不追加事件、Finding 或轮次
-结果；相同键不同答案冲突。原 explicit `review-result submit` 继续适用于未发行的
-Assignment，已发行后不能用新 Result ID 绕过。具名修订使旧卷失去新接收资格。
-
-S7 PreToolUse 只投影问卷路径，不作身份或权限判断；PostToolUse consumer 仍按原
-Assignment/session 绑定和领域规则校验保存内容。单凭 CLI 参数或文件名不能替代原
-consumer 校验。当前环境尚未完成真实 Claude session 验收。
-
-已发行 S7 的终端 `stage-answer consume --agent ...` 拒绝代交；当前终端缺受信宿主
-caller capability，不能仅凭 owner 字符串发专业结论。使用成功的平台保存 Hook 接收，
-终端可继续读 receipt。无发行的原 explicit Result 入口维持原行为。
-
-独立 cold-start E2E 的执行摘要属于 Worker 的实际 workspace，而非 Main 同名目录。
-`s7 workspace-digest --root <Worker>` 只读定位 Main Plan 后计算 Worker 字节；接收、封轮
-与原 Gate 都沿 packet receipt 的 `execution_root` 和原 execution 登记复验该来源。
+相同已接收答卷重放不追加 Result/Finding，不同答案沿原冲突/具名修订处理。`runtime stage-answer receipt --agent <owner> --path <issued-path> --root <Main>` 只读恢复事实；普通工作不手动 issue/consume。原 explicit/冻结 teammate 保存入口继续服务其原兼容责任。本文不声明新 S7 原生模型专业验收已完成。
 
 ## S8 已发行假设答卷
 
-在启用问卷的 Runtime（新 install/init 默认启用）中，Main 先登记原 Hypothesis，并通过原
-`runtime investigation dispatch` 登记 Investigator manifest/TASK/owner；当前 Hook
-自动确保假设问卷并向 Investigator 提供准确的 view/answer 绝对路径。普通
-`plan_checkpoint` 不要求 Investigator 另交 generic PLAN；显式 `plan_approval_required`
-仍走原人闸。Investigator 读自己的 view 和原 Finding encounter，
-只在精确 answer 路径填写方法、观察、证据、反事实/判别、本人结果和新问题
-内容，用 Write/Edit/MultiEdit 保存并读原 Case 责任回执。
+Main 沿原 Case/Hypothesis 与 `runtime investigation dispatch` 登记工程责任，原准备入口确保准确 view/answer。Main 携带该引用原生启动或恢复 Investigator；逻辑 owner 不要求等于实际平台 actor，登记不代表已经启动。Investigator 阅读真实 encounter/材料，填写本人方法、观察、证据、判别与结论，保存原答卷并返回引用。SubagentStop 调用原 HypothesisResult/Case Writer，普通工具不激活、不接收。
 
-手工 `stage-answer issue`/`consume` 只保留为显式诊断或兼容入口，正常 Investigator
-流程不运行它们；保存仍由原 Case Writer 和原领域规则校验。
+新只读责任不要求独立 execution/session。已登记独立目录沿原来源校验，缺失时不得换用 Main。普通 `plan_checkpoint` 无 generic PLAN；显式批准模式保留原批准。原 Writer 同 CAS 保存结果与回执，无关兄弟结果追加不使有效问卷失效，自身来源/派发/路由变化仍拒收。source boundary 使用实际 `finding:<source-id>` 或 encounter pointer；不编造 ref。
 
-原 Case Writer 同 CAS 保存结果、完整答案摘要与回执；兄弟结果的无关追加
-保持未变的卷有效，自身来源/派发或路由变化则拒收。source boundary 用
-`finding:<source-id>` 或实际存在的 `#/encounter/...` pointer，不编造 ref。
-新 Hypothesis/Assignment ID 由机器分配，后续 Main 仍须实际派发；答案不批准
-route、Contract 或 S9 修复。本人接收不等待整个 Case 完成。
-
-查询 `runtime stage-answer receipt --agent <owner> --path <issued-path-or-packet-id>
---root <Main>` 恢复原已接收事实；精确保存重放仍读取当前作者字节，修改答案
-返回冲突，缺作者文件使用只读查询。已发行 S8 的终端 consume 及旧 result
-flags 不能代交。独立目录必须有原 ready execution/session；当前不提供新的
-Investigator workspace prepare/launch profile，未登记的目录拒收。真实平台、
-独立 Worker 完整链和模型专业验收另行记录。
+新 Hypothesis/Assignment 由原领域生成，Main 仍须真正派发；答案不批准 route、Contract 或 S9 修复。重复 Stop 沿原幂等接收，改写已接收答案仍冲突。只读 receipt、冻结旧保存入口和原人闸保留。S8 当前实际 lifecycle 为 `bug_resolution/investigation`，残留 S9 pointer 不得抢占它。真实原生模型专业验收另记。
 
 ## S9 issued PlanReport boundary
 

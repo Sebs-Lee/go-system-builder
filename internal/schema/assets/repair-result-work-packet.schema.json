@@ -82,7 +82,7 @@
     "execution": {
       "type": "object", "additionalProperties": false,
       "description": "Stable workspace.Execution definition projection; status, runner receipts, ReworkRef, and delivery pointers are intentionally excluded.",
-      "required": ["check_location", "assignment_id", "runtime_id", "baseline_generation", "execution_generation", "agent_id", "worktree_path", "branch", "target_branch", "base_commit", "write_paths", "required_checks", "inputs", "bootstrap_sha256"],
+      "required": ["check_location", "assignment_id", "runtime_id", "baseline_generation", "execution_generation", "agent_id", "worktree_path", "branch", "target_branch", "base_commit", "write_paths", "required_checks", "inputs"],
       "properties": {
         "assignment_record": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/record_reference"}]},
         "assignment_record_sha256": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]},
@@ -106,7 +106,15 @@
         "required_checks": {"type": "array", "uniqueItems": true, "maxItems": 1024, "items": {"type": "string", "minLength": 1}},
         "inputs": {"type": "object", "additionalProperties": {"type": "string"}},
         "bootstrap_sha256": {"$ref": "#/$defs/sha256"}
-      }
+      },
+      "allOf": [{
+        "if": {"required": ["purpose"], "properties": {"purpose": {"const": "native_delivery"}}},
+        "then": {
+          "properties": {"check_location": {"const": "main"}},
+          "not": {"anyOf": [{"required": ["bootstrap_sha256"]}, {"required": ["platform_session_id"]}]}
+        },
+        "else": {"required": ["bootstrap_sha256"]}
+      }]
     },
     "rework_receipt": {
       "type": "object", "additionalProperties": false,

@@ -143,28 +143,20 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 				continue
 			}
 			if stringField(row["consumed_by"]) != "TR-027" {
-				break
+				continue
 			}
-			humanPath = stringField(row["path"])
-			path := humanPath
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(root, path)
+			source, sourceErr := humanDefectSource(root, current.State, []string{stringField(row["id"])})
+			if sourceErr != nil {
+				return runtime.Snapshot{}, actionableError("Main must restore the original human defect source: %v", sourceErr)
 			}
-			data, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return runtime.Snapshot{}, actionableError("read human defect decision %q: %v", humanPath, readErr)
-			}
-			var decision map[string]any
-			if err := json.Unmarshal(data, &decision); err != nil {
-				return runtime.Snapshot{}, actionableError("decode human defect decision %q: %v", humanPath, err)
-			}
-			if stringField(decision["runtime_id"]) != stringField(current.State["runtime_id"]) || stringField(decision["disposition"]) != "reject_defect" {
-				return runtime.Snapshot{}, actionableError("human defect decision %q does not describe this Runtime rejection", humanPath)
-			}
-			humanID = stringField(row["id"])
+			humanID, humanPath = source[0], source[1]
 			break
 		}
 	}
+	if humanID == "" && stringField(s8Map(current.State["last_transition"])["transition_id"]) == "TR-027" {
+		return runtime.Snapshot{}, actionableError("Main must restore the original human_decision consumed by TR-027; no Finding or ObservationBatch is required for that human report")
+	}
+
 	if humanID == "" {
 		pointer, err = observationBatchPointer(root, current.State)
 		if err != nil {
@@ -240,12 +232,17 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 		if err := json.Unmarshal(caseBytes, &document); err != nil {
 			return runtime.Snapshot{}, err
 		}
-		for _, key := range []string{"observation_batch_id", "observation_batch_ref", "observation_batch_sha256", "baseline_digest"} {
+		for _, key := range []string{"observation_batch_id", "observation_batch_ref", "observation_batch_sha256"} {
 			delete(document, key)
 		}
 		document["source_finding_ids"] = []string{}
 		document["unexplained_finding_ids"] = []string{}
 		document["failure_boundary_refs"] = []string{humanID, humanPath}
+		digest, baselineErr := humanBaselineDigest(root, current.State)
+		if baselineErr != nil {
+			return runtime.Snapshot{}, actionableError("%v", baselineErr)
+		}
+		document["baseline_digest"] = digest
 		caseBytes, err = json.MarshalIndent(document, "", "  ")
 		if err != nil {
 			return runtime.Snapshot{}, err
@@ -304,6 +301,22 @@ func Ingest(root, statePath, journalPath string, request IngestRequest) (runtime
 		Message:                fmt.Sprintf("investigation_case_ingested: %s consumes %s", caseID, sourceID),
 		OccurredAt:             occurredAt,
 		Apply: func(state map[string]any) error {
+			if humanID != "" {
+				var original map[string]any
+				if err := json.Unmarshal(caseBytes, &original); err != nil {
+					return err
+				}
+				if _, err := humanCaseSource(root, state, original); err != nil {
+					return err
+				}
+				digest, err := humanBaselineDigest(root, state)
+				if err != nil {
+					return err
+				}
+				if digest != stringField(original["baseline_digest"]) {
+					return errors.New("human report frozen baseline changed during intake; Main restores the original source")
+				}
+			}
 			review, ok := state["review"].(map[string]any)
 			if !ok {
 				return actionableError("Runtime review section is missing; restore state.review before retry")

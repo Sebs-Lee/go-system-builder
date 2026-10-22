@@ -23,12 +23,13 @@ func TestS9EvidenceChainRequiresImpactAndIndependentReverification(t *testing.T)
 	if err != nil || impact.RecordType != "change_impact" || impactRef.SHA256 == "" {
 		t.Fatalf("CreateChangeImpact() = %#v, %v", impact, err)
 	}
-	if _, _, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
-		ReverificationID: "reverify-1", RuntimeID: "loop-REQ-001", BugID: "BUG-001", BaselineGeneration: 1,
-		OriginalAssignmentID: "assignment-builder", PerformingAssignmentID: "assignment-builder", ImpactID: impact.ImpactID,
-		AssertionResults: []repair.AssertionResult{{AssertionID: "assert-1", Result: "pass", EvidenceRefs: []string{"test://reverify-log"}}}, ScopeCompliance: "pass", Result: "pass",
-	}); err == nil || !strings.Contains(err.Error(), "independent") {
-		t.Fatalf("same assignment should be rejected: %v", err)
+	plan := repair.RepairPlan{Assignments: []repair.RepairAssignment{{AssignmentID: "assignment-builder"}}}
+	owners := map[string]string{"assignment-builder": "builder"}
+	if _, err := repair.ValidateVerificationDispatch(plan, "assignment-builder", "builder", owners); err == nil || !strings.Contains(err.Error(), "not independent") {
+		t.Fatalf("Main selected the actual implementer as independent: %v", err)
+	}
+	if _, err := repair.ValidateVerificationDispatch(plan, "assignment-builder", "qa", owners); err != nil {
+		t.Fatalf("actual independent choice was rejected: %v", err)
 	}
 	reverify, reverifyRef, err := repair.CreateTargetedReverification(root, repair.TargetedReverificationRequest{
 		ReverificationID: "reverify-1", RuntimeID: "loop-REQ-001", BugID: "BUG-001", BaselineGeneration: 1,
@@ -637,12 +638,8 @@ func TestRepairPlanRejectsUnitWithoutExplicitAssertionDeclaration(t *testing.T) 
 	}
 }
 
-// TestTargetedReverificationRejectsUnanchoredContinuityReason is the RC-09
-// (S9-11) negative case: continuity_reason used to be silently defaulted to
-// "independent verification after repair", letting the original-finder
-// continuity be satisfied by auto-generated prose. A reason with no evidence
-// anchor is now rejected at the artifact boundary.
-func TestTargetedReverificationRejectsUnanchoredContinuityReason(t *testing.T) {
+// Optional continuity text retains the actual authored content and grants no proof.
+func TestTargetedReverificationPreservesOptionalContinuityWithoutInventedProof(t *testing.T) {
 	root := t.TempDir()
 	contractRef, _ := writeRuntimeContract(t, root)
 	_, sessionRef, err := repair.CreateRepairSession(root, repair.SessionRequest{
@@ -660,23 +657,17 @@ func TestTargetedReverificationRejectsUnanchoredContinuityReason(t *testing.T) {
 		ImpactID: "impact-continuity", AssertionResults: []repair.AssertionResult{{AssertionID: "symptom-1", Result: "pass", EvidenceRefs: []string{"test://symptom"}}},
 		ScopeCompliance: "pass", Result: "pass",
 	}
-	for _, reason := range []string{"", "independent verification after repair", "a thorough manual recheck with no anchor"} {
+	for i, reason := range []string{"", "independent verification after repair", "a manual recheck with no anchor", "test://verifier-run: actual continuity observation", "evidence/reverify-red.json shows the original failure"} {
 		request := base
+		request.ReverificationID = "reverify-continuity-" + string(rune('a'+i))
 		request.ContinuityReason = reason
-		if _, _, err := repair.CreateTargetedReverification(root, request); err == nil || !strings.Contains(err.Error(), "continuity_reason must cite at least one evidence reference") {
-			t.Fatalf("continuity_reason %q must be rejected for lacking an evidence anchor, got %v", reason, err)
+		value, ref, err := repair.CreateTargetedReverification(root, request)
+		if err != nil || value.ContinuityReason != reason {
+			t.Fatalf("optional continuity was rejected or fabricated: %+v %v", value, err)
 		}
-	}
-	// Anchored reasons are accepted.
-	request := base
-	request.ContinuityReason = "test://verifier-run: independent verification after repair"
-	request.ReverificationID = "reverify-continuity-anchored"
-	if _, _, err := repair.CreateTargetedReverification(root, request); err != nil {
-		t.Fatalf("anchored continuity_reason must be accepted: %v", err)
-	}
-	request.ReverificationID = "reverify-continuity-evidence-path"
-	request.ContinuityReason = "evidence/reverify-red.json shows the original failure"
-	if _, _, err := repair.CreateTargetedReverification(root, request); err != nil {
-		t.Fatalf("evidence-path continuity_reason must be accepted: %v", err)
+		read, err := repair.ValidateTargetedReverification(root, ref)
+		if err != nil || read.ContinuityReason != reason {
+			t.Fatalf("stored continuity differs from the actual authored observation: %+v %v", read, err)
+		}
 	}
 }

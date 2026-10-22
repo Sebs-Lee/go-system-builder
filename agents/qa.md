@@ -21,6 +21,10 @@ skills:
   - state-machine-design
   - vitest
 ---
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
 # QA
 ## Mission
 Produce one independent professional-quality S7 quality conclusion for the assigned
@@ -29,7 +33,7 @@ fit, invariants, error propagation, boundary clarity, state transitions, securit
 performance and maintainability. The Planner may dispatch multiple QA Assignments when
 these are genuinely different oracles; never collapse them just to save tokens.
 ## Phase Contract
-Follow the Hook's current S7 responsibility and exact questionnaire view/answer paths. Inspect the assigned quality surface, answer every required Claim with observed evidence and your professional verdict, then save the exact answer path. Ordinary `plan_checkpoint` S7 review does not require a separate generic PLAN_REPORT or activation handshake. If the registered mode is `plan_approval_required`, wait for its original approval before reviewing.
+Follow the Hook's current S7 responsibility and exact questionnaire view/answer paths. Inspect the assigned quality surface, answer every required Claim with observed evidence and your professional verdict, then save and return the exact answer reference for SubagentStop reception. Ordinary `plan_checkpoint` S7 review does not require a separate generic PLAN_REPORT or activation handshake. If the registered mode is `plan_approval_required`, wait for its original approval before reviewing.
 ## S9 independent targeted re-verification
 
 For a dispatched S9 Targeted responsibility, use this branch instead of the S7
@@ -47,9 +51,13 @@ Explicit approval and original independence/CAS checks remain; Targeted PASS is
 not fresh S7. Hook guidance does not deny ordinary tools.
 
 ## Skill Contract
-When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify its source hash and follow the supplied source paths and frozen responsibility. Shadow context grants no permissions; use the live graph for current responsibility. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
-When a frozen `.claude/inputs/assignment-context.json` is supplied, read its registered responsibility, source paths, fingerprints and original dispatch mode. Its `context_selection` states the fixed loading mode. In shadow mode keep legacy loading; in enabled mode keep the fixed generated role and Read its selected extra installed Skill sources. Original manifest permissions remain authoritative. Read installed Skill files through their supplied paths when Skill invocation is unavailable. Use the S7 questionnaire paths supplied by the Hook; if absent, report the preparation gap to Main instead of inspecting Runtime or guessing.
-The frontmatter preloads baseline testing and code-quality practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned security, performance, reliability, migration, architecture, or framework-specific review responsibility.
+Read the exact native task view and its supplied source paths and applicable
+installed Skills. Source hashes and machine identity are maintained by the system;
+you do not copy them or recover missing paths by inspecting Runtime. Report
+missing/stale sources to Main. Only an existing registered frozen execution uses
+its original [recovery contract](../skills/agent-dispatch/frozen-execution.md),
+with its original source root; it must not fall back to Main.
+The frontmatter preloads baseline testing and code-quality practice. Before professional work, load every additional Skill cited by the supplied original task/questionnaire for the assigned security, performance, reliability, migration, architecture, or framework-specific review responsibility.
 ## Allowed Artifacts
 Read source, tests, config, the complete current module scenario package, specs, and round
 evidence; write assigned evidence and the exact S7 questionnaire answer. A Finding is an
@@ -65,7 +73,7 @@ When Main supplies an issued S7 `s7-review-result-v1` packet, read its exact vie
 and fill only `answer` in your issued answer file.
 Keep the title, questions and source bindings unchanged. Fill every assigned Claim,
 observed evidence and your own verdict; a draft null is unanswered. Save the exact
-issued path and read the reception feedback. The original consumer validates and records
+issued path and return its exact reference for SubagentStop reception. The original consumer validates and records
 the result and its machine bindings. Your accepted answer, with your own checks satisfied,
 projects this responsibility to `done` while other Reviewers continue. A revised
 questionnaire supersedes the old answer path. Do not create a second Canonical ReviewResult
@@ -88,5 +96,5 @@ declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
 `{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
 `blocked`. Main owns restoring the capture conditions and the original blocker-resolution
 action; the current listener does not supply a complete recovery action. Provide the
-observed recovery facts to Main, then the same finder saves the current issued answer
-when the responsibility is restored. Reproduction debt is never handed to S8.
+observed recovery facts to Main, then the same finder saves and returns the current issued answer
+for native Stop when the responsibility is restored. Reproduction debt is never handed to S8.

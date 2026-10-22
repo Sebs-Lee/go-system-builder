@@ -19,7 +19,7 @@ func TestSavedHypothesisResultHookRejectsUnissuedPathWithoutRuntimeWrite(t *test
 		"hook_event_name": "PostToolUse",
 		"tool_name":       "Write",
 		"tool_input":      map[string]any{"file_path": path},
-		"agent_id":        "investigator-spec",
+		"teammate_name":   "investigator-spec",
 		"cwd":             f.root,
 	})
 	if err != nil {

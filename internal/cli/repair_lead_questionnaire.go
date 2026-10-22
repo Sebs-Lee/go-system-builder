@@ -64,12 +64,12 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 		if questionnaireMissing(path) {
 			return "S9 ChangeImpact questionnaire is not prepared at " + path + "; Main/system must prepare the original request when this responsibility starts."
 		}
-		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the accepted Final batch changes, and the Contract-level reverification ID are supplied from the original sources. Complete the professional change types, per-change disposition/rationale, and evidence disposition, then save this exact request. The original CreateChangeImpact and CommitChangeImpact consumers run on save." + repairLeadPreviousQuestionnaires(path) + repairLeadAnswerHelp(root, snapshot.State, false)
+		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the accepted Final batch changes, and the Contract-level reverification ID are supplied from the original sources. Complete the actual change types and professional impact/evidence dispositions with their rationales, then save this exact request. If the supplied accepted Final batch has no product changes, keep change_types=[] and explain the original Case/Contract retention or reverification decision; do not invent changed files or a change type. The original CreateChangeImpact and CommitChangeImpact consumers run on save." + repairLeadPreviousQuestionnaires(path) + repairLeadAnswerHelp(root, snapshot.State, false)
 
 	case "targeted_reverification":
 		pointer := repairPointerCLI(snapshot.State)
 		blockedResume := stringValue(pointer["status"]) == "blocked" && stringValue(pointer["failure_route"]) == "blocked"
-		selections, selectionErr := repairObservedTargetedSelections(root, snapshot.State)
+		selections, selectionErr := repairTargetedSelections(root, snapshot.State)
 		if selectionErr != nil {
 			return "S9 independent TargetedReverification source is unavailable: " + selectionErr.Error() + repairLeadExistingQuestionnaires(root, snapshot.State)
 		}
@@ -144,7 +144,7 @@ func repairLeadAnswerHelp(root string, state map[string]any, targeted bool) stri
 	if targeted {
 		b.WriteString(`Targeted fields: assertion_results=[{"assertion_id":"<supplied slot>","result":"blocked","evidence_refs":["logs/actual-blocker.txt"]}]; result=pass|fail|blocked|scope_changed. Record actual observations and evidence for every necessary supplied Contract assertion; identify each unfinished observation or blocker honestly. failure_class for a non-pass result is fail_same_cause|fail_new_cause|blocked|scope_changed|stale; keep it empty for pass. Assertion result choices are pass|fail|blocked. continuity_reason and scope_compliance are optional legacy metadata, not additional required reports. Select only actual results and real evidence locations; no unsupported PASS or fabricated observation.`)
 	} else {
-		b.WriteString(`Impact fields: change_types=[requirement|design|contract|task|implementation|test|configuration|database|dependency|documentation_only]; escalation_level=assignment|workgroup|review_round|baseline; invalidated_evidence_ids, superseded_evidence_ids and retained_evidence_ids are references to actual evidence (or []). decisions is an array of complete objects. source_id identifies the actual change/source being analyzed (such as the supplied Case or changed artifact); target_id identifies its affected consumer, assertion or evidence; relation describes that dependency, not the disposition. decision is invalidate|supersede|retain|reverify. rule_id must match IM-[A-Z0-9-]+; responsibility_id is supplied by the system or null. Example shape: {"source_id":"<actual source>","target_id":"<actual affected target>","relation":"invalidates","rule_id":"IM-DEPENDENCY","decision":"reverify","responsibility_id":null,"scope":["<actual changed path>"],"rationale":"<actual dependency and disposition basis>","recovery_evidence":["test://actual-run"]}. Do not copy placeholders or invent evidence. Use an IM- rule label for the actual dependency judgment; it needs no extra registration. Cite real evidence from the supplied sources.`)
+		b.WriteString(`This is the original flat ChangeImpact request: professional fields stay at the top level, without an answer wrapper or invented questions. Correct an unreceived draft at its exact supplied path; never overwrite a registered immutable artifact. Impact fields: change_types=[requirement|design|contract|task|implementation|test|configuration|database|dependency|documentation_only]; escalation_level=assignment|workgroup|review_round|baseline; invalidated_evidence_ids, superseded_evidence_ids and retained_evidence_ids are references to actual evidence (or []). decisions is an array of complete objects. source_id identifies the actual change/source being analyzed (such as the supplied Case or changed artifact); target_id identifies its affected consumer, assertion or evidence; relation describes that dependency, not the disposition. decision is invalidate|supersede|retain|reverify. rule_id must match IM-[A-Z0-9-]+; responsibility_id is supplied by the system or null. Example shape: {"source_id":"<actual source>","target_id":"<actual affected target>","relation":"invalidates","rule_id":"IM-DEPENDENCY","decision":"reverify","responsibility_id":null,"scope":["<actual changed path>"],"rationale":"<actual dependency and disposition basis>","recovery_evidence":["test://actual-run"]}. Do not copy placeholders or invent evidence. Use an IM- rule label for the actual dependency judgment; it needs no extra registration. Cite real evidence from the supplied sources. An accepted whole batch can have changed_artifacts=[] and change_types=[]; decisions must still explain the actual Case/Contract impact and retained or required observations. Independent Contract reverification and fresh S7 remain necessary.`)
 	}
 	b.WriteString("\nActual source/evidence candidates (read their contents; a path alone is not proof):\n")
 	seen := map[string]bool{}
@@ -273,7 +273,7 @@ func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
 			paths = append(paths, path)
 		}
 	case "targeted_reverification":
-		selections, err := repairObservedTargetedSelections(root, state)
+		selections, err := repairTargetedSelections(root, state)
 		if err != nil {
 			return nil
 		}
@@ -589,14 +589,6 @@ func repairImpactReverificationIDs(state map[string]any) ([]string, error) {
 }
 
 func repairTargetedSelections(root string, state map[string]any) ([]repairTargetedSelection, error) {
-	return repairTargetedSelectionsFrom(root, state, true)
-}
-
-func repairObservedTargetedSelections(root string, state map[string]any) ([]repairTargetedSelection, error) {
-	return repairTargetedSelectionsFrom(root, state, false)
-}
-
-func repairTargetedSelectionsFrom(root string, state map[string]any, verify bool) ([]repairTargetedSelection, error) {
 	pointer := repairPointerCLI(state)
 	planRef := repair.ArtifactRef{Path: stringValue(pointer["plan_ref"])}
 	var plan repair.RepairPlan
@@ -892,6 +884,9 @@ func runSavedRepairLeadQuestionnaire(root string, request policy.Input, stdout, 
 			return saveRepairImpactQuestionnaire(root, snapshot, path, stdout)
 		}
 	}
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Independent Targeted reception happens at its native Stop.
+	}
 	if selections, selectErr := repairTargetedSelections(root, snapshot.State); selectErr == nil {
 		for _, selection := range selections {
 			expected, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID)
@@ -1013,8 +1008,8 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 	if err := json.Unmarshal(data, &answer); err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact answer at %s is not a valid original request DTO: %v", path, err))
 	}
-	if len(answer.ChangeTypes) == 0 || len(answer.Decisions) == 0 {
-		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer at "+path+" is incomplete: record actual change types and a professional disposition/rationale for each changed surface before saving again.")
+	if len(answer.Decisions) == 0 {
+		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer at "+path+" is incomplete: use the original flat request DTO with change_types and decisions at the top level, not an answer wrapper or a replacement questionnaire. Record professional dispositions and their actual rationales; record change types when the supplied Final artifacts actually changed. This unreceived authoring draft is corrected at the same exact path; fresh IDs/files apply to immutable registered artifacts, not this draft.")
 	}
 	pointer := repairPointerCLI(snapshot.State)
 	sessionID := stringValue(pointer["session_id"])
@@ -1024,6 +1019,9 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 	changeset, err := repair.CurrentRepairResultChangeset(root, snapshot.State)
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact answer could not read the accepted Final Result changeset: "+err.Error())
+	}
+	if len(changeset.Artifacts) > 0 && len(answer.ChangeTypes) == 0 {
+		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact is incomplete: record the actual change_types for the supplied accepted Final artifacts at "+path)
 	}
 	reverificationIDs, err := repairImpactReverificationIDs(snapshot.State)
 	if err != nil {
@@ -1076,16 +1074,33 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 }
 
 func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, stdout io.Writer) (bool, int) {
-	statePath := filepath.Join(root, ".claude", "loop-state.json")
-	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	answer, err := readRepairTargetedAnswer(path)
+	if err != nil {
+		return true, repairLeadFeedback(stdout, path, err.Error())
+	}
+	return saveRepairTargetedAnswer(root, snapshot, path, selection, answer, stdout)
+}
+
+func readRepairTargetedAnswer(path string) (repair.TargetedReverificationRequest, error) {
+	var answer repair.TargetedReverificationRequest
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s could not be read: %v", path, err))
+		return answer, nativeArtifactReadError("read S9 TargetedReverification answer "+path, err)
 	}
-	var answer repair.TargetedReverificationRequest
 	if err := json.Unmarshal(data, &answer); err != nil {
-		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s is not a valid original request DTO: %v", path, err))
+		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s is not a valid original request DTO: %w", path, err)}
 	}
+	if strings.TrimSpace(answer.Result) == "" {
+		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s must record the actual independent verdict and assertion observations before save", path)}
+	}
+	return answer, nil
+}
+
+func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer) (bool, int) {
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	var err error
+
 	pointer := repairPointerCLI(snapshot.State)
 	blockedResume := stringValue(pointer["status"]) == "blocked" && stringValue(pointer["failure_route"]) == "blocked"
 	if blockedResume && answer.Result == "blocked" {
@@ -1095,9 +1110,6 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 			}
 			return true, repairLeadFeedback(stdout, path, "S9 environmental blocker is already recorded by "+registered.Path+". Resolve it, then update the same TargetedReverification questionnaire with the actual assertion observations, results, evidence and any unfinished-work reason; Runtime was not changed.")
 		}
-	}
-	if strings.TrimSpace(answer.Result) == "" {
-		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification answer at "+path+" must record the actual independent verdict and assertion observations before save.")
 	}
 	answer.RuntimeID = stringValue(snapshot.State["runtime_id"])
 	answer.CaseID = stringValue(pointer["case_id"])

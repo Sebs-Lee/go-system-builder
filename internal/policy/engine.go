@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -98,7 +99,7 @@ type AgentContext struct {
 	// DocumentReviewAssignment marks an owner with a current issued S5
 	// questionnaire. It is a read-only Hook projection, not Runtime state.
 	DocumentReviewAssignment bool `json:"-"`
-	ReviewAssignment bool `json:"review_assignment,omitempty"`
+	ReviewAssignment         bool `json:"review_assignment,omitempty"`
 	// HypothesisResultAssignment is projected only from a registered S8
 	// Investigator whose exact issued packet or accepted original receipt is
 	// bound to this Assignment. It identifies the responsibility for
@@ -290,8 +291,10 @@ type RuntimeContext struct {
 }
 
 type Input struct {
-	CWD          string         `json:"cwd,omitempty"`
-	ToolResponse map[string]any `json:"tool_response,omitempty"`
+	// Internal transport lifetime, never an authored/persisted payload field.
+	Context      context.Context `json:"-"`
+	CWD          string          `json:"cwd,omitempty"`
+	ToolResponse map[string]any  `json:"tool_response,omitempty"`
 	scope        *pathscope.Worktrees
 	SessionID    string          `json:"session_id"`
 	Event        string          `json:"hook_event_name"`

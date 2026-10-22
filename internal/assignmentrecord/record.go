@@ -20,6 +20,7 @@ const (
 	// canonical Assignment Record. Runtime or manifest schema versions do not
 	// enable this contract.
 	AssignmentRecordContract = "s6-v1.2"
+	NativeDeliveryContract   = "s6-native-v1"
 	AssignmentRecordSchema   = "1.0.0"
 	ClosingContractVersion   = "s6-closing-v1"
 )
@@ -177,7 +178,7 @@ func ManifestAssignmentRecordEnabled(manifestBytes []byte) (bool, error) {
 	switch marker.Contract {
 	case "":
 		return false, nil
-	case AssignmentRecordContract:
+	case AssignmentRecordContract, NativeDeliveryContract:
 		return true, nil
 	default:
 		return false, fmt.Errorf("unsupported assignment_record_contract %q", marker.Contract)
@@ -258,7 +259,7 @@ func BuildRecord(
 	if err := json.Unmarshal(manifestBytes, &source); err != nil {
 		return Record{}, fmt.Errorf("decode validated team manifest: %w", err)
 	}
-	if source.Contract != AssignmentRecordContract {
+	if source.Contract != AssignmentRecordContract && source.Contract != NativeDeliveryContract {
 		return Record{}, fmt.Errorf("manifest assignment record contract changed during decode")
 	}
 	if source.WorkgroupKind != "builder" {
@@ -432,7 +433,7 @@ func BuildRecord(
 
 	record := Record{
 		SchemaVersion:        AssignmentRecordSchema,
-		Contract:             AssignmentRecordContract,
+		Contract:             source.Contract,
 		RuntimeID:            runtimeID,
 		BaselineGeneration:   generation,
 		RegistrationRevision: currentRevision + 1,
@@ -561,7 +562,7 @@ func EffectiveScope(basis ScopeBasis) ([]string, error) {
 // ValidateRecord checks the serialized authority object, including that its
 // effective write set is exactly reproducible from its retained source scope.
 func ValidateRecord(record Record) error {
-	if record.SchemaVersion != AssignmentRecordSchema || record.Contract != AssignmentRecordContract {
+	if record.SchemaVersion != AssignmentRecordSchema || (record.Contract != AssignmentRecordContract && record.Contract != NativeDeliveryContract) {
 		return fmt.Errorf("unsupported Assignment Record schema/contract")
 	}
 	if !recordRuntimeIDRE.MatchString(record.RuntimeID) || record.BaselineGeneration < 1 || record.RegistrationRevision < 1 {

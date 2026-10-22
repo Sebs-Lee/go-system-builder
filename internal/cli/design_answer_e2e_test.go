@@ -20,9 +20,12 @@ import (
 
 // Only the authorized planning baseline and authored documents are seeded.
 // Issuance, reception, transition and registration use original production code.
-func newDesignFixture(t *testing.T, impact string) (string, workpacket.DesignPacket) {
+func newDesignFixture(t *testing.T, impact string, beforeBind ...func(string)) (string, workpacket.DesignPacket) {
 	t.Helper()
 	root := fixtures.FreshRoot(t)
+	for _, configure := range beforeBind {
+		configure(root)
+	}
 	state := fixtures.BaseState(t, root, "planning", "design", 0)
 	state["review"].(map[string]any)["round"] = 0
 	state["schema_version"] = "1.2.0"

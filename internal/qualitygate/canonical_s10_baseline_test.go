@@ -1,16 +1,15 @@
 package qualitygate_test
 
 import (
-	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 )
 
-func TestS10GateRefusesCanonicalResultWithoutMainProjection(t *testing.T) {
-	evaluator := newTestEvaluator(t)
+func TestS10DiagnosticBaselineRefusesCanonicalResultWithoutMainProjection(t *testing.T) {
 	root := t.TempDir()
 	manifest := validS10Manifest(t, "acceptance")
 	input := s10GateInput(t, "GATE-ACCEPTANCE-COMPLETE", "TR-015", "acceptance", map[string]any{
@@ -33,12 +32,7 @@ func TestS10GateRefusesCanonicalResultWithoutMainProjection(t *testing.T) {
 		"produced_by": []any{"builder-1"}, "invalidated_by": nil,
 		"responsibility_id": "BUILD-WORK-PACKAGE", "scope_refs": []any{},
 	})
-	result, err := evaluator.Evaluate(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Status != qualitygate.StatusUnknown || result.ErrorCode != qualitygate.ErrorGateUnknown ||
-		!containsPrefix(result.Conflicts, "s10:acceptance_manifest:ev-acc:external_baseline_unverifiable") {
-		t.Fatalf("canonical Result without Main projection must fail closed, got %+v", result)
+	if _, err := qualitygate.S10ExternalBaseline(root, input.Snapshot.State, nil); err == nil || !strings.Contains(err.Error(), "original Main facts") {
+		t.Fatalf("diagnostic baseline accepted a canonical Result without its Main projection: %v", err)
 	}
 }

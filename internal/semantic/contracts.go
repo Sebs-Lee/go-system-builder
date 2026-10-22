@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
+	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/sharedmodel"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,7 +25,8 @@ var (
 		regexp.MustCompile(`\bPATH-[A-Z0-9]+(?:-[A-Z0-9]+)*`),
 		regexp.MustCompile(`\bFR-[A-Z0-9]+(?:-[A-Z0-9]+)*`),
 	}
-	contractClauseCellPattern = regexp.MustCompile(`\b(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*\s*§\d+`)
+	contractClauseCellPattern  = regexp.MustCompile(`\b(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*\s*§\d+`)
+	contractQualifiedFRPattern = regexp.MustCompile(`\b(REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*)/(FR-[A-Z0-9]+(?:-[A-Z0-9]+)*)\b`)
 )
 
 type ContractCheckResult struct {
@@ -43,11 +46,37 @@ func ContractsCheck(root string) (ContractCheckResult, error) {
 	return ContractsCheckWithFiles(root, fileview.Disk{Root: root})
 }
 func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (ContractCheckResult, error) {
+	requested := ""
+	if len(reqIDs) > 0 {
+		requested = reqIDs[0]
+	}
+	requirement, err := contractRequirement(root, requested)
+	if err != nil {
+		return ContractCheckResult{}, err
+	}
+	if requirement.ID != "" {
+		paths, err := contractBatchPaths(root, files, requirement.ID)
+		if err != nil {
+			return ContractCheckResult{}, err
+		}
+		return ContractsCheckBatch(root, files, requirement, paths)
+	}
+	return contractsCheck(root, files, requirement, nil)
+}
+
+func contractsCheck(root string, files fileview.Reader, requirement workpacket.Reference, paths []string) (ContractCheckResult, error) {
 	root, _ = filepath.Abs(root)
 	result := ContractCheckResult{Problems: []string{}}
+	var reqIDs []string
+	if requirement.ID != "" {
+		reqIDs = []string{requirement.ID}
+	}
 	models := sharedmodel.Check(root, files, reqIDs...)
 	result.Problems = append(result.Problems, models.Problems...)
 	result.Warnings = models.Warnings
+	if requirement.ID == "" {
+		result.Warnings = append(result.Warnings, "all-project authoring diagnostic: no active REQ scope; this does not certify any single contract batch")
+	}
 	result.ModelRows = models.Rows
 	dir := filepath.Join(root, projectlayout.Contracts)
 	entries, err := files.ReadDir(dir)
@@ -60,12 +89,14 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 
 	universe := map[string]bool{}
 	caseUniverse := map[string]bool{}
+	currentCases := map[string]bool{}
 	modules, _ := files.ReadDir(filepath.Join(root, "docs", "design", "prototypes"))
 	for _, module := range modules {
 		if !module.IsDir() || module.Name() == "template" || module.Name() == "templates" {
 			continue
 		}
 		mpath := filepath.Join(root, "docs", "design", "prototypes", module.Name())
+		moduleGenerated := map[string]bool{}
 		for _, file := range []string{"cases.json", "stories.md", "flows.md"} {
 			data, err := files.ReadFile(filepath.Join(mpath, file))
 			if err != nil {
@@ -77,6 +108,7 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 					result.Problems = append(result.Problems, fmt.Sprintf("%s: cases.json unreadable: %v", module.Name(), err))
 				}
 				for id := range ids {
+					moduleGenerated[id] = true
 					universe[id] = true
 					caseUniverse[id] = true
 				}
@@ -92,10 +124,15 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 		// denominator: cases.json is a generated artifact, and a tampered
 		// cases.json (delete a CASE, delete its citations) would otherwise
 		// silently shrink the verification denominator.
-		modelCaseIDs, modelErr := modelCaseIDsWithFiles(filepath.Join(mpath, "scenario-model.json"), files)
+		modelCaseIDs, scopedCases, modelErr := modelCaseSetsWithFiles(filepath.Join(mpath, "scenario-model.json"), files, requirement.ID)
+		for id := range scopedCases {
+			currentCases[id] = true
+		}
 		switch {
 		case modelErr != nil:
 			result.Problems = append(result.Problems, fmt.Sprintf("%s: scenario-model.json unreadable: %v — the CASE denominator cannot be verified", module.Name(), modelErr))
+		case requirement.ID != "" && len(modelCaseIDs) == 0 && len(moduleGenerated) > 0:
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: original model sources are unavailable; cannot establish CASE obligations for %s", module.Name(), requirement.ID))
 		case len(modelCaseIDs) > 0:
 			for id := range modelCaseIDs {
 				caseUniverse[id] = true
@@ -125,20 +162,27 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 			reqFiles = append(reqFiles, filepath.Join(root, projectlayout.Requirements, entry.Name()))
 		}
 	}
-	for _, reqFile := range reqFiles {
-		data, err := files.ReadFile(reqFile)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "| FR-") {
-				cells := strings.Split(strings.Trim(trimmed, "|"), "|")
-				if len(cells) > 0 {
-					reqFRs[strings.TrimSpace(cells[0])] = true
-				}
+	if requirement.ID == "" { // Legacy all-repository authoring diagnostic.
+		for _, reqFile := range reqFiles {
+			data, err := files.ReadFile(reqFile)
+			if err != nil {
+				continue
+			}
+			for id := range scenario.DeclaredFRIDs(string(data)) {
+				reqFRs[id] = true
 			}
 		}
+	}
+	frByREQ := map[string]map[string]bool{}
+	readFRs := func(owner string) (map[string]bool, error) {
+		if ids, ok := frByREQ[owner]; ok {
+			return ids, nil
+		}
+		ids, err := contractRequirementFRs(root, files, requirement, owner)
+		if err == nil {
+			frByREQ[owner] = ids
+		}
+		return ids, err
 	}
 
 	citedCases := map[string]bool{}
@@ -151,7 +195,20 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 		contractIDs[id] = filepath.Join(dir, entry.Name())
 	}
 
-	for id, path := range contractIDs {
+	checkedIDs := contractIDs
+	if requirement.ID != "" {
+		checkedIDs = map[string]string{}
+		for _, path := range paths {
+			id := strings.TrimSuffix(filepath.Base(path), ".md")
+			actual, ok := contractIDs[id]
+			if !ok || filepath.Clean(filepath.Join(root, path)) != filepath.Clean(actual) {
+				result.Problems = append(result.Problems, fmt.Sprintf("%s: current contract delivery path %s is unavailable", requirement.ID, path))
+				continue
+			}
+			checkedIDs[id] = actual
+		}
+	}
+	for id, path := range checkedIDs {
 		result.Contracts++
 		data, err := files.ReadFile(path)
 		if err != nil {
@@ -159,6 +216,20 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 			continue
 		}
 		content := currentContractText(string(data))
+		bareFRs := map[string]bool{}
+		if requirement.ID != "" {
+			for _, token := range contractTokens(contractQualifiedFRPattern.ReplaceAllString(content, "")) {
+				bareFRs[token] = true
+			}
+			for _, ref := range contractQualifiedFRPattern.FindAllStringSubmatch(content, -1) {
+				ids, err := readFRs(ref[1])
+				if err != nil {
+					result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s: %v", id, ref[0], err))
+				} else if !ids[ref[2]] {
+					result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s is not declared by %s", id, ref[0], ref[1]))
+				}
+			}
+		}
 		content = expandContractCaseRanges(content)
 		var unknownGroups []string
 		content, unknownGroups = expandContractCaseGroups(content, caseUniverse)
@@ -171,7 +242,16 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 				citedCases[token] = true
 			}
 			if strings.HasPrefix(token, "FR-") {
-				if !reqFRs[token] {
+				if requirement.ID != "" {
+					if bareFRs[token] {
+						ids, err := readFRs(requirement.ID)
+						if err != nil {
+							result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s: %v", id, token, err))
+						} else if !ids[token] {
+							result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s is not declared by current %s", id, token, requirement.ID))
+						}
+					}
+				} else if !reqFRs[token] {
 					result.Problems = append(result.Problems, fmt.Sprintf("%s: token %s does not exist in any REQ's FR table", id, token))
 				}
 				continue
@@ -188,16 +268,14 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q points at unknown contract", id, cell))
 				continue
 			}
-			// Cheap anti-drift check: the §n cited in an index
-			// cell must exist in the target contract's own clause map —
-			// otherwise the two sides number clauses independently. The
-			// numbers are compared as a set, so §1 cannot satisfy §10
-			// (substring comparison would be a false negative).
+			// The existing template declares obligations in 本合同条款,
+			// not in prose, examples or another contract's reference column.
+			// This is structural reconciliation; S3/S5 own the semantics.
 			n := clauseNumberOf(cell)
 			targetData, err := files.ReadFile(target)
-			declared := declaredClauseNumbers(string(targetData))
+			declared := declaredClauseNumbers(string(targetData), contractID)
 			if err != nil || !declared[n] {
-				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q cites %s §%s but the target contract never declares that clause number — align the index cell with the contract's own clause map", id, cell, contractID, n))
+				result.Problems = append(result.Problems, fmt.Sprintf("%s: clause cell %q cites %s §%s but the target contract's 本合同条款 column does not declare that clause — Main must align this reference with the target's existing clause table; prose, examples and foreign contract references cannot declare its obligations", id, cell, contractID, n))
 			}
 		}
 		for _, line := range strings.Split(content, "\n") {
@@ -221,9 +299,13 @@ func ContractsCheckWithFiles(root string, files fileview.Reader, reqIDs ...strin
 	// member; a case no contract clause cites is neither locked nor covered
 	// by any TASK — the chain leaks at CASE→contract (single-denominator rule).
 	if result.Contracts > 0 {
-		for token := range caseUniverse {
+		requiredCases := caseUniverse
+		if requirement.ID != "" {
+			requiredCases = currentCases
+		}
+		for token := range requiredCases {
 			if !citedCases[token] {
-				result.Problems = append(result.Problems, fmt.Sprintf("reverse closure: %s exists in module packages but no contract cites it — cite it in the CONTRACTS index coverage matrix (or the FE contract case-mapping table) so it re-enters the verification denominator", token))
+				result.Problems = append(result.Problems, fmt.Sprintf("reverse closure: %s exists in module packages but no contract in the checked batch %s cites it — cite it in the CONTRACTS index coverage matrix (or the FE contract case-mapping table) so it re-enters the verification denominator", token, requirement.ID))
 			}
 		}
 	}
@@ -393,42 +475,94 @@ func modelCaseIDs(path string) (map[string]bool, error) {
 	return modelCaseIDsWithFiles(path, fileview.Disk{Root: "."})
 }
 func modelCaseIDsWithFiles(path string, files fileview.Reader) (map[string]bool, error) {
+	all, _, err := modelCaseSetsWithFiles(path, files, "")
+	return all, err
+}
+
+func modelCaseSetsWithFiles(path string, files fileview.Reader, reqID string) (map[string]bool, map[string]bool, error) {
 	data, err := files.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	var model struct {
 		Rules []struct {
-			Branches []struct {
+			SourceRefs []string `json:"source_refs"`
+			Branches   []struct {
 				CaseID string `json:"case_id"`
 			} `json:"branches"`
 		} `json:"rules"`
 	}
 	if err := json.Unmarshal(data, &model); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ids := map[string]bool{}
+	scoped := map[string]bool{}
 	for _, rule := range model.Rules {
+		if reqID != "" && len(rule.Branches) > 0 && len(rule.SourceRefs) == 0 {
+			return nil, nil, fmt.Errorf("rule source_refs unavailable; cannot establish CASE obligations for %s", reqID)
+		}
+		belongs := reqID == ""
+		for _, ref := range rule.SourceRefs {
+			if ref == reqID || strings.HasPrefix(ref, reqID+"/") {
+				belongs = true
+			}
+		}
 		for _, branch := range rule.Branches {
 			if branch.CaseID != "" {
 				ids[branch.CaseID] = true
+				if belongs {
+					scoped[branch.CaseID] = true
+				}
 			}
 		}
 	}
-	return ids, nil
+	return ids, scoped, nil
 }
 
-// clauseNumbersPattern extracts every §n token (digits only) so clause
-// numbers compare as a set — "§1" must not satisfy "§10".
-var clauseNumbersPattern = regexp.MustCompile(`§(\d+)`)
+var declaredClausePattern = regexp.MustCompile(`^(?:((?:FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*)\s+)?§(\d+)$`)
 
-func declaredClauseNumbers(content string) map[string]bool {
+// Read the original template's own declaration column. A bounded structural
+// reader suffices here: pipe tables with header/separator rows and explicit
+// clause tokens. This does not interpret promises or establish coverage.
+func declaredClauseNumbers(content, contractID string) map[string]bool {
 	out := map[string]bool{}
-	for _, m := range clauseNumbersPattern.FindAllStringSubmatch(content, -1) {
-		out[m[1]] = true
+	column := -1
+	var previous []string
+	for _, line := range strings.Split(currentContractText(content), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") {
+			column, previous = -1, nil
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		separator := true
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+			if strings.Trim(cells[i], ":- ") != "" || !strings.Contains(cells[i], "-") {
+				separator = false
+			}
+		}
+		if separator {
+			column = -1
+			if len(previous) == len(cells) {
+				for i, cell := range previous {
+					if strings.Trim(strings.Trim(cell, "`* "), "§ ") == "本合同条款" {
+						column = i
+					}
+				}
+			}
+		} else if column >= 0 && column < len(cells) {
+			for _, token := range strings.FieldsFunc(cells[column], func(r rune) bool { return strings.ContainsRune(",，、;；/", r) }) {
+				m := declaredClausePattern.FindStringSubmatch(strings.Trim(token, "`* \t"))
+				if m != nil && (m[1] == "" || m[1] == contractID) {
+					out[m[2]] = true
+				}
+			}
+		}
+		previous = cells
 	}
 	return out
 }

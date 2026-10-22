@@ -387,7 +387,7 @@ func applyAssignmentRevision(root string, state map[string]any, value manifest, 
 		return Record{}, fmt.Errorf("stale Assignment revision: current Record changed before Writer apply")
 	}
 	if taskID != previous.Task.ID || taskRef != previous.Task.Ref || sha256Of(taskBytes) != previous.Task.SHA256 {
-		return Record{}, fmt.Errorf("Assignment revision must retain the exact current locked TASK source")
+		return Record{}, fmt.Errorf("Assignment revision must retain the exact current locked TASK source %s (%s). Main must route formal TASK changes through original planning/document review; do not refresh fingerprints or repeat this revision to replace the specification", previous.Task.ID, previous.Task.Ref)
 	}
 	if value.WorkgroupID == previous.TeamID || containsEntity(entityRows(state, "teams"), value.WorkgroupID) {
 		return Record{}, fmt.Errorf("Assignment revision requires a fresh Team/workgroup id")
@@ -503,7 +503,11 @@ func applyAssignmentRevision(root string, state map[string]any, value manifest, 
 		"dispatch_mode": mode, "readback_ref": nil, "activation_ref": nil,
 		"activation_revision": nil, "updated_at": occurredAt.UTC().Format(time.RFC3339Nano),
 	}
-	if err := workstate.RecordAgentActivity(state, newAgent, "reading", "workgroup_registered"); err != nil {
+	activity := "reading"
+	if value.AssignmentRecordContract == assignmentrecord.NativeDeliveryContract {
+		activity = "queued"
+	}
+	if err := workstate.RecordAgentActivity(state, newAgent, activity, "workgroup_registered"); err != nil {
 		return Record{}, fmt.Errorf("record revised owner Agent work state: %w", err)
 	}
 	entities["agents"] = append(agents, newAgent)
@@ -878,6 +882,9 @@ func stageRevisionArtifacts(root string, state map[string]any, artifacts map[str
 }
 
 func preStageRevisionActivation(root string, state map[string]any, value manifest, taskID string, item assignment, record Record, agent map[string]any, occurredAt time.Time, staged *[]loopruntime.ArtifactCleanupRequest) error {
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		return nil
+	}
 	ref := record.Reference()
 	sha, err := record.Digest()
 	if err != nil {

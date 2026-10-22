@@ -64,7 +64,7 @@ func TestS10ProjectionKeepsTheAuditSequenceVisible(t *testing.T) {
 		want  []string
 	}{
 		{state: "acceptance", want: []string{"exact questionnaire path supplied by the listener", "professional dispositions", "counterevidence", "references and conclusion", "original acceptance consumer"}},
-		{state: "release_audit", want: []string{"exact supplied path", "all eight areas", "counterevidence", "original consumer", "blocking findings through the original rework route"}},
+		{state: "release_audit", want: []string{"actual release risks", "accepted acceptance results", "save the exact supplied release-audit questionnaire", "original exit", "reading prompts, not required tasks"}},
 	} {
 		t.Run(tc.state, func(t *testing.T) {
 			stage, _, action := projectNext(tc.state, "", ".")

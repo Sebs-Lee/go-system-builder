@@ -19,15 +19,15 @@ func TestTaskPlanningReceiptProjectsRecordedFactsWithoutArtifactReads(t *testing
 				t.Fatalf("record projection: %+v %v", got, err)
 			}
 			if status == "advanced" {
-				if len(got.WaitingOn) != 0 || !strings.Contains(got.NextAction, "S5") {
+				if len(got.WaitingOn) != 0 || got.ConsumerPending || !strings.Contains(got.NextAction, "S5") {
 					t.Fatalf("advanced receipt: %+v", got)
 				}
-			} else if len(got.WaitingOn) != 1 || got.WaitingOn[0].Ref != "recorded-followup" {
+			} else if len(got.WaitingOn) != 1 || got.WaitingOn[0].Ref != "recorded-followup" || !got.ConsumerPending || got.ConsumerOwner != "main" || !strings.Contains(got.NextAction, "recorded-followup") {
 				t.Fatalf("pending receipt: %+v", got)
 			}
 			state["baseline"] = map[string]any{"generation": 2}
 			replaced, err := s.taskPlanningReceipt(runtime.Snapshot{State: state}, p)
-			if err != nil || !replaced.Accepted || replaced.WorkComplete || replaced.ResponsibilityStatus != "replaced" || len(replaced.WaitingOn) != 0 || strings.Contains(replaced.NextAction, "S5") {
+			if err != nil || !replaced.Accepted || replaced.WorkComplete || replaced.ResponsibilityStatus != "replaced" || replaced.ConsumerPending || len(replaced.WaitingOn) != 0 || strings.Contains(replaced.NextAction, "S5") {
 				t.Fatalf("replaced receipt: %+v %v", replaced, err)
 			}
 		})

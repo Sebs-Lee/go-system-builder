@@ -890,23 +890,26 @@ func CommitChangeImpact(root, statePath, journalPath string, req CommitImpactReq
 		return runtimepkg.Snapshot{}, fmt.Errorf("ChangeImpact baseline_generation %d does not match Runtime baseline_generation %d", impactDocument.BaselineGeneration, baselineGeneration(current.State))
 	}
 	// Read already accepted Final facts; no recursive receipt/source proof.
-	complete := len(impactDocument.ChangeTypes) > 0 && len(impactDocument.Decisions) > 0
-	refs, err := currentRepairResultRefs(p)
+	complete := (len(impactDocument.ChangedArtifacts) == 0 || len(impactDocument.ChangeTypes) > 0) && len(impactDocument.Decisions) > 0
+	results, err := currentRepairResults(root, p)
 	if err != nil {
 		return current, err
 	}
-	if len(refs) == 0 {
+	accepted, err := repairResultChangeset(stringField(p["session_id"]), results)
+	if err != nil {
+		return current, err
+	}
+	reported, err := repairChangesetRecord(stringField(p["session_id"]), "explicit", impactDocument.ChangedArtifacts)
+	if err != nil {
+		return current, err
+	}
+	if accepted.Digest != reported.Digest {
+		return current, errors.New("ChangeImpact changed_artifacts do not describe the current accepted Final contribution; Main/system must prepare its original request from those Final facts")
+	}
+	if len(results) == 0 {
 		complete = false
 	}
-	for _, ref := range refs {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ref.Path)))
-		if err != nil {
-			return current, err
-		}
-		var result RepairResult
-		if err := json.Unmarshal(data, &result); err != nil {
-			return current, err
-		}
+	for _, result := range results {
 		if result.Result != "pass" {
 			complete = false
 		}
@@ -1110,15 +1113,11 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	if p == nil || (stringField(p["status"]) != "targeted_reverification" && stringField(p["status"]) != "ready_for_full_review") {
 		return current, errors.New("S9 targeted reverification requires the current verification responsibility")
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(req.Reverification.Path)))
+	value, err := ValidateTargetedReverification(root, req.Reverification)
 	if err != nil {
 		return current, err
 	}
-	var value TargetedReverification
-	if err := json.Unmarshal(data, &value); err != nil {
-		return current, err
-	}
-	data, err = os.ReadFile(filepath.Join(root, filepath.FromSlash(stringField(p["impact_ref"]))))
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(stringField(p["impact_ref"]))))
 	if err != nil {
 		return current, err
 	}
@@ -1130,12 +1129,12 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 		return current, errors.New("Targeted report is not associated with the current impact responsibility")
 	}
 	owners := stringMapField(p["assignment_owners"])
-	actor := owners[value.PerformingAssignmentID]
+	actor := dispatchedVerifierAgentID(value.PerformingAssignmentID, owners)
 	if actor == "" {
-		actor = value.PerformingAssignmentID
+		return current, errors.New("Targeted performing_assignment_id is not a dispatched verifier identity in the current responsibility; Main must resolve its original assignment owner")
 	}
-	if actor == "" {
-		actor = "orchestrator"
+	if requested := strings.TrimSpace(req.Actor); requested != "" && requested != actor {
+		return current, errors.New("Targeted actor does not match its recorded responsibility owner; Main must resolve the original handoff")
 	}
 	// Main arranges a person who did not implement or merge this repair.
 	// Existing implementation facts can expose a conflict; labels grant nothing.
@@ -1179,11 +1178,8 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	}
 	observed := map[string]string{}
 	for _, report := range latest {
-		performer := owners[report.PerformingAssignmentID]
-		if performer == "" {
-			performer = report.PerformingAssignmentID
-		}
-		if report.Result != "pass" || implementers[performer] {
+		performer := dispatchedVerifierAgentID(report.PerformingAssignmentID, owners)
+		if performer == "" || report.Result != "pass" || implementers[performer] {
 			continue
 		}
 		for _, result := range report.AssertionResults {
@@ -1420,9 +1416,9 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	// (ValidatePlan → rejectPlannerPlaceholders). The TR-012 handoff seed is
 	// intentionally unrefined — `createS7ReviewPlanSeed` marks every substantive
 	// Claim field with PLANNER-REFINE and the next action tells the Planner to
-	// `runtime review-plan revise` once before dispatch. Validating the seed
+	// first register its professional Plan before dispatch. Validating the seed
 	// through ValidatePlanArtifactForRegistration would reject every handoff.
-	// The S7 revision gate, not the handoff installer, enforces refinement.
+	// The original S7 registration gate, not the handoff installer, enforces refinement.
 	newBaselineDigest := seedBaselineDigest(impactDocument.ChangedArtifacts)
 	at := occurred(req.OccurredAt)
 	actor := req.Actor
@@ -1432,7 +1428,7 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	commitRevision := runtimeCommitRevision(req.ExpectedRevision, current)
 	return func() (runtimepkg.Snapshot, error) {
 		snapshot, updateErr := updateRuntime(writer, req.ExpectedRevision, runtimepkg.Mutation{EventID: fmt.Sprintf("evt-s9-handoff-r%d", commitRevision+1), TransitionID: whitelistChecked("TR-012"), Event: "repair_handoff_ready", Actor: actor, IdempotencyKey: fmt.Sprintf("runtime:s9:handoff:%s:%d", req.Handoff.Path, commitRevision), RuntimeID: stringField(current.State["runtime_id"]), EvidenceIDs: []string{req.Handoff.Path, seedRef.Path}, From: cursor(current.State), To: map[string]any{"state": "verification", "phase": "running"}, RequestID: "s9-handoff", BaselineGeneration: baselineGeneration(current.State), GateID: "S9-REPAIR-HANDOFF", GateFingerprint: "sha256:s9-repair-handoff-v3", ProducerResponsibility: "S9 Repair", OccurredAt: at, Apply: func(state map[string]any) error {
-			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "review the staged S7 seed; if coverage changes, refine it once with `runtime review-plan revise --file <plan-v2.json> --source-ref runtime:<change-impact-evidence-id> --affected-surface <surface>`, then dispatch Delivery + QA + E2E assignments", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
+			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "author the first professional S7 plan from the exact staged seed, preserving its id, round, generation and pinned baseline; register it through `runtime review-plan --file <professional-plan.json>` before any dispatch. Decide actual E2E applicability; an applicable browser surface gets its original cold-start/regression work, genuine N/A has no E2E Assignment and a null verification_artifact_workspace. Do not add Runtime-only digest fields. Later discovery changes retain the original one controlled revision through runtime review-plan revise", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
 			review := ensureObject(state, "review")
 			round := integerValue(review["round"])
 			round++
@@ -2031,30 +2027,20 @@ func artifactRefsFromAny(raw any, label string) ([]ArtifactRef, error) {
 	return refs, nil
 }
 
-func missingRequiredTargetedReverificationIDs(root string, refs []ArtifactRef, requiredIDs []string) ([]string, error) {
-	passedIDs := map[string]bool{}
-	for _, ref := range refs {
-		value, err := ValidateTargetedReverification(root, ref)
-		if err != nil {
-			return nil, fmt.Errorf("validate current TargetedReverification %s: %w", ref.Path, err)
-		}
-		if value.Result == "pass" && value.ScopeCompliance == "pass" {
-			passedIDs[value.ReverificationID] = true
-		}
-	}
-	missing := make([]string, 0, len(requiredIDs))
-	for _, id := range requiredIDs {
-		if !passedIDs[id] {
-			missing = append(missing, id)
-		}
-	}
-	return missing, nil
-}
-
 // Read completed work from the current recorded batch, not reference proofs.
 func validateHandoffAgainstCurrentRepair(root string, state, pointer map[string]any, handoff RepairHandoff) error {
-	if handoff.SessionRef.Path != stringField(pointer["path"]) {
-		return errors.New("Handoff is not for the current repair responsibility")
+	for _, source := range []struct {
+		name, path, sha string
+		actual          ArtifactRef
+	}{
+		{"session", "path", "sha256", handoff.SessionRef},
+		{"plan", "plan_ref", "plan_sha256", handoff.PlanRef},
+		{"contract", "contract_ref", "contract_sha256", handoff.ContractRef},
+		{"change_impact", "impact_ref", "impact_sha256", handoff.ChangeImpactRef},
+	} {
+		if source.actual.Path != stringField(pointer[source.path]) || source.actual.SHA256 != stringField(pointer[source.sha]) {
+			return fmt.Errorf("Handoff %s does not reference the current accepted source; Main/system must rebuild its automatic summary from the original receipts", source.name)
+		}
 	}
 	refs, err := currentRepairResultRefs(pointer)
 	if err != nil {
@@ -2062,6 +2048,22 @@ func validateHandoffAgainstCurrentRepair(root string, state, pointer map[string]
 	}
 	if len(refs) == 0 {
 		return errors.New("repair work and Main checks remain unfinished")
+	}
+	resultFound := false
+	for _, ref := range refs {
+		resultFound = resultFound || ref.Path == handoff.ResultRef.Path && ref.SHA256 == handoff.ResultRef.SHA256
+	}
+	if !resultFound {
+		return errors.New("Handoff result does not reference the current accepted Final batch; Main/system must rebuild its automatic summary from the original receipts")
+	}
+	acceptedTargeted := map[string]string{}
+	for _, ref := range existingArtifactRefs(pointer["targeted_reverification_artifacts"]) {
+		acceptedTargeted[ref.Path] = ref.SHA256
+	}
+	for _, ref := range handoff.TargetedReverificationRefs {
+		if sha, found := acceptedTargeted[ref.Path]; !found || sha != ref.SHA256 {
+			return fmt.Errorf("Handoff targeted_reverification %q is not an accepted current observation; Main/system must rebuild its automatic summary from the original receipts", ref.Path)
+		}
 	}
 	for _, ref := range refs {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ref.Path)))
@@ -2089,7 +2091,7 @@ func validateHandoffAgainstCurrentRepair(root string, state, pointer map[string]
 	if err := json.Unmarshal(data, &impact); err != nil {
 		return err
 	}
-	if len(impact.ChangeTypes) == 0 || len(impact.Decisions) == 0 {
+	if (len(impact.ChangedArtifacts) > 0 && len(impact.ChangeTypes) == 0) || len(impact.Decisions) == 0 {
 		return errors.New("professional impact judgment remains unfinished")
 	}
 	// Targeted reception already recorded the current completion fact. Do not

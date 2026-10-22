@@ -13,8 +13,29 @@ import (
 )
 
 // ActivatedRef derives a missing observation from the existing validated
-// activation chain. It never writes Runtime or trusts a working-state label.
+// activation chain. Native delivery returns its received professional plan,
+// without claiming approval or activation. It never writes Runtime.
 func ActivatedRef(root string, snapshot runtimemeta.Snapshot, agentID string) (string, error) {
+	record, found, recordErr := assignmentrecord.ForOwner(snapshot.State, agentID)
+	if recordErr != nil {
+		return "", recordErr
+	}
+	if found && record.Contract == assignmentrecord.NativeDeliveryContract {
+		entities, _ := snapshot.State["entities"].(map[string]any)
+		rows, _ := entities["agents"].([]any)
+		for _, raw := range rows {
+			a, _ := raw.(map[string]any)
+			if a["id"] == agentID {
+				ref := strValue(a["plan_reported_ref"])
+				if ref == "" {
+					return "", nil
+				}
+				return ref, Validate(root, snapshot, agentID, ref)
+			}
+		}
+		return "", nil
+	}
+
 	entities, _ := snapshot.State["entities"].(map[string]any)
 	rows, _ := entities["agents"].([]any)
 	for _, raw := range rows {

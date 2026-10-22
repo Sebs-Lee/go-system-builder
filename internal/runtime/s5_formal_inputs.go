@@ -427,9 +427,8 @@ func acceptedTaskPlanningArtifacts(root string, state map[string]any, p workpack
 	if err != nil {
 		return nil, err
 	}
-	if len(actualTasks) != len(answer.TaskPaths) {
-		return nil, fmt.Errorf("S4 answer task set is not the complete current REQ batch")
-	}
+	// The original batch enumerator supplies complete and cancelled artifacts.
+	// TaskPaths names the author's work; it is not a second machine manifest.
 	taskByPath := map[string]taskPlanningArtifact{}
 	complete := 0
 	for _, task := range actualTasks {

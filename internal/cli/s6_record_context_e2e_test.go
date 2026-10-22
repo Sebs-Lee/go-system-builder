@@ -263,7 +263,7 @@ func TestS6NativeAssignmentContextPlanBeginUsesCanonicalRecord(t *testing.T) {
 	}
 	stageJSON(t, root, contextView.PlanPath, plan)
 
-	s6SaveQuestionnaireHook(t, root, root, filepath.Join(root, filepath.FromSlash(contextView.PlanPath)))
+	s6SaveQuestionnaireHook(t, root, root, record.OwnerAgentID, filepath.Join(root, filepath.FromSlash(contextView.PlanPath)))
 	afterBegin := stageSnapshot(t, root)
 	if afterBegin.State["lifecycle"].(map[string]any)["state"] != "building" {
 		t.Fatalf("AgentBegin changed the Main lifecycle: %v", afterBegin.State["lifecycle"])
@@ -451,7 +451,7 @@ func TestS6CanonicalResultCLIAcceptanceReplayAndCurrentReceipt(t *testing.T) {
 	firstPath := fixture.resultPath
 	stageJSON(t, fixture.root, firstPath, firstMessage)
 	beforeFirst := stageSnapshot(t, fixture.root)
-	firstOutput := s6SaveQuestionnaireHook(t, fixture.root, fixture.root, filepath.Join(fixture.root, filepath.FromSlash(firstPath)))
+	firstOutput := stageCLI(t, "runtime", "task-complete", "--root", fixture.root, "--agent-id", fixture.record.OwnerAgentID, "--message", firstPath)
 	first := s6DecodeCanonicalTaskCompleteOutput(t, firstOutput)
 	if first.Revision != beforeFirst.Revision+1 || first.Acceptance.ResultRef == "" || first.Acceptance.ResultSHA256 == "" ||
 		first.Acceptance.ResultRevision != 1 || len(first.Acceptance.AnswerDigest) != 64 || first.Acceptance.Replayed || !first.Acceptance.Current {
@@ -594,7 +594,10 @@ func readyS6CanonicalResultCLI(t *testing.T) s6CanonicalResultCLIFixture {
 	plan["dependencies"] = []any{}
 	plan["risks_blockers"] = []any{}
 	stageJSON(t, root, contextView.PlanPath, plan)
-	s6SaveQuestionnaireHook(t, root, root, filepath.Join(root, filepath.FromSlash(contextView.PlanPath)))
+	// This fixture deliberately tests an existing frozen canonical Record, not
+	// a new native delivery. Use its original named compatibility consumer;
+	// ordinary Worker saves no longer receive professional submissions.
+	stageCLI(t, "runtime", "agent-begin", "--root", root, "--agent-id", record.OwnerAgentID, "--plan", contextView.PlanPath)
 	afterBegin := stageSnapshot(t, root)
 	var state string
 	for _, raw := range afterBegin.State["entities"].(map[string]any)["agents"].([]any) {

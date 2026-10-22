@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -159,7 +160,10 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 			firstAcceptedAnswer = answer
 		}
 		writeJSONFixture(t, filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath)), answer)
-		accepted := runS7WriteHookMode(t, fixture, packet, owner, coldHooks)
+		if i == 0 {
+			assertS7ConcurrentReceptionKeepsOriginalAnswer(t, fixture, packet, owner)
+		}
+		accepted := runS7StopHookMode(t, fixture, packet, owner, coldHooks)
 		if accepted.Revision <= before.Revision {
 			t.Fatalf("original SubmitIssuedResult did not commit a Runtime event for %s", packet.Binding.AssignmentID)
 		}
@@ -225,9 +229,8 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, conflictStdout, conflictStderr := invokeS7WriteHookMode(t, fixture, firstPacket, firstOwner, coldHooks)
-	accepted, receiptError := parseS7HookReceipt(t, conflictStdout)
-	if accepted || !strings.Contains(receiptError, "conflicts with the originally accepted professional answer") {
+	code, conflictStdout, conflictStderr := invokeS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks)
+	if code != 0 || !strings.Contains(conflictStderr, "conflicts with the originally accepted professional answer") {
 		t.Fatalf("same-key changed S7 answer did not return the original conflict receipt: stdout=%s stderr=%s", conflictStdout, conflictStderr)
 	}
 	stateAfterConflict, _ := os.ReadFile(fixture.statePath)
@@ -237,7 +240,7 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	}
 	writeJSONFixture(t, answerPath, firstAcceptedAnswer)
 
-	// A late duplicate PostToolUse payload after the final consumer uses the
+	// A late duplicate SubagentStop payload after the final consumer uses the
 	// durable receipt; it does not create another event.
 	stateBefore, err := os.ReadFile(fixture.statePath)
 	if err != nil {
@@ -248,7 +251,7 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 		t.Fatal(err)
 	}
 	_ = firstExpectedRevision // the public hook intentionally carries no caller-controlled Runtime revision.
-	if got := runS7WriteHookMode(t, fixture, firstPacket, firstOwner, coldHooks); got.Revision != final.Revision {
+	if got := runS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks); got.Revision != final.Revision {
 		t.Fatalf("exact post-CleanRound hook replay changed Runtime revision: %d -> %d", final.Revision, got.Revision)
 	}
 	stateAfter, _ := os.ReadFile(fixture.statePath)
@@ -300,6 +303,53 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	lifecycle, _ := promoted.State["lifecycle"].(map[string]any)
 	if lifecycle["state"] != "acceptance" {
 		t.Fatalf("original TR-009 did not promote CleanRound to acceptance: %#v", lifecycle)
+	}
+}
+
+// Inject an unrelated real Writer commit after source authorization, not a fake
+// ErrStaleRevision. The normal native Stop below then receives the same bytes.
+func assertS7ConcurrentReceptionKeepsOriginalAnswer(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) {
+	t.Helper()
+	service, err := submission.NewReadOnly(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answerPath := filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath))
+	original, err := os.ReadFile(answerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
+	receipt, err := service.SaveReviewResultFrom(context.Background(), owner, answerPath, fixture.root, func(root string, state map[string]any) error {
+		writer := loopruntime.NewWriter(service.StatePath, service.JournalPath, root, service.Validator)
+		_, err := writer.UpdateCurrent(loopruntime.Mutation{
+			EventID: "evt-s7-unrelated-before-reception", TransitionID: "S7-RECEPTION-COORDINATION-PROBE", Event: "test_unrelated_commit", Actor: "orchestrator",
+			IdempotencyKey: "s7-unrelated-before-reception", RuntimeID: canonicalRuntimeID, BaselineGeneration: 1,
+			Apply: func(current map[string]any) error {
+				current["milestone"].(map[string]any)["objective"] = "Main coordinates another unchanged responsibility"
+				return nil
+			},
+		})
+		return err
+	})
+	if !errors.Is(err, loopruntime.ErrStaleRevision) || receipt.Accepted || len(receipt.FieldErrors) != 0 {
+		t.Fatalf("real competing commit lost its necessary CAS/system ownership: receipt=%+v err=%v", receipt, err)
+	}
+	for _, want := range []string{packet.ID, owner, packet.AnswerPath, "Main", "original receipt", "resume the original native agent", "without rewriting"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("S7 reception recovery omitted %q: %v", want, err)
+		}
+	}
+	after := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
+	if after.Revision != before.Revision+1 {
+		t.Fatalf("failed reception committed beyond the injected unrelated event: %d -> %d", before.Revision, after.Revision)
+	}
+	if _, found, err := review.IssuedResultReceipt(fixture.root, after.State, packet.ID, owner); err != nil || found {
+		t.Fatalf("failed CAS fabricated a receipt: found=%t err=%v", found, err)
+	}
+	unchanged, err := os.ReadFile(answerPath)
+	if err != nil || !bytes.Equal(original, unchanged) {
+		t.Fatalf("CAS reception changed professional bytes: %v", err)
 	}
 }
 
@@ -650,21 +700,18 @@ func s7MechanismAnswer(t *testing.T, fixture *canonicalMainFixture, packet workp
 	return valid
 }
 
-func runS7WriteHook(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) loopruntime.Snapshot {
-	return runS7WriteHookMode(t, fixture, packet, owner, false)
+func runS7StopHook(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) loopruntime.Snapshot {
+	return runS7StopHookMode(t, fixture, packet, owner, false)
 }
 
-func runS7WriteHookMode(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string, cold bool) loopruntime.Snapshot {
+func runS7StopHookMode(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string, cold bool) loopruntime.Snapshot {
 	t.Helper()
-	code, stdoutText, stderrText := invokeS7WriteHookMode(t, fixture, packet, owner, cold)
+	code, stdoutText, stderrText := invokeS7StopHookMode(t, fixture, packet, owner, cold)
 	if code != 0 {
-		t.Fatalf("original S7 PostToolUse hook exit=%d stdout=%s stderr=%s", code, stdoutText, stderrText)
+		t.Fatalf("original S7 SubagentStop hook exit=%d stdout=%s stderr=%s", code, stdoutText, stderrText)
 	}
-	if !strings.Contains(stdoutText, "S7 SUBMISSION RECEIPT") {
-		t.Fatalf("S7 PostToolUse hook returned no receipt: %s", stdoutText)
-	}
-	if accepted, _ := parseS7HookReceipt(t, stdoutText); !accepted {
-		t.Fatalf("S7 PostToolUse hook did not return an accepted receipt: %s", stdoutText)
+	if !strings.Contains(stderrText, "original consumer") {
+		t.Fatalf("S7 SubagentStop did not report original reception: stdout=%s stderr=%s", stdoutText, stderrText)
 	}
 	snapshot := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
 	if _, found, err := review.IssuedResultReceipt(fixture.root, snapshot.State, packet.ID, owner); err != nil || !found {
@@ -673,15 +720,15 @@ func runS7WriteHookMode(t *testing.T, fixture *canonicalMainFixture, packet work
 	return snapshot
 }
 
-func invokeS7WriteHook(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) (int, string, string) {
-	return invokeS7WriteHookMode(t, fixture, packet, owner, false)
+func invokeS7StopHook(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) (int, string, string) {
+	return invokeS7StopHookMode(t, fixture, packet, owner, false)
 }
 
-func invokeS7WriteHookMode(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string, cold bool) (int, string, string) {
+func invokeS7StopHookMode(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string, cold bool) (int, string, string) {
 	t.Helper()
 	payload, err := json.Marshal(map[string]any{
-		"hook_event_name": "PostToolUse", "tool_name": "Write",
-		"tool_input": map[string]any{"file_path": filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath))},
+		"hook_event_name":        "SubagentStop",
+		"last_assistant_message": filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath)),
 		// The exact registered answer path supplies the professional owner and
 		// source root. Hook actor, cwd, and session metadata are not required to
 		// prove those already registered facts.
@@ -694,10 +741,12 @@ func invokeS7WriteHookMode(t *testing.T, fixture *canonicalMainFixture, packet w
 		return invokeS7HookSubprocess(t, fixture.root, payload)
 	}
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(payload), &stdout, &stderr)
+	code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "SubagentStop"}, bytes.NewReader(payload), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 
+// parseS7HookReceipt retains the legacy wire-schema compatibility fixture.
+// Native SubagentStop reports reception through the original durable receipt.
 func parseS7HookReceipt(t *testing.T, stdout string) (bool, string) {
 	t.Helper()
 	var envelope struct {

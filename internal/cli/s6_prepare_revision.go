@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/assignmentinputs"
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/fileview"
@@ -24,6 +25,8 @@ import (
 var s6RevisionIntentKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 
 type s6PrepareRevisionInput struct {
+	NativeDelivery bool
+	BaseCommit     string
 	Root           string
 	State          map[string]any
 	StateRevision  int
@@ -137,6 +140,33 @@ func runS6PrepareRevision(input s6PrepareRevisionInput, stdout, stderr io.Writer
 		return 1
 	}
 
+	if input.NativeDelivery {
+		if previous.Contract != assignmentrecord.NativeDeliveryContract {
+			fmt.Fprintln(stderr, "frozen legacy Assignment cannot be silently migrated; finish or explicitly retire its old execution")
+			return 1
+		}
+		if err := pinNativeS6Source(input.Root, previous.AssignmentID, nextRevision, input.BaseCommit); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		// The exact prior Record and digest are checked again under the original
+		// Writer lock. An unrelated Runtime commit does not change this intent.
+		snap, err := assignment.Register(input.Root, filepath.Join(input.Root, ".claude/loop-state.json"), filepath.Join(input.Root, ".claude/loop-events.jsonl"), assignment.Request{ExpectedRevision: -1, ManifestPath: filepath.Join(input.Root, written), TaskID: previous.Task.ID, TaskPath: filepath.Join(input.Root, previous.Task.Ref), Revision: &assignment.RevisionRequest{AssignmentID: previous.AssignmentID, IntentKey: input.IntentKey, ExpectedRecord: previous.Reference(), ExpectedRecordSHA256: previousSHA}})
+		if err != nil {
+			fmt.Fprintln(stderr, formatFailure("S6 revision registration", err))
+			return 1
+		}
+		current, found, err := assignmentrecord.ForOwner(snap.State, input.AgentID)
+		if err != nil || !found {
+			fmt.Fprintf(stderr, "native revision registration missing: %v\n", err)
+			return 1
+		}
+		if err := prepareNativeS6Brief(input.Root, snap.State, current, input.BaseCommit, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	}
 	refBytes, err := json.Marshal(previous.Reference())
 	if err != nil {
 		_ = os.Remove(filepath.Join(input.Root, filepath.FromSlash(written)))

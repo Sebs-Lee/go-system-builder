@@ -1,129 +1,197 @@
 ---
 name: team-planning
-description: Use when creating, reusing, replacing, or recovering specialized Builder, Document Verifier, Delivery Verifier, QA, or E2E Tester workgroups
+description: Use when planning independent engineering responsibilities for native Agents while preserving professional coverage and frozen recovery
 category: methodology
-version: 1.3.0
+version: 2.0.0
 ---
-# Team Planning
+# Professional Work Planning
+
+Main divides engineering work and uses Claude Code native Agent. A manifest/Assignment records engineering responsibility; it does not create a Claude Team or reserve an actor/session. `agent_id` is the engineering owner label. `platform_team_id`, where the existing schema retains it, is a logical grouping label. Do not look up opaque platform IDs or run Team/workspace launch to populate these fields.
 
 ## Authority
-The manifest proposes assignments; the original runtime records activation. Hooks observe progress and provide the exact questionnaire path and missing duties. Runtime authority lives in `.claude/loop-state.json`; stage contracts live in `docs/control/agent-protocol.md`; the team-planning method is inlined below.
 
-Responsibility progress uses the five states in
-[`docs/rules/state-machine.md`](../../docs/rules/state-machine.md#21-loop-responsibility-status).
-Here `ready` means eligible for original dispatch, not that the responsibility
-has started or finished. Team lifecycle and platform session values remain
-their exact current Runtime/host fields; never ask an Agent to write them.
+Follow `docs/control/agent-protocol.md`, the original schemas and `docs/control/loop-definition.json`. Original domain Writers own responsibility and stage facts; a manifest is not a platform scheduler.
 
 ## Entry Conditions
-- Specification scope is known (contracts, TASKs, modules, risk tags are drafted).
-- The document chain is fingerprinted and ready for assignment.
-- Current teammate state (if reusing or recovering a team) is readable from runtime.
+
+Professional scope and actual source inputs are known. Main can identify required coverage and genuine independence constraints.
 
 ## Required Inputs
-| Input | Path / field | Why |
-|:---|:---|:---|
-| Responsibility catalog | this Skill's procedure and inlined method summary | mandatory vs risk-triggered duties |
-| Contracts + TASKs | `docs/dev/contracts/**`, `docs/dev/tasks/**` | scope partitioning inputs |
-| Risk tags | TASK risk fields | route Best-practice Skills per Agent |
-| Agent Definitions | `.claude/agents/<role>.md` | available roles and max permissions |
-| Existing manifests | runtime `entities.teams[]` | reuse freshness and continuity |
-| Separation edges | this Skill's procedure and inlined method summary | independence constraints |
 
-## Procedure
-1. Enumerate mandatory responsibilities for the team type: Delivery Verifier requires REQ-source coverage, contract-implementation, module-function, integration, regression; QA requires code-quality, architecture, testing, security, performance, reliability; E2E Tester requires current module CASE/PATH coverage and console/network observation.
-2. Add risk-triggered responsibilities from TASK risk tags (security-sensitive → security-review, migration → database-change, UI → frontend-engineering).
-3. Partition the scope so each assignment covers exactly one auditable responsibility. Record `N/A` with justification for any responsibility that does not apply — silence is not N/A.
-4. Select the Builder role by write ownership: `frontend-builder` for frontend product code and owned component tests; `backend-builder` for backend product code, migrations, and owned unit/integration tests; `test-builder` for test-only files, fixtures, helpers, and test infrastructure. An E2E responsibility always uses `e2e-tester`.
-5. Build separation edges: no single Agent may verify its own output; the original finder must own targeted re-verification; Builder and Verifier for the same scope must be different Agents.
-6. Check reuse freshness: if an existing Agent's fingerprints still match and its scope covers the new responsibility, reuse it; otherwise create a new assignment.
-7. Compute Agent count from: modules × contracts × scenario coverage risk × migration × concurrency × security × BUG history. Do not use a fixed team size.
-8. Produce one assignment per responsibility with: agent ID, role, responsibility ID, allowed read paths, allowed write paths, task-specific Skills, message template, stop conditions. Harness merges these with the role's default Skill profile before launch.
-9. Validate the manifest via `loop-harness validate --all --root .` (schema + team-manifest schema).
-10. Emit launch packages: one assignment brief per assignment, ready for `agent-dispatch` (plan_checkpoint).
+Current stage, frozen specifications/implementation, original responsibilities, professional risks, dependencies and exact original preparation outputs.
+
+## Procedure — Plan actual work
+
+1. Read current professional inputs and choose concrete responsibilities, reviewed scope and outputs.
+2. Enumerate required coverage and real risk-triggered reviews. Explain genuine N/A; do not silently omit work or create empty obligations.
+3. Separate incompatible permissions, different conclusion dimensions and independent verification. An implementer must not sign independent verification of the same output.
+4. Select frontend-builder, backend-builder or test-builder by actual write ownership; use document-verifier, delivery-verifier, QA, e2e-tester and investigator for their professional duties. Keep E2E/browser work in its relevant role.
+5. Preserve source freshness, real dependencies and resource conflicts. Main starts dependent work when actual inputs are ready; a framework queue is not the native Agent scheduler.
+6. Prepare original engineering inputs and private answer paths, then carry exact references into native Agent. Claude Code owns context, messaging and resume. Registration is not a successful platform spawn.
+7. Receive actual artifacts through Start/Stop and original consumers. Main handles integration, checks, conflicting conclusions and stage closure separately.
+
+## Stage paths
+
+- S6 (`s6-native-v1`): `s6 prepare --root <Main> --task <TASK> --role <role>` supplies the exact brief. Builder uses native worktree, professional plan, actual implementation/self-checks and Result. Main uses original task-integrate. Source/report revisions use the original revision Writer.
+- S5: register this entry's two independent dimensions, then carry exact issued view/answer paths into separate native contexts. New read-only reviews need no workspace prepare.
+- S7: ReviewPlan owns Claims, lenses, waves and dependencies; original manifest draft/registration prepares the engineering responsibility and exact question. Reviewer returns the original professional answer for Stop reception. A post-S9 seed is an unfinished Planner input, not a dispatchable professional decision. Resolve PLANNER-REFINE fields against the current scope and submit the first professional Plan through original `runtime review-plan --file <professional-plan.json>` while preserving the seed id/round/generation/baseline. Only the exact unstarted seed is eligible; later discovery revisions retain their normal budget and workspace constraints. If E2E is genuinely inapplicable, set e2e_coverage_state=not_applicable, keep the explicit N/A Claim with source_refs/na_rationale/na_checklist_id, set verification_artifact_workspace null; do not add the Runtime-only verification_artifact_digest to the Plan, and remove only its E2E Assignment. Keep all applicable delivery/QA Claims. The conservative cold_start seed hint must not manufacture a browser surface or mandatory browser task.
+- S8: Main's Case/Hypothesis dispatch supplies the exact Investigator question. Investigator performs its discriminator without product writes and returns the original answer. Main owns routing/Contract approval.
+- S9: professional division prepares each exact native brief. Builder saves PlanReport before implementation, continues in native worktree, self-checks and commits actual product changes when present, then returns Result. An allowed no-change result does not manufacture a commit. Main integrates/checks separately. Targeted is a separate independent native task; original handoff leads to fresh S7.
+
+## S5 manifest assembly
+
+Use the original team-manifest schema and actual accepted S4 input set. Both `DV-SPEC-CONSISTENCY` and `DV-TASK-EXECUTABILITY` cover the full current batch, with distinct engineering owners and one `independence` separation edge. Use entry-specific IDs/paths and retain history. Main chooses the professional split; use current original preparation/source facts instead of copied example hashes.
+
+Set `workgroup_kind=document_verifier`, `review_round=null`, and current `validation.validated_at`. S5 stage entry is not an S7 verification round: use `review-e<phase_revision>` only in entry-specific IDs/paths, not in the manifest `review_round` field. The registration anchor is the first S4 dispatch-plan TASK; use its actual entity ID/path, never a REQ ID as `--task-id`. For `docs/dev/tasks/TASK-001-01.md`, use its canonical entity ID `TASK-001-01`.
+
+Required `skill_refs`: `document-verification, specification-planning, api-contracts` for specification consistency; `document-verification, specification-planning, testing-strategy` for task executability. Do not add S6 Assignment Record/Closing Contract fields to S5. These engineering grouping/owner fields require no actual Claude Team or platform ID lookup.
+
+### S5 original manifest shape
+
+The installed shape below is the original professional registration DTO, not a platform Team or execution definition. Use it directly; do not extract schemas from the binary or copy frozen launcher instructions. Replace every placeholder, carry the actual current Runtime/generation/stage-entry and **all** current registered document refs, and choose entry-specific IDs and professional scope. `baseline_generation: 1` is only an example. Keep the two original responsibility profiles and separation edge. The original registration rechecks source fingerprints, required dimensions and independence; the example's validation fields do not establish a PASS. `read_paths` covers the actual complete current batch; no product writes or S6 fields belong to these S5 roles.
+
+```json
+{
+  "schema_version": "1.0.0",
+  "manifest_id": "<entry-specific manifest id>",
+  "version": "v1.0.0",
+  "runtime_id": "<current runtime id>",
+  "req_id": "<bound REQ id>",
+  "baseline_generation": 1,
+  "review_round": null,
+  "platform_team_id": "<logical engineering group label>",
+  "workgroup_id": "<entry-specific workgroup id>",
+  "workgroup_kind": "document_verifier",
+  "status": "planned",
+  "documents": [
+    {
+      "id": "<each current registered document id>",
+      "path": "<actual path>",
+      "version": "<actual version>",
+      "sha256": "<actual registered SHA256>"
+    }
+  ],
+  "risk_tags": [],
+  "responsibility_dispositions": [
+    {
+      "responsibility_id": "DV-SPEC-CONSISTENCY",
+      "disposition": "assigned",
+      "trigger": "S5 mandatory independent dimension.",
+      "assignment_ids": [
+        "<spec assignment id>"
+      ],
+      "na_rationale": null,
+      "evidence_ref": null
+    },
+    {
+      "responsibility_id": "DV-TASK-EXECUTABILITY",
+      "disposition": "assigned",
+      "trigger": "S5 mandatory independent dimension.",
+      "assignment_ids": [
+        "<task assignment id>"
+      ],
+      "na_rationale": null,
+      "evidence_ref": null
+    }
+  ],
+  "assignments": [
+    {
+      "assignment_id": "<spec assignment id>",
+      "responsibility_id": "DV-SPEC-CONSISTENCY",
+      "role_family": "document-verifier",
+      "scope": [
+        "Review current specification-chain consistency."
+      ],
+      "agent_id": "<distinct spec engineering owner>",
+      "agent_definition_ref": ".claude/agents/document-verifier.md",
+      "skill_refs": [
+        "document-verification",
+        "specification-planning",
+        "api-contracts"
+      ],
+      "read_paths": [
+        "<actual current batch input paths>"
+      ],
+      "write_paths": [],
+      "output_paths": [],
+      "depends_on": [],
+      "reuse_decision": "create",
+      "grouping_rationale": "Different professional conclusions require independent contexts.",
+      "status": "planned",
+      "dispatch_mode": "plan_checkpoint",
+      "done_when": [
+        "Record the assigned professional conclusion and findings in its original private answer."
+      ]
+    },
+    {
+      "assignment_id": "<task assignment id>",
+      "responsibility_id": "DV-TASK-EXECUTABILITY",
+      "role_family": "document-verifier",
+      "scope": [
+        "Review executability of the complete current TASK batch."
+      ],
+      "agent_id": "<distinct task engineering owner>",
+      "agent_definition_ref": ".claude/agents/document-verifier.md",
+      "skill_refs": [
+        "document-verification",
+        "specification-planning",
+        "testing-strategy"
+      ],
+      "read_paths": [
+        "<actual current batch input paths>"
+      ],
+      "write_paths": [],
+      "output_paths": [],
+      "depends_on": [],
+      "reuse_decision": "create",
+      "grouping_rationale": "Different professional conclusions require independent contexts.",
+      "status": "planned",
+      "dispatch_mode": "plan_checkpoint",
+      "done_when": [
+        "Record the assigned professional conclusion and findings in its original private answer."
+      ]
+    }
+  ],
+  "separation_edges": [
+    {
+      "left_assignment_id": "<spec assignment id>",
+      "right_assignment_id": "<task assignment id>",
+      "reason": "independence"
+    }
+  ],
+  "planned_agent_count": 2,
+  "max_parallel_agents": 2,
+  "quantity_rationale": "Two independent document dimensions require two separate contexts.",
+  "validation": {
+    "result": "pass",
+    "missing_responsibilities": [],
+    "unresolved_conflicts": [],
+    "warnings": [],
+    "validated_at": "<current RFC3339 time>"
+  }
+}
+```
+
+Main registers the completed file through original `runtime register-workgroup --root <Main> --manifest <file> --task-id <first S4 dispatch-plan TASK id>`. The original Main questionnaire preparation supplies exact views/answers; then use native Agent. Registration alone creates no native context.
+
+## Native boundary and frozen compatibility
+
+Follow [agent-dispatch](../agent-dispatch/SKILL.md) for exact references, professional artifacts and Start/Stop. No generic readback, begin, activation or ordinary-save receipt precedes new native execution. Keep real professional approval, independence and the stage's actual required coverage.
+
+Only an existing registered pre-migration execution uses [frozen-execution.md](frozen-execution.md). Preserve its sources/recovery and avoid duplicate launch; do not apply that procedure to new native responsibilities.
 
 ## Outputs
-- A schema-valid team manifest with assignments, count rationale, and coverage result.
-- One assignment brief (launch package) per assignment.
+
+Original professional responsibility plan/manifest, concrete coverage and exact native task references. Do not create a parallel platform execution registry.
 
 ## Exit Conditions
-- Coverage is complete (all mandatory responsibilities assigned or justified N/A).
-- Independence constraints hold (no separation-edge violation).
-- Every assignment has the required Skills, paths, and dependencies.
-- The manifest validates against `team-manifest.schema.json`.
+
+Required work and independence are represented truthfully, original registration/preparation has supplied exact paths, and Main has actually dispatched the intended native responsibilities. Registration alone is not platform execution.
 
 ## Stop Conditions
-Stop dispatch of the affected assignment when coverage, dependencies, write ownership or role availability is invalid. This is a Worker/dispatch barrier, not automatically a Human Gateway. The Driver must first assign the missing duty, remove an erroneous dependency, serialize or repartition shared writes, or recover/reassign a stale teammate through the supported lifecycle. Preserve independent review and active assignment authority; do not silently widen scope or substitute roles. Continue unrelated unblocked work. Surface a human decision only when the remaining issue requires changed business semantics, unavailable external permission, a required explicit authorization or unrecoverable Runtime integrity; include the attempted autonomous recovery.
+
+Report missing authoritative inputs, incompatible responsibility ownership, lost independence or original approval still pending. Keep concrete unfinished work visible.
 
 ## Non-Goals
-- Do not use fixed team sizes — compute from scope and risk.
-- Do not merge different responsibilities into one assignment.
-- Do not weaken individual activation scope to fit a smaller team.
 
-## Inlined Methodology
-
-Claude Code currently permits one Agent Team per session. Therefore `platform_team_id` identifies the one Claude Code Team; `workgroup_id` identifies a logical phase grouping inside that Team. Builder, Document Verifier, Delivery Verifier, QA and E2E Browser workgroups execute in their applicable Loop phases; workgroups are not separate nested Claude Code Teams. Document Verification responsibilities: `DV-SPEC-CONSISTENCY` (REQ/design/UI/FE/BE/SYNC completeness, logic and cross-document consistency) and `DV-TASK-EXECUTABILITY` (task coverage, links, scope, dependencies, Closing Contracts, and evidence feasibility). Delivery Verification responsibilities: `VER-REQ-GAP`, `VER-SPEC-GAP`, `VER-MODULE-COMPLETE`, `VER-INTEGRATION`, `VER-REGRESSION`. QA responsibilities: `QA-MODULE-CODE`, `QA-REUSE-ABSTRACTION`, `QA-UNIT-TEST`, `QA-INTEGRATION-TEST`, `QA-ARCHITECTURE`, `QA-SECURITY`, `QA-PERFORMANCE`, `QA-RELIABILITY`, `QA-MIGRATION`. E2E Browser responsibilities: `E2E-USER-FLOW` (real-browser execution of assigned locked `PATH-*` entries from `USER-FLOW-*`) and `E2E-CONSOLE-NETWORK` (console errors, network failures, request/response mismatch, screenshots/traces). Risk-tag derivation covers frontend (`ui`, `frontend`), api (`api`, `cross-component`), database (`database`, `migration`), security (`security`), reliability (`reliability`, possibly `concurrency`), performance (`performance`), architecture (`architecture`), regression (`regression`). Scope partitioning rules: distinct write ownership or repository boundary; independent module or bounded-context responsibility; incompatible Best Practices or tool needs; high merge-conflict paths; independently testable Closing Contracts. One assignment may not exceed 30 files or 3 material modules. Conflict-graph `must_separate` edges when responsibilities require different conclusion enums, one responsibility checks the other's authored or repaired output, original-finder independence must be preserved, security/release/permission enforcement needs independent evidence, roles have different write permissions, scopes require incompatible Skills or tools, or combining them would exceed workload limits. Teammate reuse requires same role family and responsibility ID, unchanged scope, matching fingerprints, current prior read-back/activation, no unresolved report/BUG/blocked-task conflicts, valid independence, and non-stale teammate state. Workgroup gates: Document Verification must cover both DV duties; Builder Gate requires one write owner, Closing Contract, allowed paths and dependency position per locked TASK or accepted repair BUG; Delivery Verification must cover `VER-REQ-GAP`, `VER-SPEC-GAP`, all material module partitions and every triggered integration/regression responsibility; QA Gate must cover the four baseline QA responsibilities and every triggered architecture, security, performance, reliability and migration responsibility; E2E Browser Gate must cover all required locked `PATH-*` entries plus console/network evidence.
-
-### S5 manifest assembly (Document Verifier registration)
-
-Assemble the manifest from Runtime, never by hand-computing machine fields:
-- `documents`: every `locked`/`complete` row in Runtime `documents[]` (id/path/version/sha256 copied exactly); plus the S4 batch TASK paths and the dispatch-plan index path.
-- `validated_at`: current UTC time in RFC3339Nano, machine-filled at assembly; never a fixed or midnight timestamp.
-- `review_round`: entry-specific (`review-e<phase_revision>`); never reuse a historical round label.
-- `separation_edges`: exactly one edge between the two DV assignments with reason `independence`; the two `agent_id` values must differ.
-- Anchor binding for `runtime register-workgroup --task-id <entity> --task <path>`: the first S4 dispatch-plan TASK; entity id is the canonical `^TASK-[0-9]{3,}(?:-[0-9]{2,})?$` shape mapped from the plan filename by keeping only digit segments (`TASK-REQ-001-01.md` → `TASK-001-01`, `TASK-001-01.md` → itself); `--task` is the actual plan file path. Never pass a REQ id as `--task-id`.
-- Do not use S6-only fields (`assignment_record_contract: s6-v1.2`, `closing_contract: s6-closing-v1`, `integration_check_mode`) in a document-verifier manifest; do not copy the example manifest's metadata, hashes, scope or checks.
-- Both assignments' `scope` and `read_paths` cover the whole S4 batch; `skill_refs` for `DV-SPEC-CONSISTENCY` are `document-verification, specification-planning, api-contracts`, for `DV-TASK-EXECUTABILITY` are `document-verification, specification-planning, testing-strategy`.
-
-## Dispatch scope and check-target consistency
-
-For ordinary S6 Builder registration, prepare the current eligible TASK with
-`loop-harness s6 prepare --root <authority-root> --task <TASK> --role <Builder-role> --agent-id <actual-platform-Agent-ID> --platform-team-id <actual-platform-Team-ID>`.
-The command projects the current Runtime, REQ, generation, locked document
-fingerprints, TASK write scope, dependencies, and check commands. Main chooses the
-TASK, Builder role, and actual platform Agent/Team identities. If the command
-reports that the TASK has no concrete Worker-owned Closing Contract predicate,
-Main must add that professional decision to the exact draft path it prints;
-the draft stays unregistered until the original consumer accepts it. Use the
-exact registration command printed by `s6 prepare`:
-`loop-harness runtime register-workgroup --manifest <path> --task-id <TASK> --task <locked-task-path>`.
-The example manifest is a schema/compatibility reference for explicit
-native/legacy setup; do not copy it for the ordinary bound-workspace flow or
-manually replace Runtime metadata, hashes, scope, or checks.
-
-For the ordinary S6 bound-workspace route, after registration run
-`runtime workspace prepare --root <authority-root> --assignment <id> --agent <owner>`.
-Read its returned execution/context and submission paths, then run
-`runtime workspace launch` with the same root, Assignment, and owner. The Hook
-supplies the active view and exact answer paths. Do not add `team launch`, export
-a readback template, or create a worktree before this prepare/launch sequence.
-Use registered `team launch` only when the current Runtime explicitly selects
-the native/legacy teammate route instead of a bound workspace.
-
-For canonical S6 Builders (`assignment_record_contract: s6-v1.2`), `done_when`
-describes Worker-owned outcomes verifiable before Result submission. The
-prepared contract places TASK commands in Main `required_checks` and Main
-CheckProfiles. The Builder still runs the TASK checks and cites actual outputs
-in the Result; Main reruns required checks on the integrated tree. An empty
-`worker_checks` list means no separate worker runner is registered; it does not
-mean the TASK checks passed.
-
-
-Before registering a Builder assignment, compare its TASK deliverables with write_paths, shared-type/API/route ownership and dependency order. Assign missing connection work explicitly rather than widening paths silently or instructing a component to duplicate an inaccessible authority. Reuse existing manifest fields and TASK sections; no additional parallel ledger is required.
-
-Bind each required check to an explicit execution tree and commit. A post-merge check must use the integration target supplied by the Integrator, never prefer an old source worktree merely because it exists. Preserve the real exit status and the project's evidence reporter; report zero collection, skipped required cases and missing artifacts as failures, not successful shell wrappers.
-
-Audit checks executed before and after merge so repeated expensive runs have an explicit purpose. Do not skip registered checks by policy text alone: changing an active contract or immutable manifest requires the existing rework/replacement procedure. In a replacement rehearsal verify not just registration, but old-assignment disposition, execution-batch selection and the check set consumed by integration.
-
-## Integration check phase
-
-The canonical manifest prepared for the ordinary S6 bound-workspace route uses
-the existing `post_merge` mode with Main CheckProfiles. This keeps Main's
-registered Required Checks on the integrated tree while the Builder records
-the actual TASK-check outputs in the Result. Other manually configured or
-legacy assignments retain their original reviewed check-mode contract. Static
-identity, scope, locked-input and conflict inspection remains part of original
-integration; on failure preserve the merge and receipts, retry an environment
-failure, or use rework for code corrections. Never reset Main automatically
-or edit an active manifest's mode. Target projects use
-`docs/workspace-integration.md` for the runner and recovery contract.
+No Team creation, opaque actor lookup, process/session launcher or generic activation workflow. Do not self-author independent professional results or advance stages manually.

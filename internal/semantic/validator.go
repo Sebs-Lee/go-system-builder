@@ -12,11 +12,13 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/catalog"
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/migration"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/scenario"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/team"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
@@ -120,9 +122,11 @@ func ValidateRepository(root string) error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
-	// Contracts check: S3's mechanical close runs with every repository
-	// validation — link references, fingerprint column, clause cells.
-	contractResult, err := ContractsCheck(root)
+	// Repository validation checks existing authoring artifacts project-wide.
+	// It cannot require an active S2 responsibility to have delivered S3's
+	// future batch. Current-REQ completion stays with ContractsCheck and the
+	// original S3 consumer; this diagnostic does not certify that delivery.
+	contractResult, err := contractsCheck(root, fileview.Disk{Root: root}, workpacket.Reference{}, nil)
 	if err != nil {
 		return fmt.Errorf("contracts: %w", err)
 	}

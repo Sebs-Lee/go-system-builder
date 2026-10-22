@@ -164,6 +164,9 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 		OccurredAt:       time.Now().UTC(),
 	})
 	if submitErr != nil {
+		if errors.Is(submitErr, loopruntime.ErrStaleRevision) {
+			submitErr = fmt.Errorf("S7 packet %s, owner %s, answer %s: Main must inspect the original receipt and current responsibility; if still current and unreceived, resume the original native agent to return this existing answer, without rewriting professional work or waiting for CleanRound: %w", packet.ID, owner, packet.AnswerPath, submitErr)
+		}
 		return rejected(snapshot, packet.ID, submitErr), submitErr
 	}
 	return issuedReviewResultReceipt(s.Root, next, packet, owner)

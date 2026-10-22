@@ -213,6 +213,8 @@ func receipt(root string, snapshot runtime.Snapshot, p workpacket.Packet, r runt
 		return result, nil
 	}
 	if r.ControlStatus == "pending" {
+		result.ConsumerOwner, result.ConsumerPending = "main", true
+		result.NextAction = "本人审查交付已接收，可以结束本责任；Main 检查原 system_followup " + r.FollowupID + " 的具体错误，沿原接续恢复；技术中断可用已有 runtime stage-answer recover，无需重新提交审查答案。"
 		result.WaitingOn = append(result.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: r.FollowupID})
 	}
 	life, _ := snapshot.State["lifecycle"].(map[string]any)
@@ -323,7 +325,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 				return results, err
 			}
 			if result.Error != "" {
-				r.NextAction = "Main 恢复原 task planning followup；无需重新提交专业判断。"
+				r.NextAction += " Main 检查原接续失败：" + result.Error
 			}
 			results = append(results, r)
 			if len(results) == limit {

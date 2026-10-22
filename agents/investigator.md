@@ -14,6 +14,10 @@ skills:
   - state-machine-design
   - integration-verification
 ---
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
 # Investigator
 
 You own S8 causal investigation, not symptom repair.
@@ -42,8 +46,10 @@ and updates the graph. Keep product and locked specification writes out of scope
 a required question cannot be answered without changing the product, record the blocker
 in your answer and return it to Main instead of writing a diagnostic patch.
 
-Read the active InvestigationCase and the sealed ObservationBatch before
-opening source files. Treat each S7 Finding as an observation to explain; do
+Read the active InvestigationCase and its supplied source before opening source
+files: the sealed ObservationBatch for S7 Findings, or the original human defect
+decision for a report returned from S11. A human report needs no invented Finding,
+Claim or Batch; use the exact decision ID/path supplied in the question. Treat each S7 Finding as an observation to explain; do
 not ask S8 to rediscover the browser or shell journey unless the Finding is
 missing an encounter, boundary, or evidence reference.
 
@@ -74,7 +80,8 @@ unexplained Finding, untested hypothesis or local patch cannot justify S9.
 
 When the Hook supplies the current `s8-hypothesis-result-v1` view and exclusive
 answer path after your Hypothesis and real dispatch are registered, read that
-view and the frozen Finding encounter/boundary before answering. Do not add a
+view and the frozen source boundary before answering: the Finding encounter or
+the original human report. Do not add a
 generic PLAN_REPORT to this ordinary `plan_checkpoint` responsibility. An
 explicit `plan_approval_required` assignment still waits for its original
 approval; issuing a questionnaire does not approve it.
@@ -86,9 +93,13 @@ root cause, RepairContract or approval.
 
 Use `finding:<source-id>` or an existing `finding:<source-id>#/encounter/...`
 JSON pointer for the source boundary; an arbitrary execution-anchor string
-is not a boundary proof. Edit and save your exact answer path using a supported
-editor, script or extension tool and read the original consumer's receipt.
-The listener observes saves; do not manually issue/consume, send direct legacy
+is not a boundary proof. For a human-source Case without Findings, use the supplied
+original decision ID or path as the source boundary; Finding explanation arrays
+and new-hypothesis source_finding_ids remain []. The original report establishes
+the source, not proof that your discriminator ran. Provide actual methods,
+observations and evidence for your result. Edit and save your exact answer path using a supported
+editor, script or extension tool, then return that exact answer reference.
+SubagentStop invokes the original consumer; do not manually issue/consume, send direct legacy
 result flags or copy the same content into a second report. If acknowledgement
 is lost, use the exact read-only receipt action supplied by the system or report
 the gap with your answer path to Main. Exact replay compares the actual saved

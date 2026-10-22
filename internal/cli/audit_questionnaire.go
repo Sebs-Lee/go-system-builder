@@ -52,6 +52,10 @@ func stageAuditQuestionnaireContext(root string, request policy.Input, snapshot 
 	} else if err != nil {
 		return fmt.Sprintf("S10 %s answer draft at %s could not be inspected: %v", kind, absPath, err)
 	}
+	if kind == acceptance.ManifestAcceptance && receivedAuditReviewPending(root, snapshot.State, path) {
+		plan := mapFieldCLI(mapFieldCLI(snapshot.State, "review"), "plan")
+		return fmt.Sprintf("S10 review_required at %s is already received. Main owns its original return to a full S7 review; preserve this report and do not refill or resave it. The original ReviewPlan source is %s; restore missing source material there. Normal Main completion of source recovery resumes the original consumer.", absPath, resolveRootPath(root, stringValue(plan["path"])))
+	}
 	outcomes := "pass / review_required"
 	if kind == acceptance.ManifestReleaseAudit {
 		outcomes = "approved / approved_with_risk / blocked"
@@ -327,11 +331,17 @@ func auditQuestionnairePath(root string, state map[string]any, kind string) (str
 }
 
 func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	if !mainQuestionnaireViewer(request) {
+		return false, 0
+	}
 	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
 		return false, 0
 	}
 	actualPath, saved := savedQuestionnairePath(request)
-	if !saved {
+	if !saved && request.Event != "PostToolUse" {
+		return false, 0
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); err != nil {
 		return false, 0
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
@@ -347,8 +357,13 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 		return false, 0
 	}
 	expected, err := absoluteQuestionnairePath(root, path)
-	if err != nil || filepath.Clean(actualPath) != filepath.Clean(expected) {
+	if err != nil {
 		return false, 0
+	}
+	if !saved || filepath.Clean(actualPath) != filepath.Clean(expected) {
+		if request.Event != "PostToolUse" || kind != acceptance.ManifestAcceptance || !receivedAuditReviewPending(root, snapshot.State, path) {
+			return false, 0
+		}
 	}
 	artifactPath, err := safeS10Path(root, path)
 	if err != nil {
@@ -477,6 +492,12 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 	negative := manifest.Outcome == "review_required" || manifest.Outcome == "blocked"
 	positive := manifest.Outcome == "pass" || manifest.Outcome == "approved" || manifest.Outcome == "approved_with_risk"
 	if negative || (positive && summary.UnknownCount == 0 && summary.BlockingFindingCount == 0) {
+		if manifest.Outcome == "review_required" {
+			err = recordAuditReviewImpact(root, path, evidenceID, envelopePath, envelopeSHA)
+			if err != nil {
+				return true, auditQuestionnaireFeedback(stdout, fmt.Sprintf("S10 review_required at %s is received as %s. Main owns the original return recovery: %v. Preserve the received answer; no refill, repeated save or new professional report is required.", expected, evidenceID, err))
+			}
+		}
 		// An accepted decision still at this step can finish its original exit.
 		// Registration replay is read-only; drafts and unfinished positive reports do not advance.
 		result := runControlCycleForHook(root, request)
@@ -486,6 +507,8 @@ func runSavedAuditQuestionnaire(root string, request policy.Input, stdout, stder
 				progress += " " + stageAuditQuestionnaireContext(root, request, result.Snapshot)
 			} else if result.QualityGate.CandidateTransition == "TR-017" {
 				progress += " " + stageHumanReleaseQuestionnaireContext(root, request, result.Snapshot)
+			} else if result.QualityGate.CandidateTransition == "TR-016" {
+				progress += " " + stageReviewPlanQuestionnaireContext(root, request, result.Snapshot)
 			}
 			if positive {
 				reportPath := strings.TrimSuffix(artifactPath, ".json") + ".md"

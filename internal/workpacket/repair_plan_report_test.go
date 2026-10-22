@@ -348,3 +348,57 @@ func TestRepairPlanReportInputRawSourcesAreCanonicalized(t *testing.T) {
 		t.Fatalf("Task JSON key order changed packet identity: %s != %s", first.ID, second.ID)
 	}
 }
+
+func TestRepairPlanReportPreservesApprovedDirectoryScopeBoundary(t *testing.T) {
+	binding, inputs := repairPlanReportTestFixture(t)
+	inputs.ForbiddenScope = []string{"internal/api/generated/"}
+	for _, target := range []*json.RawMessage{&inputs.Contract, &inputs.Plan} {
+		var doc map[string]any
+		if err := json.Unmarshal(*target, &doc); err != nil {
+			t.Fatal(err)
+		}
+		doc["forbidden_scope"] = inputs.ForbiddenScope
+		*target = repairPlanReportTestRaw(t, doc)
+	}
+	before := append([]byte(nil), inputs.Contract...)
+	packet, err := BuildRepairPlanReport(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, inputs.Contract) || !reflect.DeepEqual(packet.Inputs.ForbiddenScope, inputs.ForbiddenScope) {
+		t.Fatal("approved scope bytes changed")
+	}
+	for _, path := range []string{"internal/api/payload.go", "internal/api/generated/output.go", "internal/api-other/output.go", "internal/api/../api/payload.go"} {
+		var draft map[string]any
+		data, _ := json.Marshal(packet.Draft)
+		if err := json.Unmarshal(data, &draft); err != nil {
+			t.Fatal(err)
+		}
+		answer := draft["answer"].(map[string]any)
+		answer["plan"] = "Repair only the authorized API boundary."
+		answer["red_checks"] = []any{map[string]any{"name": "original failure", "command": "go test ./internal/api", "result": "fail", "evidence_refs": []string{"test://repair-plan/before-fix"}}}
+		answer["proposed_paths"] = []string{path}
+		data, _ = json.Marshal(draft)
+		_, fields := ValidateRepairPlanReportAnswer(packet, data)
+		if (len(fields) == 0) != (path != "internal/api/../api/payload.go") {
+			t.Fatalf("scope %s feedback: %+v", path, fields)
+		}
+	}
+	// Professional proposed paths are observations, not execution permission.
+	// The original consumer still owns scope enforcement; the packet must keep
+	// its exact approved source instead of rewriting it to normalize spelling.
+	var changed map[string]any
+	if err := json.Unmarshal(inputs.Contract, &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed["forbidden_scope"] = []string{"internal/api/generated"}
+	inputs.Contract = repairPlanReportTestRaw(t, changed)
+	if _, err := BuildRepairPlanReport(binding, inputs); err == nil {
+		t.Fatal("different approved Contract bytes accepted as the same scope source")
+	}
+	for _, invalid := range [][]string{{"internal/api", "internal/api/"}, {"../outside/"}, {"/outside/"}, {"internal/api//"}, {"all/"}} {
+		if err := canonicalRepairPlanReportScope(invalid, true); err == nil {
+			t.Fatalf("invalid or duplicate scope accepted: %v", invalid)
+		}
+	}
+}

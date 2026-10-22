@@ -122,6 +122,10 @@
         {"required": ["source_bug_ids"]},
         {"required": ["source_case_ids"]}
       ],
+      "allOf": [{
+        "if": {"properties": {"changed_artifacts": {"minItems": 1}}},
+        "then": {"properties": {"change_types": {"minItems": 1}}}
+      }],
       "properties": {
         "schema_version": {"const": "1.0.0"},
         "record_type": {"const": "change_impact"},
@@ -133,13 +137,12 @@
         "source_case_ids": {"$ref": "#/$defs/strings"},
         "change_types": {
           "type": "array",
-          "minItems": 1,
           "uniqueItems": true,
           "items": {
             "enum": ["requirement", "design", "contract", "task", "implementation", "test", "configuration", "database", "dependency", "documentation_only"]
           }
         },
-        "changed_artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/reference"}},
+        "changed_artifacts": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
         "decisions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/impactDecision"}},
         "escalation_level": {"enum": ["assignment", "workgroup", "review_round", "baseline"]},
         "invalidated_evidence_ids": {"$ref": "#/$defs/strings"},

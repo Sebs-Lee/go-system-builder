@@ -16,7 +16,7 @@ import (
 )
 
 // This fixture enters S3 through the accepted S2 design, then deliberately
-// leaves docs/dev/contracts absent until the first ordinary PreToolUse. The
+// leaves docs/dev/contracts absent while Main commits the actual upstream sources. The
 // S3 packet and all later facts are produced by the installed listener,
 // original consumer, and original PTR-PLAN-02 route.
 func newS3ReworkFixture(t *testing.T) string {
@@ -33,7 +33,6 @@ func newS3ReworkFixture(t *testing.T) string {
 		}
 		writeContractSource(t, root, rel, string(data))
 	}
-	fixtures.CommitCurrentFixture(t, root)
 	if _, err := os.Stat(filepath.Join(root, "docs/dev/contracts")); !os.IsNotExist(err) {
 		t.Fatalf("cold S3 fixture must start without a contract directory: err=%v", err)
 	}
@@ -57,7 +56,7 @@ func s3PacketFromCurrentRuntime(t *testing.T, root string) workpacket.ContractPa
 		packetID, _ = row["packet_id"].(string)
 	}
 	if packetID == "" {
-		t.Fatal("ordinary PreToolUse did not register an S3 questionnaire")
+		t.Fatal("the original source commit outlet did not prepare its S3 questionnaire")
 	}
 	packet, found, err := runtime.FindContractPacket(snapshot.State, packetID)
 	if err != nil || !found {
@@ -66,8 +65,18 @@ func s3PacketFromCurrentRuntime(t *testing.T, root string) workpacket.ContractPa
 	return packet
 }
 
-func issueS3ThroughPreToolUse(t *testing.T, root string) workpacket.ContractPacket {
+func prepareS3ThroughSourceCommit(t *testing.T, root string) workpacket.ContractPacket {
 	t.Helper()
+	// The actual authored upstream sources become available on this commit.
+	// Observe that genuine successful Main action through its original Post outlet.
+	fixtures.CommitCurrentFixture(t, root)
+	changed, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "session_id": "s3-source-commit", "cwd": root, "tool_name": "Bash", "tool_input": map[string]any{"command": "git commit --allow-empty -qm 'delivered fixture'"}, "tool_response": map[string]any{"exit_code": 0}})
+	var changedOut, changedErr bytes.Buffer
+	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(changed), &changedOut, &changedErr); code != 0 {
+		t.Fatalf("actual S3 source commit observation: %d %s %s", code, &changedOut, &changedErr)
+	}
+	beforeRead := stageSnapshot(t, root)
+
 	body, err := json.Marshal(map[string]any{
 		"hook_event_name": "PreToolUse",
 		"tool_name":       "Read",
@@ -78,7 +87,7 @@ func issueS3ThroughPreToolUse(t *testing.T, root string) workpacket.ContractPack
 	}
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PreToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
-		t.Fatalf("cold S3 PreToolUse: code=%d stdout=%s stderr=%s", code, out.String(), errout.String())
+		t.Fatalf("cold S3 SessionStart: code=%d stdout=%s stderr=%s", code, out.String(), errout.String())
 	}
 	var envelope struct {
 		Output struct {
@@ -92,10 +101,14 @@ func issueS3ThroughPreToolUse(t *testing.T, root string) workpacket.ContractPack
 	if envelope.Output.Permission == "deny" {
 		t.Fatalf("S3 progress listener denied a tool: %s", out.String())
 	}
+	if stageSnapshot(t, root).Revision != beforeRead.Revision {
+		t.Fatal("ordinary S3 Read issued or changed responsibility")
+	}
+	t.Logf("original source commit feedback=%s; read=%s", &changedErr, &out)
 	packet := s3PacketFromCurrentRuntime(t, root)
 	for _, path := range []string{packet.ViewPath, packet.AnswerPath} {
 		if !strings.Contains(envelope.Output.Context, filepath.Join(root, filepath.FromSlash(path))) {
-			t.Fatalf("PreToolUse did not give exact S3 path %s: %s", path, envelope.Output.Context)
+			t.Fatalf("SessionStart did not give exact S3 path %s: %s", path, envelope.Output.Context)
 		}
 	}
 	for _, source := range packet.Inputs.Sources {
@@ -241,7 +254,7 @@ func saveS3ThroughPostToolUse(t *testing.T, root, answerPath string) (string, st
 
 func TestS3ColdListenerSaveRegistersCurrentBatchAndSharedModelClosure(t *testing.T) {
 	root := newS3ReworkFixture(t)
-	packet := issueS3ThroughPreToolUse(t, root)
+	packet := prepareS3ThroughSourceCommit(t, root)
 	indexPath, contractPath, modelPaths := writeS3SharedModelBatch(t, root, true, false)
 	stageJSON(t, root, packet.AnswerPath, s3AnswerDraft(packet, indexPath, contractPath))
 	// The project source contract is git_tree. The original consumer therefore
@@ -334,7 +347,7 @@ func TestS3ColdListenerSaveRegistersCurrentBatchAndSharedModelClosure(t *testing
 
 func TestS3ColdListenerRejectsUnknownCurrentREQDraft(t *testing.T) {
 	root := newS3ReworkFixture(t)
-	packet := issueS3ThroughPreToolUse(t, root)
+	packet := prepareS3ThroughSourceCommit(t, root)
 	indexPath, contractPath, _ := writeS3SharedModelBatch(t, root, false, true)
 	stageJSON(t, root, packet.AnswerPath, s3AnswerDraft(packet, indexPath, contractPath))
 	fixtures.CommitCurrentFixture(t, root)

@@ -37,7 +37,7 @@ func invokeS7HookSubprocess(t *testing.T, root string, payload []byte) (int, str
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
-	command := exec.CommandContext(ctx, executable, "-test.run=^TestS7PostToolUseSubprocessHelper$")
+	command := exec.CommandContext(ctx, executable, "-test.run=^TestS7NativeStopSubprocessHelper$")
 	command.Dir = root
 	command.Env = append(os.Environ(), s7HookSubprocessMarker+"=1", s7HookSubprocessRoot+"="+root)
 	command.Stdin = bytes.NewReader(payload)
@@ -61,11 +61,11 @@ func invokeS7HookSubprocess(t *testing.T, root string, payload []byte) (int, str
 	return 1, "", ""
 }
 
-// TestS7PostToolUseSubprocessHelper is selected only by invokeS7HookSubprocess.
+// TestS7NativeStopSubprocessHelper is selected only by invokeS7HookSubprocess.
 // An ordinary package test run skips it without invoking the CLI.
-func TestS7PostToolUseSubprocessHelper(t *testing.T) {
+func TestS7NativeStopSubprocessHelper(t *testing.T) {
 	if os.Getenv(s7HookSubprocessMarker) != "1" {
-		t.Skip("only runs inside a cold S7 PostToolUse subprocess")
+		t.Skip("only runs inside a cold S7 SubagentStop subprocess")
 	}
 	root := os.Getenv(s7HookSubprocessRoot)
 	if root == "" {
@@ -76,7 +76,7 @@ func TestS7PostToolUseSubprocessHelper(t *testing.T) {
 		t.Fatalf("read cold S7 hook payload: %v", err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(payload), &stdout, &stderr)
+	code := cli.Run([]string{"hook", "--root", root, "--event", "SubagentStop"}, bytes.NewReader(payload), &stdout, &stderr)
 	result, err := json.Marshal(s7HookSubprocessOutcome{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()})
 	if err != nil {
 		t.Fatalf("encode cold S7 hook result: %v", err)

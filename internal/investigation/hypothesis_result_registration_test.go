@@ -81,12 +81,22 @@ func TestS8IssueUsesActualGenerationTwoInvestigatorRegistration(t *testing.T) {
 		t.Fatalf("S8 Hook context omitted exact original answer path %s: %+v", packets[0].AnswerPath, loaded.PolicyContext.HypothesisResultAnswerPaths)
 	}
 	answerPath := writeS8ProfessionalAnswer(t, fixture.root, packets[0], "The registered Case question is answerable from its frozen Finding evidence.")
-	// The issued packet binds its actual Investigator and registered source.
-	// PostToolUse must not require the save payload to restate that identity or
-	// run from a claimed worker CWD/session.
-	receipt := runS8PostToolUseWithHookMetadata(t, fixture, "", filepath.Join(fixture.root, "unrelated-cwd"), "unrelated-session", answerPath)
-	if !receipt.Accepted || receipt.PacketID != packets[0].ID {
-		t.Fatalf("original S8 Case consumer required a separate generic PLAN: %+v", receipt)
+	// Main ordinary saves do not receive readonly Worker answers; native Stop
+	// hands the exact questionnaire to the original Case consumer.
+	before := currentS8Snapshot(t, fixture)
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": fixture.root, "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(fixture.root, answerPath)}})
+	var out, diagnostic bytes.Buffer
+	if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &diagnostic); code != 0 || currentS8Snapshot(t, fixture).Revision != before.Revision {
+		t.Fatalf("Main save received readonly answer: %d %s", code, diagnostic.String())
+	}
+	body, _ = json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "agent_id": "native-investigator-g2", "agent_type": "investigator", "session_id": "native-parent", "cwd": fixture.root, "last_assistant_message": filepath.Join(fixture.root, packets[0].ViewPath)})
+	out.Reset()
+	diagnostic.Reset()
+	if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "SubagentStop"}, bytes.NewReader(body), &out, &diagnostic); code != 0 {
+		t.Fatalf("native Stop failed: %d %s", code, diagnostic.String())
+	}
+	if _, accepted, err := investigation.IssuedHypothesisResultReceipt(fixture.root, currentS8Snapshot(t, fixture).State, packets[0].ID, owners[0].ownerID); err != nil || !accepted {
+		t.Fatalf("native Stop did not reach original Case consumer: %t %v", accepted, err)
 	}
 }
 
@@ -518,6 +528,29 @@ func registerS8Owner(t *testing.T, fixture *intakeFixture, current runtime.Snaps
 	}
 	taskBytes = append(taskBytes, '\n')
 	writeInvestigationBytes(t, fixture.root, taskRef, taskBytes)
+	readPaths := []string{caseRef}
+	if fixture.batchRel != "" {
+		readPaths = append(readPaths, fixture.batchRel)
+	}
+	for _, raw := range caseDoc["source_finding_ids"].([]any) {
+		readPaths = append(readPaths, ".claude/evidence/findings/"+raw.(string)+".json")
+	}
+	if fixture.batchRel == "" {
+		for _, raw := range question["evidence_refs"].([]any) {
+			ref, _ := raw.(string)
+			for _, evidence := range current.State["evidence"].([]any) {
+				row := evidence.(map[string]any)
+				if ref == row["id"] || ref == "runtime:"+row["id"].(string) {
+					ref, _ = row["path"].(string)
+					break
+				}
+			}
+			if info, err := os.Stat(filepath.Join(fixture.root, ref)); err == nil && info.Mode().IsRegular() {
+				readPaths = append(readPaths, ref)
+			}
+		}
+	}
+
 	manifest := map[string]any{
 		"schema_version": "1.0.0", "manifest_id": "team-manifest-" + owner.teamID, "version": "v1.0.0",
 		"runtime_id": "loop-REQ-INTAKE", "req_id": "REQ-002", "baseline_generation": 2, "review_round": 1,
@@ -535,7 +568,7 @@ func registerS8Owner(t *testing.T, fixture *intakeFixture, current runtime.Snaps
 			"assignment_id": owner.assignmentID, "responsibility_id": "S8-CAUSAL-INVESTIGATION", "role_family": "investigator",
 			"scope": []string{"case:" + caseID, "hypothesis:" + owner.hypothesisID}, "agent_id": owner.ownerID,
 			"agent_definition_ref": ".claude/agents/investigator.md", "skill_refs": agentcontext.CoreSkills("investigator"),
-			"read_paths":  []string{caseRef, fixture.batchRel, ".claude/evidence/findings/finding-1.json"},
+			"read_paths":  readPaths,
 			"write_paths": []string{}, "output_paths": []string{".claude/review/investigation/"},
 			"depends_on": []string{}, "reuse_decision": "create", "grouping_rationale": "one owner for one registered discriminator",
 			"dispatch_mode": owner.dispatchMode, "status": "planned",
@@ -633,13 +666,15 @@ func runS8PostToolUse(t *testing.T, fixture *intakeFixture, owner, answerPath st
 
 func runS8PostToolUseWithHookMetadata(t *testing.T, fixture *intakeFixture, owner, cwd, session, answerPath string) submissionReceipt {
 	t.Helper()
+	// Frozen teammate compatibility; actual native actors use Start/Stop in
+	// native_hypothesis_hook_test.go, without an engineering actor alias.
 	abs := filepath.Join(fixture.root, filepath.FromSlash(answerPath))
 	payload := map[string]any{
 		"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": map[string]any{"file_path": abs},
 		"cwd": cwd, "session_id": session,
 	}
 	if owner != "" {
-		payload["agent_id"] = owner
+		payload["teammate_name"] = owner
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

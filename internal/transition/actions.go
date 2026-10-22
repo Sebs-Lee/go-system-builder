@@ -1048,10 +1048,25 @@ func actionInvalidateAffectedEvidence(state map[string]any, ctx *ActionContext) 
 	all := false
 	if ctx.Request != nil {
 		changedPaths = append([]string(nil), ctx.Request.AffectedPaths...)
-		if len(changedPaths) == 1 && strings.TrimSpace(changedPaths[0]) == "all" {
-			all = true
-			changedPaths = nil
+	}
+	if ctx.Spec.ID == "TR-016" {
+		// S10's original re-review impact owns the scope. A save or later
+		// recovery Hook names its tool target, not the affected product.
+		ref := ctx.Evidence["change_impact_record"]
+		rows, _ := state["evidence"].([]any)
+		for _, raw := range rows {
+			row, _ := raw.(map[string]any)
+			if (row["id"] == ref || row["path"] == ref) && row["kind"] == "change_impact" {
+				if scope := toStringSlice(row["scope_refs"]); len(scope) > 0 {
+					changedPaths = scope
+				}
+				break
+			}
 		}
+	}
+	if len(changedPaths) == 1 && strings.TrimSpace(changedPaths[0]) == "all" {
+		all = true
+		changedPaths = nil
 	}
 	if !all && len(changedPaths) == 0 {
 		return ActionResult{Status: "failed", Detail: "affected_paths required for " + ctx.Spec.ID}, fmt.Errorf(

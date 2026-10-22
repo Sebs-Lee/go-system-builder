@@ -82,7 +82,7 @@ func TestREQListClassifiesStatusesAndSkipsTemplate(t *testing.T) {
 	}
 }
 
-func TestREQNextShowsCompleteBindTemplateWithExplicitPlaceholders(t *testing.T) {
+func TestREQNextNamesOriginalBindingResponsibility(t *testing.T) {
 	root := newUXTestRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
 	var stdout, stderr bytes.Buffer
 	if code := cli.Run([]string{"init", "--root", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
@@ -100,15 +100,15 @@ func TestREQNextShowsCompleteBindTemplateWithExplicitPlaceholders(t *testing.T) 
 		t.Fatalf("decode next projection: %v", err)
 	}
 	for _, want := range []string{
-		"loop-harness req bind --req docs/requirements/REQ-098.md",
-		"--approved-by <actual-approver>",
-		"--dev-branch <development-branch>",
-		"--release-upstream <release-destination>",
-		"replace placeholders before execution",
+		"actual selected requirement", "human startup decision", "explicit project branch destinations",
+		"current binding request", "save normally", "TR-001", "S2",
 	} {
 		if !strings.Contains(next.Action, want) {
 			t.Fatalf("next projection action missing %q: %s", want, next.Action)
 		}
+	}
+	if strings.Contains(next.Action, "loop-harness req bind") || strings.Contains(next.Action, "<actual-approver>") {
+		t.Fatalf("normal S1 projection introduced a second binding route: %s", next.Action)
 	}
 }
 

@@ -48,6 +48,7 @@ func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr
 }
 
 type observedQuestionnaire struct {
+	professionalWorker  bool
 	path                string
 	draft               any
 	s6Result            bool
@@ -126,6 +127,12 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	}
 questionnaires:
 	for _, q := range questionnaires {
+		// Main tools observe Main forms only. A ready Worker answer is not a
+		// save by Main and must wait for its actual native SubagentStop.
+		if mainQuestionnaireViewer(request) && q.professionalWorker {
+			continue
+		}
+
 		if q.path == "" || seen[q.path] {
 			continue
 		}
@@ -357,7 +364,7 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 			}
 		}
 		if path != "" {
-			out = append(out, observedQuestionnaire{path: filepath.Join(source, filepath.FromSlash(path)), draft: row["draft"], s8Packet: acceptedPacket, s8AcceptedAnswerSHA: acceptedAnswerSHA})
+			out = append(out, observedQuestionnaire{path: filepath.Join(source, filepath.FromSlash(path)), draft: row["draft"], s8Packet: acceptedPacket, s8AcceptedAnswerSHA: acceptedAnswerSHA, professionalWorker: template == "s5-document-review-v1" || template == "s7-review-result-v1" || template == "s8-hypothesis-result-v1"})
 		}
 	}
 	if stage == "S6" {
@@ -376,9 +383,9 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 				continue
 			}
 			if activity != "working" {
-				out = append(out, observedQuestionnaire{path: q.PlanPath, draft: context["plan_draft"]})
+				out = append(out, observedQuestionnaire{path: q.PlanPath, draft: context["plan_draft"], professionalWorker: true})
 			}
-			out = append(out, observedQuestionnaire{path: q.ResultPath, draft: context["result_draft"], s6Result: q.CanonicalRecord})
+			out = append(out, observedQuestionnaire{path: q.ResultPath, draft: context["result_draft"], s6Result: q.CanonicalRecord, professionalWorker: true})
 		}
 	}
 	return out

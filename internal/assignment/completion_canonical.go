@@ -231,7 +231,7 @@ func completeCanonicalTaskWithReceipt(
 	if _, err := commitRevision(request.ExpectedRevision, snapshot.State); err != nil {
 		return empty, noReceipt, err
 	}
-	binding, err := resolveCanonicalResultBinding(root, snapshot, request.AgentID, message)
+	binding, err := resolveCanonicalResultBinding(root, snapshot, request.AgentID, message, request.NativePlanPath)
 	if err != nil {
 		return empty, noReceipt, err
 	}
@@ -265,7 +265,7 @@ func completeCanonicalTaskWithReceipt(
 		return snapshot, receipt, err
 	}
 	for _, accepted := range history {
-		if accepted.AnswerDigest == answerDigest && (binding.Record.ClosingContract == nil || len(binding.Record.ClosingContract.WorkerChecks) == 0) {
+		if binding.Record.Contract != assignmentrecord.NativeDeliveryContract && accepted.AnswerDigest == answerDigest && (binding.Record.ClosingContract == nil || len(binding.Record.ClosingContract.WorkerChecks) == 0) {
 			return bindResultSubmissionAlias(root, store, snapshot, request, message, accepted, readMain)
 		}
 	}
@@ -286,7 +286,7 @@ func completeCanonicalTaskWithReceipt(
 		if _, err := commitRevision(request.ExpectedRevision, snapshot.State); err != nil {
 			return empty, noReceipt, err
 		}
-		binding, err = resolveCanonicalResultBinding(root, snapshot, request.AgentID, message)
+		binding, err = resolveCanonicalResultBinding(root, snapshot, request.AgentID, message, request.NativePlanPath)
 		if err != nil {
 			return empty, noReceipt, err
 		}
@@ -364,6 +364,12 @@ func completeCanonicalTaskWithReceipt(
 		ResolvedEvidenceRefs:   []assignmentresult.ResolvedEvidence{},
 		CreatedAt:              occurredAt.UTC().Format(time.RFC3339Nano),
 	}
+	if binding.Record.Contract == assignmentrecord.NativeDeliveryContract {
+		result.SourceHead, err = workspace.Git(ctx, binding.View.SourceRoot, "rev-parse", "HEAD")
+		if err != nil {
+			return empty, noReceipt, fmt.Errorf("read actual native source commit: %w", err)
+		}
+	}
 	initialSources, err := readCanonicalResultSources(binding.View, binding.Record, binding.Execution, answer)
 	if err != nil {
 		return empty, noReceipt, err
@@ -401,7 +407,7 @@ func completeCanonicalTaskWithReceipt(
 				return err
 			}
 			currentSnapshot := loopruntime.Snapshot{Revision: currentRevision, State: state}
-			current, err := resolveCanonicalResultBinding(root, currentSnapshot, request.AgentID, message)
+			current, err := resolveCanonicalResultBinding(root, currentSnapshot, request.AgentID, message, request.NativePlanPath)
 			if err != nil {
 				return err
 			}
@@ -435,6 +441,12 @@ func completeCanonicalTaskWithReceipt(
 			current.View, current.Execution, err = resolveResultExecutionView(root, state, current.Record)
 			if err != nil {
 				return err
+			}
+			if current.Record.Contract == assignmentrecord.NativeDeliveryContract {
+				head, err := workspace.Git(ctx, current.View.SourceRoot, "rev-parse", "HEAD")
+				if err != nil || head != result.SourceHead {
+					return fmt.Errorf("native source commit changed during Result acceptance; preserve the actual delivery")
+				}
 			}
 			resultSources, err := readCanonicalResultSources(current.View, current.Record, current.Execution, answer)
 			if err != nil {
@@ -508,13 +520,35 @@ func completeCanonicalTaskWithReceipt(
 				return fmt.Errorf("canonical Result path conflicts with previously staged bytes")
 			}
 			resultRel, resultSHA = actualRel, actualSHA
-			if err := applyCompletionAgent(state, request, completionMessage{AgentID: request.AgentID, TaskID: current.Record.Task.ID}, agentTransitions, actualRel, occurredAt); err != nil {
+			if current.Record.Contract == assignmentrecord.NativeDeliveryContract {
+				agent, found := findCompletionAgent(state, request.AgentID)
+				if !found {
+					return fmt.Errorf("native delivery owner missing")
+				}
+				agent["plan_reported_ref"] = current.PlanRef
+				if err := workstate.RecordAgentActivity(state, agent, "reported", "completion_reported"); err != nil {
+					return err
+				}
+				agent["completion_reported_ref"] = actualRel
+			} else if err := applyCompletionAgent(state, request, completionMessage{AgentID: request.AgentID, TaskID: current.Record.Task.ID}, agentTransitions, actualRel, occurredAt); err != nil {
 				return err
 			}
 			if err := clearCanonicalCompletionAcknowledgement(state, request.AgentID); err != nil {
 				return err
 			}
-			if err := applyCompletionTask(state, completionMessage{AgentID: request.AgentID, TaskID: current.Record.Task.ID}, taskTransitions, actualRel, occurredAt); err != nil {
+			if current.Record.Contract == assignmentrecord.NativeDeliveryContract {
+				entities, _ := state["entities"].(map[string]any)
+				tasks, _ := entities["tasks"].([]any)
+				for _, raw := range tasks {
+					task, _ := raw.(map[string]any)
+					if task["id"] == current.Record.Task.ID {
+						if err := workstate.RecordTaskActivity(state, task, "review", "builder_reported"); err != nil {
+							return err
+						}
+						task["completion_report_ref"] = actualRel
+					}
+				}
+			} else if err := applyCompletionTask(state, completionMessage{AgentID: request.AgentID, TaskID: current.Record.Task.ID}, taskTransitions, actualRel, occurredAt); err != nil {
 				return err
 			}
 			if err := appendCanonicalResultEvidence(state, result, actualRel, actualSHA, occurredAt); err != nil {
@@ -524,6 +558,13 @@ func completeCanonicalTaskWithReceipt(
 		},
 	}
 
+	if binding.Record.Contract == assignmentrecord.NativeDeliveryContract {
+		mutation.Actor = request.NativeAgentID
+		if mutation.Actor == "" {
+			mutation.Actor = "native_receiver"
+		}
+		mutation.RequestID = request.NativeSessionID + ":" + request.NativeAgentID
+	}
 	committed, err := store.Update(snapshot.Revision, mutation)
 	if err != nil {
 		var replay *canonicalResultReplay
@@ -592,7 +633,7 @@ type canonicalResultBinding struct {
 	Execution *workspace.Execution
 }
 
-func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, agentID string, message canonicalCompletionMessage) (canonicalResultBinding, error) {
+func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, agentID string, message canonicalCompletionMessage, nativePlanPath string) (canonicalResultBinding, error) {
 	var binding canonicalResultBinding
 	record, found, err := assignmentrecord.ForOwner(snapshot.State, agentID)
 	if err != nil {
@@ -608,7 +649,7 @@ func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, a
 		}
 		return binding, fmt.Errorf("canonical completion Result has no current Assignment Record")
 	}
-	if record.Contract != assignmentrecord.AssignmentRecordContract {
+	if record.Contract != assignmentrecord.AssignmentRecordContract && record.Contract != assignmentrecord.NativeDeliveryContract {
 		return binding, fmt.Errorf("canonical completion Result requires %s", assignmentrecord.AssignmentRecordContract)
 	}
 	if err := assignmentrecord.VerifySources(record, func(ref string) ([]byte, error) {
@@ -648,15 +689,29 @@ func resolveCanonicalResultBinding(root string, snapshot loopruntime.Snapshot, a
 		return binding, fmt.Errorf("resolve canonical Result Agent activity: %w", err)
 	}
 	status := projection.Activity
-	if status != "working" && status != "reported" && status != "done" {
+	if record.Contract == assignmentrecord.NativeDeliveryContract && status != "queued" && status != "reading" && status != "reported" && status != "done" {
+		return binding, fmt.Errorf("native delivery responsibility is not current: %s", status)
+	}
+	if record.Contract != assignmentrecord.NativeDeliveryContract && status != "working" && status != "reported" && status != "done" {
 		return binding, fmt.Errorf("canonical Result requires a working or previously reported Agent; got %s", status)
 	}
 	planRef, err := plancheckpoint.ActivatedRef(root, snapshot, agentID)
-	if err != nil {
-		return binding, fmt.Errorf("validate accepted PLAN activation: %w", err)
-	}
-	if planRef == "" || agent["readback_ref"] != planRef || agent["plan_reported_ref"] != planRef {
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		if planRef != "" && nativePlanPath != "" && planRef != nativePlanPath {
+			return binding, fmt.Errorf("native professional plan changed after reception; Main must issue the original Assignment revision")
+		}
+		if planRef == "" {
+			planRef = nativePlanPath
+		}
+		if planRef == "" {
+			return binding, fmt.Errorf("native Result requires its actual professional plan")
+		}
+		err = plancheckpoint.Validate(root, snapshot, agentID, planRef)
+	} else if planRef == "" || agent["readback_ref"] != planRef || agent["plan_reported_ref"] != planRef {
 		return binding, fmt.Errorf("canonical Result requires the current accepted and activated PLAN_REPORT")
+	}
+	if err != nil {
+		return binding, fmt.Errorf("validate professional PLAN: %w", err)
 	}
 	planBytes, err := workpacket.ReadFile(root, planRef, canonicalResultMessageLimit)
 	if err != nil {
@@ -917,7 +972,7 @@ func readCanonicalResultSources(view resultExecutionView, record assignmentrecor
 	resolved := make([]canonicalResultSource, 0, len(ordered))
 	for _, ref := range ordered {
 		if err := validateResultEvidenceRef(record, execution, ref); err != nil {
-			return nil, fmt.Errorf("Result evidence ref %q: %w", ref, err)
+			return nil, resultEvidenceAnswerError(fmt.Sprintf("Result evidence ref %q", ref), err)
 		}
 		readRoot := view.SourceRoot
 		if isOwnerResultArtifact(view.OwnerPrefix, ref) || frozenResultContextPath(record, execution, ref) {
@@ -925,11 +980,21 @@ func readCanonicalResultSources(view resultExecutionView, record assignmentrecor
 		}
 		body, err := workpacket.ReadFile(readRoot, ref, canonicalResultSourceLimit)
 		if err != nil {
+			if readRoot == view.SourceRoot && os.IsNotExist(err) {
+				return nil, resultEvidenceAnswerError("read actual Result evidence source "+ref, err)
+			}
 			return nil, fmt.Errorf("read actual Result evidence source %s: %w", ref, err)
 		}
 		resolved = append(resolved, canonicalResultSource{Resolved: assignmentresult.ResolvedEvidence{Ref: ref, SHA256: sha256Of(body)}, Bytes: body})
 	}
 	return resolved, nil
+}
+
+func resultEvidenceAnswerError(label string, cause error) error {
+	return &workpacket.AnswerError{Label: label, Cause: cause, Fields: []workpacket.FieldError{{
+		Pointer: "/assertion_evidence", Expected: "exact existing evidence files in the TASK write scope or listed Read paths", Observed: cause.Error(),
+		Repair: "evidence_refs must be exact existing worktree-relative files in the TASK write scope or listed Read paths; omit line numbers, descriptions and commands, and put command results in summary",
+	}}}
 }
 
 func validateResultEvidenceRef(record assignmentrecord.Record, execution *workspace.Execution, ref string) error {

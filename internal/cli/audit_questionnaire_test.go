@@ -198,8 +198,8 @@ func TestSavedAuditQuestionnaireRecordsEvidenceForMainWithoutAgentIDAndReplayIsN
 	if afterReplay.Revision != afterSave.Revision || len(stateEvidence(afterReplay.State)) != len(stateEvidence(afterSave.State)) {
 		t.Fatalf("replaying the registered exact answer mutated Runtime: revision %d->%d, evidence %d->%d", afterSave.Revision, afterReplay.Revision, len(stateEvidence(afterSave.State)), len(stateEvidence(afterReplay.State)))
 	}
-	if !strings.Contains(feedback.String(), "Replay did not") {
-		t.Fatalf("replay feedback did not explain the no-op: %s", feedback.String())
+	if !strings.Contains(feedback.String(), absPath) || !strings.Contains(feedback.String(), stringValue(registered["id"])) || strings.Contains(feedback.String(), "not registered") {
+		t.Fatalf("replay feedback lost the original accepted path/receipt: %s", feedback.String())
 	}
 }
 
@@ -237,12 +237,15 @@ func TestSavedAuditQuestionnaireRequiresProfessionalOutcome(t *testing.T) {
 	if handled, _ := runSavedAuditQuestionnaire(root, request, &feedback, &bytes.Buffer{}); !handled {
 		t.Fatal("missing-outcome save was not recognized")
 	}
-	if !strings.Contains(feedback.String(), "outcome is required") {
-		t.Fatalf("missing outcome feedback is not explicit: %s", feedback.String())
+	if !strings.Contains(feedback.String(), absPath) || !strings.Contains(feedback.String(), "draft") || !strings.Contains(feedback.String(), "outcome") {
+		t.Fatalf("missing outcome feedback must identify the original unfinished draft: %s", feedback.String())
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if snapshot.Revision != integerValue(state["revision"]) {
+		t.Fatal("an unanswered outcome wrote Runtime")
 	}
 	for _, raw := range stateEvidence(snapshot.State) {
 		entry, _ := raw.(map[string]any)
@@ -262,7 +265,7 @@ func TestHumanReleaseQuestionnaireNamesUnverifiablePackage(t *testing.T) {
 		"evidence":   []any{},
 	}}
 	context := stageHumanReleaseQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, snapshot)
-	for _, phrase := range []string{"current acceptance evidence package path cannot be verified", "Do not infer a file"} {
+	for _, phrase := range []string{"current release audit record is missing", "Main must resolve", "do not reconstruct metadata"} {
 		if !strings.Contains(context, phrase) {
 			t.Fatalf("S11 missing-package context %q does not contain %q", context, phrase)
 		}

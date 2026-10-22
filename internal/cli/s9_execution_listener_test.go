@@ -118,18 +118,23 @@ func TestS9NormalBeginBeforeSiblingPlanAndLatePlanPreservesFixing(t *testing.T) 
 	root, current, plan, sessionRef, planRef := newS9ExecutionOriginalFixture(t)
 	statePath, journalPath := filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")
 	for index, assignment := range plan.Assignments {
-		_, ref, err := repair.CreatePlanReport(root, repair.PlanReportRequest{Session: sessionRef, Plan: planRef, AssignmentID: assignment.AssignmentID, AgentID: fmt.Sprintf("builder-execution-%d", index), ReportID: fmt.Sprintf("repair-plan-report-execution-%d", index), PlanText: "restore actual boundary", RedChecks: []repair.RepairCheck{{Name: "actual precheck", Command: "go test ./internal/api", Result: "pass", EvidenceRefs: []string{"test://actual-check"}}}, ProposedPaths: assignment.Scope})
+		owner := fmt.Sprintf("builder-execution-%d", index)
+		_, ref, err := repair.CreatePlanReport(root, repair.PlanReportRequest{Session: sessionRef, Plan: planRef, AssignmentID: assignment.AssignmentID, AgentID: owner, ReportID: fmt.Sprintf("repair-plan-report-execution-%d", index), PlanText: "restore actual boundary", RedChecks: []repair.RepairCheck{{Name: "actual precheck", Command: "go test ./internal/api", Result: "pass", EvidenceRefs: []string{"test://actual-check"}}}, ProposedPaths: assignment.Scope})
 		if err != nil {
 			t.Fatal(err)
 		}
-		current, _, err = repair.SubmitRepairPlanReportToRuntime(root, statePath, journalPath, repair.SubmitPlanReportRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: "Main"}, Report: ref})
+		current, _, err = repair.SubmitRepairPlanReportToRuntime(root, statePath, journalPath, repair.SubmitPlanReportRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: owner}, Report: ref})
 		if err != nil {
 			t.Fatal(err)
 		}
 		if index == 0 {
+			beforeBegin := current.Revision
 			current, err = repair.BeginRepairExecution(root, statePath, journalPath, repair.BeginRepairExecutionRequest{RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: "Main"}})
 			if err != nil {
 				t.Fatalf("normal startup required sibling Plan: %v", err)
+			}
+			if current.Revision != beforeBegin {
+				t.Fatal("the recorded first Plan required a second startup transaction")
 			}
 		}
 		if mapFieldCLI(current.State, "lifecycle")["phase"] != "fixing" || repairPointerCLI(current.State)["status"] != "repairing" {

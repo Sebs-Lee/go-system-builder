@@ -554,10 +554,14 @@ func canonicalRepairPlanReportScope(values []string, allowEmpty bool) error {
 	}
 	seen := map[string]bool{}
 	for _, value := range values {
-		if strings.TrimSpace(value) != value || value == "" || value != "all" && !safeRelative(value) || seen[value] {
+		// S8 scope matching already treats one terminal directory slash as
+		// the same boundary. Preserve the approved bytes, but validate and
+		// deduplicate that boundary here instead of stranding its S9 handoff.
+		key := strings.TrimSuffix(value, "/")
+		if strings.TrimSpace(value) != value || key == "" || value != key && (key == "all" || key == ".") || key != "all" && !safeRelative(key) || seen[key] {
 			return fmt.Errorf("scope contains an invalid or duplicate path %q", value)
 		}
-		seen[value] = true
+		seen[key] = true
 	}
 	return nil
 }

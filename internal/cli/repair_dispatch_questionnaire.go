@@ -97,7 +97,7 @@ func stageRepairDispatchContext(root string, request policy.Input, snapshot runt
 			b.WriteString("This responsibility is awaiting Main's professional Builder selection; no owner has been selected yet. ")
 		}
 	}
-	b.WriteString("Keep supplied assignment_id; choose role_family from backend-builder, frontend-builder or test-builder. agent_id is optional and system-generated when omitted. Empty role rows stay pending. Save selected rows; Main must actually spawn/resume each Builder with its TASK/manifest: registration is not a platform launch. Main/system supplies the exact PlanReport at the Main root during normal responsibility preparation; fill that answer only. check_location (original check-location main or worker) may stay empty before execution; its workspace operation uses this same division answer.")
+	b.WriteString("Keep supplied assignment_id; choose role_family from backend-builder, frontend-builder or test-builder. agent_id is an optional engineering responsibility name, system-generated when omitted; it is not a Claude platform ID. Empty role rows stay pending. Save selected rows and pass the exact prepared brief to Claude Code native Agent with worktree isolation. The Builder saves its professional plan before implementation, continues work and self-checks, then saves its Result. SubagentStop receives those professional artifacts. No workspace prepare/launch or check_location selection is required for new native work; Main owns integration and actual necessary checks. Existing frozen executions retain their original recovery path.")
 	return b.String()
 }
 
@@ -295,7 +295,7 @@ func runRepairDispatchQuestionnaire(root string, request policy.Input, stdout, s
 		}
 		result.WriteString(repairDispatchRegisteredContext(root, latest.State, row.AssignmentID, owner))
 		status := stringValue(repairPointerCLI(latest.State)["status"])
-		if prepareExecution && runtime.PacketEnabled(latest.State) && (status == "planning" || status == "reproducing") {
+		if prepareExecution && runtime.PacketEnabled(latest.State) && (status == "planning" || status == "reproducing" || status == "repairing" && len(nativeS9PlanPackets(root, latest.State)) > 0) {
 			brief, err := repairDispatchPlanReportBrief(root, request, latest.State, row.AssignmentID, owner)
 			result.WriteString(brief)
 			if err != nil {
@@ -310,9 +310,9 @@ func runRepairDispatchQuestionnaire(root string, request policy.Input, stdout, s
 		return feedback("S9 Builder division has no selected role_family yet; this normal pending draft registered no Builder and did not change Runtime.")
 	}
 	if stringValue(repairPointerCLI(snapshot.State)["status"]) == "repairing" {
-		result.WriteString("Main must continue the actual registered Worker execution and native platform responsibility using the supplied paths. Preparation and dispatch do not start a native agent; queued original responsibilities remain pending until their named sources are ready.")
+		result.WriteString("Main continues the original native Agent or handles the returned delivery with the supplied exact references; registration did not start an Agent. Preserve real dependencies and frozen legacy recoveries.")
 	} else if prepareExecution && runtime.PacketEnabled(snapshot.State) {
-		result.WriteString("Main must now use the platform to actually spawn/resume the registered Builders with their named TASK/manifest and exact Main-root PlanReport paths. Each Builder saves its own professional answer; Main does not write it on the Builder's behalf. Registration did not start a native agent or prepare an execution workspace.")
+		result.WriteString("Main now uses Claude Code native Agent with the exact prepared S9 brief and native worktree isolation. Each Builder saves its own professional plan and Result; Stop receives them. Main does not write professional answers on the Builder's behalf. No execution workspace or Claude session was prepared.")
 	} else {
 		result.WriteString("Main must obtain each exact Main-root PlanReport path before the actual platform spawn/resume. Save the division answer through its normal questionnaire consumer to prepare missing original questions. Each Builder saves its own professional answer. Registration did not start a native agent or prepare an execution workspace.")
 	}
@@ -367,6 +367,23 @@ func repairDispatchPlanReportBrief(root string, request policy.Input, state map[
 	}
 	if !found {
 		return "", fmt.Errorf("the original issuer returned no current PlanReport for Assignment %s owner=%s", assignmentID, owner)
+	}
+	// New responsibilities carry professional material directly into native
+	// Agent execution. Existing installed Workers retain their frozen route.
+	_, execution := repairExecutionForChoice(state, repairDispatchChoice{AssignmentID: assignmentID, AgentID: owner})
+	if len(execution) == 0 || execution["purpose"] == "native_delivery" {
+		if stringValue(execution["delivery_ref"]) != "" || execution["status"] == "complete" {
+			return prepareRepairExecutionFromChoice(root, state, repairDispatchChoice{AssignmentID: assignmentID, AgentID: owner}, owner), nil
+		}
+		latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+		if err != nil {
+			return "", err
+		}
+		original, found, err := runtime.FindRepairPlanReportPacket(latest.State, packet.id)
+		if err != nil || !found {
+			return "", fmt.Errorf("original S9 Plan question is missing: %v", err)
+		}
+		return prepareNativeS9Brief(root, original)
 	}
 	view, answer := resolveRootPath(root, packet.view), resolveRootPath(root, packet.answer)
 	paths := fmt.Sprintf("Builder %s Main-root PlanReport view: %s; exact professional answer: %s. ", owner, view, answer)

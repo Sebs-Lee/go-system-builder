@@ -72,7 +72,7 @@ func (s *Store) Unbind(freshState map[string]any, archiveRoot string, approval U
 	if err != nil {
 		return RolloverRecord{}, fmt.Errorf("read runtime for unbind: %w", err)
 	}
-	journalData, err := os.ReadFile(s.journalPath)
+	journalData, err := s.lifecycleJournalDataLocked()
 	if err != nil {
 		return RolloverRecord{}, fmt.Errorf("read runtime journal for unbind: %w", err)
 	}
@@ -139,6 +139,10 @@ func (s *Store) archiveAndReset(stateData, journalData []byte, runtimeID string,
 }
 
 func (s *Store) archiveAndResetWithBoundary(stateData, journalData []byte, runtimeID string, revision int, freshState map[string]any, archiveRoot string, manifestExtras map[string]any, disposition, boundaryKind string, approval RolloverApproval, occurredAt time.Time) (RolloverRecord, error) {
+	segments, err := s.captureRolloverJournalSegments(journalData)
+	if err != nil {
+		return RolloverRecord{}, err
+	}
 	if err := os.MkdirAll(archiveRoot, 0o755); err != nil {
 		return RolloverRecord{}, fmt.Errorf("create runtime archive root: %w", err)
 	}
@@ -183,14 +187,15 @@ func (s *Store) archiveAndResetWithBoundary(stateData, journalData []byte, runti
 			ArchiveDir: archiveDir, RuntimeID: runtimeID, Revision: revision,
 			ArchiveStateSHA: stateHash, ArchiveJournalSHA: journalHash,
 		},
-		Approval:            approval,
-		BoundaryKind:        boundaryKind,
-		Disposition:         disposition,
-		OccurredAt:          occurredAt.UTC().Format(time.RFC3339Nano),
-		SourceStateSHA256:   stateHash,
-		SourceJournalSHA256: journalHash,
-		SourceRuntimeID:     runtimeID,
-		SourceRevision:      intPointer(revision),
+		Approval:              approval,
+		BoundaryKind:          boundaryKind,
+		Disposition:           disposition,
+		OccurredAt:            occurredAt.UTC().Format(time.RFC3339Nano),
+		SourceStateSHA256:     stateHash,
+		SourceJournalSHA256:   journalHash,
+		SourceRuntimeID:       runtimeID,
+		SourceRevision:        intPointer(revision),
+		SourceJournalSegments: segments,
 	}
 	if err := atomicWriteJSON(s.rolloverMarkerPath(), pending); err != nil {
 		return RolloverRecord{}, fmt.Errorf("record pending runtime rollover: %w", err)

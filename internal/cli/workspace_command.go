@@ -112,6 +112,13 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
+	if verb == "prepare" {
+		for _, packet := range nativeS9PlanPackets(mainRoot, snap.State) {
+			if packet.Binding.OwnerAgentID == *agent && (packet.Binding.ManifestAssignmentID == *id || packet.Binding.RepairAssignmentID == *id) {
+				return fail(fmt.Errorf("native S9 responsibility uses Claude Code Agent/worktree; pass its exact brief, then receive the returned source at SubagentStop; workspace prepare is for frozen legacy executions"))
+			}
+		}
+	}
 	binding, err := workspace.Decode(snap.State)
 	if err != nil {
 		return fail(err)

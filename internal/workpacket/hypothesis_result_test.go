@@ -330,3 +330,35 @@ func TestValidateHypothesisResultAnswerReturnsOnlyCompleteProfessionalFields(t *
 }
 
 func hypothesisStringPtr(value string) *string { return &value }
+
+func TestHumanQuestionFollowupNeedsNoInventedFindingButBatchKeepsSourceSubset(t *testing.T) {
+	for _, human := range []bool{false, true} {
+		t.Run(map[bool]string{false: "batch", true: "human"}[human], func(t *testing.T) {
+			binding, inputs := hypothesisResultTestBinding(t), hypothesisResultTestInputs()
+			if human {
+				binding.ObservationBatchID, binding.ObservationBatchRef, binding.ObservationBatchSHA256 = "", "", ""
+				binding.SourceFindingIDs, binding.HypothesisSourceFindingIDs = []string{}, []string{}
+				inputs.Hypothesis.SourceFindingIDs = []string{}
+				binding.HypothesisQuestionSHA256, _ = HypothesisQuestionDigest(inputs.Hypothesis)
+				inputs.Findings = []HypothesisResultFinding{}
+				inputs.EvidenceRefs = inputs.EvidenceRefs[:1]
+			}
+			p, err := BuildHypothesisResult(binding, inputs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := "inconclusive"
+			answer := HypothesisResultAnswer{Method: "compare the input boundary", EvidenceRefs: []string{"test://observation"}, SourceBoundaryRefs: []string{"test://boundary"}, Observed: "the discriminator requires a second observation", CounterfactualOrDiscriminator: "compare the next layer", Result: &result, ExplainsFindingIDs: []string{}, DoesNotExplain: []string{}, NewHypotheses: []HypothesisNewQuestion{{Statement: "the next boundary loses the value", Invariant: "values survive the next boundary", Discriminator: "compare before and after the next layer", ExpectedOutcomes: HypothesisExpectedOutcomes{Support: "value lost", Refute: "value retained"}, SourceFindingIDs: []string{}, EvidenceRefs: []string{"test://next-boundary"}}}}
+			draft := p.Draft
+			draft.Answer, _ = json.Marshal(answer)
+			data, _ := json.Marshal(draft)
+			_, fields := ValidateHypothesisResultAnswer(p, data)
+			if human && len(fields) != 0 {
+				t.Fatalf("human follow-up demanded a fake Finding: %+v", fields)
+			}
+			if !human && (len(fields) == 0 || !strings.Contains(fields[0].Pointer, "source_finding_ids")) {
+				t.Fatalf("Batch follow-up lost its source subset requirement: %+v", fields)
+			}
+		})
+	}
+}

@@ -57,7 +57,7 @@ into a round-named location.
 ## N/A Criteria
 N/A only when no UI-impacting behavior change occurred AND no cross-REQ module sweep is required.
 ## Stop Conditions
-Stop when `flows.md` fingerprint drifts from the read-back, when frontend is unreachable, when `data-test` hooks are absent blocking deterministic selection, or when a flow step contradicts the actual UI (surface as DV finding, do not work around).
+Stop when `flows.md` fingerprint differs from the supplied frozen input, when frontend is unreachable, when `data-test` hooks are absent blocking deterministic selection, or when a flow step contradicts the actual UI (surface as DV finding, do not work around).
 ## Non-Goals
 Do not use Cypress or other frameworks when the project standard is Playwright. Do not bind selectors to CSS classes or copy text (use `data-test`). Do not skip the cross-REQ regression sweep. Do not mask CDP-captured errors to force a green.
 

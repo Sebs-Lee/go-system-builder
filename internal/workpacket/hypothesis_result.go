@@ -423,7 +423,7 @@ func validateCompleteHypothesisResultAnswer(binding HypothesisResultBinding, dat
 		return err.pointer, "one or more non-empty unique references", err.observed
 	}
 	if err := validateAnswerStrings(answer.SourceBoundaryRefs, "/answer/source_boundary_refs", true); err != nil {
-		return err.pointer, "one or more non-empty unique Finding encounter boundaries", err.observed
+		return err.pointer, "one or more non-empty unique original source boundaries", err.observed
 	}
 	caseFindings := stringSet(binding.SourceFindingIDs)
 	seen := map[string]string{}
@@ -456,7 +456,7 @@ func validateCompleteHypothesisResultAnswer(binding HypothesisResultBinding, dat
 		if strings.TrimSpace(hypothesis.ExpectedOutcomes.Support) == "" || strings.TrimSpace(hypothesis.ExpectedOutcomes.Refute) == "" {
 			return fmt.Sprintf("/answer/new_hypotheses/%d/expected_outcomes", i), "non-empty support and refute outcomes", "incomplete"
 		}
-		if err := validateAnswerStrings(hypothesis.SourceFindingIDs, fmt.Sprintf("/answer/new_hypotheses/%d/source_finding_ids", i), true); err != nil {
+		if err := validateAnswerStrings(hypothesis.SourceFindingIDs, fmt.Sprintf("/answer/new_hypotheses/%d/source_finding_ids", i), len(binding.SourceFindingIDs) > 0); err != nil {
 			return err.pointer, "one or more Case Finding IDs", err.observed
 		}
 		seenSources := map[string]bool{}

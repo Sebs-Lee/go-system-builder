@@ -83,11 +83,12 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read evidence artifact: %w", err)
 	}
-	var s10Binding struct {
+	type s10Association struct {
 		RuntimeID          string `json:"runtime_id"`
 		BaselineGeneration int    `json:"baseline_generation"`
 		ReviewRound        int    `json:"review_round"`
 	}
+	var s10Binding s10Association
 	if isS10RoundScopedKind(request.Kind) {
 		if err := json.Unmarshal(data, &s10Binding); err != nil {
 			return Snapshot{}, fmt.Errorf("read S10 recording association: %w", err)
@@ -127,13 +128,30 @@ func RecordEvidence(root, statePath, journalPath string, request EvidenceRequest
 	runtimeID, _ := current["runtime_id"].(string)
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	from := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
-	// The professional manifest was checked by its normal save receiver.
-	// Recording retains only the current system association, not source proofs.
+	// The public recording entry must also read the existing professional
+	// report; it cannot assume the normal save receiver already validated it.
 	if isS10RoundScopedKind(request.Kind) {
 		baseline, _ := current["baseline"].(map[string]any)
 		review, _ := current["review"].(map[string]any)
 		if s10Binding.RuntimeID != runtimeID || !hypothesisJSONEqual(baseline["generation"], s10Binding.BaselineGeneration) || !hypothesisJSONEqual(review["round"], s10Binding.ReviewRound) {
 			return Snapshot{}, fmt.Errorf("S10 report does not describe the current responsibility/round")
+		}
+		if request.ReviewRound != nil && *request.ReviewRound != s10Binding.ReviewRound {
+			return Snapshot{}, fmt.Errorf("S10 recording review round does not match the existing report; omit the override to inherit its current round")
+		}
+		reportData, reportType, conclusion, err := acceptance.ResolveS10Manifest(root, request.Kind, data)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		var reportBinding s10Association
+		if err := json.Unmarshal(reportData, &reportBinding); err != nil {
+			return Snapshot{}, fmt.Errorf("read S10 referenced report association: %w", err)
+		}
+		if reportBinding != s10Binding {
+			return Snapshot{}, fmt.Errorf("S10 referenced report association does not match the recording responsibility/round")
+		}
+		if _, err := acceptance.ValidateForOutcome(reportData, reportType, conclusion); err != nil {
+			return Snapshot{}, fmt.Errorf("S10 %s evidence manifest is invalid: %w", reportType, err)
 		}
 	}
 

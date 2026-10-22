@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/agentcontext"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -28,7 +29,18 @@ func registerAcceptedS5Reviewers(t *testing.T, root, taskID, taskPath string) []
 		refs = append(refs, document.Reference)
 	}
 
-	for _, rel := range []string{"agents/document-verifier.md", "skills/document-verification/SKILL.md", "skills/agent-dispatch/SKILL.md"} {
+	assets := []string{"agents/document-verifier.md", "skills/agent-dispatch/SKILL.md"}
+	for _, responsibility := range []string{"DV-SPEC-CONSISTENCY", "DV-TASK-EXECUTABILITY"} {
+		for _, skill := range agentcontext.RequiredSkills(responsibility) {
+			assets = append(assets, filepath.ToSlash(filepath.Join("skills", skill, "SKILL.md")))
+		}
+	}
+	installed := map[string]bool{}
+	for _, rel := range assets {
+		if installed[rel] {
+			continue
+		}
+		installed[rel] = true
 		data, err := os.ReadFile(filepath.Join(fixtures.RepoRoot(t), rel))
 		if err != nil {
 			t.Fatal(err)
@@ -76,7 +88,7 @@ func registerAcceptedS5Reviewers(t *testing.T, root, taskID, taskPath string) []
 		}
 		assignment["assignment_id"], assignment["agent_id"], assignment["responsibility_id"] = assignmentID, owner, responsibility
 		assignment["role_family"], assignment["agent_definition_ref"] = "document-verifier", ".claude/agents/document-verifier.md"
-		assignment["skill_refs"] = []string{"document-verification"}
+		assignment["skill_refs"] = agentcontext.RequiredSkills(responsibility)
 		assignment["read_paths"] = []string{taskPath}
 		assignment["write_paths"] = []string{}
 		assignment["output_paths"] = []string{"docs/reports/review/" + owner + ".json"}

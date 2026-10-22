@@ -257,7 +257,8 @@ func canonicalCurrentPlanRef(input Input, owner string) (string, error) {
 		return "", fmt.Errorf("validate current accepted PLAN_REPORT: %w", err)
 	}
 	agent, found, err := uniqueEntityByID(input.Snapshot.State, "agents", owner)
-	if err != nil || !found || ref == "" || stringValue(agent["readback_ref"]) != ref || stringValue(agent["plan_reported_ref"]) != ref || !safeCanonicalRef(ref) {
+	record, native, _ := assignmentrecord.ForOwner(input.Snapshot.State, owner)
+	if err != nil || !found || ref == "" || (!(native && record.Contract == assignmentrecord.NativeDeliveryContract) && stringValue(agent["readback_ref"]) != ref) || stringValue(agent["plan_reported_ref"]) != ref || !safeCanonicalRef(ref) {
 		return "", fmt.Errorf("current accepted PLAN_REPORT reference is unavailable or inconsistent")
 	}
 	return ref, nil
@@ -442,7 +443,7 @@ func resolveCanonicalBuilderResult(input Input, mode canonicalAssignmentMode, ow
 		return out
 	}
 	facts := cp.CanonicalMainFacts
-	if facts == nil || cp.TaskID != record.Task.ID || cp.AssignmentID != record.AssignmentID || cp.Generation != record.BaselineGeneration || cp.ReportPath != ref || cp.ReportSHA != out.ResultSHA || facts.SourceHead != cp.SourceHead || facts.MergeBase != cp.MergeBase || facts.TestedHead != cp.TestedHead || facts.TargetBranch != cp.TargetBranch || facts.MergeCommit != cp.MergeCommit || cp.ChangedPaths != nil || cp.ChangedPathsSHA256 != "" {
+	if facts == nil || (record.Contract == assignmentrecord.NativeDeliveryContract && facts.SourceHead != accepted.SourceHead) || cp.TaskID != record.Task.ID || cp.AssignmentID != record.AssignmentID || cp.Generation != record.BaselineGeneration || cp.ReportPath != ref || cp.ReportSHA != out.ResultSHA || facts.SourceHead != cp.SourceHead || facts.MergeBase != cp.MergeBase || facts.TestedHead != cp.TestedHead || facts.TargetBranch != cp.TargetBranch || facts.MergeCommit != cp.MergeCommit || cp.ChangedPaths != nil || cp.ChangedPathsSHA256 != "" {
 		out.MainReason = "integration_receipt_invalid"
 		return out
 	}
@@ -561,7 +562,7 @@ func validateCanonicalExecutionBinding(input Input, record assignmentrecord.Reco
 	if err != nil {
 		return 0, fmt.Errorf("decode current workspace execution registry: %w", err)
 	}
-	if registry == nil {
+	if registry == nil || record.Contract == assignmentrecord.NativeDeliveryContract {
 		if facts.ExecutionGeneration != 0 {
 			return 0, fmt.Errorf("Main facts claim a workspace execution that the Runtime does not register")
 		}

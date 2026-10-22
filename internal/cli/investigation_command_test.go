@@ -186,7 +186,7 @@ func TestRuntimeInvestigationContractApproveCLIHandsOffToS9(t *testing.T) {
 	contract := map[string]any{
 		"schema_version": "1.0.0", "repair_contract_id": "repair-contract-r1", "case_id": "investigation-case-observation-batch-r1", "revision": 1, "status": "draft", "source_finding_ids": []string{"finding-1"},
 		"root_cause_statement": "the payload boundary has two incompatible owners", "violated_invariant": "one owner defines the payload shape", "causal_model_ref": "case://investigation-case-observation-batch-r1/causal-model", "architecture_intent": "restore the authoritative boundary",
-		"repair_units": []any{map[string]any{"id": "unit-1", "description": "centralize the payload contract"}}, "prospective_scope": []string{"internal/api"}, "forbidden_scope": []string{"docs/requirements"},
+		"repair_units": []any{map[string]any{"id": "unit-1", "description": "centralize the payload contract", "assertion_ids": []string{"all"}}}, "prospective_scope": []string{"internal/api"}, "forbidden_scope": []string{"docs/requirements"},
 		"symptom_assertions": []string{"finding-1 is eliminated"}, "root_invariant_assertions": []string{"one payload owner exists"}, "detection_gap_assertions": []string{"contract drift is tested"}, "stop_escalation_conditions": []string{"locked requirement changes"},
 	}
 	contractBytes, err := json.MarshalIndent(contract, "", "  ")
@@ -240,7 +240,7 @@ func TestRuntimeInvestigationContractApproveCLIHandsOffToS9(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("contract approve code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "contract_approved") || !strings.Contains(stderr.String(), "S9 consume") {
+	if !strings.Contains(stdout.String(), "contract_approved") || !strings.Contains(stderr.String(), "original S9 entry prepared") || !strings.Contains(stderr.String(), "PlanReport") {
 		t.Fatalf("approval output lacks S9 handoff: stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
 	var approvedState map[string]any
@@ -251,8 +251,20 @@ func TestRuntimeInvestigationContractApproveCLIHandsOffToS9(t *testing.T) {
 	if err := json.Unmarshal(stateBytes, &approvedState); err != nil {
 		t.Fatal(err)
 	}
-	if approvedState["lifecycle"].(map[string]any)["phase"] != "repair_readback" {
-		t.Fatalf("lifecycle phase = %#v, want repair_readback", approvedState["lifecycle"])
+	if approvedState["lifecycle"].(map[string]any)["phase"] != "planning" {
+		t.Fatalf("lifecycle phase = %#v, want planning", approvedState["lifecycle"])
+	}
+
+	preparedRepair := approvedState["review"].(map[string]any)["repair"].(map[string]any)
+	if preparedRepair["status"] != "planning" || preparedRepair["case_id"] != "investigation-case-observation-batch-r1" {
+		t.Fatalf("approval did not prepare the original current S9 responsibility: %#v", preparedRepair)
+	}
+	for _, source := range [][2]string{{"path", "sha256"}, {"plan_ref", "plan_sha256"}} {
+		rel, _ := preparedRepair[source[0]].(string)
+		data, err := os.ReadFile(filepath.Join(root, rel))
+		if rel == "" || err != nil || sha256HexForCLI(data) != preparedRepair[source[1]] {
+			t.Fatalf("prepared original S9 source %s is missing or changed: %v", rel, err)
+		}
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -265,8 +277,40 @@ func TestRuntimeInvestigationContractApproveCLIHandsOffToS9(t *testing.T) {
 		t.Fatal(err)
 	}
 	next, _ := approvedStatus["next"].(string)
-	if !strings.Contains(next, "runtime repair session open") || !strings.Contains(next, "repair_contract_ref") {
-		t.Fatalf("approved Case status must expose the executable S9 session action, got %q", next)
+	if strings.Contains(next, "runtime repair session open") || !strings.Contains(next, "PlanReport") || !strings.Contains(next, "SubagentStop") {
+		t.Fatalf("approved Case with a prepared S9 entry must continue its original responsibility, got %q", next)
+	}
+	for _, missing := range []bool{true, false} {
+		t.Run(fmt.Sprintf("status_entry_gap_missing_%t", missing), func(t *testing.T) {
+			var gapState map[string]any
+			if err := json.Unmarshal(stateBytes, &gapState); err != nil {
+				t.Fatal(err)
+			}
+			gapReview := gapState["review"].(map[string]any)
+			if missing {
+				delete(gapReview, "repair")
+			} else {
+				gapReview["repair"].(map[string]any)["case_id"] = "investigation-case-foreign"
+			}
+			stageJSON(t, root, ".claude/loop-state.json", gapState)
+			beforeState, beforeJournal := s6CanonicalRuntimePair(t, root)
+			var out, diagnostic bytes.Buffer
+			if code := cli.Run([]string{"runtime", "investigation", "status", "--root", root}, nil, &out, &diagnostic); code != 0 {
+				t.Fatalf("entry-gap status: %d %s %s", code, &out, &diagnostic)
+			}
+			var result map[string]any
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			action, _ := result["next"].(string)
+			if !strings.Contains(action, "Main must complete the original S9 entry preparation") || !strings.Contains(action, "investigation-case-observation-batch-r1") || strings.Contains(action, "runtime repair session open") {
+				t.Fatalf("missing or foreign Session supplied another startup instruction: %s", action)
+			}
+			s6AssertCanonicalRuntimePair(t, root, beforeState, beforeJournal)
+		})
+	}
+	if err := os.WriteFile(filepath.Join(root, ".claude/loop-state.json"), stateBytes, 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	// A targeted S9 failure returns the lifecycle cursor to S8 while the

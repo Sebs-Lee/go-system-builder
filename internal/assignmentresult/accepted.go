@@ -50,6 +50,7 @@ type AcceptedResult struct {
 	AssignmentRecord       assignmentrecord.RecordReference `json:"assignment_record"`
 	AssignmentRecordSHA256 string                           `json:"assignment_record_sha256"`
 	ResultRevision         int                              `json:"result_revision"`
+	SourceHead             string                           `json:"source_head,omitempty"`
 	SubmissionKey          string                           `json:"submission_key"`
 	AnswerDigest           string                           `json:"answer_digest"`
 	Answer                 Answer                           `json:"answer"`
@@ -74,6 +75,18 @@ func validRelative(ref string) bool {
 // read must be the caller's original authority file view. This function
 // does not mark assertions true or authorize a Runtime mutation.
 func LoadAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error)) (AcceptedResult, error) {
+	return loadAccepted(state, record, resultRef, read, false)
+}
+
+// LoadContribution reads the immutable delivery history for a product baseline.
+// Scope-invalidated evidence remains historical delivery provenance, never a
+// current quality verdict. Callers must still verify the original Main receipt
+// and review the current full product surface. No evidence status is changed.
+func LoadContribution(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error)) (AcceptedResult, error) {
+	return loadAccepted(state, record, resultRef, read, true)
+}
+
+func loadAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error), contribution bool) (AcceptedResult, error) {
 	var result AcceptedResult
 	if err := assignmentrecord.ValidateRecord(record); err != nil {
 		return result, err
@@ -102,7 +115,7 @@ func LoadAccepted(state map[string]any, record assignmentrecord.Record, resultRe
 			index = row
 		}
 	}
-	if index == nil || index["kind"] != "completion_report" || index["status"] != "valid" || number(index["baseline_generation"]) != record.BaselineGeneration || index["responsibility_id"] != "BUILD-WORK-PACKAGE" {
+	if index == nil || index["kind"] != "completion_report" || !acceptedIndexStatus(index, contribution) || number(index["baseline_generation"]) != record.BaselineGeneration || index["responsibility_id"] != "BUILD-WORK-PACKAGE" {
 		return result, fmt.Errorf("Result has no valid original completion evidence registration")
 	}
 	if err := requireUniqueEvidenceID(rows, index); err != nil {
@@ -280,6 +293,12 @@ func validateAcceptedEnvelope(record assignmentrecord.Record, index map[string]a
 	if result.SchemaVersion != "1.0.0" || result.Kind != "completion_report" || result.Conclusion != "submitted" || result.EvidenceID != index["id"] || result.RuntimeID != record.RuntimeID || result.BaselineGeneration != record.BaselineGeneration || result.ProducerAgentID != record.OwnerAgentID || result.ProducerResponsibility != "BUILD-WORK-PACKAGE" || result.TaskID != record.Task.ID || result.AssignmentRecord != record.Reference() || result.AssignmentRecordSHA256 != sha || result.ResultRevision < 1 || result.SubmissionKey == "" || result.CreatedAt == "" {
 		return result, fmt.Errorf("Result does not bind its original Assignment revision")
 	}
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		_, err := hex.DecodeString(result.SourceHead)
+		if err != nil || (len(result.SourceHead) != 40 && len(result.SourceHead) != 64) || strings.ToLower(result.SourceHead) != result.SourceHead {
+			return result, fmt.Errorf("native Result has no actual accepted Git source commit")
+		}
+	}
 	if !containsOwner(index["produced_by"], record.OwnerAgentID) {
 		return result, fmt.Errorf("Result evidence does not bind its original owner")
 	}
@@ -348,6 +367,16 @@ func validateAcceptedEnvelope(record assignmentrecord.Record, index map[string]a
 // AcceptedHistory returns only this Record revision's original registered
 // Results. Revision numbering is explicit, unique and continuous.
 func AcceptedHistory(state map[string]any, record assignmentrecord.Record, read func(string) ([]byte, error)) ([]AcceptedResult, error) {
+	return acceptedHistory(state, record, read, false)
+}
+
+// ContributionHistory retains exact registered delivery revisions after scope
+// invalidation without granting them current PASS or integration authority.
+func ContributionHistory(state map[string]any, record assignmentrecord.Record, read func(string) ([]byte, error)) ([]AcceptedResult, error) {
+	return acceptedHistory(state, record, read, true)
+}
+
+func acceptedHistory(state map[string]any, record assignmentrecord.Record, read func(string) ([]byte, error), contribution bool) ([]AcceptedResult, error) {
 	var results []AcceptedResult
 	rows, _ := state["evidence"].([]any)
 	for _, raw := range rows {
@@ -369,7 +398,7 @@ func AcceptedHistory(state map[string]any, record assignmentrecord.Record, read 
 		if binding.AssignmentRecord != record.Reference() {
 			continue
 		}
-		result, err := LoadAccepted(state, record, ref, read)
+		result, err := loadAccepted(state, record, ref, read, contribution)
 		if err != nil {
 			return nil, err
 		}
@@ -419,6 +448,28 @@ func containsOwner(raw any, owner string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// Only original source-scope invalidation can preserve contribution provenance.
+// Assignment supersession continues through LoadSupersededAccepted's exact
+// revision-event proof; arbitrary invalid/missing/retired registrations fail.
+func acceptedIndexStatus(index map[string]any, contribution bool) bool {
+	if index["status"] == "valid" {
+		return true
+	}
+	if !contribution || index["status"] != "invalid" {
+		return false
+	}
+	by, _ := index["invalidated_by"].(string)
+	reason, _ := index["invalidation_reason"].(string)
+	if strings.TrimSpace(by) == "" || strings.TrimSpace(reason) == "" {
+		return false
+	}
+	switch index["invalidation_rule"] {
+	case "unscoped_evidence", "scope_overlap", "change_impact_invalid":
+		return true
 	}
 	return false
 }

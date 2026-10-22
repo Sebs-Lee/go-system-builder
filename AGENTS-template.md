@@ -23,6 +23,16 @@ Every stage must be completed according to its own contract. In particular,
 S9 has one exit only: a fresh complete S7 round. S10 may consume that new S7
 clean round, but S9 never goes directly to S10.
 
+
+## Native S9 dispatch
+
+Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
+
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+
 ## Work status
 
 Describe each responsibility attempt with one status:
@@ -81,7 +91,7 @@ Main's integration requirements.
 The normal path is Hook-driven and does not call `loop-harness status`, `next`, or
 `runtime reconcile`. Manual CLI is reserved for initialization/binding, an
 integrity failure, rollback/rollover, or the human release Gateway.
-Main also runs normal workspace prepare, integration and checks using the exact Hook-supplied commands; S9 original prepare supplies the Result questionnaire, listening does not perform workspace startup, and authors still do not manually issue/consume.
+Main runs native S6 preparation and Agent dispatch, then explicit integration and checks. Other stage contracts retain their exact Hook-supplied workspace commands; S9 original prepare supplies the Result questionnaire, listening does not perform workspace startup, and authors still do not manually issue/consume.
 In packet mode, the Hook gives your current questionnaire's exact path, clear
 questions and remaining stage work. Fill the professional answers and actual
 artifact paths there, then save. The listener prepares missing questionnaires
@@ -115,6 +125,14 @@ does not execute a merge, deployment, publication, or release.
 
 `/loop` is **not** an authorization and does not bind a REQ. It only delivers the Layer 2 Wake-up prompt on a schedule.
 
+## Native S6 delivery (s6-native-v1)
+
+For a newly prepared native S6 TASK, Main uses `s6 prepare --task <TASK> --role <role> --root <Main>` and carries the exact returned task brief into Claude Code's native Agent prompt. Claude Code owns creation, foreground/background execution, messaging and resume. No Team, opaque platform ID, workspace prepare/launch, team launch, generic readback, begin or activation is required.
+
+The Builder reads the brief and actual TASK inputs, saves its professional plan, continues implementation and actual self-checks, commits deliverables and saves the professional Result. Ordinary saves do not register an execution lifecycle. Return the exact task brief / delivery path. SubagentStart supplies bounded engineering guidance; SubagentStop receives actual professional artifacts through the original domain Writer. Main integrates separately and the original full-batch Gate remains. A real blocker may be handed back; never fabricate PASS or approval.
+
+This section applies only to `s6-native-v1`. Keep the original frozen recovery behavior for existing workspace/legacy assignments and other stages until migrated. The legacy sections below are not prerequisites of native S6.
+
 ## DRIVE()
 
 This is the Main-session loop. Workers execute their current Assignment's
@@ -126,10 +144,14 @@ actual human decisions and applicable professional work; S1/S2 normal save
 records and completes the original outlet. Ordinary Pre/Stop are read only,
 and an accepted report with unfinished outlet continues on the same save.
 
-Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or tool result. Full procedure, autonomous decision rules, and stop conditions live in `.claude/skills/loop-orchestration/SKILL.md`.
+Re-enter this driver at a real stage handoff, native return or concrete blocker.
+Ordinary tools continue the current professional task; do not rerun the full
+inventory, status or baseline checks on every call. The detailed method and stop
+conditions live in `.claude/skills/loop-orchestration/SKILL.md`.
 
 ```text
-1. Use the current Hook packet/Milestone; verify the bound REQ is locked and its SHA-256 matches the baseline.
+1. Use the current Hook packet and original accepted facts. The system maintains
+   baseline identity; inspect source drift only when the actual task or error calls for it.
 2. Read the current stage contract at docs/control/agent-protocol.md#<stage>.
 3. Inventory completed deliverables and valid evidence from the packet, Runtime, and artifacts.
 4. If the stage is incomplete: pick the most-forward missing deliverable or
@@ -138,10 +160,11 @@ Run on every session start, Wake-up, subagent return, Hook `warn` or `block`, or
    unclear). “Most-forward” means the next contractually unblocked piece; it
    never means skipping coverage, prerequisites, or a required review.
    If a subagent assignment is awaiting its required plan checkpoint or approval:
-   the next action is that mode's checkpoint / approval / activation barrier,
+   for frozen legacy work the next action is that mode's checkpoint / approval / activation barrier; native S6 continues from its prepared brief,
    not self-execution of that delegated work.
-   Else: produce nothing extra — the next PreToolUse auto-advances when the
-   gate is satisfied. Do not call transition CLI.
+   Else: use the existing reception/followup feedback to identify the remaining
+   owner and action. An accepted answer is not a reason to fabricate another tool
+   call, resubmit unchanged work or call transition CLI.
 5. Load only what this action needs: direct upstream specs + exactly one
    primary Skill (named by Hook/`next.primary_skill`) + risk-triggered Best Practices.
 6. Execute the action (self, or one single-responsibility subagent assignment
@@ -183,9 +206,9 @@ the Milestone instead of relying on conversation memory.
   | S11 human release decision | Main faithfully fills the prepared application’s original disposition and optional reason, then saves; PostToolUse receives and advances through the original Writer | a real clear human choice; without one leave disposition empty and wait; no metadata, command or identity proof required |
   "Locking a REQ" = the human's explicit lock gesture in conversation (see skills: requirement-funnel Exit Conditions); the file edit that flips `状态：locked` is executed by the main session on that authorization. S1 reuses a clear accompanying startup decision without second confirmation. If startup intent is absent, leave that original answer blank and ask for the actual decision; do not request a command as proof.
 - `/loop` only delivers the Layer 2 prompt. S1 binding uses normal save of the current four-question application; the original transaction owns binding and the S2 handoff.
-- Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. S6 Builders retain their professional PLAN_REPORT. S9 Builders personally save PlanReport before work and RepairResult after work, directly recording professional facts without a generic PLAN/AgentBegin/activation/completion acceptance prerequisite; actual checks and explicit user decisions remain required work. Do not add generic PLAN or completion submissions. Outside S9, any `plan_approval_required` assignment retains its original approval and activation.
-- Once work is delegated to a subagent, the main session waits for or re-wakes that same Agent for its required checkpoint or result; it does not take over or project that responsibility to `done` unless the assignment is revoked or reassigned.
-- Blocking findings enter the canonical BUG cycle. Targeted re-verification never produces a clean round.
+- Dispatch follows the registered mode. S5/S7/S8 reviewers and Investigators on ordinary `plan_checkpoint` assignments work from the Hook's exact domain questionnaire without a duplicate generic PLAN_REPORT. Native S6 Builders save their professional plan and continue without an activation handshake; Stop receives their actual delivery. S9 Builders personally save PlanReport before work and RepairResult after work, directly recording professional facts without a generic PLAN/AgentBegin/activation/completion acceptance prerequisite; actual checks and explicit user decisions remain required work. Do not add generic PLAN or completion submissions. An explicit `plan_approval_required` responsibility retains its original domain approval; existing frozen executions retain their named recovery contract.
+- Once work is delegated, Main uses native wait/resume and the original receiver facts. A returned honest blocker or already accepted result becomes Main’s next responsibility; do not re-wake its author for peer work or integration. Main does not author independent results or mark unfinished work done.
+- Blocking findings enter InvestigationCase and approved RepairContract handling; a canonical BUG is an optional projection. Targeted re-verification never produces a clean round.
 - S10 overrides the generic Driver steps 7–8 on repeated verification and
   waiting for the next PreToolUse: Main collects actual professional results
   in the supplied current Manifest; reuse applicable S7 observations and add
@@ -218,8 +241,8 @@ Use `general-purpose` only when:
   before declaring the subcommand missing. Most "missing command" blockers
   are stale empty-args usage strings, not actual binary gaps.
 
-If a role-bearing agent gets stuck mid-assignment (no readback, no
-completion report), follow the `agent-dispatch` Skill's stop
+If a role-bearing agent gets stuck mid-assignment (no usable professional
+artifact or a concrete blocker), follow the `agent-dispatch` Skill's stop
 conditions: surface the blocker to the human or revoke/reassign the
 assignment. Do **not** silently swap to `general-purpose` to bypass the
 activation envelope — that hides the real cause and breaks the audit
@@ -412,7 +435,7 @@ Existing bound runtimes are not retroactively granted this authority.
 
 REQ 绑定必须显式提供 `--dev-branch <开发主分支>` 和 `--release-upstream <最终发布上游>`，远程发布目标包含 remote；没有 develop 默认值。项目根目录是当前 REQ 唯一权威。
 
-派发前将上游正式 Markdown、代码和测试产出整理提交；不要自动提交用户无关变更。新 worktree 不含主会话未提交或仅暂存的文件。主会话用 `runtime workspace prepare --assignment <id> --agent <owner> --root <项目根目录>` 准备 native Worker，再使用返回的 launch 命令；实际 checkout 由原 registry 创建。不要在它之前另跑 `worktree-create`，也不要依赖平台默认分支或复制目录。明确不入 Git 的 evidence 单独按依赖交接，不能复制整个控制面。
+派发前将上游正式 Markdown、代码和测试产出整理提交；不要自动提交用户无关变更。新 worktree 不含主会话未提交或仅暂存的文件。新 S6 使用 Claude Code 原生 Agent/worktree 与 s6-native-v1 工程交付；旧 workspace prepare/launch 仅用于既有执行的原恢复。不要在它之前另跑 `worktree-create`，也不要依赖平台默认分支或复制目录。明确不入 Git 的 evidence 单独按依赖交接，不能复制整个控制面。
 
 子会话在子分支提交成果并报告，主会话在项目根目录执行 `runtime task-integrate --assignment-id <id>`，生成合并提交、校验、接收并及时清理。集成不是 release；临时 worktree 不是交付终点。未回收、分支偏离、积压只提醒，不新增 Stop 或普通工具硬门禁。
 

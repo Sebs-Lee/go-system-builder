@@ -143,6 +143,12 @@ func repositoryContainedPath(root, rel string) (string, error) {
 	return abs, nil
 }
 
+// VerifyFrozenSubjects reuses the original read-only S7 subject verifier.
+// The caller must first establish the Plan's pinned identity and current scope.
+func VerifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
+	return verifyFrozenSubjects(root, plan, state)
+}
+
 // verifyFrozenSubjects proves that the registered ReviewPlan still describes
 // the bytes on disk. SubjectDigest only fingerprints the plan declarations;
 // it must not be mistaken for a disk-baseline check. A changed or missing
@@ -297,6 +303,39 @@ var errResultPacketDriftProof = errors.New("S7 issued control artifact source ca
 
 func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string) ([]string, error) {
 	controlPaths := map[string]bool{}
+	// S11's consumed defect decision is an original control artifact, not a
+	// product change. Recognize only its exact current record; sibling files
+	// and unregistered decisions remain subject to the product drift check.
+	evidenceRows, _ := state["evidence"].([]any)
+	for _, raw := range evidenceRows {
+		row, _ := raw.(map[string]any)
+		path := stringField(row["path"])
+		// S10's original recorded reports remain control history when it
+		// returns to S7. Unknown files beside them are still product drift.
+		kind := stringField(row["kind"])
+		if (kind == "acceptance" || kind == "release_audit" || kind == "change_impact") && strings.HasPrefix(path, "s10/") && workpacket.CheckPath(root, path) == nil {
+			data, err := workpacket.ReadFile(root, path, 20<<20)
+			if err == nil && workpacket.Digest(data) == row["sha256"] {
+				controlPaths[path] = true
+				var envelope struct {
+					Path string `json:"audit_manifest_path"`
+					SHA  string `json:"audit_manifest_sha256"`
+				}
+				if (kind == "acceptance" || kind == "release_audit") && json.Unmarshal(data, &envelope) == nil && filepath.Dir(envelope.Path) == filepath.Dir(path) {
+					manifest, err := workpacket.ReadFile(root, envelope.Path, 20<<20)
+					if err == nil && workpacket.Digest(manifest) == envelope.SHA {
+						controlPaths[envelope.Path] = true
+						controlPaths[strings.TrimSuffix(envelope.Path, ".json")+".md"] = true
+					}
+				}
+			}
+		}
+		if row["kind"] == "human_decision" && row["status"] == "valid" && row["consumed_by"] == "TR-027" &&
+			intField(row["baseline_generation"]) == baselineGeneration(state) && intField(row["review_round"]) == plan.ReviewRound &&
+			strings.HasPrefix(path, ".claude/decisions/") && workpacket.CheckPath(root, path) == nil {
+			controlPaths[path] = true
+		}
+	}
 	// Existing packet records name the exact question/answer files from all
 	// stages, including earlier rounds. Sibling files are not implied by them.
 	entities, _ := state["entities"].(map[string]any)
@@ -766,8 +805,8 @@ func SanitizeCapture(step CaptureStep) error {
 		"action":   step.Action,
 		"observed": step.Observed,
 	}
-	for _, ref := range step.Evidence {
-		fields["evidence_ref"] = ref
+	for index, ref := range step.Evidence {
+		fields[fmt.Sprintf("evidence_refs[%d]", index)] = ref
 	}
 	for name, value := range fields {
 		for _, pattern := range secretPatterns {

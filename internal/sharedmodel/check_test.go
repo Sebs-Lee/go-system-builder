@@ -70,6 +70,36 @@ func TestSharedModelFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestSharedModelDecoratedREQOwnerUsesOriginalCurrentBatch(t *testing.T) {
+	root := pilot(t)
+	old := filepath.Join(root, "docs/dev/contracts/CONTRACTS-001.md")
+	data, err := os.ReadFile(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(old); err != nil {
+		t.Fatal(err)
+	}
+	put(t, root, "docs/dev/contracts/CONTRACTS-CUSTOM.md", "> 需求: [REQ-001](../../requirements/REQ-001.md)\n"+string(data))
+	for _, name := range []string{"FE-001.md", "BE-001.md", "SYNC-001.md"} {
+		p := filepath.Join(root, "docs/dev/contracts", name)
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		put(t, root, "docs/dev/contracts/"+name, strings.ReplaceAll(string(data), "CONTRACTS-001.md", "CONTRACTS-CUSTOM.md"))
+	}
+	r := Check(root, fileview.Disk{Root: root}, "REQ-001")
+	if len(r.Problems) != 0 || r.Rows != 2 {
+		t.Fatalf("original decorated batch was skipped or rejected: %+v", r)
+	}
+	put(t, root, "docs/architecture/data-model/request.json", `{"order_id":42}`)
+	r = Check(root, fileview.Disk{Root: root}, "REQ-001")
+	if !strings.Contains(strings.Join(r.Problems, "\n"), "valid example") {
+		t.Fatalf("selected current source did not check its real example: %+v", r)
+	}
+}
 func TestSharedModelClosureAndRecursion(t *testing.T) {
 	root := pilot(t)
 	put(t, root, "docs/architecture/data-model/orders.schema.json", `{"$defs":{"request":{"$ref":"request.schema.json"},"response":{"type":"object"}}}`)

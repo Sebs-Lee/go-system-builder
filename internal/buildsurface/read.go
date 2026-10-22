@@ -126,10 +126,10 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 			if record.Reference() == current.Reference() {
 				ref, err = currentResultRef(root, state, record, view)
 				if err == nil {
-					accepted, err = assignmentresult.LoadAccepted(state, record, ref, read)
+					accepted, err = assignmentresult.LoadContribution(state, record, ref, read)
 				}
 				if err == nil {
-					history, historyErr := assignmentresult.AcceptedHistory(state, record, read)
+					history, historyErr := assignmentresult.ContributionHistory(state, record, read)
 					if historyErr != nil || len(history) == 0 || history[len(history)-1].EvidenceID != accepted.EvidenceID {
 						err = fmt.Errorf("current Result is not the latest original registered answer: %v", historyErr)
 					}

@@ -69,7 +69,7 @@ func TestCanonicalS6WorkspaceReworkRequiresNamedAssignmentRevision(t *testing.T)
 	plan["dependencies"] = []any{}
 	plan["risks_blockers"] = []any{}
 	stageJSON(t, e.Path, workspace.PlanDraftPath, plan)
-	s6SaveQuestionnaireHook(t, root, e.Path, filepath.Join(e.Path, workspace.PlanDraftPath))
+	s6SaveQuestionnaireHook(t, root, e.Path, e.AgentID, filepath.Join(e.Path, workspace.PlanDraftPath))
 
 	productRef := "src/pkg/service.go"
 	product := []byte("package pkg\n\n// Value is the reviewed service result.\nfunc Value() string { return \"ready\" }\n")
@@ -105,13 +105,13 @@ func TestCanonicalS6WorkspaceReworkRequiresNamedAssignmentRevision(t *testing.T)
 	completion := s6CanonicalCompletionMessage(fixture, "msg-s6-canonical-rework-result", "The reviewed package candidate is committed and ready for Main integration.")
 	completionPath := filepath.Join(e.Path, workspace.ResultDraftPath)
 	stageJSON(t, e.Path, workspace.ResultDraftPath, completion)
-	output := s6SaveQuestionnaireHook(t, root, e.Path, completionPath)
+	output := s6SaveQuestionnaireHook(t, root, e.Path, e.AgentID, completionPath)
 	accepted := s6DecodeCanonicalTaskCompleteOutput(t, output).Acceptance
 	if accepted.ResultRef == "" || !accepted.Current {
 		t.Fatalf("original Writer did not accept the current canonical Result: %+v", accepted)
 	}
 	beforeReplay := stageSnapshot(t, root).Revision
-	replayed := s6DecodeCanonicalTaskCompleteOutput(t, s6SaveQuestionnaireHook(t, root, e.Path, completionPath)).Acceptance
+	replayed := s6DecodeCanonicalTaskCompleteOutput(t, s6SaveQuestionnaireHook(t, root, e.Path, e.AgentID, completionPath)).Acceptance
 	if replayed.ResultRef != accepted.ResultRef || stageSnapshot(t, root).Revision != beforeReplay {
 		t.Fatal("same saved Result repeated its domain reception")
 	}

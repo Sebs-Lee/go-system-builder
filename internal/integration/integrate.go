@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -143,6 +144,13 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 			return Result{Checkpoint: current}, err
 		}
 	}
+	readyMerge := ""
+	if found && current.State == StateReady {
+		readyMerge, err = RecoverUnrecordedMerge(ctx, gitRoot, current)
+		if err != nil {
+			return Result{Checkpoint: current}, err
+		}
+	}
 	if canonical != nil {
 		if canonical.Binding != *req.Inspection.CanonicalResult || req.Inspection.AssignmentID != canonical.Record.AssignmentID || req.Inspection.TaskID != canonical.Record.Task.ID || req.Inspection.BaselineGeneration != canonical.Record.BaselineGeneration || len(req.Inspection.EffectiveWritePaths) > 0 && !samePathSet(req.Inspection.EffectiveWritePaths, canonical.Record.EffectiveWritePaths) {
 			return Result{Checkpoint: current}, fmt.Errorf("inspection coordinates/scope differ from the current canonical Assignment")
@@ -183,7 +191,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	canonicalGitFactsChanged := false
 	if canonical != nil {
 		base, sourceHead := req.Inspection.MergeBase, req.Inspection.SourceHead
-		alreadyMerged := found && current.MergeCommit != ""
+		alreadyMerged := found && (current.MergeCommit != "" || readyMerge != "")
 		if alreadyMerged {
 			base, sourceHead = current.MergeBase, current.SourceHead
 			if base == "" || sourceHead == "" || current.TargetBranch != req.Inspection.TargetBranch {
@@ -225,7 +233,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 				return preserveFromInspection(cfg, req, canonical, "canonical source has no commits beyond the current Main merge base")
 			}
 		}
-		actualSourceHead, sourceErr := revParse(ctx, gitRoot, req.Inspection.SourceBranch)
+		actualSourceHead, sourceErr := retainedIntegrationSource(ctx, gitRoot, req.Inspection)
 		if sourceErr != nil || actualSourceHead != sourceHead {
 			return Result{Checkpoint: current}, fmt.Errorf("canonical source branch no longer resolves to its original inspected commit")
 		}
@@ -253,6 +261,13 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		}
 		req.Inspection.ChangedPaths = actualPaths
 		req.Inspection.ChangedPathsSHA256 = actualPathsSHA
+	}
+	if canonical != nil && readyMerge != "" && req.Inspection.CompletionReportPath == "" && req.Inspection.CompletionReportSHA256 == "" {
+		// A ready checkpoint already pins the accepted Result in MainFacts,
+		// but its completion fields are written only after checks. Restore
+		// that original binding when reconstructing the interrupted request.
+		req.Inspection.CompletionReportPath = canonical.Binding.ResultPath
+		req.Inspection.CompletionReportSHA256 = canonical.Binding.ResultSHA256
 	}
 	completionBinding, reportChanged, bindingErr := resolveCompletionReportBinding(cfg.Root, req.Inspection, current, found)
 	if bindingErr != nil {
@@ -315,6 +330,12 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		req.Inspection.Ready = true
 		req.Inspection.Blockers = nil
 	}
+	if readyMerge != "" && !req.Inspection.Ready && len(req.Inspection.Blockers) == 1 && req.Inspection.Blockers[0] == ErrMissingCommits.Error() {
+		// The exact original merge explains only this readiness result.
+		// Other inspection failures still stop the original chain below.
+		req.Inspection.Ready = true
+		req.Inspection.Blockers = nil
+	}
 	if !req.Inspection.Ready {
 		// Post-merge ack/cleanup resume may arrive with Inspect Ready=false
 		// (ErrMissingCommits after merge). Do not overwrite a verified+
@@ -358,7 +379,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	// CT-039-17: a previous call may have committed the merge but been
 	// interrupted before ack. We detect that by looking at the durable
 	// state and skip the merge when it has already happened.
-	if found && current.MergeCommit != "" && current.SourceHead != req.Inspection.SourceHead && req.Inspection.SourceHead != "" {
+	if found && (current.MergeCommit != "" || readyMerge != "") && current.SourceHead != req.Inspection.SourceHead && req.Inspection.SourceHead != "" {
 		return Result{}, fmt.Errorf("source changed after recorded merge; preserve worktree and reconcile new commits")
 	}
 	if found {
@@ -406,7 +427,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		if current.AssignmentID != idempAssignment(req) || current.SourceBranch != req.Inspection.SourceBranch || current.TargetBranch != req.Inspection.TargetBranch || current.WorktreePath != req.Inspection.WorktreePath || current.BaselineGeneration != req.Inspection.BaselineGeneration {
 			return Result{}, fmt.Errorf("cleanup checkpoint identity mismatch")
 		}
-		source, err := revParse(ctx, gitRoot, current.SourceBranch)
+		source, err := retainedIntegrationSource(ctx, gitRoot, InspectionFromCheckpoint(current))
 		if err != nil || source != current.SourceHead {
 			return deferCleanup(store, checkpointPath, current, current, fmt.Errorf("cleanup source changed since verification"))
 		}
@@ -421,12 +442,8 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	}
 
 	if found && current.State == StateReady {
-		recovered, err := recoverUnrecordedMerge(ctx, gitRoot, current)
-		if err != nil {
-			return Result{Checkpoint: current}, err
-		}
-		if recovered != "" {
-			current.MergeCommit = recovered
+		if readyMerge != "" {
+			current.MergeCommit = readyMerge
 			prior := current
 			prior.MergeCommit = ""
 			current.State = StateMerged
@@ -555,7 +572,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		if err != nil || target != req.Inspection.TargetHead {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, fmt.Errorf("target changed after inspection; inspect again"), ErrMergeConflict)
 		}
-		source, err := revParse(ctx, gitRoot, req.Inspection.SourceBranch)
+		source, err := retainedIntegrationSource(ctx, gitRoot, req.Inspection)
 		if err != nil || source != req.Inspection.SourceHead {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, fmt.Errorf("source changed after inspection"), ErrMergeConflict)
 		}
@@ -563,7 +580,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrMergeConflict)
 		}
 
-		sourceHead, sourceErr := revParse(ctx, gitRoot, req.Inspection.SourceBranch)
+		sourceHead, sourceErr := retainedIntegrationSource(ctx, gitRoot, req.Inspection)
 		if sourceErr != nil || sourceHead != req.Inspection.SourceHead {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, fmt.Errorf("source changed since inspection; re-inspect"), ErrMergeConflict)
 		}
@@ -1120,4 +1137,26 @@ func integrationDurationStatus(result Result, err error) string {
 	default:
 		return "success"
 	}
+}
+
+// The platform may delete a completed no-change source branch with its native
+// checkout. Preserve its original coordinates; the recorded empty range can
+// still resolve the same immutable Git object. A live/moved branch, a retained
+// checkout, canonical work or a nonempty range keeps its original checks.
+func retainedIntegrationSource(ctx context.Context, root string, in Inspection) (string, error) {
+	source, err := revParse(ctx, root, in.SourceBranch)
+	if err == nil {
+		return source, nil
+	}
+	if in.CanonicalResult != nil || in.SourceHead == "" || in.SourceHead != in.MergeBase || len(in.ChangedPaths) != 0 {
+		return "", err
+	}
+	if _, pathErr := os.Lstat(in.WorktreePath); !os.IsNotExist(pathErr) {
+		return "", err
+	}
+	paths, digest, rangeErr := canonicalGitChangedPaths(ctx, root, in.MergeBase, in.SourceHead)
+	if rangeErr != nil || len(paths) != 0 || digest != in.ChangedPathsSHA256 {
+		return "", err
+	}
+	return revParse(ctx, root, in.SourceHead)
 }

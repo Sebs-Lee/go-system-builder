@@ -179,7 +179,7 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 		return rejected(snap, p.ID, err), err
 	}
 	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{ExpectedRevision: -1, ID: id, Kind: "planning_contract", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files, Authorize: func(root string, state map[string]any) error {
-		if err := s.validateContractChecks(state, p); err != nil {
+		if err := s.validateContractChecks(state, p, answer); err != nil {
 			return err
 		}
 		if verified, ok := s.Files.(interface{ Verify() error }); ok {
@@ -230,12 +230,13 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	return r, nil
 }
 
-func (s *Service) validateContractChecks(state map[string]any, p workpacket.ContractPacket) error {
+func (s *Service) validateContractChecks(state map[string]any, p workpacket.ContractPacket, answer workpacket.ContractAnswer) error {
 	bound, _ := state["bound_req"].(map[string]any)
 	if text(bound["id"]) != p.Binding.Requirement.ID {
 		return fmt.Errorf("S3 original checker REQ binding differs")
 	}
-	result, err := semantic.ContractsCheckWithFiles(s.Root, s.Files, p.Binding.Requirement.ID)
+	paths := append([]string{*answer.IndexPath}, answer.ContractPaths...)
+	result, err := semantic.ContractsCheckBatch(s.Root, s.Files, p.Binding.Requirement, paths)
 	if err != nil {
 		return fmt.Errorf("contracts_checked: %w", err)
 	}

@@ -81,7 +81,7 @@ func sortTasks(tasks []Task) {
 // own original receipt proof before it may replace this denominator.
 func verifyLockedTaskSet(locked []productbaseline.Task, current []Task) error {
 	if len(locked) != len(current) {
-		return fmt.Errorf("current TASK denominator differs from original TR-003 lock set; formal relock proof is required")
+		return fmt.Errorf("current TASK denominator differs from original TR-003 lock set; Main owns formal specification rework through original planning/document review. Assignment revision cannot replace this TASK set; do not refresh fingerprints or invent a relock proof. Same-generation TASK replacement is not supported by this product reader")
 	}
 	byID := make(map[string]productbaseline.Task, len(locked))
 	for _, task := range locked {
@@ -90,7 +90,7 @@ func verifyLockedTaskSet(locked []productbaseline.Task, current []Task) error {
 	for _, task := range current {
 		original, found := byID[task.ID]
 		if !found || original.Path != task.Path || original.Version != task.Version || original.SHA256 != task.SHA256 {
-			return fmt.Errorf("current TASK %s differs from original TR-003 lock set; formal relock proof is required", task.ID)
+			return fmt.Errorf("current TASK %s differs from original TR-003 lock set; Main owns formal specification rework through original planning/document review. Assignment revision requires the original TASK; do not refresh fingerprints or invent a relock proof. Same-generation TASK replacement is not supported by this product reader", task.ID)
 		}
 		delete(byID, task.ID)
 	}
@@ -183,8 +183,8 @@ func currentResultRef(root string, state map[string]any, record assignmentrecord
 		return "", fmt.Errorf("original manifest no longer enables canonical Record")
 	}
 	plan, err := plancheckpoint.ActivatedRef(root, runtimemeta.Snapshot{State: state}, record.OwnerAgentID)
-	if err != nil || plan == "" || agent["readback_ref"] != plan || agent["plan_reported_ref"] != plan {
-		return "", fmt.Errorf("canonical Result lacks original current activated PLAN: %v", err)
+	if err != nil || plan == "" || (record.Contract != assignmentrecord.NativeDeliveryContract && agent["readback_ref"] != plan) || agent["plan_reported_ref"] != plan {
+		return "", fmt.Errorf("canonical Result lacks original current accepted professional plan: %v", err)
 	}
 	ref := textField(agent["completion_reported_ref"])
 	if ref == "" || task["completion_report_ref"] != ref {

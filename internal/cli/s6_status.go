@@ -20,11 +20,11 @@ import (
 )
 
 // runS6Command is the `loop-harness s6` dispatcher. `status` projects the
-// current batch; `prepare` writes a non-authoritative Builder manifest draft
-// from the registered TASK and original dispatch inputs.
+// current batch; `prepare` registers native delivery and emits its exact brief.
+// Explicit legacy identities retain their original manifest-draft route.
 func runS6Command(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && wantsHelp(args) {
-		printCommandHelp(stdout, "loop-harness s6 <status|prepare> [flags]", "`status` inspects the existing TASK dispatch board; `prepare` projects a non-authoritative manifest draft and leaves registration to the original `runtime register-workgroup` consumer.\nStatus: `loop-harness s6 status --root <authority-root> [--capacity <slots>] [--json] [--advice [--max-unreceived-results <count>]]`.\nPrepare: `loop-harness s6 prepare --root <authority-root> --task <TASK> --role <Builder-role> --agent-id <actual-platform-Agent-ID> --platform-team-id <actual-platform-Team-ID>`.\nFor an existing canonical attempt requiring code correction, add `--revise-assignment <assignment> --revision-intent-key <new-key>` with the new Builder identities; preparation preserves the original contract and returns its exact revision draft path and original registration command. `runtime workspace pending --root <authority-root>` shows the current retry/rework actions.\nIf the Main workspace is not bound, use `loop-harness runtime workspace bind --root <authority-root>` before workspace preparation; it binds the current Main checkout and does not guess `develop`.")
+		printCommandHelp(stdout, "loop-harness s6 <status|prepare> [flags]", "`status` inspects the existing TASK dispatch board; `prepare` registers a reviewed engineering delivery and prints its exact brief for Claude Code native Agent/worktree isolation.\nStatus: `loop-harness s6 status --root <Main> [--capacity <slots>] [--json] [--advice]`.\nPrepare: `loop-harness s6 prepare --root <Main> --task <TASK> --role <Builder-role>`. No preselected platform IDs, Team or launcher.\nNative source/report rework adds `--revise-assignment <assignment> --revision-intent-key <stable-key>` and uses the original revision Writer automatically. It retains the exact reviewed TASK source; it does not replace TASK specifications or re-lock a batch. Main handles formal TASK changes through original planning/document review; same-generation TASK replacement is not supported by this recovery path. Do not refresh fingerprints or repeat revision as a workaround. Explicit legacy identity options retain the frozen manifest-draft and workspace recovery route.")
 		return 0
 	}
 	if len(args) == 0 {

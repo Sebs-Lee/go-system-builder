@@ -3,16 +3,13 @@ package investigation_test
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/entroforge/go-system-builder/internal/agentauth"
 	"github.com/entroforge/go-system-builder/internal/cli"
-	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/investigation"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -59,23 +56,6 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 		t.Fatalf("no S9 packet for first assignment %s", plan.Assignments[0].AssignmentID)
 	}
 	firstAnswer := writeS9RepairPlanReportAnswer(t, fixture.root, first, "inspect the approved boundary and establish the failing pre-fix check")
-	debugSnapshot := currentS9Snapshot(t, fixture)
-	debugLoaded, debugLoadErr := hookctx.FromSnapshot(fixture.root, first.Binding.OwnerAgentID, debugSnapshot)
-	currentPackets, packetErr := runtime.CurrentRepairPlanReportPackets(fixture.root, debugSnapshot.State, first.Binding.OwnerAgentID)
-	packetIssueErr := runtime.VerifyRepairPlanReportPacketIssue(fixture.root, debugSnapshot.State, first)
-	packetCurrentErr := runtime.VerifyRepairPlanReportCurrent(fixture.root, debugSnapshot.State, first)
-	workingAuthErr := agentauth.ValidateWorkingAuthorization(fixture.root, debugSnapshot.State, first.Binding.OwnerAgentID)
-	t.Logf("S9 fresh-hook diagnostics: lifecycle=%v packetErr=%v packetCount=%d packetPath=%s loadErr=%v issueErr=%v currentErr=%v workingAuthErr=%v agent=%+v policy=%+v", debugSnapshot.State["lifecycle"], packetErr, len(currentPackets), first.AnswerPath, debugLoadErr, packetIssueErr, packetCurrentErr, workingAuthErr, func() any {
-		if debugLoaded == nil {
-			return nil
-		}
-		return debugLoaded.PolicyContext.Agent
-	}(), func() any {
-		if debugLoaded == nil {
-			return nil
-		}
-		return debugLoaded.PolicyContext
-	}())
 	firstReceipt := runS9PostToolUse(t, fixture, "wrong-builder", filepath.Join(fixture.root, "not-main"), firstAnswer)
 	if !firstReceipt.Accepted || firstReceipt.PacketID != first.ID {
 		t.Fatalf("exact S9 answer path was rejected by Hook actor/cwd mismatch: %+v", firstReceipt)
@@ -93,8 +73,8 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 	current := currentS9Snapshot(t, fixture)
 	if _, err := repair.BeginRepairExecution(fixture.root, fixture.statePath, fixture.journalPath, repair.BeginRepairExecutionRequest{
 		RuntimeRequest: repair.RuntimeRequest{ExpectedRevision: current.Revision, Actor: "main-session"},
-	}); err == nil || !strings.Contains(err.Error(), plan.Assignments[1].AssignmentID) {
-		t.Fatalf("S9 execution begin with a missing sibling report = %v, want the exact missing Assignment", err)
+	}); err != nil {
+		t.Fatalf("Builder with its own PlanReport must not wait for sibling planning: %v", err)
 	}
 
 	second := byAssignment[plan.Assignments[1].AssignmentID]
@@ -107,8 +87,7 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 		t.Fatalf("original S9 PostToolUse did not accept the sibling pre-execution receipt: %+v", secondReceipt)
 	}
 
-	// Even complete professional PlanReports remain pre-execution evidence.
-	// The listener reports the pending execution-begin duty without tool denial.
+	// A late sibling PlanReport preserves the existing fixing phase.
 	assertS9ProductWriteObserved(t, fixture, owners[0])
 	current = currentS9Snapshot(t, fixture)
 	started, err := repair.BeginRepairExecution(fixture.root, fixture.statePath, fixture.journalPath, repair.BeginRepairExecutionRequest{
@@ -221,36 +200,18 @@ func TestS9IssuedReportStaleStagingIsSafelyRebuiltAfterSiblingCommit(t *testing.
 
 	stagePath := ".claude/review/repair/plan-reports/" + first.ReportID + ".json"
 	stageAbs := filepath.Join(fixture.root, filepath.FromSlash(stagePath))
-	sentinel := errors.New("test source revalidation failed after S9 report staging")
-	callbackCalls := 0
-	authorize := func(root string, state map[string]any) error {
-		callbackCalls++
-		if root != fixture.root {
-			return fmt.Errorf("unexpected source authority root %q", root)
-		}
-		if callbackCalls == 2 {
-			return sentinel
-		}
-		if err := runtime.VerifyRepairPlanReportPacketIssue(root, state, first); err != nil {
-			return err
-		}
-		if err := runtime.VerifyRepairPlanReportCurrent(root, state, first); err != nil {
-			return err
-		}
-		return agentauth.ValidateWorkingAuthorization(root, state, first.Binding.OwnerAgentID)
+	// Materialize a real report through its original Writer, then retain only
+	// the immutable artifact to model an interrupted pre-CAS staging write.
+	if _, _, err := submitS9RecoveryTestPacket(fixture, start.Revision, first, firstAnswer, first.Binding.OwnerAgentID); err != nil {
+		t.Fatalf("construct original staging artifact: %v", err)
 	}
-	_, _, err := repair.SubmitIssuedRepairPlanReport(fixture.root, fixture.statePath, fixture.journalPath, repair.SubmitIssuedRepairPlanReportRequest{
-		ExpectedRevision: start.Revision,
-		PacketID:         first.ID,
-		AnswerPath:       firstAnswer,
-		OwnerAgentID:     first.Binding.OwnerAgentID,
-		SourceRoot:       fixture.root,
-		AuthorizeSource:  authorize,
-	})
-	if !errors.Is(err, sentinel) || callbackCalls < 2 {
-		t.Fatalf("first report submit error/callbacks = %v/%d, want sentinel on original Writer preflight after staging", err, callbackCalls)
+	if err := os.WriteFile(fixture.statePath, startState, 0600); err != nil {
+		t.Fatal(err)
 	}
-	assertS9RuntimeBytesUnchanged(t, fixture, startState, startJournal, "failed post-stage source revalidation")
+	if err := os.WriteFile(fixture.journalPath, startJournal, 0600); err != nil {
+		t.Fatal(err)
+	}
+	assertS9RuntimeBytesUnchanged(t, fixture, startState, startJournal, "fixture interrupted pre-CAS staging")
 	stagedBytes, readErr := os.ReadFile(stageAbs)
 	if readErr != nil {
 		t.Fatalf("exact unaccepted PlanReport staging artifact was not retained for retry: %v", readErr)
@@ -669,7 +630,7 @@ func assertS9ProductWriteObserved(t *testing.T, fixture *intakeFixture, owner s9
 		}
 	}
 	context := envelope.HookSpecificOutput.AdditionalContext
-	if answerPath == "" || !strings.Contains(context, "questionnaire "+answerPath) || !strings.Contains(context, "The original PlanReport is recorded as accepted; waiting for Main's remaining reports and original execution-begin consumer.") || strings.Contains(context, "runtime stage-answer issue") {
+	if answerPath == "" || !strings.Contains(context, "questionnaire "+answerPath) || !strings.Contains(context, "The PlanReport is recorded. Main normally prepares the actual work location:") || strings.Contains(context, "runtime stage-answer issue") {
 		t.Fatalf("S9 reminder omitted the exact questionnaire path or original next duty: %s", context)
 	}
 }

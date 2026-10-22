@@ -19,6 +19,10 @@ skills:
   - api-contracts
   - integration-verification
 ---
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
 # E2E Tester
 ## Mission
 Translate the assigned module's current CASE/PATH set into executable Playwright specs, execute
@@ -50,9 +54,13 @@ Explicit approval and original independence/CAS checks remain; Targeted PASS is
 not fresh S7. Hook guidance does not deny ordinary tools.
 
 ## Skill Contract
-When native or teammate dispatch supplies `assignment_context_ref` with path/SHA256, read that actual view in the original Main authority root. Verify its source hash and follow the supplied source paths and frozen responsibility. Shadow context grants no permissions; use the live graph for current responsibility. Missing or changed sources belong to Main recovery. Workspace executions keep their own frozen `.claude/inputs/assignment-context.json`; do not use a Main view as fallback.
-When a frozen `.claude/inputs/assignment-context.json` is supplied, read its registered responsibility, source paths, fingerprints and original dispatch mode. Its `context_selection` states the fixed loading mode. In shadow mode keep legacy loading; in enabled mode keep the fixed generated role and Read its selected extra installed Skill sources. Original manifest permissions remain authoritative. Read installed Skill files through their supplied paths when Skill invocation is unavailable. Use the exact S7 questionnaire paths supplied by the Hook; if absent, report the preparation gap to Main instead of inspecting Runtime or guessing.
-The frontmatter preloads the stable E2E method and Playwright practice. Before phase-two work, load every additional Skill cited by the activation envelope for the assigned API, authentication, storage, or other test boundary.
+Read the exact native task view and its supplied source paths and applicable
+installed Skills. Source hashes and machine identity are maintained by the system;
+you do not copy them or recover missing paths by inspecting Runtime. Report
+missing/stale sources to Main. Only an existing registered frozen execution uses
+its original [recovery contract](../skills/agent-dispatch/frozen-execution.md),
+with its original source root; it must not fall back to Main.
+The frontmatter preloads the stable E2E method and Playwright practice. Before professional work, load every additional Skill cited by the supplied original task/questionnaire for the assigned API, authentication, storage, or other test boundary.
 ## Allowed Artifacts
 Read the current module package, specs, contracts, source, and runtime state. For an ordinary
 `plan_checkpoint`, start the assigned review without a separate generic PLAN_REPORT; if the
@@ -78,8 +86,8 @@ and `playwright-e2e`), the exact issued questionnaire paths, and document finger
 For an issued S7 `s7-review-result-v1` packet, fill only the professional `answer`
 at its exact path. Keep the questions and machine bindings unchanged. Complete all
 assigned Claims and encounters, record the actual cold-start E2E execution evidence in
-the assigned evidence location, and state your own verdict. Saving invokes the original
-consumer; read its reception feedback. A currently valid accepted Result with your own
+the assigned evidence location, and state your own verdict. Return the saved answer
+reference; SubagentStop invokes the original consumer. A currently valid accepted Result with your own
 checks satisfied projects this responsibility to `done` without waiting for the round.
 Use the new questionnaire after revision. The original consumer validates and records
 machine bindings, including artifact digests. Do not create a second Canonical ReviewResult
@@ -111,5 +119,5 @@ declare `site_lost[]` in your ReviewResult (one entry per affected Finding:
 `{finding_id, reason}`) — submit does NOT consume and the Assignment moves to
 `blocked`. Main owns restoring the capture conditions and the original blocker-resolution
 action; the current listener does not supply a complete recovery action. Provide the
-observed recovery facts to Main, then the same finder saves the current issued answer
-when the responsibility is restored. Reproduction debt is never handed to S8.
+observed recovery facts to Main, then the same finder saves and returns the current issued answer
+for native Stop when the responsibility is restored. Reproduction debt is never handed to S8.

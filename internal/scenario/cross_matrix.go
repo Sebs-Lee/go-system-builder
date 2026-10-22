@@ -76,20 +76,29 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 	reqID := ""
 	if bound, ok := readBoundREQ(root); ok {
 		reqID = bound.ID
-		files := source.files
-		if files == nil {
-			files = fileview.Disk{Root: root}
+		needsCurrentTable := false
+		for _, entry := range matrix.Entries {
+			if entry.ReqRef == reqID || strings.HasPrefix(entry.ReqRef, reqID+"/") {
+				needsCurrentTable = true
+				break
+			}
 		}
-		data, err := files.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path)))
-		if err != nil {
-			return fmt.Errorf("cross-matrix: read bound REQ %s: %w — the FR join cannot degrade to shape-only", bound.Path, err)
-		}
-		rows, _, _ := parseREQTables(string(data))
-		if len(rows) == 0 {
-			return fmt.Errorf("cross-matrix: bound REQ %s declares no FR table rows — the FR join cannot degrade to shape-only", bound.ID)
-		}
-		for _, row := range rows {
-			frIDs[row.ID] = true
+		if needsCurrentTable {
+			files := source.files
+			if files == nil {
+				files = fileview.Disk{Root: root}
+			}
+			data, err := files.ReadFile(filepath.Join(root, filepath.FromSlash(bound.Path)))
+			if err != nil {
+				return fmt.Errorf("cross-matrix: read bound REQ %s: %w — the FR join cannot degrade to shape-only", bound.Path, err)
+			}
+			rows, _, _ := parseREQTables(string(data))
+			if len(rows) == 0 {
+				return fmt.Errorf("cross-matrix: bound REQ %s declares no FR table rows — the FR join cannot degrade to shape-only", bound.ID)
+			}
+			for _, row := range rows {
+				frIDs[row.ID] = true
+			}
 		}
 	}
 	coveredFacts := map[string]bool{}
@@ -110,10 +119,11 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 		if !crossMatrixReqRefPattern.MatchString(entry.ReqRef) {
 			return fmt.Errorf("cross-matrix %s req_ref %q must be REQ-<id> or REQ-<id>/FR-<id>", cell, entry.ReqRef)
 		}
-		if reqID != "" {
-			if refREQ := entry.ReqRef; refREQ != reqID && !strings.HasPrefix(refREQ, reqID+"/") {
-				return fmt.Errorf("cross-matrix %s req_ref %q does not reference the bound REQ %s — the matrix must join the bound requirement's denominator", cell, entry.ReqRef, reqID)
-			}
+		// The module retains all current behaviors and their original REQs.
+		// Only this REQ's references join this REQ's FR table; the AC bridge
+		// separately checks that historical sources cannot fill its obligations.
+		currentREQ := reqID != "" && (entry.ReqRef == reqID || strings.HasPrefix(entry.ReqRef, reqID+"/"))
+		if currentREQ {
 			if frID, _, ok := splitFRRef(entry.ReqRef); ok && !frIDs[frID] {
 				return fmt.Errorf("cross-matrix %s req_ref %q names FR %q which the bound REQ's FR table does not declare", cell, entry.ReqRef, frID)
 			}
@@ -131,6 +141,13 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 			return fmt.Errorf("cross-matrix %s references unknown branch %q", cell, entry.Branch)
 		case entry.Branch != "":
 			rule := branchRule[entry.Branch]
+			if currentREQ {
+				for _, cited := range rule.SourceRefs {
+					if frID, refREQ, ok := splitFRRef(cited); ok && refREQ == reqID && !frIDs[frID] {
+						return fmt.Errorf("cross-matrix %s rule %q cites FR %q which the bound REQ %s does not declare", cell, rule.ID, frID, reqID)
+					}
+				}
+			}
 			if !ruleCitesReqRef(rule, entry.ReqRef) {
 				return fmt.Errorf("cross-matrix %s names branch %q but its rule %q never cites %q in source_refs — the matrix must join the model, not assert alongside it", cell, entry.Branch, rule.ID, entry.ReqRef)
 			}
@@ -179,7 +196,7 @@ func ruleCitesReqRef(rule Rule, ref string) bool {
 		if cited == ref {
 			return true
 		}
-		if _, req, isFR := splitFRRef(ref); !isFR && strings.HasPrefix(cited, req+"/") {
+		if _, _, isFR := splitFRRef(ref); !isFR && strings.HasPrefix(cited, ref+"/") && crossMatrixReqRefPattern.MatchString(cited) {
 			return true
 		}
 	}

@@ -36,7 +36,7 @@
       "const": "1.0.0"
     },
     "contract": {
-      "const": "s6-v1.2"
+      "enum": ["s6-v1.2", "s6-native-v1"]
     },
     "runtime_id": {
       "type": "string",

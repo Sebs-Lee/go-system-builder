@@ -178,6 +178,9 @@ func resolveCanonicalResultState(root, runtimeID string, state map[string]any, a
 }
 
 func canonicalExecutionGeneration(state map[string]any, record assignmentrecord.Record) (int, error) {
+	if record.Contract == assignmentrecord.NativeDeliveryContract {
+		return 0, nil
+	}
 	registry, err := workspace.Decode(state)
 	if err != nil {
 		return 0, fmt.Errorf("decode original workspace execution registry: %w", err)

@@ -1,0 +1,29 @@
+# Native full-stage simulation inputs
+
+These are **synthetic Main documentation inputs**, not an accepted Runtime or real professional evidence. The actual Claude Main copies the appropriate candidate at S0/S2/S3/S4 and uses each original form/Writer. No stage cursor, receipt, Worker answer or PASS is seeded. Professional Worker conclusions are mock test data authored into original answers by actual native Agents.
+
+The product marker and a read-only `make check` fixture are supplied by the runner. Normal TASK write scope remains nonempty; the user test override forbids actual product implementation, repair, testing and product commits. The original Gate is not changed for simulation.
+
+Run from the factory repository (uses real model requests and the configured provider):
+
+```sh
+python3 tools/claude-full-stage-simulation.py prepare --artifacts /tmp/gsb-full-stage-sim-new
+python3 tools/claude-full-stage-simulation.py run --artifacts /tmp/gsb-full-stage-sim-new --driver --env-file ~/.claude/minimax
+python3 tools/claude-full-stage-simulation.py verify --artifacts /tmp/gsb-full-stage-sim-new
+```
+
+`--driver` supplies only a small native Main simulation prompt. Native Agents, including `general-purpose`, retain their normal tools; there is no custom worker type or tool whitelist. Engineering responsibility remains in the original manifest/Assignment and is not a platform actor alias. Necessary file, directory, JSON and Git inspection is allowed. Hook gates concern stage facts and handoff, rather than which tool an agent uses. Requests use low effort. Omit `--driver` to test ordinary Main context; that is a separate guidance/latency check. Every child must receive the explicit mock override.
+
+A no-op native worktree may be removed by Claude Code. S6's original canonical integration requires a source commit: Main prepares one explicitly labeled empty S6 commit in the actual checkout as test input. Workers simulate answers rather than make product commits. S9 uses the supported whole-batch no-change route: no commit, mode delta or fabricated changed path. Product bytes and modes remain unchanged. Original Main checks, impact judgment, independent Contract verification and a fresh S7 still apply. If platform cleanup interrupts reception or integration, retain that evidence and investigate the original recovery boundary; do not manufacture work to hide it. Record all Main assistance; no gate is relaxed.
+
+Artifacts retain the actual native transcript, original Hook payload/output, Runtime/journal, actor/answer audit, registered evidence source audit, installed binary hash and release archive hash. Before/after revision windows can overlap other native callbacks during concurrent review; use the original journal and `concurrent-revision-windows.json` for attribution. `run` preserves evidence even on failure; a zero process status alone is not a full-stage PASS. The verifier checks stage/Stop/source/fixture facts. Commands and non-private writes remain in the audit for inspection of actual product work; neither command use nor a file path alone is a failure. An actor without a real Stop or registered source SHA drift prevents a mechanical PASS even if stage flow reaches its terminal. Heuristic product-command flags are reported for raw-record review, rather than used as an automatic failure. Mechanical checks alone cannot establish absence of product development. Platform cancellation/timeouts and test-driver interventions are reported separately; a mechanical PASS does not erase them. Verify all actual stages, final `release_authorized`, Stop receipts and the no-product-work boundary. An explicit `--resume <actual Main session id> --prompt-file <file>` continues a recorded session without changing Runtime.
+
+The test has no remote, publish, deployment or real release operation. S11 choice is explicit canned simulation input. This proves only workflow/dispatch/form mechanics; it does not prove product quality or model professional judgment.
+
+New runs pass the first-round registered observation as `runtime:<evidence-id>` through S7 and S8 unchanged. Both that spelling and the bare registered ID resolve to the same original artifact; no prefixed alias is registered. Earlier A–D logs retain their original inputs and recovery history.
+
+Keep simulated tasks clear: supply the exact original answer path and preset fields. Workers may read necessary material and use native tools; do not turn synthetic inputs into a real product audit or impose arbitrary read/command limits. Main must read the actual Stop handoff before another dispatch. An accepted native S9 candidate calls for Main integration, not another legacy RepairResult questionnaire or an unbounded Final-evidence poll. Record any interruption/resume needed to correct these model actions.
+
+At the fresh post-S9 S7 round, author and register the first professional Plan through original `runtime review-plan --file <professional-plan.json>`, preserving the exact untouched seed identity/baseline before any dispatch. This fixture has no browser surface: use the original not_applicable E2E coverage choice, a sourced N/A Claim without its Assignment, and null verification_artifact_workspace (verification_artifact_digest is Runtime metadata, not a Plan field); keep delivery and all six QA obligations. Record driver assistance if Main mistakes the conservative cold_start seed hint for an immutable requirement.
+
+Use native return/notification to continue a responsibility. Versioned Case files are immutable snapshots, and native private Plan/Result files may disappear during platform cleanup; polling those paths is not a completion signal. Read the original current Case/candidate/receipt after the native return. S9 does not require a background execution mode; S6 background use supports the explicit Main fixture-source preparation.

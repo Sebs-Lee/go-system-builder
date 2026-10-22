@@ -13,7 +13,7 @@ import (
 )
 
 // VerifiedRepairResultBlockerReceipt reads the blocker already registered by
-// the Agent Writer. Historical journal/source verification is diagnostic only.
+// the Agent Writer, including its original journal acceptance coordinates.
 func VerifiedRepairResultBlockerReceipt(root string, state map[string]any, packetID, owner string) (RepairResultBlockerReceipt, bool, error) {
 	packet, found, err := FindRepairResultPacket(state, packetID)
 	if err != nil || !found {
@@ -22,56 +22,16 @@ func VerifiedRepairResultBlockerReceipt(root string, state map[string]any, packe
 	if owner != "" && owner != packet.Binding.Sources.OwnerAgentID {
 		return RepairResultBlockerReceipt{}, false, nil
 	}
-	var selected *RepairResultBlockerReceipt
-	rows, _ := state["evidence"].([]any)
-	for _, raw := range rows {
-		row, _ := raw.(map[string]any)
-		if row == nil || row["kind"] != "repair_result_blocker" {
-			continue
-		}
-		refs, _ := json.Marshal(row["scope_refs"])
-		var scopes []string
-		_ = json.Unmarshal(refs, &scopes)
-		matches := false
-		for _, scope := range scopes {
-			if scope == packetID {
-				matches = true
-				break
-			}
-		}
-		if !matches {
-			continue
-		}
-		artifactPath := stringValue(row["path"])
-		if artifactPath == "" {
-			artifactPath = stringValue(row["id"])
-		}
-		data, err := workpacket.ReadFile(root, artifactPath, 20<<20)
-		if err != nil {
-			return RepairResultBlockerReceipt{}, false, err
-		}
-		// This is an accepted record, not new professional input. Avoid the
-		// artifact's new-input schema/answer/hash validation during projection.
-		type recordedArtifact RepairResultBlockerArtifact
-		var artifact recordedArtifact
-		if err := json.Unmarshal(data, &artifact); err != nil {
-			return RepairResultBlockerReceipt{}, false, err
-		}
-		if artifact.PacketID != packetID || artifact.Binding.Sources.OwnerAgentID != packet.Binding.Sources.OwnerAgentID ||
-			artifact.Binding.Sources.RuntimeID != packet.Binding.Sources.RuntimeID || artifact.AnswerPath != packet.AnswerPath {
-			return RepairResultBlockerReceipt{}, false, fmt.Errorf("recorded S9 blocker belongs to another questionnaire/responsibility")
-		}
-		if selected != nil {
-			return RepairResultBlockerReceipt{}, false, fmt.Errorf("S9 blocker has multiple recorded answers")
-		}
-		receipt := RepairResultBlockerReceipt{Contract: "s9-repair-result-blocker-receipt-v1",
-			ArtifactRef: artifactPath, ArtifactSHA256: stringValue(row["sha256"]), Artifact: RepairResultBlockerArtifact(artifact)}
-		selected = &receipt
+	// A receipt query may select the original owner from its exact packet;
+	// it does not grant that owner permission to execute or complete work.
+	if owner == "" {
+		owner = packet.Binding.Sources.OwnerAgentID
 	}
-	if selected == nil {
-		return RepairResultBlockerReceipt{}, false, nil
+	journal, err := repairResultResumeJournal(root, state)
+	if err != nil {
+		return RepairResultBlockerReceipt{}, false, err
 	}
-	return *selected, true, nil
+	return verifiedRepairResultBlockerReceiptWithJournal(root, state, packet, owner, journal)
 }
 
 func verifiedRepairResultBlockerReceiptWithJournal(root string, state map[string]any, p workpacket.RepairResultPacket, owner string, journal controlproof.JournalInspection) (RepairResultBlockerReceipt, bool, error) {
@@ -522,4 +482,32 @@ func validBlockerCommitID(value string) bool {
 		}
 	}
 	return true
+}
+
+// Project acceptance metadata from the original Writer journal. This does not
+// reauthorize the Worker or reconstruct historical execution permissions.
+func recordedRepairResultLifecycleEvent(journal controlproof.JournalInspection, packet workpacket.RepairResultPacket, messageRef, action string) (map[string]any, error) {
+	var selected map[string]any
+	prefix := "evt-agent-" + packet.Binding.Sources.OwnerAgentID + "-" + action + "-r"
+	for _, event := range journal.Events {
+		refs, _ := checkpointStringSlice(event["evidence_ids"])
+		if !containsStringRuntime(refs, messageRef) || !strings.HasPrefix(stringValue(event["event_id"]), prefix) || event["outcome"] != "committed" {
+			continue
+		}
+		before, be := integerField(event, "before_revision")
+		after, ae := integerField(event, "after_revision")
+		sequence, se := integerField(event, "sequence")
+		generation, ge := integerField(event, "baseline_generation")
+		if selected != nil || event["transition_id"] != "AGENT-LIFECYCLE" || event["runtime_id"] != packet.Binding.Sources.RuntimeID || ge != nil || generation != packet.Binding.Sources.BaselineGeneration || be != nil || ae != nil || se != nil || before < 0 || after != before+1 || sequence < 1 || stringValue(event["idempotency_key"]) == "" {
+			return nil, fmt.Errorf("S9 recorded %s has ambiguous or invalid original acceptance coordinates", action)
+		}
+		selected = event
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("S9 recorded %s has no original acceptance event", action)
+	}
+	if err := verifyUniqueRepairResultBlockerCommittedKey(journal, stringValue(selected["idempotency_key"]), stringValue(selected["event_id"])); err != nil {
+		return nil, err
+	}
+	return selected, nil
 }

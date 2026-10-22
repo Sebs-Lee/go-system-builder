@@ -219,8 +219,15 @@ func TestS9ObserverPassiveProbeStaysWithCurrentPhaseAndResponsibility(t *testing
 	mapFieldCLI(mapFieldCLI(f.state, "workspace"), "executions")["assignment-s9-sibling"] = execution
 	mapFieldCLI(repairPointerCLI(f.state), "assignment_owners")["repair-assignment-sibling"] = "builder-sibling"
 	entities["agents"] = append(entities["agents"].([]any), map[string]any{"id": "builder-sibling"})
+	// A previous-generation Plan is historical. A current Assignment's pending
+	// Plan remains visible even after a sibling has entered fixing.
+	historicalBinding := map[string]any{}
+	for key, value := range mapFieldCLI(f.row["binding"].(map[string]any), "sources") {
+		historicalBinding[key] = value
+	}
+	historicalBinding["baseline_generation"] = 0
 	entities["work_packets"] = append(entities["work_packets"].([]any), map[string]any{
-		"packet_id": "historical-plan", "template_id": "s9-plan-report-v1", "answer_path": "historical-plan.json", "view_path": "historical-plan-view.json", "binding": mapFieldCLI(f.row["binding"].(map[string]any), "sources"),
+		"packet_id": "historical-plan", "template_id": "s9-plan-report-v1", "answer_path": "historical-plan.json", "view_path": "historical-plan-view.json", "binding": historicalBinding,
 	}, sibling)
 	for _, scenario := range []struct {
 		request policy.Input
@@ -249,7 +256,9 @@ func TestS9ObserverPassiveProbeStaysWithCurrentPhaseAndResponsibility(t *testing
 	}
 }
 
-func TestS9ObserverUnknownNativeScriptSaveFindsChangedCurrentPlan(t *testing.T) {
+// This directly exercises the retained save adapter. Public native Worker
+// tools are intercepted before it; native reception is tested at SubagentStop.
+func TestS9SaveAdapterFindsChangedCurrentPlanWithoutRewritingCaller(t *testing.T) {
 	root, plan, _, _, path := repairExecutionPlanningFixture(t)
 	writeRepairLeadFile(t, root, ".claude/agents/test-builder.md", "# Test Builder\n")
 	var rows []repairDispatchChoice
@@ -297,7 +306,7 @@ func TestS9ObserverUnknownNativeScriptSaveFindsChangedCurrentPlan(t *testing.T) 
 	answerPath := resolveRootPath(root, packet.AnswerPath)
 	writeRepairLeadJSON(t, answerPath, draft) // Models a script's actual file save; no host file_path is invented.
 	if handled, _ := runObservedQuestionnaireSaves(root, request, &out, &diagnostic); !handled || !strings.Contains(out.String(), "S9 SUBMISSION RECEIPT") {
-		t.Fatalf("normal native script save required a matching platform ID or Write event: %s %s", out.String(), diagnostic.String())
+		t.Fatalf("original save adapter required a matching platform ID or Write event: %s %s", out.String(), diagnostic.String())
 	}
 	after := repairDispatchSnapshot(t, root)
 	refs := repairArtifactRefs(repairPointerCLI(after.State), "plan_report_refs", "plan_report_ref", "plan_report_sha256")
@@ -351,8 +360,8 @@ func TestS9ObserverUnknownNativeScriptSaveFindsChangedCurrentPlan(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(string(journal), `"transition_id":"PTR-BUG-11"`) != 1 {
-		t.Fatalf("normal startup repeated: %s", journal)
+	if strings.Count(string(journal), `"transition_id":"PTR-BUG-10"`) != 2 || strings.Contains(string(journal), `"transition_id":"PTR-BUG-11"`) {
+		t.Fatalf("each original Plan must be recorded once without a separate Begin: %s", journal)
 	}
 	before = repairDispatchRuntimeBytes(t, root)
 	out.Reset()
@@ -373,7 +382,7 @@ func TestS9ObserverUnknownNativeScriptSaveFindsChangedCurrentPlan(t *testing.T) 
 
 }
 
-func TestS9ObserverMainScriptDivisionUsesOriginalQueueAndSave(t *testing.T) {
+func TestS9NativeDivisionKeepsDependencyAndRejectsExtraWorkspacePreparation(t *testing.T) {
 	root, plan, _, _, path := repairExecutionPlanningFixture(t)
 	rows := make([]repairDispatchChoice, 0, len(plan.Assignments))
 	for _, assignment := range plan.Assignments {
@@ -410,51 +419,35 @@ func TestS9ObserverMainScriptDivisionUsesOriginalQueueAndSave(t *testing.T) {
 	}
 	selected := repairDispatchSnapshot(t, root)
 	context := stageRepairExecutionPrepareContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main"}, selected)
-	if !strings.Contains(context, "runtime workspace bind --root") || !strings.Contains(context, "runtime workspace prepare --root") || !strings.Contains(context, "--check-location") {
-		t.Fatalf("read-only context omitted the saved choice's startup commands: %s", context)
+	for _, packet := range packets {
+		brief, _, _ := nativeS9Paths(packet)
+		if !strings.Contains(context, resolveRootPath(root, brief)) {
+			t.Fatalf("read-only context omitted the actual native brief: %s", context)
+		}
+	}
+	if !strings.Contains(context, "depends_on") || strings.Contains(context, "runtime workspace bind --root") || strings.Contains(context, "runtime workspace prepare --root") {
+		t.Fatalf("native reminder lost dependency responsibility or added a startup layer: %s", context)
 	}
 	repairDispatchAssertUnchanged(t, root, beforeSave)
 	if selected.State["workspace"] != nil {
 		t.Fatal("saving a location prepared a workspace inside the Hook")
 	}
 	owners := stringMapCLI(repairPointerCLI(selected.State)["assignment_owners"])
+	// Native responsibilities cannot be launched through the retained legacy
+	// workspace prepare API. The real frozen queue/dependency behavior remains
+	// covered by TestS9RepairExecutionChoiceQueuedSameSaveAfterOriginalResult.
 	var startupOut, startupErr bytes.Buffer
-	if code := runRuntimeWorkspace([]string{"bind", "--root", root}, &startupOut, &startupErr); code != 0 {
-		t.Fatalf("normal Main bind: %s %s", startupOut.String(), startupErr.String())
-	}
-	startupOut.Reset()
-	startupErr.Reset()
 	manifestID, _ := repairExecutionForChoice(selected.State, rows[0])
-	if code := runRuntimeWorkspace([]string{"prepare", "--root", root, "--assignment", manifestID, "--agent", owners[rows[0].AssignmentID], "--check-location", "main"}, &startupOut, &startupErr); code != 0 {
-		t.Fatalf("normal Main prepare: %s %s", startupOut.String(), startupErr.String())
+	if code := runRuntimeWorkspace([]string{"prepare", "--root", root, "--assignment", manifestID, "--agent", owners[rows[0].AssignmentID], "--check-location", "main"}, &startupOut, &startupErr); code == 0 || !strings.Contains(startupErr.String(), "Claude Code Agent/worktree") {
+		t.Fatalf("native responsibility entered legacy workspace preparation: %s %s", startupOut.String(), startupErr.String())
 	}
-	prepared := repairDispatchSnapshot(t, root)
-	packetsAfter, err := runtime.RepairResultPackets(prepared.State)
-	if err != nil || len(packetsAfter) != 1 {
-		t.Fatalf("normal prepare must publish the ready owner's Result: packets=%d err=%v", len(packetsAfter), err)
-	}
-	_, execution := repairExecutionForChoice(prepared.State, rows[0])
-	for _, path := range []string{packetsAfter[0].ViewPath, packetsAfter[0].AnswerPath} {
-		if _, err := os.Stat(filepath.Join(stringValue(execution["worktree_path"]), filepath.FromSlash(path))); err != nil {
-			t.Fatalf("normal startup omitted the actual Result path: %v", err)
-		}
-	}
-	if _, first := repairExecutionForChoice(prepared.State, rows[0]); first["status"] != "ready" {
-		t.Fatalf("first original ready slot was not prepared: %+v", first)
-	}
-	if _, second := repairExecutionForChoice(prepared.State, rows[1]); len(second) != 0 {
-		t.Fatalf("queued sibling was prepared before the original predecessor Result: %+v", second)
-	}
-	before := repairDispatchRuntimeBytes(t, root)
+	repairDispatchAssertUnchanged(t, root, beforeSave)
 	for _, tool := range []string{"Bash", "mcp__example__save"} {
 		if handled, out := s9Observe(t, root, tool); handled || out != "" {
-			t.Fatalf("unchanged ready/queued choice retried prepare: %s", out)
+			t.Fatalf("unchanged native division repeated work: %s", out)
 		}
 	}
-	repairDispatchAssertUnchanged(t, root, before)
-	// Releasing the dependent responsibility after a real Main Final belongs to
-	// the existing integration test and fresh installed model run. This observer
-	// test covers initial preparation, queued work and unchanged save replays.
+	repairDispatchAssertUnchanged(t, root, beforeSave)
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) == 0 {
 		t.Fatalf("original professional division answer was lost: %v", err)

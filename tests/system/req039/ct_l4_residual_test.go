@@ -213,31 +213,30 @@ func TestAC005_MilestonePersistsQualityGateSystem(t *testing.T) {
 	}
 }
 
-// TestHOOK_PostCompact_D011SessionStartChainSystem elevates the honest D-011
-// PreCompact→SessionStart fallback to contract-complete L4 (no invent native PostCompact).
-func TestHOOK_PostCompact_D011SessionStartChainSystem(t *testing.T) {
+// The public recovery chain reads current durable facts; PreCompact does
+// not manufacture another checkpoint or require a matching cached sentence.
+func TestHOOK_PostCompact_D011SessionStartUsesOriginalFactsSystem(t *testing.T) {
 	root := freshRoot(t)
 	state := systemPlanningState(t, root, "design", 4)
+	state["milestone"].(map[string]any)["objective"] = "STALE-D011-CACHED-OBJECTIVE"
 	writeSystemState(t, root, state)
-
-	code, stdout, stderr := runHook(t, root, "PreCompact",
-		`{"hook_event_name":"PreCompact","session_id":"session-d011"}`)
+	before := readSystemRuntimePair(t, root)
+	code, stdout, stderr := runHook(t, root, "PreCompact", `{"hook_event_name":"PreCompact","session_id":"session-d011"}`)
+	if code != 0 || strings.TrimSpace(stdout) != "" {
+		t.Fatalf("PreCompact did not remain silent: %d %s %s", code, stdout, stderr)
+	}
+	assertSystemRuntimePairUnchanged(t, before)
+	code, stdout, stderr = runHook(t, root, "SessionStart", `{"hook_event_name":"SessionStart","session_id":"session-d011-recover"}`)
 	if code != 0 {
-		t.Fatalf("PreCompact failed: code=%d stderr=%s", code, stderr)
+		t.Fatalf("SessionStart recovery failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	after := req039fixtures.ReadState(t, root)
-	ms, _ := after["milestone"].(map[string]any)
-	obj, _ := ms["objective"].(string)
-	if obj == "" {
-		t.Fatalf("PreCompact must persist objective: %v stdout=%s", ms, stdout)
+	for _, want := range []string{"S2 planning.design", "docs/control/agent-protocol.md#s2"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("current recovery lost %q: %s", want, stdout)
+		}
 	}
-
-	code, stdout, stderr = runHook(t, root, "SessionStart",
-		`{"hook_event_name":"SessionStart","session_id":"session-d011-recover"}`)
-	if code != 0 {
-		t.Fatalf("SessionStart fallback failed: code=%d stderr=%s", code, stderr)
+	if strings.Contains(stdout, "STALE-D011-CACHED-OBJECTIVE") {
+		t.Fatalf("stale cache became current authority: %s", stdout)
 	}
-	if !strings.Contains(stdout, obj) {
-		t.Fatalf("D-011 SessionStart must surface PreCompact objective %q, got %s", obj, stdout)
-	}
+	req039fixtures.AssertLifecycle(t, req039fixtures.ReadState(t, root), "planning", "design")
 }

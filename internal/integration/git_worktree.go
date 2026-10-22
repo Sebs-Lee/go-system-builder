@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
@@ -74,8 +76,20 @@ func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets 
 }
 
 func isOriginalMainWorkspace(ctx context.Context, root string) bool {
-	registry, _, err := workspace.Load(root)
-	if err != nil || registry == nil {
+	registry, state, err := workspace.Load(root)
+	if err != nil {
+		return false
+	}
+	if registry == nil {
+		records, err := assignmentrecord.RecordsFromState(state)
+		if err != nil {
+			return false
+		}
+		for _, record := range records {
+			if record.Contract == assignmentrecord.NativeDeliveryContract {
+				return fileview.ValidateAuthority(root, state) == nil
+			}
+		}
 		return false
 	}
 	main, err := workspace.Canonical(root)
@@ -100,6 +114,16 @@ func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string) (bool
 		return false, fmt.Errorf("Worker control pointer has no matching Main-pinned execution")
 	} else if !os.IsNotExist(err) {
 		return false, err
+	}
+	native, err := nativeDeliveryProjection(mainRoot, workerRoot, false)
+	if err != nil {
+		return false, err
+	}
+	if projection == nil {
+		projection = map[string]string{}
+	}
+	for path, digest := range native {
+		projection[path] = digest
 	}
 	return worktreeCleanWithProjection(ctx, workerRoot, projection)
 }
@@ -263,6 +287,8 @@ func fileMatchesDigest(root, rel, expected string) bool {
 }
 
 var mainHarnessProjectionPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^\.claude/assignments/native/[A-Za-z0-9][A-Za-z0-9._-]*/r[1-9][0-9]*/(task\.md|source\.json|(?:plan|result)-[a-f0-9]{64}\.json)$`),
+	regexp.MustCompile(`^\.claude/assignments/[A-Za-z0-9][A-Za-z0-9._-]*\.json$`),
 	regexp.MustCompile(`^\.claude/assignment-context/[a-f0-9]{64}/g[1-9][0-9]*/[A-Za-z0-9][A-Za-z0-9._-]*-e[1-9][0-9]*\.json$`),
 	regexp.MustCompile(`^\.claude/assignment-context/native/[a-f0-9]{64}/g[1-9][0-9]*/[a-f0-9]{64}\.json$`),
 	regexp.MustCompile(`^\.claude/assignment-context/roles/[a-f0-9]{64}\.md$`),

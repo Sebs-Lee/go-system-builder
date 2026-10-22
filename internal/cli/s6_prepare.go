@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/agentcontext"
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/checkexec"
 	"github.com/entroforge/go-system-builder/internal/dispatch"
 	"github.com/entroforge/go-system-builder/internal/fileview"
@@ -22,6 +23,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
 	"github.com/entroforge/go-system-builder/internal/team"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
@@ -116,8 +118,8 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 	root := flags.String("root", ".", "authority repository root")
 	taskID := flags.String("task", "", "exact registered TASK ID")
 	role := flags.String("role", "", "Builder role: backend-builder, frontend-builder, or test-builder")
-	agentID := flags.String("agent-id", "", "actual platform Agent ID selected by Main")
-	platformTeamID := flags.String("platform-team-id", "", "actual platform Team ID selected by Main")
+	agentID := flags.String("agent-id", "", "legacy only: actual platform Agent ID selected by Main")
+	platformTeamID := flags.String("platform-team-id", "", "legacy only: actual platform Team ID selected by Main")
 	reviseAssignment := flags.String("revise-assignment", "", "prepare a fresh manifest draft for the current canonical S6 Assignment revision")
 	revisionIntentKey := flags.String("revision-intent-key", "", "Main-chosen stable key for the original Assignment revision Writer")
 	out := flags.String("out", "", "draft output path relative to the authority root")
@@ -126,14 +128,25 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 	if wantsHelp(args) {
 		flags.SetOutput(stdout)
 		flags.Usage()
-		fmt.Fprintln(stdout, "Before preparing a registered workspace Assignment, if the Main workspace is not bound, run `loop-harness runtime workspace bind --root <authority-root>`; it binds the current Main checkout and does not guess `develop`.")
+		fmt.Fprintln(stdout, "Default: register the reviewed TASK delivery and print its exact brief for Claude Code native Agent with worktree isolation. No platform IDs or framework launcher. Explicit legacy identity options retain the frozen workspace route.")
+		fmt.Fprintln(stdout, "For explicit frozen legacy workspace preparation only: `loop-harness runtime workspace bind --root <authority-root>` binds its original Main checkout.")
 		return 0
 	}
 	if err := parseWorkspaceFlags(flags, args); err != nil {
 		return 2
 	}
+	nativeDelivery := *agentID == "" && *platformTeamID == ""
+	if nativeDelivery {
+		*agentID = "native-" + *taskID
+		*platformTeamID = "engineering-" + *taskID
+		if *revisionIntentKey != "" {
+			suffix := "-" + workpacket.Digest([]byte(*revisionIntentKey))[:12]
+			*agentID += suffix
+			*platformTeamID += suffix
+		}
+	}
 	if *taskID == "" || *role == "" || *agentID == "" || *platformTeamID == "" {
-		fmt.Fprintln(stderr, "s6 prepare requires --task, --role, --agent-id and --platform-team-id; Agent and Team IDs must be actual platform identities")
+		fmt.Fprintln(stderr, "s6 prepare requires --task and --role; legacy identity options must be supplied together")
 		return 2
 	}
 	if (*reviseAssignment == "") != (*revisionIntentKey == "") {
@@ -185,6 +198,44 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "s6 prepare requires the current bound REQ")
 		return 1
 	}
+	if nativeDelivery {
+		if existing, found, err := assignmentrecord.ForOwner(snapshot.State, *agentID); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		} else if found {
+			if existing.Contract != assignmentrecord.NativeDeliveryContract || existing.Task.ID != *taskID || existing.RoleFamily != *role || (*reviseAssignment != "" && existing.AssignmentID != *reviseAssignment) || len(doneWhen) > 0 || *out != "" {
+				fmt.Fprintln(stderr, "existing native TASK/role contract differs; Main must inspect the original TASK and role. This replay cannot replace frozen contract fields; execution correction retains the reviewed TASK, while formal specification changes belong to planning/document review")
+				return 1
+			}
+			files, err := dispatch.View(rootAbs, snapshot.State)
+			if err != nil {
+				fmt.Fprintf(stderr, "Main must restore the current TASK source view before preparation recovery: %v\n", err)
+				return 1
+			}
+			if err := s6RequireOriginalTaskForReplay(snapshot.State, existing, files); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			coordinate, err := workpacket.ReadFile(rootAbs, fmt.Sprintf(".claude/assignments/native/%s/r%d/source.json", existing.AssignmentID, existing.Revision), 4096)
+			var binding struct {
+				Base string `json:"base_commit"`
+			}
+			if err != nil || json.Unmarshal(coordinate, &binding) != nil || binding.Base == "" {
+				fmt.Fprintln(stderr, "existing native TASK has no original source commit; Main must recover its original preparation, never recapture HEAD")
+				return 1
+			}
+			if err := prepareNativeS6Brief(rootAbs, snapshot.State, existing, binding.Base, stdout); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
+		}
+	}
+	if nativeDelivery && *reviseAssignment == "" {
+		if handled, code := resumeNativeS6Preparation(rootAbs, reqID, *taskID, *role, *agentID, *out, stdout, stderr); handled {
+			return code
+		}
+	}
 	files, err := dispatch.View(rootAbs, snapshot.State)
 	if err != nil {
 		fmt.Fprintf(stderr, "s6 prepare current source view: %v\n", err)
@@ -219,7 +270,7 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 	}
 	if *reviseAssignment != "" {
 		return runS6PrepareRevision(s6PrepareRevisionInput{
-			Root: rootAbs, State: snapshot.State, StateRevision: snapshot.Revision, Files: files, IntentKey: *revisionIntentKey,
+			Root: rootAbs, State: snapshot.State, StateRevision: snapshot.Revision, Files: files, IntentKey: *revisionIntentKey, NativeDelivery: nativeDelivery, BaseCommit: files.Commit,
 			AssignmentID: *reviseAssignment, TaskID: *taskID, Role: *role,
 			AgentID: *agentID, PlatformTeamID: *platformTeamID, Output: *out,
 			DoneWhen: append([]string(nil), doneWhen...), REQID: reqID,
@@ -334,6 +385,9 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 		Validation:               s6ManifestValidation{Result: "warn", MissingResponsibilities: []string{}, UnresolvedConflicts: []string{}, Warnings: warnings, ValidatedAt: now},
 		AssignmentRecordContract: "s6-v1.2",
 	}
+	if nativeDelivery {
+		draft.AssignmentRecordContract = assignmentrecord.NativeDeliveryContract
+	}
 	manifestBytes, err := json.MarshalIndent(draft, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "s6 prepare encode manifest: %v\n", err)
@@ -347,6 +401,12 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "s6 prepare manifest schema: %v\n", err)
 		return 1
 	}
+	if nativeDelivery {
+		if err := pinNativeS6Source(rootAbs, draft.Assignments[0].AssignmentID, 1, files.Commit); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	manifestRef, err := s6WriteDraft(rootAbs, reqID, *taskID, *out, manifestBytes)
 	if err != nil {
 		fmt.Fprintf(stderr, "s6 prepare write draft: %v\n", err)
@@ -358,6 +418,9 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	if nativeDelivery {
+		return registerNativeS6Delivery(rootAbs, manifestRef, *taskID, selected.Path, files.Commit, stdout, stderr)
+	}
 	fmt.Fprintf(stdout, "S6 manifest draft written (not registered): %s\n", manifestRef)
 	fmt.Fprintf(stdout, "TASK: %s (%s); dependencies already satisfied by the original dispatch: %s\n", *taskID, selected.Path, s6DisplayList(selected.Dependencies))
 	fmt.Fprintf(stdout, "Role: %s; platform Agent: %s; platform Team: %s\n", *role, *agentID, *platformTeamID)
@@ -389,6 +452,45 @@ func runS6PrepareCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "After registration, prepare the original bound workspace with: loop-harness runtime workspace prepare --root %q --assignment %q --agent %q\n", rootAbs, assignmentID, *agentID)
 	}
 	return 0
+}
+
+// Replaying a native preparation retains its original source commit. Check
+// only its TASK against current locked facts before returning that old brief;
+// a different specification is not an execution-recovery authorization.
+func s6RequireOriginalTaskForReplay(state map[string]any, record assignmentrecord.Record, files *fileview.View) error {
+	fail := func(reason string) error {
+		return fmt.Errorf("TASK %s (%s) cannot reuse its original native preparation: %s. Main must distinguish source recovery from a formal specification change. Assignment revision retains the exact reviewed TASK; formal changes return to original planning/document review. Same-generation TASK replacement is not supported by this recovery path; do not refresh fingerprints, repeat revision or reuse the old brief as a new specification", record.Task.ID, record.Task.Ref, reason)
+	}
+	baseline, _ := state["baseline"].(map[string]any)
+	if state["runtime_id"] != record.RuntimeID || dispatch.Number(baseline["generation"]) != record.BaselineGeneration {
+		return fail("the original Runtime/generation is no longer current")
+	}
+	rows, _ := state["documents"].([]any)
+	matches := 0
+	for _, raw := range rows {
+		doc, _ := raw.(map[string]any)
+		if doc["kind"] != "task" || doc["id"] != record.Task.ID || dispatch.Number(doc["generation"]) != record.BaselineGeneration {
+			continue
+		}
+		matches++
+		if doc["status"] != "locked" || doc["path"] != record.Task.Ref || doc["version"] != record.Task.Version || doc["sha256"] != record.Task.SHA256 {
+			return fail("the current locked TASK identity/version/content differs from the original Record")
+		}
+	}
+	if matches != 1 {
+		return fail("the current locked batch does not uniquely contain this original TASK")
+	}
+	data, err := files.ReadFile(record.Task.Ref)
+	if err != nil {
+		return fmt.Errorf("Main must recover locked TASK %s source at %s before reusing its preparation: %w", record.Task.ID, record.Task.Ref, err)
+	}
+	if workpacket.Digest(data) != record.Task.SHA256 {
+		return fail("the current Main TASK bytes changed")
+	}
+	if err := files.Verify(); err != nil {
+		return fmt.Errorf("Main TASK source view changed during preparation recovery; preserve the original brief: %w", err)
+	}
+	return nil
 }
 
 func s6ManifestDocuments(root string, files fileview.Reader, state map[string]any, reqID string, generation int, task semantic.DispatchTask, taskContext semantic.TaskContextSummary, planPath string) ([]s6ManifestReference, error) {

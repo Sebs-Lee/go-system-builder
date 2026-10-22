@@ -19,7 +19,7 @@ ownership or a justified Resource order table (Before TASK, After TASK, Resource
 Reason). Invalid non-header resource rows are errors, not absent constraints.
 Resource order and artifact dependencies must form one acyclic order.
 The effective write scope includes both assignment write_paths and output_paths;
-both must stay within the reviewed TASK scope. Registration, activation and
+both must stay within the reviewed TASK scope. For native S6, registration and delivery reception are engineering facts, not execution permission. Legacy activation and
 integration consume this same effective scope.
 
 S5's existing two reviewers explicitly review membership, parallel boundaries,

@@ -24,6 +24,9 @@ import (
 )
 
 func runSavedBuilderQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(request) {
+		return false, 0 // Main owns integration; it does not save or sweep Builder answers.
+	}
 	path, saved := savedQuestionnairePath(request)
 	if !saved {
 		return false, 0

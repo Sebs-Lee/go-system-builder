@@ -283,8 +283,31 @@ func currentQuestionnaireLifecycleContext(root string, request policy.Input) str
 		return ""
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
-	if err == nil {
+	if err != nil {
+		return stageAnswerLifecycleContext(root, request)
+	}
+	return currentQuestionnaireLifecycleContextFromSnapshot(root, request, snapshot)
+}
+
+// Observation reuses the control result already read for this Hook. Any actual
+// issuer/receiver retains its own authoritative checks and later-state refresh.
+func currentQuestionnaireLifecycleContextFromSnapshot(root string, request policy.Input, snapshot runtime.Snapshot) string {
+	if request.Event == "SubagentStart" && request.EffectiveAgentID() == "" {
+		return ""
+	}
+	if snapshot.State != nil {
 		lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "planning" {
+			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
+				return ""
+			}
+			switch lifecycle["phase"] {
+			case "design":
+				return stageDesignQuestionnaireContext(root, snapshot)
+			case "contracts", "tasks":
+				return stageCurrentPlanningContext(root, snapshot)
+			}
+		}
 		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) && request.EffectiveAgentID() == "" && (request.AgentType != "" || request.AgentTranscriptPath != "" || request.Event == "SubagentStop" || request.Event == "TeammateIdle") {
 			return "S9 native Worker responsibility is not identified by this event. Main must provide its exact registered questionnaire path in the actual task prompt; saving that path uses its original registered owner. No Main responsibility was inferred."
 		}

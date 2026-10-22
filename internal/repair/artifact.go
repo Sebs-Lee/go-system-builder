@@ -599,22 +599,35 @@ func ComputeSessionChangesetRecord(root string, session RepairSession) (Changese
 // or replay Contract/Plan/source qualification.
 func CurrentRepairResultChangeset(root string, state map[string]any) (Changeset, error) {
 	pointer := repairPointer(state)
-	refs, err := currentRepairResultRefs(pointer)
+	results, err := currentRepairResults(root, pointer)
 	if err != nil {
 		return Changeset{}, err
+	}
+	return repairResultChangeset(stringField(pointer["session_id"]), results)
+}
+
+// Read the existing accepted Final batch without replaying upstream proofs.
+func currentRepairResults(root string, pointer map[string]any) ([]RepairResult, error) {
+	refs, err := currentRepairResultRefs(pointer)
+	if err != nil {
+		return nil, err
 	}
 	results := make([]RepairResult, 0, len(refs))
 	for _, ref := range refs {
 		data, err := workpacket.ReadFile(root, ref.Path, 20<<20)
 		if err != nil {
-			return Changeset{}, err
+			return nil, err
 		}
 		var result RepairResult
 		if err := json.Unmarshal(data, &result); err != nil {
-			return Changeset{}, err
+			return nil, err
 		}
 		results = append(results, result)
 	}
+	return results, nil
+}
+
+func repairResultChangeset(sessionID string, results []RepairResult) (Changeset, error) {
 	changed, err := aggregateRepairResultArtifacts(results)
 	if err != nil {
 		return Changeset{}, err
@@ -623,20 +636,19 @@ func CurrentRepairResultChangeset(root string, state map[string]any) (Changeset,
 	for _, item := range changed {
 		artifacts = append(artifacts, ArtifactRef{Path: item.Path, SHA256: item.SHA256, Status: item.Status})
 	}
-	return repairChangesetRecord(stringField(pointer["session_id"]), "explicit", artifacts)
+	return repairChangesetRecord(sessionID, "explicit", artifacts)
 }
 
 func repairChangesetRecord(sessionID, source string, artifacts []ArtifactRef) (Changeset, error) {
-	if len(artifacts) == 0 {
-		return Changeset{}, errors.New("repair changeset is empty")
-	}
 	lines := make([]string, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		lines = append(lines, artifact.Path+":"+artifact.SHA256)
 	}
 	sort.Strings(lines)
 	digest := sha256Bytes([]byte(strings.Join(lines, "\n")))
-	return Changeset{SchemaVersion: "1.0.0", RecordType: "repair_changeset", ChangesetID: "repair-changeset-" + digest[:16], SessionID: sessionID, Source: source, Artifacts: artifacts, Digest: digest, ComputedAt: nowOr(time.Time{})}, nil
+	changeset := Changeset{SchemaVersion: "1.0.0", RecordType: "repair_changeset", SessionID: sessionID, Source: source, Artifacts: append([]ArtifactRef{}, artifacts...), Digest: digest, ComputedAt: nowOr(time.Time{})}
+	changeset.ChangesetID = repairChangesetID(changeset)
+	return changeset, nil
 }
 
 func exactIDs(expected, actual []string) error {

@@ -43,6 +43,15 @@ maintained artifact is always one final package per module.
 | `cases.json` | Deterministically generated current case catalog; never a hand-maintained REQ copy |
 | `scenario-coverage.json` | Deterministically generated branch and polarity coverage ledger |
 | `fixture-contract.json` | Synthetic, isolated fixture setup and cleanup contract |
+
+The module keeps its complete current behavior across requirements. Preserve
+original `REQ/FR` sources, required branches and CASE identities when a new REQ
+is bound. Matrix cells for the current REQ join its FR table; historical cells
+keep their own sources and still cover the full module. The AC bridge selects
+the exact bound `REQ/FR` identity, so an older REQ's same-numbered FR cannot
+stand in for a missing current obligation. A REQ-level matrix cell can join
+that REQ's actual FR-level rule source. These checks do not certify the semantic
+truth of historical references or no-branch rationales.
 | `*.html` | Current page, dialog, wizard, or component prototype |
 | `assets/` | Images, icons, fixtures, or local prototype assets |
 

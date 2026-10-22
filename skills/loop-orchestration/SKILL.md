@@ -6,6 +6,24 @@ version: 2.2.0
 ---
 # Loop Orchestration (Main-session Driver)
 
+## Native S6 delivery (s6-native-v1)
+
+For a newly prepared native S6 TASK, Main uses `s6 prepare --task <TASK> --role <role> --root <Main>` and carries the exact returned task brief into Claude Code's native Agent prompt. Claude Code owns creation, foreground/background execution, messaging and resume. No Team, opaque platform ID, workspace prepare/launch, team launch, generic readback, begin or activation is required.
+
+The Builder reads the brief and actual TASK inputs, saves its professional plan, continues implementation and actual self-checks, commits deliverables and saves the professional Result. Ordinary saves do not register an execution lifecycle. Return the exact task brief / delivery path. SubagentStart supplies bounded engineering guidance; SubagentStop receives actual professional artifacts through the original domain Writer. Main integrates separately and the original full-batch Gate remains. A real blocker may be handed back; never fabricate PASS or approval.
+
+This section applies only to `s6-native-v1`. Keep the original frozen recovery behavior for existing workspace/legacy assignments and other stages until migrated. The legacy sections below are not prerequisites of native S6.
+
+
+## Native S9 dispatch
+
+Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. The professional PlanReport and Result are private outputs in the actual native worktree. The Main-root question is read-only input; an isolated Worker never writes Main. At Stop the adapter imports the actual worktree Plan payload into the existing questionnaire and invokes the original consumer, without Main authoring the answer. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
+
+
+## Native S5 / S7 / S8 professional work
+
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+
 ## Authority
 
 This Skill is the operational core of **Layer 1** (the Main-session Driver).
@@ -98,10 +116,9 @@ DRIVE()
      usable for this round.
 
 4. Pick the next action.
-   - If the Runtime shows a legacy Agent lifecycle value such as `spawned` or
-     `reading`, or an original approval is pending: use the Agent Activation
-     Barrier below. Those are Runtime/approval facts, not extra responsibility
-     statuses.
+   - If an original explicit approval is pending, follow that real approval
+     path; native execution does not grant it. A frozen legacy Agent follows
+     its documented recovery; its lifecycle values are not new native prerequisites.
    - If the stage's `done_when` is not satisfied:
      the next action = produce the most-forward missing deliverable or
      evidence named by the Hook reminder or `ready` diagnostics.
@@ -118,12 +135,12 @@ DRIVE()
 
 6. Execute the action.
    - Self-execute, or
-   - Spawn one single-responsibility subagent assignment (phase-one
-     read-back, phase-two activation). Use `team-planning` to plan a Team
+   - Use native Agent with one concrete professional responsibility and exact
+     original references. Use `team-planning` for coverage and independence
      when multiple responsibilities must be covered.
    - After spawning a subagent assignment, do not self-execute that
-     assignment's deliverable. The current Driver action becomes the Agent
-     Activation Barrier until the Agent is activated, rejected, or revoked.
+     assignment's deliverable. Main follows actual native progress, return and original consumer facts;
+     no generic activation handshake precedes execution.
 
 7. Verify and record.
    - Verify the artifact against the stage's done_when.
@@ -140,44 +157,13 @@ DRIVE()
      Continue until a real stop condition.
 ```
 
-## Agent Dispatch Barrier (plan_checkpoint)
+## Native responsibility handoff
 
-Claude Code Agent Teams allow the same subagent to be woken repeatedly. The
-Driver therefore treats dispatch as a scheduling barrier, not as a passive
-wait. Once the main session delegates an assignment, the most-forward missing
-work is the original role's professional plan answer or checkpoint. Use a
-generic PLAN_REPORT only when that role contract requires it (for example, S6
-Builders); ordinary S5/S7/S8 assignments use their exact domain questionnaire,
-and S9's PlanReport is itself the professional checkpoint. After the original
-consumer accepts that answer, the Worker continues without a second approval in
-the default `plan_checkpoint` mode.
+Main passes the original exact inputs and output references into native Agent. The Worker performs its professional work and saves its original artifacts; Start/Stop connect them to the original consumer. Main follows actual native return, continues unrelated ready work, and handles integration or blockers. Do not create a framework wait/activation queue, infer a task from role, or self-author delegated independent judgments.
 
-Apply this barrier before self-executing any stage work:
+Professional S6/S9 plans precede implementation but do not require a generic readback/activation exchange. S5/S7/S8 read-only responsibility uses its domain questionnaire directly. A missing artifact is a concrete handoff for that responsibility, not a human approval request or a reason to re-wake an invented teammate. Use native messaging/resume with exact references when more work is needed. A returned actor ID may differ after resume; keep the same original engineering responsibility.
 
-| Agent lifecycle fact | Driver next action |
-|:---|:---|
-| assignment dispatched but no required checkpoint | follow the role contract: ask for a generic PLAN_REPORT only when required; otherwise the Worker fills and saves the exact domain questionnaire, which the original consumer projects |
-| required PLAN_REPORT sent and aligned | stay silent — the Worker continues executing in the same turn; never reply with a "go ahead" approval |
-| PLAN_REPORT drifted (scope/oracle/dependency) | send one CORRECTION to the same Agent; it continues the current assignment |
-| plan recorded, no Result yet | the Worker keeps executing; Stop/idle context reminds that same owner to save or report the missing Result and its exact delivery path |
-| Result registered (`reported`) | the Agent may idle; follow the original receiver or integration action without asking for a duplicate delivery — never let an idle teammate self-claim the next task |
-| Agent blocked with a valid blocker | idle is allowed; follow the original blocker owner/action and repair the condition |
-| Agent unrecoverable | re-dispatch a replacement from the shared Assignment + plan checkpoint; never create a second runtime truth |
-
-Rules:
-
-- Work-first does not mean main-first. If an assignment has been delegated,
-  the missing work is the plan checkpoint and the Result, not the delegated
-  deliverable itself.
-- The main session must not implement, verify, or report the delegated
-  responsibility while its Agent holds the assignment. To take the work back,
-  first revoke the assignment or record an explicit reassignment.
-- A missing required plan answer is not a Human Gateway. Re-wake the Agent and
-  follow the role's exact questionnaire or required PLAN_REPORT path, then
-  continue DRIVE. Do not request a duplicate generic PLAN_REPORT for a domain
-  questionnaire responsibility.
-- `plan_approval_required` is reserved for high-risk destructive work; only
-  that mode waits for an explicit approval before mutation.
+Real explicit approval remains in its original domain before applicable work. A frozen pre-migration teammate/execution alone uses [agent-dispatch's frozen recovery](../agent-dispatch/frozen-execution.md); do not copy that procedure into new native work. Main never reports a delegated independent conclusion on the reviewer's behalf.
 
 ## Autonomous decision rules (apply at DRIVE step 4 and 6)
 
@@ -398,8 +384,8 @@ per-tool denial.
   checkpoint.
 
 - The Driver does not implement TASKs itself when a Builder assignment
-  exists — it activates a subagent.
-- The Driver does not judge review conclusions — Verifier / QA Teams do.
+  exists — it dispatches the original brief through native Agent.
+- The Driver does not judge review conclusions — independent Verifier / QA professionals do.
 - The Driver does not edit `.claude/loop-state.json` directly — the Harness
   transition engine is the sole writer.
 - The Driver does not perform squash merge, publication, deployment, or

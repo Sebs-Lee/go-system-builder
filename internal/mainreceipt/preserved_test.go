@@ -58,3 +58,47 @@ func TestPreservedMergeIsUnverifiedWithoutBecomingSuccessfulProof(t *testing.T) 
 		})
 	}
 }
+
+func TestPreMergeFailureRemainsUnverifiedWithoutInventingMainFacts(t *testing.T) {
+	for _, name := range []string{"original pre-merge failure", "wrong Record", "wrong branch", "claims verification", "claims merge", "claims report", "claims runner receipt"} {
+		t.Run(name, func(t *testing.T) {
+			f := newReaderFixture(t)
+			cp := f.checkpoint
+			ref := f.input.Record.Reference()
+			cp.AssignmentRecord = &ref
+			cp.AssignmentRecordSHA256, _ = f.input.Record.Digest()
+			cp.CanonicalMainFacts = nil
+			cp.State, cp.VerifiedAt, cp.TestedHead, cp.MergeCommit = "preserved", "", "", ""
+			cp.ReportPath, cp.ReportSHA, cp.ChangedPathsSHA256 = "", "", ""
+			cp.ChangedPaths, cp.CheckReceipts, cp.ToolCheckReceipts = nil, nil, nil
+			switch name {
+			case "wrong Record":
+				cp.AssignmentRecordSHA256 = strings.Repeat("f", 64)
+			case "wrong branch":
+				cp.TargetBranch = "unrelated"
+			case "claims verification":
+				cp.State = "verified"
+			case "claims merge":
+				cp.MergeCommit = f.mergeHead
+			case "claims report":
+				cp.ReportPath = f.input.ResultRef
+			case "claims runner receipt":
+				cp.CheckReceipts = []string{f.receipt}
+			}
+			writeCheckpointFixture(t, f, cp)
+			path := assignmentrecord.IntegrationCheckpointPath(f.root, ref)
+			before, _ := os.ReadFile(path)
+			proof, err := Verify(context.Background(), f.input)
+			if err == nil || proof.CheckpointSHA256() != "" || proof.MainFacts().TestedHead != "" {
+				t.Fatalf("failure became successful proof: %+v %v", proof, err)
+			}
+			if errors.Is(err, ErrNotVerified) != (name == "original pre-merge failure") {
+				t.Fatalf("classification %q: %v", name, err)
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil || !bytes.Equal(before, after) {
+				t.Fatalf("verification rewrote failure history: %v", readErr)
+			}
+		})
+	}
+}

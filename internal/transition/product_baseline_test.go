@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCleanProductConsumersRejectCanonicalMissingPlan(t *testing.T) {
+func TestCleanProductConsumersRejectMissingPlanAtOriginalBoundary(t *testing.T) {
 	for _, id := range []string{"TR-009", "TR-015", "TR-017"} {
 		t.Run(id, func(t *testing.T) {
 			state := map[string]any{
@@ -16,8 +16,21 @@ func TestCleanProductConsumersRejectCanonicalMissingPlan(t *testing.T) {
 				"review":   map[string]any{"round": 1, "clean_round": map[string]any{"status": "passed"}},
 			}
 			err := validateRequest(t.TempDir(), state, TransitionSpec{ID: id}, Request{Actor: "orchestrator"})
-			if err == nil || !strings.Contains(err.Error(), "current product baseline") {
-				t.Fatalf("persisted clean label bypassed current product proof: %v", err)
+			if id == "TR-009" {
+				if err == nil || !strings.Contains(err.Error(), "current product baseline") {
+					t.Fatalf("persisted clean label bypassed current product proof: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("S10 request preflight repeated the upstream product proof: %v", err)
+			}
+			guard, found := LookupGuard("clean_round_still_valid")
+			if !found {
+				t.Fatal("original S10 clean-round guard is not registered")
+			}
+			if err := guard(state, map[string]string{"clean_round_record": "persisted-label"}); err == nil || !strings.Contains(err.Error(), "no ReviewPlan") {
+				t.Fatalf("persisted clean label bypassed the actual S10 round consumer: %v", err)
 			}
 		})
 	}

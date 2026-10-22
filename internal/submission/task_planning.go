@@ -262,7 +262,8 @@ func (s *Service) taskPlanningReceipt(snap runtime.Snapshot, p workpacket.TaskPl
 	if !r.WorkComplete {
 		r.NextAction = "这是旧代或已替换的 S4 接收记录；按当前监听给出的问卷继续，不重交此旧卷。"
 	} else if r.WorkComplete && (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
-		r.NextAction = "S4 本人交付已接收；原 TR-002 门和 system followup 仍待处理，Main 按正常监听流程继续；无需重交或手动 recover。"
+		r.ConsumerOwner, r.ConsumerPending = "main", true
+		r.NextAction = "S4 本人交付已接收，可以结束本责任；Main 检查原 TR-002 门与 system_followup " + record.FollowupID + " 的具体缺项。真实材料修复后由原 Post 接续；技术中断沿已有 runtime stage-answer recover 恢复，不重交已接收答案，也不制造工具事件等待推进。"
 		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
 	} else if record.ControlStatus == "advanced" {
 		r.NextAction = "S4 本人交付已接收，TR-002 已推进至 S5；后续由 S5 独立审查。"

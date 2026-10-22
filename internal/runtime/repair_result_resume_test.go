@@ -179,6 +179,16 @@ func TestCurrentRepairResultSelectorRejectsTwoIssuedPacketsForOneAssignment(t *t
 }
 
 func TestRepairResultResumeRejectsForgedTupleAndDuplicateRegistration(t *testing.T) {
+	t.Run("different original resolution event", func(t *testing.T) {
+		f, packet := issueRepairResultResumeSuccessorFixture(t)
+		if err := VerifyRepairResultResume(f.runtime.plan.root, f.runtime.plan.state, packet); err != nil {
+			t.Fatalf("original accepted recovery is not valid: %v", err)
+		}
+		packet.Binding.Resume.ResolutionEventID = "another-original-resolution-event"
+		if err := VerifyRepairResultResume(f.runtime.plan.root, f.runtime.plan.state, packet); err == nil {
+			t.Fatal("Resume borrowed an event absent from original acceptance")
+		}
+	})
 	t.Run("forged resolution digest", func(t *testing.T) {
 		f, packet := issueRepairResultResumeSuccessorFixture(t)
 		packet.Binding.Resume.ResolutionMessageSHA256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"

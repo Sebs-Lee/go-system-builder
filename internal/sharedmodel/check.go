@@ -28,7 +28,27 @@ type Result struct {
 var linkRE = regexp.MustCompile(`\[[^\]]+\]\(([^\s)]+)\)`)
 var fenceRE = regexp.MustCompile("(?ms)^```[^\n]*\n.*?^```[^\n]*$")
 var fieldRE = regexp.MustCompile(`(?m)^>\s*Shared model policy:\s*(\S+)\s*$`)
-var requirementRE = regexp.MustCompile(`(?m)^>\s*(?:需求|REQ|Requirement)\s*[:：]\s*(REQ-[A-Z0-9-]+)\s*$`)
+var requirementHeaderRE = regexp.MustCompile(`(?m)^>\s*(?:需求|REQ|Requirement)\s*[:：]\s*(.*)$`)
+var requirementIDRE = regexp.MustCompile(`\bREQ-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
+
+// IndexRequirement shares original S3's declaration identity, including
+// Markdown labels/links. It selects a source; it grants no approval authority.
+func IndexRequirement(content string) (string, error) {
+	owner := ""
+	for _, header := range requirementHeaderRE.FindAllStringSubmatch(content, -1) {
+		ids := requirementIDRE.FindAllString(header[1], -1)
+		if len(ids) == 0 {
+			return "", fmt.Errorf("S3 CONTRACTS index requirement declaration %q is missing a document ID", header[1])
+		}
+		for _, id := range ids {
+			if owner != "" && owner != id {
+				return "", fmt.Errorf("S3 CONTRACTS index requirement declaration %q is ambiguous", header[1])
+			}
+			owner = id
+		}
+	}
+	return owner, nil
+}
 
 // Section returns an H2 section, including numbered H2 headings.
 func Section(s, name string) string {
@@ -126,15 +146,19 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 			continue
 		}
 		content := string(b)
-		declaredReq := requirementRE.FindStringSubmatch(content)
+		declaredReq, err := IndexRequirement(content)
+		if err != nil {
+			r.Problems = append(r.Problems, rel+": "+err.Error())
+			continue
+		}
 		reqScope := fallbackRequirement(e.Name())
-		if declaredReq != nil {
-			reqScope = declaredReq[1]
+		if declaredReq != "" {
+			reqScope = declaredReq
 		}
 		if len(reqIDs) > 0 && reqIDs[0] != "" {
 			req := reqIDs[0]
-			if declaredReq != nil {
-				if declaredReq[1] != req {
+			if declaredReq != "" {
+				if declaredReq != req {
 					continue
 				}
 			} else if e.Name() != "CONTRACTS-"+strings.TrimPrefix(req, "REQ-")+".md" {
@@ -142,7 +166,7 @@ func Check(root string, files fileview.Reader, reqIDs ...string) Result {
 			}
 			// A filename fallback is the bound batch's effective REQ. It is
 			// deliberately applied only after the existing selection rule above.
-			if declaredReq == nil {
+			if declaredReq == "" {
 				reqScope = req
 			}
 		}

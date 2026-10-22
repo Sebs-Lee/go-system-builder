@@ -161,17 +161,18 @@ type RolloverApproval struct {
 }
 
 type rolloverPending struct {
-	SchemaVersion       string           `json:"schema_version"`
-	FreshState          map[string]any   `json:"fresh_state"`
-	Record              RolloverRecord   `json:"record"`
-	Approval            RolloverApproval `json:"approval"`
-	BoundaryKind        string           `json:"boundary_kind,omitempty"`
-	Disposition         string           `json:"disposition,omitempty"`
-	OccurredAt          string           `json:"occurred_at"`
-	SourceStateSHA256   string           `json:"source_state_sha256"`
-	SourceJournalSHA256 string           `json:"source_journal_sha256"`
-	SourceRuntimeID     string           `json:"source_runtime_id"`
-	SourceRevision      *int             `json:"source_revision"`
+	SchemaVersion         string                   `json:"schema_version"`
+	FreshState            map[string]any           `json:"fresh_state"`
+	Record                RolloverRecord           `json:"record"`
+	Approval              RolloverApproval         `json:"approval"`
+	BoundaryKind          string                   `json:"boundary_kind,omitempty"`
+	Disposition           string                   `json:"disposition,omitempty"`
+	OccurredAt            string                   `json:"occurred_at"`
+	SourceStateSHA256     string                   `json:"source_state_sha256"`
+	SourceJournalSHA256   string                   `json:"source_journal_sha256"`
+	SourceRuntimeID       string                   `json:"source_runtime_id"`
+	SourceRevision        *int                     `json:"source_revision"`
+	SourceJournalSegments []rolloverJournalSegment `json:"source_journal_segments,omitempty"`
 }
 
 type commitPending struct {
@@ -815,7 +816,7 @@ func (s *Store) Rollover(freshState map[string]any, archiveRoot string, approval
 	if err != nil {
 		return RolloverRecord{}, fmt.Errorf("read runtime for rollover: %w", err)
 	}
-	journalData, err := os.ReadFile(s.journalPath)
+	journalData, err := s.lifecycleJournalDataLocked()
 	if err != nil {
 		return RolloverRecord{}, fmt.Errorf("read runtime journal for rollover: %w", err)
 	}
@@ -1666,7 +1667,7 @@ func (s *Store) applyBoundaryResetLocked(previousState, targetState map[string]a
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read source runtime for boundary reset: %w", err)
 	}
-	journalData, err := os.ReadFile(s.journalPath)
+	journalData, err := s.lifecycleJournalDataLocked()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Snapshot{}, errors.New("fresh runtime journal is missing")
@@ -2475,6 +2476,16 @@ func (s *Store) recoverPendingRolloverLocked() error {
 		if err := validateLifecycleApproval(archivedState, pending.Approval.ApprovedBy, pending.Approval.EvidenceID, pending.Record.RuntimeID, pending.Record.Revision, scopePrefix); err != nil {
 			return fmt.Errorf("pending runtime rollover approval does not match archived runtime: %w", err)
 		}
+	}
+	if len(pending.SourceJournalSegments) > 0 {
+		return s.recoverSegmentedRolloverLocked(pending)
+	}
+	segments, err := journalSegmentPaths(s.journalPath)
+	if err != nil {
+		return err
+	}
+	if len(segments) > 0 {
+		return errors.New("pending runtime rollover has no original rotation segment binding; preserve the source files and archive for recovery")
 	}
 
 	currentStateData, err := os.ReadFile(s.statePath)

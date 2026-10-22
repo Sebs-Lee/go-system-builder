@@ -228,13 +228,20 @@ func ValidateAgents(root string) error {
 				return fmt.Errorf("agent %s: missing frontmatter %s", role, field)
 			}
 		}
-		for _, phrase := range []string{
-			// L4 dispatch vocabulary: every definition states the plan
-			// checkpoint flow and the activation exception.
-			"PLAN_REPORT", "plan_checkpoint", "plan_approval_required", ".claude/loop-state.json",
-			"squash merge", "## Mission", "## Allowed Artifacts", "## Output Contract", "## Stop Conditions",
-		} {
-			if !strings.Contains(body, phrase) {
+		// This is a definition/format check, not certification of professional
+		// work. Native return and frozen sources are shared responsibilities;
+		// Builder plans are not duties of independent Reviewers.
+		required := []string{
+			"## Mission", "## Allowed Artifacts", "## Output Contract", "## Stop Conditions",
+			"SubagentStop", "frozen",
+		}
+		if strings.HasSuffix(role, "-builder") {
+			required = append(required, "task-brief", "PlanReport", "RepairResult")
+		} else {
+			required = append(required, "questionnaire", "independent")
+		}
+		for _, phrase := range required {
+			if !strings.Contains(strings.ToLower(body), strings.ToLower(phrase)) {
 				return fmt.Errorf("agent %s: missing contract phrase %q", role, phrase)
 			}
 		}

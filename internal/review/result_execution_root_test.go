@@ -113,7 +113,7 @@ func TestRegisteredResultPacketSourceRootBindsCurrentExecution(t *testing.T) {
 		t.Fatalf("issue original S7 answer for registered Worker: packets=%d err=%v", len(issuedPackets), err)
 	}
 	packet = issuedPackets[0]
-	resultPath := writeResultFile(t, mainRoot, plan, packet.Binding.AssignmentID, packet.ResultID, packet.Binding.OwnerAgentID, "pass", map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
+	resultPath := writeResultFile(t, workerRoot, plan, packet.Binding.AssignmentID, packet.ResultID, packet.Binding.OwnerAgentID, "pass", map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
 	var original map[string]json.RawMessage
 	if err := json.Unmarshal(mustReadTestFile(t, resultPath), &original); err != nil {
 		t.Fatal(err)

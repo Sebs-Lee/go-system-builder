@@ -5,7 +5,7 @@ import (
 )
 
 // RepairResultResumePending reports a recorded resolution awaiting its current
-// successor questionnaire. It reads current responsibility facts, not proofs.
+// successor questionnaire through the original verified current selector.
 func RepairResultResumePending(root string, state map[string]any, owner, assignment string) (bool, error) {
 	if !PacketEnabled(state) || owner == "" || assignment == "" {
 		return false, nil
@@ -14,7 +14,10 @@ func RepairResultResumePending(root string, state map[string]any, owner, assignm
 	if err != nil {
 		return false, err
 	}
-	current := currentRepairResultCandidates(state, owner, packets)
+	current, err := currentRepairResultPackets(root, state, owner, packets)
+	if err != nil {
+		return false, err
+	}
 	for _, packet := range current {
 		if packet.Binding.Sources.RepairAssignmentID == assignment {
 			return false, nil

@@ -232,14 +232,14 @@ func messageBranchFor(message map[string]any) string {
 	case "readback_response":
 		return "readbackResponse"
 	case "plan_report":
-		if message["assignment_record_contract"] == "s6-v1.2" {
+		if message["assignment_record_contract"] == "s6-v1.2" || message["assignment_record_contract"] == "s6-native-v1" {
 			return "s6PlanReport"
 		}
 		return "planReport"
 	case "activation":
 		return "activation"
 	case "completion_report":
-		if message["assignment_record_contract"] == "s6-v1.2" {
+		if message["assignment_record_contract"] == "s6-v1.2" || message["assignment_record_contract"] == "s6-native-v1" {
 			return "s6CompletionReport"
 		}
 		return "completionReport"

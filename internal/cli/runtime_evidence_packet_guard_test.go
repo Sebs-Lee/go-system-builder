@@ -30,17 +30,17 @@ func TestRuntimeEvidenceAddPacketPlanningKindRequiresTypedConsumer(t *testing.T)
 			name: "S3 no current packet",
 			setup: func(t *testing.T) (string, string, string) {
 				root := newPlanningEvidenceRoot(t, "contracts", true)
-				return root, "planning_contract", "loop-harness runtime stage-answer issue --root " + root
+				return root, "planning_contract", "The current S3 responsibility has no registered questionnaire"
 			},
-			wantAction: "loop-harness runtime stage-answer issue",
+			wantAction: "not manually issue or consume",
 		},
 		{
 			name: "S4 no current packet",
 			setup: func(t *testing.T) (string, string, string) {
 				root := newPlanningEvidenceRoot(t, "tasks", true)
-				return root, "planning_task", "loop-harness runtime stage-answer issue --root " + root
+				return root, "planning_task", "The current S4 responsibility has no registered questionnaire"
 			},
-			wantAction: "loop-harness runtime stage-answer issue",
+			wantAction: "not manually issue or consume",
 		},
 		{
 			name: "current issued packet",
@@ -51,6 +51,14 @@ func TestRuntimeEvidenceAddPacketPlanningKindRequiresTypedConsumer(t *testing.T)
 			},
 			wantAction: "Save the professional answer normally",
 		},
+		{name: "current S3 issued packet", setup: func(t *testing.T) (string, string, string) {
+			root, packet := newContractAnswerFixture(t)
+			return root, "planning_contract", filepath.Join(root, packet.AnswerPath)
+		}, wantAction: "Save the professional answer normally"},
+		{name: "current S4 issued packet", setup: func(t *testing.T) (string, string, string) {
+			root, packet := newTaskPlanningAnswerFixture(t)
+			return root, "planning_task", filepath.Join(root, packet.AnswerPath)
+		}, wantAction: "Save the professional answer normally"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,8 +80,11 @@ func TestRuntimeEvidenceAddPacketPlanningKindRequiresTypedConsumer(t *testing.T)
 				t.Fatalf("packet-mode planning evidence add unexpectedly succeeded: %s", stdout.String())
 			}
 			message := stderr.String()
-			if !strings.Contains(message, "typed answer") || !strings.Contains(message, tc.wantAction) || !strings.Contains(message, expected) {
+			if !strings.Contains(message, tc.wantAction) || !strings.Contains(message, expected) {
 				t.Fatalf("missing actionable typed-consumer guidance: %s", message)
+			}
+			if strings.Contains(message, "runtime stage-answer issue") || strings.Contains(message, "runtime stage-answer consume") {
+				t.Fatalf("refusal introduced manual planning procedures: %s", message)
 			}
 			if strings.Contains(message, "read evidence artifact") {
 				t.Fatalf("guard should reject before reading a guessed artifact path: %s", message)

@@ -65,8 +65,9 @@ func runRuntimeInvestigation(args []string, stdout, stderr io.Writer) int {
 // was only a free-form trace field: the Case could claim that a question had
 // an owner while Runtime had no Team, Task, Agent, or activation envelope for
 // that owner. The command deliberately reuses register-workgroup so the
-// normal CAS, manifest validation, task creation, and L4 activation path stay
-// authoritative.
+// original CAS, manifest validation and professional responsibility remain
+// authoritative. Claude Code owns native launch/resume; explicit legacy
+// authorization stays with its already registered execution contract.
 func runRuntimeInvestigationDispatch(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("runtime investigation dispatch", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -240,7 +241,7 @@ func runRuntimeInvestigationDispatch(args []string, stdout, stderr io.Writer) in
 	}
 	nextAction := fmt.Sprintf("send one generic PLAN_REPORT while still running, then submit `runtime investigation hypothesis result --case-id %s --hypothesis-id %s --assignment-id %s --method <...> --observed <...> --result <supported|refuted|inconclusive> --explains <finding> --source-boundary <ref> --evidence <ref> --counterfactual <...>`", *caseID, *hypothesisID, resolvedAssignmentID)
 	if runtime.PacketEnabled(snapshot.State) {
-		nextAction = "The Hook listener prepares the exact registered S8 question and supplies its view/answer paths; the Investigator reads that packet, writes only its answer.json, and saves through the platform PostToolUse Hook. Main or the owner may inspect the original receipt with `runtime stage-answer receipt --agent " + strings.TrimSpace(*agentID) + " --packet <packet-id>`."
+		nextAction = "The original preparation supplies the exact registered S8 view/answer paths. Main carries those references into Claude Code native Agent; the Investigator reads the actual sources, saves only the professional answer and returns its exact reference. SubagentStop invokes the original Case consumer; ordinary tools do not activate or receive the work. Main or the owner may inspect the original receipt with `runtime stage-answer receipt --agent " + strings.TrimSpace(*agentID) + " --packet <packet-id>`."
 	}
 	task := map[string]any{
 		"task_id": taskID, "case_id": strings.TrimSpace(*caseID), "hypothesis_id": strings.TrimSpace(*hypothesisID), "assignment_id": resolvedAssignmentID,
@@ -1105,7 +1106,7 @@ func runRuntimeInvestigationContractApprove(args []string, stdout, stderr io.Wri
 	snapshot.State = prepared
 	snapshot.Revision = integerValue(prepared["revision"])
 	pointer := investigationPointer(snapshot.State)
-	fmt.Fprintf(stderr, "repair contract approve: %s is approved for Case %s; next: S9 consume the approved Contract; do not create a BUG as authority\n", pointer["repair_contract_ref"], pointer["case_id"])
+	fmt.Fprintf(stderr, "repair contract approve: %s is approved for Case %s; original S9 entry prepared. Main continues: %s\n", pointer["repair_contract_ref"], pointer["case_id"], repairNextAction(snapshot.State, stringValue(mapFieldCLI(snapshot.State, "lifecycle")["phase"])))
 	return encodeJSON(stdout, map[string]any{
 		"case_id":                pointer["case_id"],
 		"case_path":              pointer["path"],
@@ -1182,7 +1183,12 @@ func runRuntimeInvestigationStatus(args []string, stdout, stderr io.Writer) int 
 	switch stringValue(pointer["status"]) {
 	case "contract_approved":
 		if repairRecovery == nil {
-			next = fmt.Sprintf("open S9 with `runtime repair session open --root %s --session-id <session> --created-by <agent>`; it consumes approved RepairContract (repair_contract_ref=%s)", *root, stringValue(pointer["repair_contract_ref"]))
+			repair := mapFieldCLI(review, "repair")
+			if stringValue(repair["session_id"]) != "" && repair["case_id"] == pointer["case_id"] {
+				next = repairNextAction(snapshot.State, stringValue(mapFieldCLI(snapshot.State, "lifecycle")["phase"]))
+			} else {
+				next = fmt.Sprintf("Main must complete the original S9 entry preparation for approved Case %s and its accepted RepairContract %s; preserve the recorded approval.", pointer["case_id"], pointer["repair_contract_ref"])
+			}
 		}
 	case "blocked":
 		next = "resolve the Case blocker, then re-read the Case board before continuing"

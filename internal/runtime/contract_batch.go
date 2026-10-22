@@ -283,8 +283,8 @@ func foreignContractPaths(files fileview.Reader, entries []os.DirEntry, currentI
 		if err != nil {
 			return nil, fmt.Errorf("read S3 foreign contract index %s: %w", path, err)
 		}
-		owner := contractHeaderField(string(content), "需求", "REQ", "Requirement")
-		if !regexp.MustCompile(`^REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*$`).MatchString(owner) {
+		owner, err := sharedmodel.IndexRequirement(string(content))
+		if err != nil || owner == "" {
 			return nil, fmt.Errorf("S3 extra contract index lacks an explicit REQ owner: %s", path)
 		}
 		if owner == requirementID {
@@ -317,6 +317,13 @@ func declaredContractIDs(content string) (map[string]bool, error) {
 		}
 	}
 	return ids, nil
+}
+
+// ContractIndexContractIDs projects the existing S3 inventory/integration/
+// coverage parser for read-only consumers. It grants no registration authority.
+func ContractIndexContractIDs(content string) ([]string, error) {
+	ids, err := declaredContractIDs(content)
+	return keys(ids), err
 }
 
 func contractSharedModelArtifacts(root string, p workpacket.ContractPacket, files fileview.Reader) ([]workpacket.Reference, error) {
@@ -447,15 +454,15 @@ func validateContractIndex(path, content string, p workpacket.ContractPacket, an
 	if contractHeaderField(content, "状态", "Status") != "locked" || contractHeaderField(content, "版本", "Version") == "" {
 		return fmt.Errorf("S3 CONTRACTS index must declare status=locked and a version")
 	}
-	reqHeaders := regexp.MustCompile(`(?m)^>\s*(?:需求|REQ|Requirement)\s*[:：]\s*(.*)$`).FindAllStringSubmatch(content, -1)
-	if len(reqHeaders) == 0 {
+	owner, err := sharedmodel.IndexRequirement(content)
+	if err != nil {
+		return err
+	}
+	if owner == "" {
 		return fmt.Errorf("S3 CONTRACTS index missing requirement declaration for %s", p.Binding.Requirement.ID)
 	}
-	for _, header := range reqHeaders {
-		id, err := contractIndexDisplayID(header[1], regexp.MustCompile(`\bREQ-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`))
-		if err != nil || id != p.Binding.Requirement.ID {
-			return fmt.Errorf("S3 CONTRACTS index requirement declaration %q does not unambiguously identify %s", header[1], p.Binding.Requirement.ID)
-		}
+	if owner != p.Binding.Requirement.ID {
+		return fmt.Errorf("S3 CONTRACTS index requirement declaration %q does not unambiguously identify %s", owner, p.Binding.Requirement.ID)
 	}
 	indexRows, err := contractInventoryRows(content)
 	if err != nil {

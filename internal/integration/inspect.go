@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
@@ -27,6 +28,11 @@ type InspectConfig struct {
 	LockedArtifacts []string
 	// RecoveryBase retains the original scope denominator for an already merged branch.
 	RecoveryBase string
+	// ReceivedSourceHead is an immutable source from the original domain
+	// receiver. With ValidateDelivery, a removed native checkout may reuse it
+	// only when its entire source range is empty. This never substitutes Main
+	// for Worker checks or changes the original branch/path coordinates.
+	ReceivedSourceHead string
 	// CheckRunner runs RequiredChecks. A missing executor fails closed when
 	// checks are declared; an empty RequiredChecks list still means none.
 	CheckRunner RequiredCheckRunner
@@ -166,25 +172,41 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 		out.CompletionReportSHA256 = reportSHA
 	}
 
-	// 2. Worktree clean.
-	clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath)
-	if err != nil {
-		workerRoot := req.Assignment.WorktreePath
-		return out, fmt.Errorf("Worker checkout %q clean check failed; inspect with git -C %q status --short: %w", workerRoot, workerRoot, err)
+	// 2. Inspect a live checkout normally. Claude Code may already have
+	// removed an accepted no-change native checkout and its temporary branch.
+	sourceRef, sourceRoot := req.Assignment.Branch, req.Assignment.WorktreePath
+	released := false
+	if canonical == nil && cfg.ValidateDelivery != nil && cfg.ReceivedSourceHead != "" {
+		if _, pathErr := os.Lstat(req.Assignment.WorktreePath); os.IsNotExist(pathErr) {
+			released = true
+			sourceRef, sourceRoot = cfg.ReceivedSourceHead, req.Root
+		}
 	}
-	if !clean {
-		workerRoot := req.Assignment.WorktreePath
-		addBlocker(fmt.Sprintf("Worker checkout %q is dirty; inspect with git -C %q status --short: %s", workerRoot, workerRoot, ErrDirtyWorktree))
-		return out, nil
+	if !released {
+		clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath)
+		if err != nil {
+			workerRoot := req.Assignment.WorktreePath
+			return out, fmt.Errorf("Worker checkout %q clean check failed; inspect with git -C %q status --short: %w", workerRoot, workerRoot, err)
+		}
+		if !clean {
+			workerRoot := req.Assignment.WorktreePath
+			addBlocker(fmt.Sprintf("Worker checkout %q is dirty; inspect with git -C %q status --short: %s", workerRoot, workerRoot, ErrDirtyWorktree))
+			return out, nil
+		}
 	}
 
-	// 3. Source branch has commits.
-	sourceHead, err := revParse(ctx, req.Assignment.WorktreePath, req.Assignment.Branch)
-	if err != nil {
-		addBlocker(fmt.Sprintf("source branch head: %v", err))
+	// 3. Resolve the actual Git object, retaining the original metadata.
+	sourceHead, err := revParse(ctx, sourceRoot, sourceRef)
+	if err != nil || released && sourceHead != cfg.ReceivedSourceHead {
+		addBlocker(fmt.Sprintf("original source commit unavailable: %v", err))
 		return out, nil
 	}
 	out.SourceHead = sourceHead
+	if canonical != nil && canonical.Record.Contract == assignmentrecord.NativeDeliveryContract && canonical.Accepted.SourceHead != sourceHead {
+		addBlocker("native source commit changed after accepted Result; Main must use the original named Assignment revision")
+		return out, nil
+	}
+
 	if cfg.ValidateDelivery != nil {
 		if err := cfg.ValidateDelivery(ctx, out); err != nil {
 			addBlocker(err.Error())
@@ -208,7 +230,7 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	out.TargetHead = targetHead
 
 	// 5. Merge base + commit count.
-	base, err := mergeBase(ctx, targetRepo, req.Assignment.Branch, targetBranch)
+	base, err := mergeBase(ctx, targetRepo, sourceRef, targetBranch)
 	if err != nil {
 		addBlocker(fmt.Sprintf("merge base: %v", err))
 		return out, nil
@@ -227,6 +249,10 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	count, err := countCommitsBetween(ctx, targetRepo, base, sourceHead)
 	if err != nil {
 		return out, fmt.Errorf("count commits: %w", err)
+	}
+	if released && count != 0 {
+		addBlocker("removed Worker source has a nonempty Git range; Main must recover the original delivery")
+		return out, nil
 	}
 	if count == 0 && (cfg.ValidateDelivery == nil || canonical != nil) {
 		addBlocker(ErrMissingCommits.Error())
@@ -268,7 +294,7 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	}
 
 	// 7. Conflict detection via merge-tree.
-	conflicts, err := mergeTreeRuns(ctx, targetRepo, base, req.Assignment.Branch, targetBranch)
+	conflicts, err := mergeTreeRuns(ctx, targetRepo, base, sourceRef, targetBranch)
 	if err != nil {
 		return out, fmt.Errorf("merge-tree: %w", err)
 	}
@@ -279,6 +305,10 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	}
 
 	// 8. Required checks.
+	if released && len(cfg.RequiredChecks) != 0 {
+		addBlocker("required Worker checks have no live checkout; Main must recover their original source")
+		return out, nil
+	}
 	commands, _ := splitRequiredChecks(cfg.RequiredChecks)
 	if len(commands) > 0 {
 		// Pre-merge checks must run in the delivered worker checkout. Running

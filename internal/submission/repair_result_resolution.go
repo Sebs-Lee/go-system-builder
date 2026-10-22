@@ -11,6 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/repair"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 // RepairResultResolutionForPath selects an exact Main authoring path. Selection
@@ -133,6 +134,11 @@ func repairResultResolutionReceipt(root string, snapshot loopruntime.Snapshot, p
 	result.DomainRefs = []string{original.MessageRef, original.BlockerRef}
 	result.WaitingOn = []Waiting{{Reason: "Main must continue the recovered responsibility and prepare its current Result questionnaire", Owner: "Main", Ref: packet.ID}}
 	result.NextAction = fmt.Sprintf("Main 恢复决定已记录；Main 按实际恢复安排继续，并显式运行原 runtime workspace prepare --root %q --assignment %q --agent %q，沿该执行当前已选择的 --check-location 准备准确 Result 卷。继任卷尚未准备前保持待办；普通监听不会自动准备，旧已接收内容无需重交。", root, packet.Binding.Sources.ManifestAssignmentID, owner)
+	if registry, err := workspace.Decode(snapshot.State); err == nil && registry != nil {
+		if source, exists := registry.Executions[packet.Binding.Sources.ManifestAssignmentID]; exists && source.Purpose == workspace.NativeDeliveryPurpose {
+			result.NextAction = "Main 恢复决定已记录；按原准确 S9 brief 使用 Claude Code 原生 resume 继续同一专业责任。Builder 保存更新后的专业 Result，SubagentStop 接收原继任卷；无需 workspace prepare/launch 或重新提交已接收 Plan。"
+		}
+	}
 	return result, nil
 }
 

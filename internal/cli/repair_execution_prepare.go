@@ -137,13 +137,26 @@ func stageRepairExecutionPrepareContext(root string, request policy.Input, snaps
 		}
 		b.WriteString(prepareRepairExecutionFromChoice(root, snapshot.State, row, owner))
 	}
-	b.WriteString("Main executes the listed workspace commands and owns native spawn/resume; this reminder only reads current facts. ")
+	b.WriteString("Main owns Claude Code native spawn/resume and later integration; workspace commands apply only to an existing frozen legacy responsibility; this reminder only reads current facts. ")
 	return b.String()
 }
 
 // Keep the existing save adapter as pure feedback; Main runs normal startup.
 func prepareRepairExecutionFromChoice(root string, state map[string]any, row repairDispatchChoice, owner string) string {
 	_, current := repairExecutionForChoice(state, row)
+	for _, packet := range nativeS9PlanPackets(root, state) {
+		if packet.Binding.OwnerAgentID != owner || packet.Binding.RepairAssignmentID != row.AssignmentID {
+			continue
+		}
+		if stringValue(current["status"]) == "complete" {
+			return fmt.Sprintf("S9 Assignment %s is already integrated and cleaned through the original Main consumer; continue remaining professional responsibilities. ", row.AssignmentID)
+		}
+		if stringValue(current["delivery_ref"]) != "" {
+			return repairExecutionProjectionContext(root, state, row) + fmt.Sprintf("Native delivery received. Main selects actual necessary checks and runs original runtime workspace integrate --root %q --assignment %q --agent %q, supplying each actual check with --check-command. Do not launch another Worker. ", root, stringValue(current["assignment_id"]), owner)
+		}
+		brief, _, _ := nativeS9Paths(packet)
+		return fmt.Sprintf("Main uses Claude Code native Agent execution/resume with this exact S9 brief: %s. Builder continues its own plan, repair, self-checks and Result in its native worktree. No workspace prepare/launch is required. ", filepath.Join(root, brief))
+	}
 	if stringValue(current["status"]) == "complete" || stringValue(current["delivery_ref"]) != "" {
 		return repairExecutionProjectionContext(root, state, row)
 	}

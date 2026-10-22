@@ -82,7 +82,7 @@ func assertReadCycleConsumesPlanningFollowup(t *testing.T, s *submission.Service
 		t.Fatalf("typed Main answer did not leave one pending followup: %+v found=%t err=%v", prior, found, err)
 	}
 
-	if fromPhase != "design" {
+	{
 		journalBefore, err := os.ReadFile(filepath.Join(s.Root, ".claude/loop-events.jsonl"))
 		if err != nil {
 			t.Fatal(err)
