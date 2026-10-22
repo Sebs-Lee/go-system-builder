@@ -182,7 +182,7 @@ func TestContractAnswerPendingAndOriginalPairRecovery(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.Validator = cancelValidatedReception{CandidateValidator: s.Validator, packetID: p.ID, cancel: cancel}
+	ctx = &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: p.ID, cancel: cancel}
 	r, err := s.SaveContracts(ctx, p.AnswerPath)
 	if err != nil || !r.Accepted || !r.WorkComplete || len(r.WaitingOn) == 0 {
 		t.Fatalf("pending S3: %+v %v", r, err)

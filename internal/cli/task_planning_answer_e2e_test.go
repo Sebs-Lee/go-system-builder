@@ -272,7 +272,7 @@ func TestTaskPlanningAnswerPendingFollowupRecovery(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.Validator = cancelValidatedReception{CandidateValidator: s.Validator, packetID: p.ID, cancel: cancel}
+	ctx = &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: p.ID, cancel: cancel}
 	r, err := s.SaveTaskPlanning(ctx, p.AnswerPath)
 	if err != nil || !r.Accepted || !r.WorkComplete {
 		t.Fatalf("pending S4 reception: %+v %v", r, err)
