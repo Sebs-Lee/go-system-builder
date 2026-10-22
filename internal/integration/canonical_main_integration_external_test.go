@@ -45,6 +45,7 @@ const (
 )
 
 type canonicalMainFixture struct {
+	hookBinary  string // Set only for production-process Hook acceptance tests.
 	root        string
 	worker      string
 	statePath   string

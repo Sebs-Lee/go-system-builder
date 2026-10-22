@@ -20,6 +20,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 type s8OwnerFixture struct {
@@ -106,6 +107,7 @@ func TestS8IssueUsesActualGenerationTwoInvestigatorRegistration(t *testing.T) {
 // judgment quality or model performance.
 func TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates(t *testing.T) {
 	fixture, owners := prepareS8GenerationTwoFixture(t, true)
+	fixture.hookBinary = factory.BuildHarness(t)
 	if len(owners) != 4 {
 		t.Fatalf("registered owners = %d, want two accepted siblings, one approval-gated owner, and one route-pending owner", len(owners))
 	}
@@ -681,7 +683,16 @@ func runS8PostToolUseWithHookMetadata(t *testing.T, fixture *intakeFixture, owne
 		t.Fatal(err)
 	}
 	var out, errout bytes.Buffer
-	if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
+	var code int
+	if fixture.hookBinary != "" {
+		var stdoutText, stderrText string
+		code, stdoutText, stderrText = factory.RunHook(t, fixture.hookBinary, fixture.root, "PostToolUse", body)
+		out.WriteString(stdoutText)
+		errout.WriteString(stderrText)
+	} else {
+		code = cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout)
+	}
+	if code != 0 {
 		t.Fatalf("original PostToolUse hook code=%d stderr=%s stdout=%s", code, errout.String(), out.String())
 	}
 	var envelope struct {

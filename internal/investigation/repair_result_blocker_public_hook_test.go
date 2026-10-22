@@ -162,17 +162,22 @@ func runS9RepairResultHookPayloadWithRaw(t *testing.T, root string, payload map[
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
 		t.Fatalf("S9 RepairResult PostToolUse Hook exited %d: stderr=%s stdout=%s", code, errout.String(), out.String())
 	}
+	return parseS9RepairResultHookReceipt(t, out.Bytes())
+}
+
+func parseS9RepairResultHookReceipt(t *testing.T, out []byte) (submission.Receipt, []byte) {
+	t.Helper()
 	var envelope struct {
 		HookSpecificOutput struct {
 			AdditionalContext string `json:"additionalContext"`
 		} `json:"hookSpecificOutput"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
-		t.Fatalf("decode outer S9 Hook envelope: %v: %s", err, out.String())
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		t.Fatalf("decode outer S9 Hook envelope: %v: %s", err, out)
 	}
 	const prefix = "S9 SUBMISSION RECEIPT: "
 	if !strings.HasPrefix(envelope.HookSpecificOutput.AdditionalContext, prefix) {
-		t.Fatalf("S9 Hook did not return a domain receipt: %s", out.String())
+		t.Fatalf("S9 Hook did not return a domain receipt: %s", out)
 	}
 	rawReceipt := []byte(strings.TrimPrefix(envelope.HookSpecificOutput.AdditionalContext, prefix))
 	assertSharedSubmissionReceiptWire(t, rawReceipt)

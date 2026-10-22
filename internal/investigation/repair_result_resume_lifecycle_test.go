@@ -14,6 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 func TestS9ResumedSecondBlockerClearsOldResolutionIndexInAgentCAS(t *testing.T) {
@@ -32,13 +33,24 @@ func TestS9ResumedSecondBlockerClearsOldResolutionIndexInAgentCAS(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(workerRoot, filepath.FromSlash(successor.AnswerPath)), answer, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Measure the actual platform process, including its independent watchdog.
+	// The build and fixture setup are outside the Hook's wall-clock interval.
+	binary := factory.BuildHarness(t)
+	payload, err := json.Marshal(s9RepairResultHookPayload(owner.agentID, workerRoot, execution.PlatformSessionID, filepath.Join(workerRoot, filepath.FromSlash(successor.AnswerPath))))
+	if err != nil {
+		t.Fatal(err)
+	}
 	hookStarted := time.Now()
-	accepted, _ := runS9RepairResultPostToolUseWithRaw(t, fixture.root, owner.agentID, workerRoot, execution.PlatformSessionID, successor.AnswerPath)
+	code, stdoutText, stderrText := factory.RunHook(t, binary, fixture.root, "PostToolUse", payload)
 	hookElapsed := time.Since(hookStarted)
 	t.Logf("resumed blocker public Hook elapsed=%s", hookElapsed)
 	if hookElapsed > 10*time.Second {
 		t.Fatalf("resumed blocker exceeded the original platform Hook timeout: %s", hookElapsed)
 	}
+	if code != 0 {
+		t.Fatalf("resumed blocker Hook exit=%d stdout=%s stderr=%s", code, stdoutText, stderrText)
+	}
+	accepted, _ := parseS9RepairResultHookReceipt(t, []byte(stdoutText))
 	if !accepted.Accepted || accepted.WorkComplete || accepted.PacketID != successor.ID {
 		t.Fatalf("resumed successor's second blocker was not accepted through its original receiver: %+v", accepted)
 	}

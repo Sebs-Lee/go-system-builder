@@ -11,11 +11,15 @@ import (
 	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
-func nativeReviewEvent(t *testing.T, root, event, actor, ref string) (int, string, string) {
+func nativeReviewEvent(t *testing.T, root, event, actor, ref string, binary ...string) (int, string, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"hook_event_name": event, "agent_id": actor, "session_id": "native-review-parent", "agent_type": "professional-reviewer", "cwd": root, "last_assistant_message": ref, "tool_name": "Write", "tool_input": map[string]any{"file_path": ref}, "tool_response": map[string]any{"filePath": ref}})
+	if len(binary) > 0 {
+		return factory.RunHook(t, binary[0], root, event, body)
+	}
 	var out, diagnostic bytes.Buffer
 	code := cli.Run([]string{"hook", "--root", root, "--event", event}, bytes.NewReader(body), &out, &diagnostic)
 	return code, out.String(), diagnostic.String()

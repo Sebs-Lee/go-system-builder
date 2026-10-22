@@ -11,6 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 	fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 )
 
@@ -92,11 +93,15 @@ func TestTaskPlanningSaveKeepsActualCancelledTaskWithoutAuthorListProof(t *testi
 		t.Fatal(err)
 	}
 	packets := registerAcceptedS5Reviewers(t, root, "TASK-039-01", draft.Answer.TaskPaths[0])
+	binary := factory.BuildHarness(t)
 	for _, packet := range packets {
 		stageJSON(t, root, packet.AnswerPath, completedDraft(packet, "pass"))
-		if code, _, diagnostic := nativeReviewEvent(t, root, "SubagentStop", "actual-native-reviewer", filepath.Join(root, packet.ViewPath)); code != 0 {
+		if code, _, diagnostic := nativeReviewEvent(t, root, "SubagentStop", "actual-native-reviewer", filepath.Join(root, packet.ViewPath), binary); code != 0 {
 			t.Fatal(diagnostic)
+		} else {
+			t.Logf("S5 native reception %s: %s", packet.ID, diagnostic)
 		}
+		settleOriginalS5Followup(t, root, packet)
 	}
 	if stageSnapshot(t, root).State["lifecycle"].(map[string]any)["state"] != "building" {
 		t.Fatal("original S5 pair did not advance the active batch to S6")

@@ -20,6 +20,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 	fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 )
 
@@ -262,17 +263,26 @@ func (f stageAnswerFixture) begin(t *testing.T, p workpacket.Packet, worker *wor
 }
 
 // Frozen teammate save compatibility; native delivery uses nativeReviewEvent/Stop.
-func saveStageHook(t *testing.T, root, cwd, owner, path string, answer workpacket.Draft) submission.Receipt {
+func saveStageHook(t *testing.T, root, cwd, owner, path string, answer workpacket.Draft, binary ...string) submission.Receipt {
 	t.Helper()
 	stageJSON(t, cwd, path, answer)
 	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": map[string]any{"file_path": filepath.Join(cwd, path)}, "teammate_name": owner, "cwd": cwd})
-	return saveStageHookPayload(t, root, body)
+	return saveStageHookPayload(t, root, body, binary...)
 }
 
-func saveStageHookPayload(t *testing.T, root string, body []byte) submission.Receipt {
+func saveStageHookPayload(t *testing.T, root string, body []byte, binary ...string) submission.Receipt {
 	t.Helper()
 	var out, errout bytes.Buffer
-	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
+	var code int
+	if len(binary) > 0 {
+		var stdoutText, stderrText string
+		code, stdoutText, stderrText = factory.RunHook(t, binary[0], root, "PostToolUse", body)
+		out.WriteString(stdoutText)
+		errout.WriteString(stderrText)
+	} else {
+		code = cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &errout)
+	}
+	if code != 0 {
 		t.Fatalf("save Hook: %d %s", code, errout.String())
 	}
 	var envelope struct {

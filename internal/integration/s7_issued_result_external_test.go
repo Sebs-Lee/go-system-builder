@@ -25,6 +25,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/transition"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
+	"github.com/entroforge/go-system-builder/tests/fixtures/factory"
 )
 
 // This is a complete original S5 -> TR-003 -> S6 Main -> TR-006 -> S7
@@ -117,6 +118,9 @@ func TestS7IssuedResultUnissuedSiblingMarksOriginalPlanStale(t *testing.T) {
 func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	t.Helper()
 	fixture := newCanonicalMainFixtureWithSetup(t, canonicalSourceFile, true, false, enablePacketModeAndApplyTR003)
+	if coldHooks {
+		fixture.hookBinary = factory.BuildHarness(t)
+	}
 	registeredPlan := registerCanonicalPlanForPacketTest(t, fixture)
 	plan, _, err := review.LoadPlan(fixture.root, registeredPlan.State)
 	if err != nil {
@@ -163,7 +167,20 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 		if i == 0 {
 			assertS7ConcurrentReceptionKeepsOriginalAnswer(t, fixture, packet, owner)
 		}
-		accepted := runS7StopHookMode(t, fixture, packet, owner, coldHooks)
+		var accepted loopruntime.Snapshot
+		if coldHooks {
+			accepted = runS7StopHookMode(t, fixture, packet, owner, true)
+		} else {
+			// Instrument the original consumer and Writer under race. Platform
+			// time limits belong to the separate production-process chain.
+			accepted, err = review.SubmitIssuedResult(fixture.root, fixture.statePath, fixture.journalPath, review.IssuedSubmitRequest{
+				Context: t.Context(), ExpectedRevision: -1, PacketID: packet.ID,
+				AnswerPath: packet.AnswerPath, OwnerAgentID: owner, SourceRoot: fixture.root, OccurredAt: time.Now().UTC(),
+			})
+			if err != nil {
+				t.Fatalf("original S7 consumer rejected issued answer: %v", err)
+			}
+		}
 		if accepted.Revision <= before.Revision {
 			t.Fatalf("original SubmitIssuedResult did not commit a Runtime event for %s", packet.Binding.AssignmentID)
 		}
@@ -738,7 +755,7 @@ func invokeS7StopHookMode(t *testing.T, fixture *canonicalMainFixture, packet wo
 		t.Fatal(err)
 	}
 	if cold {
-		return invokeS7HookSubprocess(t, fixture.root, payload)
+		return factory.RunHook(t, fixture.hookBinary, fixture.root, "SubagentStop", payload)
 	}
 	var stdout, stderr bytes.Buffer
 	code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "SubagentStop"}, bytes.NewReader(payload), &stdout, &stderr)
