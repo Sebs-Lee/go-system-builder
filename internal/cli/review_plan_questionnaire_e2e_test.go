@@ -148,4 +148,24 @@ func TestMainReviewPlanQuestionnaireStopDoesNotPrepareAndInvalidSaveReturnsFeedb
 	if !bytes.Equal(before, after) {
 		t.Fatal("invalid draft changed Runtime")
 	}
+	// A valid answer cannot repair a missing frozen product source.
+	validPath := minimalReviewPlan(t, t.TempDir(), "review-plan-source-failure")
+	valid, err := os.ReadFile(validPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, valid, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "internal/example/service.go")); err != nil {
+		t.Fatal(err)
+	}
+	result = entryQuestionnaireHook(t, root, "PostToolUse", path)
+	if !strings.Contains(result, "Main owns source/environment/Writer recovery") || strings.Contains(result, "Correct the specific") {
+		t.Fatalf("source failure was misattributed to the professional answer: %s", result)
+	}
+	after, _ = os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("source failure changed Runtime")
+	}
 }

@@ -3,6 +3,7 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,12 +117,12 @@ func SubjectDigest(plan *Plan) string {
 // shape; this validates the exact-set coverage semantics.
 // ---------------------------------------------------------------------------
 
-// ValidatePlan proves the plan's Claim/Assignment coverage is closed:
+// Plan validation proves the Claim/Assignment coverage is closed:
 // every required Claim is owned by exactly one Assignment, N/A Claims are
 // never dispatched, lenses match, dependencies resolve, and the DV/QA
 // minimum holds (L3-S7 §4.2: a round with product impact never has a
 // zero-Claim white-box lens).
-func ValidatePlan(plan *Plan) error {
+func validatePlanPolicy(plan *Plan) error {
 	if plan.DispatchCapacityPolicy != "coverage_complete" {
 		return s7GateError(
 			"S7_DISPATCH_POLICY",
@@ -131,37 +132,17 @@ func ValidatePlan(plan *Plan) error {
 			"runtime review-plan --file plan.json",
 		)
 	}
-	if err := rejectPlannerPlaceholders(plan); err != nil {
-		return err
-	}
-	if err := validatePlanEvidenceRequirements(plan); err != nil {
-		return err
-	}
-	claims := make(map[string]Claim, len(plan.Claims))
-	for _, claim := range plan.Claims {
-		if _, dup := claims[claim.ClaimID]; dup {
-			return fmt.Errorf("duplicate claim_id %s", claim.ClaimID)
-		}
-		claims[claim.ClaimID] = claim
-	}
-	for _, claim := range plan.Claims {
-		for _, dep := range claim.DependsOn {
-			if _, ok := claims[dep]; !ok {
-				return fmt.Errorf("claim %s depends on unknown claim %s", claim.ClaimID, dep)
-			}
-		}
-	}
+	return nil
+}
+
+func validatePlanCoverage(plan *Plan) error {
+	claims := planClaimMap(plan)
 	if cycle := findClaimCycle(plan.Claims); cycle != "" {
 		return fmt.Errorf("claim dependency cycle involving %s", cycle)
 	}
 
-	assignmentSeen := make(map[string]bool, len(plan.Assignments))
 	claimOwner := make(map[string]string, len(plan.Claims))
 	for _, assignment := range plan.Assignments {
-		if assignmentSeen[assignment.AssignmentID] {
-			return fmt.Errorf("duplicate assignment_id %s", assignment.AssignmentID)
-		}
-		assignmentSeen[assignment.AssignmentID] = true
 		if assignment.ExecutionWave != "static" && assignment.ExecutionWave != "behavior" {
 			return fmt.Errorf("assignment %s has unknown execution_wave %q", assignment.AssignmentID, assignment.ExecutionWave)
 		}
@@ -238,6 +219,18 @@ func ValidatePlan(plan *Plan) error {
 			}
 		}
 	}
+	return nil
+}
+
+func validatePlanE2EState(plan *Plan) error {
+	requiredByLens, naByLens := map[string]int{}, map[string]int{}
+	for _, claim := range plan.Claims {
+		if claim.Applicability == "not_applicable" {
+			naByLens[claim.Lens]++
+		} else {
+			requiredByLens[claim.Lens]++
+		}
+	}
 	switch plan.E2ECoverageState {
 	case "cold_start":
 		if len(plan.E2EAssets) > 0 {
@@ -301,12 +294,6 @@ func ValidatePlan(plan *Plan) error {
 			"runtime review-plan --file plan.json",
 		)
 	}
-	if err := validateAssignmentOverlap(plan, claims); err != nil {
-		return err
-	}
-	if err := validateColdStartE2EOverload(plan, claims); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -316,11 +303,11 @@ func ValidatePlan(plan *Plan) error {
 // planner may use prose such as "todo list" in a source reference, but the
 // generated TODO(planner) token is unambiguously unfinished plan content.
 func rejectPlannerPlaceholders(plan *Plan) error {
-	check := func(kind, id, value string) error {
+	var failures []error
+	check := func(kind, id, value string) {
 		if strings.Contains(value, "TODO(planner)") || strings.Contains(value, "PLANNER-REFINE") {
-			return fmt.Errorf("%s %s still contains TODO(planner)/PLANNER-REFINE; replace the draft placeholder with a concrete target/assertion/oracle/method before registering the ReviewPlan", kind, id)
+			failures = append(failures, fmt.Errorf("%s %s still contains TODO(planner)/PLANNER-REFINE; replace the draft placeholder with a concrete target/assertion/oracle/method before registering the ReviewPlan", kind, id))
 		}
-		return nil
 	}
 	for _, claim := range plan.Claims {
 		fields := []struct {
@@ -332,27 +319,19 @@ func rejectPlannerPlaceholders(plan *Plan) error {
 			{name: "na_rationale", value: claim.NARationale}, {name: "focus_key", value: claim.FocusKey},
 		}
 		for _, field := range fields {
-			if err := check(fmt.Sprintf("claim %s %s", claim.ClaimID, field.name), claim.ClaimID, field.value); err != nil {
-				return err
-			}
+			check(fmt.Sprintf("claim %s %s", claim.ClaimID, field.name), claim.ClaimID, field.value)
 		}
 		for _, ref := range append(append([]string{}, claim.SourceRefs...), claim.RequiredEvidence...) {
-			if err := check(fmt.Sprintf("claim %s reference", claim.ClaimID), claim.ClaimID, ref); err != nil {
-				return err
-			}
+			check(fmt.Sprintf("claim %s reference", claim.ClaimID), claim.ClaimID, ref)
 		}
 	}
 	for _, assignment := range plan.Assignments {
-		if err := check("assignment boundary", assignment.AssignmentID, assignment.NonOverlapBoundary); err != nil {
-			return err
-		}
+		check("assignment boundary", assignment.AssignmentID, assignment.NonOverlapBoundary)
 		for _, focus := range assignment.FocusKeys {
-			if err := check("assignment focus", assignment.AssignmentID, focus); err != nil {
-				return err
-			}
+			check("assignment focus", assignment.AssignmentID, focus)
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // DependenciesSettled is the dispatch-time half of the Claim DAG gate. A

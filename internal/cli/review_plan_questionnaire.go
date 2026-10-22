@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,23 +81,34 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 	}
 	var output, commandErr bytes.Buffer
 	next := "Main dispatches native Agents with the registered exact view/answer paths; each Reviewer saves and returns its own answer for SubagentStop reception."
-	code := 0
 	roundFacts, _ := snapshot.State["review"].(map[string]any)
 	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) {
 		_, _, loadErr := review.LoadPlan(root, snapshot.State)
 		authored, readErr := os.ReadFile(path)
 		registered, registeredErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(ptr.Path)))
-		if loadErr != nil || readErr != nil || registeredErr != nil || !review.SamePlanAnswer(authored, registered) {
-			code = 1
+		if loadErr != nil || readErr != nil || registeredErr != nil {
+			next = "Main restores the original accepted plan/source before checking replay; preserve the answer and original receipt."
+			fmt.Fprintf(&output, "ReviewPlan replay source unavailable: %v\n", errors.Join(loadErr, readErr, registeredErr))
+		} else if !review.SamePlanAnswer(authored, registered) {
+			next = "Use the original named revision/rework path for changed professional content; preserve the accepted plan."
 			fmt.Fprintln(&output, "The current ReviewPlan is already registered; changed answers require the original named revision/rework path. Preserve the accepted plan.")
 		} else {
 			fmt.Fprintln(&output, "The same ReviewPlan was already received; no Runtime write or duplicate registration was performed.")
 		}
 	} else {
-		code = runRuntime([]string{"review-plan", "--root", root, "--file", path}, &output, &commandErr)
-	}
-	if code != 0 {
-		next = "Correct the specific original validation feedback and save this same questionnaire; do not hand-edit Runtime or issue another report."
+		received, err := review.RegisterPlan(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), review.PlanRequest{ExpectedRevision: -1, PlanPath: path})
+		if err != nil {
+			var author *review.PlanAnswerError
+			if errors.As(err, &author) {
+				next = "Correct the specific original validation feedback in this same questionnaire and save; no new command or report is required."
+			} else {
+				next = "Main owns source/environment/Writer recovery; preserve this answer and any original receipt, inspect the concrete failure before resuming. Do not rewrite professional content to repair a system failure."
+			}
+			fmt.Fprintln(&commandErr, formatFailure("runtime review-plan", err))
+		} else {
+			ptr := review.PlanPointerFromState(received.State)
+			fmt.Fprintf(&output, "review-plan: registered %s for round %d (status %s).\n", ptr.PlanID, ptr.ReviewRound, ptr.Status)
+		}
 	}
 	context := fmt.Sprintf("S7 Main ReviewPlan questionnaire saved at %s. Next: %s\n%s", path, next, output.String()+commandErr.String())
 	_ = json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": context}})

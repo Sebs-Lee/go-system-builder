@@ -16,18 +16,18 @@ import (
 // stay in the original JSON for the formal schema to reject. It never writes.
 func preparePlanAssets(root string, data []byte, state map[string]any) ([]byte, error) {
 	if len(data) > 20<<20 {
-		return nil, fmt.Errorf("ReviewPlan exceeds 20 MiB")
+		return nil, &PlanAnswerError{fmt.Errorf("ReviewPlan exceeds 20 MiB")}
 	}
 	if err := workpacket.ValidateUniqueJSON(data); err != nil {
-		return nil, err
+		return nil, &PlanAnswerError{err}
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, &PlanAnswerError{err}
 	}
 	var plan Plan
 	if err := json.Unmarshal(data, &plan); err != nil {
-		return nil, err
+		return nil, &PlanAnswerError{err}
 	}
 	if len(plan.E2EAssets) == 0 {
 		return data, nil
@@ -104,7 +104,7 @@ func planAssetReader(root string, plan *Plan, state map[string]any) (func(string
 func caseReferenceParts(ref string) (string, string, error) {
 	p, id, ok := strings.Cut(ref, "#")
 	if !ok || id == "" || strings.ContainsAny(id, "#/\\") || p != path.Clean(p) || !strings.HasPrefix(p, "docs/design/prototypes/") || path.Base(p) != "cases.json" {
-		return "", "", fmt.Errorf("use an exact cases.json#CASE reference, got %q", ref)
+		return "", "", &PlanAnswerError{fmt.Errorf("use an exact cases.json#CASE reference, got %q", ref)}
 	}
 	return p, id, nil
 }
@@ -147,7 +147,7 @@ func resolveAssetCase(ref string, plan *Plan, read func(string) ([]byte, error))
 			declared = declared || source == p
 		}
 		if !declared {
-			return "", fmt.Errorf("scenario %s is outside the Plan's declared CASE sources", p)
+			return "", &PlanAnswerError{fmt.Errorf("scenario %s is outside the Plan's declared CASE sources", p)}
 		}
 		paths = []string{p}
 		id = c
@@ -178,7 +178,7 @@ func resolveAssetCase(ref string, plan *Plan, read func(string) ([]byte, error))
 		}
 	}
 	if len(matches) != 1 {
-		return "", fmt.Errorf("CASE %q has %d matches in the declared scenario sources (%s); Main must select the exact cases.json#CASE reference", ref, len(matches), strings.Join(matches, ", "))
+		return "", &PlanAnswerError{fmt.Errorf("CASE %q has %d matches in the declared scenario sources (%s); Main must select the exact cases.json#CASE reference", ref, len(matches), strings.Join(matches, ", "))}
 	}
 	return matches[0], nil
 }

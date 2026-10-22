@@ -60,7 +60,7 @@ func RevisePlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
 	}
 	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("revised ReviewPlan schema: %w", err)
+		return loopruntime.Snapshot{}, &PlanAnswerError{fmt.Errorf("revised ReviewPlan schema: %w", err)}
 	}
 	var next Plan
 	if err := json.Unmarshal(data, &next); err != nil {
