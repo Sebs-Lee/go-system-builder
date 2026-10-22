@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/controller"
-	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -515,7 +515,7 @@ func testIndependentStageAnswerFrozenReceipt(t *testing.T, deferControl bool) {
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		s.Validator = cancelValidatedReception{CandidateValidator: s.Validator, packetID: p.ID, cancel: cancel}
+		ctx = &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: p.ID, cancel: cancel}
 		r, err = s.Save(ctx, p.Binding.Owner, filepath.Join(e.Path, workpacket.WorkerAnswerPath))
 		cancel()
 		if err != nil {
@@ -735,15 +735,34 @@ func TestConcurrentIndependentReviewersDoNotLoseAnswersOrDoubleAdvance(t *testin
 	}
 }
 
-type cancelLockedReceptionRead struct {
-	fileview.Reader
-	reads, at int
-	cancel    context.CancelFunc
+// Cancellation observes the original committed reception, never a source-read
+// count or candidate validation. The Writer has cleared its pending marker
+// before this context interrupts the separate control followup.
+type cancelAfterDurableReception struct {
+	context.Context
+	statePath, packetID string
+	cancel              context.CancelFunc
 }
 
-// Cancellation happens only after the complete original semantic validator
-// accepted the candidate containing the new reception. Independent Worker
-// source authorization must finish before its caller context is canceled.
+func (c *cancelAfterDurableReception) Err() error {
+	if err := c.Context.Err(); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(c.statePath)
+	var state map[string]any
+	if err == nil && json.Unmarshal(data, &state) == nil {
+		record, found, readErr := runtime.FindSubmission(state, c.packetID)
+		if readErr == nil && found && record.ControlStatus == "pending" {
+			if _, markerErr := os.Stat(c.statePath + ".commit-pending.json"); os.IsNotExist(markerErr) {
+				c.cancel()
+			}
+		}
+	}
+	return c.Context.Err()
+}
+
+// This distinct injection cancels while the candidate is validated but no
+// pending commit has been published. It must not claim a durable reception.
 type cancelValidatedReception struct {
 	runtime.CandidateValidator
 	packetID string
@@ -762,19 +781,46 @@ func (v cancelValidatedReception) ValidateCandidate(root string, state map[strin
 	return nil
 }
 
-func (r *cancelLockedReceptionRead) ReadFile(path string) ([]byte, error) {
-	data, err := r.Reader.ReadFile(path)
-	r.reads++
-	if r.reads == r.at {
-		r.cancel()
+func TestStageAnswerCanceledBeforePendingDoesNotClaimReception(t *testing.T) {
+	f := newStageAnswerFixture(t)
+	p := f.packets[0]
+	f.begin(t, p, nil)
+	stageJSON(t, f.root, p.AnswerPath, completedDraft(p, "pass"))
+	service, err := submission.New(f.root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return data, err
+	statePath := filepath.Join(f.root, ".claude/loop-state.json")
+	journalPath := filepath.Join(f.root, ".claude/loop-events.jsonl")
+	beforeState, beforeJournal := mustStageFile(t, statePath), mustStageFile(t, journalPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	originalValidator := service.Validator
+	service.Validator = cancelValidatedReception{CandidateValidator: originalValidator, packetID: p.ID, cancel: cancel}
+	received, err := service.Save(ctx, p.Binding.Owner, p.AnswerPath)
+	if !errors.Is(err, context.Canceled) || received.Accepted || received.WorkComplete {
+		t.Fatalf("pre-commit cancellation claimed reception: %+v %v", received, err)
+	}
+	if !bytes.Equal(beforeState, mustStageFile(t, statePath)) || !bytes.Equal(beforeJournal, mustStageFile(t, journalPath)) {
+		t.Fatal("pre-commit cancellation changed the original pair")
+	}
+	if _, err := os.Stat(statePath + ".commit-pending.json"); !os.IsNotExist(err) {
+		t.Fatalf("pre-commit cancellation published pending: %v", err)
+	}
+	service.Validator = originalValidator
+	replay, err := service.Save(context.Background(), p.Binding.Owner, p.AnswerPath)
+	if err != nil || !replay.Accepted || !replay.WorkComplete {
+		t.Fatalf("unreceived original answer could not resume: %+v %v", replay, err)
+	}
 }
-func (r *cancelLockedReceptionRead) Verify() error {
-	if v, ok := r.Reader.(interface{ Verify() error }); ok {
-		return v.Verify()
+
+func mustStageFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return nil
+	return data
 }
 
 func TestStageAnswerDomainCommitSurvivesInterruptedFollowup(t *testing.T) {
@@ -788,7 +834,7 @@ func TestStageAnswerDomainCommitSurvivesInterruptedFollowup(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s.Files = &cancelLockedReceptionRead{Reader: s.Files, at: 3 * len(p.Inputs), cancel: cancel}
+	ctx = &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: p.ID, cancel: cancel}
 	r, err := s.Save(ctx, p.Binding.Owner, p.AnswerPath)
 	if err != nil || !r.Accepted || !r.WorkComplete || !r.ConsumerPending || r.ConsumerOwner != "main" {
 		t.Fatalf("interrupted followup lost durable owner completion: %+v %v", r, err)
@@ -824,7 +870,7 @@ func TestLastS5ReviewerControlInterruptionRecoversOriginalTR003WithoutResubmissi
 			t.Fatal(err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		s.Files = &cancelLockedReceptionRead{Reader: s.Files, at: 3 * len(p.Inputs), cancel: cancel}
+		ctx = &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: p.ID, cancel: cancel}
 		r, err := s.Save(ctx, p.Binding.Owner, p.AnswerPath)
 		cancel()
 		if err != nil || !r.Accepted || !r.WorkComplete || r.CurrentStage != "S5" {
