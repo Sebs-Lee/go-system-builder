@@ -356,7 +356,7 @@ func repairDispatchPlanReportBrief(root string, request policy.Input, state map[
 		if _, err := service.IssueRepairPlanReports(contextForHook(request), owner); err != nil {
 			return "", err
 		}
-		latest, err := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()
+		latest, err := runtime.NewStore(service.StatePath, service.JournalPath).WithContext(contextForHook(request)).Snapshot()
 		if err != nil {
 			return "", err
 		}
@@ -375,7 +375,7 @@ func repairDispatchPlanReportBrief(root string, request policy.Input, state map[
 		if stringValue(execution["delivery_ref"]) != "" || execution["status"] == "complete" {
 			return prepareRepairExecutionFromChoice(root, state, repairDispatchChoice{AssignmentID: assignmentID, AgentID: owner}, owner), nil
 		}
-		latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+		latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(request)).Snapshot()
 		if err != nil {
 			return "", err
 		}
@@ -383,7 +383,7 @@ func repairDispatchPlanReportBrief(root string, request policy.Input, state map[
 		if err != nil || !found {
 			return "", fmt.Errorf("original S9 Plan question is missing: %v", err)
 		}
-		return prepareNativeS9Brief(root, original)
+		return prepareNativeS9Brief(contextForHook(request), root, original)
 	}
 	view, answer := resolveRootPath(root, packet.view), resolveRootPath(root, packet.answer)
 	paths := fmt.Sprintf("Builder %s Main-root PlanReport view: %s; exact professional answer: %s. ", owner, view, answer)

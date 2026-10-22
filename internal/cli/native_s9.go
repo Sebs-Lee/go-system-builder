@@ -52,7 +52,10 @@ func nativeS9PlanPackets(root string, state map[string]any) []workpacket.RepairP
 	return current
 }
 
-func prepareNativeS9Brief(root string, p workpacket.RepairPlanReportPacket) (string, error) {
+func prepareNativeS9Brief(ctx context.Context, root string, p workpacket.RepairPlanReportPacket) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	brief, pin, result := nativeS9Paths(p)
 	base := ""
 	if data, err := workpacket.ReadFile(root, pin, 4096); err == nil {
@@ -66,7 +69,7 @@ func prepareNativeS9Brief(root string, p workpacket.RepairPlanReportPacket) (str
 	} else if !os.IsNotExist(err) {
 		return "", err
 	} else {
-		base, err = workspace.Git(context.Background(), root, "rev-parse", "HEAD")
+		base, err = workspace.Git(ctx, root, "rev-parse", "HEAD")
 		if err != nil {
 			return "", err
 		}
