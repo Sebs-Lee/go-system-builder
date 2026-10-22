@@ -230,6 +230,8 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 		return runtime.Snapshot{}, fmt.Errorf("write approved RepairContract %s: %w", approvedRel, err)
 	}
 	contractSHA := sha256Hex(approvedBytes)
+	cleanupWriter := runtime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	cleanupContract := func() { _, _ = cleanupApprovalArtifact(cleanupWriter, current, approvedRel, contractSHA) }
 
 	approvedCase := cloneMap(caseDocument)
 	approvedCase["revision"] = caseRevision + 1
@@ -240,30 +242,28 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	approvedCase["repair_contract_sha256"] = contractSHA
 	approvedCaseBytes, err := json.MarshalIndent(approvedCase, "", "  ")
 	if err != nil {
-		_ = os.Remove(approvedPath)
+		cleanupContract()
 		return runtime.Snapshot{}, fmt.Errorf("encode approved InvestigationCase: %w", err)
 	}
 	approvedCaseBytes = append(approvedCaseBytes, '\n')
 	if err := schema.NewEmbeddedValidator().ValidateBytes("review-investigation-case.schema.json", approvedCaseBytes); err != nil {
-		_ = os.Remove(approvedPath)
+		cleanupContract()
 		return runtime.Snapshot{}, actionableContractError("approved InvestigationCase schema is invalid before write: %v", err)
 	}
 	approvedCaseRel := filepath.ToSlash(filepath.Join(".claude", "review", "investigation", "cases", request.CaseID+fmt.Sprintf("-r%d.json", caseRevision+1)))
 	approvedCasePath, err := repositoryPath(root, approvedCaseRel)
 	if err != nil {
-		_ = os.Remove(approvedPath)
+		cleanupContract()
 		return runtime.Snapshot{}, actionableContractError("approved InvestigationCase path is invalid: %v", err)
 	}
 	if err := writeExclusive(approvedCasePath, approvedCaseBytes); err != nil {
-		_ = os.Remove(approvedPath)
+		cleanupContract()
 		return runtime.Snapshot{}, fmt.Errorf("write approved InvestigationCase %s: %w", approvedCaseRel, err)
 	}
 	approvedCaseSHA := sha256Hex(approvedCaseBytes)
 	cleanup := func() {
-		if !runtimeReferencesApproval(statePath, approvedCaseRel, approvedCaseSHA, approvedRel, contractSHA) {
-			_ = os.Remove(approvedCasePath)
-			_ = os.Remove(approvedPath)
-		}
+		_, _ = cleanupApprovalArtifact(cleanupWriter, current, approvedCaseRel, approvedCaseSHA)
+		cleanupContract()
 	}
 
 	lifecycle, _ := current.State["lifecycle"].(map[string]any)
@@ -668,18 +668,8 @@ func integerValueOrZero(value any) int {
 	return result
 }
 
-func runtimeReferencesApproval(statePath, caseRel, caseSHA, contractRel, contractSHA string) bool {
-	data, err := os.ReadFile(statePath)
-	if err != nil {
-		return false
-	}
-	var state map[string]any
-	if json.Unmarshal(data, &state) != nil {
-		return false
-	}
-	review, _ := state["review"].(map[string]any)
-	pointer, _ := review["investigation"].(map[string]any)
-	return pointer != nil && stringField(pointer["path"]) == caseRel && stringField(pointer["sha256"]) == caseSHA && stringField(pointer["repair_contract_ref"]) == contractRel && stringField(pointer["repair_contract_sha256"]) == contractSHA
+func cleanupApprovalArtifact(writer *runtime.Store, current runtime.Snapshot, path, sha string) (bool, error) {
+	return writer.RemoveUnreferencedArtifact(runtime.ArtifactCleanupRequest{ExpectedRevision: current.Revision, ArtifactPath: path, ArtifactSHA256: sha, ReferencedPaths: stateStringReferences(current.State, path)})
 }
 
 func actionableContractError(format string, args ...any) error {

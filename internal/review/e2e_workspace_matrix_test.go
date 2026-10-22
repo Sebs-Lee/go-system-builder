@@ -337,7 +337,7 @@ func TestSubmitResultRechecksRegressionAssetFingerprint(t *testing.T) {
 	}
 }
 
-func TestRegisterPlanCleansNewWorkspaceWhenCASApplyFails(t *testing.T) {
+func TestRegisterPlanFailureRetainsEmptyDirectoryWithoutRegisteringAuthority(t *testing.T) {
 	workspace := "e2e-workspace/orphaned-plan"
 	root := t.TempDir()
 	state := coldStartState()
@@ -349,8 +349,23 @@ func TestRegisterPlanCleansNewWorkspaceWhenCASApplyFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid review projection must reject registration")
 	}
-	if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(workspace))); !os.IsNotExist(statErr) {
-		t.Fatalf("failed registration must clean its newly-created workspace, stat error=%v", statErr)
+	entries, readErr := os.ReadDir(filepath.Join(root, filepath.FromSlash(workspace)))
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("prepared empty directory must remain without artifacts: %v %v", entries, readErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".claude/review/plans/review-plan-cs-1.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("unreferenced failed Plan was not cleaned: %v", statErr)
+	}
+	body, readErr := os.ReadFile(statePath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	var actual map[string]any
+	if err := json.Unmarshal(body, &actual); err != nil {
+		t.Fatal(err)
+	}
+	if PlanPointerFromState(actual) != nil {
+		t.Fatal("a prepared directory was mistaken for a registered Plan")
 	}
 }
 

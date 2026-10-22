@@ -1,9 +1,9 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +14,7 @@ import (
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // PlanRequest drives `runtime review-plan` registration.
@@ -127,53 +128,36 @@ func RegisterPlan(
 		return loopruntime.Snapshot{}, err
 	}
 	// E2E cold start: create and fingerprint the isolated write surface so
-	// result submit / round close can bind it exactly (L3-S7 §1.4.1). Keep a
-	// cleanup handle for the failure path; a failed registration must not leave
-	// an apparently usable empty workspace behind.
+	// result submit / round close can bind it exactly. A prepared directory is
+	// not an execution authority; only the committed Plan grants that binding.
 	workspace := ""
 	if plan.VerificationArtifactWorkspace != nil {
 		workspace = *plan.VerificationArtifactWorkspace
 	}
-	workspacePath := ""
-	workspaceWasAbsent := false
-	if workspace != "" {
-		workspacePath, err = repositoryContainedPath(root, workspace)
-		if err != nil {
-			return loopruntime.Snapshot{}, err
-		}
-		if _, statErr := os.Stat(workspacePath); os.IsNotExist(statErr) {
-			workspaceWasAbsent = true
-		} else if statErr != nil {
-			return loopruntime.Snapshot{}, fmt.Errorf("inspect verification workspace: %w", statErr)
-		}
-	}
+
 	artifactDigest, err := prepareVerificationWorkspace(root, &plan)
 	if err != nil {
 		return loopruntime.Snapshot{}, err
-	}
-	cleanupWorkspace := func() {
-		if workspaceWasAbsent && workspacePath != "" {
-			// Remove only the exact empty leaf we created. If a concurrent
-			// writer populated it, preserve its evidence rather than using a
-			// recursive delete during recovery.
-			_ = os.Remove(workspacePath)
-		}
 	}
 
 	// Pin the plan into the shared control plane directory; the runtime
 	// stores path+sha256 and every consumer hash-verifies on load.
 	planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", plan.ReviewPlanID+".json"))
 	planBytes := append(canonicalJSON(data), '\n')
-	if err := writeArtifact(root, planRel, planBytes); err != nil {
-		cleanupWorkspace()
+	publishPlan := func() error {
+		stored, err := workpacket.PublishBounded(root, planRel, planBytes, 20<<20)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(stored, planBytes) {
+			return fmt.Errorf("staged ReviewPlan at %s differs from this answer; Main preserves the original artifact and inspects its receipt/source before revision or recovery", planRel)
+		}
+		return nil
+	}
+	if err := publishPlan(); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	planSHA := sha256Of(planBytes)
-	cleanupPlan := func() {
-		if path, err := repositoryContainedPath(root, planRel); err == nil {
-			_ = os.Remove(path)
-		}
-	}
 
 	runtimeID, _ := current["runtime_id"].(string)
 	occurredAt := request.OccurredAt
@@ -210,22 +194,31 @@ func RegisterPlan(
 			if err := verifyRegressionAssetFingerprints(root, &plan); err != nil {
 				return err
 			}
+			if err := store.Context().Err(); err != nil {
+				return err
+			}
+			// Another failed caller may have safely cleaned an unreferenced
+			// preflight artifact. Restore only these exact bytes under the
+			// original Writer before publishing their pointer.
+			if err := publishPlan(); err != nil {
+				return err
+			}
 			return ApplyRegisteredPlanProjection(state, plan, planRel, planSHA, round, workspace, artifactDigest, occurredAt)
 		},
 	})
 	if err != nil {
-		cleanupStateRevision := func() bool {
-			stateBytes, readErr := os.ReadFile(statePath)
-			if readErr != nil {
-				return false
-			}
-			var persisted map[string]any
-			return json.Unmarshal(stateBytes, &persisted) == nil && intField(persisted["revision"]) == commitRevision
+		// Error does not prove the original CAS is absent. The existing Writer
+		// fence preserves both durable pending and any concurrent accepted record.
+		removed, cleanupErr := removeStagedArtifactIfUnreferenced(store, current, commitRevision, planRel, planSHA)
+		if cleanupErr != nil {
+			return snapshot, fmt.Errorf("%w; Main must inspect original Plan/pending before cleanup: %v", err, cleanupErr)
 		}
-		if errors.Is(err, loopruntime.ErrStaleRevision) || cleanupStateRevision() {
-			cleanupPlan()
-			cleanupWorkspace()
+		if !removed {
+			return snapshot, fmt.Errorf("%w; cleanup was deferred by the original Writer fence; Main inspects the original Plan/pending before retrying", err)
 		}
+		// An unregistered empty verification directory carries no authority; keep
+		// it rather than racing another caller's preparation with a directory unlink.
+
 		return snapshot, err
 	}
 	return snapshot, nil
