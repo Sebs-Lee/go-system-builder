@@ -381,6 +381,7 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 					r.Error = saveErr.Error()
 				}
 			}
+			prepareS5PlanningHandoff(ctx, root, &r)
 			return true, renderStageAnswerHook(stdout, path, r, "S4")
 		}
 		if _, found, findErr := s.ContractForPath(path); findErr == nil && found {
@@ -876,6 +877,15 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 	if err != nil {
 		return "S5 packet issuance deferred to Main: " + err.Error()
 	}
+	if len(packets) == 0 && lifecycle["state"] == "document_verification" && (owner == "" || owner == "Main") && request.Event == "SessionStart" {
+		if err := prepareS5ReviewResponsibilities(ctx, root, snapshot.State); err != nil {
+			return "S5 原分工准备未完成，由 Main／系统恢复准确来源：" + err.Error()
+		}
+		packets, err = s.IssueContext(ctx, owner)
+		if err != nil {
+			return "S5 原分工已准备，原问卷接续由 Main／系统恢复：" + err.Error()
+		}
+	}
 	if len(packets) == 0 {
 		if lifecycle["state"] == "document_verification" {
 			if owner == "" || owner == "Main" {
@@ -940,12 +950,8 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 }
 
 func stageS5PreparationGuidance(root string, state map[string]any) string {
-	life, _ := state["lifecycle"].(map[string]any)
-	bound, _ := state["bound_req"].(map[string]any)
-	reqID, _ := bound["id"].(string)
-	entry := stageAnswerEntry(life["phase_revision"])
-	manifest := filepath.Join(root, ".claude/workgroups", reqID, fmt.Sprintf("review-e%d", entry), "manifest.json")
-	return fmt.Sprintf("S5 entry %d: the current independent reviewers are not registered yet. Main: read %s; prepare this entry's professional manifest at %s for DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY with distinct reviewers. Use current accepted S4 sources and entry-specific engineering responsibility/output references; preserve historical manifests and receipts. Original register-workgroup and Main questionnaire preparation supply the exact view/answer paths. Carry each person's exact references into a separate Claude Code native Agent; no platform Team, opaque ID or workspace prepare/launch is required. Reviewers fill only conclusion/findings, save the original answer and return its reference; SubagentStop receives it. Frozen old executions keep their original recovery.", entry, filepath.Join(root, ".claude/skills/team-planning/SKILL.md"), manifest)
+	life := mapFieldCLI(state, "lifecycle")
+	return fmt.Sprintf("S5 entry %d: 原两项独立责任尚未准备完成。系统沿当前 S5 入口在 %s 准备原 manifest、登记并发行准确问卷；Main 直接携带准确 view/answer 分别派发原生 Agent。普通读取与 Stop 不补登记；如入口准备失败，由 Main／系统恢复原来源或具名入口，不抄 Runtime、SHA、版本、编号或时间。工程 owner 仅为标签，不能证明平台已启动或实际独立。", stageAnswerEntry(life["phase_revision"]), s5ManifestQuestionnairePath(root, state))
 }
 
 // stageDesignQuestionnaireContext projects current work, not issuance proof.
@@ -1622,7 +1628,10 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 					return strings.TrimSpace(b.String()) + "\nS7 Main questionnaire preparation deferred for " + needIssueOwner + ": " + err.Error()
 				}
 			}
-			if _, err := service.IssueReviewResults(ctx, needIssueOwner); err != nil {
+			// The original issuer already filters to registered, dispatchable
+			// responsibilities. Prepare the complete ready set in this one
+			// handoff, rather than requiring another tool event per owner.
+			if _, err := service.IssueReviewResults(ctx, ""); err != nil {
 				return strings.TrimSpace(b.String()) + "\nS7 Main questionnaire preparation deferred for " + needIssueOwner + ": " + err.Error()
 			}
 			snapshot, err = runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()

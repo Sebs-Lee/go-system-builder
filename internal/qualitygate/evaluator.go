@@ -18,6 +18,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/builderbatch"
 	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/verification"
 )
@@ -128,6 +129,7 @@ func currentS5Evidence(state map[string]any, evidenceID, kind string) bool {
 // Evaluate reports unknown for unregistered gates. Registered gate semantics
 // are supplied incrementally by the registry.
 func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) {
+	defer metrics.Span(ctx, "gate/"+input.GateID)()
 	result := Evaluation{
 		Status:           StatusUnknown,
 		GateID:           input.GateID,
@@ -175,7 +177,7 @@ func (e *Engine) Evaluate(ctx context.Context, input Input) (Evaluation, error) 
 	documents, err := verifiedCurrentDocumentsWithS5Facts(input)
 	if err != nil {
 		result.ErrorCode = ErrorGateUnknown
-		result.Conflicts = []string{"s4_source_closure:unverifiable"}
+		result.Conflicts = []string{"s4_source_closure:unverifiable: " + err.Error()}
 		return result, nil
 	}
 	if events := e.qualifiedRequestedEvents(input, documents); len(events) > 1 {

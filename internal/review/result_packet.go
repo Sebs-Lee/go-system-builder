@@ -419,19 +419,22 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 	if b.VerificationArtifactDigest != nil && !equalOptionalString(result.VerificationArtifactDigest, b.VerificationArtifactDigest) {
 		return snapshot, errors.New("S7 professional execution digest differs from frozen issuance")
 	}
-	if err := bindIssuedPathEvidence(root, sourceRoot, row, &result, isReplay); err != nil {
+	// capture exec owns the original Main control-evidence tree while its
+	// provenance separately records the actual execution checkout.
+	capturePath := CaptureFile(root, b.RuntimeID, b.BaselineGeneration, b.AssignmentID)
+	if err := bindIssuedPathEvidence(root, sourceRoot, row, &result, isReplay, capturePath); err != nil {
 		return snapshot, err
 	}
 	resultData, err := json.Marshal(result)
 	if err != nil {
 		return snapshot, err
 	}
-	return SubmitResult(root, statePath, journalPath, SubmitRequest{Context: request.Context, ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: CaptureFile(root, b.RuntimeID, b.BaselineGeneration, b.AssignmentID), OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
+	return SubmitResult(root, statePath, journalPath, SubmitRequest{Context: request.Context, ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: capturePath, OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
 }
 
 // Bind only the local path references consumed by the original evidence validator.
 // Professional content and the author's questionnaire bytes remain unchanged.
-func bindIssuedPathEvidence(root, sourceRoot string, row map[string]any, result *Result, replay bool) error {
+func bindIssuedPathEvidence(root, sourceRoot string, row map[string]any, result *Result, replay bool, capturePaths ...string) error {
 	groups := func(value *Result) [][]string {
 		var refs [][]string
 		for _, claim := range value.ClaimResults {
@@ -456,7 +459,7 @@ func bindIssuedPathEvidence(root, sourceRoot string, row map[string]any, result 
 	for _, group := range refs {
 		for _, rawRef := range group {
 			ref := strings.TrimSpace(rawRef)
-			if strings.HasPrefix(ref, "path:") && !strings.Contains(ref, "#sha256=") {
+			if (strings.HasPrefix(ref, "path:") || strings.HasPrefix(ref, "command_output:")) && !strings.Contains(ref, "#sha256=") && !strings.Contains(ref, " (withheld:") {
 				missing = true
 			}
 		}
@@ -480,22 +483,69 @@ func bindIssuedPathEvidence(root, sourceRoot string, row map[string]any, result 
 		for _, group := range groups(&envelope.Submitted) {
 			for _, rawRef := range group {
 				ref := strings.TrimSpace(rawRef)
-				if !strings.HasPrefix(ref, "path:") {
+				switch {
+				case strings.HasPrefix(ref, "path:"):
+					rel, digest, err := parsePathEvidenceRef(ref)
+					if err != nil {
+						return err
+					}
+					if digest != "" {
+						acceptedRefs["path:"+rel] = ref
+					}
+				case strings.HasPrefix(ref, "command_output:"):
+					output, err := parseCommandOutputEvidenceRef(ref)
+					if err != nil {
+						return err
+					}
+					if !output.Withheld {
+						acceptedRefs["command_output:"+output.RelativePath] = ref
+					}
+				}
+			}
+		}
+	}
+	// Metadata for command output comes only from its original capture. A
+	// regular file alone cannot establish execution, byte count or truncation.
+	capturedOutputs := map[string]string{}
+	if !replay && len(capturePaths) > 0 && capturePaths[0] != "" {
+		steps, err := LoadCaptureStepsStrict(capturePaths[0])
+		if err != nil {
+			return err
+		}
+		for _, step := range steps {
+			for _, ref := range step.Evidence {
+				if !strings.HasPrefix(ref, "command_output:") || step.Provenance == nil {
 					continue
 				}
-				rel, digest, err := parsePathEvidenceRef(ref)
+				output, err := parseCommandOutputEvidenceRef(ref)
 				if err != nil {
 					return err
 				}
-				if digest != "" {
-					acceptedRefs["path:"+rel] = ref
+				if output.Withheld {
+					continue
 				}
+				key := "command_output:" + output.RelativePath
+				if old, exists := capturedOutputs[key]; exists && old != ref {
+					return fmt.Errorf("S7 command output %q has conflicting original capture metadata", key)
+				}
+				capturedOutputs[key] = ref
 			}
 		}
 	}
 	for _, group := range refs {
 		for i, rawRef := range group {
 			ref := strings.TrimSpace(rawRef)
+			if strings.HasPrefix(ref, "command_output:") && !strings.Contains(ref, "#sha256=") && !strings.Contains(ref, " (withheld:") {
+				bound, ok := capturedOutputs[ref]
+				if replay {
+					bound, ok = acceptedRefs[ref]
+				}
+				if !ok {
+					return fmt.Errorf("S7 command output %q has no original capture metadata; restore its actual capture source, do not author SHA/bytes/truncated", ref)
+				}
+				group[i] = bound
+				continue
+			}
 			if !strings.HasPrefix(ref, "path:") {
 				continue
 			}

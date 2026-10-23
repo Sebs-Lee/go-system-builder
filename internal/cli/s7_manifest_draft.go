@@ -50,7 +50,7 @@ func runS7ManifestDraft(root, assignmentID, out string, stdout io.Writer) int {
 	for _, note := range notes {
 		fmt.Fprintf(stdout, "note: %s\n", note)
 	}
-	fmt.Fprintln(stdout, "next: Main chooses agent_id (Reviewer dispatch name string), platform_team_id (logical dispatch group label string) and professional responsibility choices; no opaque platform identity lookup is required. registration rejects authoring placeholders. validation is draft preparation metadata, not evidence of a professional PASS.")
+	fmt.Fprintln(stdout, "next: the original Assignment supplies engineering agent_id/group labels, source metadata and default methods. Main retains actual professional division or replacement choices; no opaque platform identity lookup is required. registration rejects remaining professional placeholders. validation is preparation metadata, not evidence of a professional PASS.")
 	if out == "" {
 		fmt.Fprintln(stdout, "preparation gap: save the manifest with --out before selecting a registration command.")
 		return 0

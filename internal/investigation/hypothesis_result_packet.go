@@ -528,6 +528,7 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		}
 	}
 	allRefs := append([]string(nil), question.EvidenceRefs...)
+	refsToValidate := append([]string(nil), question.EvidenceRefs...)
 	for _, finding := range findingRows {
 		var doc struct {
 			EvidenceRefs []string `json:"evidence_refs"`
@@ -536,14 +537,26 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 			return workpacket.HypothesisResultPacket{}, err
 		}
 		allRefs = append(allRefs, doc.EvidenceRefs...)
+		for _, ref := range doc.EvidenceRefs {
+			_, typed, err := evidence.ParseFindingReference(ref)
+			if err != nil {
+				return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 original Finding %s source %q: %w", finding.FindingID, ref, err)
+			}
+			if typed {
+				if err := evidence.ValidateFindingReference(root, ref); err != nil {
+					return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 original Finding %s source %q: %w; Main restores the accepted source for the original question; do not create an evidence alias", finding.FindingID, ref, err)
+				}
+			} else {
+				refsToValidate = append(refsToValidate, ref)
+			}
+		}
 	}
-	refsToValidate := allRefs
 	if batchRef == "" {
 		source, err := humanCaseSource(root, state, current.document)
 		if err != nil {
 			return workpacket.HypothesisResultPacket{}, err
 		}
-		refsToValidate = withoutHumanSource(allRefs, source)
+		refsToValidate = withoutHumanSource(refsToValidate, source)
 	}
 	if len(refsToValidate) > 0 {
 		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
@@ -905,22 +918,20 @@ func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string,
 	}
 	questionCount := len(questionRefs)
 	result := make([]workpacket.HypothesisEvidenceRef, 0, len(refs))
-	index := 0
-	for _, finding := range findings {
-		var doc struct {
-			EvidenceRefs []string `json:"evidence_refs"`
-		}
-		if err := json.Unmarshal(finding.Document, &doc); err != nil {
-			return nil, err
-		}
-		for _, ref := range doc.EvidenceRefs {
-			_ = ref
-		}
-	}
 	// The packet Input order is the Hypothesis list followed by Finding lists.
 	// Resolve each tuple from its owning source rather than treating the ref
 	// string as self-authenticating.
 	appendTuple := func(ref, origin, sourceFinding string) error {
+		if origin == "finding" {
+			source, typed, err := evidence.ParseFindingReference(ref)
+			if err != nil {
+				return err
+			}
+			if typed {
+				result = append(result, workpacket.HypothesisEvidenceRef{Ref: ref, Origin: origin, SourceFindingID: sourceFinding, Attestation: "finding_source", Path: source.Path, SHA256: source.SHA256})
+				return nil
+			}
+		}
 		id, indexed, err := evidence.ReferenceID(ref)
 		if err != nil {
 			return err
@@ -974,7 +985,7 @@ func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string,
 			}
 		}
 	}
-	if index != 0 || questionCount > len(result) || len(result) != len(refs) {
+	if questionCount > len(result) || len(result) != len(refs) {
 		return nil, errors.New("S8 evidence reference projection length differs")
 	}
 	return result, nil

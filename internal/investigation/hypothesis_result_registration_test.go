@@ -407,7 +407,7 @@ func TestS8GenerationTwoOriginalHookReceiptReplaySiblingAndGates(t *testing.T) {
 	}
 }
 
-func prepareS8GenerationTwoFixture(t *testing.T, siblings bool) (*intakeFixture, []s8OwnerFixture) {
+func prepareS8GenerationTwoFixture(t *testing.T, siblings bool, sourceSetup ...func(*intakeFixture)) (*intakeFixture, []s8OwnerFixture) {
 	t.Helper()
 	fixture := newIntakeFixture(t, []string{"finding-1"})
 	stateBytes := mustRead(t, fixture.statePath)
@@ -425,6 +425,9 @@ func prepareS8GenerationTwoFixture(t *testing.T, siblings bool) (*intakeFixture,
 	state["baseline"].(map[string]any)["generation"] = 2
 	state["configuration"].(map[string]any)["optimization"] = map[string]any{"packet": true}
 	writeInvestigationJSON(t, fixture.statePath, state)
+	for _, setup := range sourceSetup {
+		setup(fixture)
+	}
 	writeObservationBatch(t, fixture, []string{"finding-1"}, 2)
 	setContractLifecycle(t, fixture)
 	registered, err := investigation.Ingest(fixture.root, fixture.statePath, fixture.journalPath, investigation.IngestRequest{

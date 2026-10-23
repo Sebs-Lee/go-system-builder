@@ -368,6 +368,7 @@ func (s *Service) Context() context.Context {
 	return context.Background()
 }
 func (s *Service) WithContext(ctx context.Context) *Service {
+	ctx = fileview.WithReadCache(ctx)
 	copy := *s
 	copy.ctx = ctx
 	if v, ok := copy.Files.(*fileview.View); ok {

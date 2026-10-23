@@ -90,6 +90,10 @@ func RunControlCycle(ctx context.Context, req ControlRequest) (ControlResult, er
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = fileview.WithReadCache(ctx)
+	if view, ok := req.Files.(*fileview.View); ok {
+		req.Files = view.WithContext(ctx)
+	}
 
 	req.callContext = ctx
 	statePath, journalPath := controlRuntimePaths(req)
@@ -634,6 +638,7 @@ func evaluateAutomaticGates(
 	affected []string,
 	files qualityGateFiles,
 ) ([]automaticGateEval, bool) {
+	defer metrics.Span(ctx, "control/automatic_gates")()
 	deadline := time.Now().Add(budget)
 	results := make([]automaticGateEval, 0, len(candidates))
 	for _, spec := range candidates {
@@ -681,6 +686,7 @@ func buildTriggerFacts(
 	affected []string,
 	files qualityGateFiles,
 ) transition.TriggerFacts {
+	defer metrics.Span(req.callContext, "control/selector_facts")()
 	outcomes := make([]transition.GateOutcome, 0, len(results))
 	for _, item := range results {
 		outcomes = append(outcomes, transition.GateOutcome{

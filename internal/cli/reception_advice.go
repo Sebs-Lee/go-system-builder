@@ -90,7 +90,7 @@ func receptionAdviceText(advice dispatch.ReceptionAdvice) []string {
 		result = append(result, "S6 integration observation unavailable: "+observation.Diagnostic+"; original execution locks remain authoritative.")
 	}
 	if advice.DispatchBudget == nil {
-		result = append(result, "Dispatch budget unknown; declare actual platform capacity.")
+		result = append(result, "Dispatch budget unknown; optional --capacity advises a batch.")
 	} else {
 		result = append(result, fmt.Sprintf("Advisory dispatch budget: %d; original registration/dependency/conflict gates remain authoritative.", *advice.DispatchBudget))
 	}

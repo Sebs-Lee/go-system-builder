@@ -12,7 +12,7 @@ For a newly prepared native S6 TASK, Main uses `s6 prepare --task <TASK> --role 
 
 The Builder reads the brief and actual TASK inputs, saves its professional plan, continues implementation and actual self-checks, commits deliverables and saves the professional Result. Ordinary saves do not register an execution lifecycle. Return the exact task brief / delivery path. SubagentStart supplies bounded engineering guidance; SubagentStop receives actual professional artifacts through the original domain Writer. Main integrates separately and the original full-batch Gate remains. A real blocker may be handed back; never fabricate PASS or approval.
 
-This section applies only to `s6-native-v1`. Keep the original frozen recovery behavior for existing workspace/legacy assignments and other stages until migrated. The legacy sections below are not prerequisites of native S6.
+This S6 section applies to `s6-native-v1`. Existing frozen workspace/legacy assignments retain their recorded recovery behavior. The native S5/S7/S8/S9 paths described below use their own original consumers; legacy procedures are not prerequisites for new native work.
 
 
 ## Native S9 dispatch
@@ -31,7 +31,8 @@ It is advisory: it shapes how the main session decides the next action. It is
 **not** authoritative on legality or current facts.
 
 Workers use their own Assignment's scope, required checks and closing contract.
-After their original Result is recorded, they await its consumer. Main applies
+They return their actual artifacts for original reception and end their own
+responsibility when its current receipt says it is complete. Main applies
 DRIVE to integration, peer results and full stage coverage; global missing work
 does not extend a Worker's assignment. A concrete risk that blocks the Worker's
 acceptance uses the original BLOCKER route with evidence and impact. Recording
@@ -67,23 +68,33 @@ always the most-forward missing piece of work the current stage requires.
 
 ## Entry Conditions
 
-- A locked REQ exists; its SHA-256 matches the Runtime baseline.
-- `.claude/loop-state.json` is readable and schema-valid.
-- The Loop Definition under `docs/control/loop-definition.json` is readable.
+- Use the current supplied responsibility and exact questionnaire or brief.
+- S0 and unbound S1 are valid work: they do not require an already bound REQ.
+- Original preparation and domain consumers own source digests, bindings and
+  Runtime validation. Report their concrete preparation errors; do not compute,
+  copy or script machine metadata as an opening ritual.
 
 If any entry condition fails, see "Stop conditions" below.
 
 ## Required Inputs
 
+Start with the current supplied responsibility and its actual materials. This
+is not a requirement to inspect the full Runtime or run diagnostic commands.
+
 | Input | Path / source | Why |
 |:---|:---|:---|
-| Runtime status | `loop-harness status --root .` | coarse stage projection only — not live gate `missing[]` |
-| Next projection | `loop-harness next --root .` | coarse missing-work projection — not live gate checklist |
-| Ready diagnostics | `loop-harness ready --root .` | dry-run current Quality Gate (`missing[]`); never hand-push Transition from it |
 | Hook context | PreToolUse / SessionStart / Stop reminder | current progress, exact questionnaire path, owner-specific missing work and next action |
 | Stage contract | `docs/control/agent-protocol.md#<current stage>` | the stage's `done_when`, `actions`, `failure_route` |
-| Bound locked REQ | `runtime.bound_req.path` | verify the locked baseline |
-| Evidence map | `runtime.evidence[]` | check validity per stage `done_when` |
+| Actual requirement | the path supplied with this responsibility | understand current commitments; source verification belongs to the original consumer |
+| Existing receipts and evidence | the references supplied for this responsibility | understand actual accepted work and remaining owners; no duplicate evidence registration |
+
+### Optional diagnostics
+
+| Tool | When it helps | Boundary |
+|:---|:---|:---|
+| `loop-harness status --root .` | current stage is genuinely unknown | coarse projection, not live gate `missing[]` |
+| `loop-harness next --root .` | the current responsibility needs routing diagnosis | coarse next-work projection, not an opening prerequisite |
+| `loop-harness ready --root .` | a concrete gate checklist is unclear | read-only diagnostics; never hand-push a Transition from it |
 
 If Hook context or `loop-harness ready` names missing work,
 the named work **is** the next action — that is not a tool blocker.
@@ -97,12 +108,14 @@ meaningful tool result.
 
 ```text
 DRIVE()
-1. Reconcile and read status.
-   - If the journal is behind the snapshot, run `runtime reconcile` first.
-   - Verify the bound REQ is locked and its SHA-256 matches the Runtime.
+1. Start from the current supplied responsibility.
+   - Use its exact input and output references and original feedback.
+   - Only an actual Runtime recovery diagnostic calls for its named recovery;
+     do not reconcile, rehash the REQ or scan the journal before ordinary work.
 
 2. Resolve the current stage.
-   - Read the Runtime's Main Spine stage (S0–S11).
+   - Use the Hook's current stage (S0–S11); inspect a coarse status only if the
+     current stage is genuinely unknown.
    - Read docs/control/agent-protocol.md#<stage> for done_when and actions.
 
 3. Inventory responsibility attempts by `pending` / `active` / `blocked` /
@@ -144,8 +157,9 @@ DRIVE()
 
 7. Verify and record.
    - Verify the artifact against the stage's done_when.
-   - Write the deliverable and the evidence; the Harness records the
-     evidence fingerprint and validity.
+   - Save the original professional deliverable and reference real observations.
+     The original consumer creates its necessary evidence envelope, fingerprints
+     and receipt; do not hand-assemble another machine artifact.
 
 8. Let Hook advance when the stage is complete.
    - When the original `done_when` and domain gate are satisfied, let the
@@ -358,8 +372,9 @@ the Hook reminder itself does not register evidence, approve a professional
 judgment, or advance a stage. Stage transitions continue through the existing
 graph and transition path after their original prerequisites hold.
 
-The Driver does not perform merge, publication, deployment, or formal release
-side effects. A real release or REQ amendment still requires its original human
+Main performs the original integration and required checks at their real stage.
+This Skill and Hook do not publish, deploy or execute a formal release.
+A real release or REQ amendment still requires its original human
 decision and domain gate; a Hook event does not enforce those boundaries by
 per-tool denial.
 
@@ -445,9 +460,9 @@ policy. Scope/semantic changes outside authority keep their existing Gateway.
 
 ## Temporary worktrees and committed stage delivery
 
-Bind both destinations explicitly with `req bind --dev-branch <branch> --release-upstream <upstream>`; neither defaults to develop or the remote default. The project's authority root and this development branch own retained changes.
+Record actual development and release destinations in the original S1 application; neither is guessed from a branch default. The project's authority root and selected development branch own retained changes. Explicit `req bind` remains the original compatibility/recovery API.
 
-Before dispatch, commit the required stage documents, code and tests to that branch. Create/reuse registered temporary worktrees with `runtime worktree-create --root <authority-root> --assignment-id <id>`. Git worktrees share Git objects, but have separate indexes and working files: staged and dirty parent changes are absent. Native Claude Code base-ref defaults must be checked against the binding.
+Before dispatch, commit the actual required stage deliverables to that branch. New writing responsibilities use Claude Code native worktree isolation from the committed bound Main branch. Only existing frozen registered workspaces retain their original `runtime worktree-create` recovery route. Git worktrees share Git objects but have separate indexes and working files: staged and dirty parent changes are absent. The original delivery consumer checks the real source and binding; no new identity or worktree registration is required from the author.
 
 Workers commit scoped results and report. Main reviews them and runs `runtime task-integrate --root <authority-root> --assignment-id <id>`: normal merge commit, verification, acknowledgement, cleanup. This is development integration, not release. Failed integration preserves the checkout; retry the same assignment. Do not discard unreceived work or create replacement worktrees indefinitely.
 

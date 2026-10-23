@@ -76,13 +76,7 @@ Team planning uses a mandatory responsibility baseline plus risk-triggered respo
 
 ## Core Principle
 
-If Main supplies an issued `s7-review-result-v1` packet, follow the original
-PLAN/activation and fill only its professional `answer` at the exact issued path.
-Record the workspace digest actually executed in `verification_artifact_digest`
-for cold-start E2E; the original consumer checks it against workspace bytes.
-Preserve questions and machine bindings, provide explicit Claim conclusions and
-your own verdict, and read the save receipt. Saving does not replace live browser
-execution, evidence provenance or the complete current module CASE/PATH coverage.
+Main 提供原 `s7-review-result-v1` 题目与准确私人答案位置。读取真实材料，完成本人的独立浏览器验证，只填写专业 `answer`，保存后返回同一引用，由 `SubagentStop` 调原消费者接收。新原生责任不增加通用 PLAN／激活或保存回执前置。保留机器预填与 `verification_artifact_digest=null`；消费者从实际执行来源固定并校验摘要，作者不计算或抄写。真实浏览器执行、证据来源、完整当前模块 CASE/PATH 覆盖和本人专业结论仍须完成。
 
 E2E tests are the **executable transcription of current module `flows.md` and CASE oracle**.
 The current module package is the source of truth; the spec is its compiled, runnable form.
@@ -334,16 +328,7 @@ Anti-patterns:
 
 ## Finding Handoff from Failures
 
-When a spec fails, the e2e-tester records an investigation-ready Finding inside the
-Canonical ReviewResult. S7 records the observable operation path and evidence only;
-S8 owns clustering, causal proof and canonical BUG mapping (the machine creates one
-BUG draft per Finding at seal — never hand-write BUG files). Record live observations
-with `loop-harness capture step` while you investigate (its output prints the buffer
-path; `--captures` merges it into a Finding's empty timeline at submit) and write the
-timeline inline only when you author it after the fact. On a cold-start workspace,
-bind `verification_artifact_digest` from `loop-harness s7 workspace-digest` after the
-last spec/fixture write; a P0 Finding must populate `capture_gaps` (what could not be
-recorded and why) or submit rejects it:
+脚本失败时，在原答卷中记录可以交给调查者的 Finding：实际入口、首次偏差、终态和证据。S8 负责归并、因果判断及后续 BUG 投射，S7 不手写 BUG 文件。实际经过可以直接写入 timeline；已有 `capture step` 缓冲只补无作者时间线且关联准确的 Finding，原 `capture exec` 保留真正命令执行与输出来源。证据作者选择实际 `path:<相对路径>` 或 `command_output:<原捕获路径>`，摘要、字节数和截断元数据由原接收／捕获机制承接；不得让作者手填，也不得从文件存在推断命令执行。冷启动资产的摘要由原消费者从本人实际工作区绑定，执行后改动脚本或夹具仍须重做受影响流程。P0 Finding 如实写 `capture_gaps`，说明不能安全采集的内容和原因：
 
 ```markdown
 ### Finding record: {short title}

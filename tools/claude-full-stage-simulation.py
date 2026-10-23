@@ -23,10 +23,12 @@ REPO = Path(__file__).resolve().parents[1]
 
 OBSERVE = r'''import json,os,subprocess,sys,time,uuid
 from pathlib import Path
-artifacts,main,event,i,j=sys.argv[1:]
+artifacts,main,event,i,j=sys.argv[1:6]
 raw=sys.stdin.buffer.read()
 payload=json.loads(raw)
-original=json.loads((Path(artifacts)/'original-settings.json').read_text())['hooks'][event][int(i)]['hooks'][int(j)]['command']
+expected=json.loads((Path(artifacts)/'original-settings.json').read_text())['hooks'][event][int(i)]['hooks'][int(j)]['command']
+original=sys.argv[6] if len(sys.argv)>6 else expected
+if original!=expected: raise SystemExit('Observer command differs from the frozen original Hook')
 def facts():
  try:
   s=json.loads((Path(main)/'.claude/loop-state.json').read_text())
@@ -46,7 +48,7 @@ subagent/form reception. All professional results, findings, tests and human
 choices here are synthetic test data, not real engineering/release acceptance.
 This user test instruction takes precedence over ordinary product-work guidance.
 
-MAIN: this test keeps every product byte and file mode unchanged. S6's original canonical integration requires a source commit: after the actual S6 native worktree is created, Main makes one clearly labeled empty SIMULATION fixture commit (git commit --allow-empty), with no product changes. This is explicit test preparation, not Worker implementation. S9 supports a genuine whole-batch no-change result: do not create any S9 commit or mode delta. Keep original Main checks and independent Contract verification. Do not fabricate changesets or weaken gates. If platform worktree cleanup interrupts an original consumer, preserve and report the exact recovery boundary rather than manufacturing a change. Native tools remain available: necessary file, directory, JSON and Git inspection is allowed. The boundary is simulated work content, not tool selection.
+This test keeps every product byte and file mode unchanged. S6's original canonical integration requires a source commit: in its actual native worktree, the S6 child prepares exactly one empty SIMULATION fixture commit (git commit --allow-empty -m 'SIMULATION source fixture') before its Result. This is disclosed test preparation with no product changes, not implementation or a product commit. S9 supports a genuine whole-batch no-change result: do not create any S9 commit or mode delta. Keep original Main checks and independent Contract verification. Do not fabricate changesets or weaken gates. If platform worktree cleanup interrupts an original consumer, preserve and report the exact recovery boundary rather than manufacturing a change. Native tools remain available: necessary file, directory, JSON and Git inspection is allowed. The boundary is simulated work content, not tool selection.
 
 MAIN: actually use Claude Code native Agent for every delegated responsibility.
 Repeat this simulation override in EACH child's task prompt, with exact original
@@ -55,6 +57,8 @@ professional dispatch/Case/plan forms and perform original integration. Main mus
 NOT author a delegated review/Builder/Investigator answer on the child's behalf.
 
 Professional conclusions are canned test inputs, not questions for the model to re-derive. Do not request real independent judgment, source audit or broad document reading. Normal pass/completed enum values in explicitly labeled mock answers are permitted; never describe them as real executed checks.
+
+S6 child saves its Plan, prepares the one empty SIMULATION fixture commit without git add or any byte/mode change, then saves Result in the same native turn and returns. No Plan-only Stop, Main waiting handshake, private-file polling or extra activation is needed. S9 creates no commit. This test-only fixture action does not exist in production guidance.
 
 EVERY SUBAGENT (including Builder): read the supplied original brief/view and
 necessary scenario inputs, simulate the role, directly fill its original
@@ -80,9 +84,9 @@ PROMPT = '''在当前隔离项目跑 S0～S11【模拟答卷流转】。先读 C
 
 从fresh inactive开始，使用系统REQ-001。场景：仅NFR-001要求simulation/products/artifact.txt保持SIMULATION_ONLY标记，AC-001检查该预置文件；无UI/FR/API/服务行为/共享模型/数据库/部署，适用N/A由NFR/负空间背书，不扩范围。模拟人类明确锁定并启动v1.0.0，dev=simulation-dev，local release=simulation-release，simulation-human认可最小ADR、测试Contract并在S11选择模拟approve。只写隔离Runtime内的测试决定，无外部发布。
 
-若simulation/candidates目录存在，这是事先准备的专业文档测试输入（没有任何Runtime或收据），Main在S0/S2/S3/S4各自阶段复制相应候选文档到实际输出路径，提交所需Git源并填原Main答卷即可，不重新设计产品。没有候选时按现有模板极小填写。正常TASK prospective write paths要包含simulation/products/artifact.txt，不能把“不真正写产品”的测试覆盖指令误写成空scope/永久禁写的专业TASK。产品文件已经预置，**整轮内容字节不修改**；Main仅在真实S6树准备明确标记的空提交测试输入；S9完整走无改动结果，不改执行位、不制造提交。普通scope是工程数据，测试执行不做实现。TASK Closing Contract用assert `make check` == pass加BE条款条件；make check是准备器已有的只读标记校验，只让Main原集成运行，Worker不做产品测试。其它planning/traceability形状按原模板。Main可以做原登记/集成及这个简单fixture检查。
+若.claude/test-inputs/candidates目录存在，这是事先准备的专业文档测试输入（没有任何Runtime或收据），Main在S0/S2/S3/S4各自阶段复制相应候选文档到实际输出路径，提交所需Git源并填原Main答卷即可，不重新设计产品。没有候选时按现有模板极小填写。正常TASK prospective write paths要包含simulation/products/artifact.txt，不能把“不真正写产品”的测试覆盖指令误写成空scope/永久禁写的专业TASK。产品文件已经预置，**整轮内容字节不修改**；S6 child仅在真实原生树准备一次明确标记的空提交测试输入；S9完整走无改动结果，不改执行位、不制造提交。普通scope是工程数据，测试执行不做实现。TASK Closing Contract用assert `make check` == pass加BE条款条件；make check是准备器已有的只读标记校验，只让Main原集成运行，Worker不做产品测试。其它planning/traceability形状按原模板。Main可以做原登记/集成及这个简单fixture检查。
 
-路线与给定mock数据：S0锁REQ→S1四问原绑定→S2最小架构/ADR→S3仅必要合同→S4单TASK→S5两个独立mock Agent各conclusion=pass/findings=[]，不要求真实判断。S5manifest完整形状已在当前team-planning的S5 original manifest shape，不要从二进制提取Schema；使用原register-workgroup+Main原准备，携带准确refs派发。→S6 s6 prepare后派模拟Builder（后台原生worktree，Main在真实树创建后先用 git commit --allow-empty 创建明确 SIMULATION fixture source input 空提交，不改产品或执行位；Worker填模拟卷，可用必要原生工具，不做产品写入或产品测试）：只填专业plan和Result，closing条件用预设satisfied/completed，注明没做真实实现/Worker测试，以现有artifact.txt为evidence。Main执行原task-integrate，实际make check。→S7：Main填原ReviewPlan/注册，原生mock delivery/qa各写原卷；首轮QA按simulation/observations/first-round.txt给一个明确SIMULATION finding，其它Claim mock pass。Main派发前须沿原evidence入口登记这份明确合成的观测来源，将准确的本代evidence ID交给Reviewer；finding的evidence_refs使用runtime:<原登记ID>，保持该引用传入S8原消费者；不得另登记前缀别名，不能只给S8无法对账的自由path描述，也不伪造已执行检查。→S8：原Case/Hypothesis派mock Investigator，给定supported结论，无真实调查；Main按原表单形成仅fixture路径的模拟Contract并用场景中模拟人类批准。→S9：专业分工后派原生worktree模拟Builder，只写本人worktree的PlanReport/Result。S9不制造任何提交或文件模式差异，proposed_paths=[]；用完整已接收Final的实际空changeset进入影响判断，保原合同断言和独立复验，不能伪造路径已修改、手工替换Final changeset或放松原门。模拟before/after以已有fixture证据作refs，Worker不改产品源码、不做产品测试或产品提交；Main原集成选择make check。收到实际native Stop的candidate后立即走原Main集成，不给已交付Builder重复派legacy RepairResult，不建立until/poll等待Final的循环。→独立mock Targeted直接填写pass的原卷→fresh S7全部适用Claim mock pass，E2E如真的不适用保留系统N/A disposition不造浏览器工作→S10 Main正常填原acceptance/release-audit Manifest，用明确SIMULATION完成结论→S11原应用填写场景预给的模拟approve，终点release_authorized，不rollover。
+路线与给定mock数据：S0锁REQ→S1四问原绑定→S2最小架构/ADR→S3仅必要合同→S4单TASK→S5两个独立mock Agent各conclusion=pass/findings=[]，不要求真实判断。S5原阶段出口自动准备两项独立责任及准确原卷；直接携带Hook给的refs原生派发，不创建manifest、不抄Runtime、不登记或手动issue。仅有真实专业分工调整时编辑原清单。→S6 s6 prepare后派模拟Builder（native isolation=worktree；Builder保存Plan后仅运行一次git commit --allow-empty -m SIMULATION-source-fixture作为明确测试夹具，再保存Result，同一回合完成，不Plan-only返回；不git add、不改产品字节或执行位；Worker填模拟卷，可用必要原生工具，不做产品写入或产品测试）：只填专业plan和Result，closing条件用预设satisfied/completed，注明没做真实实现/Worker测试，以现有artifact.txt为evidence。Main执行原task-integrate，实际make check。→S7：Main填原ReviewPlan/注册，原生mock delivery/qa各写原卷；首轮QA按simulation/observations/first-round.txt给一个明确SIMULATION finding，其它Claim mock pass。Finding只给path:simulation/observations/first-round.txt，原接收器自动固定SHA，同一原Finding来源自然进入S8；任何agent都不计算或复制摘要。不要先登记索引别名，不伪造test://或已执行检查。S8新Hypothesis外层仍引用实际Finding/Batch等原ID，来源tuple由原消费者生成，无需Main抄写。→S8：原Case/Hypothesis派mock Investigator，给定supported结论，无真实调查；Main按原表单形成仅fixture路径的模拟Contract并用场景中模拟人类批准。→S9：专业分工后派原生worktree模拟Builder，只写本人worktree的PlanReport/Result。S9不制造任何提交或文件模式差异，proposed_paths=[]；用完整已接收Final的实际空changeset进入影响判断，保原合同断言和独立复验，不能伪造路径已修改、手工替换Final changeset或放松原门。模拟before/after以已有fixture证据作refs，Worker不改产品源码、不做产品测试或产品提交；Main原集成选择make check。收到实际native Stop的candidate后立即走原Main集成，不给已交付Builder重复派legacy RepairResult，不建立until/poll等待Final的循环。→独立mock Targeted直接填写pass的原卷→fresh S7全部适用Claim mock pass，E2E如真的不适用保留系统N/A disposition不造浏览器工作→S10 Main正常填原acceptance/release-audit Manifest，用明确SIMULATION完成结论→S11原应用填写场景预给的模拟approve，终点release_authorized，不rollover。
 
 各阶段读取准确view与必要材料；专业数据是测试输入，不要重新推导真实结论。禁止给mock Agent添加“独立判定/逐项真实性核验”等工作。保存静默，Stop才接收Worker；Main工具也不能抢收。原生返回后沿当前责任和当前Case引用读取原回执；版本化Case文件是不可变来源，不能轮询固定旧版本等待更新；private Plan/Result 也不能当作平台结束或原接收的等待信号，原生返回后读当前候选/回执再集成。原消费者拒绝字段时可原生resume同child修原卷，不能改已接收答案，修订走原命名恢复。不得用stage-answer issue/consume或runtime transition推进。持续到S11测试终点或不可恢复的具体系统阻塞，不停在下一步派发提示。若no-op产品来源确实被原接收拒绝，报告准确条件，不实现产品或放松Gate。'''
 
@@ -98,7 +102,7 @@ def dump(path, obj):
 
 def prepare(base):
     base.mkdir(parents=True, exist_ok=False)
-    version = 'native-stage-simulation-20261021-current'
+    version = 'native-stage-simulation-' + time.strftime('%Y%m%d-%H%M%S', time.gmtime())
     with (base/'prepare.log').open('w') as log:
         run(['bash', REPO/'packaging/build-release.sh', version, base/'release.tar.gz'], cwd=REPO, stdout=log, stderr=subprocess.STDOUT)
         unpack = base/'release'
@@ -113,9 +117,10 @@ def prepare(base):
         run(['git', 'config', 'user.email', 'simulation@example.invalid'], cwd=root)
     (root/'.gitignore').write_text('.claude/*\n!.claude/agents/\n!.claude/skills/\n!.claude/settings.json\n')
     (root/'CLAUDE.md').write_text(BOUNDARY)
+    (root/'simulation').mkdir(exist_ok=True)
     candidates = REPO/'tests/fixtures/native-stage-simulation/documents'
     if candidates.is_dir():
-        shutil.copytree(candidates, root/'simulation/candidates')
+        shutil.copytree(candidates, root/'.claude/test-inputs/candidates')
         inputs = {'kind':'synthetic Main document inputs; no Runtime, receipts or Worker answers', 'files':{str(p.relative_to(candidates)):hashlib.sha256(p.read_bytes()).hexdigest() for p in candidates.rglob('*.md')}}
         dump(root/'simulation/candidate-inputs.json', inputs)
         dump(base/'candidate-inputs.json', inputs)
@@ -128,13 +133,13 @@ def prepare(base):
     shutil.copytree(REPO/'internal/schema/assets', root/'simulation/schema')
     (root/'simulation/MAIN-FORMS.md').write_text('''# Explicit synthetic test input and original form shapes
 
-This is read-only test assistance, not Runtime, receipts, a Worker answer or real human consent. Exact original schemas are in simulation/schema; read only the named schema if needed, not the whole tree. Use the actual Hook-provided forms and references. Correct unreceived drafts at the same exact path. New immutable evidence/decision attempts use new IDs AND new file paths.
+This is read-only test assistance, not Runtime, receipts, a Worker answer or real human consent. Exact original schemas are in simulation/schema; read only the named schema if needed, not the whole tree. Use the actual Hook-provided forms and references. Correct unreceived professional drafts at the same exact path. Original consumers supply immutable evidence and decision identity; do not invent or manually copy machine coordinates.
 
-S6 uses a native background worktree for the explicit Main fixture preparation. S9 uses a native worktree and normal platform return/notification, without a required background mode or a private-file polling loop. Main prepares one clearly labeled empty S6 source commit because the original canonical S6 integration requires it; product bytes and mode stay unchanged. S9 is a genuine no-change responsibility: proposed_paths=[], no fixture commit or mode delta, actual empty Final changeset, original Main checks and independent verification still required. Workers fill simulated private answers using native tools as needed, including necessary file, directory, JSON and Git inspection. Do not implement, repair, test or commit real products. Tools are not a stage gate. Preserve original schemas, scope, sources and gates. No explicit --paths fabrication and no direct transition/consume.
+The S6 child in native worktree saves Plan, creates exactly one labeled empty SIMULATION source fixture commit with no git add or product byte/mode change, saves Result and returns in the same turn. There is no waiting handshake or Plan-only Stop. S9 uses a native worktree and normal platform return/notification, without a required background mode or a private-file polling loop. The S6 child prepares one clearly labeled empty S6 source fixture commit because the original canonical S6 integration requires it; product bytes and mode stay unchanged. S9 is a genuine no-change responsibility: proposed_paths=[], no fixture commit or mode delta, actual empty Final changeset, original Main checks and independent verification still required. Workers fill simulated private answers using native tools as needed, including necessary file, directory, JSON and Git inspection. Do not implement, repair, test or commit real products. Tools are not a stage gate. Preserve original schemas, scope, sources and gates. No explicit --paths fabrication and no direct transition/consume.
 
-S5 complete manifest shape is in team-planning. S7 ReviewPlan is generated: retain every machine field and generated Claim/Assignment; replace all TODO oracles in ONE save with preset SIMULATION descriptions. Before dispatching first-round QA, Main registers simulation/observations/first-round.txt as qa_review evidence with a fresh known ID, current --review-round 1 and actual scenario producer. Give runtime:<that registered evidence ID> to both the mock finding and Hypothesis; the original S8 consumer resolves the same indexed artifact without an alias. Do not invent a path:// execution. Seven original independent responsibilities can run in parallel, using native Agent contexts such as general-purpose, without a custom actor type or tool whitelist. First round has one canned P2 provenance-gap finding; fresh second round is all canned pass. All findings and checks are explicitly synthetic, not executed professional verification.
+S5 normal stage entry prepares the original independent responsibilities and their exact questionnaires automatically. Carry those references into native Agents; do not create/register a manifest or manually issue packets. S7 ReviewPlan is generated: retain every machine field and generated Claim/Assignment; replace all TODO oracles in ONE save with preset SIMULATION descriptions. First-round Finding cites only path:simulation/observations/first-round.txt; the original receiver fixes its actual SHA. No actor computes or transcribes a digest. The original S8 consumer freezes this accepted Finding source without a new index or alias. New Hypothesis outer refs use actual Finding/Batch IDs; do not copy source tuples into professional answers or invent a test:// execution. The original Plan retains every applicable Claim. Main may group compatible QA Claims through the original Assignment fields; delivery remains independent. Native Agent contexts such as general-purpose need no custom actor type or tool whitelist. First round has one canned P2 provenance-gap finding; fresh second round is all canned pass. All findings and checks are explicitly synthetic, not executed professional verification.
 
-S8 original human approval JSON has decision=approve_contract, decision_id equal to the fresh evidence ID, current runtime_id/case_id/contract_id, approval_hash equal to the actual final draft SHA. The simulated human choice is pre-given in DECISIONS.md; label it SIMULATION. Register human_decision at scope s8_contract_approval:<runtime-id>, actual scenario producer simulation-human, then original approval transaction. No editing already registered files. Use canonical scope directory strings without a trailing slash in new fixture data.
+S8 fixes the final professional Contract draft and supplies the original decision application. The simulated human choice is pre-given in DECISIONS.md; label it SIMULATION and fill only the presented decision/reason. Runtime/Case/Contract identity, approval hash, evidence and original approval consumption are system responsibilities. Do not compute or copy them, register human_decision, author a raw envelope or invoke approval manually. No editing already accepted files. Use canonical scope directory strings without a trailing slash in new fixture data.
 
 S9 PlanReport output is relative to actual native worktree, not Main. Its professional object has plan, red_checks and proposed_paths. Red checks are explicitly prescribed mock data with normal enum values and real fixture file references; no Worker execution is claimed. Result is the exact original professional object from the prepared brief. Return exact brief and absolute actual Result, Stop receives. Main performs original integration with actual make check. For the no-change batch, change_types and changed_artifacts remain empty from the actual Final; never manufacture a changed path. The original Contract still requires independent verification.
 
@@ -154,14 +159,14 @@ S10 use the original exact Main Manifest shape, explicitly mock professional com
     for event, registrations in settings['hooks'].items():
         for i, registration in enumerate(registrations):
             for j, hook in enumerate(registration['hooks']):
-                hook['command'] = shlex.join(['python3',str(base/'observe-hook.py'),str(base),str(root),event,str(i),str(j)])
+                hook['command'] = shlex.join(['python3',str(base/'observe-hook.py'),str(base),str(root),event,str(i),str(j),hook['command']])
     dump(root/'.claude/settings.json', settings)
     with (base/'prepare.log').open('a') as log:
         run(['git','add','.claude/settings.json'], cwd=root, stdout=log, stderr=subprocess.STDOUT)
         run(['git','commit','-qm','Observe original Hooks without tracking live Runtime'], cwd=root, stdout=log, stderr=subprocess.STDOUT)
     initial = json.loads((root/'.claude/loop-state.json').read_text())
     dump(base/'initial-runtime.json', initial)
-    dump(base/'metadata.json', {'scope':'simulation-only S0-S11; real native Claude parent and agents','project':str(root),'created_at':time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),'claude_version':subprocess.check_output(['claude','--version'],text=True).strip(),'source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip(),'launcher_sha256':hashlib.sha256((root/'.claude/bin/loop-harness').read_bytes()).hexdigest(),'binary_sha256':hashlib.sha256((root/'.claude/bin/loop-harness-linux-amd64').read_bytes()).hexdigest(),'release_archive_sha256':hashlib.sha256((base/'release.tar.gz').read_bytes()).hexdigest(),'source_worktree_status':subprocess.check_output(['git','status','--short'],cwd=REPO,text=True),'fixture_strategy':'Main empty S6 source fixture only; genuine no-change S9; no product bytes or mode changes; native tools available for simulated answers','fixture_initial_mode':oct((root/'simulation/products/artifact.txt').stat().st_mode & 0o777),'fixture_sha256':hashlib.sha256((root/'simulation/products/artifact.txt').read_bytes()).hexdigest()})
+    dump(base/'metadata.json', {'scope':'simulation-only S0-S11; real native Claude parent and agents','project':str(root),'created_at':time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),'claude_version':subprocess.check_output(['claude','--version'],text=True).strip(),'source_head':subprocess.check_output(['git','rev-parse','HEAD'],cwd=REPO,text=True).strip(),'launcher_sha256':hashlib.sha256((root/'.claude/bin/loop-harness').read_bytes()).hexdigest(),'binary_sha256':hashlib.sha256((root/'.claude/bin/loop-harness-linux-amd64').read_bytes()).hexdigest(),'release_archive_sha256':hashlib.sha256((base/'release.tar.gz').read_bytes()).hexdigest(),'source_worktree_status':subprocess.check_output(['git','status','--short'],cwd=REPO,text=True),'fixture_strategy':'Child empty S6 source fixture only; genuine no-change S9; no product bytes or mode changes; native tools available for simulated answers','fixture_initial_mode':oct((root/'simulation/products/artifact.txt').stat().st_mode & 0o777),'fixture_sha256':hashlib.sha256((root/'simulation/products/artifact.txt').read_bytes()).hexdigest()})
     (base/'prompt.txt').write_text(PROMPT)
     print(json.dumps({'prepared':str(base),'project':str(root),'initial_lifecycle':initial.get('lifecycle')},ensure_ascii=False), flush=True)
 
@@ -172,14 +177,14 @@ def launch(base, env_file, resume, prompt_file, driver=False):
         raise SystemExit('Provider configuration file is missing; never supply its contents in logs')
     index = len(list(base.glob('claude-run-*.jsonl'))) + 1
     prompt = prompt_file.read_text() if prompt_file else (base/'prompt.txt').read_text()
-    args = ['claude','-p','--permission-mode','bypassPermissions','--output-format','stream-json','--verbose','--include-hook-events','--setting-sources','user,project','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--no-chrome','--max-turns','240','--effort','low']
+    args = ['claude','-p','--permission-mode','bypassPermissions','--output-format','stream-json','--verbose','--include-hook-events','--setting-sources','user,project','--strict-mcp-config','--mcp-config','{"mcpServers":{}}','--no-chrome','--max-turns','240']
     if driver:
         system = "You are a disposable workflow simulation test driver. Use the installed original forms, native Agents and domain Writers with exact current references. Professional conclusions are supplied synthetic inputs, not real product verification. Give each child the simulation instruction and its original task/answer references; the child fills its own original professional answers. Native tools remain available for necessary reading, file handling and metadata checks. Do not implement, repair, test or commit real products, edit Runtime/receipts/governance, bypass stage gates, publish or deploy. S6/S9 use native worktree isolation. Main performs original integration and the read-only fixture check; professional observations remain explicitly synthetic. Continue from the current recorded responsibility through S11 simulated authorization or report a precise blocker. Runtime and original journal are authority."
         (base/f'test-driver-system-{index}.txt').write_text(system)
         args += ['--system-prompt',system]
     if resume:
         args += ['--resume',resume]
-    script = 'source "$1" >/dev/null 2>&1; shift; exec "$@"'
+    script = 'source "$1" >/dev/null 2>&1 && shift && exec "$@"'
     started=time.time()
     with (base/f'claude-run-{index}.jsonl').open('w') as out, (base/f'claude-run-{index}.stderr.log').open('w') as err:
         try:
@@ -187,7 +192,7 @@ def launch(base, env_file, resume, prompt_file, driver=False):
             code=result.returncode
         except subprocess.TimeoutExpired:
             code=124
-    dump(base/f'run-{index}.json',{'exit_code':code,'seconds':round(time.time()-started,3),'resume':resume,'effort':'low','test_driver':driver,'simulation_only':True})
+    dump(base/f'run-{index}.json',{'exit_code':code,'seconds':round(time.time()-started,3),'resume':resume,'effort':'provider/default','test_driver':driver,'simulation_only':True})
     summarize(base)
     raise SystemExit(code)
 

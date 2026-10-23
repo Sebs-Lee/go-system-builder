@@ -29,7 +29,8 @@ const (
 	ManifestReleaseAudit    = "release_audit"
 )
 
-// AuditAreaIDs is the finite release-audit denominator from L3-S10 §4.5.
+// AuditAreaIDs names the existing release-audit reading prompts. A report does
+// not have to create one task, result or evidence reference for each prompt.
 var AuditAreaIDs = []string{
 	"state_machine",
 	"transaction_uow",
@@ -62,7 +63,7 @@ type Manifest struct {
 	Metrics            Metrics               `json:"metrics"`
 }
 
-// CoverageItem is one finite object in the frozen S10 review denominator.
+// CoverageItem holds supplied material and its reported professional judgment.
 type CoverageItem struct {
 	ID           string   `json:"id"`
 	Category     string   `json:"category"`
@@ -262,8 +263,8 @@ type AuditArea struct {
 	EvidenceRefs []string `json:"evidence_refs"`
 }
 
-// RiskItem keeps every non-blocking risk accountable to an owner, tracking
-// artifact, impact, and recovery point before it can be handed to S11.
+// RiskItem describes an actual residual risk and responsibility. Tracking and
+// recovery references are optional when there is no real artifact to cite.
 type RiskItem struct {
 	ID            string `json:"id"`
 	Severity      string `json:"severity"`
@@ -289,10 +290,8 @@ type BlockingFinding struct {
 	Route string `json:"route"`
 }
 
-// Metrics are objective S10 completion indicators. Coverage values are
-// checked against the manifest's declared category rows. The hard metric
-// categories must be represented explicitly; optional categories may have a
-// zero denominator only when they are genuinely outside this audit scope.
+// Metrics describe reported rows and responsibility gaps. They are derived by
+// the system, not author-maintained qualifications or proof of actual coverage.
 type Metrics struct {
 	RequirementCoverage  float64 `json:"requirement_coverage"`
 	ContractCoverage     float64 `json:"contract_coverage"`

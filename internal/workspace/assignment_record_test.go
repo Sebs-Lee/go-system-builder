@@ -84,8 +84,13 @@ func TestCanonicalAssignmentRecordWorkspacePlanFreezeAndDecode(t *testing.T) {
 	if ctx.PlanDraft == nil || ctx.PlanDraft["assignment_record_contract"] != assignmentrecord.AssignmentRecordContract || ctx.PlanDraft["assignment_record_sha256"] != e.AssignmentRecordSHA256 || ctx.PlanDraft["assignment_revision"] != float64(f.record.Revision) {
 		t.Fatalf("PLAN draft did not project its Record binding: %#v", ctx.PlanDraft)
 	}
-	if ctx.PlanDraft["objective"] != nil || len(ctx.PlanDraft["planned_paths"].([]any)) != 0 || len(ctx.PlanDraft["assertion_checks"].([]any)) != 0 || ctx.PlanDraft["dependencies"] != nil || ctx.PlanDraft["risks_blockers"] != nil {
+	if ctx.PlanDraft["objective"] != nil || len(ctx.PlanDraft["planned_paths"].([]any)) != 0 || len(ctx.PlanDraft["assertion_checks"].([]any)) != 0 || ctx.PlanDraft["risks_blockers"] != nil {
 		t.Fatalf("workspace auto-filled a professional PLAN answer: %#v", ctx.PlanDraft)
+	}
+	wantDependencies, _ := json.Marshal(append([]string{}, f.record.DependsOn...))
+	gotDependencies, _ := json.Marshal(ctx.PlanDraft["dependencies"])
+	if !bytes.Equal(gotDependencies, wantDependencies) || !strings.Contains(ctx.PlanQuestions["/dependencies"], "workgroup-local") {
+		t.Fatalf("workspace did not deliver the registered dependency set: %s; %v", gotDependencies, ctx.PlanQuestions)
 	}
 	if _, exists := ctx.PlanDraft["steps"]; exists {
 		t.Fatal("canonical thin PLAN draft still contains steps")

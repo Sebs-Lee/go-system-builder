@@ -106,7 +106,7 @@ func graphGuidance(root string, state map[string]any, request policy.Input) poli
 			guidance.Read = append([]string(nil), guidance.ReadOrder...)
 			guidance.Recovery = []string{"only if blocked: inspect the recorded source/preparation failure with Main", "optional recovery: .claude/loop-state.json", "optional recovery: " + guidance.ProtocolRef, "optional recovery: " + loopManualRef}
 		}
-		if runtime.PacketEnabled(state) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
+		if runtime.PacketEnabled(state) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) && !s7BudgetGateRequired(state, root) {
 			guidance.Missing = nil // Actual missing fields/owners come with the current exact questionnaire.
 			guidance.ReadOrder = s9QuestionnaireReadOrder(root, state, request)
 			guidance.Read = append([]string(nil), guidance.ReadOrder...)
@@ -205,7 +205,6 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	lifecyclePhase, _ := lifecycle["phase"].(string)
 	stage, skill, action := projectNext(lifecycleState, lifecyclePhase, root)
 	next := buildNextProjection(state, stage, skill, action, root, isMainPlanningViewer(input))
-	applyS7BudgetGateway(&next, state)
 	if lifecycleState == "bug_resolution" && lifecyclePhase == "investigation" {
 		next.Action = investigationNextAction(root, state)
 		if runtime.PacketEnabled(state) {
@@ -220,6 +219,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	if lifecycleState == "bug_resolution" && lifecyclePhase != "investigation" {
 		next.Action = repairNextAction(state, lifecyclePhase)
 	}
+	applyS7BudgetGateway(&next, state, root)
 
 	guidance := policy.Guidance{
 		RuntimeID:      stringValue(state["runtime_id"]),
@@ -247,9 +247,16 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	}
 	if lifecycleState == "inactive" {
 		guidance.Missing = nil // Exact unanswered choices come from the current request.
-		guidance.DoneWhen = []string{"the actual locked/committed requirement and explicit startup choice are recorded by original TR-001, with current S2 paths supplied"}
-		guidance.Automation = []string{"SessionStart or the actual requirement lock save prepares the original entry questions once", "ordinary Pre/Stop only read current work; complete the actual four binding answers and save for automatic original TR-001", "ordinary Git commits and branch choices remain Main's real work; no Hook commit, branch creation, pushing or publication"}
-		guidance.Recovery = []string{"read the current exact draft or binding-request path below; report missing preparation/materials to Main, without hand-editing Runtime or issuing a binding command"}
+		if next.Stage == "S0" {
+			guidance.DoneWhen = []string{"the current requirement records the real user's goals, scope, constraints and acceptance criteria, resolves blocking decisions and faithfully records the human's actual lock of that version"}
+			guidance.Automation = []string{"SessionStart supplies the actual requirement draft; ordinary Pre/Stop only read current work", "complete the current requirement and unresolved professional questions; save a draft normally and record locked only after the human's actual lock decision", "saving the actual locked requirement hands off to the original S1 preparation; no binding answers, machine metadata or startup choice are required to complete S0"}
+			guidance.Recovery = []string{"read the exact current requirement draft below; report a missing draft or template as an entry preparation gap, without searching for internal binding files or editing Runtime"}
+			guidance.ReadOrder = []string{"LOOP RECOVERY packet (this message)", next.ProtocolRef, "docs/requirements/", ".claude/skills/requirement-funnel/SKILL.md"}
+		} else {
+			guidance.DoneWhen = []string{"the actual locked/committed requirement and explicit startup choice are recorded by original TR-001, with current S2 paths supplied"}
+			guidance.Automation = []string{"SessionStart or the actual requirement lock save prepares the original binding questions once", "ordinary Pre/Stop only read current work; complete the actual four binding answers and save for automatic original TR-001", "ordinary Git commits and branch choices remain Main's real work; no Hook commit, branch creation, pushing or publication"}
+			guidance.Recovery = []string{"read the exact current binding-request path below; report missing preparation/materials to Main, without hand-editing Runtime or issuing a binding command"}
+		}
 	}
 	if len(nativeS6Records(state)) > 0 {
 		guidance.Automation = []string{
@@ -408,7 +415,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// an invitation to take the shortest route to S11. Keep the finite
 	// denominator, counterevidence, and the S9→fresh-S7 prerequisite visible
 	// on every normal recovery packet.
-	if lifecycleState == "acceptance" || lifecycleState == "release_audit" {
+	if (lifecycleState == "acceptance" || lifecycleState == "release_audit") && !s7BudgetGateRequired(state, root) {
 		applyS10Guidance(&guidance)
 		guidance.Action = stageAuditQuestionnaireContext(root, input, runtime.Snapshot{State: state})
 	}
@@ -418,6 +425,12 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		if qualitygate.HasDispatchPlan(state) {
 			guidance.Automation = append(guidance.Automation, "read the approved overall dispatch plan and `loop-harness s6 status --capacity <actual total slots>`; dispatch compatible ready tasks, integrate reported results promptly and refill slots without waiting for unrelated tasks in a prior wave")
 		}
+	}
+	if mainQuestionnaireViewer(input) && s7BudgetGateRequired(state, root) {
+		guidance.Action = stageS7BudgetDecisionQuestionnaireContext(root, input, runtime.Snapshot{State: state})
+		guidance.ReadOrder = s7BudgetDecisionQuestionnairePaths(root, state)
+		guidance.Automation = []string{"the original completion outlet or SessionStart prepares this exact budget application; ordinary reads do not create it", "after the human actually chooses, fill only decision, the actual increased maximum when applicable, and reason; save the same application for original Writer reception and successor", "empty choice grants nothing; do not copy Runtime metadata, register evidence or invoke a manual transition"}
+		guidance.Recovery = []string{"Main/system restores missing original decision preparation or accepted sources; do not invent another approval or repeat an already received professional report"}
 	}
 
 	guidance.Instruction = formatGuidanceInstruction(guidance)
@@ -563,7 +576,7 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 	}
 	if maxRounds := s7MaxRounds(state); maxRounds > 0 && round >= maxRounds {
 		guidance.Automation = append(guidance.Automation,
-			fmt.Sprintf("S7 budget: current round %d of %d may drain, but opening another full round requires the human `runtime s7-budget-decision` gateway", round, maxRounds),
+			fmt.Sprintf("S7 budget: current round %d of %d may drain. Only an actual request for another full round requires a human choice in the system-prepared budget application; ordinary acceptance does not require another approval", round, maxRounds),
 		)
 	}
 
@@ -1467,18 +1480,18 @@ func freshStartGuidance(root, event string) *policy.Guidance {
 		Stage:          "S0",
 		LifecycleState: "inactive",
 		Objective:      "produce one human-locked requirement",
-		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), have the human lock it, then bind with `loop-harness req bind --approved-by <the human who locked it>` (bind auto-initializes the runtime)",
+		Action:         "draft docs/requirements/REQ-<id>.md from docs/requirements/REQ-template.md (skills: requirement-funnel), resolve the real user's goals, scope, constraints and acceptance criteria, and faithfully record the human's actual lock of the current version",
 		ProtocolRef:    "docs/control/agent-protocol.md#s0",
 		ManualRef:      loopManualRef,
 		PrimarySkill:   "requirement-funnel",
 		Read:           []string{"docs/control/agent-protocol.md#s0", "docs/requirements/REQ-template.md"},
 		ReadOrder:      []string{"LOOP RECOVERY packet (this message)", "docs/control/agent-protocol.md#s0", "skills/requirement-funnel/SKILL.md", "docs/requirements/REQ-template.md"},
 		Missing:        []string{"human_locked_req"},
-		DoneWhen:       []string{"a locked REQ exists and `req bind` succeeds (the runtime is initialized by bind)"},
+		DoneWhen:       []string{"the current requirement is complete and the human's actual lock of that version is recorded"},
 		Blocked:        false,
 		Blocker:        "",
-		Recovery:       []string{"check `req list` for bindable REQs once one is locked"},
-		Automation:     []string{"req bind auto-initializes the runtime — do not run `runtime reconcile` on a fresh checkout"},
+		Recovery:       []string{"use the current requirement draft or installed REQ template; missing entry preparation belongs to normal installation/initialization recovery"},
+		Automation:     []string{"a draft does not authorize lock or startup; use the human's actual decisions", "the original entry supplies S1 after the actual requirement lock; S0 does not require a binding command or machine metadata"},
 	}
 	guidance.Instruction = formatGuidanceInstruction(*guidance)
 	return guidance

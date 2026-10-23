@@ -71,6 +71,11 @@ func newStageAnswerFixture(t *testing.T) stageAnswerFixture {
 
 func newStageAnswerFixtureMode(t *testing.T, packet bool, configure ...func(string, map[string]any)) stageAnswerFixture {
 	t.Helper()
+	return newStageAnswerFixtureIssuance(t, packet, true, configure...)
+}
+
+func newStageAnswerFixtureIssuance(t *testing.T, packet, issue bool, configure ...func(string, map[string]any)) stageAnswerFixture {
+	t.Helper()
 	root := fixtures.FreshRoot(t)
 	state := fixtures.BaseState(t, root, "document_verification", "", 0)
 	state["review"].(map[string]any)["round"] = 0
@@ -201,6 +206,9 @@ func newStageAnswerFixtureMode(t *testing.T, packet bool, configure ...func(stri
 	manifestPath := ".claude/workgroups/REQ-039/review/manifest.json"
 	stageJSON(t, root, manifestPath, manifest)
 	stageCLI(t, "runtime", "register-workgroup", "--root", root, "--manifest", manifestPath, "--task-id", f.taskID, "--task", f.taskPath)
+	if !issue {
+		return f
+	}
 	s, err := submission.New(root)
 	if err != nil {
 		t.Fatal(err)

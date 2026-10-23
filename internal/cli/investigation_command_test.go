@@ -694,7 +694,7 @@ func testRuntimeInvestigationHypothesisAndRouteCLI(t *testing.T, installed bool)
 		t.Fatalf("route output must expose the s9_repair disposition: %s", out)
 	}
 	if !strings.Contains(errOut, "draft the RepairContract") ||
-		!strings.Contains(errOut, "runtime investigation contract approve --case-id investigation-case-observation-batch-r1 --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>") {
+		!strings.Contains(errOut, "original human or bounded Driver decision application") || strings.Contains(errOut, "--approval-hash") {
 		t.Fatalf("route coaching must point at the RepairContract step: %s", errOut)
 	}
 }

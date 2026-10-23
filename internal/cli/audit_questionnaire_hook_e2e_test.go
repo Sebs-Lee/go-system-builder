@@ -20,6 +20,72 @@ func TestS10QuestionnaireHookUsesPreparedManifestAndMainProducer(t *testing.T) {
 	}
 }
 
+func TestS10PreparedQuestionnaireBindsMachineFieldsWithoutAuthorReentry(t *testing.T) {
+	for _, machineInput := range []string{"omitted", "stale"} {
+		t.Run(machineInput, func(t *testing.T) {
+			// The original stage-entry action prepares this answer from existing
+			// upstream facts. No S10 metadata or envelope is assembled by the author.
+			root, path := s10QuestionnaireHookRoot(t)
+			prepared := readS10QuestionnaireState(t, path)
+			fillS10QuestionnaireAnswer(t, path, "acceptance", "pass")
+			answer := readS10QuestionnaireState(t, path)
+			fields := []string{"schema_version", "manifest_type", "runtime_id", "baseline_generation", "review_round", "metrics"}
+			for _, field := range fields {
+				delete(answer, field)
+			}
+			if machineInput == "stale" {
+				answer["schema_version"] = "old"
+				answer["manifest_type"] = "release_audit"
+				answer["runtime_id"] = "another-runtime"
+				answer["baseline_generation"] = 99
+				answer["review_round"] = 99
+				answer["metrics"] = map[string]any{"unknown_count": 99}
+			}
+			// Selecting real professional material does not require registering
+			// another ID or copying its source association into an evidence table.
+			const observation = "docs/reports/synthetic-s10-observation.txt"
+			writeS10QuestionnaireFile(t, root, observation, []byte("Synthetic fixture observation only; no product validation is claimed.\n"))
+			for _, raw := range answer["coverage_inventory"].([]any) {
+				raw.(map[string]any)["evidence_refs"] = []string{observation}
+			}
+			data, err := json.MarshalIndent(answer, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := callS10QuestionnaireHook(t, root, map[string]any{
+				"hook_event_name": "PostToolUse", "cwd": root, "tool_name": "Write",
+				"tool_input": map[string]any{"file_path": path}, "tool_response": map[string]any{},
+			})
+			state := readS10QuestionnaireState(t, filepath.Join(root, ".claude", "loop-state.json"))
+			if state["lifecycle"].(map[string]any)["state"] != "release_audit" || !hasS10QuestionnaireEvidence(root, state, "acceptance", "pass") {
+				t.Fatalf("professional answer did not reach the original TR-015: %s", out)
+			}
+			received := readS10QuestionnaireState(t, path)
+			for _, field := range fields[:5] {
+				if received[field] != prepared[field] {
+					t.Fatalf("system did not bind current %s: got %#v, want %#v", field, received[field], prepared[field])
+				}
+			}
+			if received["metrics"].(map[string]any)["unknown_count"] != float64(0) {
+				t.Fatal("system did not derive metrics from actual reported rows")
+			}
+			for _, raw := range state["evidence"].([]any) {
+				if raw.(map[string]any)["path"] == observation {
+					t.Fatal("professional file reference was registered as a new qualification")
+				}
+			}
+			for _, next := range []string{strings.TrimSuffix(path, ".json") + ".md", filepath.Join(filepath.Dir(path), "release_audit-manifest.json")} {
+				if _, err := os.Stat(next); err != nil {
+					t.Fatalf("original outlet omitted its report/next questionnaire %s: %v", next, err)
+				}
+			}
+		})
+	}
+}
+
 func testS10QuestionnaireSave(t *testing.T, tool string) {
 	t.Helper()
 	root, manifestPath := s10QuestionnaireHookRoot(t)

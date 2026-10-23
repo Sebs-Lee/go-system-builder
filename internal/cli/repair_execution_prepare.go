@@ -160,6 +160,9 @@ func prepareRepairExecutionFromChoice(root string, state map[string]any, row rep
 	if stringValue(current["status"]) == "complete" || stringValue(current["delivery_ref"]) != "" {
 		return repairExecutionProjectionContext(root, state, row)
 	}
+	if runtime.PacketEnabled(state) && (len(current) == 0 || current["purpose"] == "native_delivery") {
+		return fmt.Sprintf("S9 Assignment %s owner=%s has no current prepared native PlanReport/brief. Main/system must restore the original division preparation at %s; no workspace startup or check_location selection was inferred from the missing native material. ", row.AssignmentID, owner, strings.Join(repairDispatchPaths(root, state), ", "))
+	}
 	if err := repairExecutionCheckLocationConflict(state, row); err != nil {
 		return "S9 execution choice conflict: " + err.Error() + ". "
 	}

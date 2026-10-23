@@ -32,7 +32,7 @@ const (
 
 var sha256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
-// ErrNotVerified identifies an exactly bound, preserved merge which has not
+// ErrNotVerified identifies an exactly bound, preserved integration attempt which has not
 // completed Main verification. It carries no successful contribution proof.
 // A caller may omit it from historical verified contributions; a current
 // Assignment still requires Verify to succeed.
@@ -234,7 +234,7 @@ func validateCheckpointBinding(cp checkpoint, in Input, recordSHA string) error 
 		cp.TargetBranch == in.ExpectedTargetBranch && cp.State == "preserved" && cp.Revision > 0 &&
 		cp.MergeCommit == "" && cp.TestedHead == "" && cp.VerifiedAt == "" && cp.ReportPath == "" && cp.ReportSHA == "" &&
 		cp.ChangedPaths == nil && cp.ChangedPathsSHA256 == "" && len(cp.CheckReceipts) == 0 && len(cp.ToolCheckReceipts) == 0 &&
-		fullObjectID(cp.SourceHead) && fullObjectID(cp.TargetHead) && fullObjectID(cp.MergeBase) {
+		unverifiedInspectionCoordinates(cp) {
 		return ErrNotVerified // Original pre-merge failure; never a verified contribution.
 	}
 	if cp.CanonicalMainFacts == nil || cp.TaskID != record.Task.ID || cp.AssignmentID != record.AssignmentID || cp.Generation != record.BaselineGeneration || cp.TargetBranch != in.ExpectedTargetBranch || cp.SourceHead != cp.CanonicalMainFacts.SourceHead || cp.MergeBase != cp.CanonicalMainFacts.MergeBase || cp.TestedHead != cp.CanonicalMainFacts.TestedHead || cp.MergeCommit != cp.CanonicalMainFacts.MergeCommit || cp.CanonicalMainFacts.TargetBranch != cp.TargetBranch || cp.ChangedPaths != nil || cp.ChangedPathsSHA256 != "" {
@@ -274,6 +274,20 @@ func validateCheckpointBinding(cp checkpoint, in Input, recordSHA string) error 
 		return fmt.Errorf("checkpoint verification time does not follow accepted Result")
 	}
 	return nil
+}
+
+// Inspect resolves source, target and merge base in that order and may stop
+// before any of them. Its preserved failure contains only the coordinates
+// actually observed. This classification grants no successful Main proof:
+// current work still fails, and only the historical caller with the verified
+// revision chain may omit it from successful contributions.
+func unverifiedInspectionCoordinates(cp checkpoint) bool {
+	for _, value := range []string{cp.SourceHead, cp.TargetHead, cp.MergeBase} {
+		if value != "" && !fullObjectID(value) {
+			return false
+		}
+	}
+	return (cp.TargetHead == "" || cp.SourceHead != "") && (cp.MergeBase == "" || cp.SourceHead != "" && cp.TargetHead != "")
 }
 
 func validateCheckReceiptSet(root, checksDirRel string, in Input, cp checkpoint, facts assignmentresult.MainFacts, read func(string) ([]byte, error)) error {

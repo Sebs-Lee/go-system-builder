@@ -174,7 +174,7 @@ Main 完成原 ReviewPlan 与专业登记，原准备入口确保当前 dispatch
 
 计划草稿、登记与修订共用绑定 REQ 和当前冻结 TASK 的明确模块范围，读取其中必需浏览器 CASE。TASK 仅以原 `Module current truth` 和 `Module Impact` 的 `Modules touched` 声明选模块，背景阅读及说明链接不扩大范围。每个已知 CASE 在 E2E Claim 的 `source_refs` 使用完整 `cases.json#CASE` 引用，安排实际验证或用原理由/检查表明确 N/A；笼统 `ui_impact=none` 不代替逐 CASE 处置。缺明确来源交 Main 恢复，不全库兜底；Main 仍须分析未显式记录的消费者影响。
 
-新只读责任可直接使用原 Main 根下私人问卷，不创建 execution。已登记独立 Worker 使用其确切来源，缺失时不能回落 Main；cold-start E2E 必须如实填写实际执行 workspace 的 `verification_artifact_digest`，原消费者仍验证来源及摘要。显式 `plan_approval_required` 等待原审批。
+新只读责任可直接使用原 Main 根下私人问卷，不创建 execution。已登记独立 Worker 使用其确切来源，缺失时不能回落 Main；cold-start E2E 必须如实报告实际执行来源，`verification_artifact_digest` 由原消费者自动固定并验证，作者保留原卷机器预填或 null，不计算、复制摘要。显式 `plan_approval_required` 等待原审批。
 
 相同已接收答卷重放不追加 Result/Finding，不同答案沿原冲突/具名修订处理。`runtime stage-answer receipt --agent <owner> --path <issued-path> --root <Main>` 只读恢复事实；普通工作不手动 issue/consume。原 explicit/冻结 teammate 保存入口继续服务其原兼容责任。专业验收须记录实际产品、平台和执行范围。
 

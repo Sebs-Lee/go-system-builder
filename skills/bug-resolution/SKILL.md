@@ -205,35 +205,17 @@ rejected, unreceived authoring draft is corrected at its exact supplied path.
 Fresh IDs and fresh files apply to new immutable registered artifacts, not
 ordinary draft corrections. The existing consumers retain all checks.
 
-## Original S8 human approval artifact
+## S8 原批准申请
 
-After a genuine human decision, the existing JSON approval consumer expects
-these exact fields (substitute the current original references):
+保存专业合同后，系统固定最终呈现稿，并在原 `.claude/decisions` 目录给出准确申请路径。没有有效有限授权时，将该实际稿件交真实人类决定；Main 只如实保存 `decision`（`approve_contract`、`reject_contract` 或 `defer`）与必要 `reason`。空选择只是草稿，保存合同不产生批准。
 
-```json
-{
-  "decision": "approve_contract",
-  "decision_id": "<fresh-evidence-id>",
-  "runtime_id": "<current-runtime-id>",
-  "case_id": "<current-case-id>",
-  "contract_id": "<current-contract-id>",
-  "approval_hash": "<sha256-of-the-final-presented-contract-draft>"
-}
-```
+存在已绑定项目策略或有效原有限授权时，原指定 Driver 审阅同一份固定稿件，填写原技术审查申请：`decision=approve_bounded_repair`、`requirements_unchanged`、`business_semantics_unchanged`、`reversible`、`scope_complete`、真实支持证据 `evidence_refs` 与 `rationale`。这四项是专业判断，不能机械翻成 true；不是让 Main 冒充人类批准，也不要求新建 reviewer 角色或第二次批准。
 
-Register the completed decision with `runtime evidence add --kind human_decision
---id <same-fresh-evidence-id> --path <fresh-decision-file> --produced-by
-<actual-approver> --scope-ref s8_contract_approval:<runtime-id> --root <Main>`.
-Then the original `runtime investigation contract approve` transaction uses
-that same evidence ID, actual approver and exact draft hash. A professional
-save or Agent return grants no approval. Explicitly authorized disposable
-simulations must label the decision as synthetic; they are not real human
-consent for a product release.
+需要新增一次有限需求授权时，只在真实需求批准人选择该方式后，使用系统给出的原有限授权申请，填写指定 reviewer、允许／禁止路径、有限合同预算和明确到期时间。已有有效策略或授权时无需重复填授权，逐稿真人批准也是有效选项。参见 [有限修复授权](../../docs/bounded-repair-autonomy.md)。
 
-A registered artifact is fingerprinted. Never correct it in place or register
-different decisions against the same mutable file. A rejected decision remains
-history; correct input uses a fresh decision ID **and a fresh file path**. This
-is the existing approval format and source lifetime, not a dispatch handshake.
+Runtime／REQ／Case／Contract 身份、源 SHA、`approval_hash`、generation、scope、证据编号、登记及事务 revision 均由系统承接。不得抄写这些字段、计算摘要、手建完整证据封套或执行 evidence add/contract approve 作为正常交卷步骤。已登记的旧完整封套仅按原冻结记录恢复，不是新作者输入。
+
+申请与被呈现的确切稿件绑定。合同、Case 或适用授权变化后，旧选择不自动跟到新稿；新稿必须按原责任取得真实判断。系统通过原证据 Writer 和批准消费者保存不可变规范记录，正常重放不重复授权、消费或刷新预算。保存不认证聊天真人身份，也不能伪造人意。明确获准的隔离模拟应标为 synthetic，不构成真实产品发布批准。
 
 ## Complete repair scope before approval
 
@@ -241,7 +223,7 @@ Trace every promised slot family through the real production entry and transacti
 
 ## Optional bounded repair delegation
 
-When a project repair policy was explicitly pinned at REQ bind, or an explicit current human grant exists, follow docs/bounded-repair-autonomy.md: register repair_contract_review using the Driver identity and pass --delegation-evidence-id to contract approve. Do not label this technical review human_decision or sign as the user. Use `binding-policy:<pinned-sha>` for the pinned-policy authority reference. If neither authority exists, the existing human approval path remains required. Budget, expiry, exact scope and semantic review remain mandatory; ordinary recoverable technical problems are handled by the Driver before requesting any missing authority.
+已绑定项目策略或有效有限授权由系统沿原 Runtime 关联识别，并准备原指定 Driver 的技术审查申请。作者只给真实技术判断，系统承接授权引用和规范证据；不手填 binding-policy 摘要，不手工登记审查。预算、有效期、完整范围和语义约束仍由原消费者检查；没有有效授权时回逐稿真人决定，不伪造 human_decision。
 
 ## Issued S9 PlanReport adapter
 
@@ -309,9 +291,12 @@ targeted step prepares that person's answer.
 Main actually spawns/notifies the independent verifier. The questionnaire supplies
 all necessary Contract assertion text and system slots; the verifier performs the
 real observations and saves
-`continuity_reason`, `assertion_results` (`assertion_id,result,evidence_refs`),
-`scope_compliance`, `result` and the applicable `failure_class` at the exact path.
-Assertion results are `pass/fail/blocked`; scope is `pass/fail`; overall result is
+`assertion_results` (`assertion_id,result,evidence_refs`), `result` and the
+applicable `failure_class` at the exact path. `continuity_reason` and
+`scope_compliance` are optional legacy metadata; do not add them to obtain
+acceptance. Machine times and the Contract-level required reverification ID come
+from the original consumer, including same-answer recovery after interruption.
+Assertion results are `pass/fail/blocked`; overall result is
 `pass/fail/blocked/scope_changed`. Use actual evidence, not the Builder's conclusion;
 the verifier must not have implemented or merged the work being verified. Every
 required assertion needs an actual result; specific missing observations prevent

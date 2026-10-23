@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/agentauth"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -324,7 +325,10 @@ func exactHypothesisAnswerPath(sourceRoot, requested, expected string) (string, 
 }
 
 func validateS8AnswerEvidence(root string, state map[string]any, packet workpacket.HypothesisResultPacket, answer workpacket.HypothesisResultAnswer) error {
-	refs := append([]string(nil), answer.EvidenceRefs...)
+	refs, err := remainingS8AnswerEvidenceRefs(root, &packet, answer.EvidenceRefs)
+	if err != nil {
+		return err
+	}
 	for _, question := range answer.NewHypotheses {
 		refs = append(refs, question.EvidenceRefs...)
 	}
@@ -359,14 +363,42 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 			}
 		}
 	} else {
-		if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
-			return fmt.Errorf("S8 answer evidence references: %w", err)
+		if len(refs) > 0 {
+			if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
+				return fmt.Errorf("S8 answer evidence references: %w", err)
+			}
 		}
 		if err := validateS8SourceBoundaryRefs(root, packet, answer.SourceBoundaryRefs); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Only exact sources imported from the original verified Finding may bypass
+// index lookup. New Hypotheses and arbitrary new answer paths retain the
+// original evidence contract. The packet consumer verifies issuance/continuity
+// before calling this helper and again inside the original Writer.
+func remainingS8AnswerEvidenceRefs(root string, packet *workpacket.HypothesisResultPacket, refs []string) ([]string, error) {
+	frozen := map[string]bool{}
+	if packet != nil {
+		for _, ref := range packet.Inputs.EvidenceRefs {
+			if ref.Attestation == "finding_source" && ref.Origin == "finding" {
+				frozen[ref.Ref] = true
+			}
+		}
+	}
+	remaining := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if !frozen[ref] {
+			remaining = append(remaining, ref)
+			continue
+		}
+		if err := evidence.ValidateFindingReference(root, ref); err != nil {
+			return nil, fmt.Errorf("S8 answer original Finding source %q: %w", ref, err)
+		}
+	}
+	return remaining, nil
 }
 
 func validateS8SourceBoundaryRefs(root string, packet workpacket.HypothesisResultPacket, refs []string) error {

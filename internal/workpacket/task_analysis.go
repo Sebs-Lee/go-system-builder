@@ -100,7 +100,10 @@ func ValidateTaskAnalysisSources(root string, p Packet, files interface{ ReadFil
 	}
 	for path, hash := range behaviorSources {
 		data, err := files.ReadFile(path)
-		if err != nil || Digest(data) != hash {
+		if err != nil {
+			return fmt.Errorf("read frozen behavior source %s: %w", path, err)
+		}
+		if Digest(data) != hash {
 			return fmt.Errorf("frozen behavior source changed: %s", path)
 		}
 		seen[path] = hash
@@ -129,7 +132,10 @@ func ValidateTaskAnalysisSources(root string, p Packet, files interface{ ReadFil
 				continue
 			}
 			data, err := files.ReadFile(ref.Path)
-			if err != nil || Digest(data) != ref.SHA {
+			if err != nil {
+				return fmt.Errorf("read frozen analysis source %s: %w", ref.Path, err)
+			}
+			if Digest(data) != ref.SHA {
 				return fmt.Errorf("frozen analysis source changed: %s", ref.Path)
 			}
 			seen[ref.Path] = ref.SHA

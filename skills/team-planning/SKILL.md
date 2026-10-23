@@ -33,146 +33,31 @@ Current stage, frozen specifications/implementation, original responsibilities, 
 ## Stage paths
 
 - S6 (`s6-native-v1`): `s6 prepare --root <Main> --task <TASK> --role <role>` supplies the exact brief. Builder uses native worktree, professional plan, actual implementation/self-checks and Result. Main uses original task-integrate. Source/report revisions use the original revision Writer.
-- S5: register this entry's two independent dimensions, then carry exact issued view/answer paths into separate native contexts. New read-only reviews need no workspace prepare.
+- S5: 原入口准备、登记两项已确定独立责任并发行准确 view／answer，Main 直接携带原引用派发两个独立原生上下文；不用组装元数据、额外确认或 workspace prepare。
 - S7: ReviewPlan owns Claims, lenses, waves and dependencies; original manifest draft/registration prepares the engineering responsibility and exact question. Reviewer returns the original professional answer for Stop reception. A post-S9 seed is an unfinished Planner input, not a dispatchable professional decision. Resolve PLANNER-REFINE fields against the current scope and submit the first professional Plan through original `runtime review-plan --file <professional-plan.json>` while preserving the seed id/round/generation/baseline. Only the exact unstarted seed is eligible; later discovery revisions retain their normal budget and workspace constraints. If E2E is genuinely inapplicable, set e2e_coverage_state=not_applicable, keep the explicit N/A Claim with source_refs/na_rationale/na_checklist_id, set verification_artifact_workspace null; do not add the Runtime-only verification_artifact_digest to the Plan, and remove only its E2E Assignment. Keep all applicable delivery/QA Claims. The conservative cold_start seed hint must not manufacture a browser surface or mandatory browser task.
 - S8: Main's Case/Hypothesis dispatch supplies the exact Investigator question. Investigator performs its discriminator without product writes and returns the original answer. Main owns routing/Contract approval.
 - S9: professional division prepares each exact native brief. Builder saves PlanReport before implementation, continues in native worktree, self-checks and commits actual product changes when present, then returns Result. An allowed no-change result does not manufacture a commit. Main integrates/checks separately. Targeted is a separate independent native task; original handoff leads to fresh S7.
 
-## S5 manifest assembly
+Before registering the first S7 professional Plan, review the generated Assignment grouping. The default one-Claim-per-Assignment split is a starting point, not a required actor count. Compatible QA Claims may share one original Assignment's `claim_ids` when their reading/methods fit and no result dependency would become self-waiting; retain every Claim, its original identity, oracle, evidence and per-Claim result. Update the existing scope/focus/boundary fields to match. Keep delivery/QA/E2E lenses, waves, independence and real specialist needs separate. Do not add headcount fields, a second planning table or an empty actor for an N/A Claim.
 
-Use the original team-manifest schema and actual accepted S4 input set. Both `DV-SPEC-CONSISTENCY` and `DV-TASK-EXECUTABILITY` cover the full current batch, with distinct engineering owners and one `independence` separation edge. Use entry-specific IDs/paths and retain history. Main chooses the professional split; use current original preparation/source facts instead of copied example hashes.
+## S5 独立文档审查分工
 
-Set `workgroup_kind=document_verifier`, `review_round=null`, and current `validation.validated_at`. S5 stage entry is not an S7 verification round: use `review-e<phase_revision>` only in entry-specific IDs/paths, not in the manifest `review_round` field. The registration anchor is the first S4 dispatch-plan TASK; use its actual entity ID/path, never a REQ ID as `--task-id`. Read the TASK's canonical entity ID from that accepted plan instead of copying a sample identifier.
+S5 入口沿当前 `.claude/workgroups/<REQ>/review-e<entry>/manifest.json` 准备并登记两项原责任，再由原发行器交付准确的 view／answer。固定的两项维度、整批覆盖和默认专业方法是既有设计，系统可以直接准备，不要求 Main 为它们抄表、填写元数据或再确认一遍；这既不启动平台子代理，也不代表任何审查结论已通过。
 
-Required `skill_refs`: `document-verification, specification-planning, api-contracts` for specification consistency; `document-verification, specification-planning, testing-strategy` for task executability. Do not add S6 Assignment Record/Closing Contract fields to S5. These engineering grouping/owner fields require no actual Claude Team or platform ID lookup.
+| 责任 | 系统准备的专业范围与默认方法 | Main 的实际工作 |
+| --- | --- | --- |
+| `DV-SPEC-CONSISTENCY` | 本批完整规格链的一致性、完整性与需求忠实度；`document-verification`、`specification-planning`、`api-contracts` | 确认真实独立上下文能完成此视角；传入准确引用，补充本项目特有风险，不代填结论 |
+| `DV-TASK-EXECUTABILITY` | 本批全部任务和整体计划的可执行性、依赖、自检与收尾；`document-verification`、`specification-planning`、`testing-strategy` | 独立安排另一实际上下文，补充适用专项和真实覆盖要求 |
 
-### S5 original manifest shape
+Runtime、REQ、generation、阶段入口、完整已登记文档的版本和摘要、S4 首个 TASK 锚点、内部编号、默认工程 owner、输出位置、分离边和计数由系统从原来源投影。原 S5 问卷另行固定已接受 S4 的完整来源闭包，两位均读整批材料，TASK 锚点不缩小审查范围。真实校验产生校验结果及时间。Main 不读 Runtime 拼 DTO、不计算或抄写 SHA、不手填版本／时间、不寻找 Schema 文件，也不先声明 `validation=pass`。
 
-The installed shape below is the original professional registration DTO, not a platform Team or execution definition. Use it directly; do not extract schemas from the binary or copy frozen launcher instructions. Replace every placeholder, carry the actual current Runtime/generation/stage-entry and **all** current registered document refs, and choose entry-specific IDs and professional scope. `baseline_generation: 1` is only an example. Keep the two original responsibility profiles and separation edge. The original registration rechecks source fingerprints, required dimensions and independence; the example's validation fields do not establish a PASS. `read_paths` covers the actual complete current batch; no product writes or S6 fields belong to these S5 roles.
+系统交付准确引用后，Main 直接携带各自 view／answer 派发两个 Claude Code 原生 Agent。工程 owner 只是责任标签，`platform_team_id` 只是原结构的逻辑分组；不用创建实际 Team 或寻找平台 ID，不用 workspace prepare／launch。审查者本人读取资料，只填原答卷 `conclusion`／`findings`，保存并原生返回准确答案引用，由 `SubagentStop` 调原消费者接收。
 
-```json
-{
-  "schema_version": "1.0.0",
-  "manifest_id": "<entry-specific manifest id>",
-  "version": "v1.0.0",
-  "runtime_id": "<current runtime id>",
-  "req_id": "<bound REQ id>",
-  "baseline_generation": 1,
-  "review_round": null,
-  "platform_team_id": "<logical engineering group label>",
-  "workgroup_id": "<entry-specific workgroup id>",
-  "workgroup_kind": "document_verifier",
-  "status": "planned",
-  "documents": [
-    {
-      "id": "<each current registered document id>",
-      "path": "<actual path>",
-      "version": "<actual version>",
-      "sha256": "<actual registered SHA256>"
-    }
-  ],
-  "risk_tags": [],
-  "responsibility_dispositions": [
-    {
-      "responsibility_id": "DV-SPEC-CONSISTENCY",
-      "disposition": "assigned",
-      "trigger": "S5 mandatory independent dimension.",
-      "assignment_ids": [
-        "<spec assignment id>"
-      ],
-      "na_rationale": null,
-      "evidence_ref": null
-    },
-    {
-      "responsibility_id": "DV-TASK-EXECUTABILITY",
-      "disposition": "assigned",
-      "trigger": "S5 mandatory independent dimension.",
-      "assignment_ids": [
-        "<task assignment id>"
-      ],
-      "na_rationale": null,
-      "evidence_ref": null
-    }
-  ],
-  "assignments": [
-    {
-      "assignment_id": "<spec assignment id>",
-      "responsibility_id": "DV-SPEC-CONSISTENCY",
-      "role_family": "document-verifier",
-      "scope": [
-        "Review current specification-chain consistency."
-      ],
-      "agent_id": "<distinct spec engineering owner>",
-      "agent_definition_ref": ".claude/agents/document-verifier.md",
-      "skill_refs": [
-        "document-verification",
-        "specification-planning",
-        "api-contracts"
-      ],
-      "read_paths": [
-        "<actual current batch input paths>"
-      ],
-      "write_paths": [],
-      "output_paths": [],
-      "depends_on": [],
-      "reuse_decision": "create",
-      "grouping_rationale": "Different professional conclusions require independent contexts.",
-      "status": "planned",
-      "dispatch_mode": "plan_checkpoint",
-      "done_when": [
-        "Record the assigned professional conclusion and findings in its original private answer."
-      ]
-    },
-    {
-      "assignment_id": "<task assignment id>",
-      "responsibility_id": "DV-TASK-EXECUTABILITY",
-      "role_family": "document-verifier",
-      "scope": [
-        "Review executability of the complete current TASK batch."
-      ],
-      "agent_id": "<distinct task engineering owner>",
-      "agent_definition_ref": ".claude/agents/document-verifier.md",
-      "skill_refs": [
-        "document-verification",
-        "specification-planning",
-        "testing-strategy"
-      ],
-      "read_paths": [
-        "<actual current batch input paths>"
-      ],
-      "write_paths": [],
-      "output_paths": [],
-      "depends_on": [],
-      "reuse_decision": "create",
-      "grouping_rationale": "Different professional conclusions require independent contexts.",
-      "status": "planned",
-      "dispatch_mode": "plan_checkpoint",
-      "done_when": [
-        "Record the assigned professional conclusion and findings in its original private answer."
-      ]
-    }
-  ],
-  "separation_edges": [
-    {
-      "left_assignment_id": "<spec assignment id>",
-      "right_assignment_id": "<task assignment id>",
-      "reason": "independence"
-    }
-  ],
-  "planned_agent_count": 2,
-  "max_parallel_agents": 2,
-  "quantity_rationale": "Two independent document dimensions require two separate contexts.",
-  "validation": {
-    "result": "pass",
-    "missing_responsibilities": [],
-    "unresolved_conflicts": [],
-    "warnings": [],
-    "validated_at": "<current RFC3339 time>"
-  }
-}
-```
+当前材料缺失、漂移或入口未完成时，由 Main／系统按具体路径恢复原来源或原准备出口；不能用当前文件重新计算摘要刷新原承诺，不能让 agent 写补元数据脚本。普通读取和 Stop 不重新登记默认责任；重放准备保留原 manifest、原责任和本人答案，复用原发行。
 
-Main registers the completed file through original `runtime register-workgroup --root <Main> --manifest <file> --task-id <first S4 dispatch-plan TASK id>`. The original Main questionnaire preparation supplies exact views/answers; then use native Agent. Registration alone creates no native context.
+默认全批责任已经登记后，Main 不再编辑原 manifest 的 scope、risk、技能或 owner。实际项目风险的阅读重点可在原生任务中说明，仍覆盖原完整输入、不改变责任；Main 选择真正独立的两个平台上下文，工程 owner 标签无需更换。原 `stage-answer revise` 修订审查答案，不修订 manifest；`register-workgroup --revise-assignment` 的 canonical Builder 修订也不适用于 S5。不能教作者先改文件、再期待保存自动重签。
+
+误改清单时，由 Main 恢复原登记字节，再沿原发行／接收继续；没有原字节时准确报告来源恢复缺口，不能用新摘要覆盖。若实际材料或正式审查基线确需变化，由 Main 处理真实专业发现，沿原文档返工 TR-004 返回规划，修正后以新 S5 入口重新准备；不能为了换清单伪造负结论。旧完整 manifest DTO 与原 `runtime register-workgroup` 兼容入口保留，但不是新正常输入。错误中的 `https://vibe-coding.local/schemas/team-manifest.schema.json` 是内嵌标识，字段指针用于定位错误，不是要求下载的网络文档。
 
 ## Native boundary and frozen compatibility
 

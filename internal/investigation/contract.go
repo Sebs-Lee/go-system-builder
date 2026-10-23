@@ -16,7 +16,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
-const contractNextCommand = "runtime investigation contract approve --root . --case-id <case> --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>"
+const contractNextCommand = "continue the current original S8 Contract/decision application at its supplied path; authors give only actual professional decisions, while Main/system recovers existing binding and evidence internally"
 
 // ContractRequest carries the caller's Runtime CAS revision and the human or
 // orchestrator identity that approves a draft RepairContract. Approval is a
@@ -176,13 +176,13 @@ func ApproveContract(root, statePath, journalPath string, request ContractReques
 	// reported first so callers fix the Case/draft before pinning the
 	// approval receipt. Then validate the human-boundary receipt.
 	if approvalHash == "" {
-		return runtime.Snapshot{}, actionableContractError("approval_hash is required; pin the exact draft bytes reviewed by the approver")
+		return runtime.Snapshot{}, actionableContractError("approval_hash binding is missing; Main/system must recover the fixed presented draft and its original decision application; do not ask the author to calculate or copy a hash")
 	}
 	if approvalHash != sha256Hex(draftBytes) {
-		return runtime.Snapshot{}, actionableContractError("approval_hash does not match the draft on disk: pinned %s but draft is %s; re-read the draft and record the decision against the current bytes", approvalHash, sha256Hex(draftBytes))
+		return runtime.Snapshot{}, actionableContractError("approval_hash does not match the draft on disk: pinned %s but draft is %s; preserve the original decision and present the current fixed draft for a fresh actual decision; the system supplies its binding", approvalHash, sha256Hex(draftBytes))
 	}
 	if approvalEvidenceID == "" {
-		return runtime.Snapshot{}, actionableContractError("approval_evidence_id is required; cite valid human_decision evidence for this S8 approval")
+		return runtime.Snapshot{}, actionableContractError("approval_evidence_id binding is missing; Main/system must recover the original decision receipt; the author gives the actual choice in the supplied application without evidence registration")
 	}
 	var delegation map[string]any
 	if request.DelegationEvidenceID != "" {
@@ -486,7 +486,7 @@ func validateContractApprovalEvidence(root string, state map[string]any, approve
 			return nil
 		}
 	}
-	return fmt.Errorf("contract approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s; register the decision artifact with `runtime evidence add --kind human_decision --scope-ref %s` before approving the Contract", evidenceID, approvedBy, semanticScope, semanticScope)
+	return fmt.Errorf("contract approval evidence %q must be valid human_decision evidence produced by %q and scoped to %s; continue the original decision application with the actual human choice, and let Main/system recover its original evidence binding without authoring metadata or manual registration", evidenceID, approvedBy, semanticScope)
 }
 
 // validateContractApprovalArtifact binds JSON approval records to the Case,

@@ -47,6 +47,7 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 			continue
 		}
 		var manifest string
+		var manifestTeam map[string]any
 		for _, raw := range teams {
 			t, _ := raw.(map[string]any)
 			tEntry, eErr := integerField(t, "packet_stage_entry")
@@ -56,6 +57,7 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 			}
 			if t["id"] == a["team_id"] && t["kind"] == "document_verifier" && (t["status"] == "planned" || t["status"] == "active") {
 				manifest = stringValue(t["manifest_ref"])
+				manifestTeam = t
 			}
 		}
 		if manifest == "" {
@@ -67,6 +69,9 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 		}
 		data, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
+			return nil, err
+		}
+		if err := validateS5RegisteredManifestBytes(manifestTeam, data); err != nil {
 			return nil, err
 		}
 		var m struct {

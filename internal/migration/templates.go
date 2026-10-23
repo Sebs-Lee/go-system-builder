@@ -85,10 +85,11 @@ func ValidateTemplates(root string) error {
 		{
 			path: "docs/reports/review/REV-template.md",
 			required: []string{
-				// v4.2 findings-only design: the §0 envelope skeleton is the
-				// mandatory artifact; the markdown report is findings-only.
-				"document_review", "subject_refs", "conclusion",
-				"requested_event", "Findings",
+				// The professional record explains the actual issued answer.
+				// Complete evidence envelopes belong to the original consumer,
+				// not to an author-facing metadata copying tutorial.
+				"document_review", "answer.conclusion", "answer.findings",
+				"fix_required", "req_change_required", "SubagentStop",
 			},
 		},
 		{
@@ -104,7 +105,7 @@ func ValidateTemplates(root string) error {
 				// The E2E projection must keep the seven-field negative-CASE
 				// accounting and the cold-start digest binding discoverable.
 				"Real-Browser Flow Execution", "`persisted_effects`", "`recovery`",
-				"s7 workspace-digest", "capture_gaps",
+				"verification_artifact_digest", "capture_gaps",
 			},
 		},
 		{

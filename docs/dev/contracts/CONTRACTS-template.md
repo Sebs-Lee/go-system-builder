@@ -7,9 +7,7 @@
 > 版本：v0.1.0
 > PM / Architect：{name}
 > Contractor：{Contractor}
-> 锁定日期：YYYY-MM-DD
-
-> 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
+> 作者维护本合同的真实状态与专业版本；登记时间、摘要和锁定关联由原消费者记录到 Runtime documents[] 与 journal，不另填机器元数据。
 
 ## 文档链接
 
@@ -71,7 +69,7 @@
 
 ## Shared model baseline
 
-先阅读 [共享模型规则](../../rules/shared-model-contracts.md)，从 [模型入口](../../architecture/data-model/MODEL-{id}.md) 定位现有权威定义。先共同收敛数据与 SYNC，再派生 FE/BE；不得按 REQ 复制模型。
+先阅读 [共享模型规则](../../rules/shared-model-contracts.md)，直接引用项目实际权威定义；已有模型导航时可用其定位，不为本模板另建 MODEL 文档。先共同收敛数据与 SYNC，再派生 FE/BE；不得按 REQ 复制模型。
 
 | Operation | Slot | Schema | Consumers | Valid example | Structural negative |
 |:---|:---|:---|:---|:---|:---|

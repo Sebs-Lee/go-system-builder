@@ -142,6 +142,9 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 	if err != nil {
 		return fmt.Errorf("read packet manifest: %w", err)
 	}
+	if err := validateS5RegisteredManifestBytes(team, manifestData); err != nil {
+		return err
+	}
 	if workpacket.Digest(manifestData) != b.AssignmentSHA {
 		return fmt.Errorf("packet assignment manifest drifted")
 	}
@@ -168,4 +171,18 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 		}
 	}
 	return fmt.Errorf("packet responsibility is not assigned to this owner")
+}
+
+// New registrations retain the original manifest digest on their existing
+// team row, including the interval before any packet is issued. Old rows
+// without that fact keep their original packet pin; never backfill history
+// from today's bytes.
+func validateS5RegisteredManifestBytes(team map[string]any, data []byte) error {
+	if raw, present := team["manifest_sha256"]; present {
+		sha, ok := raw.(string)
+		if !ok || sha == "" || sha != workpacket.Digest(data) {
+			return fmt.Errorf("registered S5 manifest differs from its original registration: %s; restore the registered bytes, do not refresh its digest", stringValue(team["manifest_ref"]))
+		}
+	}
+	return nil
 }

@@ -223,9 +223,14 @@ func TestS6NativeAssignmentContextPlanBeginUsesCanonicalRecord(t *testing.T) {
 			t.Errorf("native PLAN template omitted professional question %s", question)
 		}
 	}
-	if contextView.PlanDraft["objective"] != nil || contextView.PlanDraft["dependencies"] != nil || contextView.PlanDraft["risks_blockers"] != nil ||
+	if contextView.PlanDraft["objective"] != nil || contextView.PlanDraft["risks_blockers"] != nil ||
 		len(contextView.PlanDraft["planned_paths"].([]any)) != 0 || len(contextView.PlanDraft["assertion_checks"].([]any)) != 0 {
 		t.Fatalf("machine projection supplied an unanswered professional judgment: %v", contextView.PlanDraft)
+	}
+	wantDependencies, _ := json.Marshal(append([]string{}, record.DependsOn...))
+	gotDependencies, _ := json.Marshal(contextView.PlanDraft["dependencies"])
+	if !bytes.Equal(gotDependencies, wantDependencies) || !strings.Contains(contextView.Questions["/dependencies"], "workgroup-local") {
+		t.Fatalf("native projection lost registered dependencies: %s; %v", gotDependencies, contextView.Questions)
 	}
 	planBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(contextView.PlanPath)))
 	if err != nil {

@@ -254,7 +254,10 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 	if err := validateHypothesisSubmissionBinding(snapshot.State, request); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	refsToValidate := evidenceRefs
+	refsToValidate, err := remainingS8AnswerEvidenceRefs(root, request.typedPacket, evidenceRefs)
+	if err != nil {
+		return runtime.Snapshot{}, err
+	}
 	if stringField(s8Map(s8Map(snapshot.State["review"])["investigation"])["observation_batch_id"]) == "" {
 		current, err := readCurrentInvestigationCase(root, snapshot.State)
 		if err != nil {
@@ -265,7 +268,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 			if err != nil {
 				return runtime.Snapshot{}, err
 			}
-			refsToValidate = withoutHumanSource(evidenceRefs, source)
+			refsToValidate = withoutHumanSource(refsToValidate, source)
 		}
 	}
 

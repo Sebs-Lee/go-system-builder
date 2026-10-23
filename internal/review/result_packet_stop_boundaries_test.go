@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
@@ -42,6 +44,9 @@ func TestIssuedResultPacketPreservesP0CaptureGapRejectionAndImmediateSeal(t *tes
 	answerPath := filepath.Join(root, filepath.FromSlash(packet.AnswerPath))
 	request := IssuedSubmitRequest{ExpectedRevision: -1, PacketID: packet.ID, AnswerPath: packet.AnswerPath, OwnerAgentID: packet.Binding.OwnerAgentID}
 	finding := codeInspectionFinding("finding-typed-p0", "claim-qa-1")
+	for i, ref := range finding.EvidenceRefs {
+		finding.EvidenceRefs[i] = strings.SplitN(ref, "#sha256=", 2)[0]
+	}
 	finding.Severity = "P0"
 	finding.Encounter.LastGoodCheckpoint = ""
 	finding.Encounter.CaptureGaps = nil
@@ -52,12 +57,34 @@ func TestIssuedResultPacketPreservesP0CaptureGapRejectionAndImmediateSeal(t *tes
 		t.Fatal(err)
 	}
 	answer := s7ProfessionalTestAnswer(t, original)
+	omitS7FindingMachineFields(t, answer)
 	packet.Draft.Answer, _ = json.Marshal(answer)
 	draft, _ := json.Marshal(packet.Draft)
 	if err := os.WriteFile(answerPath, draft, 0600); err != nil {
 		t.Fatal(err)
 	}
 	beforeState, beforeJournal := mustReadTestFile(t, statePath), mustReadTestFile(t, journalPath)
+	var wrongDraft map[string]json.RawMessage
+	if err := json.Unmarshal(draft, &wrongDraft); err != nil {
+		t.Fatal(err)
+	}
+	var wrongAnswer map[string]json.RawMessage
+	_ = json.Unmarshal(wrongDraft["answer"], &wrongAnswer)
+	var wrongFindings []map[string]json.RawMessage
+	_ = json.Unmarshal(wrongAnswer["findings"], &wrongFindings)
+	wrongFindings[0]["lens"] = json.RawMessage(`"delivery"`)
+	wrongAnswer["findings"], _ = json.Marshal(wrongFindings)
+	wrongDraft["answer"], _ = json.Marshal(wrongAnswer)
+	wrongBytes, _ := json.Marshal(wrongDraft)
+	if err := os.WriteFile(answerPath, wrongBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SubmitIssuedResult(root, statePath, journalPath, request); err == nil || !strings.Contains(err.Error(), "contradicts") {
+		t.Fatalf("automatic metadata silently corrected an explicit conflicting lens: %v", err)
+	}
+	if err := os.WriteFile(answerPath, draft, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := SubmitIssuedResult(root, statePath, journalPath, request); err == nil || !strings.Contains(err.Error(), "capture_gaps") {
 		t.Fatalf("typed P0 without capture gaps must reach original rejection: %v", err)
 	}
@@ -66,6 +93,7 @@ func TestIssuedResultPacketPreservesP0CaptureGapRejectionAndImmediateSeal(t *tes
 	}
 	finding.Encounter.CaptureGaps = []string{"stopped before touching the destructive path"}
 	answer["findings"], _ = json.Marshal([]Finding{finding})
+	omitS7FindingMachineFields(t, answer)
 	packet.Draft.Answer, _ = json.Marshal(answer)
 	draft, _ = json.Marshal(packet.Draft)
 	if err := os.WriteFile(answerPath, draft, 0600); err != nil {
@@ -92,6 +120,44 @@ func TestIssuedResultPacketPreservesP0CaptureGapRejectionAndImmediateSeal(t *tes
 	if err != nil || !found || receipt.ResultRef == "" {
 		t.Fatalf("P0 did not retain original accepted receipt: %+v found=%t err=%v", receipt, found, err)
 	}
+	generatedID := "finding-" + workpacket.Digest([]byte(packet.ID + "\n" + finding.ClaimID))[:32]
+	row := findFindingRow(accepted.State, generatedID)
+	var persisted Finding
+	if err := json.Unmarshal(mustReadTestFile(t, filepath.Join(root, filepath.FromSlash(stringField(row["path"])))), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.SchemaVersion != "1.0.0" || persisted.Lens != "qa" || persisted.FindingID != generatedID {
+		t.Fatalf("normal Finding omitted machine fields but original consumer did not bind them: %+v", persisted)
+	}
+	for _, ref := range persisted.EvidenceRefs {
+		if !strings.Contains(ref, "#sha256=") {
+			t.Fatalf("S7 handed S8 a bare path requiring author hash repair: %q", ref)
+		}
+		if err := evidence.ValidateFindingReference(root, ref); err != nil {
+			t.Fatalf("original accepted Finding source is not consumable by S8: %v", err)
+		}
+	}
+	stateBeforeReplay, journalBeforeReplay := mustReadTestFile(t, statePath), mustReadTestFile(t, journalPath)
+	if _, err := SubmitIssuedResult(root, statePath, journalPath, request); err != nil {
+		t.Fatalf("same authored Finding became a changed answer after machine adaptation: %v", err)
+	}
+	if !reflect.DeepEqual(stateBeforeReplay, mustReadTestFile(t, statePath)) || !reflect.DeepEqual(journalBeforeReplay, mustReadTestFile(t, journalPath)) || !reflect.DeepEqual(draft, mustReadTestFile(t, answerPath)) {
+		t.Fatal("same-answer Finding replay rewrote authority or author bytes")
+	}
+}
+
+func omitS7FindingMachineFields(t *testing.T, answer map[string]json.RawMessage) {
+	t.Helper()
+	var findings []map[string]json.RawMessage
+	if err := json.Unmarshal(answer["findings"], &findings); err != nil {
+		t.Fatal(err)
+	}
+	for _, finding := range findings {
+		for _, key := range []string{"schema_version", "finding_id", "lens"} {
+			delete(finding, key)
+		}
+	}
+	answer["findings"], _ = json.Marshal(findings)
 }
 
 func TestIssuedResultPacketPreservesSiteLostAssignmentBlocker(t *testing.T) {

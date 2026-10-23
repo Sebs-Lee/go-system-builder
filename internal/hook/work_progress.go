@@ -88,6 +88,10 @@ func progressAction(action string) bool {
 // Unknown observations reset the diagnostic count; loss of telemetry is never
 // evidence of stagnation. Wall time is descriptive, not a liveness deadline.
 func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) (*ProgressNotice, bool, bool, error) {
+	return observeWorkProgress(root, facts, event, 25*time.Millisecond)
+}
+
+func observeWorkProgress(root string, facts ProgressFacts, event ProgressEvent, lockBudget time.Duration) (*ProgressNotice, bool, bool, error) {
 	if facts.Binding == "" || facts.Owner == "" || facts.Session == "" || !facts.Known {
 		return nil, false, false, nil
 	}
@@ -105,7 +109,7 @@ func ObserveWorkProgress(root string, facts ProgressFacts, event ProgressEvent) 
 	if err := workpacket.CheckPath(root, lockRef); err != nil {
 		return nil, false, false, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), lockBudget)
 	defer cancel()
 	release, err := filelock.Acquire(ctx, filepath.Join(root, filepath.FromSlash(lockRef)))
 	if err != nil {

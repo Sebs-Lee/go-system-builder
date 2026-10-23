@@ -129,7 +129,7 @@ func validateCrossMatrix(source sourcePackage, root string) error {
 			}
 		}
 		if !storyRefPattern.MatchString(entry.Story) || !markdownHeadingContainsID(source.stories, entry.Story) {
-			return fmt.Errorf("cross-matrix %s references story %q missing from stories.md", cell, entry.Story)
+			return fmt.Errorf("cross-matrix %s references story %q missing from stories.md; use an S-NNN ID with exactly three digits and define it in a Markdown heading such as `### S-001: story title`; a table row alone is not a definition", cell, entry.Story)
 		}
 		coveredStories[entry.Story] = true
 		switch {

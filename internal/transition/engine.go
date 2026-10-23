@@ -18,6 +18,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/impact"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/repairpolicy"
 	"github.com/entroforge/go-system-builder/internal/review"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -174,8 +175,11 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 	if err := enforceForbiddenEvents(catalog, resolved.Spec, current); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateRequest(root, current, resolved.Spec, request, true); err != nil {
-		return loopruntime.Snapshot{}, err
+	endPreflight := metrics.Span(request.Context, "transition/preflight_validation")
+	preflightErr := validateRequest(root, current, resolved.Spec, request, true)
+	endPreflight()
+	if preflightErr != nil {
+		return loopruntime.Snapshot{}, preflightErr
 	}
 	fromCursor := cursor(currentState, currentPhase)
 	targetState := resolved.Spec.To
@@ -291,8 +295,11 @@ func Apply(root, statePath, journalPath string, request Request) (loopruntime.Sn
 					return err
 				}
 			}
-			if err := validateRequest(root, state, resolved.Spec, request); err != nil {
-				return err
+			endValidation := metrics.Span(request.Context, "transition/locked_validation")
+			validationErr := validateRequest(root, state, resolved.Spec, request)
+			endValidation()
+			if validationErr != nil {
+				return validationErr
 			}
 
 			// Human decisions authorize one committed transition only. Consume
@@ -907,7 +914,9 @@ func dispatchAction(name string, results []map[string]any, state map[string]any,
 		results[index]["detail"] = "Action is not registered."
 		return fmt.Errorf("transition %s action %s is not registered", ctx.Spec.ID, name)
 	}
+	endAction := metrics.Span(ctx.Request.Context, "transition/action/"+name)
 	result, err := action(state, ctx)
+	endAction()
 	results[index]["result"] = result.Status
 	results[index]["detail"] = result.Detail
 	if err != nil {

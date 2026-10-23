@@ -146,7 +146,13 @@ func runSavedEntryQuestionnaire(root string, request policy.Input, stdout, stder
 	if code != 0 {
 		return true, auditQuestionnaireFeedback(stdout, "S1 original binding/preparation result for "+path+": "+errors.String()+". Follow the actual recorded outcome above; real Git commits/branch setup are Main's ordinary work, not Hook actions.")
 	}
-	return true, auditQuestionnaireFeedback(stdout, "S1 binding recorded through original TR-001; current cursor planning.design (S2). No further binding command is required. "+stageAnswerLifecycleContext(root, request))
+	// Binding has prepared S2 in the new Runtime. Read that current projection;
+	// the incoming Post event and its old inactive context cannot select it.
+	latest, readErr := runtime.NewStore(filepath.Join(root, ".claude", "loop-state.json"), filepath.Join(root, ".claude", "loop-events.jsonl")).WithContext(contextForHook(request)).Snapshot()
+	if readErr != nil {
+		return true, auditQuestionnaireFeedback(stdout, "S1 binding recorded through original TR-001. Main/system must restore current S2 material access: "+readErr.Error()+". Do not resubmit the binding or copy Runtime metadata.")
+	}
+	return true, auditQuestionnaireFeedback(stdout, "S1 binding recorded through original TR-001; current cursor planning.design (S2). No further binding command is required. "+stageDesignQuestionnaireContext(root, latest))
 }
 
 // Entry questions reuse the original REQ document and a human-readable binding
@@ -296,6 +302,14 @@ func currentQuestionnaireLifecycleContextFromSnapshot(root string, request polic
 		return ""
 	}
 	if snapshot.State != nil {
+		if mainQuestionnaireViewer(request) && request.Event == "SessionStart" && s7BudgetGateRequired(snapshot.State, root) {
+			if _, err := prepareS7BudgetDecisionQuestionnaire(root, snapshot.State); err != nil {
+				return "S7 budget application preparation failed; Main/system restores the original decision source: " + err.Error()
+			}
+		}
+		if context := stageS7BudgetDecisionQuestionnaireContext(root, request, snapshot); context != "" {
+			return context
+		}
 		lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
 		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "planning" {
 			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {

@@ -433,3 +433,36 @@ func TestNativeMainReturnShowsOriginalS9CandidateWithoutPrivateAnswers(t *testin
 	}
 	repairDispatchAssertUnchanged(t, root, before)
 }
+
+func TestNativeS9MissingBriefDoesNotTurnAcceptedPlanIntoLegacyStartup(t *testing.T) {
+	root, _, packet, input, _ := nativeS9WorkerFixture(t)
+	input.Event = "SubagentStop"
+	var diagnostic bytes.Buffer
+	if handled, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || code != 0 {
+		t.Fatalf("native Stop: %t %d %s", handled, code, &diagnostic)
+	}
+	brief, _, _ := nativeS9Paths(packet)
+	if err := os.Remove(resolveRootPath(root, brief)); err != nil {
+		t.Fatal(err)
+	}
+	before := repairDispatchRuntimeBytes(t, root)
+	service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl")}
+	receipt, err := service.SaveRepairPlanReportFrom(contextForHook(input), packet.Binding.OwnerAgentID, filepath.Join(root, packet.AnswerPath), root, nil)
+	if err != nil || !receipt.Accepted || !strings.Contains(receipt.NextAction, "Main/系统恢复") || !strings.Contains(receipt.NextAction, filepath.Join(root, brief)) || strings.Contains(receipt.NextAction, "runtime workspace prepare") || strings.Contains(receipt.NextAction, "runtime workspace bind") {
+		t.Fatalf("missing native material became a legacy startup requirement: %+v %v", receipt, err)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+}
+
+func TestNativeS9MissingCurrentPacketDoesNotRequestLegacyExecutionChoice(t *testing.T) {
+	// Historical Plan facts alone are not a registered frozen execution.
+	// Packet-enabled normal reminders retain the original preparation owner.
+	root, _, path, _ := repairExecutionFixture(t, true)
+	snapshot := repairDispatchSnapshot(t, root)
+	before := repairDispatchRuntimeBytes(t, root)
+	got := stageRepairExecutionPrepareContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: root}, snapshot)
+	if !strings.Contains(got, path) || !strings.Contains(got, "Main/system must restore") || strings.Contains(got, "awaits check_location") || strings.Contains(got, "runtime workspace prepare") || strings.Contains(got, "runtime workspace bind") {
+		t.Fatalf("missing native material became another execution questionnaire/startup: %s", got)
+	}
+	repairDispatchAssertUnchanged(t, root, before)
+}

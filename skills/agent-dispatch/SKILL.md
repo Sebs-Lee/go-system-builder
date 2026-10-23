@@ -26,7 +26,7 @@ Choose the applicable stage path below, carry its exact references into native A
 
 ## Native S6 (s6-native-v1)
 
-Main runs `s6 prepare --root <Main> --task <TASK> --role <role>` and passes its exact brief to a native Agent with worktree isolation. Read actual TASK inputs, save the professional plan before implementation, continue implementation/self-checks, commit products and save Result. Return the exact brief and absolute Result. Stop invokes the original receiver; Main integrates separately. Rework uses `s6 prepare --revise-assignment <id> --revision-intent-key <stable-key>` through the original revision Writer.
+Main runs `s6 prepare --root <Main> --task <TASK> --role <role>` and passes its exact brief to a native Agent with worktree isolation. Optional `s6 status --capacity <total-slots> --advice` computes a batch recommendation; unknown capacity still exposes eligible TASKs and adds no capacity registration or prepare prerequisite. Read actual TASK inputs, save the professional plan before implementation, continue implementation/self-checks, commit products and save Result. Write only the supplied professional fields in the private Plan and Result; the receiver adds registered dependencies from the original Record, without author copying. Return the exact brief and absolute Result. Stop invokes the original receiver; Main integrates separately. Rework uses `s6 prepare --revise-assignment <id> --revision-intent-key <stable-key>` through the original revision Writer.
 
 ## Native S5 / S7 / S8
 

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/metrics"
+	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workspace"
@@ -25,8 +26,9 @@ import (
 // runS7Command is the `loop-harness s7` dispatcher: `status` is the
 // read-only board, `draft` scaffolds a ReviewPlan, `manifest-draft`
 // scaffolds the reviewer team-manifest for one plan Assignment, and
-// `workspace-digest` prints the current verification-artifact digest an
-// E2E cold-start ReviewResult must bind (L3-S7 §3.5).
+// `workspace-digest` is a compatibility/diagnostic read of the current
+// artifact digest. Normal original questionnaires bind it in the consumer;
+// authors do not run this command to fill machine fields.
 func runS7Command(args []string, stdout, stderr io.Writer) int {
 	if wantsHelp(args) {
 		name := compactHelpName(args)
@@ -139,8 +141,11 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 	}
 	if maxRounds > 0 && round >= maxRounds {
 		fmt.Fprintln(stdout, "budget: exhausted for opening another full S7 round")
-		fmt.Fprintln(stdout, "human decision required: increase_budget or return_to_governance")
-		fmt.Fprintln(stdout, "next: `loop-harness runtime s7-budget-decision --file <decision.json> --actor <user>`")
+		if context := stageS7BudgetDecisionQuestionnaireContext(root, policy.Input{}, snapshot); context != "" {
+			fmt.Fprintln(stdout, context)
+		} else {
+			fmt.Fprintln(stdout, "the current round may finish normally; a human budget decision is requested only when the original flow actually needs another full round, not merely because the counter reached its limit")
+		}
 	}
 	if cfg, ok := state["configuration"].(map[string]any); ok {
 		if repair, ok := cfg["repair"].(map[string]any); ok {

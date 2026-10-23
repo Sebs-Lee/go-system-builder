@@ -23,7 +23,7 @@ type repairDispatchChoice struct {
 	AssignmentID  string `json:"assignment_id"`
 	RoleFamily    string `json:"role_family"`
 	AgentID       string `json:"agent_id,omitempty"`
-	CheckLocation string `json:"check_location"`
+	CheckLocation string `json:"check_location,omitempty"`
 }
 
 func repairDispatchCurrent(state map[string]any) bool {

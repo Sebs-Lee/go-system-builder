@@ -58,7 +58,7 @@ func TestReceptionPriorityPreservesOriginalBoardAndRequiredSet(t *testing.T) {
 
 func TestReceptionUnknownCapacityThresholdAndCleanupAreSeparate(t *testing.T) {
 	b := receptionBoard()
-	if a := AdviseReception(b, nil, nil, nil); a.DispatchBudget != nil || len(a.RecommendedTasks) != 0 || a.Action.Kind != "declare_capacity" {
+	if a := AdviseReception(b, nil, nil, nil); a.DispatchBudget != nil || len(a.RecommendedTasks) != 0 || a.Action.Kind != "dispatch_ready" || a.Action.Subject != "" || len(a.Action.Argv) != 0 {
 		t.Fatal(a)
 	}
 	capacity, ceiling := 3, 1

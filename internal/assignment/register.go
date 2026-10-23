@@ -15,6 +15,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/checkexec"
 	"github.com/entroforge/go-system-builder/internal/dispatch"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/identity"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -26,6 +27,7 @@ import (
 )
 
 type Request struct {
+	Context            context.Context
 	ExpectedRevision   int
 	ManifestPath       string
 	TaskID             string
@@ -94,6 +96,14 @@ func RegisterWithReceipt(root, statePath, journalPath string, request Request) (
 }
 
 func registerWithReceipt(root, statePath, journalPath string, request Request, receiptOut **RevisionAcceptanceReceipt) (snapshot loopruntime.Snapshot, resultErr error) {
+	ctx := request.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = fileview.WithReadCache(ctx)
+	if err := ctx.Err(); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	wasReplay := false
 	defer func() {
 		if receiptOut == nil || request.Revision == nil || resultErr != nil {
@@ -107,7 +117,7 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 		*receiptOut = receipt
 	}()
 	if request.Revision != nil {
-		_, unlock, err := integration.LockWorkspace(context.Background(), root)
+		_, unlock, err := integration.LockWorkspace(ctx, root)
 		if err != nil {
 			return loopruntime.Snapshot{}, err
 		}
@@ -266,7 +276,7 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 	}
 	responsibilityIDs := assignedResponsibilities(value)
 
-	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{})
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	// Activation envelopes are staged while the mutation builds its candidate
 	// state. Keep their exact bytes' digests so a rejected Apply can remove only
 	// the files created by this attempt. Store.Update already protects the
@@ -429,7 +439,7 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 				"agent_ids":          agentIDs,
 				"review_round":       value.ReviewRound,
 			}
-			if loopruntime.PacketEnabled(state) && (value.WorkgroupKind == "investigator" || (value.WorkgroupKind == "builder" && request.RepairAssignmentID != "")) {
+			if loopruntime.PacketEnabled(state) && (value.WorkgroupKind == "document_verifier" || value.WorkgroupKind == "investigator" || (value.WorkgroupKind == "builder" && request.RepairAssignmentID != "")) {
 				teamRow["manifest_sha256"] = transition.SHA256(manifestData)
 			}
 			if loopruntime.PacketEnabled(state) && value.WorkgroupKind == "document_verifier" {

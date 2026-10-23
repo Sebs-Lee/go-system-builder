@@ -66,7 +66,7 @@ func nativeAnswer(t *testing.T, source string, r assignmentrecord.Record) {
 	t.Helper()
 	_, plan, result := assignmentrecord.NativePaths(r)
 	assertion, oracle := "The reviewed TASK delivery is implemented.", "Inspect the committed proof and run the TASK checks."
-	stageJSON(t, source, plan, map[string]any{"objective": "Implement the reviewed TASK and run real self-checks.", "planned_paths": []string{"src/pkg/proof.txt"}, "assertion_checks": []any{map[string]any{"assertion": assertion, "oracle": oracle, "done_when_indexes": []int{0}}}, "dependencies": []string{}, "risks_blockers": []string{}})
+	stageJSON(t, source, plan, map[string]any{"objective": "Implement the reviewed TASK and run real self-checks.", "planned_paths": []string{"src/pkg/proof.txt"}, "assertion_checks": []any{map[string]any{"assertion": assertion, "oracle": oracle, "done_when_indexes": []int{0}}}, "risks_blockers": []string{}})
 	stageJSON(t, source, result, map[string]any{"summary": "Implemented the reviewed change; go test ./src/pkg executed successfully.", "assertion_evidence": []any{map[string]any{"assertion": assertion, "oracle": oracle, "evidence_refs": []string{"src/pkg/proof.txt"}}}, "risks_blockers": []string{}, "scope_deviations": []string{}, "closing_assessment": map[string]any{"disposition": "complete", "conditions": []any{map[string]any{"done_when_index": 0, "judgment": "satisfied", "plan_assertion_indexes": []int{0}, "rationale": "The committed proof and actual TASK self-check cover this condition."}}}})
 }
 
@@ -188,7 +188,7 @@ func TestNativeS6ProfessionalFieldFeedbackTargetsOriginalSchema(t *testing.T) {
 	before := stageSnapshot(t, root)
 	text := filepath.Join(root, brief) + "\n" + filepath.Join(source, result)
 	code, output := nativeEvent(t, root, source, "SubagentStop", text, false)
-	if code != 2 || !strings.Contains(output, "professional Result fields") || !strings.Contains(output, "assertion_evidence/0") || strings.Contains(output, "closest to branch") {
+	if code != 2 || !strings.Contains(output, "professional Result fields") || !strings.Contains(output, filepath.Join(source, result)) || !strings.Contains(output, "assertion_evidence/0") || strings.Contains(output, "closest to branch") {
 		t.Fatalf("unhelpful professional feedback: %d %s", code, output)
 	}
 	if stageSnapshot(t, root).Revision != before.Revision {
@@ -218,6 +218,115 @@ func TestNativeS6ProfessionalFieldFeedbackTargetsOriginalSchema(t *testing.T) {
 	}
 	if stageSnapshot(t, root).Revision <= before.Revision {
 		t.Fatal("corrected native delivery was not received")
+	}
+}
+
+func TestNativeS6PlanAndResultKeepTheirOwnFields(t *testing.T) {
+	root, source, r := nativeDeliveryFixture(t)
+	brief, plan, result := assignmentrecord.NativePaths(r)
+	briefData, err := os.ReadFile(filepath.Join(root, brief))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Read the actual two professional shapes delivered by normal prepare,
+	// without constructing a machine envelope or looking up metadata.
+	for _, section := range []struct {
+		label, path string
+	}{{"Plan", plan}, {"Result", result}} {
+		_, tail, ok := strings.Cut(string(briefData), section.label+": "+section.path+"\n```json\n")
+		if !ok {
+			t.Fatalf("missing exact %s question in brief", section.label)
+		}
+		shape, _, _ := strings.Cut(tail, "\n```")
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(shape), &fields); err != nil {
+			t.Fatalf("%s shape: %v", section.label, err)
+		}
+		_, hasDependencies := fields["dependencies"]
+		if hasDependencies {
+			t.Fatalf("%s dependencies field = %t", section.label, hasDependencies)
+		}
+	}
+	_, resultInstructions, _ := strings.Cut(string(briefData), "Result: "+result)
+	if !strings.Contains(resultInstructions, "Result has no dependencies field") || strings.Contains(resultInstructions, "dependencies, risks_blockers and scope_deviations") {
+		t.Fatalf("Result instructions mix Plan fields: %s", resultInstructions)
+	}
+	nativeCommit(t, source)
+	before := stageSnapshot(t, root)
+	text := filepath.Join(root, brief) + "\n" + filepath.Join(source, result)
+	for _, invalid := range []struct{ label, path, field string }{{"Plan", plan, "runtime_id"}, {"Result", result, "dependencies"}} {
+		nativeAnswer(t, source, r)
+		data, err := os.ReadFile(filepath.Join(source, invalid.path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var answer map[string]any
+		if err := json.Unmarshal(data, &answer); err != nil {
+			t.Fatal(err)
+		}
+		answer[invalid.field] = []string{}
+		stageJSON(t, source, invalid.path, answer)
+		code, output := nativeEvent(t, root, source, "SubagentStop", text, false)
+		for _, want := range []string{"professional " + invalid.label, filepath.Join(source, invalid.path), "unsupported field \"" + invalid.field + "\""} {
+			if code != 2 || !strings.Contains(output, want) || strings.Contains(output, "machine field") {
+				t.Fatalf("missing precise field feedback %q: %d %s", want, code, output)
+			}
+		}
+		if stageSnapshot(t, root).Revision != before.Revision {
+			t.Fatal("invalid field changed Runtime")
+		}
+	}
+	// Old explicit dependency fields still use the original exact-set check.
+	nativeAnswer(t, source, r)
+	privateData, err := os.ReadFile(filepath.Join(source, plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var explicit map[string]any
+	if err := json.Unmarshal(privateData, &explicit); err != nil {
+		t.Fatal(err)
+	}
+	explicit["dependencies"] = []string{"TASK-not-a-registered-assignment"}
+	stageJSON(t, source, plan, explicit)
+	if _, output := nativeEvent(t, root, source, "SubagentStop", text, false); !strings.Contains(output, "dependencies differ from the canonical Assignment") {
+		t.Fatalf("wrong explicit dependency was not rejected: %s", output)
+	}
+	if stageSnapshot(t, root).Revision != before.Revision {
+		t.Fatal("wrong explicit dependency changed Runtime")
+	}
+	nativeAnswer(t, source, r)
+	if code, output := nativeEvent(t, root, source, "SubagentStop", text, false); code != 0 {
+		t.Fatalf("corrected original professional files: %d %s", code, output)
+	}
+	if stageSnapshot(t, root).Revision <= before.Revision {
+		t.Fatal("corrected professional files were not received")
+	}
+	privateData, err = os.ReadFile(filepath.Join(source, plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var privatePlan map[string]any
+	if err := json.Unmarshal(privateData, &privatePlan); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasDependencies := privatePlan["dependencies"]; hasDependencies {
+		t.Fatal("normal private answer copied system-owned dependencies")
+	}
+	canonicalRef := filepath.Join(filepath.Dir(plan), "plan-"+workpacket.Digest(privateData)+".json")
+	canonicalData, err := os.ReadFile(filepath.Join(root, canonicalRef))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical struct {
+		Dependencies []string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(canonicalData, &canonical); err != nil {
+		t.Fatal(err)
+	}
+	// Normal native prepare owns one TASK per workgroup; its TASK prerequisites
+	// are satisfied before registration, so the local Assignment set is empty.
+	if canonical.Dependencies == nil || len(canonical.Dependencies) != 0 || len(r.DependsOn) != 0 {
+		t.Fatalf("registered dependencies were not automatically bound: %#v / %#v", canonical.Dependencies, r.DependsOn)
 	}
 }
 
@@ -506,6 +615,24 @@ func TestNativeS6RecoveredGitDeliveryDoesNotNeedAuthoringCaches(t *testing.T) {
 	if _, err := workspace.Git(t.Context(), root, "worktree", "remove", "--force", source); err != nil {
 		t.Fatal(err)
 	}
+	beforeState := mustStageFile(t, filepath.Join(root, ".claude/loop-state.json"))
+	beforeJournal := mustStageFile(t, filepath.Join(root, ".claude/loop-events.jsonl"))
+	var missingOut, missingErr bytes.Buffer
+	code := cli.Run([]string{"runtime", "task-integrate", "--root", root, "--assignment-id", r.AssignmentID, "--agent-id", r.OwnerAgentID}, nil, &missingOut, &missingErr)
+	diagnostic := missingOut.String() + missingErr.String()
+	// task-integrate represents a normal domain blocker in its JSON result;
+	// its process exit code alone is not a completion verdict.
+	if code != 0 || !strings.Contains(missingOut.String(), `"blocked":true`) {
+		t.Fatalf("missing source was not returned as a preserved blocker: %d %s", code, diagnostic)
+	}
+	for _, want := range []string{source, strings.TrimSpace(head), strings.TrimSpace(branch), "Main restores", "do not recreate private answer caches"} {
+		if !strings.Contains(diagnostic, want) {
+			t.Fatalf("missing original source omitted recovery coordinate %q: %d %s", want, code, diagnostic)
+		}
+	}
+	if !bytes.Equal(beforeState, mustStageFile(t, filepath.Join(root, ".claude/loop-state.json"))) || !bytes.Equal(beforeJournal, mustStageFile(t, filepath.Join(root, ".claude/loop-events.jsonl"))) {
+		t.Fatal("missing source manufactured or changed a reception")
+	}
 	if _, err := workspace.Git(t.Context(), root, "worktree", "add", source, strings.TrimSpace(branch)); err != nil {
 		t.Fatal(err)
 	}
@@ -517,9 +644,9 @@ func TestNativeS6RecoveredGitDeliveryDoesNotNeedAuthoringCaches(t *testing.T) {
 			t.Fatalf("private authoring cache unexpectedly survived: %s %v", path, err)
 		}
 	}
-	var out, diagnostic bytes.Buffer
-	if code := cli.Run([]string{"runtime", "task-integrate", "--root", root, "--assignment-id", r.AssignmentID, "--agent-id", r.OwnerAgentID}, nil, &out, &diagnostic); code != 0 {
-		t.Fatalf("Main integration of recovered accepted source: %d %s %s", code, &out, &diagnostic)
+	var out, recoveredDiagnostic bytes.Buffer
+	if code := cli.Run([]string{"runtime", "task-integrate", "--root", root, "--assignment-id", r.AssignmentID, "--agent-id", r.OwnerAgentID}, nil, &out, &recoveredDiagnostic); code != 0 {
+		t.Fatalf("Main integration of recovered accepted source: %d %s %s", code, &out, &recoveredDiagnostic)
 	}
 	cp, found, err := integration.DefaultCheckpointStore().Load(assignmentrecord.IntegrationCheckpointPath(root, r.Reference()))
 	if err != nil || !found || cp.State != integration.StateComplete || cp.CanonicalMainFacts == nil || cp.VerifiedAt == "" {

@@ -355,7 +355,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 				return results, err
 			}
 			if result.Error != "" {
-				r.NextAction = "Main 恢复原 contract followup；无需重新提交专业判断。"
+				r.NextAction = "Main 恢复原 contract followup；无需重新提交专业判断。原因：" + result.Error
 			}
 			r.NextAction += preparation
 			r.WaitingOn = append(r.WaitingOn, preparationWaiting...)

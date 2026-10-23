@@ -373,7 +373,7 @@ func validateCompleteRepairResultAnswer(sources RepairPlanReportInputs, data []b
 			return prefix + "/assertion_id", "exact frozen assertion_id in source order", result.AssertionID
 		}
 		if strings.TrimSpace(result.ObservedRed) == "" {
-			return prefix + "/observed_red", "non-empty professional observation of the red condition", "empty"
+			return prefix + "/observed_red", "non-empty actual before-fix observation or unfinished-work reason", "empty"
 		}
 		if err := validateRepairResultRefs(result.EvidenceRefs, prefix+"/evidence_refs", true); err != nil {
 			return err.pointer, "unique non-empty evidence references", err.observed

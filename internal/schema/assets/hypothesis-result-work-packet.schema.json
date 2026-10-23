@@ -113,7 +113,7 @@
         "ref": {"type": "string", "minLength": 1, "maxLength": 4096},
         "origin": {"enum": ["hypothesis", "finding"]},
         "source_finding_id": {"type": "string", "pattern": "^finding-[A-Za-z0-9._-]+$"},
-        "attestation": {"enum": ["runtime_index", "execution_anchor"]},
+        "attestation": {"enum": ["runtime_index", "execution_anchor", "finding_source"]},
         "kind": {"type": "string", "minLength": 1},
         "path": {"$ref": "#/$defs/relative_ref"},
         "sha256": {"$ref": "#/$defs/sha256"},
@@ -131,6 +131,15 @@
         {
           "if": {"properties": {"attestation": {"const": "runtime_index"}}, "required": ["attestation"]},
           "then": {"required": ["kind", "path", "sha256", "status", "baseline_generation", "review_round"], "properties": {"invalidated_by": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"attestation": {"const": "finding_source"}}, "required": ["attestation"]},
+          "then": {
+            "properties": {"origin": {"const": "finding"}, "invalidated_by": {"type": "null"}},
+            "required": ["source_finding_id"],
+            "not": {"anyOf": [{"required": ["kind"]}, {"required": ["status"]}, {"required": ["baseline_generation"]}, {"required": ["review_round"]}]},
+            "dependentRequired": {"path": ["sha256"], "sha256": ["path"]}
+          }
         },
         {
           "if": {"properties": {"attestation": {"const": "execution_anchor"}}, "required": ["attestation"]},

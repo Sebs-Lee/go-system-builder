@@ -70,8 +70,9 @@ func TestMainPlanningReadCycleConsumesAcceptedS4FollowupAndClosesS5Inputs(t *tes
 
 func pendingMainFollowupContext(s *submission.Service, packetID string) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
-	s.Validator = cancelValidatedReception{CandidateValidator: s.Validator, packetID: packetID, cancel: cancel}
-	return ctx, cancel
+	// Interrupt after the original receipt is durable. Candidate validation
+	// runs before commit and correctly cannot manufacture an accepted answer.
+	return &cancelAfterDurableReception{Context: ctx, statePath: s.StatePath, packetID: packetID, cancel: cancel}, cancel
 }
 
 func assertReadCycleConsumesPlanningFollowup(t *testing.T, s *submission.Service, packetID, transitionID, fromPhase, toPhase string) runtime.Snapshot {

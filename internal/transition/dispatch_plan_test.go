@@ -161,10 +161,11 @@ func TestPacketS3TransitionConsumesAcceptedFacts(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		refs, err := acceptedContractArtifacts(state, ctx)
+		batch, err := acceptedContractArtifacts(state, ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
+		refs := batch.contracts
 		if len(refs) != 2 || refs[0].ID != "CONTRACTS-001" || refs[1].ID != "BE-001" || refs[1].Version != "v2" {
 			t.Fatalf("wrong received set: %+v", refs)
 		}

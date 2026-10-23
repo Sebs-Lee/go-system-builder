@@ -9,15 +9,14 @@
 > Module current truth: `docs/design/prototypes/{module}/` / N/A
 > Primary contract: {FE/BE/SYNC-id}
 > Closing Contract: TASK-{id}#closing-contract
-> Runtime ref: `{runtime-id}`
 > Execution: runtime owns assignment, owner, responsibility status and integration; do not fill them into this frozen TASK.
 
 ## 1. Objective
 
 {One testable objective and user-visible value.}
 
-<!-- 一句话测试：能用一句话说出本任务的交付物吗？说不成一句、或出现"以及/然后"——回去拆。
-builder 应能在单个上下文区间内完成本任务（中途 compact 丢任务信息是灾难性表现；按 §2/§4 的量感觉会撞，拆小或裁清单）。拆分纪律全文见 specification-planning step 11。 -->
+<!-- 用一句话解释本任务的交付目标，再按独立完成判据、责任和真实变更耦合判断是否拆分。
+结合 §2 读集、§4 写入范围及执行中的 compact/返工观察调查粒度；句式、文件数或一次 compact 不能单独决定拆分，也不能据此省略必要输入。拆分纪律全文见 specification-planning step 11。 -->
 
 ## 2. Document Manifest
 
@@ -75,9 +74,12 @@ authorize or deny individual tool calls by identity, path, or scope.
 
 ## 5. Selected Skills
 
+Record additional skills needed for this TASK's actual risk or responsibility.
+The original role and assignment supply default skills; do not repeat their
+metadata here. Remove the example row when no additional selection is needed.
+
 | Skill | Category | Source | Version | Applicability |
 |:---|:---|:---|:---|:---|
-| agent-dispatch | methodology | `.claude/skills/agent-dispatch/SKILL.md` | 1.0.0 | teammate dispatch (plan_checkpoint) |
 | {skill} | best-practice | `.claude/skills/{skill}/SKILL.md` | {version} | {risk/responsibility} |
 
 ## 6. Outputs And Evidence
@@ -109,12 +111,20 @@ evidence. Runtime owns the actual assignment and receipt references.
 
 ## 7. Closing Contract
 
+Cover observable behavior, this responsibility's own checks, its reviewed
+scope, and a usable handoff. Use as many assertions as the actual conditions
+need; the four examples below are not a line-count requirement. These are
+professional completion criteria, not commands executed by the checker.
+
 ```text
 assert {contract clause} == satisfied
 assert {verification command} == pass
-assert changed_paths subset_of activated_write_paths
-assert scope_deviations == []
+assert actual changes stay within the reviewed TASK and assigned write scope
+assert completion_result explains each condition and any actual scope deviation
 ```
+
+An actual deviation must be reported and resolved through the original scope
+and change process; reporting it alone does not authorize a wider scope.
 
 ## 8. Dependencies
 

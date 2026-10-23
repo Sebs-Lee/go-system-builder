@@ -92,7 +92,12 @@ func stageInvestigationLeadContractContext(root string, request policy.Input, sn
 			return fmt.Sprintf("S8 Main Contract questionnaire: %s. Original approval recorded Contract %s; S9 Session/Plan and Main division drafts are prepared. %s", path, stringValue(investigationPointer(next.State)["repair_contract_ref"]), repairLeadExistingQuestionnaires(root, prepared))
 		}
 	}
-	return "S8 Main Contract questionnaire: " + path + ". Final review draft: " + finalPath + "; SHA256=" + workpacket.Digest(finalBytes) + ". Wait for the actual human decision or an existing bounded delegation plus technical review matching these exact bytes. Main must not self-author a human decision. The next Main tool listener passes matching original evidence to the original approval transaction; saving alone does not authorize S9."
+	if repairLeadPreparationEvent(request.Event) {
+		if _, err := prepareInvestigationContractDecision(root, snapshot.State, finalBytes); err != nil {
+			return "S8 final review draft: " + finalPath + ". Original approval application preparation failed: " + err.Error()
+		}
+	}
+	return "S8 Main Contract questionnaire: " + path + ". Final review draft: " + finalPath + ". Wait for the actual human decision or an existing bounded delegation plus technical review matching these exact bytes. " + investigationContractDecisionContext(root, snapshot.State, finalBytes)
 }
 
 // Content-addressed original-schema drafts keep previously reviewed bytes
@@ -178,7 +183,10 @@ func runSavedInvestigationLeadContract(root string, request policy.Input, stdout
 	if err != nil || !bytes.Equal(actual, data) {
 		return feedback("S8 fixed review draft differs from its exact projected bytes; Main must recover that original draft. No approved or reviewed bytes were overwritten.")
 	}
-	return feedback("S8 professional Contract answer is projected once to final review draft " + finalPath + "; SHA256=" + workpacket.Digest(data) + ". Wait for a genuine matching decision or original bounded authorization/technical review. Save is not approval; repeated save does not write Runtime.")
+	if _, err := prepareInvestigationContractDecision(root, current.State, data); err != nil {
+		return feedback("Final review draft is fixed, but original approval application preparation failed: " + err.Error())
+	}
+	return feedback("S8 professional Contract answer is projected once to final review draft " + finalPath + ". Save is not approval; repeated save does not write Runtime. " + investigationContractDecisionContext(root, current.State, data))
 }
 
 // The selector reads only already registered original artifacts. It neither

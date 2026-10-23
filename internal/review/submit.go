@@ -2,10 +2,10 @@ package review
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"io"
 	"os"
 	"path/filepath"
@@ -244,7 +244,7 @@ func submitResult(
 		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult declares assignment_revision %d but the registered ReviewPlan is at assignment_revision %d; re-read the current plan before submitting", result.AssignmentRevision, ptr.Revision)
 	}
 	if digest := SubjectDigest(plan); result.SubjectDigest != digest {
-		return loopruntime.Snapshot{}, fmt.Errorf("subject_digest mismatch: the result binds %s but the frozen baseline digests to %s — copy the expected value from `loop-harness s7 status` (subject_digest line); a mismatch after copying means the frozen baseline drifted and the round is stale, not submittable", result.SubjectDigest, digest)
+		return loopruntime.Snapshot{}, fmt.Errorf("subject_digest mismatch: the result binds %s but the frozen baseline digests to %s; Main/system must restore the original issued binding or resolve baseline drift; the author does not copy or recompute machine fields", result.SubjectDigest, digest)
 	}
 
 	assignment := findPlanAssignment(plan, result.AssignmentID)
@@ -303,7 +303,7 @@ func submitResult(
 		// (verified live in the S7 round-4 sandbox review), so this is a
 		// plain rejection with the recovery path. Only frozen-subject
 		// drift stales the plan.
-		return loopruntime.Snapshot{}, fmt.Errorf("%w; recompute with `loop-harness s7 workspace-digest`, re-run the flows if the spec/fixture changed, then resubmit", err)
+		return loopruntime.Snapshot{}, fmt.Errorf("%w; restore the original artifact source or re-run affected flows after a real spec/fixture change; the original answer adapter binds the machine digest", err)
 	}
 
 	runtimeID, _ := current["runtime_id"].(string)
@@ -853,7 +853,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 					"S7_RESULT_EVIDENCE_REF",
 					fmt.Sprintf("%s evidence reference %q has no sha256 digest", owner, ref),
 					[]string{"a local path is mutable and cannot identify immutable evidence without a content digest"},
-					[]string{"append #sha256=<64 hex> or register the artifact as Runtime evidence and use runtime:<evidence-id>"},
+					[]string{"Main/system must restore the original answer adapter; the author selects path:<repo-relative-path>, and the original reception binds its content digest"},
 					"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 				)
 			}
@@ -881,7 +881,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 						"S7_RESULT_EVIDENCE_REF",
 						fmt.Sprintf("%s evidence reference %q has a digest mismatch", owner, ref),
 						[]string{fmt.Sprintf("got %s, want %s", got, wantDigest)},
-						[]string{"refresh the #sha256 suffix or register the artifact as Runtime evidence and use runtime:<evidence-id>"},
+						[]string{"restore the exact originally referenced file or use the original revision route for new evidence; do not refresh a frozen digest"},
 						"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 					)
 				}
@@ -905,7 +905,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 					"S7_RESULT_EVIDENCE_REF",
 					fmt.Sprintf("%s references runtime evidence %q, but that id is not registered", owner, evidenceID),
 					[]string{"runtime:" + evidenceID},
-					[]string{"register the artifact as Runtime evidence first, then use runtime:" + evidenceID + " in the result"},
+					[]string{"select an existing registered Runtime source or the actual local path in the original questionnaire; the system binds new local evidence without an author-built registration envelope"},
 					"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 				)
 			}
@@ -929,7 +929,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 			"S7_RESULT_EVIDENCE_REF",
 			fmt.Sprintf("%s evidence reference %q is not a valid typed ref and does not resolve to a registered Runtime evidence row", owner, ref),
 			[]string{"bare references are only accepted when they name a registered evidence id; this one matches no indexed row and carries no path:/runtime: prefix"},
-			[]string{"use path:<repo-relative-path>#sha256=<64 hex> for a local artifact, runtime:<evidence-id> for a registered Runtime evidence row, or register the artifact first with `runtime evidence add`"},
+			[]string{"use path:<repo-relative-path> for a real local artifact in the original questionnaire, or select an existing runtime:<evidence-id>; the answer adapter supplies machine metadata"},
 			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 		)
 	}
@@ -937,21 +937,7 @@ func validateEvidenceRefs(root string, state map[string]any, refs []string, owne
 }
 
 func parsePathEvidenceRef(ref string) (string, string, error) {
-	rel := strings.TrimPrefix(ref, "path:")
-	marker := "#sha256="
-	index := strings.Index(rel, marker)
-	if index < 0 {
-		return rel, "", nil
-	}
-	want := rel[index+len(marker):]
-	rel = rel[:index]
-	if len(want) != 64 {
-		return "", "", fmt.Errorf("#sha256 must contain exactly 64 hexadecimal characters")
-	}
-	if _, err := hex.DecodeString(want); err != nil {
-		return "", "", fmt.Errorf("#sha256 is not hexadecimal: %w", err)
-	}
-	return rel, want, nil
+	return evidence.ParsePathReference(ref)
 }
 
 func validateIndexedEvidence(root string, row map[string]any, ref, owner string) error {
@@ -963,7 +949,7 @@ func validateIndexedEvidence(root string, row map[string]any, ref, owner string)
 			"S7_RESULT_EVIDENCE_REF",
 			fmt.Sprintf("%s indexed evidence %q has an invalid path", owner, ref),
 			[]string{err.Error()},
-			[]string{"register evidence with a repository-contained regular file and its current sha256"},
+			[]string{"Main/system must restore the original registered evidence path and binding; the author does not fill SHA or repair Runtime metadata"},
 			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 		)
 	}
@@ -973,7 +959,7 @@ func validateIndexedEvidence(root string, row map[string]any, ref, owner string)
 			"S7_RESULT_EVIDENCE_REF",
 			fmt.Sprintf("%s indexed evidence %q cannot be read", owner, ref),
 			[]string{err.Error()},
-			[]string{"restore the registered artifact or register a fresh evidence row"},
+			[]string{"Main/system must restore the exact registered artifact; a genuinely new observation uses its real source through the original professional answer"},
 			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 		)
 	}
@@ -982,7 +968,7 @@ func validateIndexedEvidence(root string, row map[string]any, ref, owner string)
 			"S7_RESULT_EVIDENCE_REF",
 			fmt.Sprintf("%s indexed evidence %q has a digest mismatch", owner, ref),
 			[]string{fmt.Sprintf("got %s, want %s", sha256Of(data), want)},
-			[]string{"refresh the evidence registration or reference the current immutable artifact"},
+			[]string{"restore the exact original artifact or use the original revision route for a genuine new observation; do not refresh accepted evidence metadata"},
 			"runtime review-result submit --assignment-id <assignment-id> --result <result.json>",
 		)
 	}

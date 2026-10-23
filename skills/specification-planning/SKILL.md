@@ -11,12 +11,14 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 
 ## Entry Conditions
 - The Loop is in `planning` (phases advance design → contracts → tasks via PTR-PLAN-01/02 and TR-002).
-- The locked REQ is readable and its fingerprint matches the runtime baseline.
+- The current responsibility supplies the readable locked REQ. Original
+  preparation and consumers verify its baseline; authors do not look up,
+  compute or copy a Runtime fingerprint before starting professional work.
 
 ## Required Inputs
 | Input | Path / field | Why |
 |:---|:---|:--|
-| Locked REQ | runtime `bound_req.path` | source of acceptance criteria and scope |
+| Locked REQ | exact path in the supplied current view/brief | source of acceptance criteria and scope; no Runtime metadata lookup required |
 | Existing design | `docs/design/**` | reuse and conflict detection |
 | Design Foundation | `docs/design/DESIGN.md` **§0 Next-agent card first**, then `design-language.md` and the Surface row if needed | inherit interaction/visual constraints when UI impact is `changed`; do not invent brand from a library hex; Foundation does not replace architecture |
 | Derivation template | `docs/design/derivation/DERIVATION-template.md` | write `docs/design/derivation/REQ-<id>.md` before expanding HTML |
@@ -189,18 +191,19 @@ win.
     for the current packet workflow; packet-off legacy handling is below.
 11. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
-    Contract (§7 four assert lines), and obeys single-responsibility.
+    Contract (§7 observable behavior, own checks, scope and handoff conditions; use as many assertions as needed), and obeys single-responsibility.
     Never hand-copy fingerprints or versions — runtime documents[] owns
     them; §2 keeps read order only.
     **拆分纪律（builder 视角）**：用一句话给出交付目标，按独立验收、责任和真实变更耦合拆分；只有实际依赖共享实现产物的下游任务才声明 foundation TASK 依赖。每个任务的 §2 清单引用必要条款切片，并标明 required/conditional/optional 与条件。结合共享读集、同文件写入、依赖和执行中的 compact/返工观察判断粒度；字节数、文件数或一次 compact 不能自动决定拆分。调整已批准批次时走原规划/审查/失效路径，并保留合同覆盖与可执行依赖。
-    When indexing existing engineering choices, use the empty
-    `docs/rules/project-conventions-template.json` to author the optional
-    `docs/rules/project-conventions.json`. Reference the exact locked Rule or
-    originally registered locked architecture/decision, its source section,
-    hash/version, explicit path scope and exceptions. The default text must
-    exist in that source section; do not invent a new business decision in an
-    index. Examples are references to actual implementation/tests. New decisions
-    still need the original architecture/change-control path before indexing.
+    Reference actual locked Rules, architecture/ADR sections and applicable
+    professional defaults directly in the TASK, with their concrete scope and
+    exceptions. Do not create an index, copy registered source versions or
+    hashes, or make a new business decision merely to obtain analysis advice.
+    A previously recorded complete project-conventions index may be read by
+    the original resolver and frozen with the task context. Its source and
+    drift checks remain strict; it is not a normal S4 authoring obligation.
+    Absence of that optional historical index does not block ordinary authorized
+    engineering choices or change TASK coverage and gates.
 12. For S4, complete the TASK batch and current REQ index at the exact paths and
     templates supplied by the Hook. Mark each TASK document `complete` or
     `cancelled`; these document values do not change a work responsibility's
@@ -248,7 +251,7 @@ Do not copy metadata, create envelopes, issue/consume or manually recover.
 S3/S4 retain their existing questionnaires and professional duties. Read the
 supplied exact view/answer paths and concrete missing items, then save the
 professional answer through their original consumer; do not guess directories
-or duplicate an envelope. The compatibility envelope example below is not an
+or duplicate an envelope. The frozen packet-off recovery boundary below is not an
 S2 normal authoring obligation or a producer-name whitelist for S2.
 
 For S4, the Hook also supplies the current REQ index path, TASK candidate paths
@@ -260,56 +263,30 @@ recover a received answer; follow the precise missing items and next action in
 the Hook feedback. `complete/cancelled` apply to TASK documents, not the shared
 work-responsibility states.
 
-The manual envelope path below is only for packet-off legacy Runtime flows
-that have no current typed S2/S3/S4 Main packet. Do not use it to bypass or
-substitute for an issued packet.
+### Frozen packet-off planning recovery
 
-### Packet-off legacy evidence envelope
+An existing packet-off Runtime may retain its original planning envelopes and
+explicit evidence interface. This is maintenance of an already recorded
+compatibility flow, not an alternate normal authoring procedure. Preserve the
+original identity, source version, timestamp and registered bytes. Do not ask a
+new S2/S3/S4 author to assemble an envelope, copy Runtime/SHA values, choose an
+internal evidence ID or invent an `-r2` revision to repair preparation.
 
-Each legacy planning gate (design/contracts/tasks) requires its original
-JSON evidence envelope in addition to disk facts. Registering a Markdown report
-does not provide `conclusion` and fails with `evidence:<id>:schema`. Use the
-matching kind and responsibility in the template:
-
-```json
-{
-  "schema_version": "1.0.0",
-  "evidence_id": "planning-{design|contracts|tasks}-pass",
-  "kind": "planning_design | planning_contract | planning_task",
-  "runtime_id": "从 .claude/loop-state.json 顶部复制",
-  "baseline_generation": "{当前 baseline generation——数字，如 1}",
-  "producer_agent_id": "你的 agent id",
-  "producer_responsibility": "Architect（S2）/ Contract Planner（S3）/ Task Planner（S4）——gate 按此词白名单，逐字匹配",
-  "subject_refs": [],
-  "conclusion": "pass",
-  "created_at": "ISO 时间戳"
-}
-```
-
-此 legacy 模板可将 `subject_refs` 留空，且不写 `review_round`。将文件保存为
-`docs/reports/planning/{id}.json`；仅在 packet mode 关闭且不存在当前 typed packet
-时注册：
-
-```text
-.claude/bin/loop-harness runtime evidence add --id planning-design-pass   --kind planning_design --path docs/reports/planning/planning-design-pass.json   --produced-by <你的 agent id> --responsibility Architect
-```
-
-For S3/S4 substitute `--kind planning_contract --responsibility "Contract Planner"`
-or `--kind planning_task --responsibility "Task Planner"`, with IDs
-`planning-contracts-pass` or `planning-tasks-pass`. Reusing an ID is rejected,
-including an invalid prior entry; use an `-r2` suffix for a later legacy attempt.
-The missing tokens remain `evidence:planning_design_record`,
-`evidence:planning_contract_record`, and `evidence:planning_task_record`.
-`evidence:<id>:schema` means the envelope fields and registration do not match.
+When such a frozen record needs recovery, follow the actual original diagnostic
+and [runtime recovery reference](../runtime-recovery/references/runtime-recovery-reference.md).
+The system/maintainer resolves that recorded format through its compatible
+reader and original Writer. A current typed questionnaire is never bypassed;
+missing typed preparation is a system gap, not a request to fall back to a
+hand-filled legacy DTO.
 
 ## Outputs
 - Architecture and ADR records (with the depth self-review paragraph and
   the endorsed-N/A list) under `docs/design/`.
 - Design Derivation Note at `docs/design/derivation/REQ-<id>.md` when UI
   impact is `changed`.
-- Locked current module package when needed: a nine-file UI package when
-  UI changes, or a seven-file service behavior package when an FR-targeted
-  AC has no UI impact. The service package has no HTML, PATH, or browser spec;
+- Locked current module package when needed: five authored behavior sources
+  and the two original generated outputs, plus actual applicable UI assets
+  when UI changes. A service behavior package has no HTML, PATH, or browser spec;
   its CASEs remain in the S2→S7 denominator. Module packages are current truth,
   not per-REQ copies.
 - FE/BE/SYNC contracts with REQ and design traceability.

@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/entroforge/go-system-builder/internal/controlproof"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
@@ -316,6 +317,12 @@ func verifyHypothesisResultPacketSources(root string, state map[string]any, p wo
 		}
 	}
 	for _, ref := range p.Inputs.EvidenceRefs {
+		if ref.Attestation == "finding_source" {
+			if err := evidence.ValidateFindingReference(root, ref.Ref); err != nil {
+				return fmt.Errorf("S8 frozen Finding %s source %s: %w", ref.SourceFindingID, ref.Ref, err)
+			}
+			continue
+		}
 		if ref.Attestation != "runtime_index" {
 			continue
 		}

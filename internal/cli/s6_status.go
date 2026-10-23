@@ -61,19 +61,16 @@ func runS6Command(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "max-unreceived-results requires --advice and a nonnegative ceiling")
 		return 2
 	}
-	if *advice {
-		var declaredCapacity, ceiling *int
-		flags.Visit(func(f *flag.Flag) {
-			if f.Name == "capacity" {
-				declaredCapacity = capacity
-			}
-		})
-		if *maxUnreceived >= 0 {
-			ceiling = maxUnreceived
+	var declaredCapacity, ceiling *int
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "capacity" {
+			declaredCapacity = capacity
 		}
-		return runS6DispatchAdvice(*root, *capacity, declaredCapacity, ceiling, true, *asJSON, stdout, stderr)
+	})
+	if *maxUnreceived >= 0 {
+		ceiling = maxUnreceived
 	}
-	return runS6DispatchStatus(*root, *capacity, *asJSON, stdout, stderr)
+	return runS6DispatchAdvice(*root, *capacity, declaredCapacity, ceiling, *advice, *asJSON, stdout, stderr)
 }
 
 // runS6Status reads the current runtime state and prints the S6 batch
@@ -287,10 +284,6 @@ func s6ScopeDeviations(envelope map[string]any) []string {
 	return devs
 }
 
-func runS6DispatchStatus(root string, capacity int, asJSON bool, stdout, stderr io.Writer) int {
-	return runS6DispatchAdvice(root, capacity, nil, nil, false, asJSON, stdout, stderr)
-}
-
 func runS6DispatchAdvice(root string, capacity int, declaredCapacity, ceiling *int, includeAdvice, asJSON bool, stdout, stderr io.Writer) int {
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err != nil {
@@ -310,6 +303,16 @@ func runS6DispatchAdvice(root string, capacity int, declaredCapacity, ceiling *i
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	// Loading with zero slots preserves readiness without selecting a batch.
+	// Its exhausted-slot wording applies only to a known capacity, not an
+	// omitted optional recommendation input. This changes the view alone.
+	if declaredCapacity == nil {
+		for i := range b.Rows {
+			if b.Rows[i].Eligible && b.Rows[i].Reason == "available capacity exhausted" {
+				b.Rows[i].Reason = "eligible; batch recommendation not calculated (actual platform capacity unknown)"
+			}
+		}
 	}
 	// A separate explicit flag chooses advice; legacy status keeps its shape.
 	if includeAdvice {
@@ -338,7 +341,11 @@ func runS6DispatchAdvice(root string, capacity int, declaredCapacity, ceiling *i
 	for _, w := range b.Plan.Warnings {
 		fmt.Fprintln(stdout, "warning:", w)
 	}
-	fmt.Fprintf(stdout, "S6 dispatch plan: %s (runtime revision %v, total capacity %d)\n", b.Plan.Path, b.Revision, capacity)
+	capacityText := "unknown"
+	if declaredCapacity != nil {
+		capacityText = fmt.Sprint(*declaredCapacity)
+	}
+	fmt.Fprintf(stdout, "S6 dispatch plan: %s (runtime revision %v, total capacity %s)\n", b.Plan.Path, b.Revision, capacityText)
 	for _, r := range b.Rows {
 		mark := " "
 		if r.Integrated {
@@ -346,14 +353,18 @@ func runS6DispatchAdvice(root string, capacity int, declaredCapacity, ceiling *i
 		}
 		fmt.Fprintf(stdout, "W%d [%s] %s — %s: %s\n", r.Task.Wave, mark, r.Task.ID, r.State, r.Reason)
 	}
-	fmt.Fprintf(stdout, "Next batch: %v\n", b.Next)
+	if declaredCapacity == nil {
+		fmt.Fprintln(stdout, "Next batch: not calculated (actual platform capacity unknown)")
+	} else {
+		fmt.Fprintf(stdout, "Next batch: %v\n", b.Next)
+	}
 	if b.ReceptionAdvice != nil {
 		for _, line := range receptionAdviceText(*b.ReceptionAdvice) {
 			fmt.Fprintln(stdout, line)
 		}
 	}
-	if capacity == 0 {
-		fmt.Fprintln(stdout, "Declare actual platform capacity with --capacity to select a batch; no fixed default of 2.")
+	if declaredCapacity == nil {
+		fmt.Fprintln(stdout, "Main may choose an eligible TASK and use the original s6 prepare readiness checks. Optional --capacity supplies total slots for a batch recommendation; it is not a registration, permission or prepare prerequisite.")
 	}
 	return 0
 }

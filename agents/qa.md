@@ -1,8 +1,6 @@
 ---
 name: qa
 description: Review one code quality, testing, security, performance, reliability, architecture, or migration responsibility after dispatch (plan_checkpoint by default)
-tools: Read, Glob, Grep, Bash, Write, Skill
-disallowedTools: Edit, WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:

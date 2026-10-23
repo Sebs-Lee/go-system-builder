@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/identity"
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
@@ -102,7 +103,8 @@ func (finding *HypothesisResultFinding) UnmarshalJSON(data []byte) error {
 // Runtime-index metadata is copied from the original evidence entry and must
 // still be reverified against the current Runtime and physical bytes by the
 // S8 consumer. Execution anchors intentionally carry no fabricated file
-// hash or index metadata.
+// hash or index metadata. Typed Finding sources retain their original Finding
+// binding and declared content tuple; observations never gain fabricated bytes.
 type HypothesisEvidenceRef struct {
 	Ref                string  `json:"ref"`
 	Origin             string  `json:"origin"`
@@ -571,6 +573,16 @@ func validateHypothesisEvidenceRefs(binding HypothesisResultBinding, question Hy
 			return fmt.Errorf("S8 EvidenceRef tuple %d is duplicated", i)
 		}
 		seen[key] = true
+		if ref.Attestation == "finding_source" {
+			source, typed, err := evidence.ParseFindingReference(ref.Ref)
+			if err != nil || !typed || ref.Origin != "finding" || ref.SourceFindingID == "" || ref.Path != source.Path || ref.SHA256 != source.SHA256 || ref.Kind != "" || ref.Status != "" || ref.BaselineGeneration != nil || ref.ReviewRound != nil || ref.InvalidatedBy != nil {
+				return fmt.Errorf("S8 Finding source %q must preserve its original type, Finding binding and content tuple without fabricated index metadata", ref.Ref)
+			}
+			continue
+		}
+		if _, typed, err := evidence.ParseFindingReference(ref.Ref); ref.Origin == "finding" && (typed || err != nil) {
+			return fmt.Errorf("S8 typed Finding source %q requires its original finding_source attestation, not an index alias", ref.Ref)
+		}
 		if strings.Contains(ref.Ref, "://") {
 			if ref.Attestation != "execution_anchor" || ref.Kind != "" || ref.Path != "" || ref.SHA256 != "" || ref.Status != "" || ref.BaselineGeneration != nil || ref.ReviewRound != nil || ref.InvalidatedBy != nil {
 				return fmt.Errorf("S8 execution anchor %q has fabricated Runtime index or content-hash metadata", ref.Ref)

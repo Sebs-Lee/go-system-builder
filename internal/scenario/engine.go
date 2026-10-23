@@ -348,16 +348,16 @@ func validateBranch(branch Branch, rule Rule, partitions map[string]map[string]s
 		return fmt.Errorf("references unknown fixture %q", branch.FixtureID)
 	}
 	if len(branch.StoryRefs) == 0 || len(branch.FlowRefs) == 0 {
-		return fmt.Errorf("story_refs and flow_refs must not be empty — story_refs needs at least one S-NNN (exactly three digits) and flow_refs needs at least one F-NNN and one PATH-* entry")
+		return fmt.Errorf("story_refs and flow_refs must not be empty — cite a defined S-NNN Story and F-NNN operation flow or PATH-* journey; S/F IDs use exactly three digits, and browser-required branches also need a PATH-* entry")
 	}
 	for _, ref := range branch.StoryRefs {
 		if !storyRefPattern.MatchString(ref) || !markdownHeadingContainsID(stories, ref) {
-			return fmt.Errorf("story reference %q is missing from stories.md", ref)
+			return fmt.Errorf("story reference %q is missing from stories.md; use an S-NNN ID with exactly three digits and define it in a Markdown heading, for example `### S-001: story title`; a directory table or metadata row alone is not a definition", ref)
 		}
 	}
 	for _, ref := range branch.FlowRefs {
 		if !flowRefPattern.MatchString(ref) || !markdownHeadingContainsID(flows, ref) {
-			return fmt.Errorf("flow reference %q is missing from flows.md", ref)
+			return fmt.Errorf("flow reference %q is missing from flows.md; define the referenced ID in a Markdown heading, for example `### F-001: operation flow` or `### PATH-CREATE: browser journey`; F-NNN uses exactly three digits, and a directory table alone is not a definition", ref)
 		}
 	}
 	if branch.BrowserRequired && !hasPathReference(branch.FlowRefs) {

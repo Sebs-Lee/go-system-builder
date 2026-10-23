@@ -102,14 +102,16 @@ func (s *Service) SaveRepairPlanReportFrom(ctx context.Context, owner, path, sou
 		return receipt, err
 	}
 	receipt.NextAction = "本人 S9 PlanReport 已记录；原生 Builder 继续原专业修复、自检并返回实际工作树中的 Result，由 Stop 接收。Main 单独完成原集成与必要检查，无需重复提交 Plan 或分工卷；已冻结旧执行保留原恢复路径。"
-	// A frozen pre-migration Plan has no prepared native brief. Preserve its
-	// original workspace recovery instead of redirecting it into a new Agent.
+	// Only an actual existing frozen execution keeps workspace recovery.
+	// A missing native brief is a preparation gap, never legacy authority.
+	workspaceState, _ := next.State["workspace"].(map[string]any)
+	executions, _ := workspaceState["executions"].(map[string]any)
+	execution, _ := executions[packet.Binding.ManifestAssignmentID].(map[string]any)
 	brief := filepath.Join(s.Root, filepath.Dir(packet.ViewPath), packet.ID, "native", "brief.md")
-	if _, err := os.Stat(brief); err != nil {
-		receipt.NextAction = fmt.Sprintf("本人 S9 PlanReport 已记录；Main 正常准备实际工作位置：runtime workspace prepare --root %q --assignment %q --agent %q --check-location main。受支持宿主需要 Worker 隔离检查时可选择 --check-location worker。准备完成后提供本人的准确 RepairResult 卷，无需重复提交 Plan 或分工卷。", s.Root, packet.Binding.ManifestAssignmentID, owner)
-		if next.State["workspace"] == nil {
-			receipt.NextAction = fmt.Sprintf("Main 先执行 runtime workspace bind --root %q；", s.Root) + receipt.NextAction
-		}
+	if len(execution) > 0 && execution["purpose"] != "native_delivery" {
+		receipt.NextAction = fmt.Sprintf("本人 S9 PlanReport 已记录；Main 保留已登记旧执行的原恢复位置：runtime workspace prepare --root %q --assignment %q --agent %q --check-location %s。准备完成后提供本人的准确 RepairResult 卷，无需重复提交 Plan 或分工卷。", s.Root, packet.Binding.ManifestAssignmentID, owner, execution["check_location"])
+	} else if _, err := os.Stat(brief); err != nil {
+		receipt.NextAction += fmt.Sprintf(" 原生简报 %s 暂不可读，由 Main/系统恢复该原准备资料；不转为旧 workspace startup，不重填已接收 Plan。", brief)
 	}
 	return receipt, nil
 }

@@ -167,7 +167,7 @@ func AdviseReception(board Board, pending []Reception, capacity *int, maxUnrecei
 	} else if len(out.RecommendedTasks) > 0 {
 		out.Action = ReceptionAction{Kind: "dispatch_ready", Subject: out.RecommendedTasks[0], Owner: "main", Reason: "choose original eligible TASK and perform its existing registration checks"}
 	} else if capacity == nil && len(out.EligibleTasks) > 0 {
-		out.Action = ReceptionAction{Kind: "declare_capacity", Owner: "main", Reason: "declare actual platform capacity before recommending a dispatch count"}
+		out.Action = ReceptionAction{Kind: "dispatch_ready", Owner: "main", Reason: "choose eligible TASKs via original s6 prepare; capacity is optional"}
 	} else {
 		out.Action = ReceptionAction{Kind: "wait_or_observe", Owner: "main", Reason: "no current receivable result or selected dispatch slot"}
 	}

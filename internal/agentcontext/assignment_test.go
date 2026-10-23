@@ -90,8 +90,11 @@ func TestAssignmentRecordProjectionAndThinPlanTemplate(t *testing.T) {
 	if plan["assignment_record_contract"] != assignmentrecord.AssignmentRecordContract || plan["assignment_record_sha256"] != projected.AssignmentRecordSHA256 || plan["assignment_revision"] != record.Revision {
 		t.Fatalf("PLAN did not bind the actual Record revision/digest: %#v", plan)
 	}
-	if plan["objective"] != nil || len(plan["planned_paths"].([]string)) != 0 || len(plan["assertion_checks"].([]any)) != 0 || plan["dependencies"] != nil || plan["risks_blockers"] != nil {
+	if plan["objective"] != nil || len(plan["planned_paths"].([]string)) != 0 || len(plan["assertion_checks"].([]any)) != 0 || plan["risks_blockers"] != nil {
 		t.Fatalf("professional PLAN answers were prefilled: %#v", plan)
+	}
+	if !reflect.DeepEqual(plan["dependencies"], record.DependsOn) || !strings.Contains(questions["/dependencies"], `workgroup-local`) || !strings.Contains(questions["/dependencies"], `assignment-prerequisite`) {
+		t.Fatalf("known registered dependencies were left to guessing: %#v %#v", plan, questions)
 	}
 	if _, exists := plan["steps"]; exists {
 		t.Fatal("v1.2 PLAN template must not ask for the generic steps field")
@@ -100,7 +103,7 @@ func TestAssignmentRecordProjectionAndThinPlanTemplate(t *testing.T) {
 		t.Fatalf("v1.2 questions should cover only the five professional fields: %#v", questions)
 	}
 	if _, exists := questions["/dependencies"]; !exists {
-		t.Fatal("the professional dependency answer is still required")
+		t.Fatal("the registered dependency field still needs its meaning explained")
 	}
 
 	encoded, err := json.Marshal(projected)

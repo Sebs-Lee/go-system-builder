@@ -536,7 +536,7 @@ func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPoi
 		return err
 	}
 	if result.VerificationArtifactDigest == nil || *result.VerificationArtifactDigest == "" {
-		return fmt.Errorf("E2E results on a cold-start workspace must bind verification_artifact_digest; compute it with `loop-harness s7 workspace-digest` after the spec/fixture write")
+		return fmt.Errorf("E2E result is missing its system-bound verification_artifact_digest; Main/system must restore the original answer adapter against the actual execution workspace, without asking the author to calculate a digest")
 	}
 	if *result.VerificationArtifactDigest != digest {
 		return fmt.Errorf("verification artifact digest mismatch: result binds %s but the workspace now digests to %s; re-run the flows against the current spec before submitting", *result.VerificationArtifactDigest, digest)
@@ -555,7 +555,7 @@ func verifyRegressionAssetFingerprints(root string, plan *Plan) error {
 				"S7_E2E_ASSET_FINGERPRINT",
 				fmt.Sprintf("E2E asset %s is outside the repository", asset.AssetID),
 				[]string{err.Error()},
-				[]string{"use the exact repository-relative CASE/PATH file and regenerate its sha256"},
+				[]string{"select the exact repository-relative CASE/PATH file in the original plan; the plan consumer binds its fingerprint"},
 				"runtime review-plan --file plan.json",
 			)
 		}

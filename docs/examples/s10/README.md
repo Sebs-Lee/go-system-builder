@@ -44,19 +44,19 @@ S10 completion hands off to S11 for the real human decision; it does not approve
 No actual counterevidence or risks to report? Keep `counterevidence: []` and
 `risks: []`. The same observation can be written once in the existing coverage
 row's `oracle`; do not duplicate it just to fill `counterevidence`.
-If you actually use these arrays, their entries are objects, not strings:
+If you actually use these arrays, their entries are objects, not strings.
+Only professional content is needed below. The prepared coverage rows already
+carry identities and source associations; do not invent `id` or copy `inventory_id` to
+make an optional entry acceptable. Those fields are not reception requirements.
 
 ```json
 {
   "counterevidence": [{
-    "id": "example-counter",
-    "inventory_id": "example-system-row",
     "question": "Does the existing restart observation contradict the conclusion?",
     "evidence_refs": [],
     "outcome": "unknown"
   }],
   "risks": [{
-    "id": "example-risk",
     "severity": "P2",
     "impact": "Rollback instructions do not yet cover the changed data; the release owner must resolve this before release.",
     "owner": "actual release owner",
@@ -66,6 +66,6 @@ If you actually use these arrays, their entries are objects, not strings:
 }
 ```
 
-Use real content only. These example IDs and responsibilities are not assignments.
+Use real content only. The example responsibility is not an assignment.
 `tracking_ref` and `recovery_point` may remain empty; do not invent tickets or
 recovery evidence. This excerpt adds no required rows or professional duties.

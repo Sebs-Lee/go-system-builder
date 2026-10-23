@@ -5,9 +5,7 @@
 > 版本：v0.1.0
 > 前端合同：FE-{id}
 > 后端合同：BE-{id}
-> 锁定日期：YYYY-MM-DD
-
-> 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
+> 作者维护本合同的真实状态与专业版本；登记时间、摘要和锁定关联由原消费者记录到 Runtime documents[] 与 journal，不另填机器元数据。
 
 ## Shared model inputs
 
@@ -46,7 +44,9 @@
 
 | REQ source_ref | Rule / CASE | Story / PATH | Spec | contract assertion | Evidence |
 |:---|:---|:---|:---|:---|:---|
-| REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | {wire shape, error, idempotency and state assertion} | REV/QA/E2E round {n} |
+| REQ-{id}/FR-{id} | BR-{id} / CASE-{id} | S-{id} / F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | {wire shape, error, idempotency and state assertion} | 后续 REV/QA/E2E 责任在实际报告中回链 |
+
+S3 声明验证要求与责任，不填写未来报告的轮次、时间或执行结果。
 
 ### 操作与数据投影
 

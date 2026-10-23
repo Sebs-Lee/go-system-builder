@@ -30,7 +30,8 @@ type stageContract struct {
 const PrimarySkillS7 = "loop-orchestration"
 
 var projectionContracts = map[string]stageContract{
-	"S0":                 {"produce one human-locked requirement (draft via requirement-funnel; binding is the S1 action)", []string{"docs/requirements/"}, []string{"human_locked_req"}, []string{"a locked REQ exists in docs/requirements/ — `req bind` (S1) initializes the runtime and fingerprints it"}},
+	"S0":                 {"produce one human-locked requirement (draft via requirement-funnel; binding is the S1 action)", []string{"docs/requirements/"}, []string{"human_locked_req"}, []string{"the current requirement is complete and the human's actual lock of that version is recorded"}},
+	"S1":                 {"bind the selected locked requirement using the actual startup decision and explicit project branch destinations", []string{"docs/requirements/", "docs/control/agent-protocol.md#s1"}, []string{"current_binding_choices"}, []string{"the original TR-001 records the selected committed requirement, actual startup decision and branch destinations, and supplies the current S2 responsibility"}},
 	"S2":                 {"complete architecture and any required UI design package", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/rules/"}, []string{"architecture_record"}, []string{"architecture decisions cover the contract boundary", "any UI-impacting module has a complete target design package"}},
 	"S3":                 {"complete the development contract set", []string{"bound REQ", projectlayout.Architecture + "/", "docs/design/", "docs/dev/contracts/"}, []string{"locked_contract_set"}, []string{"the current bound REQ applicable locked contract batch and shared sources are accepted"}},
 	"S4":                 {"complete an executable TASK batch", []string{"bound REQ", "docs/dev/contracts/", "docs/dev/tasks/"}, []string{"complete_task_batch"}, []string{"the complete current TASK batch is accepted, with clause coverage and executable dependencies"}},
@@ -85,7 +86,7 @@ func buildStatusProjection(state map[string]any, stage, lifecycle string, phase 
 		RuntimeID: state["runtime_id"], Revision: state["revision"], BoundREQ: state["bound_req"],
 		Stage: stage, Lifecycle: lifecycle, Phase: phase, Objective: contract.Objective,
 		Completed: completedStages(stage), OpenItems: contract.Missing,
-		ActiveWork: activeRuntimeWork(state), HumanGateway: projectedGateway(state, stage),
+		ActiveWork: activeRuntimeWork(state), HumanGateway: projectedGateway(state, stage, root),
 	}
 	if record, ok := projectedChange(state); ok {
 		summary := change.Summarize(record)
@@ -126,7 +127,7 @@ func buildNextProjection(state map[string]any, stage, skill, action, root string
 		projection.Missing = changeOpenItems(record)
 		projection.DoneWhen = []string{"all Change Record work items are done", "all required checks are passed or evidence-backed N/A"}
 	}
-	applyS7BudgetGateway(&projection, state)
+	applyS7BudgetGateway(&projection, state, root)
 	return projection
 }
 
@@ -387,6 +388,7 @@ func protocolReference(stage string) string {
 func completedStages(stage string) []string {
 	known := map[string][]string{
 		"S0":      {},
+		"S1":      {"S0"},
 		"S2":      {"S0", "S1"},
 		"S3":      {"S0", "S1", "S2"},
 		"S4":      {"S0", "S1", "S2", "S3"},
@@ -437,24 +439,23 @@ func stringValue(value any) string {
 	return text
 }
 
-func projectedGateway(state map[string]any, stage string) any {
-	if s7BudgetGateRequired(state) {
+func projectedGateway(state map[string]any, stage string, roots ...string) any {
+	if s7BudgetGateRequired(state, roots...) {
 		return map[string]any{
-			"type":             "s7_budget_gateway",
-			"human_required":   true,
-			"decision_command": "loop-harness runtime s7-budget-decision --file <decision.json> --actor <user>",
-			"decisions":        []string{"increase_budget", "return_to_governance"},
-			"guidance":         "the current S7 round may finish, but no new full review round opens until the human decision is recorded",
+			"type":            "s7_budget_gateway",
+			"human_required":  true,
+			"decision_fields": []string{"decision", "new_max_full_review_rounds (only an actual increase)", "reason"},
+			"decisions":       []string{"increase_budget", "return_to_governance"},
+			"guidance":        "Use the exact prepared original budget application. Main records only the human's actual decision and reason, plus a genuinely higher maximum for increase_budget; save to invoke the original Writer and fixed successor. Do not copy Runtime metadata, author evidence or supply an actor command. An empty choice does not authorize another round.",
 		}
 	}
 	switch lifecycleState(state) {
 	case "awaiting_human_release":
 		return map[string]any{
-			"type":             "human_release_gateway",
-			"human_required":   true,
-			"decision_command": "loop-harness runtime human-decision --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> --actor <user|orchestrator> --decision-evidence <ref>",
-			"dispositions":     []string{"approve", "defer", "reject_defect", "reject_acceptance", "reject_release_audit", "abort"},
-			"finding_evidence": "--finding-evidence <ref> is required for reject_defect",
+			"type":           "human_release_gateway",
+			"human_required": true,
+			"dispositions":   []string{"approve", "defer", "reject_defect", "reject_acceptance", "reject_release_audit", "abort"},
+			"guidance":       "Read the current S10 materials and exact application path supplied by the original stage entry. After the human explicitly chooses, Main fills only disposition and optional reason and saves that application; the original Writer records and consumes the decision and follows its fixed exit. Empty disposition keeps waiting. System metadata and evidence registration are automatic; reject_defect hands the actual human problem to S8 without requiring a Finding. Approval records authorization and does not publish or deploy.",
 		}
 	case "release_authorized":
 		return map[string]any{

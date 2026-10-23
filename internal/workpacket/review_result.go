@@ -237,9 +237,6 @@ func ValidateReviewResultAnswer(packet ReviewResultPacket, data []byte) (json.Ra
 	if err := ValidateUniqueJSON(data); err != nil {
 		return issue("/", "unique JSON keys", err.Error())
 	}
-	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s7.schema.json", data); err != nil {
-		return issue("/", "registered closed S7 ReviewResult answer", err.Error())
-	}
 	var draft ReviewResultDraft
 	if err := decodeOneStrictJSON(data, &draft); err != nil {
 		return issue("/", "one closed S7 ReviewResult questionnaire", err.Error())
@@ -257,10 +254,79 @@ func ValidateReviewResultAnswer(packet ReviewResultPacket, data []byte) (json.Ra
 	if err != nil {
 		return issue("/answer", "one JSON answer object", err.Error())
 	}
+	canonicalAnswer, err = bindReviewFindingMetadata(packet, canonicalAnswer)
+	if err != nil {
+		return issue("/answer/findings", "Findings for the original assigned Claims", err.Error())
+	}
+	// Validate the same original closed persisted shape after binding only
+	// omitted machine fields. The author file and frozen questions stay intact.
+	validated := expected.Draft
+	validated.Answer = canonicalAnswer
+	validatedBytes, err := json.Marshal(validated)
+	if err != nil {
+		return issue("/answer", "valid professional JSON", err.Error())
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s7.schema.json", validatedBytes); err != nil {
+		return issue("/", "registered closed S7 ReviewResult answer", err.Error())
+	}
 	if pointer, expected, observed := validateCompleteReviewResultAnswer(packet.Binding, canonicalAnswer); pointer != "" {
 		return issue(pointer, expected, observed)
 	}
 	return json.RawMessage(canonicalAnswer), nil
+}
+
+// S7 already requires exactly one Finding for each failed Claim. The original
+// packet and Claim therefore determine its default identity and lens. Explicit
+// labels remain available for actual same-answer correlations; malformed or
+// conflicting explicit values still reach the original schema/domain checks.
+func bindReviewFindingMetadata(packet ReviewResultPacket, answer []byte) ([]byte, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(answer, &raw); err != nil {
+		return nil, err
+	}
+	if _, exists := raw["findings"]; !exists {
+		return answer, nil
+	}
+	var findings []map[string]json.RawMessage
+	if err := json.Unmarshal(raw["findings"], &findings); err != nil {
+		return nil, err
+	}
+	if len(findings) == 0 {
+		return answer, nil
+	}
+	var claims []struct {
+		ClaimID string `json:"claim_id"`
+		Lens    string `json:"lens"`
+	}
+	if err := json.Unmarshal(packet.Inputs.Claims, &claims); err != nil {
+		return nil, err
+	}
+	lenses := map[string]string{}
+	for _, claim := range claims {
+		lenses[claim.ClaimID] = claim.Lens
+	}
+	for _, finding := range findings {
+		var claimID string
+		if err := json.Unmarshal(finding["claim_id"], &claimID); err != nil || lenses[claimID] == "" {
+			return nil, fmt.Errorf("finding claim_id must select a Claim in this original packet")
+		}
+		defaults := map[string]string{
+			"schema_version": "1.0.0",
+			"finding_id":     "finding-" + Digest([]byte(packet.ID + "\n" + claimID))[:32],
+			"lens":           lenses[claimID],
+		}
+		for key, value := range defaults {
+			if _, exists := finding[key]; !exists {
+				finding[key], _ = json.Marshal(value)
+			}
+		}
+	}
+	var err error
+	raw["findings"], err = json.Marshal(findings)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(raw)
 }
 
 func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte) (pointer, expected, observed string) {

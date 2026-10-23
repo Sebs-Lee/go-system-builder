@@ -18,7 +18,9 @@ func progressFixture() ProgressFacts {
 }
 func observeProgress(t *testing.T, root string, f ProgressFacts, e ProgressEvent) *ProgressNotice {
 	t.Helper()
-	n, _, _, err := ObserveWorkProgress(root, f, e)
+	// These cases test counting/reset semantics, not scheduler latency. The
+	// public 25ms best-effort lock bound is tested separately under contention.
+	n, _, _, err := observeWorkProgress(root, f, e, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,17 +181,17 @@ func TestWorkProgressReportsOnlyResponsibilityFactChanges(t *testing.T) {
 	facts := progressFixture()
 	event := ProgressEvent{Action: "status", Known: true}
 	for i, want := range []bool{true, false} {
-		_, known, changed, err := ObserveWorkProgress(root, facts, event)
+		_, known, changed, err := observeWorkProgress(root, facts, event, time.Second)
 		if err != nil || !known || changed != want {
 			t.Fatalf("observation %d: known=%v changed=%v err=%v", i, known, changed, err)
 		}
 	}
 	read := ProgressEvent{Action: "Read", Known: true, Read: &ProgressRead{Path: "/necessary", Digest: "digest", Range: "1:2"}}
-	if _, known, changed, err := ObserveWorkProgress(root, facts, read); err != nil || !known || changed {
+	if _, known, changed, err := observeWorkProgress(root, facts, read, time.Second); err != nil || !known || changed {
 		t.Fatalf("new read range became a changed answer/source: %v %v %v", known, changed, err)
 	}
 	facts.Semantic = "actual changed professional answer"
-	if _, known, changed, err := ObserveWorkProgress(root, facts, event); err != nil || !known || !changed {
+	if _, known, changed, err := observeWorkProgress(root, facts, event, time.Second); err != nil || !known || !changed {
 		t.Fatalf("changed fact lost: %v %v %v", known, changed, err)
 	}
 	facts.Known = false

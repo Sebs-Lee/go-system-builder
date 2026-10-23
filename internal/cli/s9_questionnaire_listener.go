@@ -87,9 +87,10 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 			continue
 		}
 		if fact.kind != "" {
-			next := fmt.Sprintf("The PlanReport is recorded. Main normally prepares the actual work location: runtime workspace prepare --root %q --assignment %q --agent %q --check-location main; then supplies this Builder’s exact RepairResult questionnaire. On a supported host, Main may choose --check-location worker for isolated Worker checks. Do not repeat the accepted Plan or division answer.", root, packet.binding.ManifestAssignmentID, packet.binding.OwnerAgentID)
-			if snapshot.State["workspace"] == nil {
-				next = fmt.Sprintf("Main first runs runtime workspace bind --root %q. ", root) + next
+			next := "The PlanReport is recorded. Continue the same native Builder's repair, self-checks and private Result using its exact prepared brief; SubagentStop receives the professional artifacts. Main owns integration and necessary checks. Do not repeat the accepted Plan or add a workspace startup step."
+			_, originalExecution := repairExecutionForChoice(snapshot.State, repairDispatchChoice{AssignmentID: packet.binding.RepairAssignmentID, AgentID: packet.binding.OwnerAgentID})
+			if len(originalExecution) > 0 && originalExecution["purpose"] != "native_delivery" {
+				next = fmt.Sprintf("The PlanReport is recorded for an existing frozen execution. Main preserves its original workspace recovery: runtime workspace prepare --root %q --assignment %q --agent %q --check-location %s; then supplies this Builder’s exact RepairResult questionnaire. Do not repeat the accepted Plan or division answer.", root, packet.binding.ManifestAssignmentID, packet.binding.OwnerAgentID, stringValue(originalExecution["check_location"]))
 			}
 			switch fact.kind {
 			case "candidate":

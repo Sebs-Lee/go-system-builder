@@ -25,6 +25,20 @@ func TestStatusProjectionAtHumanReleaseUsesEmptyOpenItemsArray(t *testing.T) {
 	if !ok || len(dispositions) != 6 {
 		t.Fatalf("S11 gateway must expose six finite dispositions, got %#v", gateway["dispositions"])
 	}
+	if gateway["human_required"] != true {
+		t.Fatal("S11 status omitted the actual human decision boundary")
+	}
+	for _, retired := range []string{"decision_command", "finding_evidence"} {
+		if _, exists := gateway[retired]; exists {
+			t.Fatalf("S11 status still teaches the legacy %s submission requirement", retired)
+		}
+	}
+	guidance, _ := gateway["guidance"].(string)
+	for _, want := range []string{"exact application path", "human explicitly chooses", "disposition and optional reason", "saves that application", "Empty disposition", "without requiring a Finding", "does not publish or deploy"} {
+		if !strings.Contains(guidance, want) {
+			t.Fatalf("S11 status lacks normal human handoff guidance %q: %s", want, guidance)
+		}
+	}
 }
 
 func TestTerminalProjectionsDoNotFallBackToCrossStage(t *testing.T) {

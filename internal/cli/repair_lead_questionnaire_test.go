@@ -323,9 +323,10 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		Rationale:        "the changed API surfaces require independent assertion runs",
 		RecoveryEvidence: []string{resultRef.Path},
 	}}
-	// The author leaves machine-required IDs alone; save preserves the supplied
-	// Contract obligation while creating the original Impact.
-	impactAnswer.RequiredReverificationIDs = nil
+	// Machine-only edits cannot redefine the required Contract obligation or
+	// turn an author's chosen timestamp into an execution fact.
+	impactAnswer.RequiredReverificationIDs = []string{"reverify-author-invented"}
+	impactAnswer.AnalyzedAt = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	writeRepairLeadJSON(t, impactPath, impactAnswer)
 	feedback.Reset()
 	if handled, _ := runSavedRepairLeadQuestionnaire(root, impactSave, &feedback, &bytes.Buffer{}); !handled || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
@@ -338,6 +339,10 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	registeredRequired := stringSliceAny(repairPointerCLI(impactSnapshot.State)["required_reverification_ids"])
 	if len(registeredRequired) != 1 || registeredRequired[0] != wantReverificationIDs[0] {
 		t.Fatalf("Runtime registered required IDs = %#v, want one Contract obligation %#v", registeredRequired, wantReverificationIDs)
+	}
+	readRepairLeadJSON(t, impactPath, &impactAnswer)
+	if impactAnswer.AnalyzedAt.Before(time.Now().Add(-time.Hour)) {
+		t.Fatalf("Impact retained author-supplied machine time: %s", impactAnswer.AnalyzedAt)
 	}
 	impactRevision := impactSnapshot.Revision
 	feedback.Reset()
@@ -435,6 +440,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		targetAnswer.Result = "blocked"
 		targetAnswer.FailureClass = "blocked"
+		targetAnswer.PerformedAt = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 		for i := range targetAnswer.AssertionResults {
 			targetAnswer.AssertionResults[i].Result = "blocked"
 			targetAnswer.AssertionResults[i].EvidenceRefs = []string{"test://blocked-assertion"}
@@ -460,8 +466,8 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		var persistedBlocked repair.TargetedReverificationRequest
 		readRepairLeadJSON(t, targetPath, &persistedBlocked)
 		blockedPerformedAt := persistedBlocked.PerformedAt
-		if blockedPerformedAt.IsZero() {
-			t.Fatal("blocked Targeted save did not persist its machine PerformedAt")
+		if blockedPerformedAt.Before(time.Now().Add(-time.Hour)) {
+			t.Fatalf("blocked Targeted retained author-supplied machine time: %s", blockedPerformedAt)
 		}
 		blockedRefs := repairArtifactRefs(blockedPointer, "targeted_reverification_artifacts", "", "")
 		if len(blockedRefs) != 1 {
@@ -499,7 +505,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		persistedBlocked.Result = "pass"
 		persistedBlocked.FailureClass = ""
-		persistedBlocked.PerformedAt = time.Time{}
+		persistedBlocked.PerformedAt = time.Date(2035, 1, 1, 0, 0, 0, 0, time.UTC)
 		for i := range persistedBlocked.AssertionResults {
 			persistedBlocked.AssertionResults[i].Result = "pass"
 			persistedBlocked.AssertionResults[i].EvidenceRefs = []string{"test://assertion-replay-pass"}
@@ -513,7 +519,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		handoffContext = feedback.String()
 		var persistedPass repair.TargetedReverificationRequest
 		readRepairLeadJSON(t, targetPath, &persistedPass)
-		if persistedPass.PerformedAt.IsZero() || persistedPass.PerformedAt.Equal(blockedPerformedAt) {
+		if persistedPass.PerformedAt.Before(blockedPerformedAt) || persistedPass.PerformedAt.Equal(blockedPerformedAt) || persistedPass.PerformedAt.After(time.Now().Add(time.Hour)) {
 			t.Fatalf("resumed Targeted save did not persist a fresh PerformedAt: blocked=%s resumed=%s", blockedPerformedAt, persistedPass.PerformedAt)
 		}
 		afterTarget, err := runtime.NewStore(statePath, journalPath).Snapshot()
@@ -782,7 +788,7 @@ func TestS9RepairReadbackUsesOriginalSessionAndPlanWriters(t *testing.T) {
 	}
 	reminder := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
 	after, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
-	if err != nil || before.Revision != after.Revision || !strings.Contains(reminder, "runtime repair session open") {
+	if err != nil || before.Revision != after.Revision || !strings.Contains(reminder, "Main/system must restore") || strings.Contains(reminder, "runtime repair session open") {
 		t.Fatalf("ordinary reminder changed Runtime or omitted startup: %s (%v)", reminder, err)
 	}
 	runtimeID, generation, contract, err := repairReadbackContractSource(root, state)

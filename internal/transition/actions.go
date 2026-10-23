@@ -476,7 +476,7 @@ func actionRoot(state map[string]any, ctx *ActionContext) string {
 // PTR-PLAN-02. Packet-mode TR-002 retains that already-registered S3 source
 // set; it must not rescan contracts while registering S4 outputs.
 func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (ActionResult, error) {
-	var accepted []workpacket.Reference
+	var accepted *acceptedS3ContractBatch
 	if ctx.Spec.ID == "PTR-PLAN-02" && loopruntime.PacketEnabled(state) {
 		if ctx.Request == nil || ctx.Request.SubmissionFollowupID == "" {
 			err := fmt.Errorf("S3 transition needs the received current S3 questionnaire; save the exact answer path supplied by the listener and let its original consumer continue")
@@ -485,6 +485,9 @@ func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (Ac
 		var err error
 		accepted, err = acceptedContractArtifacts(state, ctx)
 		if err != nil {
+			return ActionResult{Status: "failed", Detail: err.Error()}, err
+		}
+		if err := accepted.validateSources(actionRoot(state, ctx), ctx.Request.Files); err != nil {
 			return ActionResult{Status: "failed", Detail: err.Error()}, err
 		}
 	}
@@ -499,17 +502,14 @@ func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (Ac
 		// validates this same followup before registering the exact S4 outputs.
 		return ActionResult{Status: "committed", Detail: "retained the exact locked contract source set accepted at S3"}, nil
 	}
-	models, modelErr := sharedModelDocuments(state, ctx, true)
+	models, modelErr := sharedModelDocuments(state, ctx, true, accepted)
 	if modelErr != nil {
 		return ActionResult{Status: "failed", Detail: modelErr.Error()}, modelErr
 	}
 	registered := 0
 	var err error
 	if accepted != nil {
-		for _, ref := range accepted {
-			if filepath.ToSlash(filepath.Dir(ref.Path)) != projectlayout.Contracts {
-				continue
-			}
+		for _, ref := range accepted.contracts {
 			state["documents"] = appendDocument(state["documents"], map[string]any{
 				"id": ref.ID, "kind": "contract", "path": ref.Path, "version": ref.Version,
 				"sha256": ref.SHA256, "status": "locked", "generation": integerOf(state["baseline"].(map[string]any)["generation"]),
@@ -527,7 +527,43 @@ func actionRegisterLockedContracts(state map[string]any, ctx *ActionContext) (Ac
 		Detail: fmt.Sprintf("registered %d locked contract(s) and %d shared input(s)", registered, models)}, nil
 }
 
-func acceptedContractArtifacts(state map[string]any, ctx *ActionContext) ([]workpacket.Reference, error) {
+type acceptedS3ContractBatch struct {
+	contracts     []workpacket.Reference
+	subjects      map[string]workpacket.Subject
+	sharedOutputs map[string]bool
+}
+
+// Registration consumes the complete accepted source closure. It does not
+// redo the professional review or let a delayed followup adopt newer bytes.
+func (batch *acceptedS3ContractBatch) validateSources(root string, files fileview.Reader) error {
+	if files == nil {
+		files = fileview.Disk{Root: root}
+	}
+	paths := make([]string, 0, len(batch.subjects))
+	for path := range batch.subjects {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		data, err := files.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read accepted S3 source %s: %w", path, err)
+		}
+		checkout, err := workpacket.ReadFile(root, path, 4<<20)
+		if err != nil {
+			return fmt.Errorf("read accepted S3 checkout source %s: %w", path, err)
+		}
+		if SHA256(data) != batch.subjects[path].SHA256 || SHA256(checkout) != batch.subjects[path].SHA256 {
+			return fmt.Errorf("accepted S3 source changed before registration: %s; preserve the accepted evidence and restore its source bytes for the original followup, or use controlled planning rework for a professional change", path)
+		}
+	}
+	if view, ok := files.(interface{ Verify() error }); ok {
+		return view.Verify()
+	}
+	return nil
+}
+
+func acceptedContractArtifacts(state map[string]any, ctx *ActionContext) (*acceptedS3ContractBatch, error) {
 	entities, _ := state["entities"].(map[string]any)
 	rows, _ := entities["submissions"].([]any)
 	for _, raw := range rows {
@@ -569,6 +605,26 @@ func acceptedContractArtifacts(state map[string]any, ctx *ActionContext) ([]work
 				return nil, fmt.Errorf("S3 registration original answer differs")
 			}
 			paths := append([]string{*envelope.Answer.IndexPath}, envelope.Answer.ContractPaths...)
+			batch := &acceptedS3ContractBatch{subjects: map[string]workpacket.Subject{}, sharedOutputs: map[string]bool{}}
+			frozen := map[string]bool{packet.Binding.Requirement.Path: true}
+			for _, ref := range packet.Inputs.Designs {
+				frozen[ref.Path] = true
+			}
+			for _, ref := range packet.Inputs.Sources {
+				frozen[ref.Path] = true
+			}
+			for _, path := range paths {
+				frozen[path] = true
+			}
+			for _, subject := range envelope.Subjects {
+				if _, duplicate := batch.subjects[subject.Path]; duplicate {
+					return nil, fmt.Errorf("S3 registration original evidence repeats source %s", subject.Path)
+				}
+				batch.subjects[subject.Path] = subject
+				if !frozen[subject.Path] {
+					batch.sharedOutputs[subject.Path] = true
+				}
+			}
 			refs := make([]workpacket.Reference, 0, len(paths))
 			for _, path := range paths {
 				found := false
@@ -589,7 +645,8 @@ func acceptedContractArtifacts(state map[string]any, ctx *ActionContext) ([]work
 					return nil, err
 				}
 			}
-			return refs, nil
+			batch.contracts = refs
+			return batch, nil
 		}
 		return nil, fmt.Errorf("S3 registration original evidence is missing")
 	}
@@ -710,7 +767,7 @@ func actionRegisterExecutionBatch(state map[string]any, ctx *ActionContext) (Act
 	if err := dispatchPlanDocuments(state, ctx, false); err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
-	if _, err := sharedModelDocuments(state, ctx, false); err != nil {
+	if _, err := sharedModelDocuments(state, ctx, false, nil); err != nil {
 		return ActionResult{Status: "failed", Detail: err.Error()}, err
 	}
 	if len(ctx.Evidence) == 0 {

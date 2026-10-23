@@ -11,7 +11,7 @@
       "example": {"path": "answer.verdict", "expected": "\"blocked\"（仅为合法值示例，结论须本人判断）", "observed": "依据全绿测试自动填写 completed"}
     },
     "before_fix_results": {
-      "question": "对题干列出的每一个精确 assertion_id，记录你实际观察到的 red 条件及支持该观察的资料引用。PlanReport 中某条命令 fail 不能代替逐断言观察。",
+      "question": "对题干列出的每一个精确 assertion_id，记录本人真实修前观察及支持资料；observed_red 是历史字段名，已通过、未重现或被阻塞均须如实说明，不编造失败。PlanReport 中某条命令 fail 不能代替逐断言观察。",
       "example": {"path": "answer.before_fix_results", "expected": "[{\"assertion_id\":\"root-1\",\"observed_red\":\"修复前空白输入被成功保存，既有名称被覆盖；见实际响应与读回日志。\",\"evidence_refs\":[\"test://pre-fix-log\"]}]（覆盖本卷每个实际断言，不可省略）", "observed": "复制 PlanReport 命令和 fail 字样，或未观察却编造 red"}
     },
     "unit_results": {

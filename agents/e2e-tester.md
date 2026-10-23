@@ -1,8 +1,6 @@
 ---
 name: e2e-tester
 description: Execute assigned real-browser user flows and maintain their Playwright evidence after dispatch (plan_checkpoint by default)
-tools: Read, Glob, Grep, Bash, Write, Edit, Skill
-disallowedTools: WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:

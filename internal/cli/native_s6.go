@@ -123,7 +123,12 @@ func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.
 	for _, check := range r.RequiredChecks {
 		fmt.Fprintf(&b, "- %s\n", check)
 	}
-	fmt.Fprintf(&b, "\nUse Claude Code native worktree isolation from Main HEAD %s. Save the following professional JSON files relative to your actual worktree; do not write these drafts into Main. Plan before implementation; save does not activate anything. Implement, self-test, commit only actual TASK products and save Result. Keep these private professional files out of Git; do not force-add them. Return this exact brief reference %s and the absolute path to your Result. Do not run workspace launch, agent-begin or task-complete.\n\nPlan: %s\n```json\n{\"objective\":null,\"planned_paths\":[],\"assertion_checks\":[{\"assertion\":null,\"oracle\":null,\"done_when_indexes\":[]}],\"dependencies\":[],\"risks_blockers\":[]}\n```\nEach assertion has assertion, oracle and done_when_indexes (zero-based indices into Done when). Cover each required condition.\n\nResult: %s\n```json\n{\"summary\":null,\"assertion_evidence\":[{\"assertion\":null,\"oracle\":null,\"evidence_refs\":[]}],\"risks_blockers\":[],\"scope_deviations\":[],\"closing_assessment\":{\"disposition\":null,\"conditions\":[{\"done_when_index\":0,\"judgment\":null,\"plan_assertion_indexes\":[],\"rationale\":null}]}}\n```\nUse exactly the shown field names; no extra nested fields. Each assertion_evidence item has assertion and oracle copied verbatim from its plan assertion, plus nonempty evidence_refs containing exact existing file paths relative to your worktree, within this TASK write scope or its listed Read paths. These are file references: omit line numbers, fragments, descriptions, command text and output. Put commands, outputs and observations in summary or closing rationale; cite their actual evidence file only when it exists within the allowed scope. dependencies, risks_blockers and scope_deviations are arrays of strings. Replace nulls with your own professional answers; do not copy placeholder values. closing_assessment has disposition (complete/incomplete/blocked) and conditions; each condition has done_when_index, judgment (satisfied/incomplete/blocked), plan_assertion_indexes and rationale. Include real self-check commands/results in summary. When blocked, also state the actual blocker and unfinished work directly in your native return. A real blocker is an honest handoff, never a fabricated PASS.\n", base, filepath.Join(root, brief), plan, result)
+	dependencies, err := json.Marshal(append([]string{}, r.DependsOn...))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(&b, "\nRegistered workgroup-local Assignment dependencies (read-only): %s. The receiver supplies this exact set to the canonical Plan; do not copy dependencies into either private JSON file. TASK prerequisites have already been satisfied by dispatch. Explain actual input or environment assumptions in objective/oracles and unresolved risks_blockers instead.\n", dependencies)
+	fmt.Fprintf(&b, "\nUse Claude Code native worktree isolation from Main HEAD %s. Save the following professional JSON files relative to your actual worktree; do not write these drafts into Main. Plan before implementation; save does not activate anything. Implement, self-test, commit only actual TASK products and save Result. Keep these private professional files out of Git; do not force-add them. Return this exact brief reference %s and the absolute path to your Result. Do not run workspace launch, agent-begin or task-complete.\n\nPlan: %s\n```json\n{\"objective\":null,\"planned_paths\":[],\"assertion_checks\":[{\"assertion\":null,\"oracle\":null,\"done_when_indexes\":[]}],\"risks_blockers\":[]}\n```\nPlan fields are objective, planned_paths, assertion_checks and risks_blockers only. Plan.risks_blockers is an array of strings. Registered dependencies are system facts, not a private Plan question. Each assertion has assertion, oracle and done_when_indexes (zero-based indices into Done when). Cover each required condition.\n\nResult: %s\n```json\n{\"summary\":null,\"assertion_evidence\":[{\"assertion\":null,\"oracle\":null,\"evidence_refs\":[]}],\"risks_blockers\":[],\"scope_deviations\":[],\"closing_assessment\":{\"disposition\":null,\"conditions\":[{\"done_when_index\":0,\"judgment\":null,\"plan_assertion_indexes\":[],\"rationale\":null}]}}\n```\nResult fields are summary, assertion_evidence, risks_blockers, scope_deviations and closing_assessment only. Result has no dependencies field. Use exactly the shown field names; no extra nested fields. Each assertion_evidence item has assertion and oracle copied verbatim from its plan assertion, plus nonempty evidence_refs containing exact existing file paths relative to your worktree, within this TASK write scope or its listed Read paths. These are file references: omit line numbers, fragments, descriptions, command text and output. Put commands, outputs and observations in summary or closing rationale; cite their actual evidence file only when it exists within the allowed scope. Result.risks_blockers and Result.scope_deviations are arrays of strings. Any unresolved Result risk/blocker or scope deviation prevents completion/integration; report real ones honestly. Put non-blocking context, scope limitations and resolved-risk explanations in summary/closing rationale, without hiding unfinished obligations. Replace nulls with your own professional answers; do not copy placeholder values. closing_assessment has disposition (complete/incomplete/blocked) and conditions; each condition has done_when_index, judgment (satisfied/incomplete/blocked), plan_assertion_indexes and rationale. Include real self-check commands/results in summary. When blocked, also state the actual blocker and unfinished work directly in your native return. A real blocker is an honest handoff, never a fabricated PASS.\n", base, filepath.Join(root, brief), plan, result)
 	if published, err := workpacket.PublishBounded(root, brief, []byte(b.String()), 1<<20); err != nil {
 		return err
 	} else if !bytes.Equal(published, []byte(b.String())) {
@@ -392,7 +397,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	}
 	resultData, err := workpacket.ReadFile(source, resultRel, 1<<20)
 	if err != nil {
-		return nativeArtifactReadError("read professional Result", err)
+		return nativeArtifactReadError("read professional Result "+filepath.Join(source, resultRel), err)
 	}
 	planData, err := workpacket.ReadFile(source, planRel, 1<<20)
 	if err != nil {
@@ -410,7 +415,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 				}
 			}
 		}
-		return nativeArtifactReadError("read professional plan", err)
+		return nativeArtifactReadError("read professional Plan "+filepath.Join(source, planRel), err)
 	}
 	projected, err := agentcontext.ApplyRecord(agentcontext.Assignment{}, r)
 	if err != nil {
@@ -419,19 +424,19 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	plan, _ := agentcontext.PlanTemplate(projected, r.RuntimeID, time.Now().UTC().Format(time.RFC3339Nano), nil)
 	result, _ := agentcontext.ResultTemplate(projected, r.RuntimeID, time.Now().UTC().Format(time.RFC3339Nano))
 	if err := mergeNativeProfessional(plan, planData, []string{"objective", "planned_paths", "assertion_checks", "dependencies", "risks_blockers"}); err != nil {
-		return err
+		return fmt.Errorf("professional Plan %s: %w", filepath.Join(source, planRel), err)
 	}
 	if err := mergeNativeProfessional(result, resultData, []string{"summary", "assertion_evidence", "risks_blockers", "scope_deviations", "closing_assessment"}); err != nil {
-		return err
+		return fmt.Errorf("professional Result %s (Plan is %s): %w", filepath.Join(source, resultRel), filepath.Join(source, planRel), err)
 	}
 	plan["assignment_record_contract"] = r.Contract
 	result["assignment_record_contract"] = r.Contract
 	// Validate the original S6 branches directly so professional mistakes
 	// report their exact nested fields instead of an unrelated oneOf branch.
 	for _, candidate := range []struct {
-		label, definition string
-		message           map[string]any
-	}{{"plan", "s6PlanReport", plan}, {"Result", "s6CompletionReport", result}} {
+		label, definition, path string
+		message                 map[string]any
+	}{{"Plan", "s6PlanReport", filepath.Join(source, planRel), plan}, {"Result", "s6CompletionReport", filepath.Join(source, resultRel), result}} {
 		data, err := json.Marshal(candidate.message)
 		if err != nil {
 			return err
@@ -439,7 +444,7 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 		if err := schema.NewValidator(root).ValidateBytes("agent-message.schema.json#/$defs/"+candidate.definition, data); err != nil {
 			var validation *jsonschema.ValidationError
 			if errors.As(err, &validation) {
-				return &nativeAuthorError{fmt.Errorf("professional %s fields: %w", candidate.label, err)}
+				return &nativeAuthorError{fmt.Errorf("professional %s fields at %s: %w", candidate.label, candidate.path, err)}
 			}
 			return err
 		}
@@ -546,7 +551,7 @@ func mergeNativeProfessional(target map[string]any, data []byte, allowed []strin
 			}
 		}
 		if !ok {
-			return &nativeAuthorError{fmt.Errorf("professional answer cannot set machine field %s", key)}
+			return &nativeAuthorError{fmt.Errorf("unsupported field %q; this file accepts only %s", key, strings.Join(allowed, ", "))}
 		}
 		target[key] = value
 	}

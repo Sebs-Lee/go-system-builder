@@ -127,6 +127,9 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(data, []byte("check_location")) {
+		t.Fatalf("new native division still asks for legacy check_location: %s", data)
+	}
 	if err := json.Unmarshal(data, &rows); err != nil || len(rows) != 2 || repairDispatchHasProfessionalContent(path, data) {
 		t.Fatalf("untouched division draft: %s %v", data, err)
 	}

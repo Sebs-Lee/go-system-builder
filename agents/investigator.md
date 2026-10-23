@@ -1,8 +1,6 @@
 ---
 name: investigator
 description: Investigate one assigned S8 causal hypothesis using falsifiable evidence without modifying product code
-tools: Read, Glob, Grep, Bash, Write, Edit, MultiEdit, Skill, SendMessage
-disallowedTools: WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:

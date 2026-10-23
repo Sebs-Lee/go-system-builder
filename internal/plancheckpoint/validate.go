@@ -236,12 +236,12 @@ func validateCanonicalPlan(root string, record assignmentrecord.Record, message 
 	}
 	dependencies := stringsValue(message["dependencies"])
 	if len(dependencies) != len(record.DependsOn) {
-		return fmt.Errorf("S6 PLAN dependencies differ from the canonical Assignment")
+		return fmt.Errorf("S6 PLAN dependencies differ from the canonical Assignment: expected workgroup-local depends_on=%v; retain that exact set, not TASK prerequisites, input files or environment descriptions", record.DependsOn)
 	}
 	seen := map[string]bool{}
 	for _, dependency := range dependencies {
 		if seen[dependency] || !containsStringValue(record.DependsOn, dependency) {
-			return fmt.Errorf("S6 PLAN dependencies differ from the canonical Assignment")
+			return fmt.Errorf("S6 PLAN dependencies differ from the canonical Assignment: expected workgroup-local depends_on=%v; retain that exact set, not TASK prerequisites, input files or environment descriptions", record.DependsOn)
 		}
 		seen[dependency] = true
 	}

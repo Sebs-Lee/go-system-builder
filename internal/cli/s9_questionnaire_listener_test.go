@@ -295,6 +295,9 @@ func TestS9ListenerAcceptedOriginalArtifactsProjectWithoutFullReceiptProof(t *te
 			if !strings.Contains(got, filepath.Join(f.worker, filepath.FromSlash(f.packet.answer))) || !strings.Contains(got, "recorded") || strings.Contains(got, "work_complete=true") {
 				t.Fatalf("accepted fact not safely projected: %s", got)
 			}
+			if kind == "plan" && (!strings.Contains(got, "same native Builder") || strings.Contains(got, "runtime workspace prepare") || strings.Contains(got, "runtime workspace bind")) {
+				t.Fatalf("recorded native Plan was redirected into legacy workspace startup: %s", got)
+			}
 			if kind == "blocker" && !strings.Contains(got, "main-resolution.json") {
 				t.Fatalf("blocker omitted Main's exact resolution path: %s", got)
 			}

@@ -147,12 +147,16 @@ func TestDraftManifestPrefillsControlPlaneFacts(t *testing.T) {
 		t.Errorf("documents = %v, want [REQ-002 TASK-001]", ids)
 	}
 
-	// The TODO surface is exactly the fields no fact decides.
-	if !strings.HasPrefix(row.AgentID, "TODO(planner):") {
-		t.Errorf("agent_id = %q, want a TODO(planner): marker", row.AgentID)
+	// Engineering labels come from the original Assignment, not another
+	// identity question or an opaque platform actor lookup.
+	if row.AgentID != "s7-g1-r1-qa-static" || strings.Contains(draft.PlatformTeamID, "TODO") {
+		t.Errorf("prepared engineering labels = %q/%q", row.AgentID, draft.PlatformTeamID)
 	}
 	if len(notes) == 0 {
 		t.Error("expected planner notes")
+	}
+	if strings.Contains(strings.Join(row.SkillRefs, ","), "TODO") || !strings.Contains(strings.Join(row.SkillRefs, ","), "code-quality") {
+		t.Fatalf("known QA role methods were left as an author question: %v", row.SkillRefs)
 	}
 
 	// The draft passes the same schema + semantic validation
@@ -167,6 +171,26 @@ func TestDraftManifestPrefillsControlPlaneFacts(t *testing.T) {
 	}
 	if err := team.ValidateBytes(data); err != nil {
 		t.Fatalf("draft fails team manifest semantics: %v", err)
+	}
+}
+
+func TestDraftManifestMissingOriginalDocumentMetadataIsSystemPreparationGap(t *testing.T) {
+	for _, scenario := range []string{"version", "sha256", "path", "no-documents"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			state := baseVerificationState()
+			if scenario == "no-documents" {
+				state["bound_req"] = map[string]any{}
+				state["documents"] = []any{}
+			} else {
+				delete(state["bound_req"].(map[string]any), scenario)
+			}
+			pinPlan(t, root, state, manifestDraftFixturePlan())
+			draft, _, err := DraftManifest(root, state, "assignment-qa-static")
+			if err == nil || draft != nil || !strings.Contains(err.Error(), "Main/system preparation gap") {
+				t.Fatalf("missing source became a planner metadata exercise: draft=%+v err=%v", draft, err)
+			}
+		})
 	}
 }
 

@@ -325,3 +325,116 @@ func TestContractAuthorityUsesOriginalS2RegisteredDesign(t *testing.T) {
 		t.Fatal("S3 Main fabricated outside contracts")
 	}
 }
+
+// Start at the actual entry, without a seeded S2 packet or hand-built source
+// metadata. S1's original save prepares S2 and S2's original save prepares S3.
+func TestDesignNormalEntryDerivesMachineFactsFromTwoProfessionalAnswers(t *testing.T) {
+	root := initEntryQuestionnaireRoot(t, map[string]string{"REQ-098.md": lockedReqBody})
+	bindingPath := filepath.Join(root, ".claude/submissions/requirement-binding.md")
+	entryQuestionnaireHook(t, root, "SessionStart", bindingPath)
+	binding, err := os.ReadFile(bindingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filled := string(binding)
+	for question, answer := range map[string]string{
+		"Who actually authorized this binding?":     "actual-test-human",
+		"Which development branch was selected?":    "feature/req",
+		"What is the explicit release destination?": "origin/main",
+	} {
+		filled = strings.Replace(filled, "- "+question+" ", "- "+question+" "+answer, 1)
+	}
+	if err := os.WriteFile(bindingPath, []byte(filled), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	feedback := entryQuestionnaireHook(t, root, "PostToolUse", bindingPath)
+	snap := stageSnapshot(t, root)
+	var packet workpacket.DesignPacket
+	// Inspect original issuance only to verify the paths the Hook delivered;
+	// no explicit issue command, Runtime edit, digest or envelope is submitted.
+	for _, raw := range snap.State["entities"].(map[string]any)["work_packets"].([]any) {
+		row := raw.(map[string]any)
+		if row["template_id"] == "s2-design-v1" {
+			encoded, err := json.Marshal(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encoded, &packet); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if packet.ID == "" || !strings.Contains(feedback, filepath.Join(root, packet.ViewPath)) || !strings.Contains(feedback, filepath.Join(root, packet.AnswerPath)) {
+		t.Fatalf("normal binding did not deliver the current S2 paths: %s", feedback)
+	}
+	answerPath := filepath.Join(root, packet.AnswerPath)
+	data, err := os.ReadFile(answerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft map[string]any
+	if err := json.Unmarshal(data, &draft); err != nil {
+		t.Fatal(err)
+	}
+	answer := draft["answer"].(map[string]any)
+	if len(answer) != 2 || answer["conclusion"] != nil || answer["architecture_path"] != nil {
+		t.Fatalf("normal S2 draft is not exactly two unfinished professional answers: %+v", answer)
+	}
+	const architecturePath = "docs/architecture/ARCHITECTURE-098.md"
+	const architectureBody = "# ARCHITECTURE-098\n\n> 状态：locked\n> 版本：v1.2.3\n> 关联需求：`docs/requirements/REQ-098.md`\n\nAuthored architecture boundaries and decisions.\n"
+	for path, content := range map[string]string{
+		architecturePath:        architectureBody,
+		"docs/design/README.md": "# Design\n\nNo module behavior or UI changes in this synthetic entry.\n",
+	} {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixtures.CommitCurrentFixture(t, root)
+	answer["conclusion"], answer["architecture_path"] = "pass", architecturePath
+	stageJSON(t, root, packet.AnswerPath, draft)
+	feedback = entryQuestionnaireHook(t, root, "PostToolUse", answerPath)
+	after := stageSnapshot(t, root)
+	record, accepted, err := runtime.FindSubmission(after.State, packet.ID)
+	if err != nil || !accepted || record.ControlStatus != "advanced" || after.State["lifecycle"].(map[string]any)["phase"] != "contracts" {
+		t.Fatalf("normal two-field save did not complete the original S2 outlet: %+v %v %s", record, err, feedback)
+	}
+	var material map[string]any
+	for _, raw := range after.State["evidence"].([]any) {
+		ev := raw.(map[string]any)
+		if ev["id"] == record.EvidenceID {
+			material = readJSONMap(t, filepath.Join(root, ev["path"].(string)))
+		}
+	}
+	if material == nil || material["runtime_id"] != packet.Binding.RuntimeID || material["created_at"] == "" || material["producer_agent_id"] != "Main" {
+		t.Fatalf("original consumer did not derive the evidence metadata: %+v", material)
+	}
+	subjects := material["subject_refs"].([]any)
+	if len(subjects) != 2 {
+		t.Fatalf("original consumer did not bind exact requirement and architecture subjects: %+v", subjects)
+	}
+	arch := subjects[1].(map[string]any)
+	if arch["path"] != architecturePath || arch["version"] != "v1.2.3" || arch["sha256"] != sha256Hex([]byte(architectureBody)) {
+		t.Fatalf("original consumer did not bind actual architecture bytes/version: %+v", subjects)
+	}
+	prepared := false
+	for _, raw := range after.State["entities"].(map[string]any)["work_packets"].([]any) {
+		row := raw.(map[string]any)
+		if row["template_id"] == "s3-contract-v1" {
+			prepared = true
+			for _, key := range []string{"view_path", "answer_path"} {
+				path := filepath.Join(root, row[key].(string))
+				if _, err := os.Stat(path); err != nil || !strings.Contains(feedback, path) {
+					t.Fatalf("normal S2 outlet did not deliver actual S3 %s: %v %s", key, err, feedback)
+				}
+			}
+		}
+	}
+	if !prepared {
+		t.Fatalf("normal S2 outlet did not prepare S3: %s", feedback)
+	}
+}

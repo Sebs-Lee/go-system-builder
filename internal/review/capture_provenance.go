@@ -14,12 +14,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 )
 
 // CapturedFrozenSubject records the content or presence observed at one side
@@ -273,37 +272,10 @@ func captureContainedPath(root, rel string) (string, error) {
 	return path, nil
 }
 
-var captureCommandOutputRE = regexp.MustCompile(`^command_output:(.+)#sha256=([0-9a-f]{64}) \(bytes=([0-9]+), truncated=(true|false)\)$`)
-
-type commandOutputEvidence struct {
-	RelativePath string
-	SHA256       string
-	Bytes        int64
-	Truncated    bool
-	Withheld     bool
-}
+type commandOutputEvidence = evidence.CommandOutputReference
 
 func parseCommandOutputEvidenceRef(ref string) (commandOutputEvidence, error) {
-	ref = strings.TrimSpace(ref)
-	if !strings.HasPrefix(ref, "command_output:") {
-		return commandOutputEvidence{}, fmt.Errorf("not a command_output reference")
-	}
-	body := strings.TrimPrefix(ref, "command_output:")
-	if strings.Contains(body, " (withheld:") {
-		return commandOutputEvidence{RelativePath: strings.TrimSpace(strings.SplitN(body, " (withheld:", 2)[0]), Withheld: true}, nil
-	}
-	matches := captureCommandOutputRE.FindStringSubmatch(ref)
-	if len(matches) != 5 {
-		return commandOutputEvidence{}, fmt.Errorf("command_output reference must include #sha256, bytes and truncated metadata")
-	}
-	bytes, err := strconv.ParseInt(matches[3], 10, 64)
-	if err != nil || bytes < 0 {
-		return commandOutputEvidence{}, fmt.Errorf("command_output bytes metadata is invalid")
-	}
-	return commandOutputEvidence{
-		RelativePath: matches[1], SHA256: matches[2], Bytes: bytes,
-		Truncated: matches[4] == "true",
-	}, nil
+	return evidence.ParseCommandOutputReference(ref)
 }
 
 // captureEvidenceKey returns the stable path+digest identity shared by the
@@ -612,34 +584,17 @@ func validateCommandOutputEvidence(root, ref, owner string) error {
 }
 
 func validateArtifactCaptureRef(ref, owner string) error {
-	body := strings.TrimPrefix(strings.TrimSpace(ref), "artifact:")
-	if strings.HasSuffix(body, " (deleted)") {
-		if strings.TrimSpace(strings.TrimSuffix(body, " (deleted)")) == "" {
-			return fmt.Errorf("%s contains an empty deleted artifact reference", owner)
-		}
-		return nil
-	}
-	first := strings.SplitN(body, " ", 2)[0]
-	rel, digest, err := parsePathEvidenceRef("path:" + first)
-	if err != nil || rel == "" || digest == "" {
-		if err == nil {
-			err = fmt.Errorf("artifact ref must include a relative path and sha256 digest")
-		}
+	_, _, err := evidence.ParseFindingReference(ref)
+	if err != nil {
 		return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
-	}
-	if filepath.IsAbs(rel) || strings.HasPrefix(filepath.ToSlash(filepath.Clean(rel)), "../") {
-		return fmt.Errorf("%s evidence reference %q escapes its execution root", owner, ref)
 	}
 	return nil
 }
 
 func validateEnvironmentCaptureRef(ref, owner string) error {
-	body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(ref), "env:"))
-	if body == "" || !strings.Contains(body, " (present; value never captured)") {
-		return fmt.Errorf("%s evidence reference %q is not a valid redacted environment marker", owner, ref)
-	}
-	if strings.TrimSpace(strings.SplitN(body, " (present;", 2)[0]) == "" {
-		return fmt.Errorf("%s evidence reference %q has no environment name", owner, ref)
+	_, _, err := evidence.ParseFindingReference(ref)
+	if err != nil {
+		return fmt.Errorf("%s evidence reference %q is invalid: %w", owner, ref, err)
 	}
 	return nil
 }

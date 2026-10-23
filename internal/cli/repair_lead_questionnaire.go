@@ -48,7 +48,7 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 		session := repair.ArtifactRef{Path: stringValue(pointer["path"]), SHA256: stringValue(pointer["sha256"])}
 		plan := repair.ArtifactRef{Path: stringValue(pointer["plan_ref"]), SHA256: stringValue(pointer["plan_sha256"])}
 		if contract.Path == "" || session.Path == "" || plan.Path == "" {
-			return "S9 repair_readback is missing a current approved Contract, RepairSession, or RepairPlan reference. Use the normal startup commands: " + repairReadbackStartupCommands(root, state) + "."
+			return "S9 repair_readback is missing a current approved Contract, RepairSession, or RepairPlan reference. Main/system must restore the original approved-Contract entry preparation; do not invent Session/Plan IDs or fall back to legacy startup commands."
 		}
 		contractPath, _ := absoluteQuestionnairePath(root, contract.Path)
 		sessionPath, _ := absoluteQuestionnairePath(root, session.Path)
@@ -434,23 +434,6 @@ func prepareRepairEntry(root, statePath, journalPath string, state map[string]an
 		}
 	}
 	return state, nil
-}
-
-func repairReadbackStartupCommands(root string, state map[string]any) string {
-	runtimeID, generation, contract, err := repairReadbackContractSource(root, state)
-	if err != nil {
-		return "loop-harness runtime repair status --root " + s7CaptureShellQuote(root) + " (current approved Contract unavailable: " + err.Error() + ")"
-	}
-	suffix, err := repairReadbackIDSuffix(runtimeID, generation, contract.CaseID, contract.ContractID, contract.Ref)
-	if err != nil {
-		return err.Error()
-	}
-	commands := []string{}
-	if stringValue(repairPointerCLI(state)["path"]) == "" {
-		commands = append(commands, "loop-harness runtime repair session open --root "+s7CaptureShellQuote(root)+" --session-id repair-session-"+suffix+" --created-by Main --actor Main")
-	}
-	commands = append(commands, "loop-harness runtime repair plan compile --root "+s7CaptureShellQuote(root)+" --plan-id repair-plan-"+suffix+" --created-by Main --actor Main")
-	return strings.Join(commands, "; then ")
 }
 
 func prepareRepairReadback(root, statePath, journalPath string, state map[string]any) (map[string]any, error) {
@@ -1029,6 +1012,31 @@ func registeredTargetedForSelection(root string, pointer map[string]any, selecti
 	return repair.ArtifactRef{}, false
 }
 
+// Recover only the original system timestamp after artifact creation was
+// interrupted before Commit. The original Create consumer still compares the
+// complete immutable bytes; reading this value never accepts changed content.
+func repairLeadArtifactTime(root, relative, field string, fallback time.Time) (time.Time, error) {
+	data, err := workpacket.ReadFile(root, filepath.ToSlash(relative), 20<<20)
+	if os.IsNotExist(err) {
+		return fallback, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if err := workpacket.ValidateUniqueJSON(data); err != nil {
+		return time.Time{}, err
+	}
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal(data, &original); err != nil {
+		return time.Time{}, err
+	}
+	var recorded time.Time
+	if err := json.Unmarshal(original[field], &recorded); err != nil || recorded.IsZero() {
+		return time.Time{}, fmt.Errorf("%s has no valid original %s", relative, field)
+	}
+	return recorded, nil
+}
+
 func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path string, stdout io.Writer) (bool, int) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1065,12 +1073,11 @@ func saveRepairImpactQuestionnaire(root string, snapshot runtime.Snapshot, path 
 	answer.SourceBugIDs = []string{}
 	answer.SourceCaseIDs = []string{stringValue(pointer["case_id"])}
 	answer.ChangedArtifacts = changeset.Artifacts
-	if len(answer.RequiredReverificationIDs) == 0 {
-		answer.RequiredReverificationIDs = reverificationIDs
-	}
+	answer.RequiredReverificationIDs = reverificationIDs
 	answer.AnalyzedBy = "Main"
-	if answer.AnalyzedAt.IsZero() {
-		answer.AnalyzedAt = time.Now().UTC()
+	answer.AnalyzedAt, err = repairLeadArtifactTime(root, filepath.Join(".claude/review/repair/change-impact", answer.ImpactID+".json"), "analyzed_at", time.Now().UTC())
+	if err != nil {
+		return true, repairLeadFeedback(stdout, path, "S9 ChangeImpact original artifact time is unavailable; preserve its immutable source: "+err.Error())
 	}
 	if err := persistRepairLeadQuestionnaire(path, answer); err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 ChangeImpact answer at %s could not persist its original DTO: %v", path, err))
@@ -1156,24 +1163,9 @@ func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot 
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, err.Error())
 	}
-	if blockedResume {
-		if blockedRef, ok := registeredBlockedTargetedForSelection(root, pointer, selection); ok {
-			var blockedValue repair.TargetedReverification
-			validateErr := repairLeadIndexedSource(root, blockedRef, &blockedValue)
-			if validateErr == nil {
-				blockedAt, parseErr := time.Parse(time.RFC3339Nano, blockedValue.PerformedAt)
-				if parseErr == nil && (answer.PerformedAt.IsZero() || answer.PerformedAt.Equal(blockedAt)) {
-					answer.PerformedAt = time.Now().UTC()
-				}
-			}
-		}
-	}
-	if answer.PerformedAt.IsZero() {
-		answer.PerformedAt = time.Now().UTC()
-	}
-	if err := persistRepairLeadQuestionnaire(path, answer); err != nil {
-		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s could not persist its original DTO: %v", path, err))
-	}
+	// The author reports observations, not a timestamp. Record reception
+	// here; an uncommitted artifact retains its original system time.
+	answer.PerformedAt = time.Now().UTC()
 	currentSnapshot := snapshot
 	currentPointer := repairPointerCLI(currentSnapshot.State)
 	if blockedResume {
@@ -1187,14 +1179,26 @@ func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot 
 		currentSnapshot = resumed
 		currentPointer = repairPointerCLI(currentSnapshot.State)
 	}
+	var resolvedAt time.Time
+	artifactPath := filepath.Join(".claude/review/repair/reverification", answer.ReverificationID+".json")
+	if resolvedAtText := stringValue(currentPointer["blocker_resolved_at"]); resolvedAtText != "" {
+		resolvedAt, err = time.Parse(time.RFC3339Nano, resolvedAtText)
+		if err != nil {
+			return true, repairLeadFeedback(stdout, path, "S9 Runtime blocker_resolved_at is invalid; preserve the original Runtime source for reconciliation: "+err.Error())
+		}
+		artifactPath = filepath.Join(".claude/review/repair/reverification", answer.ReverificationID+"-resume-"+resolvedAt.UTC().Format("20060102T150405.000000000Z")+".json")
+	}
+	answer.PerformedAt, err = repairLeadArtifactTime(root, artifactPath, "performed_at", answer.PerformedAt)
+	if err != nil {
+		return true, repairLeadFeedback(stdout, path, "S9 TargetedReverification original artifact time is unavailable; preserve its immutable source: "+err.Error())
+	}
+	if err := persistRepairLeadQuestionnaire(path, answer); err != nil {
+		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 TargetedReverification answer at %s could not persist its original DTO: %v", path, err))
+	}
 	var value repair.TargetedReverification
 	var ref repair.ArtifactRef
 	var createErr error
-	if resolvedAtText := stringValue(currentPointer["blocker_resolved_at"]); resolvedAtText != "" {
-		resolvedAt, parseErr := time.Parse(time.RFC3339Nano, resolvedAtText)
-		if parseErr != nil {
-			return true, repairLeadFeedback(stdout, path, "S9 Runtime blocker_resolved_at is invalid; preserve the original Runtime source for reconciliation: "+parseErr.Error())
-		}
+	if !resolvedAt.IsZero() {
 		value, ref, createErr = repair.CreateTargetedReverificationForResume(root, answer, resolvedAt)
 	} else {
 		value, ref, createErr = repair.CreateTargetedReverification(root, answer)

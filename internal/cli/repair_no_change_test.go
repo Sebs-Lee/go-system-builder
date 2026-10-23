@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entroforge/go-system-builder/internal/agentcontext"
 	"github.com/entroforge/go-system-builder/internal/policy"
@@ -19,7 +20,7 @@ import (
 // real Git worktrees, Main commands and the original domain consumers execute;
 // this is not a Claude platform or product acceptance test.
 func TestNativeS9WholeBatchNoChangeKeepsMainChecksAndIndependentReview(t *testing.T) {
-	for _, outcome := range []string{"complete", "missing-assertion", "implementer"} {
+	for _, outcome := range []string{"complete", "interrupted", "missing-assertion", "implementer"} {
 		t.Run(outcome, func(t *testing.T) { testNativeS9NoChangeContractOutcome(t, outcome, false) })
 	}
 }
@@ -178,12 +179,46 @@ func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformC
 		t.Fatalf("empty professional judgment did not name the gap: %s", &diagnostic)
 	}
 	impact.Decisions = []repair.ImpactDecision{{SourceID: impact.SourceCaseIDs[0], TargetID: "root-1", Relation: "requires-verification", RuleID: "IM-CONTRACT", Decision: "reverify", Scope: []string{}, Rationale: "The synthetic existing behavior needs no product edit; independently check all original Contract assertions before closing", RecoveryEvidence: []string{stringValue(repairPointerCLI(current.State)["result_ref"])}}}
-	writeRepairLeadJSON(t, impactPath, impact)
+	var stagedImpact repair.ArtifactRef
+	if outcome == "interrupted" {
+		// Simulate the existing system Create succeeding before Commit was
+		// interrupted. The author does not preserve or copy its machine time.
+		impact.AnalyzedAt = time.Now().UTC()
+		_, stagedImpact, err = repair.CreateChangeImpact(root, impact)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	professionalImpact := map[string]any{
+		"change_types": impact.ChangeTypes, "decisions": impact.Decisions,
+		"escalation_level":         impact.EscalationLevel,
+		"invalidated_evidence_ids": impact.InvalidatedEvidenceIDs,
+		"superseded_evidence_ids":  impact.SupersededEvidenceIDs,
+		"retained_evidence_ids":    impact.RetainedEvidenceIDs,
+	}
+	if outcome == "interrupted" {
+		original := impact.Decisions[0].Rationale
+		impact.Decisions[0].Rationale = "different professional answer after the original artifact was written"
+		writeRepairLeadJSON(t, impactPath, professionalImpact)
+		diagnostic.Reset()
+		runSavedRepairLeadQuestionnaire(root, repairLeadSaveInput(root, impactPath, "Main"), &diagnostic, &bytes.Buffer{})
+		repairDispatchAssertUnchanged(t, root, before)
+		if !strings.Contains(diagnostic.String(), "did not create") {
+			t.Fatalf("interrupted Impact replaced the original professional content: %s", &diagnostic)
+		}
+		impact.Decisions[0].Rationale = original
+	}
+	// Normal authors submit only these original professional fields. The
+	// system rebinds the accepted Final diff, identities, obligations and time.
+	writeRepairLeadJSON(t, impactPath, professionalImpact)
 	diagnostic.Reset()
 	if handled, code := runSavedRepairLeadQuestionnaire(root, repairLeadSaveInput(root, impactPath, "Main"), &diagnostic, &bytes.Buffer{}); !handled || code != 0 || !strings.Contains(diagnostic.String(), "committed through the original Runtime Writer") {
 		t.Fatalf("no-change Impact not received: %t %d %s", handled, code, &diagnostic)
 	}
 	current = repairDispatchSnapshot(t, root)
+	if outcome == "interrupted" && (repairPointerCLI(current.State)["impact_ref"] != stagedImpact.Path || repairPointerCLI(current.State)["impact_sha256"] != stagedImpact.SHA256) {
+		t.Fatal("interrupted Impact retry replaced the original immutable source")
+	}
 	if repairPointerCLI(current.State)["status"] != "targeted_reverification" {
 		t.Fatalf("empty batch skipped original independent responsibility: %+v", repairPointerCLI(current.State))
 	}
@@ -227,7 +262,29 @@ func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformC
 	if outcome == "missing-assertion" {
 		target.AssertionResults = target.AssertionResults[:1]
 	}
-	writeRepairLeadJSON(t, paths[0], target)
+	var stagedTarget repair.ArtifactRef
+	if outcome == "interrupted" {
+		target.PerformedAt = time.Now().UTC()
+		_, stagedTarget, err = repair.CreateTargetedReverification(root, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	professionalTarget := map[string]any{"assertion_results": target.AssertionResults, "result": target.Result, "failure_class": target.FailureClass}
+	if outcome == "interrupted" {
+		before := repairDispatchRuntimeBytes(t, root)
+		original := target.AssertionResults[0].EvidenceRefs
+		target.AssertionResults[0].EvidenceRefs = []string{"logs/different-observation.txt"}
+		writeRepairLeadJSON(t, paths[0], professionalTarget)
+		diagnostic.Reset()
+		runSavedRepairLeadQuestionnaire(root, repairLeadSaveInput(root, paths[0], "no-change-independent"), &diagnostic, &bytes.Buffer{})
+		repairDispatchAssertUnchanged(t, root, before)
+		if !strings.Contains(diagnostic.String(), "did not create") {
+			t.Fatalf("interrupted Targeted replaced the original professional content: %s", &diagnostic)
+		}
+		target.AssertionResults[0].EvidenceRefs = original
+	}
+	writeRepairLeadJSON(t, paths[0], professionalTarget)
 	diagnostic.Reset()
 	input := policy.Input{Event: "SubagentStop", CWD: root, AgentID: "opaque-independent", LastAssistantMessage: paths[0]}
 	if handled, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || code != 0 {
@@ -240,6 +297,12 @@ func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformC
 			t.Fatalf("no-change skipped missing Contract observations: %+v", ptr)
 		}
 		return
+	}
+	if outcome == "interrupted" {
+		refs := repairArtifactRefs(ptr, "targeted_reverification_artifacts", "", "")
+		if len(refs) != 1 || refs[0].Path != stagedTarget.Path || refs[0].SHA256 != stagedTarget.SHA256 {
+			t.Fatalf("interrupted Targeted retry replaced the original immutable source: %+v", refs)
+		}
 	}
 	if ptr["status"] != "closed" || mapFieldCLI(closed.State, "lifecycle")["state"] != "verification" || integerValue(mapFieldCLI(closed.State, "review")["round"]) != 2 {
 		t.Fatalf("no-change did not open a fresh ordinary S7: %+v %s", ptr, &diagnostic)

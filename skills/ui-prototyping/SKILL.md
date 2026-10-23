@@ -395,7 +395,8 @@ A module prototype set is ready for contract lock when ALL of these hold:
 - [ ] If the REQ modifies an existing module: the test plan includes a
       full-module regression sweep enumerating every `F-NNN` and required CASE/PATH
 - [ ] The scenario four-pack is present; generated cases and coverage are current;
-      required allow/reject branch coverage is 100%; and the module ratio gate passes
+      required allow/reject branch coverage is 100%; profile positive/negative
+      ratios guide risk review without adding quotas or dropping real branches
 
 Failing any item is a `DV-SPEC-CONSISTENCY` finding; the prototype set
 returns to S2 rework.

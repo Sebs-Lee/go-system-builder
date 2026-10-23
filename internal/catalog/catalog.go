@@ -223,7 +223,9 @@ func ValidateAgents(root string) error {
 		if frontmatter["name"] != role {
 			return fmt.Errorf("agent %s: frontmatter name mismatch", role)
 		}
-		for _, field := range []string{"description", "tools", "disallowedTools", "permissionMode"} {
+		// Native roles inherit platform tools unless the user configures them.
+		// Engineering responsibilities do not require a tool allow/deny list.
+		for _, field := range []string{"description", "permissionMode"} {
 			if frontmatter[field] == "" {
 				return fmt.Errorf("agent %s: missing frontmatter %s", role, field)
 			}

@@ -47,10 +47,14 @@ func gitContext(parent context.Context, root string, args ...string) ([]byte, er
 	if parent == nil {
 		parent = context.Background()
 	}
+	defer metrics.Span(parent, "source/git")()
 	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 	out, e := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...).CombinedOutput()
 	if e != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("git %s in %s: %w", strings.Join(args, " "), root, err)
+		}
 		detail := strings.TrimSpace(string(out))
 		if len(detail) > 1024 {
 			detail = detail[:1024]
@@ -162,7 +166,7 @@ func (v *View) ReadFile(path string) ([]byte, error) {
 		return os.ReadFile(full)
 	}
 	// Reject symlinks/submodules instead of treating their pointer bytes as content.
-	out, e := gitContext(v.context(), v.Root, "ls-tree", "-z", v.Commit, "--", p)
+	out, e := immutableGit(v.context(), v.Root, "ls-tree", "-z", v.Commit, "--", p)
 	if e != nil {
 		return nil, e
 	}
@@ -174,12 +178,13 @@ func (v *View) ReadFile(path string) ([]byte, error) {
 	if len(fields) != 3 || fields[1] != "blob" || fields[0] == "120000" {
 		return nil, fmt.Errorf("not a regular Git blob: %s", p)
 	}
-	return gitContext(v.context(), v.Root, "cat-file", "blob", fields[2])
+	return immutableGit(v.context(), v.Root, "cat-file", "blob", fields[2])
 }
 func (v *View) ReadDir(path string) ([]os.DirEntry, error) {
 	if err := v.context().Err(); err != nil {
 		return nil, err
 	}
+	defer metrics.Span(v.context(), "source/read_dir")()
 	p, source, e := v.source(path)
 	if e != nil {
 		return nil, e
@@ -193,7 +198,7 @@ func (v *View) ReadDir(path string) ([]os.DirEntry, error) {
 	}
 	spec := v.Commit + ":"
 	if p != "." {
-		out, err := gitContext(v.context(), v.Root, "ls-tree", "-z", v.Commit, "--", p)
+		out, err := immutableGit(v.context(), v.Root, "ls-tree", "-z", v.Commit, "--", p)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +207,7 @@ func (v *View) ReadDir(path string) ([]os.DirEntry, error) {
 		}
 		spec += p
 	}
-	out, e := gitContext(v.context(), v.Root, "ls-tree", "-z", spec)
+	out, e := immutableGit(v.context(), v.Root, "ls-tree", "-z", spec)
 	if e != nil {
 		return nil, e
 	}
@@ -234,6 +239,10 @@ func (v *View) ReadDir(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 func (v *View) Verify() error {
+	if err := v.context().Err(); err != nil {
+		return err
+	}
+	defer metrics.Span(v.context(), "source/verify")()
 	if v.Commit == "" {
 		return nil
 	}

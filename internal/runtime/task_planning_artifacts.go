@@ -377,7 +377,10 @@ func acceptedS3ForTaskPlanning(root string, state map[string]any, binding workpa
 			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 accepted evidence is incomplete")
 		}
 		evidenceData, err := workpacket.ReadFile(root, stringValue(evidence["path"]), 1<<20)
-		if err != nil || workpacket.Digest(evidenceData) != stringValue(evidence["sha256"]) {
+		if err != nil {
+			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("read S4 original S3 evidence artifact: %w", err)
+		}
+		if workpacket.Digest(evidenceData) != stringValue(evidence["sha256"]) {
 			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence artifact is unavailable or changed")
 		}
 		var envelope map[string]json.RawMessage

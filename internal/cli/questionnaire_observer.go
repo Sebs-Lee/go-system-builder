@@ -35,12 +35,36 @@ func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr
 		}
 	}
 	for _, receive := range []func(string, policy.Input, io.Writer, io.Writer) (bool, int){
-		runSavedEntryQuestionnaire, runSavedRepairDispatch, runSavedRepairVerifierDispatch,
+		runSavedEntryQuestionnaire, runSavedS5ManifestQuestionnaire, runSavedS7BudgetDecisionQuestionnaire, runSavedRepairDispatch, runSavedRepairVerifierDispatch,
 		runSavedInvestigationLeadQuestionnaire, runSavedRepairLeadQuestionnaire,
 		runSavedReviewPlanQuestionnaire, runSavedAuditQuestionnaire, runSavedHumanReleaseQuestionnaire,
 		runSavedBuilderQuestionnaire, runSavedStageAnswerHook,
 	} {
-		if handled, code := receive(root, request, stdout, stderr); handled {
+		var output bytes.Buffer
+		if handled, code := receive(root, request, &output, stderr); handled {
+			// A real Main save may reach the existing budget wait through S9
+			// final reception or S10 review_required. Prepare its original
+			// application here, never on an ordinary Pre/Stop/status read.
+			if code == 0 && request.Event == "PostToolUse" && request.Error == "" && mainQuestionnaireViewer(request) {
+				failed, _ := request.ToolResponse["is_error"].(bool)
+				if snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); !failed && err == nil && s7BudgetGateRequired(snapshot.State, root) {
+					var message string
+					if _, err := prepareS7BudgetDecisionQuestionnaire(root, snapshot.State); err != nil {
+						message = "S7 budget preparation failed; Main/system restores the original application: " + err.Error()
+					} else {
+						message = stageS7BudgetDecisionQuestionnaireContext(root, request, snapshot)
+					}
+					var envelope map[string]any
+					if json.Unmarshal(output.Bytes(), &envelope) == nil {
+						if hookOutput, ok := envelope["hookSpecificOutput"].(map[string]any); ok {
+							hookOutput["additionalContext"] = strings.TrimSpace(stringValue(hookOutput["additionalContext"]) + "\n" + message)
+							output.Reset()
+							_ = json.NewEncoder(&output).Encode(envelope)
+						}
+					}
+				}
+			}
+			_, _ = io.Copy(stdout, &output)
 			return true, code
 		}
 	}
@@ -88,6 +112,7 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 									receipt.Error = saveErr.Error()
 								}
 							}
+							prepareS5PlanningHandoff(ctx, root, &receipt)
 							return true, renderStageAnswerHook(stdout, path, receipt, "S4")
 						}
 					}
@@ -120,9 +145,10 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	var leadPaths []string
 	if currentAuditKind(snapshot.State) == "" {
 		leadPaths = investigationLeadQuestionnairePaths(root, snapshot.State)
+		leadPaths = append(leadPaths, repairDelegationApplicationPaths(root, snapshot.State)...)
 	}
 	questionnaires := observableQuestionnaires(root, snapshot)
-	if lifecycle := mapFieldCLI(snapshot.State, "lifecycle"); lifecycle["state"] == "bug_resolution" && lifecycle["phase"] != "investigation" {
+	if lifecycle := mapFieldCLI(snapshot.State, "lifecycle"); lifecycle["state"] == "bug_resolution" && lifecycle["phase"] != "investigation" && !s7BudgetGateRequired(snapshot.State, root) {
 		questionnaires = s9ObservableQuestionnaires(root, snapshot.State, request)
 	}
 questionnaires:
@@ -148,11 +174,18 @@ questionnaires:
 		if q.s9Kind != "" && s9ObservedQuestionnaireUnchanged(root, snapshot.State, q, data) {
 			continue
 		}
+		if strings.HasPrefix(filepath.Base(q.path), "hd-s7-budget-") {
+			var app s7BudgetDecisionApplication
+			if json.Unmarshal(data, &app) == nil && app.Decision == "" {
+				continue
+			}
+		}
 		for _, leadPath := range leadPaths {
 			if !samePath(q.path, leadPath) {
 				continue
 			}
 			if !investigationLeadQuestionnaireHasProfessionalContent(q.path, data) ||
+				repairDelegationApplicationAlreadyRecorded(root, snapshot.State, q.path, data) ||
 				s8ObservedHypothesesAlreadyRegistered(q.path, data, snapshot.State, q.s8Case) ||
 				s8ObservedRouteAlreadyRegistered(root, q.path, data, snapshot.State, q.s8Case) ||
 				s8ObservedContractAlreadyProjected(root, q.path, data, snapshot.State, q.s8Case) {
@@ -239,6 +272,9 @@ func s7ObservedPlanHasProfessionalContent(data []byte) bool {
 
 func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observedQuestionnaire {
 	state := snapshot.State
+	if paths := s7BudgetDecisionQuestionnairePaths(root, state); len(paths) > 0 {
+		return []observedQuestionnaire{{path: paths[0]}}
+	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	stage, _, _ := projectNext(stringValue(lifecycle["state"]), stringValue(lifecycle["phase"]), root)
 	if lifecycle["state"] == "inactive" {
@@ -268,7 +304,8 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 	var s8Case map[string]any
 	if stage == "S8" {
 		s8Case, _ = readS8ListenerCase(root, state)
-		for _, path := range investigationLeadQuestionnairePaths(root, state) {
+		paths := append(investigationLeadQuestionnairePaths(root, state), repairDelegationApplicationPaths(root, state)...)
+		for _, path := range paths {
 			out = append(out, observedQuestionnaire{path: path, s8Case: s8Case})
 		}
 	}

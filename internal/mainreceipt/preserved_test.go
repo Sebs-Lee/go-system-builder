@@ -60,7 +60,7 @@ func TestPreservedMergeIsUnverifiedWithoutBecomingSuccessfulProof(t *testing.T) 
 }
 
 func TestPreMergeFailureRemainsUnverifiedWithoutInventingMainFacts(t *testing.T) {
-	for _, name := range []string{"original pre-merge failure", "wrong Record", "wrong branch", "claims verification", "claims merge", "claims report", "claims runner receipt"} {
+	for _, name := range []string{"original pre-merge failure", "early before source", "early before target", "early before base", "malformed source", "target without source", "base without target", "wrong Record", "wrong branch", "claims verification", "claims merge", "claims report", "claims runner receipt", "claims changed paths"} {
 		t.Run(name, func(t *testing.T) {
 			f := newReaderFixture(t)
 			cp := f.checkpoint
@@ -72,6 +72,18 @@ func TestPreMergeFailureRemainsUnverifiedWithoutInventingMainFacts(t *testing.T)
 			cp.ReportPath, cp.ReportSHA, cp.ChangedPathsSHA256 = "", "", ""
 			cp.ChangedPaths, cp.CheckReceipts, cp.ToolCheckReceipts = nil, nil, nil
 			switch name {
+			case "early before source":
+				cp.SourceHead, cp.TargetHead, cp.MergeBase = "", "", ""
+			case "early before target":
+				cp.TargetHead, cp.MergeBase = "", ""
+			case "early before base":
+				cp.MergeBase = ""
+			case "malformed source":
+				cp.SourceHead = "not-a-Git-object"
+			case "target without source":
+				cp.SourceHead, cp.MergeBase = "", ""
+			case "base without target":
+				cp.TargetHead = ""
 			case "wrong Record":
 				cp.AssignmentRecordSHA256 = strings.Repeat("f", 64)
 			case "wrong branch":
@@ -84,6 +96,8 @@ func TestPreMergeFailureRemainsUnverifiedWithoutInventingMainFacts(t *testing.T)
 				cp.ReportPath = f.input.ResultRef
 			case "claims runner receipt":
 				cp.CheckReceipts = []string{f.receipt}
+			case "claims changed paths":
+				cp.ChangedPaths = []string{"src/claimed.go"}
 			}
 			writeCheckpointFixture(t, f, cp)
 			path := assignmentrecord.IntegrationCheckpointPath(f.root, ref)
@@ -92,7 +106,7 @@ func TestPreMergeFailureRemainsUnverifiedWithoutInventingMainFacts(t *testing.T)
 			if err == nil || proof.CheckpointSHA256() != "" || proof.MainFacts().TestedHead != "" {
 				t.Fatalf("failure became successful proof: %+v %v", proof, err)
 			}
-			if errors.Is(err, ErrNotVerified) != (name == "original pre-merge failure") {
+			if errors.Is(err, ErrNotVerified) != (name == "original pre-merge failure" || strings.HasPrefix(name, "early before ")) {
 				t.Fatalf("classification %q: %v", name, err)
 			}
 			after, readErr := os.ReadFile(path)

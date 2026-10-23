@@ -54,6 +54,10 @@ func TestEntryQuestionnaireS0PreparesActualDraftWithoutHumanDecision(t *testing.
 	if !strings.Contains(envelope.Output.Context, path) || envelope.Output.Permission == "deny" {
 		t.Fatalf("no exact draft or unexpected denial: %s", out)
 	}
+	assertS0CurrentResponsibility(t, envelope.Output.Context)
+	if _, err := os.Stat(filepath.Join(root, ".claude/submissions/requirement-binding.md")); !os.IsNotExist(err) {
+		t.Fatalf("S0 prepared a binding request before a locked requirement: %v", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -65,12 +69,70 @@ func TestEntryQuestionnaireS0PreparesActualDraftWithoutHumanDecision(t *testing.
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	entryQuestionnaireHook(t, root, "PreToolUse", path)
+	for _, event := range []string{"PreToolUse", "Stop"} {
+		out = entryQuestionnaireHook(t, root, event, path)
+		if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		assertS0CurrentResponsibility(t, envelope.Output.Context)
+	}
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(data, after) {
 		t.Fatal("repeat listener overwrote draft")
 	}
 	entryQuestionnaireHook(t, root, "PostToolUse", path)
+	assertEntryInactive(t, root)
+}
+
+func assertS0CurrentResponsibility(t *testing.T, context string) {
+	t.Helper()
+	for _, premature := range []string{"complete the actual four binding answers", "TR-001", "req bind", ".claude/loop-state.json"} {
+		if strings.Contains(context, premature) {
+			t.Fatalf("S0 asks for S1 or internal metadata before the current requirement: %q", context)
+		}
+	}
+	if !strings.Contains(context, "actual lock") || !strings.Contains(context, "requirement") {
+		t.Fatalf("S0 must explain the current professional requirement and real lock: %q", context)
+	}
+}
+
+func TestEntryQuestionnaireS0NextAndLockSaveKeepStageBoundary(t *testing.T) {
+	root := initEntryQuestionnaireRoot(t, nil)
+	state := readJSONMap(t, filepath.Join(root, ".claude/loop-state.json"))
+	milestone, _ := state["milestone"].(map[string]any)
+	data, _ := json.Marshal(milestone)
+	assertS0CurrentResponsibility(t, string(data))
+	var out, errout bytes.Buffer
+	if code := cli.Run([]string{"next", "--root", root}, nil, &out, &errout); code != 0 {
+		t.Fatalf("next failed: %s", &errout)
+	}
+	assertS0CurrentResponsibility(t, out.String())
+
+	path := filepath.Join(root, "docs/requirements/REQ-001.md")
+	entryQuestionnaireHook(t, root, "SessionStart", path)
+	// This is an explicit synthetic lock for this test, not a startup approval.
+	locked := strings.Replace(lockedReqBody, "REQ-098", "REQ-001", 1)
+	if err := os.WriteFile(path, []byte(locked), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	feedback := entryQuestionnaireHook(t, root, "PostToolUse", path)
+	requestPath := filepath.Join(root, ".claude/submissions/requirement-binding.md")
+	if !strings.Contains(feedback, requestPath) || !strings.Contains(feedback, "S1 binding questionnaire") {
+		t.Fatalf("the actual lock save did not hand off to original S1 preparation: %s", feedback)
+	}
+	request, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, question := range []string{"Which requirement is selected?", "Who actually authorized this binding?", "Which development branch was selected?", "What is the explicit release destination?"} {
+		if !strings.Contains(string(request), question) {
+			t.Fatalf("S1 handoff lost original choice %q: %s", question, request)
+		}
+	}
+	if !strings.Contains(string(request), "- Who actually authorized this binding? \n") {
+		t.Fatalf("S0 lock was incorrectly treated as startup approval: %s", request)
+	}
+	entryQuestionnaireHook(t, root, "PostToolUse", requestPath)
 	assertEntryInactive(t, root)
 }
 

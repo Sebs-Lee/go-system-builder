@@ -7,9 +7,7 @@
 > 负责 Builder：{Builder-FE-01}
 > 关联需求：`docs/requirements/REQ-{id}.md`
 > 关联设计：`docs/architecture/ARCHITECTURE.md`
-> 锁定日期：YYYY-MM-DD
-
-> 锁定状态与依据见 runtime documents[] 与 journal（.claude/loop-events.jsonl）——文件内不再手填
+> 作者维护本合同的真实状态与专业版本；登记时间、摘要和锁定关联由原消费者记录到 Runtime documents[] 与 journal，不另填机器元数据。
 
 ## Shared model inputs
 
@@ -67,7 +65,9 @@
 
 | CASE | polarity / branch | visible oracle | PATH | module spec | evidence |
 |:---|:---|:---|:---|:---|:---|
-| CASE-{id} | positive / negative · BR-{id} | {visible / terminal_state / persisted_effects / forbidden_side_effects; negative also rejection / expected_state / recovery} | F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | QA/E2E round {n} |
+| CASE-{id} | positive / negative · BR-{id} | {visible / terminal_state / persisted_effects / forbidden_side_effects; negative also rejection / expected_state / recovery} | F-{id} / PATH-{id} | `web/e2e/{module}/*.spec.ts` | 后续 QA/E2E 责任在实际报告中回链 |
+
+S3 声明验证要求与责任，不填写未来报告的轮次、时间或执行结果。
 
 ## 4. 技术约束
 

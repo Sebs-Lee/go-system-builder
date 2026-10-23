@@ -259,7 +259,7 @@ func resolve(r *resolver, req Request) Projection {
 			}
 			ref.SHA256 = digest(body)
 			entry := Entry{ID: "candidate-" + topic, Topic: topic, Scope: scope, Default: "", SourceRefs: []Reference{ref}, ExampleRefs: []Reference{}, Exceptions: []string{}, Status: "candidate"}
-			question := "Architect: confirm the exact applicable original rule choice and its exceptions before indexing a current default."
+			question := "Architect: confirm the exact applicable original rule choice and its exceptions for this TASK in the original professional material; this candidate does not establish a current default."
 			if _, err := r.prove(ref, req.ApprovedRefs); err != nil {
 				question += " " + err.Error()
 			}

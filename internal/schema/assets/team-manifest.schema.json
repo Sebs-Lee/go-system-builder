@@ -87,8 +87,7 @@
     "documents": {
       "type": "array",
       "minItems": 1,
-      "description": "Fingerprinted document references used for runtime verification. The bottom-up reading order is NOT enforced here; it is enforced on the readback-request template (see internal/schema/assets/readback-request.schema.json) because ordering is a launch-time concern, not a manifest-construction concern.",
-      "$comment": "BUG-002: positional kind/read_order lives in readback-request.schema.json, not here. BUG-004: documents[].sha256 is hand-maintained today; refresh coverage is partial (see D1/D2 in BUG-004 §8).",
+      "description": "系统准备的当前代际已登记来源；原阶段消费者冻结完整专业阅读闭包。内部完整 DTO 保留来源关联，不要求 Main 复制 Runtime 元数据。",
       "items": {
         "$ref": "#/$defs/reference"
       }
@@ -172,8 +171,7 @@
         "sha256": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
-          "description": "SHA-256 of the document file referenced by `path`. Verified against disk by semantic.validateReviewManifestReferences at validate --all time. Mismatches surface as fingerprint-mismatch errors. BUG-004 D5: future direction is to make this field optional and compute on validate; today it is required.",
-          "$comment": "BUG-004: refresh coverage today is loop-state.json only (via loop-harness runtime fingerprint); manifests and readback templates still require manual hash propagation when source documents change."
+          "description": "系统从原已接受来源准备的内容摘要；作者不计算或转写。接收和后续校验核对同一来源，漂移时恢复原字节或正式修订，不能自动刷新摘要。"
         }
       }
     },

@@ -220,6 +220,43 @@ func TestHypothesisResultRouteAndEvidenceClosuresFailClosed(t *testing.T) {
 	}
 }
 
+func TestHypothesisResultPreservesTypedFindingSourcesWithoutIndexAliases(t *testing.T) {
+	for _, change := range []string{"unchanged", "hash", "path", "owner", "index metadata", "alias"} {
+		t.Run(change, func(t *testing.T) {
+			inputs := hypothesisResultTestInputs()
+			ref := "path:observations/source.txt#sha256=" + strings.Repeat("a", 64)
+			inputs.Findings[0].Document = json.RawMessage(strings.Replace(string(inputs.Findings[0].Document), "test://finding-observation", ref, 1))
+			inputs.EvidenceRefs[1] = HypothesisEvidenceRef{Ref: ref, Origin: "finding", SourceFindingID: "finding-001", Attestation: "finding_source", Path: "observations/source.txt", SHA256: strings.Repeat("a", 64)}
+			switch change {
+			case "hash":
+				inputs.EvidenceRefs[1].SHA256 = strings.Repeat("b", 64)
+			case "path":
+				inputs.EvidenceRefs[1].Path = "other.txt"
+			case "owner":
+				inputs.EvidenceRefs[1].SourceFindingID = "finding-other"
+			case "index metadata":
+				inputs.EvidenceRefs[1].Status = "valid"
+			case "alias":
+				inputs.EvidenceRefs[1].Attestation = "runtime_index"
+			}
+			packet, err := BuildHypothesisResult(hypothesisResultTestBinding(t), inputs)
+			if change != "unchanged" {
+				if err == nil {
+					t.Fatal("forged original Finding source accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, _ := json.Marshal(packet)
+			if err := schema.NewEmbeddedValidator().ValidateBytes("hypothesis-result-work-packet.schema.json", data); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestHypothesisQuestionDigestExcludesIdentityButBindsAllQuestionFields(t *testing.T) {
 	question := hypothesisResultTestQuestion()
 	base, err := HypothesisQuestionDigest(question)

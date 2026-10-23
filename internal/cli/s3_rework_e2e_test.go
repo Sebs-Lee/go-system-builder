@@ -256,7 +256,21 @@ func TestS3ColdListenerSaveRegistersCurrentBatchAndSharedModelClosure(t *testing
 	root := newS3ReworkFixture(t)
 	packet := prepareS3ThroughSourceCommit(t, root)
 	indexPath, contractPath, modelPaths := writeS3SharedModelBatch(t, root, true, false)
-	stageJSON(t, root, packet.AnswerPath, s3AnswerDraft(packet, indexPath, contractPath))
+	// Start from the actual published author file. Main supplies professional
+	// content only; source hashes, receipt identity and time come from consumers.
+	data, err := os.ReadFile(filepath.Join(root, packet.AnswerPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var draft workpacket.ContractDraft
+	if err := json.Unmarshal(data, &draft); err != nil {
+		t.Fatal(err)
+	}
+	if draft.Answer.Conclusion != nil || draft.Answer.IndexPath != nil || len(draft.Answer.ContractPaths) != 0 || len(draft.Answer.Applicability) != 0 {
+		t.Fatal("published author file prefilled professional judgments")
+	}
+	draft.Answer = s3AnswerDraft(packet, indexPath, contractPath).Answer
+	stageJSON(t, root, packet.AnswerPath, draft)
 	// The project source contract is git_tree. The original consumer therefore
 	// evaluates the authored, complete S3 delivery from the committed branch.
 	fixtures.CommitCurrentFixture(t, root)
@@ -297,7 +311,7 @@ func TestS3ColdListenerSaveRegistersCurrentBatchAndSharedModelClosure(t *testing
 	if evidencePath == "" {
 		t.Fatalf("original S3 evidence record %s is missing", record.EvidenceID)
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(evidencePath)))
+	data, err = os.ReadFile(filepath.Join(root, filepath.FromSlash(evidencePath)))
 	if err != nil {
 		t.Fatal(err)
 	}

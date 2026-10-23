@@ -662,15 +662,15 @@ func investigationRouteNextAction(route string, pointer map[string]any) string {
 	switch route {
 	case "s9_repair":
 		caseID := stringValue(pointer["case_id"])
-		return fmt.Sprintf("draft the RepairContract for Case %s, use a matching human_decision, or (only with an explicit current bounded-repair grant) a repair_contract_review plus --delegation-evidence-id; then run `runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>`", caseID, caseID)
+		return fmt.Sprintf("draft the RepairContract for Case %s in the original supplied professional application, then save to fix its final review draft; Main/system prepares the original human or bounded Driver decision application at its exact path. Record only the actual decision and professional judgments there; the original Writer supplies identity, approval hash and evidence registration. Missing application preparation belongs to Main/system, not author-created metadata", caseID)
 	case "investigate_more":
-		return "register a new falsifiable hypothesis or submit its result before routing again"
+		return "append the actual new falsifiable question to the supplied original hypotheses application, or receive its genuine professional result before routing again; original registration is supplied internally"
 	case "duplicate":
 		return fmt.Sprintf("inspect canonical Case %s at %s and continue that Case; do not investigate this duplicate", stringValue(pointer["canonical_case_id"]), stringValue(pointer["canonical_case_ref"]))
 	case "s2_spec_rework":
-		return "consume the route with `runtime investigation consume --case-id <case>` to return to planning.design"
+		return "save the current original route judgment; the original consumer returns to planning.design after its actual conditions hold, without a separate manual consume"
 	case "s7_no_change":
-		return "consume the route with `runtime investigation consume --case-id <case>` to open a fresh S7 round"
+		return "save the current original no-change route judgment; the original consumer opens a fresh complete S7 round after its actual conditions hold, without a separate manual consume"
 	case "human_req_change":
 		return "pause at the human boundary with `runtime pause --reason <reason> --approved-by <human>`, then run `req amend`"
 	default:
@@ -1009,7 +1009,7 @@ func writeInvestigationCaseTemplate(root string, pointer map[string]any, target 
 		"root_invariant_assertions":  []string{"TODO(root-1: ...)"},
 		"detection_gap_assertions":   []string{"TODO(gap-1: ...)"},
 		"stop_escalation_conditions": []string{"TODO(when the repair must stop and escalate)"},
-		"next_verb":                  fmt.Sprintf("runtime investigation contract approve --case-id %s --file <draft> --approved-by <actor> --approval-hash <sha256> --approval-evidence-id <evidence-id>", caseID),
+		"next_verb":                  "save the supplied original professional Contract application, then use its system-prepared human or bounded Driver decision application; Main/system owns missing preparation and machine binding",
 	}
 
 	document := map[string]any{
@@ -1155,7 +1155,7 @@ func runRuntimeInvestigationStatus(args []string, stdout, stderr io.Writer) int 
 		return encodeJSON(stdout, map[string]any{
 			"status":   "not_ingested",
 			"revision": snapshot.Revision,
-			"next":     "runtime investigation ingest --root <root> --grouping-rationale <reason>",
+			"next":     "Main/system prepares the original S8 intake application from the sealed batch or actual human report; fill grouping_rationale there and save without authoring source metadata",
 		})
 	}
 	if requested := strings.TrimSpace(*caseID); requested != "" && requested != stringValue(pointer["case_id"]) {

@@ -241,7 +241,7 @@ func investigationLeadBatchReference(state map[string]any) (string, string) {
 
 func investigationLeadQuestionnairePaths(root string, state map[string]any) []string {
 	if paths := investigationLeadContractPaths(root, state); len(paths) != 0 {
-		return paths
+		return append(paths, investigationLeadContractDecisionPaths(root, state)...)
 	}
 	return append(investigationLeadQuestionnairePathsForQuestions(root, state), investigationLeadDispositionPaths(root, state)...)
 }
@@ -329,6 +329,12 @@ func investigationLeadSource(root string, state map[string]any) (map[string]any,
 }
 
 func runSavedInvestigationLeadQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
+	if handled, code := runSavedRepairDelegationApplication(root, request, stdout); handled {
+		return true, code
+	}
+	if handled, code := runSavedInvestigationContractDecision(root, request, stdout); handled {
+		return true, code
+	}
 	if handled, code := runSavedInvestigationLeadContract(root, request, stdout); handled {
 		return true, code
 	}
@@ -492,6 +498,14 @@ func investigationLeadDecode(data []byte, value any) error {
 // The script-save observer only needs to distinguish untouched machine drafts
 // from professional edits. Invalid JSON remains the original consumer's work.
 func investigationLeadQuestionnaireHasProfessionalContent(path string, data []byte) bool {
+	if strings.HasPrefix(filepath.Base(path), "s8-repair-delegation-") {
+		var answer repairDelegationApplicationAnswer
+		return investigationLeadDecode(data, &answer) != nil || strings.TrimSpace(answer.Decision) != ""
+	}
+	if strings.HasPrefix(filepath.Base(path), "s8-contract-") || strings.HasPrefix(filepath.Base(path), "s8-review-") {
+		var answer investigationContractDecisionAnswer
+		return investigationLeadDecode(data, &answer) != nil || strings.TrimSpace(answer.Decision) != ""
+	}
 	if err := workpacket.ValidateUniqueJSON(data); err != nil {
 		return true
 	}

@@ -556,7 +556,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 				return "S1", "loop-orchestration", "record the actual selected requirement, human startup decision and explicit project branch destinations in the supplied current binding request; save normally for original TR-001 and S2"
 			}
 		}
-		return "S0", "requirement-funnel", "continue the existing requirement draft with the real user; after the actual lock/start decision, save the current requirement and complete the supplied original binding request"
+		return "S0", "requirement-funnel", "complete the current requirement draft with the real user's goals, scope, constraints, acceptance criteria and unresolved decisions; record and save locked only after the human's actual lock of that version; the original lock-save listener then supplies the S1 handoff"
 	case "planning":
 		return cursor, "specification-planning", "complete the planning phase for " + phase
 	case "document_verification":
@@ -989,18 +989,18 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 			"lifecycle_state": "inactive",
 			"lifecycle_phase": nil,
 			"objective":       "produce one human-locked requirement (binding is the S1 action)",
-			"action":          "produce one human-locked REQ (docs/requirements/REQ-template.md + skills: requirement-funnel), then bind it",
+			"action":          "complete the current REQ from docs/requirements/REQ-template.md using requirement-funnel, resolve blocking decisions and record only the human's actual lock of that version",
 			"protocol_ref":    "docs/control/agent-protocol.md#s0",
 			"manual_ref":      loopManualRef,
 			"primary_skill":   "requirement-funnel",
 			"read":            []any{"docs/requirements/"},
 			"missing":         []any{"human_locked_req"},
-			"done_when":       []any{"the real requirement is locked and the actual four choices in the exact current binding request are saved for original TR-001 and S2"},
+			"done_when":       []any{"the current requirement is complete and the human's actual lock of that version is recorded"},
 			"human_required":  false,
 			"blocked":         false,
 			"blocker":         nil,
 			"event":           "init",
-			"instruction":     "LOOP RECOVERY: bind one human-locked REQ.",
+			"instruction":     "LOOP RECOVERY: complete the current requirement and faithfully record the human's actual lock.",
 			"recovery":        []any{"read docs/control/agent-protocol.md#s0", "if blocked read .claude/bin/loop-harness.md"},
 			"source_revision": 0,
 			"updated_at":      occurredAt.UTC().Format(time.RFC3339Nano),
@@ -2002,7 +2002,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		statePath := flags.String("state", ".claude/loop-state.json", "runtime state path")
 		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
 		findingID := flags.String("finding", "", "finding id the supplement extends")
-		filePath := flags.String("file", "", "FindingSupplement JSON path")
+		filePath := flags.String("file", "", "professional observation JSON path; original consumer binds schema/id/time/hash")
 		authorizedBy := flags.String("authorized-by", "", "scheduler identity authorizing a replacement finder (required when author != original finder)")
 		inRoundNote := flags.Bool("in-round-note", false, "declare an S7 in-round note from the original finder (exempt from the hypothesis_id + discriminator + expected_outcomes gate; must not carry hypothesis_id)")
 		if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
@@ -3037,6 +3037,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		request.Context = ctx
 		request.Context, _ = metrics.WithCallTimings(request.Context)
 	}
+	request.Context = fileview.WithReadCache(contextForHook(request))
 	// Resolve a registered Worker to its sole control Runtime without chdir.
 	rootContext, rootCancel := context.WithTimeout(contextForHook(request), 3*time.Second)
 	controlRoot, rootErr := workspace.ResolveControl(rootContext, root)

@@ -183,6 +183,11 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 		}
 	}
 	if !released {
+		if canonical != nil && canonical.Record.Contract == assignmentrecord.NativeDeliveryContract {
+			if _, pathErr := os.Lstat(req.Assignment.WorktreePath); os.IsNotExist(pathErr) {
+				return out, fmt.Errorf("accepted native S6 checkout %q is missing; Main restores the original Git checkout/branch %q at accepted SourceHead %s, then retries the original task-integrate. The original Plan/Result are already retained in Main; do not recreate private answer caches, recapture HEAD, or add a new commit to repair source identity", req.Assignment.WorktreePath, req.Assignment.Branch, canonical.Accepted.SourceHead)
+			}
+		}
 		clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath)
 		if err != nil {
 			workerRoot := req.Assignment.WorktreePath
@@ -203,7 +208,7 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 	}
 	out.SourceHead = sourceHead
 	if canonical != nil && canonical.Record.Contract == assignmentrecord.NativeDeliveryContract && canonical.Accepted.SourceHead != sourceHead {
-		addBlocker("native source commit changed after accepted Result; Main must use the original named Assignment revision")
+		addBlocker(fmt.Sprintf("native source commit changed after accepted Result; expected SourceHead %s at checkout %q branch %q. Main restores that exact accepted source for the original task-integrate, or uses the original named Assignment revision for genuinely new work; never recapture HEAD or rewrite the accepted Result", canonical.Accepted.SourceHead, req.Assignment.WorktreePath, req.Assignment.Branch))
 		return out, nil
 	}
 

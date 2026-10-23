@@ -1707,11 +1707,13 @@ func TestFreshCheckoutSessionStartIsNotBlocked(t *testing.T) {
 	if guidance.Stage != "S0" || guidance.PrimarySkill != "requirement-funnel" {
 		t.Fatalf("fresh checkout must route to S0/requirement-funnel, got %s/%s", guidance.Stage, guidance.PrimarySkill)
 	}
-	if !strings.Contains(guidance.Action, "REQ-template") || !strings.Contains(guidance.Action, "req bind") {
-		t.Fatalf("fresh checkout action must point at drafting + bind, got %q", guidance.Action)
+	if !strings.Contains(guidance.Action, "REQ-template") || !strings.Contains(guidance.Action, "actual lock") {
+		t.Fatalf("fresh checkout action must point at the current requirement and actual lock, got %q", guidance.Action)
 	}
-	if strings.Contains(guidance.Action, "reconcile") {
-		t.Fatalf("fresh checkout must not suggest reconcile, got %q", guidance.Action)
+	for _, prompt := range append([]string{guidance.Action, guidance.Instruction}, guidance.DoneWhen...) {
+		if strings.Contains(prompt, "req bind") || strings.Contains(prompt, "four binding answers") || strings.Contains(prompt, "TR-001") || strings.Contains(prompt, "reconcile") {
+			t.Fatalf("fresh checkout S0 must not require binding or internal recovery before its requirement: %q", prompt)
+		}
 	}
 }
 

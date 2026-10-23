@@ -91,6 +91,11 @@ func ApplyRecord(current Assignment, record assignmentrecord.Record) (Assignment
 // deliberately invalid as a submitted PLAN_REPORT until its owner answers.
 const resultOracleTiming = "Choose oracles verifiable before submitting the Result. The receiver's acceptance receipt proves Result registration afterwards. Checks owned by Main are verified by Main during integration."
 
+func dependencyQuestion(dependsOn []string) string {
+	encoded, _ := json.Marshal(append([]string{}, dependsOn...))
+	return fmt.Sprintf("Read-only registered workgroup-local Assignment dependencies: %s. The original receiver carries them into the canonical Plan; the private professional answer does not need this field. TASK prerequisites are handled by dispatch; input files, environment conditions and waiting for Main are not Assignment identifiers.", encoded)
+}
+
 func PlanTemplate(d Assignment, runtimeID, occurredAt string, planned []string) (map[string]any, map[string]string) {
 	if d.DispatchMode != "plan_checkpoint" {
 		return nil, nil
@@ -108,13 +113,13 @@ func PlanTemplate(d Assignment, runtimeID, occurredAt string, planned []string) 
 			"assignment_record_contract": assignmentrecord.AssignmentRecordContract,
 			"assignment_record_sha256":   d.AssignmentRecordSHA256,
 			"objective":                  nil, "planned_paths": []string{}, "assertion_checks": []any{},
-			"dependencies": nil, "risks_blockers": nil,
+			"dependencies": append([]string{}, d.DependsOn...), "risks_blockers": nil,
 		}
 		questions := map[string]string{
 			"/objective":        "State the concrete work and user value after reading the actual TASK and responsibility (at least 8 characters).",
 			"/planned_paths":    "List the paths this plan will change, within the canonical effective write paths and in your execution view.",
 			"/assertion_checks": "Give one or more actual assertions and observable oracles; use the registered done_when and required_checks.",
-			"/dependencies":     "Confirm the registered dependency identifiers against the locked TASK; do not infer completed prerequisites. Use [] only after confirming there are none.",
+			"/dependencies":     dependencyQuestion(d.DependsOn),
 			"/risks_blockers":   "List actual risks and blockers; use [] only after judging that none remain.",
 		}
 		if d.ClosingContract != nil {
@@ -124,7 +129,7 @@ func PlanTemplate(d Assignment, runtimeID, occurredAt string, planned []string) 
 		return plan, questions
 	}
 	plan := map[string]any{"schema_version": "1.0.0", "message_type": "plan_report", "message_id": "msg-plan-" + d.AssignmentID, "correlation_id": "corr-" + d.AssignmentID, "runtime_id": runtimeID, "agent_id": d.Owner, "agent_definition_ref": d.AgentDefinitionRef, "task_id": d.TaskID, "bug_id": nil, "team_id": d.TeamID, "occurred_at": occurredAt, "assignment_id": d.AssignmentID, "assignment_revision": 1, "objective": nil, "planned_paths": append([]string{}, planned...), "steps": []any{}, "assertion_checks": []any{}, "dependencies": append([]string{}, d.DependsOn...), "risks_blockers": nil}
-	questions := map[string]string{"/objective": "State the concrete work and user value after reading the actual TASK and responsibility (at least 8 characters).", "/steps": "Give one or more concrete steps with description (at least 4 characters) and optional target path.", "/assertion_checks": "Give one or more actual assertions and observable oracles (at least 4 characters each); use the registered done_when and required_checks.", "/planned_paths": "Choose paths within the original assignment. An S5 issued answer path is authority-relative; the local Worker answer path is in its execution view.", "/dependencies": "Confirm the registered Assignment dependencies against the locked TASK; do not infer completed prerequisites.", "/risks_blockers": "List actual risks and blockers; use [] only after judging that none remain."}
+	questions := map[string]string{"/objective": "State the concrete work and user value after reading the actual TASK and responsibility (at least 8 characters).", "/steps": "Give one or more concrete steps with description (at least 4 characters) and optional target path.", "/assertion_checks": "Give one or more actual assertions and observable oracles (at least 4 characters each); use the registered done_when and required_checks.", "/planned_paths": "Choose paths within the original assignment. An S5 issued answer path is authority-relative; the local Worker answer path is in its execution view.", "/dependencies": dependencyQuestion(d.DependsOn), "/risks_blockers": "List actual risks and blockers; use [] only after judging that none remain."}
 	questions["/assertion_checks"] += " " + resultOracleTiming
 	return plan, questions
 }
@@ -167,8 +172,8 @@ func ResultTemplate(d Assignment, runtimeID, occurredAt string) (map[string]any,
 	questions := map[string]string{
 		"/summary":            resultSummaryQuestion(d.RequiredChecks),
 		"/assertion_evidence": "The original begin flow copies each accepted PLAN assertion and oracle into these rows. Preserve those values and cite actual evidence file paths in evidence_refs. A cited file proves only its bytes, not that the assertion passed.",
-		"/risks_blockers":     "State remaining risks or blockers; use [] only after making that professional judgment.",
-		"/scope_deviations":   "State professional deviations from the planned scope; Main independently checks actual Git scope. Use [] only after making that judgment.",
+		"/risks_blockers":     "State actual remaining risks or blockers; any nonempty list prevents completion/integration. Put information-only limitations and resolved issues in summary/rationale, without hiding unfinished work. Use [] only after judging none remain.",
+		"/scope_deviations":   "State actual deviations from the planned scope; a nonempty list prevents completion/integration. Main independently checks Git scope. Explain information-only context in summary, without hiding a real deviation.",
 	}
 	if d.ClosingContract != nil {
 		draft["closing_assessment"] = nil

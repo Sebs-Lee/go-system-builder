@@ -2,10 +2,12 @@ package review
 
 import (
 	"fmt"
-	"github.com/entroforge/go-system-builder/internal/workstate"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/entroforge/go-system-builder/internal/agentcontext"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 // ---------------------------------------------------------------------------
@@ -116,16 +118,6 @@ var mandatoryResponsibilities = map[string][]string{
 	"e2e_browser":       {"E2E-USER-FLOW", "E2E-CONSOLE-NETWORK"},
 }
 
-// responsibilityRequiredSkills mirrors internal/team/validator.go
-// responsibilitySkills for the responsibilities the draft can pick.
-var responsibilityRequiredSkills = map[string][]string{
-	"QA-UNIT-TEST":        {"testing-strategy"},
-	"QA-INTEGRATION-TEST": {"testing-strategy"},
-	"VER-INTEGRATION":     {"integration-verification"},
-	"E2E-USER-FLOW":       {"e2e-browser-testing", "playwright-e2e"},
-	"E2E-CONSOLE-NETWORK": {"e2e-browser-testing", "playwright-e2e"},
-}
-
 // lensToRoleFamily maps a plan lens to the team-manifest role family.
 func lensToRoleFamily(lens string) string {
 	switch lens {
@@ -219,6 +211,7 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	if round == 0 {
 		round = currentReviewRound(state)
 	}
+	generation := baselineGeneration(state)
 
 	// Reuse a platform team only when registered facts name a single team.
 	platformTeamID := ""
@@ -237,26 +230,25 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		}
 	}
 	if len(platformTeams) != 1 {
-		platformTeamID = "TODO(planner): logical dispatch group label string"
-		notes = append(notes, "platform_team_id is a string label for this logical dispatch group, chosen by Main (for example s7-r1-review); no opaque platform identity lookup is required")
+		platformTeamID = fmt.Sprintf("s7-g%d-r%d-review", generation, round)
 	}
+	notes = append(notes, "platform_team_id is the prepared logical engineering group label; it does not create or identify a Claude Code platform Team")
 
 	suffix := strings.TrimPrefix(assignmentID, "assignment-")
 	workgroupID := "workgroup-" + suffix
 	if workgroupTaken[workgroupID] {
 		workgroupID = fmt.Sprintf("workgroup-%s-r%d", suffix, round)
 	}
-	notes = append(notes, "workgroup_id/manifest_id are suggestions; rename freely as long as the ^workgroup- / ^team-manifest- patterns hold")
+	notes = append(notes, "workgroup_id/manifest_id are prepared engineering identifiers for this original responsibility; Main does not need to invent or copy internal labels")
 
 	// Fingerprinted documents: the bound REQ plus every current-generation
 	// TASK the round freezes (the runtime verifies sha256 against disk).
-	generation := baselineGeneration(state)
 	documents := []ManifestDocument{}
 	if reqID != "" {
 		documents = append(documents, ManifestDocument{
 			ID:      reqID,
 			Path:    stringField(bound["path"]),
-			Version: documentVersion(bound["version"], reqID, &notes),
+			Version: stringField(bound["version"]),
 			SHA256:  stringField(bound["sha256"]),
 		})
 	}
@@ -272,18 +264,17 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		documents = append(documents, ManifestDocument{
 			ID:      id,
 			Path:    stringField(doc["path"]),
-			Version: documentVersion(doc["version"], id, &notes),
+			Version: stringField(doc["version"]),
 			SHA256:  stringField(doc["sha256"]),
 		})
 	}
 	if len(documents) == 0 {
-		documents = append(documents, ManifestDocument{
-			ID:      "TODO(planner): document id",
-			Path:    "TODO(planner): document path",
-			Version: "TODO(planner): document version",
-			SHA256:  strings.Repeat("0", 64),
-		})
-		notes = append(notes, "no bound REQ or current-generation TASK documents found; the placeholder documents row MUST be replaced with real fingerprinted references")
+		return nil, nil, fmt.Errorf("S7 Main/system preparation gap: no original bound REQ or current-generation TASK document references; restore the original source registration, do not author IDs, versions or SHA values")
+	}
+	for _, document := range documents {
+		if document.Path == "" || document.Version == "" || document.SHA256 == "" {
+			return nil, nil, fmt.Errorf("S7 Main/system preparation gap: original document %s is missing its registered path, version or SHA; restore its original source registration, do not ask the author to supply machine metadata", document.ID)
+		}
 	}
 
 	// The single manifest row binds the exact Claim set of the plan
@@ -309,12 +300,10 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		scope = []string{"TODO(planner): review scope"}
 	}
 
-	notes = append(notes, `skill_refs is a string array of existing Skill names required by the role, chosen by Main; for example ["integration-verification"] or ["testing-strategy"], not objects or digests`)
-	skillRefs := responsibilityRequiredSkills[responsibility]
+	notes = append(notes, `skill_refs contains the original required responsibility methods or role defaults; Main may add an actual additional professional method by its existing Skill name, not an object or digest`)
+	skillRefs := agentcontext.RequiredSkills(responsibility)
 	if len(skillRefs) == 0 {
-		skillRefs = []string{fmt.Sprintf("TODO(planner): existing Skill name string for %s", responsibility)}
-	} else {
-		skillRefs = append([]string(nil), skillRefs...)
+		skillRefs = agentcontext.CoreSkills(lensToRoleFamily(planned.Lens))
 	}
 
 	readPaths := []string{}
@@ -337,8 +326,8 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	}
 	notes = append(notes, "write_paths describe the Reviewer questionnaire/evidence responsibility and the registered verification_artifact_workspace; they are not a tool ACL")
 
-	agentID := fmt.Sprintf("TODO(planner): choose an engineering owner label for %s, not a platform agent_id", suffix)
-	notes = append(notes, "agent_id is this Reviewer dispatch name string, chosen by Main (for example s7-r1-qa); no opaque platform ID lookup is required")
+	agentID := fmt.Sprintf("s7-g%d-r%d-%s", generation, round, suffix)
+	notes = append(notes, "agent_id is the prepared engineering owner label for this exact original Assignment, not an opaque platform agent_id; Main may select an actual replacement owner without changing the professional scope or independence requirements")
 
 	roleFamily := lensToRoleFamily(planned.Lens)
 	dispositions := make([]ManifestDisposition, 0, len(mandatoryResponsibilities[kind]))
@@ -400,20 +389,11 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 			Result:                  "warn",
 			MissingResponsibilities: []string{},
 			UnresolvedConflicts:     []string{},
-			Warnings:                []string{"Draft preparation is incomplete: Main must choose the Reviewer dispatch name and logical dispatch group label and complete professional responsibility choices; this is not validation evidence."},
+			Warnings:                []string{"Prepared from the registered ReviewPlan; the original register-workgroup validates actual responsibility and source consistency. This draft is not professional validation evidence."},
 			ValidatedAt:             time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		},
 	}
 	notes = append(notes, "risk_tags left empty on purpose: adding a tag can force extra `assigned` responsibility dispositions at registration (internal/team validator)")
 	notes = append(notes, "validation uses the existing pass|warn|block schema; warn and its timestamp describe this generated draft, not professional review or registration acceptance. The original register-workgroup validates the completed manifest; no manual validation tuple or timestamp is required.")
 	return draft, notes, nil
-}
-
-// documentVersion returns the recorded version or a TODO marker.
-func documentVersion(value any, id string, notes *[]string) string {
-	if version, _ := value.(string); version != "" {
-		return version
-	}
-	*notes = append(*notes, fmt.Sprintf("document %s has no recorded version in the runtime; a TODO marker is emitted", id))
-	return "TODO(planner): document version"
 }

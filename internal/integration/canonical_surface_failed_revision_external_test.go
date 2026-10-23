@@ -15,10 +15,91 @@ import (
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/integration"
+	"github.com/entroforge/go-system-builder/internal/mainreceipt"
 	"github.com/entroforge/go-system-builder/internal/qualitygate"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/transition"
 )
+
+func TestCanonicalSurfaceEarlyInspectionFailureDoesNotBlockSuccessfulRevision(t *testing.T) {
+	ctx := context.Background()
+	fixture := newCanonicalMainFixtureWithSetup(t, canonicalSourceFile, true, false, seedCanonicalS5AndApplyTR003)
+	r1 := fixture.record
+	// Fail the real clean-tree check before Inspect resolves source/target/base.
+	// This is the original Writer's early failure path, not a hand-written checkpoint.
+	dirtyPath := filepath.Join(fixture.worker, "src/pkg/uncommitted.txt")
+	if err := os.WriteFile(dirtyPath, []byte("uncommitted fixture\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inspection := fixture.inspect(t, "")
+	if err := os.Remove(dirtyPath); err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Ready || inspection.CanonicalResult == nil || inspection.SourceHead != "" || inspection.TargetHead != "" || inspection.MergeBase != "" || len(inspection.Blockers) != 1 {
+		t.Fatalf("not the original early inspection failure: %+v", inspection)
+	}
+	failed, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: inspection}, fixture.integrateConfig())
+	if err != nil || failed.Checkpoint.State != integration.StatePreserved || failed.Checkpoint.CanonicalMainFacts != nil || failed.Checkpoint.MergeCommit != "" {
+		t.Fatalf("early failure invented a Main contribution: %+v err=%v", failed.Checkpoint, err)
+	}
+	r1Path := integration.CheckpointPathForRecord(fixture.root, r1.Reference())
+	r1Before, err := os.ReadFile(r1Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
+	if _, err := buildsurface.Read(fixture.root, before.State); !errors.Is(err, mainreceipt.ErrNotVerified) {
+		t.Fatalf("unfinished current r1 must still block: %v", err)
+	}
+	r2 := registerCanonicalRevisionTwo(t, fixture, r1, "agent-s6-early-failure-r2", canonicalSourceFile, []byte("main-check-marker\n"), "early-failure-r2")
+	ready := fixture.inspect(t, "")
+	if !ready.Ready {
+		t.Fatalf("legitimate successor not ready: %v", ready.Blockers)
+	}
+	integrated, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: ready}, fixture.integrateConfig())
+	if err != nil || integrated.Checkpoint.State != integration.StateVerified {
+		t.Fatalf("successor integration failed: %+v err=%v", integrated.Checkpoint, err)
+	}
+	current := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
+	surface, err := buildsurface.Read(fixture.root, current.State)
+	if err != nil || len(surface.Contributions) != 1 || surface.Contributions[0].AssignmentRecord != r2.Reference() {
+		t.Fatalf("early r1 blocked verified r2 or became successful history: %+v err=%v", surface, err)
+	}
+	catalog, err := transition.LoadCatalog(fixture.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := fileview.New(fixture.root, "refs/heads/main", catalog.Definition.FileSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := qualitygate.NewRegistry(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate, err := qualitygate.NewEvaluator(registry).Evaluate(ctx, qualitygate.Input{
+		Root: fixture.root, Snapshot: current, Files: files, GateID: "GATE-BUILDER-BATCH-READY", TransitionID: "TR-006",
+	})
+	if err != nil || gate.Status != qualitygate.StatusSatisfied {
+		t.Fatalf("original S6 exit after early r1 and verified r2: %+v err=%v", gate, err)
+	}
+	started, err := transition.Apply(fixture.root, fixture.statePath, fixture.journalPath, transition.Request{
+		Files: files, TransitionID: "TR-006", ExpectedRevision: current.Revision,
+		ExpectedRuntimeID: canonicalRuntimeID, Actor: "orchestrator",
+		Evidence: map[string]string{"builder_report_record": canonicalEvidenceIDForPath(t, current.State, integrated.Checkpoint.CanonicalMainFacts.Binding.ResultPath)},
+		GateID:   gate.GateID, GateFingerprint: gate.Fingerprint, ProducerResponsibility: "delivery_orchestrator",
+	})
+	if err != nil {
+		t.Fatalf("original S6 exit Writer: %v", err)
+	}
+	draft, notes := review.DraftPlanForRoot(fixture.root, started.State, 1)
+	if draft == nil || draft.ProductBaseline == nil || !reflect.DeepEqual(*draft.ProductBaseline, surface) {
+		t.Fatalf("S7 draft lost verified successor surface: %+v notes=%v", draft, notes)
+	}
+	if after, err := os.ReadFile(r1Path); err != nil || !reflect.DeepEqual(after, r1Before) {
+		t.Fatalf("early historical failure was rewritten: %v", err)
+	}
+}
 
 func TestCanonicalSurfaceSkipsOnlyPreservedFailedHistoricalContribution(t *testing.T) {
 	ctx := context.Background()

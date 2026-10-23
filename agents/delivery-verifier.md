@@ -1,8 +1,6 @@
 ---
 name: delivery-verifier
 description: Review one delivery gap, module, integration, or regression responsibility after dispatch (plan_checkpoint by default)
-tools: Read, Glob, Grep, Bash, Write, Skill
-disallowedTools: Edit, WebFetch, WebSearch
 model: sonnet
 permissionMode: default
 skills:
