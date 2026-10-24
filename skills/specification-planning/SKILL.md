@@ -333,11 +333,12 @@ S2 normal authoring obligation or a producer-name whitelist for S2.
 
 For S3/S4, tool access uses the exact supplied absolute filesystem paths;
 answer fields `index_path`, `contract_paths` and `task_paths` contain
-repository-relative values. For example, read/write
-`/work/project/docs/dev/contracts/CONTRACTS-042.md` with a tool, but put
-`docs/dev/contracts/CONTRACTS-042.md` in `index_path`. Save the questionnaire at
-its exact supplied absolute answer path. Markdown links remain relative to
-the containing document; do not convert them to answer-field root-relative paths.
+repository-relative values. For example, read/write the same contracts file
+under its supplied absolute path with a tool, but put its repository-relative
+path (`docs/dev/contracts/CONTRACTS-{id}.md`) in `index_path`. Save the
+questionnaire at its exact supplied absolute answer path. Markdown links remain
+relative to the containing document; do not convert them to answer-field
+root-relative paths.
 
 Professional S3/S4 rework is separate from technical continuation. Within the
 same bound REQ, use
