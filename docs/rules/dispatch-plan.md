@@ -10,7 +10,9 @@ by its original gate; it does not mean any implementation responsibility is
 [`state-machine.md`](state-machine.md#21-loop-responsibility-status). TASKs explicitly declare Source REQ refs.
 Use numeric TASK IDs such as `TASK-009` or `TASK-009-01`, with matching file
 names. Cancelled TASK files remain in the full S4 answer batch but do not appear
-as active plan members; they contribute no clause coverage.
+as active plan members; they contribute no clause coverage. Resolve any resulting
+coverage gap without removing those files from the delivered batch. Source REQ
+refs binds support and cancelled TASKs to the current REQ as well.
 New REQs and TASKs declare waves-v1; missing plans are not a legacy exemption.
 
 Keep real artifact dependencies in TASK Dependencies, not in a second graph.

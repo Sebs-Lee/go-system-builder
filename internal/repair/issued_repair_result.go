@@ -490,6 +490,14 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	if err != nil {
 		return current, WorkspaceCandidate{}, ArtifactRef{}, err
 	}
+	// Frozen executions retain their original evidence contract. Only new
+	// native delivery captures local author sources at this boundary.
+	if execution.Purpose == workspace.NativeDeliveryPurpose {
+		provenance.LocalEvidence, err = captureS9LocalEvidence(registry.MainRoot, actualSource, packet.ID, answer)
+		if err != nil {
+			return current, WorkspaceCandidate{}, ArtifactRef{}, err
+		}
+	}
 	proposal, err := repairResultProposal(packet, answer, execution, registry.MainRoot, provenance)
 	if err != nil {
 		return current, WorkspaceCandidate{}, ArtifactRef{}, err
@@ -986,6 +994,9 @@ func SubmitIssuedRepairResult(ctx context.Context, root, statePath, journalPath 
 		return current, RepairResult{}, ArtifactRef{}, errors.New("S9 candidate belongs to a different Result questionnaire")
 	}
 	provenance := *candidate.Provenance
+	if err := verifyS9CapturedEvidence(root, provenance); err != nil {
+		return current, RepairResult{}, ArtifactRef{}, err
+	}
 	if err := ensureRepairResultCompleted(provenance.SubmittedAnswer); err != nil {
 		return current, RepairResult{}, ArtifactRef{}, err
 	}

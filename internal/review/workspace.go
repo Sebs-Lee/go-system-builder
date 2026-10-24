@@ -686,22 +686,31 @@ func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignme
 			return fmt.Errorf("assignment %s execution workspace digest: %w", id, err)
 		}
 		bound, _ := row["artifact_digest"].(string)
-		if bound == "" || bound == current {
+		if bound == current {
 			continue
 		}
-		if err := verifyResultWorkspaceAnchors(root, artifactRoot, ptr.VerificationArtifactWorkspace, id, row); err != nil {
+		if bound == "" {
+			return fmt.Errorf("assignment %s result_ref %s has no original artifact_digest for execution workspace %s; Main must restore the original machine binding, not infer dependencies from missing metadata", id, stringField(row["result_ref"]), filepath.Join(artifactRoot, ptr.VerificationArtifactWorkspace))
+		}
+		var plan *Plan
+		if state != nil && bound != sha256Of(nil) {
+			var err error
+			plan, _, err = LoadPlan(root, state)
+			if err != nil {
+				return err
+			}
+		}
+		if err := verifyResultWorkspaceAnchors(root, artifactRoot, ptr.VerificationArtifactWorkspace, id, row, plan); err != nil {
 			return fmt.Errorf("assignment %s consumed a result against workspace digest %s, but the workspace now digests to %s; the round is stale (L3-S7 §10.3): %w", id, bound, current, err)
 		}
 	}
 	return nil
 }
 
-// verifyResultWorkspaceAnchors re-verifies every workspace-relative typed
-// path anchor (path:<workspace-relative>#sha256=<hex>) that a consumed
-// result pinned. It returns nil only when at least one anchor was verified
-// and none drifted; results that pinned no workspace anchor cannot be
-// re-verified and fail closed.
-func verifyResultWorkspaceAnchors(root, executionRoot, workspaceRel, assignmentID string, row map[string]any) error {
+// verifyResultWorkspaceAnchors re-verifies the dependencies declared in the
+// original result. Missing declarations are unknown, never proof that a result
+// did not use the workspace. Historical receipts retain their original bytes.
+func verifyResultWorkspaceAnchors(root, executionRoot, workspaceRel, assignmentID string, row map[string]any, plans ...*Plan) error {
 	resultRel, _ := row["result_ref"].(string)
 	if resultRel == "" {
 		return fmt.Errorf("consumed row has no result_ref; its workspace anchors cannot be re-verified")
@@ -710,63 +719,114 @@ func verifyResultWorkspaceAnchors(root, executionRoot, workspaceRel, assignmentI
 	if err != nil {
 		return fmt.Errorf("read consumed result %s: %w", resultRel, err)
 	}
-	var result struct {
-		Checks []struct {
-			EvidenceRefs []string `json:"evidence_refs"`
-		} `json:"checks"`
-		ClaimResults []struct {
-			EvidenceRefs []string `json:"evidence_refs"`
-		} `json:"claim_results"`
-	}
+	var result Result
 	if err := json.Unmarshal(data, &result); err != nil {
 		return fmt.Errorf("decode consumed result %s: %w", resultRel, err)
 	}
-	workspaceAbs, err := repositoryContainedPath(executionRoot, workspaceRel)
+	count, err := verifyWorkspaceDependencyRefs(executionRoot, workspaceRel, &result)
 	if err != nil {
-		return fmt.Errorf("resolve registered execution workspace: %w", err)
+		return err
 	}
-	check := func(ref string) error {
-		if !strings.HasPrefix(ref, "path:") {
-			return nil
-		}
-		refPath := strings.TrimPrefix(ref, "path:")
-		shaIdx := strings.Index(refPath, "#sha256=")
-		if shaIdx < 0 {
-			return nil
-		}
-		rel := filepath.Clean(filepath.FromSlash(refPath[:shaIdx]))
-		abs := filepath.Clean(filepath.Join(executionRoot, rel))
-		if !strings.HasPrefix(abs, workspaceAbs+string(filepath.Separator)) && abs != workspaceAbs {
-			return nil // anchored outside the workspace: not ours to re-verify
-		}
-		want := refPath[shaIdx+len("#sha256="):]
-		fileData, err := os.ReadFile(abs)
-		if err != nil {
-			return fmt.Errorf("anchor %s no longer resolvable: %w", ref, err)
-		}
-		if got := sha256Of(fileData); got != want {
-			return fmt.Errorf("anchor %s changed after consumption (now %s)", ref, got)
-		}
+	if count > 0 {
 		return nil
 	}
-	for _, c := range result.Checks {
-		for _, ref := range c.EvidenceRefs {
-			if err := check(ref); err != nil {
-				return err
-			}
+	// The empty-workspace hash is an existing machine proof of no files at
+	// consumption. Later additions cannot have changed a dependency from it.
+	if stringField(row["artifact_digest"]) == sha256Of(nil) {
+		return nil
+	}
+	for _, plan := range plans {
+		if resultUsesBoundReuseAssets(plan, &result) {
+			return verifyRegressionAssetFingerprints(executionRoot, plan)
 		}
 	}
-	for _, c := range result.ClaimResults {
-		for _, ref := range c.EvidenceRefs {
-			if err := check(ref); err != nil {
-				return err
+	return missingWorkspaceDependencies(executionRoot, workspaceRel, assignmentID, resultRel)
+}
+
+// The author names actual scripts/fixtures in the existing claim/check refs;
+// bindIssuedPathEvidence supplies hashes from the authenticated execution root.
+// Command output establishes observations, not the script/fixture dependency.
+func verifyWorkspaceDependencyRefs(executionRoot, workspaceRel string, result *Result) (int, error) {
+	workspaceAbs, err := repositoryContainedPath(executionRoot, workspaceRel)
+	if err != nil {
+		return 0, fmt.Errorf("resolve registered execution workspace: %w", err)
+	}
+	var groups [][]string
+	for _, claim := range result.ClaimResults {
+		groups = append(groups, claim.EvidenceRefs)
+	}
+	for _, check := range result.Checks {
+		groups = append(groups, check.EvidenceRefs)
+	}
+	count := 0
+	for _, refs := range groups {
+		for _, ref := range refs {
+			if !strings.HasPrefix(ref, "path:") {
+				continue
 			}
+			rel, digest, err := parsePathEvidenceRef(ref)
+			if err != nil {
+				return count, err
+			}
+			// Resolve containment before reading, including symlink protection.
+			abs, err := repositoryContainedPath(executionRoot, rel)
+			if err != nil {
+				return count, err
+			}
+			if !strings.HasPrefix(abs, workspaceAbs+string(filepath.Separator)) {
+				continue
+			}
+			if digest == "" {
+				return count, fmt.Errorf("workspace dependency %s has no original bound digest; restore the original result consumer, do not author a hash", ref)
+			}
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				return count, fmt.Errorf("anchor %s no longer resolvable: %w", ref, err)
+			}
+			if got := sha256Of(data); got != digest {
+				return count, fmt.Errorf("anchor %s changed after consumption (now %s); restore the original asset bytes and retry the original seal; if restoration is impossible, Main must resolve this affected accepted result through original round recovery before reusing PASS (runtime review-plan revise requires a legal round status, real --source-ref/--affected-surface and an actual Claim change; metadata gaps alone do not authorize a revision)", ref, got)
+			}
+			count++
 		}
 	}
-	// A result that pinned no workspace anchors declared no dependency on
-	// the workspace (e.g. a repo-spec re-run); workspace growth cannot have
-	// invalidated it, so there is nothing to re-verify.
-	return nil
+	return count, nil
+}
+
+// A selected reusable asset is already bound by the original Plan consumer.
+// Require coverage for every executed Claim before using those existing
+// bindings as proof; a partial reuse declaration does not explain other work.
+func resultUsesBoundReuseAssets(plan *Plan, result *Result) bool {
+	if plan == nil || len(result.ClaimResults) == 0 {
+		return false
+	}
+	boundTargets := map[string]bool{}
+	for _, asset := range plan.E2EAssets {
+		if _, _, err := caseReferenceParts(asset.CaseRef); err == nil && asset.Path != "" && asset.SHA256 != "" {
+			boundTargets[asset.CaseRef] = true
+		}
+	}
+	coveredClaims := map[string]bool{}
+	for _, claim := range plan.Claims {
+		declared, covered := false, true
+		for _, ref := range claim.SourceRefs {
+			if _, _, err := caseReferenceParts(ref); err != nil {
+				continue
+			}
+			declared = true
+			covered = covered && boundTargets[ref]
+		}
+		coveredClaims[claim.ClaimID] = declared && covered
+	}
+	for _, executed := range result.ClaimResults {
+		if !coveredClaims[executed.ClaimID] {
+			return false
+		}
+	}
+	return true
+}
+
+func missingWorkspaceDependencies(executionRoot, workspaceRel, assignmentID, resultRel string) error {
+	return fmt.Errorf("assignment %s result %s has unknown script/fixture dependencies in execution workspace %s: claim_results[].evidence_refs or checks[].evidence_refs must name the actual used paths (path:<repository-relative-script-or-fixture>); execution logs do not replace dependency refs. If original dependency bytes are known and can be restored, restore them and retry the original seal. Otherwise hand this missing proof to Main for original round recovery before reusing PASS; accepted results stay immutable. runtime review-plan revise requires a legal round status, real --source-ref/--affected-surface and an actual Claim change; do not invent a Claim change for this metadata gap. For a new original answer, name actual used scripts/fixtures in those evidence_refs and let the original answer consumer bind hashes", assignmentID, resultRel, filepath.Join(executionRoot, filepath.FromSlash(workspaceRel)))
 }
 
 // projectedAssignments returns the assignment projection as it will look

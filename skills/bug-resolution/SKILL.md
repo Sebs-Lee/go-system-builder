@@ -256,6 +256,21 @@ use their original [recovery contract](../agent-dispatch/frozen-execution.md).
 
 ## Issued S9 RepairResult after implementation
 
+For new native delivery, local files in Result `evidence_refs` (top level and
+nested observations) use the registered Builder root, never Main's root.
+Prefer `path:logs/check.txt` (no authored hash needed); slash-containing relative
+file references and absolute files within that Builder root are also accepted.
+The original Result receiver captures these actual bytes into Main and keeps the
+original authored references and source root in its immutable provenance. A
+missing local file is a source handoff gap: restore the original file and retry
+reception, without inventing observations. URI references retain their meaning;
+bare tokens are opaque, unarchived identifiers. For a filename without a directory,
+use `path:check.log` or `./check.log`. Migration, rollback and detection-gap artifact
+references keep their original meaning and are not included in this capture. This
+Result capture does not claim to archive Plan-only evidence: PlanReport retains
+its original references and Builder source context. Registered frozen executions
+keep their original reception requirements and unarchived source references.
+
 At the supplied Worker root, implement and self-check, or complete assigned
 no-change tests, then personally save flat top-level professional fields at the private Result path
 in the native brief. Do not add an `answer` wrapper or write Main. Fill the

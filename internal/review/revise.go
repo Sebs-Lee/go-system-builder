@@ -80,6 +80,9 @@ func RevisePlan(
 	if err != nil {
 		return loopruntime.Snapshot{}, err
 	}
+	if err := validateAuthoredBehaviorSurfaces(&next, currentPlan); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	switch ptr.Status {
 	// stale is recoverable by a controlled revision once the drift source is
 	// remediated: without this arm a stale round has no in-round verb at all

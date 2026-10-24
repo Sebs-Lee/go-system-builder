@@ -14,7 +14,7 @@ Read the module current-truth package (`scenario-model.json`, generated cases/co
 fixture contract, `stories.md`, `flows.md`, and current HTML), browser support target,
 test data, and environment contract.
 ## Quality Criteria
-Execute human navigation steps, use stable semantic selectors, isolate test data, assert
+Execute human navigation steps, use the current selector contract, isolate test data, assert
 common oracle fields (`visible`, `terminal_state`, `persisted_effects`,
 `forbidden_side_effects`) and, for negative cases, `rejection`, `expected_state`, and
 `recovery`; retain traceable evidence and source-backed recovery N/A. Playwright or
@@ -36,7 +36,7 @@ Do not replace S7 responsibility assignment or clean-round decisions.
 
 ## Operating Procedure
 1. Read the assigned CASE, branch polarity, oracle, PATH, controls and fixture contract. During S7, read existing sources/specs without editing them; for cold_start create only needed scripts/fixtures in the declared verification_artifact_workspace. Use the actual selected paths and runner configuration, preserving existing web/e2e assets as read/run-only.
-2. For test implementation or permitted cold-start scripts, implement each human action using role, label, or approved `data-test` locators. Use direct API/URL operations only to establish fixtures, never to skip the route under test.
+2. For S7 browser review and its permitted cold-start scripts, use the original `data-test` selector contract from `e2e-browser-testing`; role/label locators are not a fallback for a missing required hook. Report that affected check to Main and continue other safe assigned checks without editing product code. Outside this S7 contract, implementation may use role/label locators only when the assigned project's selector contract allows them. Use direct API/URL operations only to establish fixtures, never to skip the route under test.
 3. Assert visible checkpoints and relevant request outcomes with auto-waited conditions, not sleeps. Add trace, screenshot, or video on failure for diagnosis.
 4. Run only the assigned Claims/CASEs through their actual selected specs; Main owns full-round module coverage. Record passing negative observations in ClaimResult.observed and referenced real evidence; Finding encounter fields apply only to failed Claims. Run the assigned independent verification, retain its actual browser evidence and reference it in the original S7 answer using the methods in `e2e-browser-testing`. Repeat only when needed to resolve a real observation; do not repeat unsafe P0 actions or create another report.
 

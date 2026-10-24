@@ -135,6 +135,10 @@
         "vitest"
       ]
     },
+    "e2e-tester": {
+      "core": ["agent-dispatch", "testing-strategy", "integration-verification"],
+      "legacy": ["agent-dispatch", "e2e-browser-testing", "playwright-e2e", "testing-strategy", "user-flow-design", "scenario-model-design", "integration-verification"]
+    },
     "investigator": {
       "core": [
         "agent-dispatch",
@@ -173,6 +177,7 @@
     "VER-INTEGRATION": [
       "integration-verification"
     ],
+    "E2E-BEHAVIOR": ["integration-verification", "testing-strategy"],
     "E2E-USER-FLOW": [
       "e2e-browser-testing",
       "playwright-e2e"

@@ -33,6 +33,7 @@ var Skills = []SkillSpec{
 	{"pinia", "best-practice"},
 	{"vitest", "best-practice"},
 	{"playwright-e2e", "best-practice"},
+	{"e2e-browser-testing", "best-practice"},
 	{"eslint", "best-practice"},
 	{"prettier", "best-practice"},
 	{"vue-devtools", "best-practice"},

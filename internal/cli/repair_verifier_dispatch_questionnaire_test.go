@@ -44,7 +44,7 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 	before := repairDispatchRuntimeBytes(t, root)
 	context := stageRepairVerifierDispatchContext(root, policy.Input{Event: "PreToolUse"}, snapshot)
 	contractPath := resolveRootPath(root, stringValue(repairPointerCLI(snapshot.State)["contract_ref"]))
-	for _, want := range []string{path, contractPath, "all current Contract assertions", "not required for every Builder", "role_family=test-builder", "restore first authority", "ordinary Builder selection", "platform launch"} {
+	for _, want := range []string{path, contractPath, "all current Contract assertions", "not required for every Builder", "role_family=test-builder", "restore first authority", "ordinary Builder selection", "dispatch only when the current Targeted responsibility"} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("verifier professional view lacks %q: %s", want, context)
 		}
@@ -73,7 +73,7 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 	if owner == "" || owner == "builder-for-verifier" || len(owners) != 2 || registered.Revision != snapshot.Revision+1 {
 		t.Fatalf("one original verifier must register independently, not per Builder: owners=%#v revision=%d", owners, registered.Revision)
 	}
-	for _, want := range []string{owner, verificationID, "TASK", "Manifest:", "not prepared yet", "No native agent was started"} {
+	for _, want := range []string{owner, verificationID, "TASK", "Manifest:", "wait for the original Final integration and ChangeImpact", "no native agent was started"} {
 		if !strings.Contains(feedback, want) {
 			t.Fatalf("original verifier dispatch feedback lacks %q: %s", want, feedback)
 		}
@@ -120,8 +120,8 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 	if !taskFound {
 		t.Fatal("packet verifier TASK was not registered")
 	}
-	if !strings.Contains(feedback, targetPath) {
-		t.Fatalf("system omitted exact current Targeted path: %s", feedback)
+	if strings.Contains(feedback, "spawn/resume") {
+		t.Fatalf("pending registration prematurely requested native launch: %s", feedback)
 	}
 	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
 		t.Fatalf("verifier registration prepared a premature independent result: %v", err)

@@ -191,12 +191,12 @@ S2 已接收但原出口仍未完成时，修复具名缺口后由原答卷保�
 
 | 层次 | 权威载体与职责 | 同步要求 |
 | --- | --- | --- |
-| 入口路由 | AGENTS、生成手册、loop-orchestration：指向当前阶段、原 view/answer 和具名恢复 | 不复制全部问卷或要求读 Runtime 才能开始 |
-| 阶段合同 | agent-protocol S4/S5、TR-002：区分专业完成、持久接收、阶段迁移和审查准备 | 普通拆分无人类闸门；真实需求变更或超出授权决定才交人 |
-| 专业方法 | specification-planning、TASK/index 模板、dispatch-plan：粒度、读集、条款、范围、收尾、依赖和资源顺序 | 使用合法 TASK 编号与真实相对路径；取消项保留，活动计划成员完整；分析建议不成为新批准手续 |
-| 具体责任 | S4 packet/draft 和动态产物指引：准确输入、作者路径、绑定 Git 分支、三项答案 | 工具绝对路径与答卷相对值分开；示例须通过完整接收，不仅通过 JSON 校验；完整批次不受任意任务数量门槛限制，已有字节预算仍有效 |
-| 事件与接收 | 普通 Pre/Session 只读；实际保存经原消费者、Writer 和 TR-002；Stop 只作有界提醒 | 无变化去重，责任/错误变化重新交付；普通工具可用，不禁止必要 status/next 诊断，不把系统待续催成新的专业交付 |
-| 结果与交接 | S4 回执、recover、S5 准备及会话恢复共用后继指引；team-planning/agent-dispatch 承接真实派发 | 当次给出真实错误和完整恢复命令，成功则给两路准确 view/answer/source root；注册不等于 Agent 启动 |
+| 入口路由 | [AGENTS](../../AGENTS-template.md)、[生成手册](../../loop-harness.md)、[loop-orchestration](../../skills/loop-orchestration/SKILL.md)：指向当前阶段、原 view/answer 和具名恢复 | 不复制全部问卷或要求读 Runtime 才能开始 |
+| 阶段合同 | [agent-protocol S4/S5](../../docs/control/agent-protocol.md)、[TR-002 / PTR-PLAN-07](../../docs/control/loop-definition.json)：区分专业完成、持久接收、阶段迁移和审查准备 | 普通拆分无人类闸门；真实需求变更或超出授权决定才交人 |
+| 专业方法 | [specification-planning](../../skills/specification-planning/SKILL.md)、[TASK](../../docs/dev/tasks/TASK-template.md)/[index](../../docs/dev/tasks/index-template.md) 模板、[dispatch-plan](../../docs/rules/dispatch-plan.md)：粒度、读集、条款、范围、收尾、依赖和资源顺序 | 使用合法 TASK 编号与真实相对路径；取消项保留，活动计划成员完整；分析建议不成为新批准手续 |
+| 具体责任 | [S4 模板](../../internal/schema/assets/stage-form-s4-template.json)、[packet/draft](../../internal/workpacket/task_planning.go)、[动态产物指引](../../internal/submission/design.go)：准确输入、作者路径、绑定 Git 分支、三项答案 | 工具绝对路径与答卷相对值分开；示例须通过完整接收，不仅通过 JSON 校验；完整批次不受任意任务数量门槛限制，已有字节预算仍有效 |
+| 事件与接收 | [CLI 保存/恢复](../../internal/cli/stage_answer.go)、[保存观察](../../internal/cli/questionnaire_observer.go)、[原消费者](../../internal/submission/task_planning.go)、[Stop](../../internal/hook/mainstop.go)：普通 Pre/Session 只读，实际保存经原 Writer 和 TR-002，Stop 只作有界提醒 | 无变化去重，责任/错误变化重新交付；普通工具可用，不禁止必要 status/next 诊断，不把系统待续催成新的专业交付 |
+| 结果与交接 | [S4→S5 交接](../../internal/cli/s5_planning_handoff.go)、[准备器](../../internal/cli/s5_manifest_questionnaire.go)、[只读投影](../../internal/cli/s5_guidance.go)、[诊断](../../internal/submission/planning_diagnostics.go)共用后继指引；[team-planning](../../skills/team-planning/SKILL.md)/[agent-dispatch](../../skills/agent-dispatch/SKILL.md)承接真实派发 | 当次给出真实错误和完整恢复命令，成功则给两路准确 view/answer/source root；注册不等于 Agent 启动 |
 
 | 时点 | 必须交付给 Main 的内容 | 合法后继 |
 | --- | --- | --- |
@@ -219,11 +219,32 @@ S2 已接收但原出口仍未完成时，修复具名缺口后由原答卷保�
 | 隐藏 128 项门槛 | 移除任意任务数量上限，保留完整批次、唯一性与字节预算；超过 128 的合法批次仍可表达和接收，后续 TR-003 执行批次不得重新施加同一任务数门槛；历史基线记录数量预算与任务集合大小分别处理 |
 | 问卷泛称 human gates，Stop 禁止 status/next | 仅明确真实人类决定；必要诊断工具可用，有界 Stop 尊重系统待续/真实阻塞，不诱导重交或伪造证据 |
 
-专业返工使用 `runtime stage-answer rework --target tasks --reason <具体规划修正>`，只适用于当前 S4。原 REQ、已接收 S3 和冻结输入必须继续成立，不能用任务返工刷新漂移的上游。已经进入 S5 时沿原独立审查及文档返工责任处理，不用 S4 命令越过审查。新的模板措辞不得使原已发行 packet 身份或合法历史答案失效。
+专业返工使用 `runtime stage-answer rework --target tasks --reason <具体规划修正>`，只适用于当前 S4。原 REQ、已接收 S2/S3 和正式来源必须继续成立，不能用任务返工刷新漂移的上游。已经进入 S5 时沿原独立审查及文档返工责任处理，不用 S4 命令越过审查。新的模板措辞不得使原已发行 packet 身份或合法历史答案失效。
+
+须区分正式来源与描述性方法：REQ、设计、已接收契约及其条款/来源按原冻结合同验证；S4 的 `TASK-template.md`、`dispatch-plan.md` 方法说明保留历史交付引用，说明文字更新不成为原答卷接收或 tasks 返工的新资格门。返工后新发行的 S4 仍验证当次实际来源并采用当次方法引用；S5 新准备也按当次方法来源交付，不把旧 S4 方法摘要重新变为交接门。方法未变化时不改变既有 S5 packet 身份，部分已发行问卷仍按原准备恢复规则保留。这不豁免 TASK 自身的范围、条款、依赖或完整性检查。旧 JSON 问卷模板只允许按已知历史模板摘要重建，不接受任意自填提示替换。
 
 S4 成功 Main Post 的接收与后继准备分别使用 12 秒上限；当前 S4 的无路径脚本保存和原已接收待续事件采用同一预算。工作上限 26 秒、进程上限 28 秒与 PostToolUse 平台上限 30 秒须相互包含；其他事件保留原 6/8 秒内部预算。预算选择只决定可运行时间，不授予接收权限。相同冻结输入允许在一次调用中复用分析与 Git 读取，Writer 的原来源校验和独立审查责任仍须完整执行。
 
 测试须从公开 Hook/CLI 核对：正常交接、NotReady/错误跨会话、recover 交接、S5 部分准备失败及重试、任务返工及上游漂移拒绝、合法大批次、实际工具无拒绝、Stop 防循环。直接控制器调用的 Pre 自动接续测试不能代替公开只读 Hook 的行为；源码测试也不等于真实 Agent 专业质量验证。
+
+回归入口分别为 [平台注册命令](../../internal/cli/s4_registered_handoff_test.go)（真实二进制、平台超时、Write 与无路径 MCP）、[接收与恢复交接](../../internal/cli/s5_planning_handoff_e2e_test.go)、[tasks 专业返工](../../internal/cli/planning_rework_e2e_test.go)、[合法示例与 129 TASK 批次](../../internal/cli/s4_boundary_contract_test.go)、[历史模板](../../internal/runtime/s4_template_compatibility_test.go)及[门诊断持久化](../../internal/submission/task_planning_receipt_test.go)。大批次用例验证完整原消费者接收和 TR-002 登记，不宣称任意大小批次都能在单次 Hook 预算内完成；资源中断仍走原接续及准备恢复。
+
+### 边界内表达复审：反馈自身即可执行
+
+本轮沿上述六层收敛以下差距，不增加阶段、审批或作者字段。反馈必须区分原责任事实、本次尝试结果和下一动作；agent 不应从相互冲突的状态或未来占位符猜测流程。
+
+| 差距与所属层 | 修复合同 | 验收 |
+| --- | --- | --- |
+| 接收层：已接收答案改写后返回 `not_accepted`，文字却称原答案已接收；仅说“原返工流程” | 原接收及其当前有效/被替换状态继续投影；本次修改拒绝单独说明，不抹掉历史也不接收新内容。仍在当前 S4 且仅改 TASK/index 时给完整 `rework --target tasks --reason` 入口；已经进入 S5 或旧入口被替换时分别给原审查/当前责任，不诱导运行不适用命令。来源恢复与专业返工须分清 | 从真实已接收责任改写后走 CLI/Hook，验证结构化事实与文字一致、原记录与 revision 不被改写、下一动作符合实际阶段 |
+| 交接层：`issue` 恢复成功仅返回 packet JSON | S5 `issue` 与正常交接共用当前责任投影，当次给两路 owner/责任、绝对 view/answer、source root、独立派发和原生返回边界；保留现有机器输出兼容，不重新发行或覆盖答案，不让 Main 自拼路径。若最终观察发现阶段已前进，交付当前阶段事实，不把旧 S5 引用当成待派发责任 | 从准备失败/部分发行恢复，检查命令实际输出而非仅检查 Runtime；已有答案/packet 身份保留，重复恢复不增加责任 |
+| 具体责任与专业方法：TASK 要求提前填写 `{agent-message-path}` 和未指明的 `schema-valid` | S4 确定产品、测试和确需保存的专业证据路径；运行时 Plan/Result 等入口在后续实际责任发行时供应。TASK 只声明交付语义及使用原入口，不猜未来 Assignment、报告路径或 schema；问卷中的 Scope 覆盖要求不能把未来运行时元数据变成 S4 前置 | 模板与方法不再遗留未来身份/路径占位要求；保持必要产品范围、检查证据及完成标准 |
+| 专业方法：Scope 的 `allowed command classes` 看似工具白名单 | 改为适用检查/操作说明，真实授权和产品范围仍由原合同约束；不把 test/lint/build/read-only 列表解释为普通工具许可，不另增 Hook ACL | 模板、派发规则、阶段合同同义；正常 Git/实现/检查不需新许可 |
+| 专业方法：`cancelled=out of the batch` 与原问卷完整批次冲突；“Do not create an index”未限定对象 | 取消 TASK 退出活动派发及条款覆盖，但保留在完整交付批次；工程惯例索引与必需 REQ 派发索引具名区分 | 问卷、TASK/index 模板、规划方法及取消批次原消费者保持同一语义 |
+| 阶段合同：L3 来源校验说明滞后 | 新接收明确验证 REQ/S2/S3 正式来源；历史 TASK 模板/dispatch-plan 方法说明沿已发行引用保留，不成为新接收资格。已接收重放、TR-002 登记及 S5 当前来源验证分别陈述 | L3/L4 与实际消费者调用一致，不把所有读取称为完整历史重验，也不漏写正式来源校验 |
+
+这轮不通过改写已发行问卷模板身份、放松正式来源校验或增加等待手续消除歧义。实现若用独立的人类可读输出补充现有 CLI JSON，必须在同次命令中交付，并验证机器输出仍可按原结构解析。
+
+落地验证入口：[S4 本次拒绝与原接收分离](../../internal/cli/s4_rejected_attempt_e2e_test.go)覆盖当前 S4、已进入 S5、旧入口被替换，以及正常结构改写和字段无效两类尝试；[S5 issue 同次交接](../../internal/cli/s5_issue_handoff_delivery_test.go)检查 stdout 原 packet 数组与 stderr 派发指引、准备失败恢复和部分发行保留；[最新阶段保护](../../internal/cli/s5_issue_handoff_snapshot_test.go)验证阶段前进后不再投影旧 S5 派发。原取消批次、历史模板及模板迁移检查继续验证方法措辞变更没有改变原接收合同。
 
 <a id="s6-s7-guidance"></a>
 
@@ -347,6 +368,23 @@ S4 成功 Main Post 的接收与后继准备分别使用 12 秒上限；当前 S
 修复输入：S7 Stop 的实际错误没有进入 Main 回执投影；未知 Start 收到问卷要求；单责任重复工具收到相同长上下文；E2E 角色把非浏览器工作浏览器化、把轮次覆盖下放成每人的全模块覆盖；冷启动与 web/e2e 路径冲突；共用方法混入规格作者指令；负向 PASS 观察误指向 Finding 字段；CleanRound 仍等下一次 Pre、TR-009 文档残留手工绑定、S10 缺稿只有报错没有恢复动作。
 
 验收包括：精确/未知/歧义 Start；字段失败与真实缺源的 Stop→Main 回显；不读取私人未接收答案；相同上下文去重与新错误/会话/轮次恢复；浏览器与非浏览器责任、冷启动与既有资产均有可执行且不越权的方法；真实最后结果接收同次进入 S10并给出材料；失败门不放行；迁移失败与准备失败分别可恢复；重放不重复结果、转换或覆盖报告。已有非本轮工作和冻结合同须保持；测试不通过删校验、放宽权限边界或增大 Hook 预算实现。
+
+### S7 边界内第二轮审查：实例与回传必须兑现总则
+
+总则不能要求 agent 覆盖生成物中的错误默认值。专业判断仍由 Main/Reviewer 作出；系统必须交付已知事实、确定的字段映射和原下一步，不将未观察的事实预填成结论。
+
+| 差距与负责层 | 编排合同 | 验收边界 |
+| --- | --- | --- |
+| 无 UI 被草稿推成 E2E N/A；计划生成层 | 浏览器发现只说明浏览器候选集合。无 UI 或没有浏览器 CASE 时，其他行为适用性保持待 Main 判断，不预填“无用户可观察行为变化”或要求保留泛化 N/A；有依据的正式 N/A 继续允许 | 必需非浏览器 CASE 不被默认结论遮蔽；真正 N/A 可由 Main 完成原字段并登记 |
+| 非浏览器 Assignment 默认浏览器职责；实例/方法选择/校验层 | 依据原计划中明确的行为适用事实选择职责和方法；未声明时交还 Main 具名待决项，不解析任意 prose 猜浏览器。通用 E2E、浏览器专用职责和历史登记保持可区分，真实浏览器义务不能因减负被删去 | API/命令/状态责任可用适用方法完成原登记；浏览器责任仍保留原浏览器方法；旧已登记 manifest 不被迁移或改写 |
+| 未列资产依赖被当作无依赖；原结果接收与复核层 | 执行日志证明观察，脚本/夹具引用说明支持该观察的实际资产，两者不互相替代。沿原 answer 的 evidence_refs 说明实际使用路径，原消费者绑定摘要；系统已知的原资产绑定直接复用，不要求作者抄 hash 或另建清单。工作区变化且依赖未知时明确缺口，不将沉默解释成不依赖 | 实际依赖改动不能沿用旧 PASS；不同 Reviewer 合法新增无关资产仍可并行；缺依赖给出原字段/路径的恢复指引，历史结果不被静默升级 |
+| 部分接收只报本人完成；Main 返回投影层 | 个人回执保持已交付；Main 同次只读收到剩余准确 Assignment、已知 owner/引用、队列与依赖及原动作。未登记给原 manifest 入口，已登记给原问卷/来源恢复，实际平台运行状态须核对原生执行，不能由登记推定 | 第一份有效结果返回时可定位其余责任；不代收、不启动、不修改 Runtime，也不要求已完成 Reviewer 等整轮 |
+| 选择器方法互相冲突；专业方法层 | S7 浏览器执行遵守原 data-test 契约，通用 Playwright 的 role/label 建议明确适用范围，不覆盖该契约；缺钩子只停止受影响检查并交 Main | 同时加载两个方法时没有相反操作指令，不为通过检查改产品 |
+| PASS/FAIL/BLOCKED 报告未映射；专业方法/题面层 | S7 只填原答卷：正常结论 pass/fail，真实 Finding 阻断进 blocked_claims，环境未执行说明实际缺项并交 Main，正常负向通过进 observed；不另造流程报告或状态枚举 | 方法步骤、示例、checklist 与原字段含义一致，环境缺失不伪造成产品阻断 |
+
+这轮按计划与实例生成、资产依赖与原复核、Main 反馈三层修复；方法近端指令与题面由主代理对齐。任何新增可选专业字段须在原题面说明、兼容历史冻结字节；不增加通用审批、工具 ACL、重复报告或 Hook 时间预算。证据不足时明确事实缺口，不靠要求作者揣测内部校验来完成流程。
+
+当前实例编排在原 E2E Plan Assignment 中使用 `behavior_surface=browser|non_browser`。新计划在原登记前校验这项专业选择，缺失时回原草稿，不等计划不可变后才要求修订，也不从 method/target 自由文本推断。字段对历史冻结 JSON 可省略；已登记缺字段的历史计划及其未派发责任保留原浏览器合同。已知浏览器 CASE 可供应 browser，其他行为由 Main 指定。non_browser 使用通用 `E2E-BEHAVIOR` 与现有通用方法；browser 保留原浏览器职责。历史 `e2e_browser` workgroup kind 是兼容容器，不再单独决定新计划的专业适用性，已登记冻结责任沿原合同恢复。
 
 ## 事件选点与信息预算
 

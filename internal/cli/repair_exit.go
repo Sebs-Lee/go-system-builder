@@ -12,6 +12,8 @@ import (
 	"github.com/entroforge/go-system-builder/internal/runtime"
 )
 
+const repairHandoffPendingInstruction = "The final required Targeted SubagentStop attempts the original Handoff automatically. If it remains incomplete, preserve the accepted observations and use the exact runtime repair handoff complete recovery supplied with the failure; a real budget decision remains necessary when the limit is reached. No extra Handoff answer or repeated Targeted report is needed; ordinary reminders do not retry the transition"
+
 func repairExitRecovery(root string) string {
 	return fmt.Sprintf("runtime repair handoff complete --root %q", root)
 }
@@ -34,6 +36,18 @@ func repairCurrentS7Entry(state map[string]any) bool {
 		integerValue(entry["baseline_generation"]) == integerValue(nestedStateValue(state, "baseline", "generation")) &&
 		stringValue(p["review_plan_seed_ref"]) != "" && entry["review_plan_seed_ref"] == p["review_plan_seed_ref"] &&
 		stringValue(p["handoff_ref"]) != "" && entry["repair_handoff_ref"] == p["handoff_ref"]
+}
+
+// TR-012 installs the seed's pointer to pin its baseline. That projection is
+// not the Planner's first professional registration; RegisterPlan still owns
+// checking the untouched seed and all refinement requirements.
+func repairSeedAwaitingPlan(state map[string]any) bool {
+	if !repairCurrentS7Entry(state) {
+		return false
+	}
+	plan := review.PlanPointerFromState(state)
+	p := repairPointerCLI(state)
+	return plan != nil && plan.Revision == 1 && plan.Path == stringValue(p["review_plan_seed_ref"]) && plan.SHA256 == stringValue(p["review_plan_seed_sha256"])
 }
 
 // This projection never retries a Writer or prepares files. The explicit
@@ -60,7 +74,7 @@ func repairHandoffProjectionContext(root string, state map[string]any) string {
 	}
 	if seed := stringValue(p["review_plan_seed_ref"]); repairCurrentS7Entry(state) {
 		message += " Fresh S7 seed: " + resolveRootPath(root, seed) + "."
-		if plan := review.PlanPointerFromState(state); plan != nil && plan.ReviewRound == integerValue(nestedStateValue(state, "review", "round")) {
+		if plan := review.PlanPointerFromState(state); plan != nil && plan.ReviewRound == integerValue(nestedStateValue(state, "review", "round")) && !repairSeedAwaitingPlan(state) {
 			return message + " The current S7 ReviewPlan is already registered; follow its current independent review responsibilities without submitting it again."
 		}
 		if path := reviewPlanQuestionnairePath(root, state); path != "" {
@@ -100,7 +114,7 @@ func completeRepairExit(root string) (string, error) {
 	}
 	// System-owned preparation at the actual completion outlet, even when the
 	// triggering event was a Worker stop. This does not receive a plan answer.
-	guidance, prepareErr := prepareReviewPlanQuestionnaireContext(root, policy.Input{Event: "PostToolUse", CWD: root}, snapshot)
+	guidance, prepareErr := prepareReviewPlanQuestionnaireEntry(root, policy.Input{Event: "PostToolUse", CWD: root}, snapshot, true)
 	if guidance != "" {
 		message += " " + guidance
 	}

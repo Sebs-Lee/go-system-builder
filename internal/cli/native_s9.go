@@ -93,7 +93,8 @@ baseline %s. Respect the actual dependency order. Before implementation,
 perform actual prechecks and personally save the professional PlanReport at %s relative
 to your actual native worktree. Write only plan, red_checks and proposed_paths in this
 private JSON; the original Main-root question is read-only input, not a Worker write
-location. Claude Code forbids isolated Workers from editing the shared Main checkout.
+location. This workflow requires isolated Workers to keep edits in their actual
+native worktree; Main owns changes to the shared Main checkout.
 Continue your repair and real self-checks without waiting for a save receipt or activation.
 Commit only product deliverables. Keep professional files out of Git.
 Save your professional Result at %s relative to your actual native worktree:
@@ -113,6 +114,13 @@ are arrays of strings, never artifact objects. migration_ref and rollback_ref ar
 use "" if not applicable. Keep every shown field; use [] for an empty array. Do not add
 machine metadata or extra nested fields. Record commands/observations in the professional
 text fields and reference actual files as strings.
+Local files in Result evidence_refs (top-level and per-observation) are relative
+to your registered Worker root (or absolute within it); prefer path:logs/check.txt,
+without authoring a hash.
+Use path:check.log or ./check.log for a local bare filename; bare tokens without
+path: or a slash remain opaque legacy IDs.
+Reception captures these actual bytes for Main. URI references remain unchanged;
+missing local source files must be restored for reception.
 Return this exact brief %s and the absolute Result path. SubagentStop receives the
 professional artifacts; Main owns integration and necessary checks. No workspace
 prepare/launch, session reservation, Team, generic readback, begin or activation.
@@ -324,10 +332,10 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 	}
 	var verdict workpacket.RepairResultProfessionalAnswer
 	if err := workpacket.ValidateUniqueJSON(professional); err != nil {
-		return &nativeAuthorError{err}
+		return nativeS9ArtifactAuthorError("Result", filepath.Join(source, result), err)
 	}
 	if err := json.Unmarshal(professional, &verdict); err != nil {
-		return &nativeAuthorError{err}
+		return nativeS9ArtifactAuthorError("Result", filepath.Join(source, result), err)
 	}
 	service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
 	if err := importNativeS9PlanReport(contextForHook(in), root, source, p, service, diagnostic); err != nil {
@@ -386,7 +394,7 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 		decoder := json.NewDecoder(bytes.NewReader(professional))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&answer); err != nil {
-			return &nativeAuthorError{err}
+			return nativeS9ArtifactAuthorError("Result", filepath.Join(source, result), err)
 		}
 		draft := packet.Draft
 		// Preserve explicit null/missing values for the original professional
@@ -397,7 +405,7 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 		}
 		receipt, err := service.SaveRepairResultFrom(contextForHook(in), p.Binding.OwnerAgentID, filepath.Join(source, packet.AnswerPath), source, nil)
 		if err != nil {
-			return err
+			return nativeS9FlatArtifactError("Result", filepath.Join(source, result), err)
 		}
 		if !receipt.Accepted {
 			return fmt.Errorf("original RepairResult was not accepted: %s", receipt.Error)
@@ -420,20 +428,20 @@ func importNativeS9PlanReport(ctx context.Context, root, source string, p workpa
 		return &nativeAuthorError{fmt.Errorf("actual native worktree PlanReport is missing at %s; Main's draft cannot substitute for the Worker artifact", filepath.Join(source, p.AnswerPath))}
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("read actual native PlanReport at %s: %w", filepath.Join(source, p.AnswerPath), err)
 	}
 	if err := workpacket.ValidateUniqueJSON(raw); err != nil {
-		return &nativeAuthorError{err}
+		return &nativeAuthorError{fmt.Errorf("actual native PlanReport at %s: %w", filepath.Join(source, p.AnswerPath), err)}
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return &nativeAuthorError{fmt.Errorf("actual native PlanReport must be a JSON object: %v", err)}
+		return &nativeAuthorError{fmt.Errorf("actual native PlanReport at %s must be a JSON object: %v", filepath.Join(source, p.AnswerPath), err)}
 	}
 	professional := json.RawMessage(raw)
 	if answer, exists := object["answer"]; exists {
 		for _, key := range []string{"plan", "red_checks", "proposed_paths"} {
 			if _, mixed := object[key]; mixed {
-				return &nativeAuthorError{fmt.Errorf("actual native PlanReport mixes answer and professional fields")}
+				return &nativeAuthorError{fmt.Errorf("actual native PlanReport at %s mixes answer and professional fields", filepath.Join(source, p.AnswerPath))}
 			}
 		}
 		professional = answer
@@ -446,7 +454,11 @@ func importNativeS9PlanReport(ctx context.Context, root, source string, p workpa
 	}
 	answer, fields := workpacket.ValidateRepairPlanReportAnswer(p, data)
 	if len(fields) != 0 {
-		return &workpacket.AnswerError{Label: "actual native PlanReport", Fields: fields}
+		err := &workpacket.AnswerError{Label: "actual native PlanReport at " + filepath.Join(source, p.AnswerPath), Fields: fields}
+		if _, wrapped := object["answer"]; !wrapped {
+			return nativeS9FlatArtifactError("PlanReport", filepath.Join(source, p.AnswerPath), err)
+		}
+		return err
 	}
 	draft.Answer = answer
 	if err := persistRepairLeadQuestionnaire(filepath.Join(root, p.AnswerPath), draft); err != nil {

@@ -52,12 +52,22 @@ func repairVerifierDispatchSelection(state map[string]any, row repairVerifierDis
 
 func repairVerifierDispatchContext(root string, state map[string]any, assignmentID, owner string) string {
 	context := strings.Replace(repairDispatchRegisteredContext(root, state, assignmentID, owner), "Registered Builder", "Registered independent verifier", 1)
-	if path, err := repairTargetedQuestionnairePath(root, state, assignmentID); err == nil {
-		if questionnaireMissing(path) {
-			context += "Original Targeted answer path: " + path + "; not prepared yet. The original responsibility entry prepares it when this responsibility reaches targeted_reverification; ordinary reminders only read existing materials. "
-		} else {
-			context += "Original Targeted answer: " + path + ". Carry this exact path in the independent verifier's native prompt; the verifier returns it for SubagentStop reception. Ordinary saves do not receive the result. "
+	context = strings.Replace(context, "platform spawn/resume remains Main's responsibility. ", "registration retained. ", 1)
+	if stringValue(repairPointerCLI(state)["status"]) != "targeted_reverification" {
+		return context + "Registration is complete; wait for the original Final integration and ChangeImpact before dispatching this verifier. The original Targeted responsibility prepares its answer when ready. "
+	}
+	path, err := repairTargetedQuestionnairePath(root, state, assignmentID)
+	if err == nil {
+		info, statErr := os.Stat(path)
+		if statErr == nil && info.Mode().IsRegular() {
+			return context + "Original Targeted answer: " + path + ". Main must actually spawn/resume the registered independent verifier with its real TASK and manifest context, carrying this exact answer path in the native prompt. The verifier returns it for SubagentStop reception; ordinary saves do not receive the result. "
 		}
+		context += "Original Targeted answer is not prepared as a regular file at " + path + ". "
+	} else {
+		context += "Original Targeted answer path is unavailable: " + err.Error() + ". "
+	}
+	if division, pathErr := repairLeadQuestionnairePath(root, state, "independent-verifier-dispatch.json"); pathErr == nil {
+		context += "Restore the named source/filesystem failure, then save the registered division again at " + division + "; the original registration is reused and its Targeted answer is prepared. "
 	}
 	return context
 }
@@ -93,7 +103,7 @@ func stageRepairVerifierDispatchContext(root string, request policy.Input, snaps
 			b.WriteString("This anchor is awaiting its ordinary Builder selection; select its Builder first, before registering an independent verifier. ")
 		}
 	}
-	b.WriteString("Keep supplied assignment_id; set independent_verification=true on the selected anchor, others false. agent_id is optional and system-generated when omitted. role_family=test-builder, with no product writes. One independent verifier can cover all current Contract assertions; a verifier is not required for every Builder row. Select someone who did not implement or merge the repair. Save; Main must actually spawn/resume the verifier with its TASK/manifest: registration is not a platform launch. Follow the original Targeted result questionnaire; no Builder PlanReport or separate generic report is required.")
+	b.WriteString("Keep supplied assignment_id; set independent_verification=true on the selected anchor, others false. agent_id is optional and system-generated when omitted. role_family=test-builder, with no product writes. One independent verifier can cover all current Contract assertions; a verifier is not required for every Builder row. Select someone who did not implement or merge the repair. Save to register the identity; dispatch only when the current Targeted responsibility and its exact original answer are ready, as described above. Follow the original Targeted result questionnaire; no Builder PlanReport or separate generic report is required.")
 	return b.String()
 }
 
@@ -188,7 +198,7 @@ func runSavedRepairVerifierDispatch(root string, request policy.Input, stdout, s
 		if stringValue(repairPointerCLI(latest.State)["status"]) == "targeted_reverification" {
 			selections, err := repairTargetedSelections(root, latest.State)
 			if err != nil {
-				return feedback(result.String() + " Independent Targeted source: " + err.Error())
+				return feedback(result.String() + " Independent Targeted source: " + err.Error() + ". Restore the named source and save this same registered division again; its original registration is reused and Targeted preparation retried.")
 			}
 			for _, selection := range selections {
 				if selection.performingAssignmentID != choice.AssignmentID || selection.verifierOwner != owner {
@@ -196,7 +206,7 @@ func runSavedRepairVerifierDispatch(root string, request policy.Input, stdout, s
 				}
 				answerPath, _, err := prepareRepairTargetedQuestionnaire(root, latest.State, selection)
 				if err != nil {
-					return feedback(result.String() + " Original verifier dispatch recorded; Targeted questionnaire preparation: " + err.Error())
+					return feedback(result.String() + " Original verifier dispatch recorded; Targeted questionnaire preparation: " + err.Error() + ". Restore the named source/filesystem failure and save this same division again; the original registration will be reused.")
 				}
 				result.WriteString(" Independent verifier answer: " + answerPath + ". ")
 			}
@@ -206,6 +216,6 @@ func runSavedRepairVerifierDispatch(root string, request policy.Input, stdout, s
 	if !selected {
 		return feedback("S9 independent verifier division has no selection yet; this normal pending draft registered no verifier and did not change Runtime.")
 	}
-	result.WriteString("Main must actually spawn/resume the registered independent verifier with its real TASK and manifest context. This identity covers the current Contract assertions; its original Targeted answer is prepared when the targeted responsibility starts. No native agent was started by this save.")
+	result.WriteString("This identity covers the current Contract assertions. Follow the readiness or original preparation recovery above; no native agent was started by this save.")
 	return feedback(result.String())
 }

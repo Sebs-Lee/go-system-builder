@@ -70,6 +70,10 @@ func CurrentTaskPlanningBinding(state map[string]any) (workpacket.PlanningBindin
 // source closure from the accepted S3 packet/evidence. It never infers those
 // historical facts from unregistered files on disk.
 func ResolveTaskPlanningInputs(root string, state map[string]any, files fileview.Reader) (workpacket.TaskPlanningInputs, error) {
+	return resolveTaskPlanningInputs(root, state, files, nil)
+}
+
+func resolveTaskPlanningInputs(root string, state map[string]any, files fileview.Reader, issuedMethods map[string]workpacket.Subject) (workpacket.TaskPlanningInputs, error) {
 	if files == nil {
 		return workpacket.TaskPlanningInputs{}, fmt.Errorf("S4 requires the original authoritative file view")
 	}
@@ -116,13 +120,17 @@ func ResolveTaskPlanningInputs(root string, state map[string]any, files fileview
 		return workpacket.TaskPlanningInputs{}, err
 	}
 	for _, path := range []string{"docs/dev/tasks/TASK-template.md", "docs/rules/dispatch-plan.md"} {
+		if ref, issued := issuedMethods[path]; issued {
+			inputs.Sources = append(inputs.Sources, ref)
+			continue
+		}
 		data, err := readTaskPlanningFrozenFile(absoluteRoot, files, path)
 		if err != nil {
 			return workpacket.TaskPlanningInputs{}, err
 		}
 		inputs.Sources = append(inputs.Sources, workpacket.Subject{Path: path, SHA256: workpacket.Digest(data)})
 	}
-	if err := validateTaskPlanningFrozenInputs(absoluteRoot, binding, inputs, files); err != nil {
+	if err := validateTaskPlanningFrozenInputs(absoluteRoot, binding, taskPlanningFormalInputs(inputs, issuedMethods), files); err != nil {
 		return workpacket.TaskPlanningInputs{}, err
 	}
 	if verified, ok := files.(interface{ Verify() error }); ok {
@@ -142,6 +150,17 @@ func ResolveTaskPlanningInputs(root string, state map[string]any, files fileview
 // state and the upstream source view. Mutable output files are resolved only
 // after this frozen binding passes.
 func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.TaskPlanningPacket, files fileview.Reader) error {
+	return validateTaskPlanningPacket(root, state, p, files, false)
+}
+
+// ValidateTaskPlanningReceptionSources checks an issued responsibility's formal
+// source closure without making historical method text a new reception gate.
+// Packet/template identity and every REQ/design/contract source remain exact.
+func ValidateTaskPlanningReceptionSources(root string, state map[string]any, p workpacket.TaskPlanningPacket, files fileview.Reader) error {
+	return validateTaskPlanningPacket(root, state, p, files, true)
+}
+
+func validateTaskPlanningPacket(root string, state map[string]any, p workpacket.TaskPlanningPacket, files fileview.Reader, reception bool) error {
 	if files == nil {
 		return fmt.Errorf("S4 requires the original authoritative file view")
 	}
@@ -152,7 +171,11 @@ func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.
 	if err != nil {
 		return err
 	}
-	inputs, err := ResolveTaskPlanningInputs(root, state, files)
+	var methods map[string]workpacket.Subject
+	if reception {
+		methods = taskPlanningIssuedMethods(p)
+	}
+	inputs, err := resolveTaskPlanningInputs(root, state, files, methods)
 	if err != nil {
 		return err
 	}
@@ -166,7 +189,7 @@ func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.
 	if err != nil || !reflectTaskPlanningPacketEqual(expected, p) {
 		return fmt.Errorf("S4 frozen Main, REQ, contracts, clause universe, sources or template differ")
 	}
-	if err := validateTaskPlanningFrozenInputs(root, binding, inputs, files); err != nil {
+	if err := validateTaskPlanningFrozenInputs(root, binding, taskPlanningFormalInputs(inputs, methods), files); err != nil {
 		return err
 	}
 	for _, contract := range inputs.Contracts {
@@ -1028,4 +1051,32 @@ func sameStringSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func taskPlanningMethodPath(path string) bool {
+	return path == "docs/dev/tasks/TASK-template.md" || path == "docs/rules/dispatch-plan.md"
+}
+
+func taskPlanningFormalInputs(inputs workpacket.TaskPlanningInputs, methods map[string]workpacket.Subject) workpacket.TaskPlanningInputs {
+	if methods == nil {
+		return inputs
+	}
+	sources := make([]workpacket.Subject, 0, len(inputs.Sources))
+	for _, ref := range inputs.Sources {
+		if _, method := methods[ref.Path]; !method {
+			sources = append(sources, ref)
+		}
+	}
+	inputs.Sources = sources
+	return inputs
+}
+
+func taskPlanningIssuedMethods(p workpacket.TaskPlanningPacket) map[string]workpacket.Subject {
+	methods := map[string]workpacket.Subject{}
+	for _, ref := range p.Inputs.Sources {
+		if taskPlanningMethodPath(ref.Path) {
+			methods[ref.Path] = ref
+		}
+	}
+	return methods
 }

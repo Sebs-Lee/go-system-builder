@@ -84,6 +84,9 @@ func RegisterPlan(
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode ReviewPlan: %w", err)
 	}
+	if err := validateAuthoredBehaviorSurfaces(&plan, nil); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
 	// The original CAS below checks the complete frozen baseline. Preflight
 	// retains professional coverage and regression assets without repeating it.
 	if err := ValidatePlan(&plan); err != nil {
@@ -285,4 +288,27 @@ func mergedResourceLocks(assignmentLocks []string, plan *Plan, claimIDs []string
 		result[i] = value
 	}
 	return result
+}
+
+// New authoring must resolve applicability before the immutable Plan is pinned.
+// Frozen historical assignments without this optional field retain their
+// original browser responsibility contract during recovery and revision.
+func validateAuthoredBehaviorSurfaces(plan, previous *Plan) error {
+	for _, a := range plan.Assignments {
+		if a.Lens != "e2e" || a.BehaviorSurface != "" {
+			continue
+		}
+		legacy := false
+		if previous != nil {
+			for _, old := range previous.Assignments {
+				if old.AssignmentID == a.AssignmentID && old.Lens == "e2e" && old.BehaviorSurface == "" {
+					legacy = true
+				}
+			}
+		}
+		if !legacy {
+			return &PlanAnswerError{fmt.Errorf("assignment %s is missing behavior_surface; Main must set browser or non_browser from explicit behavior sources in this original ReviewPlan answer before registration; ui_impact and method prose do not decide this field", a.AssignmentID)}
+		}
+	}
+	return nil
 }

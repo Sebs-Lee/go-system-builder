@@ -514,7 +514,7 @@ func repairNextAction(state map[string]any, phase string) string {
 	case "targeted_reverification":
 		return "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and handoff"
 	case "ready_for_full_review":
-		return "The final required Targeted SubagentStop attempts the original Handoff automatically. If it remains incomplete, preserve the accepted observations and use the exact runtime repair handoff complete recovery supplied with the failure; a real budget decision remains necessary when the limit is reached. No extra Handoff answer or repeated Targeted report is needed; ordinary reminders do not retry the transition"
+		return repairHandoffPendingInstruction
 	case "closed":
 		return "the original S9 Handoff consumer has seeded a fresh S7 round; use the supplied ReviewPlan questionnaire path and continue through the original S7 registration, dispatch, checks, and evaluation"
 	}
@@ -562,6 +562,13 @@ func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
 func applyS7RecoveryProjection(root string, state map[string]any, guidance *policy.Guidance) {
 	reviewMap, _ := state["review"].(map[string]any)
 	if reviewMap == nil {
+		return
+	}
+	if repairSeedAwaitingPlan(state) {
+		guidance.Action = stageReviewPlanQuestionnaireContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: root}, runtime.Snapshot{State: state})
+		guidance.Missing = []string{"Main: refine the original TR-012 seed through its S7 ReviewPlan questionnaire"}
+		guidance.ReadOrder = []string{reviewPlanQuestionnairePath(root, state), reviewPlanGuidePath(reviewPlanQuestionnairePath(root, state))}
+		guidance.Read = append([]string(nil), guidance.ReadOrder...)
 		return
 	}
 	// The buildNextProjection layer still emits the legacy `claim_results`

@@ -141,7 +141,7 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 			err := fmt.Errorf("S4 answer is not for the current task-planning responsibility")
 			return s.rejectedTaskPlanning(snap, p, err), err
 		}
-		if err := runtime.ValidateIssuedTaskPlanningPacket(s.Root, snap.State, p, s.Files); err != nil {
+		if err := runtime.ValidateTaskPlanningReceptionSources(s.Root, snap.State, p, s.Files); err != nil {
 			return s.rejectedTaskPlanning(snap, p, err), err
 		}
 		if err := s.validateTaskPlanningChecks(snap.State, p); err != nil {
@@ -212,17 +212,43 @@ func currentTaskPlanningPacket(state map[string]any, binding workpacket.Planning
 
 func (s *Service) rejectedTaskPlanning(snapshot runtime.Snapshot, p workpacket.TaskPlanningPacket, err error) Receipt {
 	RecordPlanningDiagnostic(s.Root, snapshot.State, "reception", err.Error())
+	// Rejection belongs to this save attempt. An edited or malformed answer
+	// cannot erase the original reception, its references, or its current status.
+	if prior, projectionErr := s.taskPlanningReceipt(snapshot, p); projectionErr == nil && prior.Accepted {
+		prior.AttemptStatus = "rejected"
+		prior.Error = err.Error()
+		prior.NextAction = "本次 S4 保存尝试被拒绝，新内容未接收；原接收记录保留。具体原因：" + err.Error() + "。" + s.taskPlanningRejectedChangeGuidance(snapshot, p, prior)
+		return prior
+	}
 	r := rejected(snapshot, p.ID, err)
+	r.AttemptStatus = "rejected"
 	answerPath := filepath.Join(s.Root, filepath.FromSlash(p.AnswerPath))
 	r.NextAction = fmt.Sprintf("按具体错误修复 S4 交付或来源，再保存原答案 %s。冻结上游变化须按原阶段流程处理。", answerPath)
 	var outputErr *runtime.TaskPlanningOutputSourceError
 	if errors.As(err, &outputErr) {
 		r.NextAction = outputErr.NextAction()
 	}
-	if errors.Is(err, runtime.ErrSubmissionConflict) {
-		r.NextAction = fmt.Sprintf("原 S4 答案已接收；内容变更按原返工流程处理。当前答案路径为 %s。", answerPath)
-	}
 	return r
+}
+
+func (s *Service) taskPlanningRejectedChangeGuidance(snapshot runtime.Snapshot, p workpacket.TaskPlanningPacket, prior Receipt) string {
+	life, _ := snapshot.State["lifecycle"].(map[string]any)
+	if prior.ResponsibilityStatus == "replaced" {
+		return "原 S4 接收已被替换；按当前监听给出的责任与准确问卷继续，不恢复或重交此旧卷。"
+	}
+	if life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
+		guidance := "仍在当前 S4：若仅修正 TASK 或派发索引且 REQ/S2/S3 不变，Main 使用 " + PlanningRecoveryCommand(s.Root, "rework") + " --target tasks --reason '修正已接收的 TASK 或派发索引' 开启新入口，并将 reason 改为具体规划修正。冻结上游变化回其所属责任。若只是误改答卷，无需重交或另补答案，也无需先恢复答卷字节。"
+		if prior.ConsumerPending {
+			// This is the original durable projection, including its concrete
+			// recover command and outlet cause, never a prior rejected attempt.
+			guidance += "继续已持久的原接续：" + prior.NextAction
+		}
+		return guidance
+	}
+	if life["state"] == "document_verification" {
+		return "当前已进入 S5；沿原两路独立审查继续，需改材料时由真实发现进入原文档返工责任，不重交旧 S4 答卷。"
+	}
+	return "按当前监听给出的责任与准确问卷继续；后续材料变化沿当前阶段的原返工责任处理，不恢复或重交此旧卷。"
 }
 
 func (s *Service) validateTaskPlanningChecks(state map[string]any, p workpacket.TaskPlanningPacket) error {
@@ -262,6 +288,10 @@ func (s *Service) taskPlanningReceipt(snap runtime.Snapshot, p workpacket.TaskPl
 		r.ResponsibilityStatus = "replaced"
 	}
 	life, _ := snap.State["lifecycle"].(map[string]any)
+	if life["state"] == "planning" && (life["phase"] != "tasks" || number(life["phase_revision"]) != p.Binding.StageEntry) {
+		r.WorkComplete = false
+		r.ResponsibilityStatus = "replaced"
+	}
 	if record.ControlStatus == "replaced" || ((record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && (life["state"] != "planning" || life["phase"] != "tasks" || number(life["phase_revision"]) != p.Binding.StageEntry)) {
 		r.WorkComplete = false
 		r.ResponsibilityStatus = "replaced"

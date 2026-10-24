@@ -143,6 +143,9 @@ func validatePlanCoverage(plan *Plan) error {
 
 	claimOwner := make(map[string]string, len(plan.Claims))
 	for _, assignment := range plan.Assignments {
+		if assignment.BehaviorSurface != "" && (assignment.Lens != "e2e" || (assignment.BehaviorSurface != "browser" && assignment.BehaviorSurface != "non_browser")) {
+			return fmt.Errorf("assignment %s has invalid behavior_surface %q; only E2E Assignments may declare browser or non_browser", assignment.AssignmentID, assignment.BehaviorSurface)
+		}
 		if assignment.ExecutionWave != "static" && assignment.ExecutionWave != "behavior" {
 			return fmt.Errorf("assignment %s has unknown execution_wave %q", assignment.AssignmentID, assignment.ExecutionWave)
 		}

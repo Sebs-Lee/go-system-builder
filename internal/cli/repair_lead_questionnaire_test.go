@@ -382,6 +382,9 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		targetPaths[index] = path
 	}
+	t.Run("registered verifier save restores original missing target", func(t *testing.T) {
+		assertS9RegisteredVerifierSaveRestoresTarget(t, root, divisionPath, targetPaths[0], dispatchedSnapshot)
+	})
 	if paths := repairLeadQuestionnairePaths(root, dispatchedSnapshot.State); len(paths) != 1 {
 		t.Fatalf("fresh Contract-level path selector returned %#v, want one path for the actual verifier", paths)
 	} else {
@@ -547,7 +550,11 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			configuration = map[string]any{}
 			partial.State["configuration"] = configuration
 		}
-		configuration["repair"] = map[string]any{"max_full_review_rounds": integerValue(nestedStateValue(partial.State, "review", "round"))}
+		repairBudget := mapFieldCLI(configuration, "repair")
+		if repairBudget == nil {
+			t.Fatal("fixture is missing the original repair budget configuration")
+		}
+		repairBudget["max_full_review_rounds"] = integerValue(nestedStateValue(partial.State, "review", "round"))
 		writeRepairLeadJSON(t, statePath, partial.State)
 		_, exitErr := completeRepairExit(root)
 		if exitErr == nil {
@@ -577,10 +584,12 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if handled, code := runSavedS7BudgetDecisionQuestionnaire(root, repairLeadSaveInput(root, applicationPath, ""), &feedback, &bytes.Buffer{}); !handled || code != 0 {
 			t.Fatalf("budget decision did not resume original completion: %s", &feedback)
 		}
+		budgetFeedback := feedback.String()
 		feedback.Reset()
 
-		if code := runRuntimeRepairHandoffComplete([]string{"--root", root}, &feedback, &bytes.Buffer{}); code != 0 {
-			t.Fatalf("explicit completion failed: %s", &feedback)
+		var completionDiagnostic bytes.Buffer
+		if code := runRuntimeRepairHandoffComplete([]string{"--root", root}, &feedback, &completionDiagnostic); code != 0 {
+			t.Fatalf("explicit completion failed: %s %s; budget reception: %s", &feedback, &completionDiagnostic, budgetFeedback)
 		}
 		recovered, _ := runtime.NewStore(statePath, journalPath).Snapshot()
 		if integerValue(nestedStateValue(recovered.State, "review", "round")) != integerValue(nestedStateValue(partial.State, "review", "round"))+1 || len(repairArtifactRefs(repairPointerCLI(recovered.State), "targeted_reverification_artifacts", "", "")) != len(refsBefore) {
@@ -705,10 +714,21 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			t.Fatalf("completion did not deliver S7 preparation %s: %v %s", path, err, handoffContext)
 		}
 	}
+	t.Run("seed projections read only and explicit completion restores preparation", func(t *testing.T) {
+		assertS9SeedProjectionReadOnlyAndCompletionRepair(t, root, handoffSnapshot)
+	})
 	var mainReturn bytes.Buffer
 	mainEvent := policy.Input{Event: "PostToolUse", ToolName: "Agent", CWD: root, ToolInput: map[string]any{"prompt": "Return the independent Targeted answer " + targetPaths[0]}}
 	if handled, code := nativeMainReturnHook(root, mainEvent, &mainReturn); !handled || code != 0 || !strings.Contains(mainReturn.String(), seedPath) || !strings.Contains(mainReturn.String(), reviewPlanQuestionnairePath(root, handoffSnapshot.State)) {
 		t.Fatalf("Main Agent return did not deliver the completed S7 entry: %t %d %s", handled, code, &mainReturn)
+	}
+	planAnswer := reviewPlanQuestionnairePath(root, handoffSnapshot.State)
+	var seedSave bytes.Buffer
+	if handled, _ := runSavedReviewPlanQuestionnaire(root, repairLeadSaveInput(root, planAnswer, "Main"), &seedSave, &bytes.Buffer{}); !handled || strings.Contains(seedSave.String(), "already registered") || !strings.Contains(seedSave.String(), "runtime review-plan") {
+		t.Fatalf("untouched machine seed bypassed first professional registration: %s", &seedSave)
+	}
+	if after := repairDispatchSnapshot(t, root); after.Revision != handoffSnapshot.Revision {
+		t.Fatal("untouched machine seed was accepted as a professional S7 plan")
 	}
 	committedAgain, replayed, err := completeRepairHandoff(root)
 	if err != nil || committedAgain.Path != handoffRef.Path || replayed.Revision != handoffSnapshot.Revision {

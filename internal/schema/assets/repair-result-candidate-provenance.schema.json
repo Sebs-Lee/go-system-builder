@@ -7,6 +7,7 @@
   "additionalProperties": false,
   "required": ["contract", "packet_id", "packet_sha256", "issuance_event_id", "answer_sha256", "submitted_answer", "owner_agent_id", "runtime_id", "baseline_generation", "review_round", "execution_assignment_id", "execution_generation", "execution_sha256", "execution_root", "source_head", "base_commit", "plan_report_ref", "plan_report_sha256", "rework_ref", "rework_sha256", "worker_check_receipts", "owned_check_receipts"],
   "properties": {
+    "local_evidence": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["authored_ref", "source_path", "path", "sha256"], "properties": {"authored_ref": {"type": "string", "minLength": 1}, "source_path": {"type": "string", "minLength": 1}, "path": {"type": "string", "pattern": "^\\.claude/evidence/s9/"}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}}},
     "contract": {"const": "s9-repair-result-candidate-v1"},
     "packet_id": {"type": "string", "pattern": "^packet-[a-f0-9]{64}$"},
     "packet_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

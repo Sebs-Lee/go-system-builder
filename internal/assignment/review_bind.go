@@ -61,6 +61,11 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		if review.LensToWorkgroupKind(lens) != kind {
 			return fmt.Errorf("assignment %s belongs to lens %s but the workgroup kind is %s; a workgroup never mixes lenses (L3-S7 §3.4)", item.AssignmentID, lens, kind)
 		}
+		if planned := findPlanAssignmentByID(plan, item.AssignmentID); planned != nil && planned.Lens == "e2e" {
+			if err := validateBehaviorResponsibility(planned, item.ResponsibilityID); err != nil {
+				return err
+			}
+		}
 		status := workstate.ReviewAssignmentActivity(row)
 		if status != "planned" && status != "blocked" {
 			return fmt.Errorf("assignment %s is already %s; one plan Assignment dispatches once", item.AssignmentID, status)
@@ -247,4 +252,22 @@ func findPlanAssignmentByID(plan *review.Plan, assignmentID string) *review.Plan
 		}
 	}
 	return nil
+}
+
+// Dispatch uses explicit Plan facts; a frozen historical Plan without the
+// optional field retains its original browser responsibility contract.
+func validateBehaviorResponsibility(planned *review.PlanAssignment, responsibility string) error {
+	switch planned.BehaviorSurface {
+	case "", "browser":
+		if responsibility == "E2E-USER-FLOW" || responsibility == "E2E-CONSOLE-NETWORK" {
+			return nil
+		}
+	case "non_browser":
+		if responsibility == "E2E-BEHAVIOR" {
+			return nil
+		}
+	default:
+		return fmt.Errorf("assignment %s has no explicit behavior_surface; restore the original registered Plan; new authoring decides browser or non_browser before registration", planned.AssignmentID)
+	}
+	return fmt.Errorf("assignment %s behavior_surface=%s cannot dispatch responsibility %s; restore the original Plan's applicable responsibility and methods", planned.AssignmentID, planned.BehaviorSurface, responsibility)
 }

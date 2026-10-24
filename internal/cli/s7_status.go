@@ -157,6 +157,11 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 	roundEntry, _ := reviewMap["round_entry"].(map[string]any)
 	seedRef := stringValue(roundEntry["review_plan_seed_ref"])
 	ptr := review.PlanPointerFromState(state)
+	if repairSeedAwaitingPlan(state) {
+		fmt.Fprintf(stdout, "seed_projection: awaiting professional refinement (seed=%s)\n", seedRef)
+		fmt.Fprintln(stdout, stageReviewPlanQuestionnaireContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: root}, runtime.Snapshot{State: state}))
+		return 0
+	}
 	if ptr == nil {
 		if seedRef != "" {
 			fmt.Fprintf(stdout, "seed_projection: missing (seed=%s is present in round_entry but review.plan is absent)\n", seedRef)

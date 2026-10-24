@@ -14,4 +14,5 @@ type PlanAssignment struct {
 	NonOverlapBoundary string   `json:"non_overlap_boundary"`
 	ExecutionWave      string   `json:"execution_wave"`
 	ResourceLocks      []string `json:"resource_locks,omitempty"`
+	BehaviorSurface    string   `json:"behavior_surface,omitempty"`
 }

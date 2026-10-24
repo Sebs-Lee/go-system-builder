@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -237,31 +238,77 @@ func repairStopConditionsContext(root string, state map[string]any) string {
 }
 
 func repairLeadEvidenceHelp(root string, b *strings.Builder, value any) {
-	switch value := value.(type) {
-	case map[string]any:
-		for key, child := range value {
-			if key == "evidence_refs" {
-				if refs, ok := child.([]any); ok {
-					for _, ref := range refs {
-						if text, ok := ref.(string); ok && text != "" {
-							if !strings.Contains(text, "://") {
-								if path, err := absoluteQuestionnairePath(root, text); err == nil {
-									text = path
-								}
-							}
-							fmt.Fprintf(b, "Recorded evidence candidate: %s\n", text)
-						}
-					}
-				}
-			} else {
-				repairLeadEvidenceHelp(root, b, child)
+	doc, _ := value.(map[string]any)
+	receipt, _ := doc["receipt"].(map[string]any)
+	provenance, _ := receipt["provenance"].(map[string]any)
+	sourceRoot := stringValue(provenance["execution_root"])
+	captures := map[string]map[string]any{}
+	if rows, ok := provenance["local_evidence"].([]any); ok {
+		for _, row := range rows {
+			if row, ok := row.(map[string]any); ok {
+				captures[stringValue(row["authored_ref"])] = row
 			}
 		}
-	case []any:
-		for _, child := range value {
-			repairLeadEvidenceHelp(root, b, child)
+	}
+	var walk func(any, bool)
+	walk = func(value any, mainCheck bool) {
+		switch value := value.(type) {
+		case map[string]any:
+			for key, child := range value {
+				if key == "receipt" || key == "provenance" {
+					continue
+				}
+				if key != "evidence_refs" {
+					walk(child, mainCheck || key == "checks")
+					continue
+				}
+				refs, _ := child.([]any)
+				if text, ok := child.(string); ok {
+					refs = []any{text}
+				}
+				for _, ref := range refs {
+					text, ok := ref.(string)
+					if !ok || text == "" {
+						continue
+					}
+					parsed, _ := url.Parse(text)
+					if !strings.HasPrefix(text, "path:") && parsed != nil && parsed.Scheme != "" {
+						fmt.Fprintf(b, "Recorded evidence candidate: %s\n", text)
+						continue
+					}
+					if !mainCheck {
+						if captured := captures[text]; captured != nil {
+							path, digest := stringValue(captured["path"]), stringValue(captured["sha256"])
+							fmt.Fprintf(b, "Recorded Builder evidence candidate: %s (original ref %q; Builder root %s; source %s; sha256=%s)\n", filepath.Join(root, path), text, sourceRoot, stringValue(captured["source_path"]), digest)
+						} else if sourceRoot != "" {
+							fmt.Fprintf(b, "Recorded Builder evidence candidate: %s (Builder root %s; historical/unarchived reference; resolve at its original source, not Main)\n", text, sourceRoot)
+						} else {
+							fmt.Fprintf(b, "Recorded evidence candidate: %s (historical source root unspecified; unarchived reference, do not assume Main)\n", text)
+						}
+						continue
+					}
+					if sourceRoot == "" {
+						fmt.Fprintf(b, "Recorded check evidence candidate: %s (historical source root unspecified; preserve the original reference, do not assume Main)\n", text)
+						continue
+					}
+					original := text
+					text = strings.TrimPrefix(text, "path:")
+					text = strings.SplitN(text, "#sha256=", 2)[0]
+					if !filepath.IsAbs(text) {
+						if path, err := absoluteQuestionnairePath(root, text); err == nil {
+							text = path
+						}
+					}
+					fmt.Fprintf(b, "Recorded Main check evidence candidate: %s (original ref %q)\n", text, original)
+				}
+			}
+		case []any:
+			for _, child := range value {
+				walk(child, mainCheck)
+			}
 		}
 	}
+	walk(value, false)
 }
 
 // repairLeadQuestionnairePaths returns only the deterministic paths for the
@@ -762,6 +809,9 @@ func persistRepairChangeset(root string, changeset repair.Changeset) (repair.Art
 	if readErr != nil || json.Unmarshal(data, &existing) != nil || existing.Digest != changeset.Digest || existing.SessionID != changeset.SessionID {
 		return repair.ArtifactRef{}, err
 	}
+	// Match PersistChangeset's original wire reference. The local lookup ID is
+	// not part of the Handoff ref schema and must not appear only on retries.
+	existingRef.ID = ""
 	return existingRef, nil
 }
 
@@ -1108,7 +1158,7 @@ func readRepairTargetedAnswer(path string) (repair.TargetedReverificationRequest
 		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s is not a valid original request DTO: %w", path, err)}
 	}
 	if strings.TrimSpace(answer.Result) == "" {
-		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s must record the actual independent verdict and assertion observations before save", path)}
+		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s must record the actual independent verdict and assertion observations before SubagentStop reception; ordinary saves can retain unfinished work", path)}
 	}
 	return answer, nil
 }

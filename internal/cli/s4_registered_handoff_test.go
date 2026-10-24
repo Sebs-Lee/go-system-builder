@@ -71,17 +71,22 @@ func TestS4RegisteredHookDeliversS5WithinPlatformBudget(t *testing.T) {
 				input["file_path"] = filepath.Join(root, packet.AnswerPath)
 			}
 			body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": root, "session_id": "registered-s4", "tool_name": tool, "tool_input": input, "tool_response": map[string]any{}})
-			ctx, cancel := context.WithTimeout(t.Context(), time.Duration(timeout)*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, "bash", "-c", command)
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+root)
-			cmd.Stdin = bytes.NewReader(body)
 			var out, diagnostic bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &out, &diagnostic
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("native Hook: %v stdout=%s stderr=%s", err, &out, &diagnostic)
+			run := func() {
+				out.Reset()
+				diagnostic.Reset()
+				ctx, cancel := context.WithTimeout(t.Context(), time.Duration(timeout)*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, "bash", "-c", command)
+				cmd.Dir = root
+				cmd.Env = append(os.Environ(), "CLAUDE_PROJECT_DIR="+root)
+				cmd.Stdin = bytes.NewReader(body)
+				cmd.Stdout, cmd.Stderr = &out, &diagnostic
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("native Hook: %v stdout=%s stderr=%s", err, &out, &diagnostic)
+				}
 			}
+			run()
 			snapshot := stageSnapshot(t, root)
 			packets, err := runtime.S5Packets(root, snapshot.State, "")
 			if err != nil || len(packets) != 2 {
@@ -94,6 +99,17 @@ func TestS4RegisteredHookDeliversS5WithinPlatformBudget(t *testing.T) {
 				for _, ref := range []string{p.Binding.Owner, p.Binding.Responsibility, filepath.Join(root, p.ViewPath), filepath.Join(root, p.AnswerPath)} {
 					if !strings.Contains(out.String(), ref) {
 						t.Fatalf("native receipt missing %q: stdout=%s stderr=%s", ref, &out, &diagnostic)
+					}
+				}
+			}
+			if tool == "Write" {
+				run() // Original S4 path is still a valid receipt after entering S5.
+				if stageSnapshot(t, root).Revision != snapshot.Revision {
+					t.Fatal("native original-answer replay created another transition or responsibility")
+				}
+				for _, p := range packets {
+					if !strings.Contains(out.String(), filepath.Join(root, p.AnswerPath)) {
+						t.Fatalf("native replay lost the prepared original S5 handoff: %s %s", &out, &diagnostic)
 					}
 				}
 			}

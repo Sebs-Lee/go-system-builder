@@ -3,15 +3,15 @@
 > Status: draft
 > Reading policy: linked-v1
 > Dispatch policy: waves-v1
-> （document status: draft=still writing；complete=the planning document is finished and eligible for its original gate——required across the whole batch at TR-002, says nothing about implementation；cancelled=out of the batch, its §3 clause declarations drop out of coverage so any gap resurfaces. Responsibility progress uses the separate five-state model in `docs/rules/state-machine.md`; do not infer implementation `done` from this line.）
+> （document status: draft=still writing；complete=the planning document is finished and eligible for its original gate——required for every non-cancelled TASK at TR-002, says nothing about implementation；cancelled=excluded from active dispatch and clause coverage, retained in the full S4 delivery batch so any coverage gap resurfaces. Responsibility progress uses the separate five-state model in `docs/rules/state-machine.md`; do not infer implementation `done` from this line.）
 > Version: v1.0.0
-> Source REQ refs: REQ-{id} / none
+> Source REQ refs: REQ-{id}
 > Module current truth: `docs/design/prototypes/{module}/` / N/A
 > Primary contract: {FE/BE/SYNC-id}
 > Closing Contract: TASK-{id}#closing-contract
 > Execution: runtime owns assignment, owner, responsibility status and integration; do not fill them into this frozen TASK.
 
-TASK ID 使用数字段：例如 `TASK-009` 或 `TASK-009-01`，文件名与标题一致；业务或模块名放在 Objective，不放进 ID。模板中的 `{id}` 按对应 REQ、合同或 TASK 的实际编号替换。
+TASK ID 使用数字段：例如 `TASK-009` 或 `TASK-009-01`，文件名与标题一致；业务或模块名放在 Objective，不放进 ID。模板中的 `{id}` 按对应 REQ、合同或 TASK 的实际编号替换。当前 REQ 批次中的每份 TASK（含支撑或取消任务）均在 Source REQ refs 声明实际 REQ；支撑任务的空条款声明不等于没有来源。
 
 ## 1. Objective
 
@@ -62,16 +62,21 @@ module regression sweep.
 
 ## 4. Scope
 
-| Type | Paths / Commands |
+| Type | Paths / Applicable operations |
 |:---|:---|
 | read paths | `{path}` |
 | prospective write paths | `{path}` |
 | forbidden paths | `.claude/loop-state.json`, `{path}` |
-| allowed command classes | test / lint / build / read-only |
-| output paths | `{implementation/test/report paths}` |
+| applicable checks / operations | {necessary test, lint, build or inspection operations and their purpose} |
+| output paths | `{implementation/test/professional-evidence paths}` |
 
 This scope records the planned dispatch and integration-check boundaries for
-the TASK. Hook events observe progress and provide reminders; they do not
+the TASK. Cover the product outputs promised in §6, including necessary tests,
+wiring and saved professional evidence, with concrete repository-relative paths.
+Applicable operations explain the work and check responsibility; they are not
+a command whitelist. Runtime Plan/Result locations are supplied with the later
+actual responsibility and are not future paths to invent here.
+Hook events observe progress and provide reminders; they do not
 authorize or deny individual tool calls by identity, path, or scope.
 
 ## 5. Selected Skills
@@ -89,27 +94,37 @@ metadata here. Remove the example row when no additional selection is needed.
 ### 6.1 This TASK's assigned deliverables
 
 Keep only outputs owned by this TASK's dispatched responsibility. A Builder
-produces implementation, its scoped tests and its completion report; each
-independent reviewer receives a separate original assignment.
+produces implementation, its scoped tests, actual self-check evidence and a
+professional completion result; each independent reviewer receives a separate original assignment.
 
 | Output | Path | Acceptance |
 |:---|:---|:---|
 | implementation | `{path}` | {contract assertion} |
 | tests | `{path}` | {behavior/failure coverage} |
-| completion report | `{agent-message-path}` | schema-valid |
+| professional evidence (when saved separately) | `{actual product/test evidence path}` | {observable result and conditions} |
+| completion result | original Result entry supplied by the actual later responsibility | explain Closing Contract conditions, actual checks and blockers |
+
+Plan/Result paths, schemas and submission details belong to that later supplied
+entry. S4 states the handoff meaning without pre-creating an Assignment, runtime
+message path or unavailable schema. Remove inapplicable product/evidence rows;
+keep concrete paths for every actual file deliverable.
 
 ### 6.2 Subsequent consumption and independent verification
 
 These responsibilities retain their original gates and required coverage.
 They are not additional Builder outputs or permission to author another role's
-evidence. Runtime owns the actual assignment and receipt references.
+evidence. Keep only applicable downstream responsibilities and describe the
+necessary input, coverage and handoff. Runtime owns the actual assignment and
+receipt references; the later responsibility supplies its result entry. The
+legacy report paths below apply only when that original responsibility actually
+uses them; they create no default separate report obligation.
 
 | Responsibility / consumer | Evidence or action | Acceptance |
 |:---|:---|:---|
 | Main / integration | bound development branch and integration receipt | original required checks pass after integration |
-| Delivery Verifier | `docs/reports/review/REV-{id}.md` | assigned dimension result |
-| QA | `docs/reports/qa/QA-{id}.md` | assigned dimension result |
-| E2E | `docs/reports/e2e/E2E-{id}.md` | real-browser flow result |
+| Delivery Verifier | original result entry (legacy: `docs/reports/review/REV-{id}.md`) | assigned dimension result |
+| QA | original result entry (legacy: `docs/reports/qa/QA-{id}.md`) | assigned dimension result |
+| E2E | original result entry (legacy: `docs/reports/e2e/E2E-{id}.md`) | assigned behavior verification; real-browser flow where browser verification applies |
 
 ## 7. Closing Contract
 

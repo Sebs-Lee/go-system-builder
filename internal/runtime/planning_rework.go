@@ -133,7 +133,8 @@ func validateReworkFrozenDesign(root string, state map[string]any, files filevie
 
 // Validate the original current S4 issuance before opening a replacement. TASK
 // and dispatch outputs are mutable; the original packet only freezes upstream
-// sources, methods and contracts, and must never be reconstructed from new bytes.
+// formal sources and contracts. Historical method descriptions do not gate
+// reception; the replacement issuer freezes the current method bytes afresh.
 func validateReworkFrozenTaskInputs(root string, state map[string]any, files fileview.Reader) error {
 	binding, err := CurrentTaskPlanningBinding(state)
 	if err != nil {
@@ -159,7 +160,7 @@ func validateReworkFrozenTaskInputs(root string, state map[string]any, files fil
 			return err
 		}
 		if found && p.Binding == binding {
-			return ValidateTaskPlanningPacket(root, projection, p, files)
+			return ValidateTaskPlanningReceptionSources(root, projection, p, files)
 		}
 	}
 	return fmt.Errorf("original current S4 issuance is required before replacing tasks")

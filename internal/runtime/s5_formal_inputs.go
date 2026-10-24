@@ -61,7 +61,23 @@ func S5FormalInputs(root string, state map[string]any, files fileview.Reader) (S
 	if err != nil {
 		return S5FormalInputSet{}, fmt.Errorf("revalidate accepted S4 task batch: %w", err)
 	}
-	return mergeS5FormalInputs(state, generation, refs, packet, subjects, outputs)
+	// S4 proves the historical method identity; new S5 work freezes the method
+	// bytes it actually receives. Existing S5 packets keep their pinned inputs.
+	methods := map[string]workpacket.Subject{}
+	for path, original := range taskPlanningIssuedMethods(packet) {
+		data, err := readTaskPlanningFrozenFile(root, files, path)
+		if err != nil {
+			return S5FormalInputSet{}, fmt.Errorf("read current S5 planning method: %w", err)
+		}
+		original.SHA256 = workpacket.Digest(data)
+		methods[path] = original
+	}
+	if verified, ok := files.(interface{ Verify() error }); ok {
+		if err := verified.Verify(); err != nil {
+			return S5FormalInputSet{}, fmt.Errorf("S5 planning method source moved: %w", err)
+		}
+	}
+	return mergeS5FormalInputs(state, generation, refs, packet, subjects, outputs, methods)
 }
 
 func hasTaskPlanningPacket(state map[string]any) bool {
@@ -233,7 +249,7 @@ func acceptedCurrentS4(root string, state map[string]any, files fileview.Reader)
 	return selected.packet, envelope.Answer, subjects, nil
 }
 
-func mergeS5FormalInputs(state map[string]any, generation int, refs []workpacket.Reference, packet workpacket.TaskPlanningPacket, subjects map[string]workpacket.Subject, outputs []taskPlanningArtifact) (S5FormalInputSet, error) {
+func mergeS5FormalInputs(state map[string]any, generation int, refs []workpacket.Reference, packet workpacket.TaskPlanningPacket, subjects map[string]workpacket.Subject, outputs []taskPlanningArtifact, methods map[string]workpacket.Subject) (S5FormalInputSet, error) {
 	byPath := map[string]workpacket.Reference{}
 	for _, ref := range refs {
 		byPath[ref.Path] = ref
@@ -243,6 +259,10 @@ func mergeS5FormalInputs(state map[string]any, generation int, refs []workpacket
 		subject, ok := subjects[source.Path]
 		if !ok || subject.SHA256 != source.SHA256 {
 			return S5FormalInputSet{}, fmt.Errorf("accepted S4 envelope does not bind frozen source %s", source.Path)
+		}
+		if method, current := methods[source.Path]; current {
+			source = method
+			subject = method
 		}
 		if existing, exists := byPath[source.Path]; exists {
 			if existing.SHA256 != source.SHA256 || (source.Version != "" && existing.Version != source.Version) {
@@ -410,9 +430,14 @@ func acceptedTaskPlanningArtifacts(root string, state map[string]any, p workpack
 	}
 	life := map[string]any{"state": "planning", "phase": "tasks", "phase_revision": p.Binding.StageEntry}
 	projection["lifecycle"] = life
-	inputs, err := ResolveTaskPlanningInputs(root, projection, files)
+	inputs, err := resolveTaskPlanningInputs(root, projection, files, taskPlanningIssuedMethods(p))
 	if err != nil {
 		return nil, fmt.Errorf("reconstruct accepted S4 inputs from the current accepted S3 registration: %w", err)
+	}
+	// The issued questionnaire may retain the old contracts-directory metadata.
+	// Actual contract membership remains proven by the accepted S3 refs above.
+	if names, ok := p.Inputs.Directories[taskContractsDirectory]; ok {
+		inputs.Directories[taskContractsDirectory] = append([]string(nil), names...)
 	}
 	rebuilt, err := workpacket.BuildTaskPlanningWithTemplate(p.Binding, inputs, p.TemplateSHA)
 	if err != nil || !reflect.DeepEqual(rebuilt, p) {

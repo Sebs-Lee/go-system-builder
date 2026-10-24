@@ -558,6 +558,7 @@
         "QA-PERFORMANCE",
         "QA-RELIABILITY",
         "QA-MIGRATION",
+        "E2E-BEHAVIOR",
         "E2E-USER-FLOW",
         "E2E-CONSOLE-NETWORK",
         "S8-CAUSAL-INVESTIGATION"

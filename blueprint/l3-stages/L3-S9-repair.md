@@ -386,6 +386,8 @@ S9 完成需要本人单元实施／测试与自检结束，必要 Main 集成�
 
 TR-012 保存 Handoff、新轮号与 ReviewPlan 种子，清除旧轮通过投射，进入新的 `verification.running`。种子提供机器已知来源与待细化字段，不生成任何新的 Delivery／QA／E2E PASS。不可变种子必须满足原正式计划 Schema，因此其中的 `cold_start` 是结构占位；`PLANNER-REFINE` 保持派发门关闭，Main 在首次专业登记时决定实际资产安排。普通 S7 未决草稿仍留空，不继承这一占位决定。
 
+TR-012 安装的 `review.plan` 种子指针不等于首次专业登记。当前问卷准备、普通保存发现、重放判断和状态提示都须识别这份准确种子，从它生成作者副本并保持身份与固定基线；不能因指针已存在而跳过问卷或把首次专业细化误判为受控修订。真正的专业登记仍交原 RegisterPlan 消费者核对。
+
 Main 应依 [S7](L3-S7-verification-round.md)完成首次专业规划，保持种子身份、轮次、代际和固定产品基线。原未启动种子首次登记与发现后的受控修订不同；实际不需要浏览器时给出有来源的 N/A，不能把保守 cold-start 提示变成虚构浏览器工作，也不能误删适用交付和 QA 命题。
 
 当前规范产品读取仍依赖原 TR-003 准确 TASK 锁集。正式 TASK 源需要重锁而相关读取尚未衔接时，不能仅凭 Assignment 或修复计划修订宣称新 S7 已获得有效基线；应明确原来源缺口，不能降级为空变化面绕过。
@@ -491,7 +493,22 @@ Targeted 登记和 Handoff 完成是两个可能部分成功的步骤。最后�
 | S9 首次不完整 Stop 仍阻拦，Main 只得到泛化诊断 | 接收／返回层 | 首次可返回，拒绝与具体缺口可追到原责任，绝不冒充完成 |
 | Targeted 已登记但 Handoff 失败后缺少明确重入；预算应用未在该出口准备 | 收尾层 | 部分成功、重试、预算决定和准备失败均有原恢复；轮次只增一次 |
 | Targeted 指引仍称 on save，S7 next_action 仍要求手动登记 | 动态提示／阶段边界 | 普通 Worker 保存不接收；Stop 接收；新 S7 保存原问卷登记 |
+| 中断重试的 Changeset 引用多出查找 ID；S7 将机器种子指针误认成已登记专业计划 | 原引用／S7 入口层 | 首次和重试使用同一引用结构；种子副本可直接进入原专业登记，原种子保持不可变 |
 | 断言重复展开、证据候选不分当前相关性 | 提示投射层 | 完整保留当前问题及来源，减少重复材料与无关证据扫描 |
+
+本次边界复审继续按上述层次收敛，以下约束同时适用于正常提示和失败恢复：
+
+| 复审缺口 | 责任边界与修正 | 验收观察 |
+| --- | --- | --- |
+| native flat 答案失败后收到内部 `/answer/...` 与旧包装修复指引 | native 接收适配层将原消费者字段反馈映射到本人实际私人文件；旧消费者及冻结执行保持原格式 | 缺字段时准确指向私人文件的顶层字段，不诱导添加 answer 包装；拒绝事实不变 |
+| Worker 相对日志引用被提示层直接拼到 Main 根目录 | 原接收／证据交接保留实际来源工作区；本地引用明确基准，读取端不猜 Main 路径，历史未解析引用明确显示来源限制 | Worker 与 Main 存在同名不同内容日志时仍能定位本人观察；URI 保持原义，不以提示拼接冒充证据搬运 |
+| 提前登记独立验证者后立刻要求启动，但 Targeted 尚未准备 | Main 分工提示按当前责任区分登记完成、等待 Final／Impact、题面准备缺口与可实际派发 | 只有已进入 Targeted 且原题面可用才要求现在派发；缺卷沿原登记保存恢复，不让验证者猜卷或空等 |
+| S9 seed 等待完善时，普通 Pre／S7 status 隐式创建问卷或 guide | 普通投射只读；S9 完成出口与显式 handoff complete 拥有新 S7 准备 | 缺文件时查询不写文件、不推进 Runtime，显示准确恢复入口；完成出口仍能补齐原问卷和 guide；当前 TR-012 的计划指针缺失也不得回退生成通用 S7 草稿 |
+| 通用角色实施要求、平台归因与 before save 说法覆盖实际责任 | 在要求所在句限定实施职责；Main checkout 边界是本工作流约定；Targeted 完整性属于返回接收 | 独立验证不被要求另交计划或提交产品；普通保存可保留未完成工作 |
+
+这些修正不增加作者报告、审批或工具禁令。已有真实证据由系统按来源交接；缺失材料明确由原责任恢复，不要求作者编造观察来满足结构。历史已接收产物保持不可变，不能为改善提示而重写其字节或把未搬运的旧引用宣称为已归档。
+
+新 native Result 的顶层及逐观察 `evidence_refs` 中，本地文件以登记的 Builder 工作区为基准。推荐 `path:logs/check.txt`，也接受含 `/` 的相对文件路径及该工作区内绝对路径；单文件名写作 `path:check.log` 或 `./check.log`，没有路径标记或 `/` 的裸词保留为已有标识。原接收器将真实文件内容保存在 Main 的 `.claude/evidence/s9/`，在系统 provenance 中记录原引用、来源相对路径和归档摘要；作者答案及其摘要不改写。URI 保持原义，缺失本地源明确反馈原工作区与恢复责任。普通提示只投射登记的来源和归档位置，不重复读取、散列全部日志。此交接不扩大到 Plan-only 引用、迁移／回滚依据或其他任意字符串；这些材料保留原字段语义。已登记冻结执行沿用原接收要求，不追加本地文件归档准入；其未归档引用保留原来源说明。
 
 ### 14.4 实现索引与保持的边界
 
@@ -499,6 +516,7 @@ Targeted 登记和 Handoff 完成是两个可能部分成功的步骤。最后�
 | --- | --- |
 | 合同、执行计划与责任 | [领域对象](../../internal/repair/model.go)、[Session／Plan 编译](../../internal/repair/session.go)、[Main 分工](../../internal/cli/repair_dispatch_questionnaire.go) |
 | 原生简报与返回 | [native_s9.go](../../internal/cli/native_s9.go)、[本人 Plan／Result 题干](../../internal/cli/repair_result_questionnaire.go)、[阅读顺序](../../internal/cli/s9_execution_listener.go) |
+| 私人答案纠错与证据交接 | [native 字段反馈](../../internal/cli/native_s9_artifact_feedback.go)、[Result 本地来源保留](../../internal/repair/s9_local_evidence.go)、[来源记录](../../internal/runtime/repair_result_types.go) |
 | 候选与 Final | [原结果消费者](../../internal/repair/issued_repair_result.go)、[交付接收](../../internal/repair/workspace_delivery.go)、[Result 记录](../../internal/repair/result.go) |
 | 影响与定向 | [原 Main／Targeted 工序](../../internal/cli/repair_lead_questionnaire.go)、[独立分工](../../internal/cli/repair_verifier_dispatch_questionnaire.go)、[影响及复验产物](../../internal/repair/evidence.go) |
 | 批次、退出与新轮 | [Final 变化归并](../../internal/repair/artifact.go)、[Runtime 消费](../../internal/repair/runtime.go)、[Handoff](../../internal/repair/handoff.go)、[S7 种子](../../internal/repair/s7_seed.go) |

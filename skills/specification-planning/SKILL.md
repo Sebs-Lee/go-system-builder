@@ -240,17 +240,27 @@ bring a genuinely unresolved direction or requirement change to its human gatewa
     **拆分纪律（builder 视角）**：用一句话给出交付目标，按独立验收、责任和真实变更耦合拆分；只有实际依赖共享实现产物的下游任务才声明 foundation TASK 依赖。每个任务的 §2 清单引用必要条款切片，并标明 required/conditional/optional 与条件。结合共享读集、同文件写入、依赖和执行中的 compact/返工观察判断粒度；字节数、文件数或一次 compact 不能自动决定拆分。调整已批准批次时走原规划/审查/失效路径，并保留合同覆盖与可执行依赖。
     Reference actual locked Rules, architecture/ADR sections and applicable
     professional defaults directly in the TASK, with their concrete scope and
-    exceptions. Do not create an index, copy registered source versions or
+    exceptions. Do not create a project-conventions index, copy registered source versions or
     hashes, or make a new business decision merely to obtain analysis advice.
     A previously recorded complete project-conventions index may be read by
     the original resolver and frozen with the task context. Its source and
     drift checks remain strict; it is not a normal S4 authoring obligation.
     Absence of that optional historical index does not block ordinary authorized
-    engineering choices or change TASK coverage and gates.
+    engineering choices or change TASK coverage and gates. The current REQ dispatch
+    index remains required; it is a different planning deliverable.
+    Plan concrete implementation, test, wiring and saved professional-evidence
+    paths within the TASK scope, and explain applicable operations and checks
+    without a tool whitelist. Describe the completion result and downstream
+    verification semantically; actual later responsibilities supply their original
+    Plan/Result paths and schemas. Legacy REV/QA/E2E report paths apply only to
+    responsibilities that actually use them, without a new separate report duty.
 12. Use numeric TASK IDs such as `TASK-009` or `TASK-009-01`; keep module/service
     names in the objective. For S4, complete the TASK batch and current REQ index at the exact paths and
     templates supplied by the Hook. Mark each TASK document `complete` or
-    `cancelled`; these document values do not change a work responsibility's
+    `cancelled`; cancelled TASKs exit active dispatch and clause coverage but remain
+    in the complete delivery batch and answer.task_paths. Resolve any resulting
+    coverage gap. Every TASK declares the actual Source REQ refs, including support
+    and cancelled tasks. These document values do not change a work responsibility's
     status. Commit declared Git-sourced outputs to the Hook-named branch, fill
     the existing S4 answer, and save it once. The original consumer runs
     `tasks check`, projects planning evidence, and evaluates the existing gate

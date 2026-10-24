@@ -24,9 +24,15 @@ func nativeS7AcceptedOutletContext(root string, snapshot runtime.Snapshot, packe
 	case "acceptance":
 		return diagnostic + " Original TR-009 has entered S10 acceptance. " + stageAuditQuestionnaireContext(root, policy.Input{Event: "PostToolUse", AgentID: "Main", CWD: root}, snapshot)
 	case "verification":
+		if state["pause"] != nil {
+			return diagnostic + nativeS7RemainingOutletContext(root, state)
+		}
 		if plan["status"] == "clean" {
 			return diagnostic + " The machine CleanRound is recorded; Main follows the original continuation result, preserving accepted Reviewer answers. If the exit is still pending after resolving its cause, resume with `" + s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime review-continue --root " + s7CaptureShellQuote(root) + "`."
 		}
+		return diagnostic + nativeS7RemainingOutletContext(root, state)
+	case "paused", "awaiting_human_release":
+		return diagnostic + nativeS7RemainingOutletContext(root, state)
 	}
 	return ""
 }

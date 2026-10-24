@@ -210,13 +210,13 @@ func submitResult(
 		}
 		return loopruntime.Snapshot{}, err
 	}
-	// A regression_available plan reuses an existing CASE/PATH asset only
-	// while the declared path and fingerprint still match disk. Registration
+	// Selected CASE/PATH assets, including partial reuse in cold_start, keep
+	// their original path and fingerprint bindings. Registration
 	// checks this once, but submit must check again because a test asset can
 	// drift while reviewers are working. This is verification-artifact drift,
 	// not a product-baseline drift: keep the runtime unchanged and return the
 	// repair path so the Planner can refresh the asset or choose cold_start.
-	if plan.E2ECoverageState == "regression_available" {
+	if len(plan.E2EAssets) > 0 {
 		if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
 			return loopruntime.Snapshot{}, err
 		}

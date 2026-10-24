@@ -140,8 +140,16 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		} else if life["state"] == "document_verification" && runtime.PacketEnabled(snapshot.State) && (*owner == "" || *owner == "Main") {
 			// The named recovery entry reuses the original S5 preparation.
 			// Ordinary Main observations never register or issue responsibilities.
-			if err = prepareS5ReviewResponsibilities(ctx, s.Root, snapshot.State); err == nil {
-				result, err = s.IssueContext(ctx, "")
+			err = prepareS5ReviewResponsibilities(ctx, s.Root, snapshot.State)
+			// Preparation already ran the original issuer. Project its durable
+			// publication facts once, without issuing or validating sources again.
+			packets, guidance, observeErr := s5IssueHandoffContext(ctx, s.Root, err)
+			fmt.Fprintln(stderr, guidance)
+			if err == nil {
+				err = observeErr
+				if err == nil {
+					result = packets
+				}
 			}
 		} else {
 			result, err = s.IssueContext(ctx, *owner)
@@ -427,7 +435,7 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 			defer cancel()
 			r, saveErr := s.SaveTaskPlanning(ctx, path)
 			if saveErr != nil {
-				fmt.Fprintf(stderr, "TASK planning not accepted: %v\n", saveErr)
+				fmt.Fprintf(stderr, "TASK planning save attempt not accepted: %v\n", saveErr)
 				if r.Error == "" {
 					r.Error = saveErr.Error()
 				}

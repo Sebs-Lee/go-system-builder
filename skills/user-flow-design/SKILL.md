@@ -113,9 +113,14 @@ Provide a per-module flow directory that lets S7 assign explicit flow IDs
 to an `E2E-USER-FLOW` responsibility. Include flow goal, role, entry,
   terminal state, data/permission requirements, linked story, CASE and source
   refs, prototype area, priority, and required / N-A status. Keep the current
-  `flows.md` as the planned checklist; the E2E report mirrors
-assigned flow and `PATH-*` IDs and adds PASS/FAIL/BLOCKED plus
-screenshots, traces, and observations.
+  `flows.md` as the planned checklist. In S7, record the assigned flow/PATH
+observations in the original `claim_results.observed` and reference actual
+screenshots/traces in `evidence_refs`; no separate flow report is required.
+`claim_results.conclusion` is `pass` or `fail`, including `pass` for an expected
+rejection that actually succeeds. Only a confirmed current-round Finding that
+prevents a required precondition belongs in `blocked_claims`. An unavailable
+environment or an unexecuted check remains an actual gap returned to Main;
+do not write `BLOCKED` as a Claim conclusion or manufacture a product Finding.
 
 ### Audit Interaction Coverage
 

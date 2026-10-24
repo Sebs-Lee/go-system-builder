@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vibe-coding.local/schemas/stage-answer-s9-plan.schema.json",
+  "description": "Local files in top-level and nested Result evidence_refs use the registered Builder source root, never Main. Result reception captures path: files (no author hash needed), slash-containing relative file refs and absolute files contained in that root; URI refs remain unchanged and bare tokens remain opaque identifiers (use path:check.log or ./check.log for a local filename). Migration, rollback and detection-gap artifact references keep their original meaning and are not captured. Missing Result source files require restoring the original source before reception. Plan-only refs retain their original source context and are not captured by the Result receiver.",
   "title": "S9 PlanReport authoring answer",
   "type": "object",
   "additionalProperties": false,

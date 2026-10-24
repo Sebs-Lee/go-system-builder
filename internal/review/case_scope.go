@@ -138,6 +138,25 @@ func validateKnownE2ECaseCoverage(ctx context.Context, root string, state map[st
 	if err != nil {
 		return err
 	}
+	// A declared required browser CASE cannot be routed to a non-browser
+	// responsibility. Missing historical fields remain unchanged on load.
+	browserRefs := map[string]bool{}
+	for _, c := range cases {
+		browserRefs[scenarioRef(c)] = true
+	}
+	claimMap := planClaimMap(plan)
+	for _, assignment := range plan.Assignments {
+		if assignment.BehaviorSurface != "non_browser" {
+			continue
+		}
+		for _, id := range assignment.ClaimIDs {
+			for _, ref := range claimMap[id].SourceRefs {
+				if browserRefs[ref] {
+					return &PlanAnswerError{fmt.Errorf("S7_CASE_COVERAGE: assignment %s declares non_browser but owns required browser CASE %s; restore browser applicability in the original Plan", assignment.AssignmentID, ref)}
+				}
+			}
+		}
+	}
 	covered := map[string]bool{}
 	for _, claim := range plan.Claims {
 		if claim.Lens == "e2e" {

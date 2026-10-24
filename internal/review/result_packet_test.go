@@ -485,7 +485,7 @@ func TestIssuedE2ENilArtifactDigestAcceptsAndReplaysWithoutMutableWorkspace(t *t
 		t.Fatalf("issue E2E packet: count=%d err=%v", len(packets), err)
 	}
 	packet := packets[0]
-	resultPath := writeE2EResultFile(t, root, plan, packet.ResultID, "")
+	resultPath := writeE2EResultFile(t, root, plan, packet.ResultID, "", "path:"+workspaceRel+"/fixture.txt")
 	var original map[string]json.RawMessage
 	if err := json.Unmarshal(mustReadTestFile(t, resultPath), &original); err != nil {
 		t.Fatal(err)
@@ -510,6 +510,16 @@ func TestIssuedE2ENilArtifactDigestAcceptsAndReplaysWithoutMutableWorkspace(t *t
 		t.Fatal(err)
 	}
 	ptr := PlanPointerFromState(accepted.State)
+	assignments := accepted.State["review"].(map[string]any)["assignments"].(map[string]any)
+	if err := VerifySealedArtifactDigests(root, accepted.State, ptr, assignments); err != nil {
+		t.Fatalf("unrelated workspace growth invalidated the original dependency: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, workspaceRel, "fixture.txt"), []byte("actual dependency changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySealedArtifactDigests(root, accepted.State, ptr, assignments); err == nil || !strings.Contains(err.Error(), "changed after consumption") {
+		t.Fatalf("changed dependency survived packet-backed seal verification: %v", err)
+	}
 	if err := verifyResultArtifactDigestAt(root, plan, ptr, &Result{VerificationArtifactDigest: receipt.VerificationArtifactDigest}, "e2e"); err == nil {
 		t.Fatal("original artifact verification accepted changed workspace bytes")
 	}

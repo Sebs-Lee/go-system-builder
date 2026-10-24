@@ -207,7 +207,7 @@ func TestDraftManifestE2EPrefillsForcedSkills(t *testing.T) {
 		"method": "real-browser execution", "applicability": "required", "source_refs": []string{"TASK-001"},
 	})
 	plan["assignments"] = append(plan["assignments"].([]any), map[string]any{
-		"assignment_id": "assignment-e2e-flows", "lens": "e2e",
+		"assignment_id": "assignment-e2e-flows", "lens": "e2e", "behavior_surface": "browser",
 		"claim_ids":            []string{"claim-e2e-flow"},
 		"non_overlap_boundary": "owns the declared flows",
 		"execution_wave":       "behavior",

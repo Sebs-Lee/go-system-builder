@@ -68,6 +68,29 @@ func TestS7LastNativeResultHandsMainS10WithoutAnotherTool(t *testing.T) {
 					if after.State["lifecycle"].(map[string]any)["state"] != "verification" {
 						t.Fatal("partial coverage advanced the round")
 					}
+					// The sibling answer is private and unreceived. Its contents
+					// must not affect Main's read-only responsibility projection.
+					sibling := packets[i+1]
+					answer := filepath.Join(root, sibling.AnswerPath)
+					original, err := os.ReadFile(answer)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(answer, []byte("PRIVATE-UNRECEIVED-ANSWER invalid JSON"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					text := mainNativeReturn(t, root, ref)
+					for _, want := range []string{`"accepted":true`, `"work_complete":true`, `"waiting_on":[]`, sibling.Binding.AssignmentID, sibling.Binding.OwnerAgentID, filepath.Join(root, sibling.ViewPath), answer, "does not prove a native Reviewer is running"} {
+						if !strings.Contains(text, want) {
+							t.Fatalf("partial Main return missing %q: %s", want, text)
+						}
+					}
+					if strings.Contains(text, "PRIVATE-UNRECEIVED-ANSWER") || stageSnapshot(t, root).Revision != after.Revision {
+						t.Fatalf("Main projection read private contents or changed Runtime: %s", text)
+					}
+					if err := os.WriteFile(answer, original, 0600); err != nil {
+						t.Fatal(err)
+					}
 					continue
 				}
 				if after.State["lifecycle"].(map[string]any)["state"] != "acceptance" {

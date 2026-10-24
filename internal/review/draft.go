@@ -19,7 +19,7 @@ type taskDoc struct {
 // current-generation TASK yields a delivery traceability claim; the union of
 // Builder-changed paths yields one independently dispatchable QA Assignment
 // per baseline focus; CASE/script discovery offers candidates while Main
-// chooses actual reuse. A no-UI REQ produces a sourced N/A candidate. The
+// chooses actual reuse. UI impact and browser discovery do not decide general E2E applicability. The
 // draft is still a scaffold when no stable CASE input exists —
 // its remaining TODO markers are intentionally rejected by registration.
 func DraftPlan(state map[string]any, round int) (*Plan, []string) {
@@ -208,7 +208,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 		// S7-9 (RC-07): a missing/mistyped ui_impact previously followed the
 		// same not_applicable branch as an explicit "none", silently dropping
 		// the whole E2E dimension. The draft refuses to choose for the
-		// Planner: only an explicit "none" may produce the N/A claim.
+		// Planner: UI impact alone never establishes general E2E N/A.
 		return nil, append(notes, "bound REQ metadata.ui_impact is empty or missing; the E2E coverage state cannot be derived — bind the REQ with an explicit ui_impact value (none | changed | unknown) via the requirement bind path, or add the metadata.ui_impact field, then re-draft (S7-9/RC-07: an empty ui_impact is an error, not an implicit not_applicable)")
 	}
 	inventory, discoveryDiagnostics := discoverE2EInventory(root, state, &Plan{ProductBaseline: productBaseline})
@@ -217,62 +217,46 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	}
 	var e2eAssets []E2EAsset
 	var verificationWorkspace *string
-	e2eState := "regression_available"
-	switch {
-	case uiImpact == "none" && len(inventory.Cases) == 0:
-		e2eState = "not_applicable"
-		claims = append(claims, Claim{
-			ClaimID: "claim-e2e-na-1", Lens: "e2e", Target: "n/a",
-			Assertion:     "no user-observable behavior changed",
-			Oracle:        "impact analysis shows no user-visible surface",
-			Method:        "impact analysis",
-			Applicability: "not_applicable",
-			NARationale:   "bound REQ declares no UI impact; no entry point or browser-observable behavior is in scope",
-			// The id references the checklist template this N/A was checked
-			// against (RC-12: docs/design/NA-checklist-template.md); a bare
-			// rationale without a named checklist is not a verifiable N/A.
-			NAChecklistID: "na-checklist-template-1#bound_req#ui_impact",
-			SourceRefs:    []string{"bound_req"},
-		})
-		notes = append(notes, "E2E assessed as not_applicable from ui_impact=none; keep the explicit claim-e2e-na-1 Claim with source_refs and na_rationale (it is not dispatched), then verify against the real required surfaces (§4.3) before registering")
-	default:
-		e2eState = ""
-		notes = append(notes, "Main must decide e2e_coverage_state from actual assets and environment: regression_available reuses confirmed assets; cold_start prepares only missing assets in the original workspace; not_applicable requires the original justified N/A Claim. Discovery does not decide this field.")
-		for _, candidate := range inventory.Candidates {
-			notes = append(notes, fmt.Sprintf("Candidate script %s (observed sha256=%s), possible scenarios: %s. Text matches do not prove selectors, routes, environment or execution; resolve the actual binding in this ReviewPlan.", candidate.Path, candidate.SHA256, strings.Join(candidate.PossibleCases, ", ")))
-		}
-		if len(inventory.Cases) > 0 {
-			for index, scenario := range inventory.Cases {
-				claimID := fmt.Sprintf("claim-e2e-case-%d", index+1)
-				claims = append(claims, Claim{
-					ClaimID: claimID, Lens: "e2e",
-					Target:    e2eScenarioTarget(scenario),
-					Assertion: fmt.Sprintf("%s (%s) follows the declared CASE oracle without forbidden side effects", scenario.ID, scenario.Title),
-					Oracle:    e2eScenarioOracle(scenario), Method: "real-browser execution",
-					Applicability: "required", SourceRefs: e2eScenarioSourceRefs(scenario), FocusKey: scenarioRef(scenario),
-				})
-				assignments = append(assignments, PlanAssignment{
-					AssignmentID: fmt.Sprintf("assignment-e2e-case-%d", index+1), Lens: "e2e", ClaimIDs: []string{claimID},
-					FocusKeys:          []string{scenarioRef(scenario)},
-					NonOverlapBoundary: "owns exactly " + scenarioRef(scenario) + " and its declared PATH(s); do not repeat another CASE's oracle",
-					ExecutionWave:      "behavior",
-				})
-			}
-		} else {
-			notes = append(notes, "No required browser CASE inventory was discoverable; Main must restore the actual scenario sources or supply a justified applicability decision, not assume a blank test library")
-			id := nextClaim("e2e", "flows")
+	e2eState := ""
+	notes = append(notes, "Main must decide e2e_coverage_state from actual behavior, assets and environment: regression_available reuses confirmed assets; cold_start prepares only missing assets in the original workspace; not_applicable requires the original justified N/A Claim. UI impact and browser discovery do not decide general behavior applicability.")
+	if uiImpact == "none" && len(inventory.Cases) == 0 {
+		notes = append(notes, "ui_impact=none and no discovered browser CASE establish only the browser candidate facts; assess API, command, state and other observable behavior before choosing E2E applicability. No N/A Claim has been inferred.")
+	}
+	for _, candidate := range inventory.Candidates {
+		notes = append(notes, fmt.Sprintf("Candidate script %s (observed sha256=%s), possible scenarios: %s. Text matches do not prove selectors, routes, environment or execution; resolve the actual binding in this ReviewPlan.", candidate.Path, candidate.SHA256, strings.Join(candidate.PossibleCases, ", ")))
+	}
+	if len(inventory.Cases) > 0 {
+		for index, scenario := range inventory.Cases {
+			claimID := fmt.Sprintf("claim-e2e-case-%d", index+1)
 			claims = append(claims, Claim{
-				ClaimID: id, Lens: "e2e", Target: "TODO(planner): which existing persona and CASE/PATH define this behavior? Name the actual entry; report missing scenario inputs to Main",
-				Assertion: "declared entry points produce the expected user-observable behavior",
-				Oracle:    "TODO(planner): after the declared fixture and actions, what visible/terminal state, persisted or forbidden effects and recovery distinguish pass from fail? Cite actual scenario evidence",
-				Method:    "real-browser execution", Applicability: "required", SourceRefs: taskIDs(tasks), FocusKey: "user-flow",
+				ClaimID: claimID, Lens: "e2e",
+				Target:    e2eScenarioTarget(scenario),
+				Assertion: fmt.Sprintf("%s (%s) follows the declared CASE oracle without forbidden side effects", scenario.ID, scenario.Title),
+				Oracle:    e2eScenarioOracle(scenario), Method: "real-browser execution",
+				Applicability: "required", SourceRefs: e2eScenarioSourceRefs(scenario), FocusKey: scenarioRef(scenario),
 			})
 			assignments = append(assignments, PlanAssignment{
-				AssignmentID: "assignment-e2e-flows", Lens: "e2e", ClaimIDs: []string{id},
-				NonOverlapBoundary: "owns the declared flows; cold-start spec authoring stays inside the verification workspace",
+				AssignmentID: fmt.Sprintf("assignment-e2e-case-%d", index+1), Lens: "e2e", ClaimIDs: []string{claimID},
+				FocusKeys:          []string{scenarioRef(scenario)},
+				NonOverlapBoundary: "owns exactly " + scenarioRef(scenario) + " and its declared PATH(s); do not repeat another CASE's oracle",
 				ExecutionWave:      "behavior",
+				BehaviorSurface:    "browser",
 			})
 		}
+	} else {
+		notes = append(notes, "No required browser CASE inventory was discoverable; Main must restore the actual scenario sources or supply a justified applicability decision, not assume a blank test library; set each required E2E Assignment behavior_surface to browser or non_browser from explicit source facts before drafting its manifest")
+		id := nextClaim("e2e", "flows")
+		claims = append(claims, Claim{
+			ClaimID: id, Lens: "e2e", Target: "TODO(planner): which existing scenario and source define this behavior? Name the actual browser, API, command or state entry; report missing scenario inputs to Main",
+			Assertion: "declared entry points produce the expected user-observable behavior",
+			Oracle:    "TODO(planner): after the declared fixture and actions, what visible/terminal state, persisted or forbidden effects and recovery distinguish pass from fail? Cite actual scenario evidence",
+			Method:    "TODO(planner): choose the actual browser, API, command or state method from the behavior sources", Applicability: "required", SourceRefs: taskIDs(tasks), FocusKey: "user-flow",
+		})
+		assignments = append(assignments, PlanAssignment{
+			AssignmentID: "assignment-e2e-flows", Lens: "e2e", ClaimIDs: []string{id},
+			NonOverlapBoundary: "owns the declared flows; cold-start spec authoring stays inside the verification workspace",
+			ExecutionWave:      "behavior",
+		})
 	}
 
 	if len(tasks) == 0 {

@@ -29,6 +29,10 @@ func reviewPlanPreparationFailure(message string) (string, error) {
 }
 
 func prepareReviewPlanQuestionnaireContext(root string, request policy.Input, snapshot runtime.Snapshot) (string, error) {
+	return prepareReviewPlanQuestionnaireEntry(root, request, snapshot, false)
+}
+
+func prepareReviewPlanQuestionnaireEntry(root string, request policy.Input, snapshot runtime.Snapshot, repairCompletion bool) (string, error) {
 	prepare := request.Event != "Stop" && request.Event != "SubagentStop" && request.Event != "TeammateIdle"
 	if !mainQuestionnaireViewer(request) {
 		return "", nil
@@ -39,53 +43,80 @@ func prepareReviewPlanQuestionnaireContext(root string, request policy.Input, sn
 	}
 	facts, _ := snapshot.State["review"].(map[string]any)
 	round := tolerantInt(facts["round"])
-	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == round {
+	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == round && !repairSeedAwaitingPlan(snapshot.State) {
 		return "", nil
 	}
+	// TR-012 seed preparation belongs to the actual completion outlet. Ordinary
+	// Main projections remain read-only, including Pre, status and recovery.
+	seedEntry := repairCurrentS7Entry(snapshot.State)
+	if seedEntry {
+		prepare = repairCompletion
+	}
 	path := reviewPlanQuestionnairePath(root, snapshot.State)
+	recovery := reviewPlanPreparationRecovery(root, path)
+	if seedEntry {
+		recovery = "Restore the stated source/filesystem failure, then resume original S9 completion with `" + repairExitRecovery(root) + "`; preserve the existing professional answer and accepted Handoff."
+	}
 	if path == "" {
 		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable: Main must restore the original current round and generation. No path was guessed.")
 	}
 	if info, err := os.Stat(path); os.IsNotExist(err) && prepare {
-		plan, notes := review.DraftPlanForRoot(root, snapshot.State, round)
+		plan, notes := reviewPlanDraftForEntry(root, snapshot.State, round)
 		if plan == nil {
-			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + strings.Join(notes, "; ") + ". " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + strings.Join(notes, "; ") + ". " + recovery)
 		}
 		data, err := json.MarshalIndent(plan, "", "  ")
 		if err == nil {
 			err = prepareQuestionnaireText(path, string(data)+"\n")
 		}
 		if err != nil {
-			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + err.Error() + ". " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + err.Error() + ". " + recovery)
 		}
 		if err := prepareQuestionnaireText(reviewPlanGuidePath(path), reviewPlanGuide(notes)); err != nil {
-			return reviewPlanPreparationFailure("S7 Main questionnaire was prepared at " + path + "; Main must restore its planning guidance: " + err.Error() + ". " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main questionnaire was prepared at " + path + "; Main must restore its planning guidance: " + err.Error() + ". " + recovery)
 		}
 	} else if err != nil {
 		if os.IsNotExist(err) {
-			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is not prepared at " + path + "; Main owns this preparation gap. " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is not prepared at " + path + "; Main owns this preparation gap. " + recovery)
 		}
-		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable at " + path + ": " + err.Error() + ". " + reviewPlanPreparationRecovery(root, path))
+		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable at " + path + ": " + err.Error() + ". " + recovery)
 	} else if !info.Mode().IsRegular() {
-		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable at " + path + ": expected a regular file. " + reviewPlanPreparationRecovery(root, path))
+		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable at " + path + ": expected a regular file. " + recovery)
 	}
 	guide := reviewPlanGuidePath(path)
 	if info, err := os.Stat(guide); os.IsNotExist(err) && prepare {
-		plan, notes := review.DraftPlanForRoot(root, snapshot.State, round)
+		plan, notes := reviewPlanDraftForEntry(root, snapshot.State, round)
 		if plan == nil {
-			return reviewPlanPreparationFailure("S7 Main guidance preparation failed at " + guide + ": " + strings.Join(notes, "; ") + ". " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main guidance preparation failed at " + guide + ": " + strings.Join(notes, "; ") + ". " + recovery)
 		}
 		if err := prepareQuestionnaireText(guide, reviewPlanGuide(notes)); err != nil {
-			return reviewPlanPreparationFailure("S7 Main questionnaire is retained at " + path + "; guidance preparation failed at " + guide + ": " + err.Error() + ". " + reviewPlanPreparationRecovery(root, path))
+			return reviewPlanPreparationFailure("S7 Main questionnaire is retained at " + path + "; guidance preparation failed at " + guide + ": " + err.Error() + ". " + recovery)
 		}
 	} else if os.IsNotExist(err) {
-		return reviewPlanPreparationFailure("S7 Main planning guidance is not prepared at " + guide + ". " + reviewPlanPreparationRecovery(root, path))
+		return reviewPlanPreparationFailure("S7 Main planning guidance is not prepared at " + guide + ". " + recovery)
 	} else if err != nil {
-		return reviewPlanPreparationFailure("S7 Main planning guidance is unavailable at " + guide + ": " + err.Error() + ". " + reviewPlanPreparationRecovery(root, path))
+		return reviewPlanPreparationFailure("S7 Main planning guidance is unavailable at " + guide + ": " + err.Error() + ". " + recovery)
 	} else if err == nil && !info.Mode().IsRegular() {
-		return reviewPlanPreparationFailure("S7 Main planning guidance is unavailable at " + guide + ": expected a regular file. " + reviewPlanPreparationRecovery(root, path))
+		return reviewPlanPreparationFailure("S7 Main planning guidance is unavailable at " + guide + ": expected a regular file. " + recovery)
 	}
 	return "S7 Main ReviewPlan questionnaire: " + path + ". Planning sources/candidates and unresolved decisions: " + guide + " (diagnostic only; if missing, Main restores preparation, never rewrites the professional answer). For each Claim, name the actual target, a falsifiable assertion, observable pass/fail oracle and concrete review or execution method using its source refs. Complete assignments and applicable coverage; resolve TODO(planner)/PLANNER-REFINE with real professional facts, then save this exact file for the original ReviewPlan consumer. Keep the supplied baseline; missing source or environment belongs to Main preparation, not invented evidence. Reviewer answers remain independent responsibilities.", nil
+}
+
+func reviewPlanDraftForEntry(root string, state map[string]any, round int) (*review.Plan, []string) {
+	if repairCurrentS7Entry(state) {
+		if !repairSeedAwaitingPlan(state) {
+			return nil, []string{"restore the original S9 seed/ReviewPlan projection for the current TR-012 round; do not substitute a generic S7 draft"}
+		}
+		seed, _, err := review.LoadPlan(root, state)
+		if err != nil {
+			return nil, []string{"restore the exact original S9 seed: " + err.Error()}
+		}
+		return seed, []string{
+			"Original TR-012 seed: " + resolveRootPath(root, stringValue(repairPointerCLI(state)["review_plan_seed_ref"])),
+			"Preserve its plan id, round, generation and pinned baseline. Resolve PLANNER-REFINE with actual professional coverage, assertions, methods and E2E applicability before saving the original questionnaire; the seed is not an accepted professional plan.",
+		}
+	}
+	return review.DraftPlanForRoot(root, state, round)
 }
 
 func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
@@ -104,7 +135,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 	var output, commandErr bytes.Buffer
 	next := "Main prepares and registers eligible Reviewer assignments before native dispatch; each Reviewer saves and returns its own answer for SubagentStop reception."
 	roundFacts, _ := snapshot.State["review"].(map[string]any)
-	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) {
+	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) && !repairSeedAwaitingPlan(snapshot.State) {
 		_, _, loadErr := review.LoadPlan(root, snapshot.State)
 		authored, readErr := os.ReadFile(path)
 		registered, registeredErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(ptr.Path)))
@@ -146,7 +177,7 @@ func reviewPlanGuide(notes []string) string {
 	for _, note := range notes {
 		b.WriteString("- " + note + "\n")
 	}
-	b.WriteString("\nChoose the existing E2E state from actual circumstances; unresolved discovery does not require rebuilding scripts. Select exact cases.json#CASE references and actual script paths; the original receiver fills omitted asset IDs/digests. Supply real selector, route and environment facts rather than generated labels. For cold_start, verification_artifact_workspace must be repository-relative under e2e-workspace/; the original registration prepares that isolated script/fixture surface. Reuse confirmed scripts at their original paths and create only missing assets in that workspace.\n\nREQ prototype links bound automatic discovery hints, not the professional regression boundary. Follow the actual changed providers and consumers through approved architecture/contracts, shared models, API/event/auth/configuration and journey/data paths. When removing a dependency or changing its owner, inspect the previously known consumers as well. Use existing declared sources and identify missing relationship/environment material for Main; no mandatory module graph or whole-project fallback is implied. Explain scope from actual dependencies and keep each scenario's exact source.\n")
+	b.WriteString("\nFor each required E2E Assignment, set behavior_surface to browser or non_browser from explicit behavior sources before registering this Plan. Browser CASE discovery can establish browser; ui_impact=none or an empty browser inventory cannot establish general E2E N/A. When no source establishes the surface, Main resolves this named Plan decision; do not guess from method prose. Historical registered manifests stay frozen. Choose the existing E2E state from actual circumstances; unresolved discovery does not require rebuilding scripts. Select exact cases.json#CASE references and actual script paths; the original receiver fills omitted asset IDs/digests. Supply real selector, route and environment facts rather than generated labels. For cold_start, verification_artifact_workspace must be repository-relative under e2e-workspace/; the original registration prepares that isolated script/fixture surface. Reuse confirmed scripts at their original paths and create only missing assets in that workspace.\n\nREQ prototype links bound automatic discovery hints, not the professional regression boundary. Follow the actual changed providers and consumers through approved architecture/contracts, shared models, API/event/auth/configuration and journey/data paths. When removing a dependency or changing its owner, inspect the previously known consumers as well. Use existing declared sources and identify missing relationship/environment material for Main; no mandatory module graph or whole-project fallback is implied. Explain scope from actual dependencies and keep each scenario's exact source.\n")
 	return b.String()
 }
 

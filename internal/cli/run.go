@@ -591,7 +591,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "targeted_reverification":
 			return "S9", "bug-resolution", "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and Handoff"
 		case "ready_for_full_review":
-			return "S9", "bug-resolution", "S9 has no author-filled Handoff form; completing the necessary professional work through its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. Follow any recorded actual missing work; do not wait for another Hook"
+			return "S9", "bug-resolution", repairHandoffPendingInstruction
 		}
 		return "S9", "bug-resolution", "continue from the current S9 Hook checkpoint; follow its supplied questionnaire paths and recorded recovery action"
 	case "acceptance", "release_audit":

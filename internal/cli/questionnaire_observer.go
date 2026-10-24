@@ -333,7 +333,7 @@ func observableQuestionnaires(root string, snapshot runtime.Snapshot) []observed
 	}
 	if stage == "S7" {
 		facts, _ := state["review"].(map[string]any)
-		if ptr := review.PlanPointerFromState(state); ptr == nil || ptr.ReviewRound != tolerantInt(facts["round"]) {
+		if ptr := review.PlanPointerFromState(state); ptr == nil || ptr.ReviewRound != tolerantInt(facts["round"]) || repairSeedAwaitingPlan(state) {
 			out = append(out, observedQuestionnaire{path: reviewPlanQuestionnairePath(root, state), s7Plan: true})
 		}
 	}

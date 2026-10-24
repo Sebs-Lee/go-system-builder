@@ -14,7 +14,7 @@
       }
     },
     "red_checks": {
-      "question": "填写对象数组，每项包含 name、command、result、evidence_refs（字符串数组）。command 记录本人实际做过的前检或尝试；result 按真实结果填写 pass、fail 或 blocked，不强制造 red。前检命令记录过去的工作，不冻结为 Main 后续检查命令；Main 按修复目标与实际改动选择并执行必要检查。证据可填实际日志路径或已有引用，不要求 URI 前缀；没有执行条件时如实记录尝试、缺失条件与现有证据，不冒充已执行或 fail，不另造 blocker 字段。",
+      "question": "填写对象数组，每项包含 name、command、result、evidence_refs（字符串数组）。command 记录本人实际做过的前检或尝试；result 按真实结果填写 pass、fail 或 blocked，不强制造 red。前检命令记录过去的工作，不冻结为 Main 后续检查命令；Main 按修复目标与实际改动选择并执行必要检查。证据可填本人实际 Builder 根目录下的日志路径或已有引用，不要求 URI 前缀；PlanReport 保留原作者引用与来源上下文，不代表 Result 接收器已归档仅出现在 PlanReport 的文件；没有执行条件时如实记录尝试、缺失条件与现有证据，不冒充已执行或 fail，不另造 blocker 字段。",
       "choices": [
         "fail",
         "pass",

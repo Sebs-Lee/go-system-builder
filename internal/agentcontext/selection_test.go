@@ -70,3 +70,23 @@ func TestUnknownProfileIsExplicitLegacyAndUnknownSkillRejected(t *testing.T) {
 		t.Fatal("unknown Skill invented knowledge/authority")
 	}
 }
+
+func TestE2ESelectionUsesResponsibilityForBrowserMethods(t *testing.T) {
+	for _, responsibility := range []string{"E2E-BEHAVIOR", "E2E-USER-FLOW", "E2E-CONSOLE-NETWORK"} {
+		selection, err := agentcontext.Select("../..", "e2e-tester", []string{responsibility}, agentcontext.RequiredSkills(responsibility))
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]bool{}
+		for _, skill := range selection.Selected {
+			names[skill.Name] = true
+		}
+		browser := responsibility != "E2E-BEHAVIOR"
+		if names["playwright-e2e"] != browser || names["e2e-browser-testing"] != browser {
+			t.Fatalf("%s browser selection: %+v", responsibility, selection.Selected)
+		}
+		if !names["testing-strategy"] {
+			t.Fatal("lost general test method")
+		}
+	}
+}

@@ -60,6 +60,13 @@ under `docs/reports/`, but never under `docs/reports/bugs/`). Every failure beco
 structured ReviewResult Finding, not a BUG draft; S8 owns root-cause and canonical BUG
 mapping. Evidence reports may be review-round scoped; product test assets may not be copied
 into a round-named location.
+For cold-start work, include the actual scripts/fixtures used from the declared
+workspace in the original Claim/check `evidence_refs` as `path:<repository-relative file>`;
+the original consumer supplies hashes. Output logs, screenshots and command_output
+show what happened, but do not identify those asset dependencies. Cite only real
+dependencies, not every other Reviewer's workspace file. Existing selected reuse
+assets keep their original Plan bindings. Unknown dependencies after workspace
+change are a Main recovery gap, not proof that the accepted result is still valid.
 ## N/A Criteria
 N/A only when no UI-impacting behavior change occurred AND no cross-REQ module sweep is required.
 ## Stop Conditions

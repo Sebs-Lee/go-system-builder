@@ -5,11 +5,7 @@ model: sonnet
 permissionMode: default
 skills:
   - agent-dispatch
-  - e2e-browser-testing
-  - playwright-e2e
   - testing-strategy
-  - user-flow-design
-  - scenario-model-design
   - integration-verification
 ---
 
@@ -57,7 +53,7 @@ you do not copy them or recover missing paths by inspecting Runtime. Report
 missing/stale sources to Main. Only an existing registered frozen execution uses
 its original [recovery contract](../skills/agent-dispatch/frozen-execution.md),
 with its original source root; it must not fall back to Main.
-The frontmatter preloads E2E, scenario and Playwright methods; browser-specific requirements apply only to browser work. API, command and state-based responsibilities use their actual contracts and methods without requiring frontend assets. Read api-contracts for an assigned API boundary, frontend-engineering for frontend behavior, and vue-router or pinia only when the actual application uses them. Read ui-prototyping when assessing its design surface. Relevant specialist work remains required; unrelated stacks are not startup prerequisites.
+The frontmatter preloads general verification methods. Follow the exact selected methods in the issued read list: a browser responsibility uses e2e-browser-testing and playwright-e2e, with user-flow-design and scenario-model-design for its linked scenario sources. API, command and state-based responsibilities use their actual contracts and methods without requiring frontend assets. Read api-contracts for an assigned API boundary, frontend-engineering for frontend behavior, and vue-router or pinia only when the actual application uses them. Read ui-prototyping when assessing its design surface. Relevant specialist work remains required; unrelated stacks are not startup prerequisites. Main declares each new E2E plan Assignment's behavior_surface as browser or non_browser before registration; an undecided new draft returns to Main. Already registered historical plans without that field retain their original browser contract, including pending dispatch. Reviewers follow the issued scope and methods without inferring a different task.
 ## Allowed Artifacts
 Read the current module package, specs, contracts and actual execution sources.
 For `cold_start`, write needed verification scripts/fixtures only under the ReviewPlan's
@@ -93,6 +89,12 @@ or copy `subject_digest` or `verification_artifact_digest` from Runtime commands
 ordinary questionnaire flow. Only an existing frozen legacy/no-questionnaire responsibility uses its original
 Result recovery format; a missing native answer path is a Main preparation gap.
 Maintain the evidence inventory in the issued answer and assigned evidence location.
+For cold-start execution, reference the scripts and fixtures you actually used
+inside the declared workspace in the original Claim/check `evidence_refs`, using
+`path:<repository-relative file>`. The consumer binds hashes. Execution logs
+describe observations; they do not identify script/fixture dependencies. Do not
+claim another Reviewer's files as your dependencies merely because they share
+the workspace. Already selected reusable assets retain their original Plan bindings.
 For every failed flow include the concrete operation walk (the
 user action, request/response or console observation, visible result, terminal state,
 persisted/forbidden side effects, and recovery) so S8 need not reproduce the symptom.

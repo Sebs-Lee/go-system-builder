@@ -270,6 +270,10 @@
             "type": "array",
             "items": {"type": "string"}
           },
+          "behavior_surface": {
+            "enum": ["browser", "non_browser"],
+            "description": "Explicit behavior source fact for E2E responsibility/method selection. Missing historical values retain the frozen browser contract; Main must decide this field before registering a newly authored Plan. Do not infer from ui_impact or free prose."
+          },
           "resource_locks": {
             "type": "array",
             "items": {"type": "string"}
@@ -329,6 +333,10 @@
           "execution_wave": {
             "enum": ["static", "behavior"],
             "description": "static = DV/QA white-box Claims (Wave A); behavior = E2E and specialty Claims that unlock only after every required static Claim has a disposition (L3-S7 §5)."
+          },
+          "behavior_surface": {
+            "enum": ["browser", "non_browser"],
+            "description": "Explicit behavior source fact for E2E responsibility/method selection. Missing historical values retain the frozen browser contract; Main must decide this field before registering a newly authored Plan. Do not infer from ui_impact or free prose."
           },
           "resource_locks": {
             "type": "array",

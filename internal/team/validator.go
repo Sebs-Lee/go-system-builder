@@ -112,13 +112,32 @@ func ValidateBytes(data []byte) error {
 	for _, item := range value.ResponsibilityDispositions {
 		dispositions[item.ResponsibilityID] = item
 	}
-	for _, responsibility := range mandatoryByWorkgroup[value.WorkgroupKind] {
+	mandatory := mandatoryByWorkgroup[value.WorkgroupKind]
+	onlyGenericBehavior := value.WorkgroupKind == "e2e_browser" && len(value.Assignments) > 0
+	if value.WorkgroupKind == "e2e_browser" {
+		mandatory = nil
+		for _, item := range value.Assignments {
+			if item.Responsibility == "E2E-BEHAVIOR" {
+				mandatory = append(mandatory, "E2E-BEHAVIOR")
+			} else {
+				onlyGenericBehavior = false
+				mandatory = append(mandatory, mandatoryByWorkgroup["e2e_browser"]...)
+			}
+		}
+		if len(value.Assignments) == 0 {
+			mandatory = mandatoryByWorkgroup["e2e_browser"]
+		}
+	}
+	for _, responsibility := range mandatory {
 		if _, ok := dispositions[responsibility]; !ok {
 			return fmt.Errorf("missing mandatory responsibility %s", responsibility)
 		}
 	}
 	for _, tag := range value.RiskTags {
 		required := riskResponsibilityByWorkgroup[value.WorkgroupKind][tag.Tag]
+		if onlyGenericBehavior && tag.Tag == "regression" {
+			required = "E2E-BEHAVIOR"
+		}
 		if required == "" {
 			continue
 		}

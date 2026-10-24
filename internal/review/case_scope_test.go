@@ -284,7 +284,7 @@ func TestKnownCASECoveragePreservesParallelAssignmentsAndExistingAssets(t *testi
 		c.NARationale = ""
 		c.NAChecklistID = ""
 		c.FocusKey = c.Target
-		plan.Assignments = append(plan.Assignments, PlanAssignment{AssignmentID: "assignment-" + c.ClaimID, Lens: "e2e", ClaimIDs: []string{c.ClaimID}, FocusKeys: []string{c.Target}, ExecutionWave: "behavior", NonOverlapBoundary: "owns exactly " + c.Target})
+		plan.Assignments = append(plan.Assignments, PlanAssignment{AssignmentID: "assignment-" + c.ClaimID, Lens: "e2e", BehaviorSurface: "browser", ClaimIDs: []string{c.ClaimID}, FocusKeys: []string{c.Target}, ExecutionWave: "behavior", NonOverlapBoundary: "owns exactly " + c.Target})
 		plan.E2EAssets = append(plan.E2EAssets, E2EAsset{CaseRef: c.Target, Path: script, SelectorRef: "existing selector contract", RouteRef: "/existing-entry", Environment: "original test environment"})
 	}
 	writeCaseScopePlan(t, p, plan)

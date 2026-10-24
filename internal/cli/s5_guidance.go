@@ -107,7 +107,11 @@ func stageS5ObservedContext(root string, state map[string]any) string {
 		}
 		missing := false
 		for _, path := range []string{view, answer} {
-			if _, err := os.Stat(path); err != nil {
+			info, err := os.Stat(path)
+			if err == nil && !info.Mode().IsRegular() {
+				err = fmt.Errorf("expected a regular questionnaire file")
+			}
+			if err != nil {
 				recovery := "Main restores the original files with " + submission.PlanningRecoveryCommand(root, "issue") + "; preserve existing authored answers."
 				if frozen {
 					recovery = fmt.Sprintf("Main restores this registered frozen execution's original files and source using %s; stage-answer issue in Main does not restore a frozen execution copy. Preserve existing authored answers and the original execution; do not replace it with Main authoring.", filepath.Join(root, ".claude/skills/agent-dispatch/frozen-execution.md"))

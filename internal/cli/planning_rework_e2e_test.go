@@ -396,7 +396,7 @@ func TestPlanningReworkCLITasksAcceptedHistoryAndOriginalS5Outlet(t *testing.T) 
 }
 
 func TestPlanningReworkCLITasksRejectsUpstreamDrift(t *testing.T) {
-	for _, source := range []string{"design", "contract", "method", "REQ"} {
+	for _, source := range []string{"design", "contract", "REQ"} {
 		t.Run(source, func(t *testing.T) {
 			root, p := newTaskPlanningAnswerFixture(t)
 			path := p.Inputs.Contracts[0].Path
@@ -411,8 +411,6 @@ func TestPlanningReworkCLITasksRejectsUpstreamDrift(t *testing.T) {
 				if path == p.Inputs.Contracts[0].Path {
 					t.Fatal("no frozen architecture source")
 				}
-			case "method":
-				path = "docs/rules/dispatch-plan.md"
 			case "REQ":
 				path = p.Binding.Requirement.Path
 			}
@@ -483,6 +481,79 @@ func TestPlanningReworkCLITasksInvalidatesOnlyDependentProjections(t *testing.T)
 			if e["status"] != "valid" {
 				t.Fatal("unrelated or upstream evidence changed", e)
 			}
+		}
+	}
+}
+
+func TestPlanningReworkCLITasksRefreshesMethodDescriptionsWithoutChangingFormalInputs(t *testing.T) {
+	root, original := newTaskPlanningAnswerFixture(t)
+	stageJSON(t, root, original.AnswerPath, completedTaskPlanningDraft(original))
+	acceptPendingTaskForRework(t, root, original)
+	before := stageSnapshot(t, root)
+	methodDigests := map[string]string{}
+	for _, path := range []string{"docs/dev/tasks/TASK-template.md", "docs/rules/dispatch-plan.md"} {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated := string(data) + "\nClarified professional method description for this planning revision.\n"
+		writeContractSource(t, root, path, updated)
+		methodDigests[path] = workpacket.Digest([]byte(updated))
+	}
+	// New issuance reads the current declared Git source for methods. Commit
+	// the real description changes rather than replacing any frozen digest.
+	fixtures.CommitCurrentFixture(t, root)
+	result := reworkCLI(t, root, "tasks")
+	encoded, err := json.Marshal(result.Packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next workpacket.TaskPlanningPacket
+	if err := json.Unmarshal(encoded, &next); err != nil {
+		t.Fatal(err)
+	}
+	if next.ID == original.ID {
+		t.Fatal("method clarification did not open a new S4 entry")
+	}
+	if original.Binding.Requirement != next.Binding.Requirement || !reflect.DeepEqual(original.Inputs.Contracts, next.Inputs.Contracts) || !reflect.DeepEqual(original.Inputs.ClauseUniverse, next.Inputs.ClauseUniverse) || !reflect.DeepEqual(original.Inputs.Directories, next.Inputs.Directories) {
+		t.Fatal("method refresh changed frozen formal inputs")
+	}
+	formal := func(p workpacket.TaskPlanningPacket) []workpacket.Subject {
+		var refs []workpacket.Subject
+		for _, ref := range p.Inputs.Sources {
+			if _, method := methodDigests[ref.Path]; !method {
+				refs = append(refs, ref)
+			}
+		}
+		return refs
+	}
+	if !reflect.DeepEqual(formal(original), formal(next)) {
+		t.Fatal("method refresh changed REQ/S2/S3 source closure")
+	}
+	for path, digest := range methodDigests {
+		var oldDigest, newDigest string
+		for _, ref := range original.Inputs.Sources {
+			if ref.Path == path {
+				oldDigest = ref.SHA256
+			}
+		}
+		for _, ref := range next.Inputs.Sources {
+			if ref.Path == path {
+				newDigest = ref.SHA256
+			}
+		}
+		if oldDigest == "" || oldDigest == digest || newDigest != digest {
+			t.Fatalf("new S4 did not freeze current method %s: old=%s new=%s want=%s", path, oldDigest, newDigest, digest)
+		}
+	}
+	after := stageSnapshot(t, root)
+	if !reflect.DeepEqual(before.State["bound_req"], after.State["bound_req"]) || !reflect.DeepEqual(before.State["baseline"], after.State["baseline"]) || !reflect.DeepEqual(before.State["documents"], after.State["documents"]) {
+		t.Fatal("method refresh changed locked REQ, baseline or upstream documents")
+	}
+	for _, raw := range after.State["evidence"].([]any) {
+		e := raw.(map[string]any)
+		if (e["kind"] == "planning_design" || e["kind"] == "planning_design_record" || e["kind"] == "planning_contract" || e["kind"] == "planning_contract_record") && e["status"] != "valid" {
+			t.Fatal("method refresh invalidated upstream evidence", e)
 		}
 	}
 }

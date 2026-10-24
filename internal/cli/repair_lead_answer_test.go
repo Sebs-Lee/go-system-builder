@@ -124,10 +124,16 @@ func TestS9RepairLeadAnswerShapeUsesActualSources(t *testing.T) {
 	}
 	for _, targeted := range []bool{false, true} {
 		help := repairLeadAnswerHelp(root, state, targeted)
-		for _, required := range []string{filepath.Join(root, contract), filepath.Join(root, result), filepath.Join(root, second), filepath.Join(root, evidence), "original-evidence-id", filepath.Join(root, "docs/REQ-039.md"), "symptom-1", "actual symptom text", "root-1", "actual root text", "gap-1", "actual gap text", "test://actual-original-check", "test://second-original-check", "not executed evidence"} {
+		for _, required := range []string{filepath.Join(root, contract), filepath.Join(root, result), filepath.Join(root, second), filepath.Join(root, "docs/REQ-039.md"), "symptom-1", "actual symptom text", "root-1", "actual root text", "gap-1", "actual gap text", "test://actual-original-check", "test://second-original-check", "not executed evidence"} {
 			if !strings.Contains(help, required) {
 				t.Fatalf("targeted=%v omitted %q: %s", targeted, required, help)
 			}
+		}
+		if strings.Contains(help, "original-evidence-id") || strings.Contains(help, filepath.Join(root, evidence)) {
+			t.Fatalf("unrelated evidence index was dumped: %s", help)
+		}
+		if !targeted && !strings.Contains(help, "loop-state.json#/evidence") {
+			t.Fatalf("impact omitted original index navigation: %s", help)
 		}
 		var fields []string
 		if targeted {
@@ -207,5 +213,40 @@ func assertRepairLeadAnswerReplay(t *testing.T, root, path string, input policy.
 				t.Fatalf("conflict=%v replay rewrote %s: %v", conflict, ref, err)
 			}
 		}
+	}
+}
+
+func TestS9EvidenceProjectionPreservesBuilderRootAndCapturedHandoff(t *testing.T) {
+	mainRoot, workerRoot := t.TempDir(), t.TempDir()
+	raw := `{"receipt":{"provenance":{"execution_root":"WORKER","local_evidence":[{"authored_ref":"logs/check.txt","source_path":"logs/check.txt","path":".claude/evidence/s9/captured","sha256":"digest"}]}},"unit_results":[{"evidence_refs":["logs/check.txt","path:legacy.log#sha256=abc","old-id","test://actual-run"]}],"checks":[{"evidence_refs":["logs/check.txt"]}]}`
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["receipt"].(map[string]any)["provenance"].(map[string]any)["execution_root"] = workerRoot
+	var b strings.Builder
+	repairLeadEvidenceHelp(mainRoot, &b, doc)
+	help := b.String()
+	for _, want := range []string{filepath.Join(mainRoot, ".claude/evidence/s9/captured"), "Builder root " + workerRoot, "original ref \"logs/check.txt\"", "Recorded Main check evidence candidate: " + filepath.Join(mainRoot, "logs/check.txt"), "historical/unarchived reference", "test://actual-run"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("projection omitted %q: %s", want, help)
+		}
+	}
+	if strings.Contains(help, filepath.Join(mainRoot, "path:legacy.log")) || strings.Contains(help, filepath.Join(mainRoot, "old-id")) {
+		t.Fatalf("unarchived Builder evidence mislabeled Main: %s", help)
+	}
+	// Captures are recorded navigation. Ordinary reminders do not re-read/hash
+	// source bytes, require the Worker to survive, or manufacture a new receipt.
+	if _, err := os.Stat(filepath.Join(mainRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatal("projection wrote capture")
+	}
+	delete(doc, "receipt")
+	b.Reset()
+	repairLeadEvidenceHelp(mainRoot, &b, doc)
+	if !strings.Contains(b.String(), "historical source root unspecified") {
+		t.Fatalf("legacy source guessed Main: %s", b.String())
+	}
+	if strings.Contains(b.String(), "Recorded Main check evidence candidate:") || strings.Contains(b.String(), filepath.Join(mainRoot, "logs/check.txt")) {
+		t.Fatalf("legacy check evidence guessed Main: %s", b.String())
 	}
 }

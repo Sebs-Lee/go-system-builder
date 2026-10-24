@@ -21,9 +21,12 @@ type Waiting struct {
 }
 
 type Receipt struct {
-	SubmissionKey        string                  `json:"submission_key,omitempty"`
-	PacketID             string                  `json:"packet_id"`
-	Accepted             bool                    `json:"accepted"`
+	SubmissionKey string `json:"submission_key,omitempty"`
+	PacketID      string `json:"packet_id"`
+	Accepted      bool   `json:"accepted"`
+	// AttemptStatus describes the current save attempt separately from durable
+	// acceptance. Only S4 rejected attempts currently populate this field.
+	AttemptStatus        string                  `json:"attempt_status,omitempty"`
 	ResponsibilityStatus string                  `json:"responsibility_status"`
 	WorkComplete         bool                    `json:"work_complete"`
 	ConsumerOwner        string                  `json:"consumer_owner,omitempty"`

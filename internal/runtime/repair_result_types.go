@@ -8,11 +8,21 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
+// RepairResultLocalEvidence is system-owned source capture, not an authored
+// report. SourcePath is relative to provenance.ExecutionRoot; Path is in Main.
+type RepairResultLocalEvidence struct {
+	AuthoredRef string `json:"authored_ref"`
+	SourcePath  string `json:"source_path"`
+	Path        string `json:"path"`
+	SHA256      string `json:"sha256"`
+}
+
 // RepairResultCandidateProvenance is embedded in the original immutable S9
 // WorkspaceCandidate. It proves which answer produced the proposal, not that
 // the candidate was received. DeliveryRef/SHA and the original journal prove
 // reception; no candidate file contains its own hash or predicted sequence.
 type RepairResultCandidateProvenance struct {
+	LocalEvidence           []RepairResultLocalEvidence     `json:"local_evidence,omitempty"`
 	Contract                string                          `json:"contract"`
 	PacketID                string                          `json:"packet_id"`
 	PacketSHA256            string                          `json:"packet_sha256"`

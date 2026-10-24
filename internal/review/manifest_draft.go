@@ -146,7 +146,7 @@ func assignmentDoneWhen(kind, assignmentID string, claimIDs []string) []string {
 	result := fmt.Sprintf("fill and save the exact issued professional answer for %s for assigned Claims [%s], and return its exact reference for original-consumer reception; ending the native turn does not establish acceptance", assignmentID, claims)
 	evidence := "for an ordinary complete result, each assigned Claim has a disposition and the required evidence is referenced"
 	if kind == "e2e_browser" {
-		evidence = "follow the original Plan's applicability decisions; for an ordinary complete result, execute assigned required user flows and reference their actual evidence, with every assigned Claim answered as pass/fail or a legitimate product-blocked Claim; unclear applicability goes to Main for original Plan recovery, not a new Claim conclusion"
+		evidence = "follow the original Plan's applicability decisions; for an ordinary complete result, execute assigned required behavior through its declared entry and method and reference their actual evidence, with every assigned Claim answered as pass/fail or a legitimate product-blocked Claim; unclear applicability goes to Main for original Plan recovery, not a new Claim conclusion"
 	}
 	return []string{result, evidence,
 		"run every declared required check before reporting ordinary completion; for a real P0, stop dangerous work, preserve observed Claim conclusions and the actual P0 Finding with genuine capture gaps, and omit unanswered Claim rows; the original consumer validates the P0 and derives unobserved Claims",
@@ -187,6 +187,10 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 		return nil, nil, fmt.Errorf("assignment %s has unsupported lens %q; reviewer workgroup kinds are delivery_verifier/qa/e2e_browser", assignmentID, planned.Lens)
 	}
 
+	responsibilities := mandatoryResponsibilities[kind]
+	if planned.Lens == "e2e" && planned.BehaviorSurface == "non_browser" {
+		responsibilities = []string{"E2E-BEHAVIOR"}
+	}
 	var notes []string
 	// A plan Assignment dispatches exactly once; warn early when the runtime
 	// projection shows it is already consumed.
@@ -282,7 +286,7 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	// The single manifest row binds the exact Claim set of the plan
 	// Assignment; responsibility defaults to the first mandatory one for the
 	// workgroup kind.
-	responsibility := mandatoryResponsibilities[kind][0]
+	responsibility := responsibilities[0]
 	notes = append(notes, fmt.Sprintf("responsibility_id defaults to %s (first mandatory %s responsibility); all mandatory responsibilities are pre-assigned to this row — adjust the routing if the Planner splits duties", responsibility, kind))
 
 	scope := []string{}
@@ -332,8 +336,8 @@ func DraftManifest(root string, state map[string]any, assignmentID string) (*Man
 	notes = append(notes, "agent_id is the prepared engineering owner label for this exact original Assignment, not an opaque platform agent_id; Main may select an actual replacement owner without changing the professional scope or independence requirements")
 
 	roleFamily := lensToRoleFamily(planned.Lens)
-	dispositions := make([]ManifestDisposition, 0, len(mandatoryResponsibilities[kind]))
-	for _, mandatory := range mandatoryResponsibilities[kind] {
+	dispositions := make([]ManifestDisposition, 0, len(responsibilities))
+	for _, mandatory := range responsibilities {
 		dispositions = append(dispositions, ManifestDisposition{
 			ResponsibilityID: mandatory,
 			Disposition:      "assigned",

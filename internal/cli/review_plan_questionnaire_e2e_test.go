@@ -64,7 +64,7 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 	e2e["source_refs"] = []string{casePath + "#CASE-001"}
 	delete(e2e, "na_rationale")
 	delete(e2e, "na_checklist_id")
-	answer["assignments"] = append(answer["assignments"].([]any), map[string]any{"assignment_id": "assignment-e2e-1", "lens": "e2e", "claim_ids": []string{"claim-e2e-na"}, "execution_wave": "behavior", "non_overlap_boundary": "actual browser journey"})
+	answer["assignments"] = append(answer["assignments"].([]any), map[string]any{"assignment_id": "assignment-e2e-1", "lens": "e2e", "claim_ids": []string{"claim-e2e-na"}, "execution_wave": "behavior", "non_overlap_boundary": "actual browser journey", "behavior_surface": "browser"})
 	answer["e2e_coverage_state"] = "regression_available"
 	answer["e2e_assets"] = []any{map[string]any{"case_ref": casePath + "#CASE-001", "path": "example.spec.ts", "selector_ref": "button[name=Save]", "route_ref": "/example", "environment": "local test browser"}}
 	for _, source := range []string{casePath, "example.spec.ts"} {

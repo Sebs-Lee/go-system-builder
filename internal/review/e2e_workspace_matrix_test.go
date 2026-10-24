@@ -64,7 +64,7 @@ func writeColdStartPlan(t *testing.T, root, workspace string) string {
 				"non_overlap_boundary": "owns logic/state", "execution_wave": "static",
 			},
 			map[string]any{
-				"assignment_id": "assignment-e2e-1", "lens": "e2e", "claim_ids": []string{"claim-e2e-1"},
+				"assignment_id": "assignment-e2e-1", "lens": "e2e", "behavior_surface": "browser", "claim_ids": []string{"claim-e2e-1"},
 				"non_overlap_boundary": "owns the declared flows; spec authoring stays inside the verification workspace",
 				"execution_wave":       "behavior",
 			},

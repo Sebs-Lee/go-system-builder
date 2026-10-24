@@ -3,7 +3,7 @@
   "stage": "S9",
   "adapter": "repair_result",
   "title": "S09 修复结果 · RepairResult",
-  "instruction": "新 native Builder 只在准确 brief 指定的实际 worktree 私人输出中填写顶层专业结论、逐断言观察、逐单元实施结果与资料引用，然后保存 brief 给出的私人 Result 路径；这是唯一专业完成答案，不另交 generic completion 或第二报告，不手动 issue/consume。已有检查、实际变更路径、身份与时间由系统带出，不用复制机器信息；无改动测试正常报告实际结果，不要求新 commit，实际有改动才由 Main 做 Git 集成，必要真实检查和独立复验仍须执行。示例只说明原字段形状，实际 assertion_id、unit_id、不变量引用取自本卷，证据必须真实。缺卷/来源缺失归 Main/系统准备，不退 legacy。 原 Main 题面是只读问题与来源，不是 native 私人输出位置；不要添加 answer 包装。普通保存只保留工作，返回准确 brief 与私人 Result 绝对路径，由 SubagentStop 调用原消费者；Main 不代写。已登记冻结旧执行仍按其原题面、包装和来源恢复，不重写旧绑定。",
+  "instruction": "Result 顶层及逐观察 evidence_refs 中的本地文件以本人已登记 Builder 根目录为基准，不以 Main 为基准。推荐 path:logs/check.txt，无需作者填写 hash；也接受带目录的相对路径或该 Builder 根目录内绝对文件路径。单文件名写 path:check.log 或 ./check.log，裸 token 作为旧证据标识保留。原接收器交接真实文件字节，缺失文件由原责任恢复后重试，不编造观察；URI 保持原义。migration_ref、rollback_ref 与 detection_gap_artifacts 保持各自原引用语义，不属于此文件交接。 新 native Builder 只在准确 brief 指定的实际 worktree 私人输出中填写顶层专业结论、逐断言观察、逐单元实施结果与资料引用，然后保存 brief 给出的私人 Result 路径；这是唯一专业完成答案，不另交 generic completion 或第二报告，不手动 issue/consume。已有检查、实际变更路径、身份与时间由系统带出，不用复制机器信息；无改动测试正常报告实际结果，不要求新 commit，实际有改动才由 Main 做 Git 集成，必要真实检查和独立复验仍须执行。示例只说明原字段形状，实际 assertion_id、unit_id、不变量引用取自本卷，证据必须真实。缺卷/来源缺失归 Main/系统准备，不退 legacy。 原 Main 题面是只读问题与来源，不是 native 私人输出位置；不要添加 answer 包装。普通保存只保留工作，返回准确 brief 与私人 Result 绝对路径，由 SubagentStop 调用原消费者；Main 不代写。已登记冻结旧执行仍按其原题面、包装和来源恢复，不重写旧绑定。",
   "questions": {
     "verdict": {
       "question": "对本次修复给出专业结论。completed 仅说明本人按 Assignment 完成实施和自检；blocked、contract_conflict、stale 必须如实保留。阻塞/未执行事项用现有 unit_results 的 implementation_summary、证据和 residual_risks 说明实际尝试、缺口与下一责任，不新增字段或虚构观察；按原消费者反馈恢复。全绿检查不会替你作答。",

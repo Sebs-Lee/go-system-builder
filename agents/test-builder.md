@@ -19,9 +19,11 @@ For implementation/test work, use Main's exact S6 task-brief or approved S9 repa
 For independent Targeted work, use only the original Targeted request described below.
 The brief owns this instance's input/output paths and field contract;
 [agent-dispatch](../skills/agent-dispatch/SKILL.md#native-s6-s6-native-v1)
-owns native S6 handoff. Save the professional plan before implementation,
-perform your own real checks and commit actual deliverables. Main integrates;
-independent Reviewers verify. Do not approve your own work.
+owns native S6 handoff. For implementation/test work, save the professional plan
+before implementation, perform your own real checks and commit actual deliverables.
+Main integrates; independent Reviewers verify. Independent Targeted work instead
+uses its original request and observations, without a Builder plan or product commit.
+Do not approve your own work.
 Only an already registered frozen execution uses its original
 [frozen recovery contract](../skills/agent-dispatch/frozen-execution.md).
 
