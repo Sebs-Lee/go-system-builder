@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -385,5 +386,80 @@ func TestTaskPlanningArtifactsReadsOnlyActualOutputsOnce(t *testing.T) {
 	data, _ = json.Marshal(envelope)
 	if err := runtime.ValidateTaskPlanningEnvelope(p, "E-S4", answer, data); err == nil {
 		t.Fatal("unreadable professional record accepted")
+	}
+}
+
+func TestTaskPlanningIgnoresUnrelatedContractDirectoryMembersAndPreservesIssuedPacket(t *testing.T) {
+	root, state, files := taskPlanningRuntimeFixture(t)
+	inputs, err := runtime.ResolveTaskPlanningInputs(root, state, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Historical packets froze the entire directory. Keep their original ID and
+	// metadata while applying the current accepted-contract scope on validation.
+	entries, err := files.ReadDir("docs/dev/contracts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	inputs.Directories["docs/dev/contracts"] = names
+	binding, _ := runtime.CurrentTaskPlanningBinding(state)
+	p, err := workpacket.BuildTaskPlanning(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = commitContractBatchFixture(t, contractBatchFixture{root: root})
+	for _, path := range []string{"local-note.txt", "notes.md", ".BE-001.md.swp", "scratch/FE-999.md"} {
+		writeTaskPlanningFile(t, root, "docs/dev/contracts/"+path, "# Notes about BE-039\nLocal working notes.\n")
+	}
+	for name, fence := range map[string]string{"example-notes.md": "```", "tilde-notes.md": "~~~"} {
+		writeTaskPlanningFile(t, root, "docs/dev/contracts/"+name, "Local notes with no document title.\n\n"+fence+"markdown\n# BE-039 Example contract\n"+fence+"\n")
+	}
+	if _, err := runtime.ResolveTaskPlanningInputs(root, state, files); err != nil {
+		t.Fatalf("unrelated members blocked S4 issue: %v", err)
+	}
+	if err := runtime.ValidateTaskPlanningPacket(root, state, p, files); err != nil {
+		t.Fatalf("unrelated members invalidated historical S4 packet: %v", err)
+	}
+	descriptivePath := "docs/dev/contracts/service-contract.md"
+	writeTaskPlanningFile(t, root, descriptivePath, "```markdown\n# Example only\n```\n\n# BE-999 Service contract\n> Status: draft\n")
+	if err := runtime.ValidateTaskPlanningPacket(root, state, p, files); err == nil || !strings.Contains(err.Error(), descriptivePath) {
+		t.Fatalf("real descriptive contract identity after a code example escaped S4: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, descriptivePath)); err != nil {
+		t.Fatal(err)
+	}
+	writeTaskPlanningFile(t, root, "docs/dev/contracts/FE-999.md", "# FE-999\n> Status: draft\n")
+	if err := runtime.ValidateTaskPlanningPacket(root, state, p, files); err == nil || !strings.Contains(err.Error(), "docs/dev/contracts/FE-999.md") {
+		t.Fatalf("new contract candidate lacks its exact S4 source diagnostic: %v", err)
+	}
+}
+
+// The first read validates the registered contract; a later read must not
+// silently provide a new clause universe from bytes that were never accepted.
+type changedTaskIndexReader struct {
+	fileview.Reader
+	path  string
+	reads int
+}
+
+func (r *changedTaskIndexReader) ReadFile(path string) ([]byte, error) {
+	data, err := r.Reader.ReadFile(path)
+	if path == r.path {
+		r.reads++
+		if r.reads >= 2 {
+			return append(data, []byte("\nBE-001 §999\n")...), err
+		}
+	}
+	return data, err
+}
+func TestTaskPlanningRejectsIndexBytesChangedBeforeClauseProjection(t *testing.T) {
+	root, state, files := taskPlanningRuntimeFixture(t)
+	reader := &changedTaskIndexReader{Reader: files, path: "docs/dev/contracts/CONTRACTS-001.md"}
+	if _, err := runtime.ResolveTaskPlanningInputs(root, state, reader); err == nil {
+		t.Fatal("new index bytes were used to build the accepted clause universe")
 	}
 }

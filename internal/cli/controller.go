@@ -251,6 +251,13 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		HumanRequired: next.HumanRequired,
 		Recovery:      []string{"continue from this packet's Stage and Next", "read " + next.ProtocolRef, "if blocked or unclear read " + loopManualRef},
 	}
+	if runtime.PacketEnabled(state) && lifecycleState == "planning" && (lifecyclePhase == "contracts" || lifecyclePhase == "tasks") {
+		if row, err := registeredPlanningRow(state); err == nil && row != nil {
+			guidance.Read = []string{stringValue(row["view_path"]), stringValue(row["answer_path"])}
+			guidance.ReadOrder = append([]string{"LOOP RECOVERY packet (this message)"}, guidance.Read...)
+			guidance.Recovery = []string{"continue the exact registered view/answer; read the linked professional method as needed; Runtime and repository-wide reading are for named diagnostics"}
+		}
+	}
 	if lifecycleState == "inactive" {
 		guidance.Missing = nil // Exact unanswered choices come from the current request.
 		if next.Stage == "S0" {
@@ -507,7 +514,7 @@ func repairNextAction(state map[string]any, phase string) string {
 	case "targeted_reverification":
 		return "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and handoff"
 	case "ready_for_full_review":
-		return "S9 has no author-filled Handoff form; completing the necessary professional work through its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. Follow any recorded actual missing work; do not wait for another Hook"
+		return "The final required Targeted SubagentStop attempts the original Handoff automatically. If it remains incomplete, preserve the accepted observations and use the exact runtime repair handoff complete recovery supplied with the failure; a real budget decision remains necessary when the limit is reached. No extra Handoff answer or repeated Targeted report is needed; ordinary reminders do not retry the transition"
 	case "closed":
 		return "the original S9 Handoff consumer has seeded a fresh S7 round; use the supplied ReviewPlan questionnaire path and continue through the original S7 registration, dispatch, checks, and evaluation"
 	}
@@ -727,7 +734,7 @@ func s7RecoveryNextAction(root string, state map[string]any, planStatus string, 
 	case "observation_sealed":
 		return "the sealed ObservationBatch hands off to S8 automatically: the next PreToolUse auto-commits TR-008 — do not invoke the transition CLI"
 	case "clean":
-		return "the machine CleanRound promotes to acceptance automatically: the next PreToolUse auto-commits TR-009 — do not invoke the transition CLI"
+		return "the original final ReviewResult exit continues Gate/TR-009 and prepares S10 acceptance; resume a pending original exit with loop-harness runtime review-continue --root <root>"
 	case "paused":
 		return "resolve the recorded pause verdict checkpoint; the round resumes only through the human gateway (TR-010/TR-011)"
 	case "planned", "":

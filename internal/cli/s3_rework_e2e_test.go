@@ -68,9 +68,18 @@ func s3PacketFromCurrentRuntime(t *testing.T, root string) workpacket.ContractPa
 func prepareS3ThroughSourceCommit(t *testing.T, root string) workpacket.ContractPacket {
 	t.Helper()
 	// The actual authored upstream sources become available on this commit.
-	// Observe that genuine successful Main action through its original Post outlet.
+	// A script save is observed through its matching Pre/Post pair; command
+	// text in an isolated Post is not proof that a material change occurred.
+	tool := map[string]any{"hook_event_name": "PreToolUse", "session_id": "s3-source-commit", "tool_use_id": "source-commit", "cwd": root, "tool_name": "Bash", "tool_input": map[string]any{"command": "git commit -qm 'delivered fixture'"}}
+	before, _ := json.Marshal(tool)
+	var beforeOut, beforeErr bytes.Buffer
+	if code := cli.Run([]string{"hook", "--root", root, "--event", "PreToolUse"}, bytes.NewReader(before), &beforeOut, &beforeErr); code != 0 {
+		t.Fatalf("source commit Pre: %d %s %s", code, &beforeOut, &beforeErr)
+	}
 	fixtures.CommitCurrentFixture(t, root)
-	changed, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "session_id": "s3-source-commit", "cwd": root, "tool_name": "Bash", "tool_input": map[string]any{"command": "git commit --allow-empty -qm 'delivered fixture'"}, "tool_response": map[string]any{"exit_code": 0}})
+	tool["hook_event_name"] = "PostToolUse"
+	tool["tool_response"] = map[string]any{"exit_code": 0}
+	changed, _ := json.Marshal(tool)
 	var changedOut, changedErr bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(changed), &changedOut, &changedErr); code != 0 {
 		t.Fatalf("actual S3 source commit observation: %d %s %s", code, &changedOut, &changedErr)
@@ -87,7 +96,7 @@ func prepareS3ThroughSourceCommit(t *testing.T, root string) workpacket.Contract
 	}
 	var out, errout bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PreToolUse"}, bytes.NewReader(body), &out, &errout); code != 0 {
-		t.Fatalf("cold S3 SessionStart: code=%d stdout=%s stderr=%s", code, out.String(), errout.String())
+		t.Fatalf("cold S3 Pre: code=%d stdout=%s stderr=%s", code, out.String(), errout.String())
 	}
 	var envelope struct {
 		Output struct {
@@ -104,11 +113,21 @@ func prepareS3ThroughSourceCommit(t *testing.T, root string) workpacket.Contract
 	if stageSnapshot(t, root).Revision != beforeRead.Revision {
 		t.Fatal("ordinary S3 Read issued or changed responsibility")
 	}
-	t.Logf("original source commit feedback=%s; read=%s", &changedErr, &out)
 	packet := s3PacketFromCurrentRuntime(t, root)
+	var delivered struct {
+		Output struct {
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(changedOut.Bytes(), &delivered); err != nil {
+		t.Fatalf("source commit did not deliver a model response: %v %s", err, &changedOut)
+	}
 	for _, path := range []string{packet.ViewPath, packet.AnswerPath} {
+		if !strings.Contains(delivered.Output.Context, filepath.Join(root, filepath.FromSlash(path))) {
+			t.Fatalf("source commit did not deliver next S3 path %s: %s", path, &changedOut)
+		}
 		if !strings.Contains(envelope.Output.Context, filepath.Join(root, filepath.FromSlash(path))) {
-			t.Fatalf("SessionStart did not give exact S3 path %s: %s", path, envelope.Output.Context)
+			t.Fatalf("Pre did not give exact S3 path %s: %s", path, envelope.Output.Context)
 		}
 	}
 	for _, source := range packet.Inputs.Sources {

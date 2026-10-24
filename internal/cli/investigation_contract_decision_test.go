@@ -101,75 +101,107 @@ func TestS8ContractChoiceCannotFollowChangedDraftCaseOrBytes(t *testing.T) {
 }
 
 func TestS8ExplicitGrantAndDriverChoiceNormalHookWithoutMachineInput(t *testing.T) {
-	root, contract := s8LeadContractTestReady(t)
-	writeRepairLeadJSON(t, contract, s8LeadContractTestAnswer())
-	s8LeadContractTestSave(t, root, contract)
-	current := investigationLeadTestSnapshot(t, root)
-	grantPaths := repairDelegationApplicationPaths(root, current.State)
-	if len(grantPaths) != 1 || questionnaireMissing(grantPaths[0]) {
-		t.Fatalf("optional original grant not prepared: %v", grantPaths)
-	}
-	grantPath := grantPaths[0]
-	before := s8DecisionControlBytes(t, root)
-	s8DecisionNormalHook(t, root, grantPath)
-	s8DecisionRequireUnchanged(t, root, before)
-	writeRepairLeadJSON(t, grantPath, repairDelegationApplicationAnswer{Decision: "delegate_bounded_repair", Reviewer: "Main", AllowedPaths: []string{"internal/example"}, ForbiddenPaths: []string{"internal/unrelated-private"}, MaxContracts: 2, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
-	out := s8DecisionNormalHook(t, root, grantPath)
-	if !strings.Contains(out, "finite grant was recorded") {
-		t.Fatalf("professional human choices could not create original grant: %s", out)
-	}
-	current = investigationLeadTestSnapshot(t, root)
-	authority, reviewer, err := investigation.ContractReviewAuthority(root, current.State)
-	if err != nil || authority == "" || reviewer != "Main" {
-		t.Fatalf("original authority not found: %s %s %v", authority, reviewer, err)
-	}
-	afterGrant := s8DecisionControlBytes(t, root)
-	s8DecisionNormalHook(t, root, grantPath)
-	s8DecisionRequireUnchanged(t, root, afterGrant)
-	// A later ordinary script is not another save of the accepted human choice.
-	var unrelatedOut, unrelatedDiag bytes.Buffer
-	if handled, _ := runObservedQuestionnaireSaves(root, policy.Input{Event: "PostToolUse", ToolName: "Bash", CWD: root}, &unrelatedOut, &unrelatedDiag); handled {
-		t.Fatalf("ordinary tool resubmitted an already recorded grant: %s %s", &unrelatedOut, &unrelatedDiag)
-	}
-	s8DecisionRequireUnchanged(t, root, afterGrant)
-	paths := investigationLeadContractDecisionPaths(root, current.State)
-	if len(paths) != 1 || !strings.Contains(paths[0], "s8-review-") || questionnaireMissing(paths[0]) {
-		t.Fatalf("original Driver review not prepared: %v", paths)
-	}
-	reviewPath := paths[0]
-	before = s8DecisionControlBytes(t, root)
-	s8DecisionNormalHook(t, root, reviewPath)
-	s8DecisionRequireUnchanged(t, root, before)
-	supportRel := ".claude/evidence/s8-real-boundary.json"
-	writeRepairLeadFile(t, root, supportRel, `{"observed":"synthetic verified boundary trace"}`)
-	_, err = runtime.RecordEvidence(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), runtime.EvidenceRequest{ExpectedRevision: current.Revision, ID: "s8-boundary", Kind: "builder_report", Path: supportRel, ProducedBy: []string{"Main"}, ScopeRefs: []string{"boundary"}, Validator: semantic.RuntimeCandidateValidator{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer := investigationContractDecisionAnswer{Decision: "approve_bounded_repair", RequirementsUnchanged: true, BusinessSemanticsUnchanged: true, Reversible: true, ScopeComplete: false, EvidenceRefs: []string{"s8-boundary"}, Rationale: "Synthetic Driver traced current entry, source authority, complete scope and rollback."}
-	writeRepairLeadJSON(t, reviewPath, answer)
-	before = s8DecisionControlBytes(t, root)
-	out = s8DecisionNormalHook(t, root, reviewPath)
-	s8DecisionRequireUnchanged(t, root, before)
-	if !strings.Contains(out, "four actual technical judgments") {
-		t.Fatalf("missing judgment not explained: %s", out)
-	}
-	answer.ScopeComplete = true
-	writeRepairLeadJSON(t, reviewPath, answer)
-	out = s8DecisionNormalHook(t, root, reviewPath)
-	approved := investigationLeadTestSnapshot(t, root)
-	if stringValue(investigationPointer(approved.State)["status"]) != "contract_approved" {
-		t.Fatalf("original bounded approval did not consume professional review: %s", out)
-	}
-	uses := mapFieldCLI(mapFieldCLI(mapFieldCLI(approved.State, "configuration"), "repair"), "delegation_uses")
-	if integerValue(uses[authority]) != 1 {
-		t.Fatalf("original finite budget not consumed exactly once: %v", uses)
-	}
-	approvedBytes := s8DecisionControlBytes(t, root)
-	out = s8DecisionNormalHook(t, root, reviewPath)
-	s8DecisionRequireUnchanged(t, root, approvedBytes)
-	if !strings.Contains(out, "already recorded") {
-		t.Fatalf("bounded replay lost receipt: %s", out)
+	for _, designated := range []string{"Main", "driver-reviewer"} {
+		t.Run(designated, func(t *testing.T) {
+			root, contract := s8LeadContractTestReady(t)
+			writeRepairLeadJSON(t, contract, s8LeadContractTestAnswer())
+			s8LeadContractTestSave(t, root, contract)
+			current := investigationLeadTestSnapshot(t, root)
+			grantPaths := repairDelegationApplicationPaths(root, current.State)
+			if len(grantPaths) != 1 || questionnaireMissing(grantPaths[0]) {
+				t.Fatalf("optional original grant not prepared: %v", grantPaths)
+			}
+			grantPath := grantPaths[0]
+			before := s8DecisionControlBytes(t, root)
+			s8DecisionNormalHook(t, root, grantPath)
+			s8DecisionRequireUnchanged(t, root, before)
+			writeRepairLeadJSON(t, grantPath, repairDelegationApplicationAnswer{Decision: "delegate_bounded_repair", Reviewer: designated, AllowedPaths: []string{"internal/example"}, ForbiddenPaths: []string{"internal/unrelated-private"}, MaxContracts: 2, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)})
+			out := s8DecisionNormalHook(t, root, grantPath)
+			if !strings.Contains(out, "finite grant was recorded") {
+				t.Fatalf("professional human choices could not create original grant: %s", out)
+			}
+			current = investigationLeadTestSnapshot(t, root)
+			authority, reviewer, err := investigation.ContractReviewAuthority(root, current.State)
+			if err != nil || authority == "" || reviewer != designated {
+				t.Fatalf("original authority not found: %s %s %v", authority, reviewer, err)
+			}
+			afterGrant := s8DecisionControlBytes(t, root)
+			s8DecisionNormalHook(t, root, grantPath)
+			s8DecisionRequireUnchanged(t, root, afterGrant)
+			// A later ordinary script is not another save of the accepted human choice.
+			var unrelatedOut, unrelatedDiag bytes.Buffer
+			if handled, _ := runObservedQuestionnaireSaves(root, policy.Input{Event: "PostToolUse", ToolName: "Bash", CWD: root}, &unrelatedOut, &unrelatedDiag); handled {
+				t.Fatalf("ordinary tool resubmitted an already recorded grant: %s %s", &unrelatedOut, &unrelatedDiag)
+			}
+			s8DecisionRequireUnchanged(t, root, afterGrant)
+			paths := investigationLeadContractDecisionPaths(root, current.State)
+			if len(paths) != 1 || !strings.Contains(paths[0], "s8-review-") || questionnaireMissing(paths[0]) {
+				t.Fatalf("original Driver review not prepared: %v", paths)
+			}
+			reviewPath := paths[0]
+			_, doc, _, _ := investigationLeadSource(root, current.State)
+			finalPath, finalBytes, _ := investigationLeadContractProjection(root, contract, doc)
+			guidance := investigationContractDecisionContext(root, current.State, finalBytes)
+			for _, field := range []string{reviewPath, finalPath, "requirements_unchanged/business_semantics_unchanged/reversible/scope_complete", "evidence_refs and rationale"} {
+				if !strings.Contains(guidance, field) {
+					t.Fatalf("Driver handoff omitted %q: %s", field, guidance)
+				}
+			}
+			if designated == "Main" {
+				if !strings.Contains(guidance, "Main is the designated Driver: personally review") {
+					t.Fatalf("Main reviewer ownership missing: %s", guidance)
+				}
+			} else {
+				for _, text := range []string{"That Driver returns their own decision", "Main faithfully records that returned judgment", "A Worker save does not consume"} {
+					if !strings.Contains(guidance, text) {
+						t.Fatalf("non-Main handoff omitted %q: %s", text, guidance)
+					}
+				}
+			}
+			before = s8DecisionControlBytes(t, root)
+			s8DecisionNormalHook(t, root, reviewPath)
+			s8DecisionRequireUnchanged(t, root, before)
+			supportRel := ".claude/evidence/s8-real-boundary.json"
+			writeRepairLeadFile(t, root, supportRel, `{"observed":"synthetic verified boundary trace"}`)
+			_, err = runtime.RecordEvidence(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), runtime.EvidenceRequest{ExpectedRevision: current.Revision, ID: "s8-boundary", Kind: "builder_report", Path: supportRel, ProducedBy: []string{designated}, ScopeRefs: []string{"boundary"}, Validator: semantic.RuntimeCandidateValidator{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer := investigationContractDecisionAnswer{Decision: "approve_bounded_repair", RequirementsUnchanged: true, BusinessSemanticsUnchanged: true, Reversible: true, ScopeComplete: false, EvidenceRefs: []string{"s8-boundary"}, Rationale: "Synthetic Driver traced current entry, source authority, complete scope and rollback."}
+			writeRepairLeadJSON(t, reviewPath, answer)
+			before = s8DecisionControlBytes(t, root)
+			out = s8DecisionNormalHook(t, root, reviewPath)
+			s8DecisionRequireUnchanged(t, root, before)
+			if !strings.Contains(out, "four actual technical judgments") {
+				t.Fatalf("missing judgment not explained: %s", out)
+			}
+			answer.ScopeComplete = true
+			writeRepairLeadJSON(t, reviewPath, answer)
+			if designated != "Main" {
+				beforeWorker := s8DecisionControlBytes(t, root)
+				var workerOut bytes.Buffer
+				handled, code := runSavedInvestigationContractDecision(root, repairLeadSaveInput(root, reviewPath, designated), &workerOut)
+				if !handled || code != 0 || !strings.Contains(workerOut.String(), "A Worker save does not consume") {
+					t.Fatalf("Worker save boundary unclear: %s", &workerOut)
+				}
+				s8DecisionRequireUnchanged(t, root, beforeWorker)
+			}
+			out = s8DecisionNormalHook(t, root, reviewPath)
+			approved := investigationLeadTestSnapshot(t, root)
+			if stringValue(investigationPointer(approved.State)["status"]) != "contract_approved" {
+				t.Fatalf("original bounded approval did not consume professional review: %s", out)
+			}
+			uses := mapFieldCLI(mapFieldCLI(mapFieldCLI(approved.State, "configuration"), "repair"), "delegation_uses")
+			if integerValue(uses[authority]) != 1 {
+				t.Fatalf("original finite budget not consumed exactly once: %v", uses)
+			}
+			approvedBytes := s8DecisionControlBytes(t, root)
+			out = s8DecisionNormalHook(t, root, reviewPath)
+			s8DecisionRequireUnchanged(t, root, approvedBytes)
+			if !strings.Contains(out, "already recorded") {
+				t.Fatalf("bounded replay lost receipt: %s", out)
+			}
+		})
 	}
 }
 

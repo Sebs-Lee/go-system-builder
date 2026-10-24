@@ -131,9 +131,6 @@ func (record S6MainStart) Validate() error {
 	if len(record.TaskSet) == 0 {
 		return fmt.Errorf("task_set must be non-empty")
 	}
-	if len(record.TaskSet) > 128 {
-		return fmt.Errorf("task_set exceeds 128 entries")
-	}
 	seenIDs := make(map[string]bool, len(record.TaskSet))
 	seenPaths := make(map[string]bool, len(record.TaskSet))
 	for i, task := range record.TaskSet {

@@ -8,6 +8,9 @@ and `Status: complete` before review. This is the plan-document status required
 by its original gate; it does not mean any implementation responsibility is
 `done`. Responsibility progress follows the shared five-state semantics in
 [`state-machine.md`](state-machine.md#21-loop-responsibility-status). TASKs explicitly declare Source REQ refs.
+Use numeric TASK IDs such as `TASK-009` or `TASK-009-01`, with matching file
+names. Cancelled TASK files remain in the full S4 answer batch but do not appear
+as active plan members; they contribute no clause coverage.
 New REQs and TASKs declare waves-v1; missing plans are not a legacy exemption.
 
 Keep real artifact dependencies in TASK Dependencies, not in a second graph.
@@ -46,6 +49,13 @@ Never update frozen plan checkboxes or TASK lifecycle fields;
 execution progress is runtime-owned. Clean temporary worktrees promptly; cleanup
 remains advisory. Plan/member/dependency/scope changes return to planning/review;
 capacity changes and runtime progress do not change the plan.
+Before acceptance, correct the original TASK/index and save its original answer.
+For accepted planning while S4 is still current, use
+`runtime stage-answer rework --target tasks --reason "<concrete TASK/index correction>" --root . --agent Main`
+when the frozen REQ/S2/S3 remain valid. Keep correct upstream work. Once in S5,
+follow its independent review and original document-rework route. Ordinary
+planning requires no fresh human approval; actual REQ changes or decisions
+outside authorization retain their human boundary.
 
 Legacy executions without a registered plan remain recoverable and are labeled
 legacy. Do not invent retrospective S5 signatures. New planning must use this

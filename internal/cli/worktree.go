@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/hook"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
@@ -219,6 +220,12 @@ func reminderDelivery(root string, input policy.Input) (string, func()) {
 			facts = append(facts, "authority checkout differs from REQ development branch "+dev+"; preserve local changes and restore the declared branch explicitly")
 		}
 	}
+	// Native S6 supplies its current responsibility action through the existing
+	// building-stage guidance, including accepted but unfinished Results.
+	nativeGuidance := map[string]assignmentrecord.Record{}
+	for _, record := range nativeS6Records(snap.State) {
+		nativeGuidance[record.AssignmentID] = record
+	}
 	knownTrees := map[string]bool{}
 	remindableTrees := map[string]bool{}
 	if loaded, e := hookctx.LoadFull(root, ""); e == nil {
@@ -227,6 +234,10 @@ func reminderDelivery(root string, input policy.Input) (string, func()) {
 			path := filepath.Clean(a.WorktreePath)
 			if a.WorktreePath != "" {
 				knownTrees[path] = true
+			}
+			if record, ok := nativeGuidance[a.AssignmentID]; ok && a.AssignmentRecord != nil &&
+				*a.AssignmentRecord == record.Reference() && a.OwnerAgentID == record.OwnerAgentID && a.AssignmentRevision == record.Revision {
+				continue
 			}
 			if !shouldRemindWorktreeIntegration(a, registry, loaded.PolicyContext.RuntimeID, loaded.BaselineGeneration) || a.WorktreePath == "" {
 				continue
@@ -301,6 +312,23 @@ func runWorktreePostTool(root string, input policy.Input, stdout, stderr io.Writ
 		return 0
 	}
 	message, delivered := reminderDelivery(root, input)
+	// Relay the original CLI receipt; PostToolUse never reruns the batch Gate
+	// or integration to manufacture another completion event.
+	if input.ToolName == "Bash" && input.Error == "" && mainQuestionnaireViewer(input) {
+		command, _ := input.ToolInput["command"].(string)
+		if strings.Contains(command, "task-integrate") {
+			output, _ := input.ToolResponse["stdout"].(string)
+			var receipt struct {
+				Handoff string `json:"handoff"`
+			}
+			if json.Unmarshal([]byte(output), &receipt) == nil && receipt.Handoff != "" {
+				if message != "" {
+					message += "\n\n"
+				}
+				message += receipt.Handoff
+			}
+		}
+	}
 	if dispatchContext := postToolDispatchContext(root, input); dispatchContext != "" {
 		if message != "" {
 			message += "\n\n"

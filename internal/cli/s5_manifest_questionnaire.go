@@ -276,11 +276,22 @@ func completeS5Manifest(input, expected map[string]any) error {
 
 // prepareS5ReviewResponsibilities performs only known engineering preparation:
 // it neither starts a platform Agent nor records a professional review verdict.
-func prepareS5ReviewResponsibilities(ctx context.Context, root string, state map[string]any) error {
+func prepareS5ReviewResponsibilities(ctx context.Context, root string, state map[string]any) (err error) {
+	defer func() {
+		message := ""
+		if err != nil {
+			message = err.Error()
+		}
+		submission.RecordPlanningDiagnostic(root, state, "preparation", message)
+	}()
+	return prepareS5ReviewResponsibilitiesOriginal(ctx, root, state)
+}
+
+func prepareS5ReviewResponsibilitiesOriginal(ctx context.Context, root string, state map[string]any) error {
 	if s5ManifestQuestionnairePath(root, state) == "" {
 		return nil
 	}
-	current, err := runtime.S5Packets(root, state, "")
+	current, err := observedS5Packets(state)
 	if err != nil {
 		return err
 	}

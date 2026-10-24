@@ -73,6 +73,27 @@ func NewContext(ctx context.Context, root, ref string, rules []Rule) (*View, err
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	v, e := declaredView(root, rules)
+	if e != nil {
+		return nil, e
+	}
+	v.ctx, v.Ref = ctx, ref
+	for _, rule := range v.rules {
+		if rule.Source == "git_tree" {
+			v.Commit, e = ResolveContext(ctx, v.Root, ref)
+			if e != nil {
+				return nil, e
+			}
+			break
+		}
+	}
+	return v, nil
+}
+
+// declaredView validates and orders the source declarations without resolving
+// their Git reference or reading their contents. Only NewContext returns a
+// usable source reader; guidance queries the declarations via SourceForRules.
+func declaredView(root string, rules []Rule) (*View, error) {
 	root, e := filepath.Abs(root)
 	if e != nil {
 		return nil, e
@@ -80,9 +101,8 @@ func NewContext(ctx context.Context, root, ref string, rules []Rule) (*View, err
 	if len(rules) == 0 {
 		return nil, fmt.Errorf("missing upstream file source contract")
 	}
-	v := &View{ctx: ctx, Root: root, Ref: ref, rules: append([]Rule(nil), rules...), scope: pathscope.New(root)}
+	v := &View{Root: root, rules: append([]Rule(nil), rules...), scope: pathscope.New(root)}
 	seen := map[string]bool{}
-	needsGit := false
 	for i, r := range rules {
 		if r.Source != "git_tree" && r.Source != "disk" {
 			return nil, fmt.Errorf("unknown file source %q", r.Source)
@@ -97,16 +117,21 @@ func NewContext(ctx context.Context, root, ref string, rules []Rule) (*View, err
 			return nil, fmt.Errorf("duplicate file source %q", r.Path)
 		}
 		seen[r.Path] = true
-		needsGit = needsGit || r.Source == "git_tree"
-	}
-	if needsGit {
-		v.Commit, e = ResolveContext(ctx, root, ref)
-		if e != nil {
-			return nil, e
-		}
 	}
 	sort.SliceStable(v.rules, func(i, j int) bool { return len(v.rules[i].Path) > len(v.rules[j].Path) })
 	return v, nil
+}
+
+// SourceForRules projects a declared source without opening a Git tree. It
+// shares normalization, containment and longest-prefix resolution with View.
+// A declaration is a delivery hint, not proof that the file exists or matches
+// its formal source; those checks remain with the original consumer.
+func SourceForRules(root, path string, rules []Rule) (string, error) {
+	v, err := declaredView(root, rules)
+	if err != nil {
+		return "", err
+	}
+	return v.Source(path)
 }
 func (v *View) relative(p string) (string, error) {
 	if filepath.IsAbs(p) {

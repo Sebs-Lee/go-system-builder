@@ -233,10 +233,15 @@ func TestNativeS9MalformedProfessionalArtifactIsNotReceived(t *testing.T) {
 	var out, diagnostic bytes.Buffer
 	// Go versions differ in whether UnmarshalTypeError.Field includes a slice
 	// index. Require the actual field and expected type, not that formatting.
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 2 || !strings.Contains(diagnostic.String(), "detection_gap_artifacts") || !strings.Contains(diagnostic.String(), "string") {
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "detection_gap_artifacts") || !strings.Contains(diagnostic.String(), "string") {
 		t.Fatalf("malformed professional field lacks exact feedback: %t %d %s", handled, code, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
+	summary, err := nativeReturnSummary(root, repairDispatchSnapshot(t, root), nativeReturnSubject{kind: "s9-plan-report-v1", id: p.ID})
+	if err != nil || !strings.Contains(summary, "detection_gap_artifacts") || !strings.Contains(summary, filepath.Join(worker, result)) || !strings.Contains(summary, p.Binding.OwnerAgentID) {
+		t.Fatalf("Main lost exact field/path/owner diagnostic: %v %s", err, summary)
+	}
+
 }
 
 func TestNativeS9NullProfessionalReferenceIsNotConvertedToNotApplicable(t *testing.T) {
@@ -253,7 +258,7 @@ func TestNativeS9NullProfessionalReferenceIsNotConvertedToNotApplicable(t *testi
 	}
 	input.Event = "SubagentStop"
 	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 2 || !strings.Contains(diagnostic.String(), "migration_ref") {
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "migration_ref") {
 		t.Fatalf("unknown reference became an empty declaration: %t %d %s", handled, code, &diagnostic)
 	}
 	registry, err := workspace.Decode(repairDispatchSnapshot(t, root).State)
@@ -321,7 +326,7 @@ func TestNativeS9MissingWorktreePlanDoesNotBorrowMainAnswer(t *testing.T) {
 	before := repairDispatchRuntimeBytes(t, root)
 	input.Event = "SubagentStop"
 	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 2 || !strings.Contains(diagnostic.String(), "Main's draft cannot substitute") {
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main's draft cannot substitute") {
 		t.Fatalf("missing actual source borrowed Main: %t %d %s %s", handled, code, &out, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
@@ -341,7 +346,7 @@ func TestNativeS9ActualBlockerCanReturnWithoutPrivatePlan(t *testing.T) {
 	before := repairDispatchRuntimeBytes(t, root)
 	input.Event = "SubagentStop"
 	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "actual blocker returned to Main without completion") {
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main owns recovery") || !strings.Contains(diagnostic.String(), "PlanReport is missing") {
 		t.Fatalf("actual blocker forced a successful Plan: %t %d %s %s", handled, code, &out, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
@@ -465,4 +470,100 @@ func TestNativeS9MissingCurrentPacketDoesNotRequestLegacyExecutionChoice(t *test
 		t.Fatalf("missing native material became another execution questionnaire/startup: %s", got)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
+}
+
+func TestNativeS9FirstIncompleteStopReturnsExactGapToMainWithoutAcceptance(t *testing.T) {
+	for _, missing := range []string{"Result", "PlanReport"} {
+		t.Run(missing, func(t *testing.T) {
+			root, worker, p, input, _ := nativeS9WorkerFixture(t)
+			brief, _, result := nativeS9Paths(p)
+			local := filepath.Join(worker, result)
+			if missing == "PlanReport" {
+				local = filepath.Join(worker, p.AnswerPath)
+			}
+			original, err := os.ReadFile(local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(local); err != nil {
+				t.Fatal(err)
+			}
+			before := repairDispatchRuntimeBytes(t, root)
+			input.Event = "SubagentStop"
+			var out, diagnostic bytes.Buffer
+			if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main owns recovery") || !strings.Contains(diagnostic.String(), local) {
+				t.Fatalf("first incomplete Stop: %t %d %s", handled, code, &diagnostic)
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+			snap := repairDispatchSnapshot(t, root)
+			summary, err := nativeReturnSummary(root, snap, nativeReturnSubject{kind: "s9-plan-report-v1", id: p.ID, ref: filepath.Join(root, brief)})
+			if err != nil || !strings.Contains(summary, local) || !strings.Contains(summary, "Consumer diagnostic") || !strings.Contains(summary, "Neither PlanReport nor Builder Result is accepted") {
+				t.Fatalf("Main lacks exact incomplete reception: %v %s", err, summary)
+			}
+			if strings.Contains(summary, "后台") {
+				t.Fatalf("unfinished responsibility treated as running: %s", summary)
+			}
+			// Fixing a private artifact makes the old display inapplicable, even
+			// before a subsequent Stop has attempted reception. Unrelated writes
+			// keep this original gap visible; changed sources/owners do not.
+			if err := os.WriteFile(local, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); got != "" {
+				t.Fatalf("old missing-file diagnostic survived changed artifact: %s", got)
+			}
+			if err := os.Remove(local); err != nil {
+				t.Fatal(err)
+			}
+			snap.Revision++
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); !strings.Contains(got, local) {
+				t.Fatalf("unrelated reception/revision erased the original diagnostic: %s", got)
+			}
+			pointer := repairPointerCLI(snap.State)
+			originalPlan := pointer["plan_ref"]
+			pointer["plan_ref"] = "replacement-plan.json"
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); got != "" {
+				t.Fatalf("old diagnostic survived a replaced source: %s", got)
+			}
+			pointer["plan_ref"] = originalPlan
+			owners := mapFieldCLI(pointer, "assignment_owners")
+			owners["unrelated-received-assignment"] = "other-builder"
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); !strings.Contains(got, local) {
+				t.Fatalf("another assignment erased this responsibility's diagnostic: %s", got)
+			}
+			delete(owners, "unrelated-received-assignment")
+			originalOwner := owners[p.Binding.RepairAssignmentID]
+			owners[p.Binding.RepairAssignmentID] = "replacement-builder"
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); got != "" {
+				t.Fatalf("old diagnostic survived a replaced responsibility: %s", got)
+			}
+			owners[p.Binding.RepairAssignmentID] = originalOwner
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); !strings.Contains(got, local) {
+				t.Fatalf("restored original coordinates lost the unchanged diagnostic: %s", got)
+			}
+			if err := os.WriteFile(local, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			diagnostic.Reset()
+			if _, code := nativeS9Hook(root, input, &out, &diagnostic); code != 0 {
+				t.Fatal(diagnostic.String())
+			}
+			accepted := repairDispatchSnapshot(t, root)
+			if got := nativeS9ReturnDiagnostic(root, accepted, p.ID); got != "" {
+				t.Fatalf("accepted Result retained old failure: %s", got)
+			}
+			service, err := submission.NewReadOnly(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packets, err := runtime.CurrentRepairResultPackets(root, accepted.State, p.Binding.OwnerAgentID)
+			if err != nil || len(packets) != 1 {
+				t.Fatalf("Result packet missing: %v", err)
+			}
+			receipt, err := service.RepairResultReceipt(p.Binding.OwnerAgentID, packets[0].ID)
+			if err != nil || !receipt.Accepted {
+				t.Fatalf("restored original responsibility not accepted: %v %#v", err, receipt)
+			}
+		})
+	}
 }

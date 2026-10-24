@@ -13,7 +13,7 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/bin/loop-harness hook --event PostToolUse --root \"$CLAUDE_PROJECT_DIR\"",
-            "timeout": 10
+            "timeout": 30
           }
         ]
       }

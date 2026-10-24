@@ -159,7 +159,7 @@ func currentMainTaskAnswerPath(state map[string]any) string {
 		if !valid || packet.Binding != binding || packet.ID == "" {
 			return ""
 		}
-		expected, err := workpacket.BuildTaskPlanning(binding, packet.Inputs)
+		expected, err := workpacket.BuildTaskPlanningWithTemplate(binding, packet.Inputs, packet.TemplateSHA)
 		if err != nil || !reflect.DeepEqual(expected, packet) {
 			return ""
 		}

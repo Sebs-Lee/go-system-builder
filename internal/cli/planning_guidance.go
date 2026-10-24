@@ -39,7 +39,7 @@ func mainPlanningNextForState(state map[string]any, stage string) *mainPlanningN
 		view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
 		if record, found, err := runtime.FindSubmission(state, stringValue(row["packet_id"])); err == nil && found {
 			if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
-				return &mainPlanningNext{Action: stage + " professional answer already received; resolve the current material gaps, then save the same answer or actual changed material for its pending original outlet: " + answer, Automation: "No duplicate report or ordinary-read progression"}
+				return &mainPlanningNext{Action: stage + " professional answer already received; preserve the answer and resolve the named gap, then use runtime stage-answer recover for the original outlet; original answer: " + answer, Automation: "No duplicate report or ordinary-read progression"}
 			}
 			return &mainPlanningNext{Action: stage + " answer already received; continue the current responsibility without resubmitting: " + answer, Automation: "Read registered completion facts only"}
 		}
@@ -245,7 +245,7 @@ func currentTaskPlanningPacket(state map[string]any, binding workpacket.Planning
 	if err != nil || !found {
 		return workpacket.TaskPlanningPacket{}, false, true
 	}
-	expected, err := workpacket.BuildTaskPlanning(binding, packet.Inputs)
+	expected, err := workpacket.BuildTaskPlanningWithTemplate(binding, packet.Inputs, packet.TemplateSHA)
 	if err != nil || !reflect.DeepEqual(expected, packet) {
 		return workpacket.TaskPlanningPacket{}, false, true
 	}

@@ -571,7 +571,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "observation_sealed":
 			return "S7", "bug-resolution", "ObservationBatch sealed; the next PreToolUse auto-commits TR-008 to hand the batch to S8 — do not call the transition CLI"
 		case "clean":
-			return "S7", "acceptance-and-handoff", "machine CleanRound recorded; the next PreToolUse auto-commits TR-009 to advance into S10 — do not call the transition CLI"
+			return "S7", "acceptance-and-handoff", "machine CleanRound recorded; the original Result completion exit continues Gate/TR-009 and prepares S10 acceptance. Resume a pending exit with loop-harness runtime review-continue --root <root>"
 		}
 		return "S7", PrimarySkillS7, "continue from the current S7 Hook checkpoint and use the exact ReviewPlan or dispatched Claim questionnaire paths it supplies; save professional answers for the original consumers. Main retains plan registration, dispatch and queue release, and full-round evaluation"
 	case "bug_resolution":
@@ -1022,9 +1022,10 @@ func inactiveRuntimeState(root string, occurredAt time.Time) (map[string]any, er
 		"configuration": map[string]any{
 			"optimization": map[string]any{"packet": true},
 			"repair": map[string]any{
-				"max_attempts_per_bug":       3,
-				"max_same_contract_failures": 2,
-				"max_full_review_rounds":     5,
+				"max_attempts_per_bug":        3,
+				"max_same_contract_failures":  2,
+				"max_full_review_rounds":      5,
+				"max_investigation_reentries": 5,
 			},
 		},
 		"hook_control": state.HookControl,
@@ -1174,6 +1175,14 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if name == "" {
 			name = "<stage-specific verb>"
 		}
+		if name == "review-continue" || name == "audit-prepare" {
+			description := "Resume an accepted machine CleanRound through the original Gate/TR-009, then prepare current S10 acceptance materials. Accepted Reviewer results are preserved."
+			if name == "audit-prepare" {
+				description = "Restore missing materials for the current S10 acceptance or release_audit responsibility through the original preparer. Existing reports are preserved; this does not repeat TR-009 or Reviewer reception."
+			}
+			printCommandHelp(stdout, "loop-harness runtime "+name+" --root <project-root> [--state <runtime-state>] [--journal <runtime-journal>]", description)
+			return 0
+		}
 		if name == "human-decision" {
 			printCommandHelp(stdout, "loop-harness runtime human-decision --root <project-root> --disposition <approve|defer|reject_defect|reject_acceptance|reject_release_audit|abort> --actor Main [--reason <human-reason>]", "Record the human's explicit choice through its fixed transition; actor is a caller record, not authentication. --reason is optional. The system supplies the current decision path and association. --decision-evidence <existing-reference> is optional compatibility only, not a normal registration step. This command does not publish or deploy.")
 			return 0
@@ -1182,14 +1191,18 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			printCommandHelp(stdout, "loop-harness runtime transition --id <ID> --actor <role> [--affected-paths <repo-relative-path>]...", "Low-level recovery only. Repeat --affected-paths for multiple literal paths (including deleted paths); use all alone only for an explicitly authorized full sweep. --params does not supply affected paths. Normal continuation uses stage-specific verbs.")
 			return 0
 		}
-		printCommandHelp(stdout, "loop-harness runtime "+name, "Runtime actions are the CAS-owned mutation surface. Choose the stage-specific verb shown by `loop-harness actions`; diagnostics expose the next recovery action.")
+		printCommandHelp(stdout, "loop-harness runtime "+name, "Runtime actions are the CAS-owned mutation surface. Choose the stage-specific verb shown by `loop-harness actions`; diagnostics expose the next recovery action. S7/S10 recovery: review-continue resumes the original clean-round exit; audit-prepare restores current missing S10 materials.")
 		return 0
 	}
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-receipt|worktree-create|task-integrate|review-plan|review-result|finding-supplement|investigation|repair|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-receipt|worktree-create|task-integrate|review-plan|review-result|review-continue|audit-prepare|finding-supplement|investigation|repair|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
+	case "review-continue":
+		return runRuntimeS7Recovery(args[1:], false, stdout, stderr)
+	case "audit-prepare":
+		return runRuntimeS7Recovery(args[1:], true, stdout, stderr)
 	case "repair-batch-scope":
 		return runBatchScopeRepair(args[1:], stdout, stderr)
 	case "recover":
@@ -1820,12 +1833,20 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		} else {
 			state = "integrated"
 		}
+		handoff := ""
+		if !guidance.Blocked {
+			updated, handoff = continueS6Integration(resolvedRoot, resolvedState, resolvedJournal, *assignmentID, updated)
+		}
 		fmt.Fprintf(stderr, "task-integrate: %s — %s\n", state, guidance.Action)
+		if handoff != "" {
+			fmt.Fprintln(stderr, handoff)
+		}
 		if len(guidance.Integration) > 0 {
 			fmt.Fprintf(stderr, "integration facts: %s\n", strings.Join(guidance.Integration, "; "))
 		}
 		payload := map[string]any{
 			"assignment_id": *assignmentID,
+			"handoff":       handoff,
 			"state":         state,
 			"blocked":       guidance.Blocked,
 			"blocker":       guidance.Blocker,
@@ -1974,7 +1995,9 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		case "observation_sealed":
 			fmt.Fprintln(stderr, "review-result: consumed; ObservationBatch sealed — the next PreToolUse will auto-commit TR-008 to hand off to S8 (do not invoke the transition CLI)")
 		case "clean":
-			fmt.Fprintln(stderr, "review-result: consumed; machine CleanRound generated — the next PreToolUse will auto-commit TR-009 to advance into S10 (do not invoke the transition CLI)")
+			var handoff string
+			next, handoff = continueS7Acceptance(context.Background(), *root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), next)
+			fmt.Fprintln(stderr, "review-result: consumed; "+handoff)
 		case "paused":
 			fmt.Fprintln(stderr, "review-result: consumed; pause checkpoint recorded — route via TR-010 (req change) or TR-011 (release blocked)")
 		case "cannot_clean", "discovery_draining":
@@ -3039,7 +3062,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 1
 	}
 	if renderHook {
-		ctx, cancel := context.WithDeadline(context.Background(), evaluationStarted.Add(hookWorkBudget))
+		ctx, cancel := context.WithDeadline(context.Background(), evaluationStarted.Add(hookBudget(root, request)-2*time.Second))
 		defer cancel()
 		request.Context = ctx
 		request.Context, _ = metrics.WithCallTimings(request.Context)
@@ -3456,7 +3479,11 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			output, err = json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": request.Event, "additionalContext": context}})
 		}
 	} else if request.Event == "PreToolUse" {
-		output, code, err = hook.PreToolUseWithQualityGate(decision, controlResult)
+		if mainQuestionnaireViewer(request) && len(nativeS6Records(controlResult.Snapshot.State)) > 0 {
+			output, code, err = hook.PreToolUseS6Context(decision, controlResult)
+		} else {
+			output, code, err = hook.PreToolUseWithQualityGate(decision, controlResult)
+		}
 	} else {
 		output, code, err = hook.RenderWithAdditionalContext(root, request.Event, decision, request.Runtime, decision.AdditionalContext)
 	}
@@ -3467,11 +3494,12 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "render Hook output: %v\n", err)
 		return 1
 	}
-	// Only the verified S2/S5 read-only Main projections use this delivery policy.
+	// Issued planning, S5 and native S6 Main observations share the presentation-only cache.
 	// Responsibility identity excludes observation revision churn. Reminders
 	// and control failures retain full delivery even when their text repeats.
 	responsibility := ""
 	contextStage := ""
+	forcePlanningDelivery := false
 	if graphObserved && mainQuestionnaireViewer(request) && decision.Guidance != nil && (decision.Guidance.Stage == "S2" || decision.Guidance.Stage == "S5") && !reminderPending && controlResult.Error == "" {
 		state := controlResult.Snapshot.State
 		baseline, _ := state["baseline"].(map[string]any)
@@ -3480,7 +3508,71 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		responsibility = string(identity)
 		contextStage = decision.Guidance.Stage
 	}
+	if graphObserved && mainQuestionnaireViewer(request) && decision.Guidance != nil &&
+		(decision.Guidance.Stage == "S3" || decision.Guidance.Stage == "S4") {
+		state := controlResult.Snapshot.State
+		if row, rowErr := registeredPlanningRow(state); rowErr == nil && row != nil {
+			knownFailure := reminderPending || controlResult.Error != "" || decision.Decision != "allow" || len(controlResult.QualityGate.Conflicts) > 0 || controlResult.QualityGate.ErrorCode != ""
+			for _, kind := range []string{"preparation", "reception", "outlet"} {
+				if submission.PlanningDiagnostic(root, state, kind) != "" {
+					knownFailure = true
+				}
+			}
+			for _, key := range []string{"view_path", "answer_path"} {
+				path := stringValue(row[key])
+				if path == "" {
+					knownFailure = true
+					continue
+				}
+				if _, statErr := os.Stat(filepath.Join(root, path)); statErr != nil {
+					knownFailure = true
+				}
+			}
+			baseline, _ := state["baseline"].(map[string]any)
+			lifecycle, _ := state["lifecycle"].(map[string]any)
+			identity, _ := json.Marshal([]any{state["runtime_id"], baseline["generation"], lifecycle["state"], lifecycle["phase"], lifecycle["phase_revision"], row["packet_id"]})
+			responsibility, contextStage = string(identity), decision.Guidance.Stage
+			forcePlanningDelivery = knownFailure
+		}
+	}
+	if mainQuestionnaireViewer(request) && decision.Guidance != nil && decision.Guidance.Stage == "S6" &&
+		!reminderPending && controlResult.Error == "" && decision.Decision == "allow" &&
+		!controlResult.QualityGate.TransitionCommitted && len(controlResult.QualityGate.Conflicts) == 0 &&
+		controlResult.QualityGate.ErrorCode == "" &&
+		(controlResult.QualityGate.Status == controller.StatusNotReady || controlResult.QualityGate.Status == controller.StatusSatisfied) {
+		state := controlResult.Snapshot.State
+		records := nativeS6Records(state)
+		if len(records) > 0 {
+			refs := make([]any, 0, len(records))
+			for _, record := range records {
+				refs = append(refs, record.Reference())
+			}
+			baseline, _ := state["baseline"].(map[string]any)
+			lifecycle, _ := state["lifecycle"].(map[string]any)
+			identity, _ := json.Marshal([]any{state["runtime_id"], baseline["generation"], lifecycle["phase_revision"], refs})
+			responsibility, contextStage = string(identity), "S6"
+		}
+	}
+	if mainQuestionnaireViewer(request) && decision.Guidance != nil && decision.Guidance.Stage == "S7" &&
+		!reminderPending && controlResult.Error == "" && decision.Decision == "allow" &&
+		!controlResult.QualityGate.TransitionCommitted && len(controlResult.QualityGate.Conflicts) == 0 &&
+		controlResult.QualityGate.ErrorCode == "" {
+		state := controlResult.Snapshot.State
+		baseline := mapFieldCLI(state, "baseline")
+		lifecycle := mapFieldCLI(state, "lifecycle")
+		review := mapFieldCLI(state, "review")
+		// These are original registered facts; no frozen source closure or
+		// private author answer is inspected to deduplicate presentation.
+		identity, _ := json.Marshal([]any{state["runtime_id"], baseline["generation"], lifecycle["phase_revision"], review["round"], review["plan"]})
+		responsibility, contextStage = string(identity), "S7"
+	}
+	// Cache the actual error/reminder content too, so its later resolution is a
+	// changed delivery. Such feedback itself always retains its complete text.
+	fullOutput := output
 	output, commitContext := hook.PrepareResponsibilityContext(root, request.SessionID, request.EffectiveAgentID(), request.Event, contextStage, responsibility, output)
+	if forcePlanningDelivery {
+		output = fullOutput
+	}
 	output, commitNotice := hook.PrepareNotice(root, request.SessionID, request.EffectiveAgentID(), request.Event, output)
 	if len(output) > 0 {
 		if _, err := stdout.Write(append(output, '\n')); err != nil {
@@ -3800,7 +3892,7 @@ func runControlCycleForHook(root string, request policy.Input) controller.Contro
 	if result.QualityGate.TransitionCommitted && (result.QualityGate.CandidateTransition == "TR-009" || result.QualityGate.CandidateTransition == "TR-015") && runtime.PacketEnabled(result.Snapshot.State) {
 		if kind := currentAuditKind(result.Snapshot.State); kind != "" {
 			if _, _, err := prepareAuditQuestionnaire(root, result.Snapshot.State, kind); err != nil {
-				result.Warnings = append(result.Warnings, "S10 current questionnaire preparation: "+err.Error())
+				result.Warnings = append(result.Warnings, auditPreparationFailureContext(root, result.Snapshot.State, err))
 			}
 		}
 	}

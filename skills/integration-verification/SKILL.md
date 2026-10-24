@@ -18,7 +18,12 @@ Integration evidence with environment and observed results.
 ## N/A Criteria
 N/A only when evidence proves no integration boundary exists.
 ## Stop Conditions
-Stop on mocked-away critical boundaries or unavailable authoritative environment.
+Stop the affected integration check when a critical boundary is mocked away or
+the authoritative environment is unavailable; report the exact missing boundary
+or prerequisite and actual attempts to Main, preserving observations and
+continuing other safe assigned checks. Do not claim the omitted integration
+verified. Real P0 or unsafe operations stop dangerous work with actual evidence
+and capture gaps.
 ## Non-Goals
 Do not substitute isolated unit tests for integration evidence.
 
@@ -32,7 +37,14 @@ services were real or mocked and what those observations can and cannot prove.
 Keep command/request outputs and observed state changes in the existing evidence
 locations and reference them from the assigned answer.
 
-Main owns scope, dependencies and independent dispatch through the current
-ReviewPlan. Missing environments go to Main with actual attempts and missing
+Main owns complete-round coverage, scope, dependencies and independent dispatch
+through the current ReviewPlan. Each Reviewer executes the assigned Claims and
+boundaries, reporting uncovered surfaces to Main without adding a full-module
+sweep to every Assignment. Browser, API, command and state-based behavior use
+their actual product entry and method; browser assets apply only to browser work.
+Record passing rejection, terminal state, side effects and recovery in
+`ClaimResult.observed` and real evidence references. Only observed failed Claims
+create Findings; continue other safe assigned checks after ordinary Findings.
+Stop real P0 or dangerous operations with actual observations and capture gaps. Missing environments go to Main with actual attempts and missing
 sources; they do not become product Findings without observed product failure.
 This method neither creates a workgroup gate nor declares a clean round.

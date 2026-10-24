@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/controller"
+	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/transition"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
@@ -121,12 +125,12 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	}
 	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, workpacket.ContractAnswerReadLimit(p))
 	if err != nil {
-		return rejected(snap, p.ID, err), err
+		return s.unreceivedContractReceipt(snap, p, err), err
 	}
 	answer, issues := workpacket.ValidateContractAnswer(p, data)
 	if len(issues) > 0 {
-		err := fmt.Errorf("contract answer %s: %s", issues[0].Pointer, issues[0].Expected)
-		r := rejected(snap, p.ID, err)
+		err := fmt.Errorf("contract answer %s", planningFieldDiagnostic(issues[0]))
+		r := s.unreceivedContractReceipt(snap, p, err)
 		r.FieldErrors = issues
 		return r, err
 	}
@@ -143,6 +147,11 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	if accepted {
 		if prior.ContentHash != digest {
 			return rejected(snap, p.ID, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
+		}
+		if _, followupErr := runtime.SubmissionFollowup(snap.State, prior.FollowupID); errors.Is(followupErr, runtime.ErrSubmissionFollowupOriginChanged) && (prior.ControlStatus == "pending" || prior.ControlStatus == "no_transition") {
+			// Replaying a historical answer cannot resume an outlet whose
+			// original entry was replaced by professional planning rework.
+			return s.contractReceipt(snap, p)
 		}
 		id = prior.EvidenceID
 		found := false
@@ -192,6 +201,7 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	if err != nil {
 		return s.unreceivedContractReceipt(snap, p, err), err
 	}
+	RecordPlanningDiagnostic(s.Root, snap.State, "reception", "")
 	record, found, err := runtime.FindSubmission(next.State, p.ID)
 	if err != nil || !found {
 		return Receipt{}, fmt.Errorf("contract reception has no durable original record")
@@ -221,11 +231,20 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 		} else {
 			r.NextAction += " 原因：" + result.Error
 		}
+		r.NextAction += " 恢复入口：" + PlanningRecoveryCommand(s.Root, "recover")
 		if len(r.WaitingOn) == 0 {
 			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
 		}
 	} else if !result.QualityGate.TransitionCommitted && len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
-		r.NextAction = fmt.Sprintf("S3 答卷已接收，阶段尚未推进。原门 %s：缺项 %v；冲突 %v。按具体条目修复文档或系统接续，监听器会继续检查；无需重交已接收答案。", result.QualityGate.GateID, result.QualityGate.Missing, result.QualityGate.Conflicts)
+		r.NextAction = fmt.Sprintf("S3 答卷已接收，阶段尚未推进。原门 %s：缺项 %v；冲突 %v。按具体条目修复文档或系统接续，修复后使用 %s 接续原出口；无需重交已接收答案。", result.QualityGate.GateID, result.QualityGate.Missing, result.QualityGate.Conflicts, PlanningRecoveryCommand(s.Root, "recover"))
+	}
+	if controlErr != nil || result.Error != "" || len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
+		RecordPlanningDiagnostic(s.Root, snap.State, "outlet", r.NextAction)
+	} else if result.QualityGate.TransitionCommitted {
+		// Clear the completed S3 entry, not the newly entered S4 diagnostic.
+		// A no-op attempt retains its previous cause without nesting that cause
+		// inside another copy of the receipt's recovery guidance.
+		RecordPlanningDiagnostic(s.Root, snap.State, "outlet", "")
 	}
 	r.NextAction += preparation
 	r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
@@ -292,8 +311,17 @@ func (s *Service) contractReceipt(snap runtime.Snapshot, p workpacket.ContractPa
 			r.WorkComplete = false
 			r.ResponsibilityStatus = "replaced"
 		}
+		life, _ := snap.State["lifecycle"].(map[string]any)
+		if record.ControlStatus == "replaced" || ev["status"] == "invalid" || ((record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && (life["state"] != "planning" || life["phase"] != "contracts" || number(life["phase_revision"]) != p.Binding.StageEntry)) {
+			r.WorkComplete = false
+			r.ResponsibilityStatus = "replaced"
+		}
+		if !r.WorkComplete {
+			r.NextAction = "这是旧代或已替换的 S3 接收记录；原接收事实保留，按当前责任给出的问卷继续，不重交或恢复此旧卷。"
+			return r, nil
+		}
 		if _, err := runtime.SubmissionFollowup(snap.State, record.FollowupID); err == nil {
-			r.NextAction = "S3 答卷已接收，阶段接续尚未完成；监听器会继续原阶段门检查。Main/系统处理具体缺项，无需重交答案。"
+			r.NextAction = "S3 答卷已接收，阶段接续尚未完成；Main/系统处理具体缺项，然后使用 " + PlanningRecoveryCommand(s.Root, "recover") + " 接续原出口，无需重交答案。" + PlanningDiagnostic(s.Root, snap.State, "outlet")
 			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
 		}
 		return r, nil
@@ -350,7 +378,174 @@ func (s *Service) MainPlanningReceipt(path, packetID string) (Receipt, error) {
 // unreceivedContractReceipt keeps output/source errors on the current answer.
 // Named revision applies only to an already accepted judgment.
 func (s *Service) unreceivedContractReceipt(snapshot runtime.Snapshot, p workpacket.ContractPacket, err error) Receipt {
+	RecordPlanningDiagnostic(s.Root, snapshot.State, "reception", err.Error())
 	r := rejected(snapshot, p.ID, err)
 	r.NextAction = "本次 S3 答卷尚未接收。按具体错误修正专业文件或答卷，再保存原路径 " + filepath.Join(s.Root, filepath.FromSlash(p.AnswerPath)) + "；保留本次所需的专业修复。"
 	return r
+}
+
+func ContractDeliveryGuidance(root string, packet workpacket.ContractPacket, files fileview.Reader, state map[string]any) string {
+	id := strings.TrimPrefix(packet.Binding.Requirement.ID, "REQ-")
+	paths := []string{"docs/dev/contracts/CONTRACTS-" + id + ".md", "docs/dev/contracts/FE-" + id + ".md", "docs/dev/contracts/BE-" + id + ".md", "docs/dev/contracts/SYNC-" + id + ".md"}
+	// Once the author has named the actual delivery, show that exact set.
+	// Before then these are conventional starting paths, not an applicability
+	// decision or a requirement to produce all three contract families.
+	label := "Conventional output candidates (choose contract IDs and FE/BE/SYNC applicability from the frozen scope)"
+	fieldDiagnostic := ""
+	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.ContractAnswerReadLimit(packet)); err == nil {
+		if namedPaths, named := workpacket.ContractDraftDeliveryPaths(packet, data); named {
+			paths = namedPaths
+			label = "Your named contract delivery (safe draft paths; reception still requires the complete answer)"
+		}
+		if _, issues := workpacket.ValidateContractAnswer(packet, data); len(issues) > 0 {
+			fieldDiagnostic = " Current answer field: " + planningFieldDiagnostic(issues[0]) + "."
+		}
+	}
+	sourceHint := planningDeclaredSourceGuidance(root, paths, state, "S3", false)
+	if view, ok := files.(*fileview.View); ok {
+		var committed []string
+		for _, path := range paths {
+			if source, err := view.Source(path); err == nil && source == "git_tree" {
+				committed = append(committed, filepath.Join(root, filepath.FromSlash(path)))
+			}
+		}
+		if len(committed) > 0 {
+			sourceHint = fmt.Sprintf("\nS3 outputs can change in this entry. Before saving this answer, commit the applicable completed Git-sourced professional files to bound development branch %s: %s; include their Git-sourced model/example dependencies. REQ/S2 inputs stay frozen. The answer and Runtime use their supplied disk paths.", strings.TrimPrefix(view.Ref, "refs/heads/"), strings.Join(committed, ", "))
+		}
+	}
+	for index, path := range paths {
+		paths[index] = filepath.Join(root, filepath.FromSlash(path))
+	}
+	answerHint := " Tool file paths above are absolute. In answer.index_path and answer.contract_paths, copy repository-relative values without the root prefix; for example index_path=\"docs/dev/contracts/CONTRACTS-SERVICE-009.md\", contract_paths=[\"docs/dev/contracts/BE-SERVICE-009.md\"]. Choose actual IDs from the frozen scope; these examples do not mandate IDs or applicability."
+	if strings.HasPrefix(label, "Your named") {
+		answerHint += planningAnswerPathValues(root, paths, "contract_paths", "CONTRACTS-")
+	}
+	templates := []string{"CONTRACTS-template.md", "FE-contract-template.md", "BE-contract-template.md", "SYNC-contract-template.md"}
+	for index, name := range templates {
+		templates[index] = filepath.Join(root, "docs/dev/contracts", name)
+	}
+	return fmt.Sprintf("\n%s: %s. Templates: %s. Determine FE/BE/SYNC and shared-data applicability; align shared models and SYNC only where applicable, and complete the applicable contracts and index; deliver at least one real applicable contract; when FE/BE/SYNC are all not_applicable, report the stage adaptation gap instead of inventing a BE contract. Read %s for professional method, then save the professional answer once. The original consumer runs contracts check and scenario bridge; manual check commands support self-review or diagnostics, not additional submissions.%s", label, strings.Join(paths, ", "), strings.Join(templates, ", "), filepath.Join(root, ".claude/skills/specification-planning/SKILL.md"), sourceHint+answerHint+fieldDiagnostic+" Human decisions are required only for REQ semantics or decisions outside the existing authorization; Main owns contract decomposition, contract IDs and applicability within the frozen scope."+PlanningProfessionalReworkGuidance(root))
+}
+
+// Source declarations and the bound branch suffice for delivery hints. Ordinary
+// observation never resolves a Git tree or revalidates the frozen source batch.
+func planningDeclaredSourceGuidance(root string, paths []string, state map[string]any, stage string, accepted bool) string {
+	if state == nil {
+		return ""
+	}
+	catalog, err := transition.LoadCatalog(root)
+	if err != nil {
+		return " Source declaration unavailable: " + err.Error()
+	}
+	ref, err := fileview.DevelopmentRef(state)
+	if err != nil {
+		return " Bound delivery branch unavailable: " + err.Error()
+	}
+	var gitPaths, diskPaths []string
+	for _, path := range paths {
+		source, sourceErr := fileview.SourceForRules(root, path, catalog.Definition.FileSources)
+		if sourceErr != nil {
+			return " Source declaration unavailable: " + sourceErr.Error()
+		}
+
+		switch source {
+		case "git_tree":
+			gitPaths = append(gitPaths, filepath.Join(root, path))
+		case "disk":
+			diskPaths = append(diskPaths, filepath.Join(root, path))
+		default:
+			return " No declared formal source for " + path + "; Main must repair this source declaration."
+		}
+	}
+	hint := ""
+	if accepted {
+		if len(gitPaths) > 0 {
+			hint = fmt.Sprintf(" Recorded Git sources on bound development branch %s: %s.", strings.TrimPrefix(ref, "refs/heads/"), strings.Join(gitPaths, ", "))
+		}
+		if len(diskPaths) > 0 {
+			hint += " Recorded disk sources: " + strings.Join(diskPaths, ", ") + "."
+		}
+		return hint + " Preserve or restore the original accepted content. Genuine professional changes use the formal stage rework/revision path; system continuation uses the original recover command."
+	}
+	if len(gitPaths) > 0 {
+		upstream := "REQ/S2"
+		if stage == "S4" {
+			upstream = "REQ/S3 and other upstream"
+		}
+		hint = fmt.Sprintf("\n%s outputs can change in this entry. Before saving this answer, commit applicable completed Git-sourced files to bound development branch %s: %s; include their Git-sourced model/example dependencies. %s inputs stay frozen. The answer and Runtime use their supplied disk paths.", stage, strings.TrimPrefix(ref, "refs/heads/"), strings.Join(gitPaths, ", "), upstream)
+	}
+	if len(diskPaths) > 0 {
+		hint += " Declared disk outputs: " + strings.Join(diskPaths, ", ") + "."
+	}
+
+	return hint
+}
+
+// Accepted deliveries are read from the recorded evidence, never reconstructed
+// from a possibly edited author answer or from the complete source closure.
+func AcceptedPlanningDeliveryGuidance(root string, state map[string]any, record runtime.SubmissionRecord, stage string) string {
+	var limit int64
+	entities, _ := state["entities"].(map[string]any)
+	packets, _ := entities["work_packets"].([]any)
+	for _, raw := range packets {
+		row, _ := raw.(map[string]any)
+		if text(row["packet_id"]) != record.PacketID {
+			continue
+		}
+		data, err := json.Marshal(row)
+		if err != nil {
+			return " Original accepted questionnaire cannot be read: " + err.Error()
+		}
+		if stage == "S3" {
+			var packet workpacket.ContractPacket
+			if err := json.Unmarshal(data, &packet); err != nil {
+				return " Original accepted questionnaire cannot be read: " + err.Error()
+			}
+			limit = workpacket.ContractEvidenceReadLimit(packet)
+		} else {
+			var packet workpacket.TaskPlanningPacket
+			if err := json.Unmarshal(data, &packet); err != nil {
+				return " Original accepted questionnaire cannot be read: " + err.Error()
+			}
+			limit = workpacket.TaskPlanningEvidenceReadLimit(packet)
+		}
+		break
+	}
+	if limit == 0 {
+		return " Original accepted questionnaire is unavailable; Main must restore its registered record."
+	}
+	for _, ev := range evidenceRows(state) {
+		if text(ev["id"]) != record.EvidenceID {
+			continue
+		}
+		path := text(ev["path"])
+		data, err := workpacket.ReadFile(root, path, limit)
+		if err != nil {
+			return " Accepted delivery record unavailable at " + filepath.Join(root, path) + ": " + err.Error()
+		}
+		var envelope struct {
+			Contracts workpacket.ContractAnswer     `json:"contract_answer"`
+			Tasks     workpacket.TaskPlanningAnswer `json:"task_planning_answer"`
+		}
+		if err := json.Unmarshal(data, &envelope); err != nil {
+			return " Accepted delivery record unreadable at " + filepath.Join(root, path) + ": " + err.Error()
+		}
+		var paths, display []string
+		if stage == "S3" && envelope.Contracts.IndexPath != nil {
+			paths = append([]string{*envelope.Contracts.IndexPath}, envelope.Contracts.ContractPaths...)
+		}
+		if stage == "S4" && envelope.Tasks.IndexPath != nil {
+			paths = append([]string{*envelope.Tasks.IndexPath}, envelope.Tasks.TaskPaths...)
+		}
+		if len(paths) == 0 {
+			return " Accepted delivery paths are unavailable in original record " + filepath.Join(root, path) + "; Main must inspect that record without resubmitting the answer."
+		}
+		for _, output := range paths {
+			display = append(display, filepath.Join(root, output))
+		}
+
+		hint := planningDeclaredSourceGuidance(root, paths, state, stage, true)
+		return " Recorded accepted delivery: " + strings.Join(display, ", ") + ". Full accepted source references remain in " + filepath.Join(root, path) + "." + hint + PlanningProfessionalReworkGuidance(root)
+	}
+	return " Accepted delivery reference is missing for " + record.EvidenceID + "; Main must restore the original record."
 }

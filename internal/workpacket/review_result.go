@@ -221,7 +221,7 @@ func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewRes
 // for restoring its original issuance; new work always uses BuildReviewResult.
 // Never trust the caller's questions as a new template or refresh its digest.
 func RebuildReviewResult(old ReviewResultPacket) (ReviewResultPacket, error) {
-	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-safety-stop.json"} {
+	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-safety-stop.json"} {
 		data, err := schema.ReadAsset(name)
 		if err != nil {
 			return ReviewResultPacket{}, err

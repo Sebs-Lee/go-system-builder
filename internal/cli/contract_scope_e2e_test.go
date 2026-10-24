@@ -118,6 +118,17 @@ func TestS3OriginalHookCannotBorrowForeignBatchAndS4KeepsExactDelivery(t *testin
 	}
 	out = callHook(path)
 	after = stageSnapshot(t, root)
+	if after.State["lifecycle"].(map[string]any)["phase"] != "contracts" || strings.Contains(out, "SUBMISSION RECEIPT") {
+		t.Fatalf("material save submitted an unchanged, unreceived answer: %s", out)
+	}
+	if _, found, err := runtime.FindSubmission(after.State, p.ID); err != nil || found {
+		t.Fatalf("material save received the old answer: %t %v", found, err)
+	}
+	// The rejected report remains editable at its original path. Explicitly
+	// saving that answer after the professional fix is the submission boundary.
+	stageJSON(t, root, p.AnswerPath, completedContractDraft(p))
+	out = callHook(p.AnswerPath)
+	after = stageSnapshot(t, root)
 	if life := after.State["lifecycle"].(map[string]any); life["phase"] != "tasks" {
 		t.Fatalf("corrected original source did not continue S3: %v %s", life, out)
 	}

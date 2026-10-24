@@ -178,10 +178,11 @@ func TestNativeS6BriefPreservesExactLegacyAuthoringAndRejectsDrift(t *testing.T)
 	if !bytes.Contains(current, []byte(`"plan_assertion_index":0`)) || bytes.Contains(current, []byte(`"judgment":null,"plan_assertion_indexes":[]`)) {
 		t.Fatal("normal preparation did not deliver compact authoring")
 	}
-	previousInputs := strings.Replace(string(current), nativeS6BriefInputs(root, r, false), nativeS6BriefInputs(root, r, true), 1)
+	previousCurrent := strings.TrimPrefix(string(current), nativeS6SourceAlignment(r, "original-base", plan, result))
+	previousInputs := strings.Replace(previousCurrent, nativeS6BriefInputs(root, r, false), nativeS6BriefInputs(root, r, true), 1)
 	legacy := strings.Replace(previousInputs, nativeS6ProfessionalInstructions("original-base", path, plan, result), nativeS6LegacyProfessionalInstructions("original-base", path, plan, result), 1)
 	compact := strings.Replace(previousInputs, nativeS6ProfessionalInstructions("original-base", path, plan, result), fmt.Sprintf(nativeS6CompactProfessionalFormat, "original-base", path, plan, result), 1)
-	for _, text := range []string{string(current), compact, strings.Replace(compact, nativeS6MethodGuidance(root, r), "", 1), legacy, strings.Replace(legacy, nativeS6MethodGuidance(root, r), "", 1)} {
+	for _, text := range []string{string(current), previousCurrent + nativeS6LegacySourceAlignment(r, "original-base", plan, result), previousCurrent, compact, strings.Replace(compact, nativeS6MethodGuidance(root, r), "", 1), legacy, strings.Replace(legacy, nativeS6MethodGuidance(root, r), "", 1)} {
 		if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}

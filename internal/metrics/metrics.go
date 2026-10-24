@@ -32,12 +32,11 @@ const (
 	metricIntegrationDuration      = "loop_integration_duration_ms"
 	metricSubmissionSave           = "loop_submission_save_total"
 	metricSubmissionSaveDuration   = "loop_submission_save_duration_ms"
-	// Hook registrations currently use the Claude Code default command
-	// timeout configured by this repository. Forty percent is the early
+	// Match the shipped platform budgets (PostToolUse has an S4 handoff
+	// ceiling). Forty percent is the early
 	// warning point: PreToolUse command timeouts can silently let the tool
 	// proceed, so operators need signal before the platform budget is near.
-	defaultHookTimeoutMS         int64 = 10000
-	hookTimingWarningThresholdMS int64 = defaultHookTimeoutMS * 40 / 100
+	defaultHookTimeoutMS int64 = 10000
 )
 
 // DurationStats aggregates observed integration durations per status label.
@@ -396,9 +395,9 @@ func healthDegraded(snap Snapshot, timing map[string]hookTimingStats) bool {
 	if snap.GateEvaluations["unknown"] > 0 {
 		return true
 	}
-	for _, stats := range timing {
+	for event, stats := range timing {
 		for _, sample := range stats.samples {
-			if sample >= hookTimingWarningThresholdMS {
+			if sample >= hookPlatformTimeoutMS(event)*40/100 {
 				return true
 			}
 		}
@@ -510,10 +509,23 @@ func writeHookTimingStats(b *strings.Builder, timing map[string]hookTimingStats)
 			fmt.Fprintf(b, "  loop_hook_completed_phase_ms{event=%q,phase=%q} count=%d sum_ms=%d (nested spans overlap)\n", event, name, span.Count, span.SumMS)
 		}
 
-		if p95 >= hookTimingWarningThresholdMS || max >= hookTimingWarningThresholdMS {
-			fmt.Fprintf(b, "  WARNING: Hook event %q is at or above %d%% of the %dms timeout; a platform timeout can bypass PreToolUse enforcement\n", event, hookTimingWarningThresholdMS*100/defaultHookTimeoutMS, defaultHookTimeoutMS)
+		timeoutMS := hookPlatformTimeoutMS(event)
+		thresholdMS := timeoutMS * 40 / 100
+		if p95 >= thresholdMS || max >= thresholdMS {
+			fmt.Fprintf(b, "  WARNING: Hook event %q is at or above 40%% of the %dms platform timeout", event, timeoutMS)
+			if event == "PreToolUse" {
+				fmt.Fprint(b, "; a platform timeout can bypass PreToolUse enforcement")
+			}
+			fmt.Fprintln(b)
 		}
 	}
+}
+
+func hookPlatformTimeoutMS(event string) int64 {
+	if event == "PostToolUse" {
+		return 30000
+	}
+	return defaultHookTimeoutMS
 }
 
 func writeLabeledCounter(b *strings.Builder, name, labelKey string, values map[string]int64) {

@@ -399,3 +399,33 @@ func TestHumanQuestionFollowupNeedsNoInventedFindingButBatchKeepsSourceSubset(t 
 		})
 	}
 }
+
+func TestHistoricalHypothesisResultTemplateRestoresOnlyKnownIssuance(t *testing.T) {
+	data, err := schema.ReadAsset("stage-form-s8-template-before-guidance.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := buildHypothesisResultWithTemplate(hypothesisResultTestBinding(t), hypothesisResultTestInputs(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := RebuildHypothesisResult(old)
+	if err != nil || !reflect.DeepEqual(old, rebuilt) {
+		t.Fatalf("historical rebuild: %v", err)
+	}
+	if _, err := HypothesisResultPacketDigest(old); err != nil {
+		t.Fatal(err)
+	}
+	current, err := BuildHypothesisResult(old.Binding, old.Inputs)
+	if err != nil || current.ID == old.ID {
+		t.Fatalf("new work must use current template: %v", err)
+	}
+	old.Draft.Instruction = "tampered"
+	if _, err := HypothesisResultPacketDigest(old); err == nil {
+		t.Fatal("accepted edited frozen questions")
+	}
+	old.TemplateSHA = strings.Repeat("f", 64)
+	if _, err := RebuildHypothesisResult(old); err == nil {
+		t.Fatal("accepted unknown template")
+	}
+}

@@ -350,12 +350,12 @@ func TestS9ListenerMissingSourceAndUnknownNativeOwnerKeepResponsibilityPaths(t *
 		if !strings.Contains(got, "not identified") || strings.Contains(got, f.packet.answer) || strings.Contains(got, "not currently prepared") {
 			t.Fatalf("unknown native owner inherited Main/another worker or reported a false missing question: %s", got)
 		}
-		if request.AgentID != "" && (!strings.Contains(got, "fill and save your own professional answer") || !strings.Contains(got, "existing answer-path binding")) {
-			t.Fatalf("native platform ID did not retain the Worker's own save path: %s", got)
+		if request.AgentID != "" && (!strings.Contains(got, "private worktree outputs") || !strings.Contains(got, "SubagentStop reception")) {
+			t.Fatalf("native platform ID did not retain the Worker's exact original output/return contract: %s", got)
 		}
 		if request.AgentID != "" {
 			paths := s9ListenerKnownPaths(f.root, f.state, request.AgentID, true)
-			if strings.Contains(paths, "not prepared") || strings.Contains(paths, f.packet.answer) || !strings.Contains(paths, "save your own professional answer") {
+			if strings.Contains(paths, "not prepared") || strings.Contains(paths, f.packet.answer) || !strings.Contains(paths, "save your own professional output") || !strings.Contains(paths, "SubagentStop reception") {
 				t.Fatalf("unknown native background guidance reported a false missing question: %s", paths)
 			}
 		}

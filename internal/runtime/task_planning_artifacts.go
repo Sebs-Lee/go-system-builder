@@ -97,29 +97,19 @@ func ResolveTaskPlanningInputs(root string, state map[string]any, files fileview
 	}
 	inputs.Sources = append(inputs.Sources, s3Sources...)
 	for dir, names := range s3.Inputs.Directories {
+		if dir == taskContractsDirectory {
+			continue
+		}
 		inputs.Directories[dir] = append([]string(nil), names...)
 	}
-	contractEntries, err := files.ReadDir(filepath.Join(absoluteRoot, taskContractsDirectory))
-	if err != nil {
-		return workpacket.TaskPlanningInputs{}, fmt.Errorf("enumerate registered contract directory: %w", err)
-	}
-	if err := verifyTaskPlanningDirectory(absoluteRoot, files, taskContractsDirectory, contractEntries); err != nil {
-		return workpacket.TaskPlanningInputs{}, err
-	}
-	contractNames := make([]string, 0, len(contractEntries))
-	for _, entry := range contractEntries {
-		contractNames = append(contractNames, entry.Name())
-	}
-	sort.Strings(contractNames)
-	if prior, ok := inputs.Directories[taskContractsDirectory]; ok && !sameStringSlice(prior, contractNames) {
-		return workpacket.TaskPlanningInputs{}, fmt.Errorf("S4 contracts directory differs from the accepted S3 source closure")
-	}
-	inputs.Directories[taskContractsDirectory] = contractNames
 
 	index := contractIndexReference(contracts)
 	indexData, err := files.ReadFile(index.Path)
 	if err != nil {
 		return workpacket.TaskPlanningInputs{}, err
+	}
+	if workpacket.Digest(indexData) != index.SHA256 {
+		return workpacket.TaskPlanningInputs{}, fmt.Errorf("S4 accepted contract index changed while resolving clauses: %s", index.Path)
 	}
 	inputs.ClauseUniverse, err = taskClauseUniverse(string(indexData), contracts)
 	if err != nil {
@@ -166,7 +156,13 @@ func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.
 	if err != nil {
 		return err
 	}
-	expected, err := workpacket.BuildTaskPlanning(binding, inputs)
+	// Preserve the issued packet's historical directory metadata and identity.
+	// Its contracts are now checked by exact accepted refs and candidate coverage,
+	// rather than treating old unrelated directory members as obligations.
+	if names, ok := p.Inputs.Directories[taskContractsDirectory]; ok {
+		inputs.Directories[taskContractsDirectory] = append([]string(nil), names...)
+	}
+	expected, err := workpacket.BuildTaskPlanningWithTemplate(binding, inputs, p.TemplateSHA)
 	if err != nil || !reflectTaskPlanningPacketEqual(expected, p) {
 		return fmt.Errorf("S4 frozen Main, REQ, contracts, clause universe, sources or template differ")
 	}
@@ -180,6 +176,9 @@ func ValidateTaskPlanningPacket(root string, state map[string]any, p workpacket.
 		}
 	}
 	for dir, names := range inputs.Directories {
+		if dir == taskContractsDirectory {
+			continue
+		}
 		entries, err := files.ReadDir(dir)
 		if err != nil {
 			return err
@@ -644,6 +643,9 @@ func taskPlanningOutputSourceError(root string, state map[string]any, p workpack
 func validateTaskPlanningFrozenInputs(root string, binding workpacket.PlanningBinding, inputs workpacket.TaskPlanningInputs, files fileview.Reader) error {
 	refs := []workpacket.Subject{{Path: binding.Requirement.Path, Version: binding.Requirement.Version, SHA256: binding.Requirement.SHA256}}
 	refs = append(refs, inputs.Sources...)
+	for _, ref := range inputs.Contracts {
+		refs = append(refs, workpacket.Subject{Path: ref.Path, Version: ref.Version, SHA256: ref.SHA256})
+	}
 	seen := map[string]bool{}
 	for _, ref := range refs {
 		if seen[ref.Path] {
@@ -663,6 +665,9 @@ func validateTaskPlanningFrozenInputs(root string, binding workpacket.PlanningBi
 		}
 	}
 	for dir, names := range inputs.Directories {
+		if dir == taskContractsDirectory {
+			continue
+		}
 		entries, err := files.ReadDir(dir)
 		if err != nil {
 			return fmt.Errorf("read S4 frozen source directory %s: %w", dir, err)
@@ -749,7 +754,20 @@ func verifyTaskPlanningDirectory(root string, files fileview.Reader, dir string,
 	if err != nil {
 		return fmt.Errorf("inspect S4 authority directory %s: %w", dir, err)
 	}
+	if dir == taskContractsDirectory {
+		viewEntries, err = contractCandidateEntries(files, viewEntries)
+		if err != nil {
+			return err
+		}
+		live, err = contractCandidateEntries(fileview.Disk{Root: root}, live)
+		if err != nil {
+			return err
+		}
+	}
 	if !sameDirectoryEntries(viewEntries, live) {
+		if dir == taskContractsDirectory {
+			return fmt.Errorf("S4 source view and checkout directory differ: %s: %s", dir, contractDirectoryDifference(viewEntries, live))
+		}
 		return fmt.Errorf("S4 source view and checkout directory differ: %s", dir)
 	}
 	return nil

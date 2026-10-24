@@ -329,7 +329,7 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		return 0
 	}
 	if ptr.Status == "clean" {
-		fmt.Fprintln(stdout, "clean round: machine CleanRound registered — the next PreToolUse auto-commits TR-009 (do not invoke the transition CLI)")
+		fmt.Fprintln(stdout, "clean round: machine CleanRound registered; original Result completion continues Gate/TR-009 and prepares S10 acceptance. Pending exit recovery: loop-harness runtime review-continue --root <root>")
 		return 0
 	}
 	if packetMode {
@@ -561,6 +561,24 @@ func runS7Draft(root, out string, stdout, stderr io.Writer) int {
 			"current stage is %s; S7 (verification) ReviewPlan drafting is only legal while the lifecycle stage is `verification` — round=%d is open but the ReviewPlan register-verb (`runtime review-plan --file <plan.json>`) will reject with `a ReviewPlan can only be registered in the verification stage`. Finish the current stage's missing work first.\n",
 			stage, round)
 		return 1
+	}
+	if out != "" {
+		requested, _ := filepath.Abs(out)
+		materials, _ := filepath.Abs(filepath.Join(root, ".claude/submissions"))
+		if strings.HasPrefix(requested, materials+string(filepath.Separator)) && filepath.Base(out) == "review-plan.json" && filepath.Clean(out) != filepath.Clean(reviewPlanQuestionnairePath(root, snapshot.State)) {
+			fmt.Fprintln(stderr, "preserve historical ReviewPlan materials; original preparation requires the exact current round questionnaire path")
+			return 1
+		}
+	}
+	// The original draft verb also restores listener-owned materials. Preserve
+	// an existing professional answer while repairing its derived guide.
+	if out != "" && filepath.Clean(out) == filepath.Clean(reviewPlanQuestionnairePath(root, snapshot.State)) {
+		message, prepareErr := prepareReviewPlanQuestionnaireContext(root, policy.Input{Event: "IntegrationComplete", AgentID: "Main", CWD: root}, snapshot)
+		fmt.Fprintln(stdout, message)
+		if prepareErr != nil {
+			return 1
+		}
+		return 0
 	}
 	plan, notes := review.DraftPlanForRoot(root, snapshot.State, round)
 	if plan == nil {

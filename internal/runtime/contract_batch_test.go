@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,4 +454,51 @@ func readContractFile(t *testing.T, root, path string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestContractArtifactsGitIgnoresUnrelatedDirectoryMembers(t *testing.T) {
+	f := newContractBatchFixture(t)
+	f.files = commitContractBatchFixture(t, f)
+	for _, path := range []string{"local-note.txt", "notes.md", ".BE-001.md.swp", "scratch/BE-999.md"} {
+		writeContractFile(t, f.root, "docs/dev/contracts/"+path, "# Notes about BE-039\nLocal working notes.\n")
+	}
+	for name, fence := range map[string]string{"example-notes.md": "```", "tilde-notes.md": "~~~"} {
+		writeContractFile(t, f.root, "docs/dev/contracts/"+name, "Local notes with no document title.\n\n"+fence+"markdown\n# BE-039 Example contract\n"+fence+"\n")
+	}
+	if _, err := runtime.ContractArtifacts(f.root, f.state, f.packet, f.answer, f.files); err != nil {
+		t.Fatalf("unrelated checkout members blocked delivery: %v", err)
+	}
+	writeContractFile(t, f.root, "docs/dev/contracts/FE-002.md", "# FE-002\n> Status: draft\n")
+	if _, err := runtime.ContractArtifacts(f.root, f.state, f.packet, f.answer, f.files); err == nil || !strings.Contains(err.Error(), "docs/dev/contracts/FE-002.md") {
+		t.Fatalf("unsubmitted real contract candidate lacks its exact source diagnostic: %v", err)
+	}
+}
+
+func TestContractArtifactsRejectsDescriptiveContractCandidate(t *testing.T) {
+	for _, prefix := range []string{"", "```markdown\n# Example only\n```\n\n"} {
+		f := newContractBatchFixture(t)
+		writeContractFile(t, f.root, "docs/dev/contracts/service-contract.md", prefix+"# BE-999 Service contract\n> Status: draft\n")
+		if _, err := runtime.ContractArtifacts(f.root, f.state, f.packet, f.answer, f.files); err == nil {
+			t.Fatal("unowned contract identity with descriptive filename was accepted")
+		}
+	}
+}
+
+func TestContractArtifactsAcceptsCompleteBatchLargerThan64Contracts(t *testing.T) {
+	f := newContractBatchFixture(t)
+	index := string(readContractFile(t, f.root, f.indexPath))
+	rows := ""
+	for i := 2; i <= 96; i++ {
+		id := fmt.Sprintf("BE-%03d", i)
+		path := "docs/dev/contracts/" + id + ".md"
+		rows += "| " + id + " | 后端 | Builder | locked | v1.0.0 | N/A |\n"
+		writeContractFile(t, f.root, path, "# "+id+"\n> 状态：locked\n> 版本：v1.0.0\n")
+		f.answer.ContractPaths = append(f.answer.ContractPaths, path)
+	}
+	index = strings.Replace(index, "| BE-001 | 后端 | Builder | locked | v1.0.0 | N/A |", rows+"| BE-001 | 后端 | Builder | locked | v1.0.0 | N/A |", 1)
+	writeContractFile(t, f.root, f.indexPath, index)
+	refs, err := runtime.ContractArtifacts(f.root, f.state, f.packet, f.answer, f.files)
+	if err != nil || len(refs) != 97 {
+		t.Fatalf("legal complete large batch rejected: size=%d err=%v", len(refs), err)
+	}
 }

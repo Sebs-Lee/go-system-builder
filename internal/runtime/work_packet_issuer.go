@@ -18,6 +18,12 @@ import (
 // An empty owner selects every current document reviewer for Main issuance.
 // It does not grant activation, write authority, or change Runtime.
 func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Packet, error) {
+	return S5PacketsWithFiles(root, state, owner, fileview.Disk{Root: root})
+}
+
+// S5PacketsWithFiles preserves the full formal-source reconstruction while
+// sharing the caller's pinned, request-scoped Git object cache and deadline.
+func S5PacketsWithFiles(root string, state map[string]any, owner string, files fileview.Reader) ([]workpacket.Packet, error) {
 	life, _ := state["lifecycle"].(map[string]any)
 	if !PacketEnabled(state) || life["state"] != "document_verification" {
 		return nil, nil
@@ -31,7 +37,7 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 	if err != nil {
 		return nil, err
 	}
-	formalInputs, err := S5FormalInputs(root, state, fileview.Disk{Root: root})
+	formalInputs, err := S5FormalInputs(root, state, files)
 	if err != nil {
 		return nil, err
 	}

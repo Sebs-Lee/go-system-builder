@@ -105,6 +105,11 @@ func TestS8LeadContractMatchesRegisteredDecisionThenOriginalCASAndReplay(t *test
 	if stringValue(mapFieldCLI(approved.State, "lifecycle")["phase"]) != "planning" || !strings.Contains(context, "Original approval recorded") {
 		t.Fatalf("matching genuine-fixture artifact did not reach original S9 entry: %s", context)
 	}
+	for _, staleInstruction := range []string{"Current approval responsibility", "Current designated Driver reviewer", "Assertion IDs are positional", "Fill violated_invariant"} {
+		if strings.Contains(context, staleInstruction) {
+			t.Fatalf("approved S9 handoff repeated finished S8 work: %s", context)
+		}
+	}
 	for _, name := range []string{"builder-dispatch.json", "independent-verifier-dispatch.json"} {
 		path, err := repairLeadQuestionnairePath(root, approved.State, name)
 		if err != nil || questionnaireMissing(path) {
@@ -170,4 +175,31 @@ func s8LeadContractTestSave(t *testing.T, root, path string) string {
 		t.Fatalf("Contract save not handled: %v %d %s", handled, code, &out)
 	}
 	return out.String()
+}
+
+func TestS8ContractGuidanceSupportsMultipleUnitsWithoutGuessing(t *testing.T) {
+	root, path := s8LeadContractTestReady(t)
+	current := investigationLeadTestSnapshot(t, root)
+	context := stageInvestigationLeadContractContext(root, policy.Input{Event: "PreToolUse"}, current)
+	for _, text := range []string{"starting at 1", "symptom-1, symptom-2", "root-1, root-2", "gap-1, gap-2", "must stand alone", "Every assertion must be assigned", "depends_on", "no cycles", "resource_locks", "repository-relative file or directory paths", "directory includes descendants", "glob patterns are not interpreted", "inside prospective_scope and outside forbidden_scope", "behavioral prohibitions in architecture_intent"} {
+		if !strings.Contains(context, text) {
+			t.Fatalf("Contract author omitted %q: %s", text, context)
+		}
+	}
+	answer := s8LeadContractTestAnswer()
+	answer.RepairUnits = []map[string]any{
+		{"id": "boundary", "description": "restore boundary", "scope": []string{"internal/example"}, "assertion_ids": []string{"symptom-1", "root-1"}},
+		{"id": "regression", "description": "protect original boundary", "scope": []string{"internal/example"}, "assertion_ids": []string{"gap-1"}, "depends_on": []string{"boundary"}, "resource_locks": []string{"fixture-environment"}},
+	}
+	writeRepairLeadJSON(t, path, answer)
+	feedback := s8LeadContractTestSave(t, root, path)
+	if !strings.Contains(feedback, "Save is not approval") {
+		t.Fatalf("documented multi-unit contract did not save: %s", feedback)
+	}
+	_, doc, _, _ := investigationLeadSource(root, current.State)
+	finalPath, expected, err := investigationLeadContractProjection(root, path, doc)
+	stored, readErr := os.ReadFile(finalPath)
+	if err != nil || readErr != nil || !bytes.Equal(stored, expected) {
+		t.Fatalf("multi-unit review bytes not fixed: %v %v", err, readErr)
+	}
 }

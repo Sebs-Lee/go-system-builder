@@ -163,15 +163,10 @@ func TasksCheckWithFiles(root string, files fileview.Reader, reqIDs ...string) (
 		byID[task.id] = task
 		result.Problems = append(result.Problems, task.problems...)
 		if !taskIDPattern.MatchString(task.id) {
-			// The S5 runtime schema and workgroup registration require the
-			// canonical ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ shape for the entity
-			// id passed as --task-id. The filename id feeds that parameter,
-			// so a non-canonical filename breaks S5 registration. r97 B-road
-			// precedent: entity id TASK-001-01 bound to file
-			// TASK-REQ-001-01.md is accepted (path bytes + plan membership
-			// are what the Writer checks), but the Main must then pass the
-			// canonical entity id explicitly — the filename is not reused.
-			result.Problems = append(result.Problems, fmt.Sprintf("%s: TASK id %q does not match the canonical ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ shape required by the S5 runtime schema — rename the file and its index/dependency references, or register S5 with an explicit canonical --task-id for this path, before TR-002", task.rel, task.id))
+			// S4 derives the registered S5 task entity id from the filename.
+			// Repair the authored task and its references here; manual S5
+			// registration is not an alternative to the original reception.
+			result.Problems = append(result.Problems, fmt.Sprintf("%s: TASK id %q does not match the canonical ^TASK-[0-9]{3,}(?:-[0-9]{2,})?$ shape required by the S5 runtime schema — use a numeric TASK id such as TASK-009-01 and update its filename and index/dependency references; Source REQ refs binds the task to its actual requirement, without manual S5 registration", task.rel, task.id))
 		}
 		if task.status == "cancelled" {
 			result.Cancelled++

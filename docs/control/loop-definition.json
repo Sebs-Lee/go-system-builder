@@ -196,7 +196,122 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Advance contracts to tasks through the original S3 gate and PTR-PLAN-02. In questionnaire mode the listener gives exact answer and output paths; Main saves one professional answer, and the original consumer checks the current bound REQ's complete locked contract batch and shared-model dependencies. The gate rechecks the accepted subjects before the original transaction registers them. An unready gate retains its original followup for listener retry; an accepted answer is not a completed stage. Explicitly unpacketized legacy flows retain their existing disk/evidence path."
+          "description": "Advance contracts to tasks through the original S3 gate and PTR-PLAN-02. In questionnaire mode the listener gives exact answer and output paths; Main saves one professional answer, and the original consumer checks the current bound REQ's complete locked contract batch and shared-model dependencies. The gate rechecks the accepted subjects before the original transaction registers them. Normal successful Post handling retains its original continuation. If the gate remains pending after reception, preserve the accepted answer, repair the concrete gap and execute the complete original runtime stage-answer recover command supplied by feedback. If the transition is already committed but next-material preparation failed, repair its named source gap and execute the supplied original runtime stage-answer issue command to prepare the current stage. Neither path requires refilling or resaving the accepted answer; arbitrary reads or material saves do not promise retry. An accepted answer is not a completed stage. Explicitly unpacketized legacy flows retain their existing disk/evidence path."
+        },
+        {
+          "id": "PTR-PLAN-03",
+          "from": "contracts",
+          "selector": "SEL-PLANNING-OUTCOME",
+          "automation": {
+            "eligible": false,
+            "human_boundary": false
+          },
+          "event": "planning_professional_rework",
+          "to": "design",
+          "actors": [
+            "orchestrator"
+          ],
+          "guards": [
+            "planning_rework_scope"
+          ],
+          "actions": [
+            "planning_professional_rework"
+          ],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Main explicitly opens a fresh design entry within the original locked REQ for a named professional reason; preserve accepted history and invalidate dependent planning projections. Use runtime stage-answer rework; requirement changes retain the original human boundary."
+        },
+        {
+          "id": "PTR-PLAN-04",
+          "from": "contracts",
+          "selector": "SEL-PLANNING-OUTCOME",
+          "automation": {
+            "eligible": false,
+            "human_boundary": false
+          },
+          "event": "planning_professional_rework",
+          "to": "contracts",
+          "actors": [
+            "orchestrator"
+          ],
+          "guards": [
+            "planning_rework_scope"
+          ],
+          "actions": [
+            "planning_professional_rework"
+          ],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Main explicitly opens a fresh contracts entry within the original locked REQ for a named professional reason; preserve accepted history and invalidate dependent planning projections. Use runtime stage-answer rework; requirement changes retain the original human boundary."
+        },
+        {
+          "id": "PTR-PLAN-05",
+          "from": "tasks",
+          "selector": "SEL-PLANNING-OUTCOME",
+          "automation": {
+            "eligible": false,
+            "human_boundary": false
+          },
+          "event": "planning_professional_rework",
+          "to": "design",
+          "actors": [
+            "orchestrator"
+          ],
+          "guards": [
+            "planning_rework_scope"
+          ],
+          "actions": [
+            "planning_professional_rework"
+          ],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Main explicitly opens a fresh design entry within the original locked REQ for a named professional reason; preserve accepted history and invalidate dependent planning projections. Use runtime stage-answer rework; requirement changes retain the original human boundary."
+        },
+        {
+          "id": "PTR-PLAN-06",
+          "from": "tasks",
+          "selector": "SEL-PLANNING-OUTCOME",
+          "automation": {
+            "eligible": false,
+            "human_boundary": false
+          },
+          "event": "planning_professional_rework",
+          "to": "contracts",
+          "actors": [
+            "orchestrator"
+          ],
+          "guards": [
+            "planning_rework_scope"
+          ],
+          "actions": [
+            "planning_professional_rework"
+          ],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Main explicitly opens a fresh contracts entry within the original locked REQ for a named professional reason; preserve accepted history and invalidate dependent planning projections. Use runtime stage-answer rework; requirement changes retain the original human boundary."
+        },
+        {
+          "id": "PTR-PLAN-07",
+          "from": "tasks",
+          "selector": "SEL-PLANNING-OUTCOME",
+          "automation": {
+            "eligible": false,
+            "human_boundary": false
+          },
+          "event": "planning_professional_rework",
+          "to": "tasks",
+          "actors": [
+            "orchestrator"
+          ],
+          "guards": [
+            "planning_rework_scope"
+          ],
+          "actions": [
+            "planning_professional_rework"
+          ],
+          "required_evidence": [],
+          "on_guard_failure": "reject",
+          "description": "Main explicitly opens a fresh tasks entry within the original locked REQ for a named professional reason; preserve REQ/S2/S3 frozen inputs and accepted history; invalidate only tasks, dispatch plans and downstream review projections. Use runtime stage-answer rework; requirement changes retain the original human boundary."
         }
       ]
     },
@@ -1367,7 +1482,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time."
+      "description": "The final accepted ReviewResult continues the original Gate/TR-009 in the same completion event, then prepares the current S10 acceptance questionnaire. Every required Claim of the current ReviewPlan needs a consumed PASS; clean_round_valid recomputes the snapshot, current product baseline and applicable E2E assets at promotion. Reception, transition and material preparation are separate facts. Resume a pending original exit with runtime review-continue; recover missing current S10 materials with runtime audit-prepare. PreToolUse remains a compatibility recovery path."
     },
     {
       "id": "TR-010",

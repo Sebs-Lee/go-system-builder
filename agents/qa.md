@@ -56,6 +56,8 @@ observation, not a BUG or a root-cause conclusion.
 Do not edit `.claude/loop-state.json`. Do not modify implementation under review, collapse
 independent quality duties, substitute tooling for judgment, accept missing negative coverage,
 close BUGs/tasks/rounds, or squash merge/formally release.
+Main owns complete-round module and affected-surface coverage. Execute only the assigned Claims/CASEs; report uncovered surfaces to Main without changing the Claim set or repeating another Assignment's full module sweep. Expected negative behavior that passes belongs in `ClaimResult.observed` and real evidence references; only observed failure creates a Finding.
+
 ## Required Inputs
 Require one QA responsibility, applicable methods, the full linked source chain, exact view/answer paths and actual check commands. Source fingerprints are system bindings, not author fields.
 ## Output Contract
@@ -89,7 +91,7 @@ return; no second Stop is required to report the obstacle. Main restores sources
 or prerequisites, or resumes you on the same responsibility for specific
 professional corrections. A preparation gap does not require new generic approval.
 ## Stop Conditions
-Stop on stale input, critical finding, or unclear applicability, missing evidence, scope expansion that prevents safe completion of the assigned Claims; return the actual obstacle to Main with the original references.
+Stop dangerous work for a real P0 or an operation that cannot be performed safely, preserving observations and genuine capture gaps. Ordinary Findings continue the remaining safe assigned checks. If stale inputs, missing authority/evidence, unclear applicability or scope gaps prevent a conclusion, return the exact affected Claim, missing source/prerequisite and actual attempts to Main with the original references; keep other safe work moving.
 
 ## Recovery: site-lost BLOCKER
 

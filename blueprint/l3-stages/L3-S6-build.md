@@ -156,7 +156,9 @@ Done when 是本次本人条件。系统从 TASK 收尾契约提取可识别的�
 
 ### 5.1 Main 交付正确起点
 
-写入任务使用 Claude Code 原生 worktree。当前设置使用 `worktree.baseRef: head`，因此 Main 派发前确认自己就在 REQ 绑定开发分支，必要输入已经提交，实际 HEAD 与 brief 固定起点一致。
+写入任务使用 Claude Code 原生 worktree。当前设置使用 `worktree.baseRef: head`，因此 Main 派发前确认自己就在 REQ 绑定开发分支，必要输入已经提交。准备后 Main 若前进，不重置 Main 或重新捕获 source；由 brief 在输入阅读前说明首次未开始且干净时的准确固定源对齐。
+
+正常恢复与首次对齐分别说明：在原正确来源上已有本人 Plan、提交或未提交工作，是继续本人责任的常态，不因 HEAD 不再等于 base 而停工或重做对齐。保存原成果并继续未完成工作；来源确实无法确认或混入其他输入时才交 Main。原接收检查 base 的祖先关系不机械证明首次阅读时刻，不把猜测的 commit 作者或新登记当恢复许可。
 
 worktree 不继承 Main 未提交或仅暂存的文件。一个契约在 Main 编辑器里已经改好，不表示隔离执行可以读到它；相应正式来源需按原流程提交并对齐，不能依靠软链接整个控制目录补齐。
 
@@ -319,6 +321,10 @@ Result 的 `risks_blockers` 或 `scope_deviations` 非空会阻止完成与集�
 
 ### 9.3 真实阻塞与错误重试都有边界
 
+Main 对已接收但本人未完成的完整 Result，应直接获得其原专业 disposition、风险/阻塞、范围偏差与未满足条件；最小 blocked 的未接收诊断不能替代此分支。投影读取原接受事实，不扫描私人文件或重跑整套集成校验；无法读取原接受来源时给准确失败与原诊断入口。本人 complete 与 Main 集成资格仍分别判断。
+
+S6→S7 的提示内容、接收者和事件时点按 [分层编排](../l4-mechanisms/L4-agent-guidance.md#s6-s7-guidance) 统一推导。Start 不能因存在待执行 S6 登记而给未知 agent 分配实现责任。阻塞或接收失败须把准确原因和原引用交到 Main 的模型可读反馈；诊断不产生完成回执，已退役责任不能被泛化的“尚无回执”提示重新启动。
+
 接收器只把准确私人产物中的可补文件、JSON 与专业字段缺项反馈为本人继续补齐；系统来源、准备、控制面和未知故障直接保留诊断交 Main。`stop_hook_active` 用于避免无限循环，放行后仍由 Main 处理未完成工作；实际错误边界见 [L4 原生接收](../l4-mechanisms/L4-agent-dispatch-governance.md)。缺计划但已有明确实际 blocker 的专业结果可以诚实交回 Main，不强造完成回执。
 
 Builder 收到的 brief 必须直接说明正常完成、形成 Plan 前受阻和已有 Plan 后受阻三种交付。真实阻塞的最低 Result 包含说明当前进展/未完成工作的 `summary`、非空真实原因 `risks_blockers`，以及 `closing_assessment.disposition: blocked`，保存到原 Result 路径并返回原 brief 与实际 Result 绝对引用。已有 Plan 和真实证据保留；没有完成的检查不编造 evidence，不为退出补一个虚假计划。只有口头 blocker 而缺 Result 时，反馈须指出这个准确路径及最小形状。阻塞交接沿原来源与责任核对，不放宽正常完成的 Plan、证据、条件和集成校验。
@@ -421,6 +427,8 @@ flowchart TD
 
 阶段门和原事务实际成功后才进入 S7，不要求先在 building 阶段伪造 Delivery 团队或 S7 PASS 作为 S6 出口。S7 的计划应消费真实已集成变化、风险和锁定规格。
 
+最后一次有效集成的完成接续应检查原整批 Gate，通过原 TR-006 进入 S7，并在同次交接给 Main 当前 ReviewPlan 与 guide。未闭合时给真实剩余责任；转换失败或已转换但材料准备失败时分别保留已成立事实，给具名恢复入口。不以额外普通工具调用触发迁移，也不要求重交已接收 Result 或重复合并来重试交接。
+
 ### 12.2 保留整批实际变化，而非只留最后成功摘要
 
 S7 的产品变化面从原 TR-003 共同起点到最终 Main 计算，包含删除、历史失败残留及后继修复的实际影响。任务证据列表不能代替这个完整 Git 分母，最后一个成功任务的 base 也不能代表整批起点。
@@ -457,6 +465,9 @@ S9 后的影响处置可能使某些 S6 证据失去当前质量资格，却不�
 | 原 Result 接收 | [完成消费者](../../internal/assignment/completion_canonical.go)、[准确原接收](../../internal/assignmentresult/accepted.go) | 当前记录、专业内容、实际证据及不可变来源 |
 | Main 集成 | [Inspect](../../internal/integration/inspect.go)、[Integrate](../../internal/integration/integrate.go)、[原生文件边界](../../internal/integration/native_delivery.go) | 真实 Git 差异、目标、配置检查和恢复 |
 | 接收与批次投影 | [本人/集成事实](../../internal/qualitygate/canonical_builder_result.go)、[批次门](../../internal/qualitygate/evaluator.go)、[实际转换](../../internal/transition/engine.go) | 本人完成、Main 集成及精确 TR-006 分母 |
+| 原集成出口接续 | [S6 交接](../../internal/cli/s6_handoff.go)、[S7 材料准备](../../internal/cli/review_plan_questionnaire.go) | 同次原 Gate/TR-006、准确 ReviewPlan/guide、已成立事实及具名幂等恢复 |
+| 责任交付与反馈 | [S6 原生诊断](../../internal/cli/native_s6_diagnostic.go)、[Main 返回](../../internal/cli/native_main_return.go)、[观察提示](../../internal/hook/s6_context.go) | 准确 actor/brief 边界、blocked/字段反馈/接收故障、只减展示重复不改变业务资格 |
+| 固定源对齐指引 | [原生源指引](../../internal/cli/native_s6_source.go) | 派发延迟后的准确原起点、仅未开始且干净时普通 Git 新分支对齐、已有工作保留 |
 | 调度、修订与下游来源 | [实时投影](../../internal/dispatch)、[修订准备](../../internal/cli/s6_prepare_revision.go)、[共同起点](../../internal/productbaseline/s6_main_start.go)、[产品表面](../../internal/buildsurface) | 实际依赖、原记录修订和完整变化面 |
 
 需要明确的限制：
@@ -464,7 +475,8 @@ S9 后的影响处置可能使某些 S6 证据失去当前质量资格，却不�
 - 结构有效、证据文件存在和专业 `complete` 不机械证明判据为真；当前普通 Worker 空 runner 配置不提供全部本人测试的执行背书。Main 检查及 S7 独立验证不能省略。
 - TASK 自由文本到检查命令及 Done when 的解析有约定范围，不能承诺任意自然语言都被提取。Main 与 Builder 要核对实际 brief 是否忠实，缺项不能靠清空条件解决。
 - 原生接收一起核对 plan/result，不证明事前形成时间；Start 与普通工具也不产生开工批准或读完文件的证明。
-- 角色卡仍有旧执行兼容段与较宽的技能预载。不能据此要求新原生任务履行激活手续，也不能声称已经对每次原生上下文实现最小技能加载。
+- 三类 Builder 预载稳定核心方法，专项按实际输入触发；适用性仍需专业判断，不能声称系统已自动判定所有方法。只有原登记旧执行使用冻结兼容恢复，不能据此给新原生任务增加激活手续。
+- 固定源对齐由准确 brief 指导 Builder 在未开始且干净的原生 worktree 中执行普通 Git；Hook 不自动 reset 或推测首次阅读时刻。已从原正确起点开始的本人工作保留并正常继续，只有来源不明、混入其他来源或原输入丢失才交 Main 恢复。接收端原来源校验不等于机械证明作者始终遵循了阅读顺序。
 - 当前正式产品来源读取要求 TASK 集合与首次 TR-003 锁定的路径、版本及字节准确一致；普通 Assignment 修订只支持保原 TASK 的执行纠偏。同代正式 TASK 替换尚未贯通完整来源与后继责任，不要求作者造重锁证明，也不把返回规划说成已经具备无缝续跑能力。
 - 已接受且持久化在 Main 的交付不要求私人缓存永久存在；未接受工作及真实 Git 来源仍不可缺失。历史贡献的有限读取也不代表恢复其当前质量资格。
 - 本章描述已接线的工程合同；机械测试、实际 Claude Code 运行和专业产品验收分别证明各自范围，不能相互代签。

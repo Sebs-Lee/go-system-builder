@@ -400,7 +400,7 @@ func acceptedTaskPlanningArtifacts(root string, state map[string]any, p workpack
 	if p.Binding.Requirement.ID != stringValue(bound["id"]) || p.Binding.Requirement.Path != stringValue(bound["path"]) || p.Binding.Requirement.Version != stringValue(bound["version"]) || p.Binding.Requirement.SHA256 != stringValue(bound["sha256"]) {
 		return nil, fmt.Errorf("S4 packet does not match the current locked REQ")
 	}
-	expected, err := workpacket.BuildTaskPlanning(p.Binding, p.Inputs)
+	expected, err := workpacket.BuildTaskPlanningWithTemplate(p.Binding, p.Inputs, p.TemplateSHA)
 	if err != nil || !reflect.DeepEqual(expected, p) {
 		return nil, fmt.Errorf("accepted S4 packet differs from its registered template projection")
 	}
@@ -414,7 +414,7 @@ func acceptedTaskPlanningArtifacts(root string, state map[string]any, p workpack
 	if err != nil {
 		return nil, fmt.Errorf("reconstruct accepted S4 inputs from the current accepted S3 registration: %w", err)
 	}
-	rebuilt, err := workpacket.BuildTaskPlanning(p.Binding, inputs)
+	rebuilt, err := workpacket.BuildTaskPlanningWithTemplate(p.Binding, inputs, p.TemplateSHA)
 	if err != nil || !reflect.DeepEqual(rebuilt, p) {
 		return nil, fmt.Errorf("accepted S4 packet differs from the reconstructed S3 source closure")
 	}

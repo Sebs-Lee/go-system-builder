@@ -33,12 +33,12 @@ import (
 // --agent is only a compatibility hint for issue/receipt commands.
 func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime stage-answer requires <issue|revise|consume|receipt|recover>")
+		fmt.Fprintln(stderr, "runtime stage-answer requires <issue|revise|rework|consume|receipt|recover>")
 		return 2
 	}
 	action := args[0]
 	switch action {
-	case "issue", "revise", "consume", "receipt", "recover":
+	case "issue", "revise", "rework", "consume", "receipt", "recover":
 	default:
 		fmt.Fprintln(stderr, "unknown stage-answer action")
 		return 2
@@ -50,6 +50,7 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 	path := flags.String("path", "", "exact issued answer path (consume/receipt)")
 	previous := flags.String("previous", "", "previous receipt submission_key (Main revise)")
 	reason := flags.String("reason", "", "concrete named revision reason")
+	target := flags.String("target", "", "professional rework target: design|contracts|tasks")
 	packetID := flags.String("packet", "", "historical issued packet ID (receipt)")
 	if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
 		return 2
@@ -75,7 +76,11 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	budget := 6 * time.Second
+	if action == "consume" || action == "recover" || action == "issue" {
+		budget = 12 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(fileview.WithReadCache(context.Background()), budget)
 	defer cancel()
 	var result any
 	switch action {
@@ -141,6 +146,12 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		} else {
 			result, err = s.IssueContext(ctx, *owner)
 		}
+	case "rework":
+		if *owner != "" && *owner != "Main" {
+			err = fmt.Errorf("planning rework requires the actual Main responsibility")
+			break
+		}
+		result, err = s.ReworkPlanning(ctx, *target, *reason)
 	case "revise":
 		result, err = s.Revise(ctx, *previous, *reason)
 	case "consume":
@@ -236,6 +247,20 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 	case "recover":
 		result, err = s.Recover(ctx, *owner, 2)
 	}
+	// CLI and Hook share exactly the same successor projection/preparation.
+	if action == "consume" || action == "recover" {
+		switch value := result.(type) {
+		case submission.Receipt:
+			continueS5PlanningHandoff(context.Background(), s.Root, &value)
+			result = value
+		case []submission.Receipt:
+			for i := range value {
+				continueS5PlanningHandoff(context.Background(), s.Root, &value[i])
+			}
+			result = value
+		}
+	}
+
 	if result != nil {
 		if e := json.NewEncoder(stdout).Encode(result); e != nil {
 			fmt.Fprintln(stderr, e)
@@ -398,7 +423,7 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 	s, err := submission.New(root)
 	if err == nil {
 		if _, found, findErr := s.TaskPlanningForPath(path); findErr == nil && found {
-			ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
+			ctx, cancel := context.WithTimeout(contextForHook(request), 12*time.Second)
 			defer cancel()
 			r, saveErr := s.SaveTaskPlanning(ctx, path)
 			if saveErr != nil {
@@ -407,7 +432,7 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 					r.Error = saveErr.Error()
 				}
 			}
-			prepareS5PlanningHandoff(ctx, root, &r)
+			continueS5PlanningHandoff(contextForHook(request), root, &r)
 			return true, renderStageAnswerHook(stdout, path, r, "S4")
 		}
 		if _, found, findErr := s.ContractForPath(path); findErr == nil && found {
@@ -852,6 +877,13 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 		return "S7 ReviewResult context deferred to Main: " + err.Error()
 	}
 	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+	if lifecycle["state"] == "planning" && (lifecycle["phase"] == "contracts" || lifecycle["phase"] == "tasks") {
+		if owner != "" && owner != "Main" {
+			return ""
+		}
+		return stageCurrentPlanningContext(root, snapshot)
+	}
+
 	if lifecycle["state"] == "planning" && (lifecycle["phase"] == "design" || lifecycle["phase"] == "contracts" || lifecycle["phase"] == "tasks") {
 		if owner != "" && owner != "Main" {
 			return "" // Planning belongs to Main; keep this Worker on its own responsibility.
@@ -906,15 +938,7 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 	if err != nil {
 		return "S5 packet issuance deferred to Main: " + err.Error()
 	}
-	if len(packets) == 0 && lifecycle["state"] == "document_verification" && (owner == "" || owner == "Main") && request.Event == "SessionStart" {
-		if err := prepareS5ReviewResponsibilities(ctx, root, snapshot.State); err != nil {
-			return "S5 原分工准备未完成，由 Main／系统恢复准确来源：" + err.Error()
-		}
-		packets, err = s.IssueContext(ctx, owner)
-		if err != nil {
-			return "S5 原分工已准备，原问卷接续由 Main／系统恢复：" + err.Error()
-		}
-	}
+
 	if len(packets) == 0 {
 		if lifecycle["state"] == "document_verification" {
 			if owner == "" || owner == "Main" {
@@ -980,7 +1004,7 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 
 func stageS5PreparationGuidance(root string, state map[string]any) string {
 	life := mapFieldCLI(state, "lifecycle")
-	return fmt.Sprintf("S5 entry %d: DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY 的原独立责任尚未准备完成。原入口使用当前 accepted S4 来源，在 %s 准备分工、登记并发行准确问卷。Main 检查具体准备错误；技术恢复用 `loop-harness runtime stage-answer issue --root %s` 复用原入口，不手填 manifest 或机器字段。方法入口：%s。准备后携带准确 view/answer 分别派发独立原生 Agent；登记不证明平台已启动或实际独立。普通读取与 Stop 不补登记。", stageAnswerEntry(life["phase_revision"]), s5ManifestQuestionnairePath(root, state), s7CaptureShellQuote(root), filepath.Join(root, ".claude/skills/team-planning/SKILL.md"))
+	return fmt.Sprintf("S5 entry %d: DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY 原独立责任尚未准备完成。Main 恢复原准备：%s；manifest %s。保留已发行问卷及答案，不重交 S4。方法入口 %s；准备后携带准确 view/answer/source root 派入两个独立原生上下文，登记不证明平台已启动。", stageAnswerEntry(life["phase_revision"]), submission.PlanningRecoveryCommand(root, "issue"), s5ManifestQuestionnairePath(root, state), filepath.Join(root, ".claude/skills/team-planning/SKILL.md")) + submission.PlanningDiagnostic(root, state, "preparation")
 }
 
 // stageDesignQuestionnaireContext projects current work, not issuance proof.
@@ -1115,80 +1139,11 @@ func stagePlanningQuestionnaireLifecycleContext(ctx context.Context, service *su
 }
 
 func taskPlanningDeliveryGuidance(root string, packet workpacket.TaskPlanningPacket, files fileview.Reader) string {
-	index := "docs/dev/tasks/index-" + packet.Binding.Requirement.ID + ".md"
-	paths := []string{index}
-	label := "Required dispatch index"
-	candidates := ""
-	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.TaskPlanningAnswerReadLimit(packet)); err == nil {
-		if answer, issues := workpacket.ValidateTaskPlanningAnswer(packet, data); len(issues) == 0 {
-			paths = append([]string{*answer.IndexPath}, answer.TaskPaths...)
-			label = "Your named TASK delivery"
-		}
-	}
-	if label == "Required dispatch index" && files != nil {
-		if entries, err := files.ReadDir(filepath.Join(root, "docs/dev/tasks")); err == nil {
-			var existing []string
-			for _, entry := range entries {
-				if !entry.IsDir() && strings.HasPrefix(entry.Name(), "TASK-") && strings.HasSuffix(entry.Name(), ".md") && !strings.Contains(strings.ToLower(entry.Name()), "template") {
-					existing = append(existing, filepath.Join(root, "docs/dev/tasks", entry.Name()))
-				}
-			}
-			if len(existing) > 0 {
-				candidates = " Existing TASK candidates (verify current REQ membership): " + strings.Join(existing, ", ") + "."
-			}
-		}
-	}
-	sourceHint := ""
-	if view, ok := files.(*fileview.View); ok {
-		var committed []string
-		for _, path := range paths {
-			if source, err := view.Source(path); err == nil && source == "git_tree" {
-				committed = append(committed, filepath.Join(root, filepath.FromSlash(path)))
-			}
-		}
-		if len(committed) > 0 {
-			sourceHint = fmt.Sprintf("\nS4 TASK outputs and the index can change in this entry. Before saving this answer, commit the completed Git-sourced TASK files in your current REQ delivery and its index to bound development branch %s (current named Git paths: %s). REQ/S3 and other upstream inputs stay frozen. The answer and Runtime use their supplied disk paths.", strings.TrimPrefix(view.Ref, "refs/heads/"), strings.Join(committed, ", "))
-		}
-	}
-	for i, path := range paths {
-		paths[i] = filepath.Join(root, filepath.FromSlash(path))
-	}
-	return fmt.Sprintf("\n%s: %s.%s TASK output directory: %s; choose TASK IDs and professional scope from the frozen contracts, and include the full current REQ batch in task_paths. Templates: %s, %s. Dispatch rules: %s. Complete task granularity, Closing Contracts, clause coverage, dependencies and waves; save the professional answer once. The original consumer runs tasks check, records evidence and resumes TR-002. Manual check commands are optional diagnostics, not additional submissions.%s", label, strings.Join(paths, ", "), candidates, filepath.Join(root, "docs/dev/tasks"), filepath.Join(root, "docs/dev/tasks/TASK-template.md"), filepath.Join(root, "docs/dev/tasks/index-template.md"), filepath.Join(root, "docs/rules/dispatch-plan.md"), sourceHint)
+	return submission.TaskPlanningDeliveryGuidance(root, packet, files, nil)
 }
 
 func contractDeliveryGuidance(root string, packet workpacket.ContractPacket, files fileview.Reader) string {
-	id := strings.TrimPrefix(packet.Binding.Requirement.ID, "REQ-")
-	paths := []string{"docs/dev/contracts/CONTRACTS-" + id + ".md", "docs/dev/contracts/FE-" + id + ".md", "docs/dev/contracts/BE-" + id + ".md", "docs/dev/contracts/SYNC-" + id + ".md"}
-	// Once the author has named the actual delivery, show that exact set.
-	// Before then these are conventional starting paths, not an applicability
-	// decision or a requirement to produce all three contract families.
-	label := "Conventional output candidates (choose contract IDs and FE/BE/SYNC applicability from the frozen scope)"
-	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.ContractAnswerReadLimit(packet)); err == nil {
-		if answer, issues := workpacket.ValidateContractAnswer(packet, data); len(issues) == 0 {
-			paths = append([]string{*answer.IndexPath}, answer.ContractPaths...)
-			label = "Your named contract delivery"
-		}
-	}
-	sourceHint := ""
-	if view, ok := files.(*fileview.View); ok {
-		var committed []string
-		for _, path := range paths {
-			if source, err := view.Source(path); err == nil && source == "git_tree" {
-				committed = append(committed, filepath.Join(root, filepath.FromSlash(path)))
-			}
-		}
-		if len(committed) > 0 {
-			sourceHint = fmt.Sprintf("\nS3 outputs can change in this entry. Before saving this answer, commit the applicable completed Git-sourced professional files to bound development branch %s: %s; include their Git-sourced model/example dependencies. REQ/S2 inputs stay frozen. The answer and Runtime use their supplied disk paths.", strings.TrimPrefix(view.Ref, "refs/heads/"), strings.Join(committed, ", "))
-		}
-	}
-	for index, path := range paths {
-		paths[index] = filepath.Join(root, filepath.FromSlash(path))
-	}
-	templates := []string{"CONTRACTS-template.md", "FE-contract-template.md", "BE-contract-template.md", "SYNC-contract-template.md"}
-	for index, name := range templates {
-		templates[index] = filepath.Join(root, "docs/dev/contracts", name)
-	}
-	return fmt.Sprintf("\n%s: %s. Templates: %s. Complete shared-model/SYNC alignment, applicable contracts and the index; save the professional answer once. The original consumer runs contracts check and scenario bridge; manual check commands are optional diagnostics, not additional submissions.%s", label, strings.Join(paths, ", "), strings.Join(templates, ", "), sourceHint)
+	return submission.ContractDeliveryGuidance(root, packet, files, nil)
 }
 
 type s6BuilderQuestionnaire struct {
@@ -1621,6 +1576,9 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 					completed++
 					continue
 				}
+				if diagnostic := submission.PlanningDiagnostic(root, snapshot.State, nativeS7DiagnosticKind(packet.ID)); diagnostic != "" {
+					fmt.Fprintln(&b, nativeS7ReturnDiagnostic(root, snapshot.State, packet))
+				}
 				view, answer, err := reviewResultLifecyclePaths(ctx, root, snapshot.State, packet, request.CWD, request.SessionID)
 				if err != nil {
 					fmt.Fprintf(&b, "S7 %s/%s: questionnaire preparation gap: %s\n", packet.Binding.OwnerAgentID, assignmentID, err)
@@ -1841,29 +1799,54 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 	}
 	preparation := submission.PlanningDiagnostic(root, snapshot.State, "preparation")
 	if row == nil {
-		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage)) + preparation + ". For a technical retry, use " + submission.PlanningRecoveryCommand(root, "issue") + "; this reuses the original entry."
+		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage)) + preparation + ". For a technical retry, use " + submission.PlanningRecoveryCommand(root, "issue") + "; this reuses the original entry." + submission.PlanningProfessionalReworkGuidance(root)
 	}
 	view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
 	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer)) + preparation
+	missingFiles := false
 	for _, path := range []string{view, answer} {
 		if path == "" {
+			missingFiles = true
 			message += " Current registered questionnaire path is missing; Main must finish entry preparation."
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			missingFiles = true
 			message += " Current material missing: " + filepath.Join(root, path) + " (" + err.Error() + ")."
 		}
 	}
 	if record, found, err := runtime.FindSubmission(snapshot.State, stringValue(row["packet_id"])); err == nil && found {
 		if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
-			message += " The professional answer is already recorded; do not resubmit it. Main owns the original outlet " + record.FollowupID + ": inspect the actual gate/material failure, repair genuine material gaps through the original save path; technical interruption uses " + submission.PlanningRecoveryCommand(root, "recover") + ". Do not create saves or tools just to trigger progress."
+			message += submission.AcceptedPlanningDeliveryGuidance(root, snapshot.State, record, stage)
+			message += " The professional answer is already recorded; do not resubmit it. Main owns the original outlet " + record.FollowupID + ": repair the named material/system gap, then continue using " + submission.PlanningRecoveryCommand(root, "recover") + ". Do not create saves or tools just to trigger progress." + submission.PlanningDiagnostic(root, snapshot.State, "outlet")
 		} else {
 			message += " This answer is already received; follow the current stage responsibility without resubmitting it."
 		}
 	} else if err != nil {
 		message += " Main must inspect the original reception record: " + err.Error()
 	} else {
-		message += " Complete its original professional questions and save normally."
+		if missingFiles {
+			message += " Restore original missing questionnaire files with " + submission.PlanningRecoveryCommand(root, "issue") + "; preserve existing answers."
+		}
+		message += " Complete its original professional questions and save normally." + submission.PlanningDiagnostic(root, snapshot.State, "reception")
+		if phase == "contracts" || phase == "tasks" {
+			data, decodeErr := json.Marshal(row)
+			var packet workpacket.ContractPacket
+			var tasks workpacket.TaskPlanningPacket
+			if decodeErr == nil && phase == "tasks" {
+				decodeErr = json.Unmarshal(data, &tasks)
+			}
+			if decodeErr == nil && phase == "contracts" {
+				decodeErr = json.Unmarshal(data, &packet)
+			}
+			if decodeErr != nil {
+				message += " Original responsibility cannot be read: " + decodeErr.Error()
+			} else if phase == "tasks" {
+				message += submission.TaskPlanningDeliveryGuidance(root, tasks, nil, snapshot.State)
+			} else {
+				message += submission.ContractDeliveryGuidance(root, packet, nil, snapshot.State)
+			}
+		}
 	}
 	return message
 }

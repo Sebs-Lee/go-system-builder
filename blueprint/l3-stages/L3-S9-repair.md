@@ -423,7 +423,7 @@ S9 的非 `blocked` 定向失败通过原因果重查衔接保留原 Finding 集
 
 ### 12.2 独立复验的环境恢复
 
-正常 Targeted 入口识别已记录环境阻塞。环境确实恢复后，独立验证者在原题目记录新的实际结果，原保存接线使用已有 Resume／Create／Commit 路线形成新尝试；相同 blocked 重放不改变 Runtime，也不假称已恢复。
+正常 Targeted 入口识别已记录环境阻塞。环境确实恢复后，独立验证者在原题目记录新的实际结果并返回准确路径，原生 SubagentStop 使用已有 Resume／Create／Commit 路线形成新尝试；普通保存不接收，相同 blocked 重放不改变 Runtime，也不假称已恢复。
 
 需要显式恢复时，按系统给出的原 `targeted resume` 责任处理。恢复声明不是 PASS，必须有后续真实观察。原因或规格变化则使用调查／返工，不把这种变化塞进“环境已解决”。
 
@@ -452,6 +452,49 @@ S9 的非 `blocked` 定向失败通过原因果重查衔接保留原 Finding 集
 
 ## 14. 实现对应与当前边界
 
+### 14.1 先确定职责层，再安排提示
+
+S9→S7 的指引按以下层次维护。同一个提交动作只在当前职责的准确题面定义；上层提供导航和责任边界，不能另写一套路径、字段包装或接收时机。原消费者决定事实是否成立，提示与角色名称不能代替实际批准、独立性或完成条件。
+
+| 层次 | 内容与主要落点 | 不应承担的内容 |
+| --- | --- | --- |
+| 阶段规范 | 本文、`agent-protocol.md#s9`、原合法转换定义：输入、责任、完成和失败去向 | 把旧执行方式混入新原生工作的必经步骤 |
+| 通用入口与方法 | AGENTS／loop 模板及手册、agent-dispatch／loop-orchestration／bug-resolution：识别当前职责并导航到准确材料 | 重复字段字典、另发报告、每次工具调用重证开工资格 |
+| 角色能力 | backend／frontend／test Builder：实施能力与独立验证能力按实际派发区分 | 用 test-builder 名称推断必须实施，或禁止已明确派发的独立 Targeted 结论 |
+| Main 工序 | 分工、Candidate 集成、ChangeImpact、独立复验派发的当前问卷与反馈 | 代写 Worker 观察、把分工登记说成平台已启动、让已完成 Worker 承担 Main 集成 |
+| Worker 题面 | 原 native brief、Plan／Result 专业题干、Targeted 原请求：准确输入、作者字段、实际输出位置和返回引用 | Main 只读题面与私人输出混用；同时要求 flat JSON 和另一个 answer 信封 |
+| Hook 接收与诊断 | Start 短提示、Stop 原消费者、Main 返回摘要：本次接收事实、未完成项、责任人与准确恢复入口 | 普通工具保存激活 native Worker、阻止真实未完成返回、因退出而制造完整结论 |
+| 原出口与下一阶段 | Targeted 完成、Handoff、预算应用、S7 问卷准备和 Runtime next_action | 重交已接收专业结果、把 seed 当 PASS、让正常 S7 同时走保存与手动登记两条入口 |
+
+Builder 以私人 brief 中的实际输出位置填写顶层专业字段，原题面只提供问题与来源；独立验证者以当前 Targeted 请求为唯一答题入口，不交 Builder PlanReport，不改产品来取得 PASS。Main 保存 ChangeImpact 时接收，native Worker 的 Plan／Result 或 Targeted 在返回准确引用的 SubagentStop 接收；“保存”与“接收”不能混写。
+
+指引应优先交付当前动作所需的 Contract、已接收 Final／Impact 和相关证据引用；断言只展开一次，其他材料提供来源导航。不能用重复输出整个证据登记表替代明确当前责任，也不能为了缩短提示遗漏必要断言、停止条件或失败恢复。
+
+### 14.2 收尾、未完成返回与恢复边界
+
+首次 native 返回即使没有可接收的完整答案，也应将真实未完成工作与原拒绝原因交给 Main。原消费者继续拒绝不合格结果，不生成完成回执或推进；Hook 不以第二次 Stop、虚构 blocker 字段或凑齐结论作为退出条件。Main 摘要须关联准确 brief／answer、已接收事实与具体缺口，区分恢复来源、继续原专业责任和 Main 收尾，不只让 Main 猜测平台是否仍在运行。
+
+Targeted 登记和 Handoff 完成是两个可能部分成功的步骤。最后一次有效 Targeted 在原完成出口尝试 Handoff；失败保留已接收 Targeted，返回可重入的原收尾入口及已有 Handoff 来源，恢复只补未完成交接，不重跑独立观察、不新增作者报告、不重复增加轮次。普通 Pre／状态查询保持只读，不隐式重跑交接。
+
+当前原恢复入口为 `runtime repair handoff complete --root <Main-root>`，反馈提供实际 Main 路径。它复用原 Handoff 消费者与 S7 准备；仅在真实未完成交接或准备失败时使用，不成为正常作者额外提交步骤。尚未通过的 Targeted 不获得这一交接指令；已登记 S7 计划也不因迟到返回再次要求填卷。
+
+触及完整轮预算时，当前完成出口准备原预算应用并交付准确路径；空选择不授权扩额。原真实决策接收后续接未完成交接。若准备本身失败，明确其原恢复入口。成功 TR-012 后交付新 S7 seed 及原专业 ReviewPlan 问卷入口；正常 Main 填写并保存该问卷，不再要求另一条手工 review-plan 登记。
+
+### 14.3 本轮缺口与分层修复验收
+
+以下是本轮审查发现及修复验收项，不是额外的 agent 提交要求。修复必须同时检查相应提示来源、真实接线与失败反馈，避免只改文案留下旧 next_action。
+
+| 已发现缺口 | 修复归属 | 验收观察 |
+| --- | --- | --- |
+| 独立 Targeted 使用 test-builder，但角色禁止独立结论并泛化要求 PlanReport | 角色／方法层 | 明确两类职责；独立验证只提交 Targeted，实施者仍履行 Plan／Result |
+| 原 Plan 题干的 answer 包装／路径与 native 私人 flat 输出不一致 | 作者题面层 | 题干与 brief 对当前输出一致；冻结旧来源保持其原恢复兼容 |
+| S9 首次不完整 Stop 仍阻拦，Main 只得到泛化诊断 | 接收／返回层 | 首次可返回，拒绝与具体缺口可追到原责任，绝不冒充完成 |
+| Targeted 已登记但 Handoff 失败后缺少明确重入；预算应用未在该出口准备 | 收尾层 | 部分成功、重试、预算决定和准备失败均有原恢复；轮次只增一次 |
+| Targeted 指引仍称 on save，S7 next_action 仍要求手动登记 | 动态提示／阶段边界 | 普通 Worker 保存不接收；Stop 接收；新 S7 保存原问卷登记 |
+| 断言重复展开、证据候选不分当前相关性 | 提示投射层 | 完整保留当前问题及来源，减少重复材料与无关证据扫描 |
+
+### 14.4 实现索引与保持的边界
+
 | 环节 | 当前主要落点 |
 | --- | --- |
 | 合同、执行计划与责任 | [领域对象](../../internal/repair/model.go)、[Session／Plan 编译](../../internal/repair/session.go)、[Main 分工](../../internal/cli/repair_dispatch_questionnaire.go) |
@@ -459,6 +502,7 @@ S9 的非 `blocked` 定向失败通过原因果重查衔接保留原 Finding 集
 | 候选与 Final | [原结果消费者](../../internal/repair/issued_repair_result.go)、[交付接收](../../internal/repair/workspace_delivery.go)、[Result 记录](../../internal/repair/result.go) |
 | 影响与定向 | [原 Main／Targeted 工序](../../internal/cli/repair_lead_questionnaire.go)、[独立分工](../../internal/cli/repair_verifier_dispatch_questionnaire.go)、[影响及复验产物](../../internal/repair/evidence.go) |
 | 批次、退出与新轮 | [Final 变化归并](../../internal/repair/artifact.go)、[Runtime 消费](../../internal/repair/runtime.go)、[Handoff](../../internal/repair/handoff.go)、[S7 种子](../../internal/repair/s7_seed.go) |
+| 原出口恢复与指引 | [收尾与 S7 准备](../../internal/cli/repair_exit.go)、[预算原申请](../../internal/cli/s7_budget_questionnaire.go)、[原生拒绝诊断](../../internal/cli/native_s9_diagnostic.go)、[Main 返回投射](../../internal/cli/native_main_return.go) |
 
 使用入口为[主会话协议](../../docs/control/agent-protocol.md#s9)、[bug-resolution](../../skills/bug-resolution/SKILL.md)以及各实际 Builder／验证责任。计划与结果的专业字段分别见 [PlanReport 题目](../../internal/schema/assets/stage-form-s9-plan-template.json)和 [RepairResult 题目](../../internal/schema/assets/stage-form-s9-result-template.json)。
 

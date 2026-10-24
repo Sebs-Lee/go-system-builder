@@ -49,7 +49,24 @@ func investigationLeadContractPaths(root string, state map[string]any) []string 
 	return []string{filepath.Join(filepath.Dir(route), "contract-"+stringValue(pointer["sha256"])+".json")}
 }
 
-func stageInvestigationLeadContractContext(root string, request policy.Input, snapshot runtime.Snapshot) string {
+func stageInvestigationLeadContractContext(root string, request policy.Input, snapshot runtime.Snapshot) (context string) {
+	approvalRecorded := false
+	defer func() {
+		if context == "" || approvalRecorded || !mainQuestionnaireViewer(request) {
+			return
+		}
+		authority, reviewer, err := investigation.ContractReviewAuthority(root, snapshot.State)
+		if err != nil {
+			context += " Main must resolve the actual review authority: " + err.Error()
+			return
+		}
+		if authority != "" {
+			context += " Current designated Driver reviewer: " + reviewer + ". Main may perform that review only when actually designated; otherwise Main organizes and faithfully records the designated reviewer’s own judgment."
+		} else {
+			context += " Current approval responsibility: the actual human reviews this final draft and decides; Main presents and faithfully records the explicit choice."
+		}
+	}()
+
 	if !mainQuestionnaireViewer(request) {
 		return ""
 	}
@@ -73,11 +90,11 @@ func stageInvestigationLeadContractContext(root string, request policy.Input, sn
 	}
 	finalPath, finalBytes, err := investigationLeadContractProjection(root, path, document)
 	if err != nil {
-		return "S8 Main Contract questionnaire: " + path + ". Fill violated_invariant, architecture_intent, complete repair_units (id/description/scope/assertion_ids), prospective_scope, forbidden_scope, compatibility_migration, symptom_assertions, root_invariant_assertions, detection_gap_assertions, regression_surfaces and stop_escalation_conditions, then save. The existing Case cause is carried automatically; do not repeat its causal report or supply approval metadata. Current original-schema gap: " + err.Error()
+		return "S8 Main Contract questionnaire: " + path + ". Fill violated_invariant, architecture_intent, complete repair_units (id/description/scope/assertion_ids), prospective_scope, forbidden_scope, compatibility_migration, symptom_assertions, root_invariant_assertions, detection_gap_assertions, regression_surfaces and stop_escalation_conditions, then save. The existing Case cause is carried automatically; do not repeat its causal report or supply approval metadata. " + investigationLeadContractAuthoringGuidance() + " Current original-schema gap: " + err.Error()
 	}
 	stored, readErr := os.ReadFile(finalPath)
 	if readErr != nil || !bytes.Equal(stored, finalBytes) {
-		return "S8 Main Contract questionnaire: " + path + ". Fill violated_invariant/architecture_intent as strings; repair_units as objects with id/description and scope arrays such as [\"internal/module\"], plus assertion_ids=[\"all\"] or original symptom-1/root-1/gap-1 assertion IDs. Fill prospective_scope/forbidden_scope, symptom_assertions/root_invariant_assertions/detection_gap_assertions, regression_surfaces and stop_escalation_conditions as string arrays, and compatibility_migration as a string. The Case cause/binding is supplied automatically. Save once to fix final review draft bytes at " + finalPath + ". No approval is implied."
+		return "S8 Main Contract questionnaire: " + path + ". Fill violated_invariant/architecture_intent as strings; repair_units as objects with id/description and scope arrays such as [\"internal/module\"], plus assertion_ids=[\"all\"] or original symptom-1/root-1/gap-1 assertion IDs. Fill prospective_scope/forbidden_scope, symptom_assertions/root_invariant_assertions/detection_gap_assertions, regression_surfaces and stop_escalation_conditions as string arrays, and compatibility_migration as a string. The Case cause/binding is supplied automatically. Save once to fix final review draft bytes at " + finalPath + ". No approval is implied. " + investigationLeadContractAuthoringGuidance()
 	}
 	if request.Event == "PreToolUse" {
 		if approval, ok := investigationLeadContractApproval(root, snapshot.State, document, finalPath, finalBytes); ok {
@@ -85,6 +102,7 @@ func stageInvestigationLeadContractContext(root string, request policy.Input, sn
 			if err != nil {
 				return "S8 Main Contract questionnaire: " + path + ". Final review draft: " + finalPath + ". Original approval validation remains outstanding: " + err.Error()
 			}
+			approvalRecorded = true
 			prepared, prepareErr := prepareRepairEntry(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), next.State)
 			if prepareErr != nil {
 				return "S8 Original approval recorded. S9 entry preparation: " + prepareErr.Error()
@@ -287,4 +305,8 @@ func investigationLeadContractApprovedReplay(root, path string, state map[string
 		return feedback("S8 Contract answer conflicts with the already approved final draft; no approved content or authorization was changed.")
 	}
 	return feedback("S8 original Contract approval is already recorded at " + resolveRootPath(root, stringValue(pointer["repair_contract_ref"])) + ". Repeated save is read-only; continue with the original S9 handoff.")
+}
+
+func investigationLeadContractAuthoringGuidance() string {
+	return "Assertion IDs are positional within each original array, starting at 1: symptom_assertions -> symptom-1, symptom-2; root_invariant_assertions -> root-1, root-2; detection_gap_assertions -> gap-1, gap-2. Every assertion must be assigned to an actual repair unit. assertion_ids=[\"all\"] must stand alone and means that unit owns every assertion; never mix all with individual IDs. Optional depends_on is an array of other repair-unit IDs in this same Contract, with no cycles; optional resource_locks lists actual shared resources requiring coordination. Unit scope, prospective_scope and forbidden_scope are repository-relative file or directory paths; a directory includes descendants, glob patterns are not interpreted. Each unit write scope must stay inside prospective_scope and outside forbidden_scope. Put behavioral prohibitions in architecture_intent and stop/escalation conditions in stop_escalation_conditions; forbidden_scope contains paths, not prose."
 }

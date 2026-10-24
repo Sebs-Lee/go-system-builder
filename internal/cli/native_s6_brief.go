@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 )
 
 // Frozen native briefs retain their original exact bytes. This legacy format
@@ -40,4 +42,11 @@ func nativeS6BriefMatches(published []byte, methods string, versions ...string) 
 		}
 	}
 	return false
+}
+
+// Frozen trailing alignment from the previous issued brief version.
+// Keep its bytes for replay; new responsibilities use the leading guidance.
+func nativeS6LegacySourceAlignment(r assignmentrecord.Record, base, plan, result string) string {
+	branch := fmt.Sprintf("gsb/%s/r%d-fixed-source", r.AssignmentID, r.Revision)
+	return fmt.Sprintf("\nFixed-source preparation before reading TASK/specifications/product or writing a Plan: Main may have advanced since this brief was prepared; native baseRef head alone does not establish the fixed source %s. In your actual isolated worktree, inspect `git rev-parse HEAD` and `git status --porcelain --untracked-files=all`. If HEAD is already exactly %s, continue normally. If it differs, ONLY before starting this responsibility, with no existing Plan (%s), Result (%s), personal commits or uncommitted/untracked product work, align using this exact ordinary Git command: `git switch -c %s %s`. This creates a new branch and preserves the original branch/commits and Main's later contributions. Recheck HEAD equals the fixed source, then read all worktree-relative TASK, specification and product inputs there. If the named branch already exists, the command fails safely: never force, reset, overwrite or delete it; Main checks the original branch/worktree and restores this same responsibility. If work has already started, inputs are missing, or cleanliness/ownership is uncertain, preserve all existing files, commits and private professional artifacts and return the actual blocker for Main recovery; do not align or recapture today's HEAD as the original source. No framework begin, activation or new preparation is required.\n", base, base, plan, result, s7CaptureShellQuote(branch), s7CaptureShellQuote(base))
 }

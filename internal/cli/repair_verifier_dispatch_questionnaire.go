@@ -54,9 +54,9 @@ func repairVerifierDispatchContext(root string, state map[string]any, assignment
 	context := strings.Replace(repairDispatchRegisteredContext(root, state, assignmentID, owner), "Registered Builder", "Registered independent verifier", 1)
 	if path, err := repairTargetedQuestionnairePath(root, state, assignmentID); err == nil {
 		if questionnaireMissing(path) {
-			context += "Original Targeted answer path: " + path + "; not prepared yet. The original targeted listener prepares it when this responsibility reaches targeted_reverification. "
+			context += "Original Targeted answer path: " + path + "; not prepared yet. The original responsibility entry prepares it when this responsibility reaches targeted_reverification; ordinary reminders only read existing materials. "
 		} else {
-			context += "Original Targeted answer: " + path + ". "
+			context += "Original Targeted answer: " + path + ". Carry this exact path in the independent verifier's native prompt; the verifier returns it for SubagentStop reception. Ordinary saves do not receive the result. "
 		}
 	}
 	return context

@@ -11,6 +11,8 @@
 > Closing Contract: TASK-{id}#closing-contract
 > Execution: runtime owns assignment, owner, responsibility status and integration; do not fill them into this frozen TASK.
 
+TASK ID 使用数字段：例如 `TASK-009` 或 `TASK-009-01`，文件名与标题一致；业务或模块名放在 Objective，不放进 ID。模板中的 `{id}` 按对应 REQ、合同或 TASK 的实际编号替换。
+
 ## 1. Objective
 
 {One testable objective and user-visible value.}
@@ -132,7 +134,7 @@ and change process; reporting it alone does not authorize a wider scope.
 |:---|:---|
 | TASK-{id} | {committed artifact integrated and verified on the bound development branch} |
 
-依赖列只认 `TASK-*` 引用——只有 TASK 引用进入 DAG（`tasks check` 的环检测与拓扑）。assignment 级依赖不被机检追踪，需要跨任务顺序时写成 TASK 依赖或在收尾契约中声明。
+依赖列使用合法数字 TASK ID（如 `TASK-009-01`）——只有 TASK 引用进入 DAG（`tasks check` 的环检测与拓扑）。assignment 级依赖不被机检追踪，需要跨任务顺序时写成 TASK 依赖或在收尾契约中声明。
 
 ## 9. Execution entry
 

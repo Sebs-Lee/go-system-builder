@@ -23,6 +23,7 @@ type GuardSpec struct {
 
 // guardSpecRegistry maps guard IDs to their one-sentence documentation.
 var guardSpecRegistry = map[string]GuardSpec{
+	"planning_rework_scope": {ID: "planning_rework_scope", Check: "The current packet-mode S3/S4 entry keeps its authorized locked REQ; the named Main request supplies the professional reason and the original Writer invalidates dependent planning projections."},
 	"acc_complete": {
 		ID:    "acc_complete",
 		Check: "The latest valid acceptance report for the current responsibility, baseline generation and review round records pass with no reported unfinished rows or blockers; this reads professional completion, not historical source proofs.",
@@ -277,7 +278,7 @@ var guardSpecRegistry = map[string]GuardSpec{
 	},
 	"contracts_checked": {
 		ID:    "contracts_checked",
-		Check: "S3's mechanical close (semantic.ContractsCheck) runs at PTR-PLAN-02: contract token references resolve against REQ FR tables and module packages, clause cells point at known contracts, and fingerprint columns match disk.",
+		Check: "S3 typed reception checks the declared current-REQ delivery and source view with semantic.ContractsCheck: REQ/CASE references and contract clauses resolve, shared models and examples validate, and system-maintained source fingerprints match. PTR-PLAN-02 rechecks the accepted delivery for registration. Existing disk-based compatibility flows retain their original checks; fingerprint columns are not an author obligation.",
 	},
 	"tasks_checked": {
 		ID:    "tasks_checked",

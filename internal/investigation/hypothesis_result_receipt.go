@@ -100,7 +100,15 @@ func SubmitIssuedHypothesisResult(root, statePath, journalPath string, request I
 	if err := json.Unmarshal(answerJSON, &answer); err != nil {
 		return snapshot, err
 	}
+	// Bind new local observations while retaining the original author JSON and
+	// digest in the receipt. Frozen Finding references are never rebound.
+	if err := bindS8LocalEvidence(root, sourceRoot, packet, &answer, accepted); err != nil {
+		return snapshot, err
+	}
 	if accepted {
+		if err := verifyS8ReplayedLocalEvidence(root, existingReceipt, packet, answer); err != nil {
+			return snapshot, err
+		}
 		if existingReceipt.AnswerSHA256 != answerSHA || existingReceipt.ExecutionRoot != sourceRoot {
 			return snapshot, errors.New("S8 packet replay conflicts with the original accepted answer/source")
 		}
@@ -330,7 +338,18 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 		return err
 	}
 	for _, question := range answer.NewHypotheses {
-		refs = append(refs, question.EvidenceRefs...)
+		questionRefs := question.EvidenceRefs
+		if packet.Binding.ObservationBatchRef != "" {
+			current, err := readCurrentInvestigationCase(root, state)
+			if err != nil {
+				return err
+			}
+			questionRefs, err = remainingFindingQuestionRefs(root, state, current.document, question.SourceFindingIDs, questionRefs)
+			if err != nil {
+				return err
+			}
+		}
+		refs = append(refs, questionRefs...)
 	}
 	if packet.Binding.ObservationBatchRef == "" {
 		data, err := workpacket.ReadFile(root, packet.Binding.CaseRef, hypothesisResultPacketReadLimit)
@@ -347,7 +366,7 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 		}
 		remaining := withoutHumanSource(refs, source)
 		if len(remaining) > 0 {
-			if err := ValidateEvidenceRefs(remaining, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
+			if err := ValidateEvidenceRefs(remaining, EvidenceAttestationOptions{AllowPaths: true, State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
 				return fmt.Errorf("S8 answer evidence references: %w", err)
 			}
 		}
@@ -364,7 +383,7 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 		}
 	} else {
 		if len(refs) > 0 {
-			if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
+			if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{AllowPaths: true, State: state, Root: root, RequireSHA: true, RequireReviewRound: packet.Binding.ReviewRound}); err != nil {
 				return fmt.Errorf("S8 answer evidence references: %w", err)
 			}
 		}
@@ -376,8 +395,8 @@ func validateS8AnswerEvidence(root string, state map[string]any, packet workpack
 }
 
 // Only exact sources imported from the original verified Finding may bypass
-// index lookup. New Hypotheses and arbitrary new answer paths retain the
-// original evidence contract. The packet consumer verifies issuance/continuity
+// index lookup. Follow-up questions separately verify their own selected
+// Findings; arbitrary new answer paths retain the original evidence contract. The packet consumer verifies issuance/continuity
 // before calling this helper and again inside the original Writer.
 func remainingS8AnswerEvidenceRefs(root string, packet *workpacket.HypothesisResultPacket, refs []string) ([]string, error) {
 	frozen := map[string]bool{}

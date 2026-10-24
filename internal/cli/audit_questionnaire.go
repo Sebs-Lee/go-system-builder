@@ -40,17 +40,19 @@ func stageAuditQuestionnaireContext(root string, request policy.Input, snapshot 
 	}
 	path, err := auditQuestionnairePath(root, snapshot.State, kind)
 	if err != nil {
-		return fmt.Sprintf("S10 %s is active, but the system could not prepare its exact manifest path from the current Runtime: %v. This is a wiring/source gap; do not guess a path or reconstruct the inventory from other Runtime files.", kind, err)
+		return auditPreparationFailureContext(root, snapshot.State, err)
 	}
 	absPath, err := absoluteQuestionnairePath(root, path)
 	if err != nil {
-		return fmt.Sprintf("S10 %s is active, but its exact manifest path cannot be resolved: %v", kind, err)
+		return auditPreparationFailureContext(root, snapshot.State, err)
 	}
 	readmePath, _ := filepath.Abs(filepath.Join(root, "docs", "examples", "s10", "README.md"))
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); os.IsNotExist(err) {
-		return fmt.Sprintf("S10 %s answer draft is not prepared yet; the exact path is %s. This Hook event is read-only. The original stage-entry action must prepare this draft; Main should report this wiring gap, not guess a path or wait for another Hook.", kind, absPath)
+	if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); os.IsNotExist(err) {
+		return auditPreparationFailureContext(root, snapshot.State, fmt.Errorf("answer draft is not prepared yet (stage-entry wiring/source gap); this Hook event is read-only"))
 	} else if err != nil {
-		return fmt.Sprintf("S10 %s answer draft at %s could not be inspected: %v", kind, absPath, err)
+		return auditPreparationFailureContext(root, snapshot.State, err)
+	} else if !info.Mode().IsRegular() {
+		return auditPreparationFailureContext(root, snapshot.State, fmt.Errorf("answer draft is not a regular file; this Hook event is read-only"))
 	}
 	if kind == acceptance.ManifestAcceptance && receivedAuditReviewPending(root, snapshot.State, path) {
 		plan := mapFieldCLI(mapFieldCLI(snapshot.State, "review"), "plan")
@@ -87,7 +89,10 @@ func prepareAuditQuestionnaire(root string, state map[string]any, kind string) (
 	if err != nil {
 		return "", acceptance.Manifest{}, err
 	}
-	if _, err := os.Stat(draftPath); err == nil {
+	if info, err := os.Stat(draftPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return "", acceptance.Manifest{}, fmt.Errorf("existing manifest %s is not a regular file", draftPath)
+		}
 		// Existing audit observations survive re-entry. Refresh only the
 		// system acceptance reference to the latest accepted report.
 		if kind == acceptance.ManifestReleaseAudit {

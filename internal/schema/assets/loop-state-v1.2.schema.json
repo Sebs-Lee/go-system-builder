@@ -541,7 +541,6 @@
               "task_set": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 128,
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
@@ -1642,6 +1641,12 @@
               "type": "integer",
               "minimum": 1,
               "default": 2
+            },
+            "max_investigation_reentries": {
+              "description": "Maximum consecutive S8 investigate_more route registrations; does not limit actual investigation work. Absent legacy values use the independent S8 default, never the S7 review-round limit.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 5
             },
             "max_full_review_rounds": {
               "type": "integer",
@@ -4555,7 +4560,6 @@
                     },
                     "contract_paths": {
                       "type": "array",
-                      "maxItems": 64,
                       "items": {
                         "type": "string",
                         "minLength": 1,
@@ -5006,7 +5010,6 @@
                     },
                     "task_paths": {
                       "type": "array",
-                      "maxItems": 128,
                       "items": {
                         "type": "string",
                         "minLength": 1,
@@ -5068,7 +5071,6 @@
                 "contracts": {
                   "type": "array",
                   "minItems": 1,
-                  "maxItems": 65,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,

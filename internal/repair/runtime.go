@@ -315,7 +315,7 @@ func SubmitRepairPlanReportToRuntime(root, statePath, journalPath string, req Su
 			owners[report.AssignmentID] = report.AgentID
 			updateRepairPointer(state, map[string]any{"plan_report_ref": req.Report.Path, "plan_report_sha256": req.Report.SHA256,
 				"plan_report_refs": merged, "assignment_owners": owners, "assignment_id": report.AssignmentID, "status": "repairing",
-				"updated_at": at.Format(time.RFC3339Nano), "next_action": "continue this Builder's actual work; Main runs normal workspace startup"})
+				"updated_at": at.Format(time.RFC3339Nano), "next_action": "continue this Builder's original implementation responsibility at its recorded work location; preserve its existing dispatch and return its actual RepairResult through the original receiver; Main retains integration and necessary checks"})
 			setLifecycle(state, "bug_resolution", "fixing")
 			return nil
 		},
@@ -390,7 +390,7 @@ func BeginRepairExecution(root, statePath, journalPath string, req BeginRepairEx
 				(latest["status"] != "planning" && latest["status"] != "reproducing") {
 				return errors.New("current repair work changed before startup fact was recorded")
 			}
-			updateRepairPointer(state, map[string]any{"status": "repairing", "updated_at": at.Format(time.RFC3339Nano), "next_action": "Main runs normal workspace startup for the recorded Builder"})
+			updateRepairPointer(state, map[string]any{"status": "repairing", "updated_at": at.Format(time.RFC3339Nano), "next_action": "continue the recorded Builder's original implementation responsibility at its recorded work location; preserve its existing dispatch and return its actual Result through the original receiver"})
 			setLifecycle(state, "bug_resolution", "fixing")
 			return nil
 		}})
@@ -1227,7 +1227,7 @@ func CommitTargetedReverification(root, statePath, journalPath string, req Commi
 	} else if !independent {
 		action = "report recorded; Main must arrange an independent verifier who did not implement or merge this repair"
 	} else if len(missing) == 0 {
-		phase, status, action = "ready_for_full_review", "ready_for_full_review", "complete normal Handoff and start fresh S7"
+		phase, status, action = "ready_for_full_review", "ready_for_full_review", "complete the original Handoff with runtime repair handoff complete --root <root>; do not resubmit accepted Targeted observations"
 	}
 	var failureRoute any
 	if route != "" {
@@ -1430,7 +1430,7 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	commitRevision := runtimeCommitRevision(req.ExpectedRevision, current)
 	return func() (runtimepkg.Snapshot, error) {
 		snapshot, updateErr := updateRuntime(writer, req.ExpectedRevision, runtimepkg.Mutation{EventID: fmt.Sprintf("evt-s9-handoff-r%d", commitRevision+1), TransitionID: whitelistChecked("TR-012"), Event: "repair_handoff_ready", Actor: actor, IdempotencyKey: fmt.Sprintf("runtime:s9:handoff:%s:%d", req.Handoff.Path, commitRevision), RuntimeID: stringField(current.State["runtime_id"]), EvidenceIDs: []string{req.Handoff.Path, seedRef.Path}, From: cursor(current.State), To: map[string]any{"state": "verification", "phase": "running"}, RequestID: "s9-handoff", BaselineGeneration: baselineGeneration(current.State), GateID: "S9-REPAIR-HANDOFF", GateFingerprint: "sha256:s9-repair-handoff-v3", ProducerResponsibility: "S9 Repair", OccurredAt: at, Apply: func(state map[string]any) error {
-			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "author the first professional S7 plan from the exact staged seed, preserving its id, round, generation and pinned baseline; register it through `runtime review-plan --file <professional-plan.json>` before any dispatch. Decide actual E2E applicability; an applicable browser surface gets its original cold-start/regression work, genuine N/A has no E2E Assignment and a null verification_artifact_workspace. Do not add Runtime-only digest fields. Later discovery changes retain the original one controlled revision through runtime review-plan revise", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
+			updateRepairPointer(state, map[string]any{"changeset_ref": handoff.ChangesetRef.Path, "changeset_sha256": handoff.ChangesetRef.SHA256, "handoff_ref": req.Handoff.Path, "handoff_sha256": req.Handoff.SHA256, "status": "closed", "updated_at": at.Format(time.RFC3339Nano), "next_action": "author the first professional S7 plan from the exact staged seed, preserving its id, round, generation and pinned baseline; complete and save the original current S7 ReviewPlan questionnaire before any dispatch; its original save consumer registers the plan. Decide actual E2E applicability; an applicable browser surface gets its original cold-start/regression work, genuine N/A has no E2E Assignment and a null verification_artifact_workspace. Do not add Runtime-only digest fields. Later discovery changes retain the original one controlled revision through runtime review-plan revise", "review_plan_seed_ref": seedRef.Path, "review_plan_seed_sha256": seedRef.SHA256, "implementation_baseline_digest": newBaselineDigest})
 			review := ensureObject(state, "review")
 			round := integerValue(review["round"])
 			round++

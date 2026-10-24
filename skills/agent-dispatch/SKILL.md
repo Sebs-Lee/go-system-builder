@@ -26,7 +26,54 @@ Choose the applicable stage path below, carry its exact references into native A
 
 ## Native S6 (s6-native-v1)
 
-Main runs `s6 prepare --root <Main> --task <TASK> --role <role>` and passes its exact brief to a native Agent with worktree isolation. Optional `s6 status --capacity <total-slots> --advice` computes a batch recommendation; unknown capacity still exposes eligible TASKs and adds no capacity registration or prepare prerequisite. Read actual TASK inputs, save the professional plan before implementation, continue implementation/self-checks, commit products and save Result. Write only the supplied professional fields in the private Plan and Result; the receiver adds registered dependencies from the original Record, without author copying. Return the exact brief and absolute Result. Stop invokes the original receiver; Main integrates separately. Rework uses `s6 prepare --revise-assignment <id> --revision-intent-key <stable-key>` through the original revision Writer.
+Main runs `s6 prepare --root <Main> --task <TASK> --role <role>` and carries its
+exact brief into native Agent with worktree isolation. Preparation is not launch.
+The brief supplies this responsibility's fixed source, control/method references,
+worktree-relative product inputs, private Plan/Result paths and adjacent author
+fields. Main's later HEAD is not a replacement source. Use the brief's exact
+source-alignment/recovery instructions; preserve existing work and branches.
+Historical briefs retain their original contract.
+
+Builder reads the actual TASK and applicable methods, saves the professional
+Plan before implementation, then continues implementation and real self-checks
+without another activation or save receipt. Commit completed deliverables, save
+the supplied professional Result and return the exact brief and absolute Result
+reference. Fill only author fields; original consumers supply identity, source
+fingerprints and registered dependencies. Before or after forming a Plan, use
+the brief's minimal blocked Result at the same supplied Result path for a real
+blocker. Preserve any Plan and evidence, describe unfinished work and return the
+exact references; do not invent checks, a Plan or PASS to exit. This return does
+not establish acceptance or TASK completion.
+
+Stop invokes the original receiver. Main inspects its actual acceptance or
+specific failure. Accepted complete work follows original checks/integration;
+accepted full blocked/incomplete Results follow the feedback's closing-checkpoint
+and named revision path, without editing the accepted answer. Restore actual
+source/environment/reception gaps. Only unreceived, still-current author-owned
+corrections resume the original responsibility. A returned actor with no accepted
+Result is not proof it is still running. Preserve accepted work. Rework uses
+`s6 prepare --revise-assignment <id> --revision-intent-key <stable-key>` through
+the original revision Writer; changing
+the locked TASK/specification instead follows TR-007 to planning and renewed
+independent document review.
+
+After successful integration, the original integration completion outlet checks
+the entire TR-003 batch. Incomplete batches retain concrete remaining work; a
+qualified batch follows TR-006 and prepares the exact S7 ReviewPlan and guide in
+that same completion response. A transition/preparation failure retains already
+completed integration and names its original recovery entry. Re-enter the original
+`runtime task-integrate` command when directed to resume unfinished integration,
+checks or the S6 exit; its checkpoints prevent duplicate merge and acceptance.
+If failed Main checks left the checkpoint preserved/blocked, first resolve the
+stated environment/check cause, then use the original pending command with
+`--retry-preserved`; a bare replay retains that failure. Already successful
+integration that only needs its exit continued requires no such retry flag.
+After migration to S7, restore missing materials through the supplied original
+`s7 draft --root <Main> --out <original-path>` entry. Preserve received Builder
+Results and completed merge/acceptance facts; an unrelated tool call is not a
+continuation trigger.
+Optional `s6 status --capacity <total-slots> --advice` only recommends a batch;
+unknown capacity leaves eligible TASKs visible without another prerequisite.
 
 ## Native S5 / S7 / S8
 
@@ -34,22 +81,48 @@ Main's original registration/questionnaire preparation supplies the exact view a
 
 No duplicate generic plan is required. Keep ReviewPlan waves/dependencies, actual independence, source facts, Case/Contract judgments and real approval. Main owns further division, Case routing and stage closure. The same role may have several responsibilities; role, start order and actor name do not identify a questionnaire.
 
+For S8, Main freezes the experiment-specific scope, stopping and unresolved
+conditions in the original Hypothesis `discriminator`, with predictions in
+`expected_outcomes`. General product/specification read-only limits accompany
+the issued question. The first native return may hand an incomplete answer and
+its concrete diagnostic to Main; the original consumer still rejects invalid
+answers. Main restores sources or asks the author to continue. Do not force a
+verdict or another Stop merely to end native execution. See the
+[investigation role](../../agents/investigator.md) for the assigned work and
+[stage protocol](../../docs/control/agent-protocol.md#s8) for Case/approval duties.
+
 ## Native S9
 
-The professional PlanReport and Result are private outputs in the actual native worktree. The Main-root question is read-only input; an isolated Worker never writes Main. At Stop the adapter imports the actual worktree Plan payload into the existing questionnaire and invokes the original consumer, without Main authoring the answer.
+Main reads its original division/recovery question, approved Contract and RepairPlan,
+then carries the exact prepared brief into Claude Code native Agent with worktree
+isolation. Preparation does not start the Agent. Builder implementation and assigned
+no-change tests use [the S9 authoring method](../bug-resolution/SKILL.md#issued-s9-planreport-adapter):
+private flat PlanReport before work, real implementation/tests and self-checks, then
+private flat Result. Main-root questions are read-only; the exact brief owns output
+paths. Return the exact brief and absolute Result path for SubagentStop reception.
+Main integrates accepted Candidates and runs necessary checks before Final/Impact;
+an accepted Worker does not wait for Final or refill its Result.
 
+An explicitly independent Targeted verifier, including test-builder in that role,
+uses only the original Targeted request and answer path. It performs actual required
+observations without product writes, Builder PlanReport/Result or a new commit, then
+returns the exact answer for SubagentStop. Ordinary saving receives neither native
+Builder artifacts nor Targeted. Preserve actual independence and Contract assertions.
+The original completion outlet hands off to fresh S7; Main saves the original new
+S7 ReviewPlan questionnaire rather than manually registering a second plan.
 
-Main passes the exact prepared S9 brief to native Agent with worktree isolation. Builder performs real prechecks and saves its professional PlanReport before implementation, continues repair/self-checks, commits actual product changes when present and saves Result. An allowed no-change result does not manufacture a commit. Return exact brief and absolute Result. Stop invokes original PlanReport/RepairResult consumers; Main integrates and runs actual necessary checks separately.
-
-An independent Targeted verifier instead receives its exact original Targeted answer path, checks the actual post-repair tree without product writes and returns that path. Stop invokes the original Targeted consumer. Keep actual independence and Contract assertions; the original handoff leads to fresh S7.
-
-Returned Git coordinates may be recorded as `native_delivery` for original Result/Main integration. They contain no bootstrap or reserved Claude session and do not create or resume an Agent.
+Returned Git coordinates may be recorded as `native_delivery` for original Result/Main
+integration. They contain no bootstrap or reserved Claude session and do not create
+or resume an Agent. Only registered frozen sources keep their original recovery.
 
 ## Start and Stop
 
 Start supplies bounded context and observes actual facts; it does not guess a task or approve work. Ordinary tools and saves do not activate or receive native work. Stop selects the exact engineering reference and invokes the original consumer with actual artifacts. Unknown or multiple references remain Main's handoff; never claim another responsibility by role or queue order.
 
-Return real blockers and unfinished work honestly. Ended execution, accepted delivery, Main integration and stage completion are separate. Real human approval stays in its original domain; Start never grants it. Resume can emit a new platform actor ID; do not invent an alias or new work item for that change.
+Return real blockers and unfinished work honestly on the first Stop; rejected or
+missing artifacts remain unaccepted and Main receives the exact diagnostic and
+recovery responsibility. Do not require another Stop or invented fields to exit.
+Ended execution, accepted delivery, Main integration and stage completion are separate. Real human approval stays in its original domain; Start never grants it. Resume can emit a new platform actor ID; do not invent an alias or new work item for that change.
 
 After a native return or completion notification, Main checks the original consumer's current receipt or accepted delivery. A returned actor without a receipt is not proof that professional work is still running. Receiver preparation, source and concurrent-commit failures belong to Main: inspect the original failure and current responsibility first. If that same responsibility remains current and unreceived, resume the original native agent to return its already saved artifacts unchanged. Do not repeat the professional review, create another answer, or poll stage completion in place of reception recovery. Changed responsibility or input follows its original revision path.
 

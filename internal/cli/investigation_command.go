@@ -1441,6 +1441,19 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 	if route := stringValue(document["route"]); route != "" && !issuedHypothesisResult && !unissuedDispatchedHypothesis && !packetProjectionProblem {
 		nextAction = investigationRouteNextAction(route, pointer)
 	}
+	// Aggregate historical Cases have no active Runtime configuration; do not
+	// project a guessed budget for them.
+	var reentryBudget *investigation.InvestigationBudgetStatus
+	if state != nil {
+		budget, err := investigation.InvestigationReentryBudget(state, document)
+		if err != nil {
+			return nil, err
+		}
+		reentryBudget = &budget
+		if budget.Exhausted && stringValue(document["route"]) == "investigate_more" {
+			nextAction += "; consecutive investigate_more route-registration budget is exhausted. Continue actual investigation in this Case through the supplied questions and original result consumer; submit a disposition only when evidence supports it. Do not resubmit investigate_more or invent another disposition to bypass the limit"
+		}
+	}
 	// RC-18 S8-H3: surface the baseline-drift warning on the status board so
 	// the investigator sees the stale-baseline fact at read time, not only in
 	// the journal message recorded by the last Case revision.
@@ -1463,9 +1476,10 @@ func investigationStatusBoard(root string, pointer map[string]any, state map[str
 			"completed":        completedHypotheses,
 			"dispatch_unknown": unknownDispatchHypotheses,
 		},
-		"hypothesis_result_packets": hypothesisResultPackets,
-		"ready_for_contract":        len(unexplained) == 0 && stringValue(document["route"]) == "s9_repair",
-		"next_action":               nextAction,
+		"investigation_reentry_budget": reentryBudget,
+		"hypothesis_result_packets":    hypothesisResultPackets,
+		"ready_for_contract":           len(unexplained) == 0 && stringValue(document["route"]) == "s9_repair",
+		"next_action":                  nextAction,
 	}, nil
 }
 

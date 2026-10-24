@@ -87,8 +87,11 @@ func runRuntimeRepair(args []string, stdout, stderr io.Writer) int {
 		}
 		return runRuntimeRepairTargetedCommit(args[2:], stdout, stderr)
 	case "handoff":
+		if len(args) > 1 && args[1] == "complete" {
+			return runRuntimeRepairHandoffComplete(args[2:], stdout, stderr)
+		}
 		if len(args) < 2 || (args[1] != "commit" && args[1] != "create") {
-			fmt.Fprintln(stderr, "runtime repair handoff requires <create|commit>")
+			fmt.Fprintln(stderr, "runtime repair handoff requires <create|commit|complete>")
 			return 2
 		}
 		if args[1] == "create" {
@@ -941,6 +944,9 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 		}
 		response["board"] = board
 		response["next"] = board["next_action"]
+		if runtime.PacketEnabled(snapshot.State) && stringValue(pointer["status"]) == "ready_for_full_review" {
+			response["next"] = repairHandoffProjectionContext(*root, snapshot.State)
+		}
 		if runtime.PacketEnabled(snapshot.State) && s9RepairResultStage(snapshot.State) {
 			rows, next := repairResultPacketStatus(*root, snapshot.State)
 			response["repair_result_packets"] = rows
@@ -1313,12 +1319,12 @@ func repairAssignmentBoard(root string, pointer map[string]any, packetMode bool)
 	case "targeted_reverification":
 		next = "submit the independent targeted reverification"
 		if packetMode {
-			next = "the registered independent verifier fills and saves the exact TargetedReverification questionnaire supplied by the listener; the original consumer checks the Contract assertions"
+			next = "the registered independent verifier fills the exact TargetedReverification questionnaire and returns its path for SubagentStop reception; ordinary saves do not receive it"
 		}
 	case "ready_for_full_review":
 		next = "create and commit the complete RepairHandoff; S7 then registers a fresh full ReviewPlan"
 		if packetMode {
-			next = "S9 has no author-filled Handoff form; when the necessary professional work is complete, its save outlet automatically records the original Handoff and supplies the fresh S7 seed path. If actual work remains, follow the recorded missing work; do not wait for another Hook to perform Handoff"
+			next = repairHandoffProjectionContext(root, map[string]any{"review": map[string]any{"repair": pointer}})
 		}
 	}
 	return map[string]any{

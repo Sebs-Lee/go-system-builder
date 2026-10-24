@@ -14,10 +14,11 @@ func TestLegendCoversPresentTokensOnly(t *testing.T) {
 	for _, want := range []string{
 		"MISSING TOKENS:",
 		"`evidence:completion_report:<id>`",
-		"Main coordinates the original registered Builder execution for that TASK and waits",
-		"its assigned Builder implements the TASK and fills and saves its own exact Result questionnaire",
+		"Main prepares this TASK with s6 prepare if eligible and unprepared",
+		"dispatches or resumes its original brief or resolves the actual returned blocker",
+		"an absent Result is not proof of a running Builder",
 		"`integration_checkpoint:<id>`",
-		"Main integrates the named Assignment and runs its required checks",
+		"Main follows the named Assignment's exact action",
 	} {
 		if !strings.Contains(legend, want) {
 			t.Fatalf("legend missing %q:\n%s", want, legend)
@@ -33,14 +34,14 @@ func TestLegendCoversPresentTokensOnly(t *testing.T) {
 	}
 }
 
-func TestBuilderMissingResultGuidanceAssignsTheAnswerToItsOwner(t *testing.T) {
+func TestBuilderMissingResultGuidanceUsesActualProgress(t *testing.T) {
 	legend := RenderMissingTokenLegend("GATE-BUILDER-BATCH-READY", []string{"evidence:completion_report"})
-	for _, want := range []string{"Main coordinates each original registered Builder execution", "each assigned Builder implements its TASK", "fills and saves its own exact Result questionnaire", "Main integrates"} {
+	for _, want := range []string{"does not prove a Builder has been prepared or started", "prepare an eligible unprepared TASK with s6 prepare", "dispatch or resume its exact native brief", "resolve the actual returned blocker", "integrate only a qualified received delivery"} {
 		if !strings.Contains(legend, want) {
 			t.Fatalf("missing Result guidance omits %q: %s", want, legend)
 		}
 	}
-	if strings.Contains(legend, "Main fills") || strings.Contains(legend, "complete each unfinished TASK") {
+	if strings.Contains(legend, "Main fills") || strings.Contains(legend, "complete each unfinished TASK") || strings.Contains(legend, "waits for its Result") {
 		t.Fatalf("missing Result guidance assigns Builder work to Main: %s", legend)
 	}
 }

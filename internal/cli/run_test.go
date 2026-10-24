@@ -458,12 +458,12 @@ func TestNextProjectsInvestigationAsS8AndRepairAsS9(t *testing.T) {
 			forbidden: []string{"runtime repair status", "commit ChangeImpact"},
 		},
 		{
-			name:      "S9 handoff is automatic",
+			name:      "S9 handoff is automatic with explicit incomplete recovery",
 			phase:     "ready_for_full_review",
 			wantStage: "S9",
 			wantSkill: "bug-resolution",
-			wantText:  "no author-filled Handoff form",
-			forbidden: []string{"runtime repair handoff", "create and commit"},
+			wantText:  "runtime repair handoff complete",
+			forbidden: []string{"runtime repair handoff create", "runtime repair handoff commit", "create and commit"},
 		},
 	}
 

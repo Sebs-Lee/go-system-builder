@@ -101,12 +101,13 @@ func ActionNames() []string {
 // from BUG-001 §4b.2(c). Calling it more than once is safe.
 func InitActionRegistry() {
 	newReg := map[string]ActionFn{
-		"bind_loop_req":             actionBindLoopREQ,
-		"record_loop_authorization": actionRecordLoopAuthorization,
-		"update_bound_req":          actionUpdateBoundREQ,
-		"register_locked_contracts": actionRegisterLockedContracts,
-		"register_design_documents": actionRegisterDesignDocuments,
-		"register_execution_batch":  actionRegisterExecutionBatch,
+		"planning_professional_rework": actionPlanningProfessionalRework,
+		"bind_loop_req":                actionBindLoopREQ,
+		"record_loop_authorization":    actionRecordLoopAuthorization,
+		"update_bound_req":             actionUpdateBoundREQ,
+		"register_locked_contracts":    actionRegisterLockedContracts,
+		"register_design_documents":    actionRegisterDesignDocuments,
+		"register_execution_batch":     actionRegisterExecutionBatch,
 		// BUG-PLANNING-SUBSTATE: only set_planning_phase_design remains
 		// from the planning phase-set family. The other six (initialize,
 		// contract_drafting, task_drafting, ui_prototype, rework,

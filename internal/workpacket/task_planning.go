@@ -72,6 +72,12 @@ type TaskPlanningPacket struct {
 // inputs. The task set itself is left empty until the professional answer is
 // submitted; callers must resolve it from the actual REQ-scoped directory.
 func BuildTaskPlanning(binding PlanningBinding, inputs TaskPlanningInputs) (TaskPlanningPacket, error) {
+	return BuildTaskPlanningWithTemplate(binding, inputs, "")
+}
+
+// BuildTaskPlanningWithTemplate preserves known issued templates without trusting
+// caller-supplied prompt bytes. Empty selects the current template for new work.
+func BuildTaskPlanningWithTemplate(binding PlanningBinding, inputs TaskPlanningInputs, templateSHA string) (TaskPlanningPacket, error) {
 	if binding.Stage != "S4" || binding.Owner != "Main" || !safeComponent(binding.RuntimeID) || binding.Generation < 1 || binding.StageEntry < 0 || !taskPlanningREQIDRE.MatchString(binding.Requirement.ID) || !validTaskPlanningRequirementPath(binding.Requirement.ID, binding.Requirement.Path) || binding.Requirement.Version == "" || !digestPattern.MatchString(binding.Requirement.SHA256) {
 		return TaskPlanningPacket{}, fmt.Errorf("S4 requires the actual Main stage and frozen requirement binding")
 	}
@@ -79,9 +85,18 @@ func BuildTaskPlanning(binding PlanningBinding, inputs TaskPlanningInputs) (Task
 	if err != nil {
 		return TaskPlanningPacket{}, err
 	}
-	data, err := schema.ReadAsset("stage-form-s4-template.json")
-	if err != nil {
-		return TaskPlanningPacket{}, err
+	var data []byte
+	for _, asset := range []string{"stage-form-s4-template.json", "stage-form-s4-template-before-guidance.json"} {
+		data, err = schema.ReadAsset(asset)
+		if err != nil {
+			return TaskPlanningPacket{}, err
+		}
+		if templateSHA == "" || Digest(data) == templateSHA {
+			break
+		}
+	}
+	if templateSHA != "" && Digest(data) != templateSHA {
+		return TaskPlanningPacket{}, fmt.Errorf("unknown S4 questionnaire template")
 	}
 	var template struct {
 		Stage, Adapter, Title, Instruction string
@@ -90,7 +105,7 @@ func BuildTaskPlanning(binding PlanningBinding, inputs TaskPlanningInputs) (Task
 	if err := json.Unmarshal(data, &template); err != nil || template.Stage != "S4" || template.Adapter != "task_planning" || len(template.Questions) != 3 {
 		return TaskPlanningPacket{}, fmt.Errorf("unregistered S4 task planning template")
 	}
-	templateSHA := Digest(data)
+	templateSHA = Digest(data)
 	identity, err := json.Marshal(struct {
 		Binding     PlanningBinding
 		Inputs      TaskPlanningInputs
@@ -138,8 +153,8 @@ func validTaskPlanningRequirementPath(id, path string) bool {
 }
 
 func canonicalTaskPlanningInputs(binding PlanningBinding, inputs TaskPlanningInputs) (TaskPlanningInputs, error) {
-	if len(inputs.Contracts) == 0 || len(inputs.Contracts) > 65 || len(inputs.ClauseUniverse) == 0 || len(inputs.ClauseUniverse) > 16384 {
-		return TaskPlanningInputs{}, fmt.Errorf("S4 requires bounded locked contracts, frozen sources, directories and clause universe")
+	if len(inputs.Contracts) == 0 || len(inputs.ClauseUniverse) == 0 || len(inputs.ClauseUniverse) > 16384 {
+		return TaskPlanningInputs{}, fmt.Errorf("S4 requires locked contracts, frozen sources, directories and a bounded clause universe")
 	}
 	out := TaskPlanningInputs{
 		Contracts:      append([]Reference(nil), inputs.Contracts...),
@@ -227,7 +242,7 @@ func ValidateTaskPlanningAnswer(p TaskPlanningPacket, data []byte) (TaskPlanning
 		return issue("/", "unique keys", err.Error())
 	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s4.schema.json", data); err != nil {
-		return issue("/", "registered S4 answer", err.Error())
+		return TaskPlanningAnswer{}, planningSchemaIssues(err, "S4")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -240,24 +255,28 @@ func ValidateTaskPlanningAnswer(p TaskPlanningPacket, data []byte) (TaskPlanning
 		return issue("/", "one JSON object", "trailing data")
 	}
 	answer := draft.Answer
-	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
+	if answer.Conclusion == nil && answer.IndexPath == nil && len(answer.TaskPaths) == 0 {
 		return issue("/answer/conclusion", "explicit professional task planning pass", "incomplete")
 	}
+
 	reqID := p.Binding.Requirement.ID
 	wantIndex := "docs/dev/tasks/index-" + reqID + ".md"
 	if answer.IndexPath == nil || *answer.IndexPath != wantIndex {
-		return issue("/answer/index_path", wantIndex, "missing or different")
+		return issue("/answer/index_path", wantIndex+" (repository-relative; no root prefix)", fmt.Sprintf("%v", optionalContractPath(answer.IndexPath)))
 	}
-	if len(answer.TaskPaths) == 0 || len(answer.TaskPaths) > 128 {
-		return issue("/answer/task_paths", "actual planned REQ task paths", "empty or oversized")
+	if len(answer.TaskPaths) == 0 {
+		return issue("/answer/task_paths", "actual planned REQ task paths within the answer byte budget", "empty")
 	}
 	seen := map[string]bool{}
-	for _, path := range answer.TaskPaths {
+	for i, path := range answer.TaskPaths {
 		base := filepath.Base(path)
 		if !safeRelative(path) || filepath.ToSlash(filepath.Dir(path)) != "docs/dev/tasks" || !strings.HasPrefix(base, "TASK-") || !strings.HasSuffix(base, ".md") || strings.Contains(strings.ToLower(base), "template") || seen[path] {
-			return issue("/answer/task_paths", "unique actual docs/dev/tasks/TASK-*.md paths", "invalid or duplicate")
+			return issue(fmt.Sprintf("/answer/task_paths/%d", i), "unique actual repository-relative docs/dev/tasks/TASK-*.md paths (no root prefix)", fmt.Sprintf("%q (invalid or duplicate)", path))
 		}
 		seen[path] = true
+	}
+	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
+		return issue("/answer/conclusion", "explicit professional task planning pass", "incomplete")
 	}
 	answer.TaskPaths = append([]string(nil), answer.TaskPaths...)
 	sort.Strings(answer.TaskPaths)

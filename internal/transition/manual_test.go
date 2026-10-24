@@ -158,3 +158,16 @@ func TestManualApprovedAmendmentUsesOriginalReceiverAndCurrentQuestionnaire(t *t
 		t.Fatal(err)
 	}
 }
+
+func TestManualCleanRoundUsesOriginalCompletionAndNamedRecovery(t *testing.T) {
+	manual := transition.RenderManual(&transition.LoopDefinition{Transitions: []transition.TransitionSpec{{ID: "TR-009", From: "verification", To: "acceptance", RequiredEvidence: []string{"clean_round_record"}}}}, transition.ManualOptions{})
+	for _, want := range []string{"final accepted ReviewResult", "runtime review-continue", "runtime audit-prepare", "material recovery does not repeat TR-009"} {
+		if !strings.Contains(manual, want) {
+			t.Fatalf("clean-round handoff omitted %q", want)
+		}
+	}
+	section := manual[strings.Index(manual, "### `TR-009`"):]
+	if strings.Contains(section, "Evidence bindings (copy into") || strings.Contains(section, "If a binding is missing, retry") {
+		t.Fatal("clean-round handoff asks author to copy machine bindings")
+	}
+}

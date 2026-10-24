@@ -123,9 +123,6 @@ func s6MainStartTaskSet(state map[string]any, generation int) ([]productbaseline
 		}
 		tasks = append(tasks, task)
 	}
-	if len(tasks) > 128 {
-		return nil, fmt.Errorf("S6 Main start TASK set exceeds 128 entries")
-	}
 	return productbaseline.SortTasks(tasks), nil
 }
 

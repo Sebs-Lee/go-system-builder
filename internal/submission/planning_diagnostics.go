@@ -80,3 +80,39 @@ func PlanningRecoveryCommand(root, action string) string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
 	return quote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime stage-answer " + action + " --root " + quote(root) + " --agent Main"
 }
+
+// Keep the field, reason and actionable repair together in every delivery.
+func planningFieldDiagnostic(field workpacket.FieldError) string {
+	bounded := func(value string) string {
+		if len(value) > 2048 {
+			value = strings.ToValidUTF8(value[:2048], "") + " [truncated]"
+		}
+		return value
+	}
+	return bounded(field.Pointer) + ": expected " + bounded(field.Expected) + "; observed " + bounded(field.Observed) + "; repair: " + bounded(field.Repair)
+}
+
+// Professional changes use the named rework route; recovery retains accepted content.
+func PlanningProfessionalReworkGuidance(root string) string {
+	return " For a substantive change to frozen S2 design, Main runs " + PlanningRecoveryCommand(root, "rework") + " --target design --reason '<author-written concrete design correction>'; for a substantive correction to already accepted contracts with S2 unchanged, Main runs " + PlanningRecoveryCommand(root, "rework") + " --target contracts --reason '<author-written concrete contract correction>'. Replace the reason placeholder with the professional cause; do not copy machine identity fields. Only while still in S4, a professional correction to already accepted TASKs or the dispatch index with REQ/S2/S3 unchanged uses " + PlanningRecoveryCommand(root, "rework") + " --target tasks --reason '<author-written concrete planning correction>'. After entering S5 use its original review and document-rework responsibility. Unreceived outputs can be edited normally. These are professional rework entries; recover only continues the original system outlet."
+}
+
+func planningAnswerPathValues(root string, paths []string, field, indexPrefix string) string {
+	values := map[string]any{field: []string{}}
+	for _, path := range paths {
+		if root != "" {
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				continue
+			}
+			path = filepath.ToSlash(relative)
+		}
+		if strings.HasPrefix(filepath.Base(path), indexPrefix) {
+			values["index_path"] = path
+		} else {
+			values[field] = append(values[field].([]string), path)
+		}
+	}
+	encoded, _ := json.Marshal(values)
+	return " Copyable safe draft answer path fields (complete other answers separately): " + string(encoded) + "."
+}

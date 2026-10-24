@@ -3,11 +3,15 @@ package workpacket
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 
 	"github.com/entroforge/go-system-builder/internal/schema"
 )
@@ -130,7 +134,7 @@ func ValidateContractAnswer(p ContractPacket, data []byte) (ContractAnswer, []Fi
 		return issue("/", "unique keys", err.Error())
 	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes("stage-answer-s3.schema.json", data); err != nil {
-		return issue("/", "registered S3 answer", err.Error())
+		return ContractAnswer{}, planningSchemaIssues(err, "S3")
 	}
 	var draft ContractDraft
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -143,36 +147,30 @@ func ValidateContractAnswer(p ContractPacket, data []byte) (ContractAnswer, []Fi
 	if !reflect.DeepEqual(draft, p.Draft) {
 		return issue("/", "unchanged issued questionnaire", "machine fields changed")
 	}
-	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
-		return issue("/answer/conclusion", "explicit professional pass", "incomplete")
+
+	if answer.Conclusion == nil && answer.IndexPath == nil && len(answer.ContractPaths) == 0 {
+		return issue("/answer/conclusion", "explicit professional pass after completing the draft", "draft incomplete")
 	}
-	validPath := func(path string, prefixes ...string) bool {
-		if !safeRelative(path) || filepath.ToSlash(filepath.Dir(path)) != "docs/dev/contracts" || !strings.HasSuffix(path, ".md") || strings.Contains(strings.ToLower(path), "template") {
-			return false
-		}
-		name := filepath.Base(path)
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(name, prefix) {
-				return true
-			}
-		}
-		return false
+
+	if answer.IndexPath == nil || !validContractDeliveryPath(*answer.IndexPath, "CONTRACTS-") {
+		return issue("/answer/index_path", "repository-relative docs/dev/contracts/CONTRACTS-<ID>.md (no absolute paths, traversal or templates)", fmt.Sprintf("%v", optionalContractPath(answer.IndexPath)))
 	}
-	if answer.IndexPath == nil || !validPath(*answer.IndexPath, "CONTRACTS-") {
-		return issue("/answer/index_path", "actual CONTRACTS index", "missing or invalid")
-	}
-	if len(answer.ContractPaths) == 0 || len(answer.ContractPaths) > 64 {
-		return issue("/answer/contract_paths", "complete bounded FE/BE/SYNC set", "empty or oversized")
+	if len(answer.ContractPaths) == 0 {
+		return issue("/answer/contract_paths", "at least one actual FE/BE/SYNC contract; empty contract sets are an unsupported S3 stage adaptation gap (do not fabricate a BE contract)", "empty")
 	}
 	seen := map[string]bool{}
 	families := map[string]bool{}
-	for _, path := range answer.ContractPaths {
-		if !validPath(path, "FE-", "BE-", "SYNC-") || seen[path] {
-			return issue("/answer/contract_paths", "unique actual contracts", "invalid or duplicate")
+	for i, path := range answer.ContractPaths {
+		if !validContractDeliveryPath(path, "FE-", "BE-", "SYNC-") || seen[path] {
+			return issue(fmt.Sprintf("/answer/contract_paths/%d", i), "unique repository-relative docs/dev/contracts/{FE,BE,SYNC}-<ID>.md (no absolute paths, traversal or templates)", fmt.Sprintf("%q (invalid or duplicate)", path))
 		}
 		seen[path] = true
 		families[strings.SplitN(filepath.Base(path), "-", 2)[0]] = true
 	}
+	if answer.Conclusion == nil || *answer.Conclusion != "pass" {
+		return issue("/answer/conclusion", "explicit professional pass", "incomplete")
+	}
+
 	if len(answer.Applicability) != 3 {
 		return issue("/answer/applicability", "explicit FE/BE/SYNC decisions", "incomplete")
 	}
@@ -195,4 +193,102 @@ func ContractAnswerDigest(answer ContractAnswer) (string, error) {
 		return "", err
 	}
 	return Digest(data), nil
+}
+
+// ContractDraftDeliveryPaths only projects safe author-named paths for display.
+// It grants no reception eligibility: the original validator still runs in full.
+func ContractDraftDeliveryPaths(p ContractPacket, data []byte) ([]string, bool) {
+	if int64(len(data)) > ContractAnswerReadLimit(p) || ValidateUniqueJSON(data) != nil {
+		return nil, false
+	}
+	var draft struct {
+		Answer struct {
+			IndexPath     *string  `json:"index_path"`
+			ContractPaths []string `json:"contract_paths"`
+		} `json:"answer"`
+	}
+	if json.Unmarshal(data, &draft) != nil {
+		return nil, false
+	}
+	var paths []string
+	named := draft.Answer.IndexPath != nil || len(draft.Answer.ContractPaths) > 0
+	if draft.Answer.IndexPath != nil && validContractDeliveryPath(*draft.Answer.IndexPath, "CONTRACTS-") {
+		paths = append(paths, *draft.Answer.IndexPath)
+	}
+	seen := map[string]bool{}
+	for _, path := range draft.Answer.ContractPaths {
+		if validContractDeliveryPath(path, "FE-", "BE-", "SYNC-") && !seen[path] {
+			paths = append(paths, path)
+			seen[path] = true
+		}
+	}
+	return paths, named
+}
+
+func validContractDeliveryPath(path string, prefixes ...string) bool {
+	if !safeRelative(path) || filepath.ToSlash(filepath.Dir(path)) != "docs/dev/contracts" || !strings.HasSuffix(path, ".md") || strings.Contains(strings.ToLower(path), "template") {
+		return false
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(filepath.Base(path), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func optionalContractPath(path *string) any {
+	if path == nil {
+		return nil
+	}
+	return *path
+}
+
+func planningSchemaIssues(err error, stage string) []FieldError {
+	var validation *jsonschema.ValidationError
+	if !errors.As(err, &validation) {
+		return []FieldError{{Pointer: "/", Expected: "registered " + stage + " answer", Observed: boundedContractDiagnostic(err.Error()), Repair: "Restore the issued questionnaire shape; edit only its answer fields."}}
+	}
+	var issues []FieldError
+	var walk func(*jsonschema.ValidationError)
+	walk = func(node *jsonschema.ValidationError) {
+		if len(issues) >= 8 {
+			return
+		}
+		if len(node.Causes) > 0 {
+			for _, child := range node.Causes {
+				walk(child)
+			}
+			return
+		}
+		pointer := ""
+		for _, part := range node.InstanceLocation {
+			pointer += "/" + strings.ReplaceAll(strings.ReplaceAll(part, "~", "~0"), "/", "~1")
+		}
+		var fields []string
+		switch detail := node.ErrorKind.(type) {
+		case *kind.AdditionalProperties:
+			fields = append(fields, detail.Properties...)
+		case *kind.Required:
+			fields = append(fields, detail.Missing...)
+		}
+		if len(fields) > 0 {
+			sort.Strings(fields)
+			pointer += "/" + strings.ReplaceAll(strings.ReplaceAll(fields[0], "~", "~0"), "/", "~1")
+		}
+		if pointer == "" {
+			pointer = "/"
+		}
+		issues = append(issues, FieldError{Pointer: boundedContractDiagnostic(pointer), Expected: "registered " + stage + " field shape", Observed: boundedContractDiagnostic(node.Error()), Repair: "At this field, remove unknown properties or restore the issued type and required keys; keep professional values in the registered answer fields."})
+	}
+	walk(validation)
+	return issues
+}
+
+func boundedContractDiagnostic(message string) string {
+	const limit = 2048
+	if len(message) > limit {
+		return strings.ToValidUTF8(message[:limit], "") + " [truncated]"
+	}
+	return message
 }

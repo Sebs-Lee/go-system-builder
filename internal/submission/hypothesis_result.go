@@ -135,7 +135,9 @@ func (s *Service) HypothesisResultReceipt(owner, ref string) (Receipt, error) {
 		return Receipt{}, err
 	}
 	if !ok {
-		return rejected(snapshot, packet.ID, errors.New("HypothesisResult has not been accepted")), nil
+		result := rejected(snapshot, packet.ID, errors.New("HypothesisResult has not been accepted"))
+		result.NextAction = "Main 查看本次原生返回和 Stop 的具名作者、准确答案路径及具体字段/来源诊断；恢复缺失来源或判别前提，必要时续跑原 Investigator 补充本人答案。不能把已结束但未接收的责任当作仍在后台运行，也不能代填结论或仅凭返回宣称完成。"
+		return result, nil
 	}
 	return acceptedHypothesisResultReceipt(snapshot, packet, accepted)
 }

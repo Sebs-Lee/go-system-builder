@@ -572,7 +572,7 @@ func TestRuntimeRepairEvidenceChainHandsOffToFreshS7Cursor(t *testing.T) {
 	}
 	repairPointer := snapshot.State["review"].(map[string]any)["repair"].(map[string]any)
 	nextAction, _ := repairPointer["next_action"].(string)
-	if !strings.Contains(nextAction, "runtime review-plan --file") || !strings.Contains(nextAction, "first professional S7 plan") {
+	if !strings.Contains(nextAction, "complete and save the original current S7 ReviewPlan questionnaire") || !strings.Contains(nextAction, "first professional S7 plan") || strings.Contains(nextAction, "runtime review-plan --file") {
 		t.Fatalf("TR-012 next_action must explain how to refine the staged seed before dispatch, got %q", nextAction)
 	}
 }

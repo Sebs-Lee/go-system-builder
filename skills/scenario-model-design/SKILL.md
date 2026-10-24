@@ -36,7 +36,7 @@ S6, and S7. Do not use it to define a role or a parallel methodology.
 
 ## Current Module Package
 
-Maintain the complete current behavior package under
+S2 authors maintain the complete current behavior package under
 `docs/design/prototypes/<module>/`: five authored sources and two generated
 outputs. Add HTML assets only for applicable UI behavior:
 
@@ -52,7 +52,10 @@ index.html             (UI only: current module entry)
 *.html                 (UI only: applicable pages and states)
 ```
 
-Maintain permanent browser definitions only under `web/e2e/<module>/**/*.spec.ts`.
+Later implementation maintains permanent browser definitions under `web/e2e/<module>/**/*.spec.ts`.
+S7 reads these assets and the locked package without rewriting either. A permitted
+cold-start responsibility writes missing scripts/fixtures only in its declared
+`verification_artifact_workspace` under `e2e-workspace/`.
 Service-only branches use an API caller/worker story, F-NNN operation flow and
 `browser_required:false`; they require CASEs without HTML, PATH or browser specs.
 Mixed modules retain existing UI behavior and its applicable regression scope.
@@ -61,32 +64,36 @@ may identify a review round because they record an execution fact.
 
 ## Workflow
 
-1. Read the complete existing module package before editing. Read every current
+1. S2 authors read the complete existing module package before editing. S7 Reviewers
+   read the supplied package to check the assigned Claims/CASEs, preserving all
+   locked sources and generated outputs; Main owns the complete-round coverage. Read every current
    rule, branch, CASE, story, PATH, prototype state, fixture, and module spec.
-2. Resolve locked business sources. Put REQ/decision/state/contract references
+2. S2 authors resolve locked business sources and put REQ/decision/state/contract references
    in `source_refs`; stop for clarification when an oracle cannot be derived.
-3. Author `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`,
+3. S2 authors author `scenario-model.json`, `cross-matrix.json`, `fixture-contract.json`,
    `stories.md`, and `flows.md`. The original `scenario generate` command writes
    `cases.json` and `scenario-coverage.json`, including their derived counts and
    digests. Do not copy output examples or hand-build generated files.
-4. Model facts as stable IDs and non-empty partitions. Use synthetic values only.
-5. Model `risk` on each parent rule. Model every required allow and reject
+4. S2 authors model facts as stable IDs and non-empty partitions using synthetic values.
+   S7 checks those definitions against the assigned oracle and actual observations;
+   a missing or contradictory source is reported, not rewritten to make the check pass.
+5. For S2 authoring, model `risk` on each parent rule. Model every required allow and reject
    branch with its oracle (written with the branch — polarity forces
    outcome thinking). Fill `cross-matrix.json` as the hunt's carrier: every
    meaningful fact×FR×story cell names its covering branch or a no-branch
    reason — silence is not N/A. Cite `REQ-<id>/FR-<id>` in `source_refs`.
-6. Check the design before handing the S2 package to S3: run
+6. S2 authors check the design before handing the package to S3: run
    `loop-harness scenario bridge --root .` right after convergence-1 (the
    AC source check needs no generated outputs — fix FR gaps now), then
    `scenario generate` + `scenario validate` at close for source and generated
    consistency. The original S3 receiver checks the full AC→CASE bridge;
    module validation alone does not run that REQ-wide check. Endorsed N/A is a
    declared NFR id or an explicit §A4 pointer — free text is rejected.
-7. Reconcile the full `stories.md`, `flows.md`, and applicable current `*.html` set —
+7. S2 authors reconcile the full `stories.md`, `flows.md`, and applicable current `*.html` set —
    by dual-track order stories are written BEFORE rules (they seed the
    hunt and branches cite them); flows/prototypes converge stories with
    branches and bind PATH for browser-required cases.
-8. Hand off Rule/CASE/Story/flow references to contracts and TASKs, adding PATH
+8. S2 authors hand off Rule/CASE/Story/flow references to contracts and TASKs, adding PATH
    for browser-required cases. Later implementation and verification bind specs
    and actual evidence. Any module package change requires the full module
    regression sweep in the later verification scope.
@@ -162,7 +169,9 @@ shared mutable data is a fail-closed finding.
 
 ## Validation Commands
 
-Use the repository harness when available:
+S2 authors use the repository harness for generation and validation. S7 Reviewers
+may run applicable read-only validation; they do not run generation to rewrite
+the current package or add missing FE contracts. Use the actual installed harness:
 
 ```bash
 .claude/bin/loop-harness scenario generate --module <module> --root .
@@ -170,7 +179,7 @@ Use the repository harness when available:
 .claude/bin/loop-harness scenario validate --all --root .
 ```
 
-Run module generation and validation for applicable packages; use `--all` only
+For S2, run module generation and validation for applicable packages; use `--all` only
 when the current responsibility calls for that scope. `--require-specs` belongs
 to later browser test implementation/verification work, not ordinary S2 close.
 The generator owns CASE/coverage output; the Main design receiver does not run
@@ -181,6 +190,14 @@ unavailable in the installed harness, report that concrete installation gap
 and preserve the required design work; do not fabricate generated output.
 
 ## Outputs
+
+S7 Reviewers instead record the assigned Claim observations and real evidence in
+the issued answer, with a Finding only for observed failure. A passing negative
+CASE records state, side effects, rejection and recovery in `ClaimResult.observed`
+and evidence references. Missing applicability or environment facts go to Main
+with the affected Claim and exact gap. Ordinary Findings continue safe assigned
+checks; a real P0 or dangerous action stops with actual observations and gaps.
+The following authored outputs belong to S2:
 
 - The complete current module package with reviewed human inputs and current
   generated `cases.json` and `scenario-coverage.json` outputs. Each rule keeps
@@ -202,7 +219,10 @@ unimplemented spec, or unavailable fixture is not N/A.
 
 ## Stop Conditions
 
-Stop and report a document finding when any of these occurs:
+For S2, stop authoring and report the concrete design gap when any of these occurs.
+For S7, report an observed source inconsistency as the assigned Finding, continue
+other safe checks, and return missing prerequisites/applicability to Main without
+inventing a product failure or rewriting the design:
 
 - the module package is missing or split into REQ/round/version copies;
 - a rule source or expected outcome is unknown;
@@ -223,5 +243,7 @@ Stop and report a document finding when any of these occurs:
 ## Non-Goals
 
 Do not invent business rules, implement the scenario engine, modify Runtime or
-Loop Definition, create real business data, write production/test code, decide
-stage transitions, or author DV/QA/E2E conclusions.
+Loop Definition, create real business data, write production/test code, or decide
+stage transitions. S2 authoring does not produce DV/QA/E2E conclusions; S7
+Reviewers record only their original assigned conclusions and evidence. Permitted
+cold-start verification scripts remain within the declared workspace.

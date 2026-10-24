@@ -40,7 +40,7 @@ func PrepareResponsibilityContext(root, session, agent, event, stage, responsibi
 	if !ok || context == "" || specific["permissionDecision"] != nil {
 		return output, noop
 	}
-	sum := sha256.Sum256([]byte(stage + "\x00" + responsibility + "\x00" + context))
+	sum := sha256.Sum256([]byte(stage + "\x00" + responsibility + "\x00" + responsibilityContextStamp(stage, context)))
 	stamp := fmt.Sprintf("%x", sum)
 	if old, err := os.ReadFile(path); err == nil && string(old) == stamp {
 		specific["additionalContext"] = stage + " guidance is unchanged; continue the current responsibility using the previously delivered paths and instructions."

@@ -78,23 +78,82 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(answerPath, []byte("{}"), 0600); err != nil {
+	var unfinished map[string]any
+	if err := json.Unmarshal(valid, &unfinished); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 2 || !strings.Contains(diagnostic, "correct") {
-		t.Fatalf("professional error lost its owner: %d %s", code, diagnostic)
-	}
-	active = true
-	if code, _, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 0 || !strings.Contains(diagnostic, "Main owns recovery") {
-		t.Fatalf("repeated correction was not bounded: %d %s", code, diagnostic)
-	}
-	if currentS8Snapshot(t, fixture).Revision != before.Revision {
-		t.Fatal("invalid answer fabricated a Case result")
+	answer := unfinished["answer"].(map[string]any)
+	answer["result"] = "inconclusive"
+	answer["observed"] = "The discriminator could not obtain its required source; Main must restore the missing evidence."
+	answer["evidence_refs"] = []any{}
+	answer["source_boundary_refs"] = []any{}
+	unfinishedBytes, _ := json.Marshal(unfinished)
+	beforeState, beforeJournal := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
+	for _, scenario := range []struct {
+		name string
+		data []byte
+	}{
+		{"malformed-answer", []byte("{}")},
+		{"honest-missing-evidence", unfinishedBytes},
+		{"missing-answer", nil},
+	} {
+		if scenario.data == nil {
+			if err := os.Remove(answerPath); err != nil {
+				t.Fatal(err)
+			}
+		} else if err := os.WriteFile(answerPath, scenario.data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, repeated := range []bool{false, true} {
+			active = repeated
+			if code, _, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 0 || !strings.Contains(diagnostic, "Main owns recovery") || !strings.Contains(diagnostic, owner.ownerID) || !strings.Contains(diagnostic, answerPath) {
+				t.Fatalf("%s repeated=%t did not return the original unfinished responsibility: %d %s", scenario.name, repeated, code, diagnostic)
+			}
+			if !bytes.Equal(beforeState, mustRead(t, fixture.statePath)) || !bytes.Equal(beforeJournal, mustRead(t, fixture.journalPath)) {
+				t.Fatalf("%s incomplete return changed Runtime or journal", scenario.name)
+			}
+			if receipt, code := query("--packet", p.ID, owner.ownerID); code != 0 || receipt.Accepted || receipt.WorkComplete {
+				t.Fatalf("%s incomplete return fabricated acceptance: %+v code=%d", scenario.name, receipt, code)
+			}
+			mainBody, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": fixture.root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": filepath.Join(fixture.root, p.ViewPath)}})
+			var out, diagnostic bytes.Buffer
+			if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(mainBody), &out, &diagnostic); code != 0 {
+				t.Fatalf("%s Main return failed: %d %s", scenario.name, code, &diagnostic)
+			}
+			var message struct {
+				Output struct {
+					Text string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &message); err != nil || !strings.Contains(message.Output.Text, `"accepted":false`) || !strings.Contains(message.Output.Text, "续跑原 Investigator") || !strings.Contains(message.Output.Text, "Last S8 native Stop "+p.ID) || !strings.Contains(message.Output.Text, answerPath) {
+				t.Fatalf("%s Main lost the unreceived responsibility: %v %s", scenario.name, err, &out)
+			}
+		}
+		if scenario.data != nil && !bytes.Equal(scenario.data, mustRead(t, answerPath)) {
+			t.Fatalf("%s return rewrote the author's incomplete answer", scenario.name)
+		}
 	}
 	if err := os.WriteFile(answerPath, valid, 0600); err != nil {
 		t.Fatal(err)
 	}
 	active = false
+	// Source preparation can fail before current packets are selectable.
+	// The original registered reference still identifies the unfinished
+	// responsibility, but can never authorize reception from a damaged Case.
+	currentCasePath := filepath.Join(fixture.root, p.Binding.CaseRef)
+	currentCaseBytes := mustRead(t, currentCasePath)
+	if err := os.WriteFile(currentCasePath, append(append([]byte(nil), currentCaseBytes...), '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 0 || !strings.Contains(diagnostic, "Main owns recovery") || !strings.Contains(diagnostic, owner.ownerID) || !strings.Contains(diagnostic, answerPath) {
+		t.Fatalf("Case preparation failure lost the original handoff: %d %s", code, diagnostic)
+	}
+	if !bytes.Equal(beforeState, mustRead(t, fixture.statePath)) || !bytes.Equal(beforeJournal, mustRead(t, fixture.journalPath)) {
+		t.Fatal("Case preparation failure fabricated reception")
+	}
+	if err := os.WriteFile(currentCasePath, currentCaseBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	if code, out, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 0 || out != "" || !strings.Contains(diagnostic, "original consumer") {
 		t.Fatalf("native Stop: %d %s %s", code, out, diagnostic)

@@ -19,6 +19,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
+	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -126,13 +127,15 @@ func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.
 		return err
 	}
 	fmt.Fprintf(&b, "\nRegistered workgroup-local Assignment dependencies (read-only): %s. The receiver supplies this exact set to the canonical Plan; do not copy dependencies into either private JSON file. TASK prerequisites have already been satisfied by dispatch. Explain actual input or environment assumptions in objective/oracles and unresolved risks_blockers instead.\n", dependencies)
-	current := nativeS6BriefInputs(root, r, false) + b.String() + nativeS6ProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
+	previousCurrent := nativeS6BriefInputs(root, r, false) + b.String() + nativeS6ProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
+	previousAligned := previousCurrent + nativeS6LegacySourceAlignment(r, base, plan, result)
+	current := nativeS6SourceAlignment(r, base, plan, result) + previousCurrent
 	previousInputs := nativeS6BriefInputs(root, r, true) + b.String()
 	compact := previousInputs + fmt.Sprintf(nativeS6CompactProfessionalFormat, base, filepath.Join(root, brief), plan, result)
 	legacy := previousInputs + nativeS6LegacyProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
 	if published, err := workpacket.PublishBounded(root, brief, []byte(current), 1<<20); err != nil {
 		return err
-	} else if !nativeS6BriefMatches(published, methods, current, compact, legacy) {
+	} else if !nativeS6BriefMatches(published, methods, current, previousAligned, previousCurrent, compact, legacy) {
 		return fmt.Errorf("original native task brief differs; preserve it for Main recovery")
 	}
 	bound, _ := state["bound_req"].(map[string]any)
@@ -217,7 +220,7 @@ func nativeS6Worker(state map[string]any, in policy.Input) bool {
 	if r, found, _ := assignmentrecord.ForOwner(state, in.AgentID); found {
 		return r.Contract == assignmentrecord.NativeDeliveryContract
 	}
-	return len(nativeS6Records(state)) > 0
+	return false
 }
 
 // The initial task prompt supplies the exact brief. Roles/queue order never bind it.
@@ -334,7 +337,61 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task" || in.ToolName == "SubagentHandback") && len(nativeS6Records(snap.State)) > 0 {
 		return true, 0
 	}
-	if !nativeS6Worker(snap.State, in) {
+	if in.AgentID == "" || in.AgentID == "Main" {
+		return false, 0
+	}
+	if owned, found, _ := assignmentrecord.ForOwner(snap.State, in.AgentID); found && owned.Contract != assignmentrecord.NativeDeliveryContract {
+		return false, 0
+	}
+	records := nativeS6Records(snap.State)
+	if in.Event != "SubagentStart" && in.Event != "SubagentStop" {
+		// Ordinary worker tools need no transcript read or lifecycle instructions.
+		return nativeS6Worker(snap.State, in) || len(records) > 0, 0
+	}
+	refs := make([]string, 0, len(records))
+	for _, r := range records {
+		brief, _, _ := assignmentrecord.NativePaths(r)
+		refs = append(refs, filepath.Join(root, brief))
+	}
+	taskText := nativeReviewTaskText(in, refs)
+	exact := false
+	for _, ref := range refs {
+		if nativeS6ExactReference(taskText, ref) {
+			exact = true
+			break
+		}
+	}
+	if owned, found, _ := assignmentrecord.ForOwner(snap.State, in.AgentID); found && owned.Contract == assignmentrecord.NativeDeliveryContract && exact {
+		var conflicts []assignmentrecord.Record
+		var observed []string
+		for _, r := range records {
+			brief, _, _ := assignmentrecord.NativePaths(r)
+			if r.Reference() != owned.Reference() && nativeS6ExactReference(taskText, filepath.Join(root, brief)) {
+				conflicts = append(conflicts, r)
+				observed = append(observed, filepath.Join(root, brief))
+			}
+		}
+		if len(conflicts) > 0 {
+			brief, _, _ := assignmentrecord.NativePaths(owned)
+			message := fmt.Sprintf("Native S6 responsibility mismatch: actor %s is bound to Assignment %s revision %d, original brief %s; observed conflicting exact brief(s): %s. Main resolves this original actor/brief mismatch and preserves the worktree before resuming any responsibility. No Result was inspected or received; do not assign work by role.", in.AgentID, owned.AssignmentID, owned.Revision, filepath.Join(root, brief), strings.Join(observed, "; "))
+			if in.Event == "SubagentStop" {
+				for _, r := range append(conflicts, owned) {
+					submission.RecordPlanningDiagnostic(root, snap.State, nativeS6DiagnosticKind(r), message)
+				}
+			} else {
+				_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "SubagentStart", "additionalContext": message}})
+			}
+			fmt.Fprintln(diagnostic, message)
+			return true, 0
+		}
+	}
+	if !nativeS6Worker(snap.State, in) && !exact {
+		// Start often has no task prompt/transcript yet. Absence of a precise
+		// responsibility is not permission to adopt a queued task or guess by role.
+		// Preserve the native ordinary-tool path without adding an ACL.
+		if len(records) > 0 {
+			return true, 0
+		}
 		return false, 0
 	}
 	if in.Event == "SubagentStart" || in.Event == "SubagentStop" {
@@ -350,20 +407,34 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		}
 	}
 	if in.Event == "SubagentStart" {
-		body := map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "SubagentStart", "additionalContext": "Native S6: follow the exact task brief in your native Agent prompt. Read actual inputs, save your professional plan before implementation, continue work and real self-checks without activation, commit and save Result in your own worktree. Return the exact brief and absolute Result reference. If blocked before or after forming a Plan, follow the brief’s minimal blocked Result handoff and preserve existing work; Main owns recovery. Main integrates separately. No framework launch, begin or per-tool receipt is required."}}
+		var start *assignmentrecord.Record
+		for _, r := range records {
+			brief, _, _ := assignmentrecord.NativePaths(r)
+			if exact && nativeS6ExactReference(taskText, filepath.Join(root, brief)) || !exact && r.OwnerAgentID == in.AgentID {
+				if start != nil {
+					return true, 0
+				}
+				copy := r
+				start = &copy
+			}
+		}
+		if start == nil {
+			return true, 0
+		}
+		switch workstate.AgentActivity(contextAgent(snap.State, start.OwnerAgentID)) {
+		case "done", "stopped", "cancelled":
+			return true, 0
+		}
+		brief, _, _ := assignmentrecord.NativePaths(*start)
+		context := fmt.Sprintf("Native S6 %s (Assignment %s revision %d): follow the original exact brief %s and its original source instructions. Save the professional Plan before implementation, continue actual work and self-checks without activation, commit and save Result in your own worktree. Return this brief and the absolute Result reference. For a real blocker, preserve existing work and use the brief's blocked handoff; Main owns recovery and integration.", start.Task.ID, start.AssignmentID, start.Revision, filepath.Join(root, brief))
+		body := map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "SubagentStart", "additionalContext": context}}
 		_ = json.NewEncoder(out).Encode(body)
 		return true, 0
 	}
 	if in.Event != "SubagentStop" {
 		return true, 0
 	} // Ordinary Worker tools do not manage execution.
-	records := nativeS6Records(snap.State)
-	refs := make([]string, 0, len(records))
-	for _, r := range records {
-		brief, _, _ := assignmentrecord.NativePaths(r)
-		refs = append(refs, filepath.Join(root, brief))
-	}
-	taskText := nativeReviewTaskText(in, refs)
+
 	var chosen *assignmentrecord.Record
 	for _, r := range records {
 		brief, _, _ := assignmentrecord.NativePaths(r)
@@ -390,12 +461,22 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if err := receiveNativeS6(root, in, *chosen, taskText); err != nil {
 		var handoff *nativeS6Handoff
 		if errors.As(err, &handoff) {
+			submission.RecordPlanningDiagnostic(root, snap.State, nativeS6DiagnosticKind(*chosen), nativeS6DiagnosticMessage(root, in, *chosen, taskText, err)+". Stop allowed this blocked handoff back to Main; no completion is established")
 			fmt.Fprintln(diagnostic, "Native S6 blocker returned for Main; no completion receipt created: "+err.Error())
 			return true, 0
 		}
 
-		return true, nativeStopFailure("Native S6", in.StopHookActive, err, diagnostic)
+		code := nativeStopFailure("Native S6", in.StopHookActive, err, diagnostic)
+		message := nativeS6DiagnosticMessage(root, in, *chosen, taskText, err)
+		if code == 2 {
+			message += ". Stop returned code 2 to the Worker for professional correction; actual platform execution/completion must be checked before Main recovery"
+		} else {
+			message += ". Stop allowed the incomplete return to Main for original-responsibility recovery; no completion is established"
+		}
+		submission.RecordPlanningDiagnostic(root, snap.State, nativeS6DiagnosticKind(*chosen), message)
+		return true, code
 	}
+	submission.RecordPlanningDiagnostic(root, snap.State, nativeS6DiagnosticKind(*chosen), "")
 	return true, 0
 }
 
@@ -643,8 +724,14 @@ func nativeS6RecordGuidance(root string, state map[string]any, r assignmentrecor
 	if workstate.AgentActivity(agent) == "done" {
 		return fmt.Sprintf("S6 %s: Main acknowledged the original delivery; continue the reviewed batch.", r.Task.ID)
 	}
+	if activity := workstate.AgentActivity(agent); activity == "stopped" || activity == "cancelled" {
+		return fmt.Sprintf("S6 %s: original responsibility is closed; preserve its history without re-dispatching.", r.Task.ID)
+	}
 	if ref := stringValue(agent["completion_reported_ref"]); ref != "" {
-		return fmt.Sprintf("S6 %s: professional Result received in the original Runtime record at %s; inspect its original task-receipt for blockers and own checks. A qualified completed delivery is ready for Main's `loop-harness runtime task-integrate --root %s --assignment-id %s --agent-id %s`; an incomplete or blocked result needs its actual recovery first. Required Main checks and full-batch Gate remain; do not ask the Builder to resubmit a received Result.", r.Task.ID, filepath.Join(root, ref), s7CaptureShellQuote(root), s7CaptureShellQuote(r.AssignmentID), s7CaptureShellQuote(r.OwnerAgentID))
+		return nativeS6ReceivedGuidance(root, state, r, ref)
+	}
+	if submission.PlanningDiagnostic(root, state, nativeS6DiagnosticKind(r)) != "" {
+		return nativeS6ReturnDiagnostic(root, state, r)
 	}
 	return fmt.Sprintf("S6 %s: original brief is prepared at %s for Claude Code native Agent (%s) with worktree isolation. Preparation does not prove the Agent has started. Main dispatches this exact brief if no actual native task exists, otherwise follows that task's execution/resume and actual blocker. Builder owns professional plan, implementation/self-checks and Result; SubagentStop receives delivery. No workspace launcher or activation is required.", r.Task.ID, filepath.Join(root, brief), r.RoleFamily)
 }

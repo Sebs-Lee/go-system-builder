@@ -79,29 +79,6 @@ baseline — the running code IS the baseline. Do not redefine `S-NNN` /
 `F-NNN` ID rules (those belong to `user-story-design` /
 `user-flow-design`).
 
-## Inlined Methodology
-
-Loop Engineering uses two Skill categories: Methodology (reusable procedure
-for an engineering event, including entry, steps, output and stop conditions)
-and Best Practice (professional quality criteria and review techniques for
-one technical concern). Role identity is not a Skill; Builder, Document
-Verifier, Delivery Verifier, QA and E2E Browser identities belong to Agent
-Definitions. An Agent gains capability by combining one role definition, one
-task instance and the smallest applicable Skill set. Skill files must
-reference source documents by path. They must not copy REQ, contract, TASK,
-BUG or report bodies. The `ui` risk tag selects the complementary
-`ui-prototyping`, `user-story-design`, and `user-flow-design` Skills.
-Routing order: current runtime state and phase -> pending legal event -> one
-primary Methodology Skill -> Agent Definition kind -> task artifact and risk
-tags -> smallest applicable Best-practice set -> the original native task and
-professional delivery contract. Composition rules: one workflow event that requires
-reusable procedure has exactly one primary Methodology Skill; at most two
-secondary Methodology dependencies should be active for one action.
-Anti-patterns include `builder`, `verifier` or `qa` as a general-purpose
-role Skill; a Skill that reads or writes current Loop state as its own
-authority; a Skill containing a second state machine; copied REQ/contract/
-TASK/BUG content; and Best Practices loaded globally without applicability.
-
 ## Core Principle
 
 A prototype describes **the target** — what we are about to build. The

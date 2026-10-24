@@ -86,7 +86,7 @@ func TestS7IncompleteNativeReturnHandsOriginalResponsibilityToMain(t *testing.T)
 					t.Fatalf("unreceived return changed Runtime: revision %d/%d lifecycle %v", after.Revision, before, after.State["lifecycle"])
 				}
 				text := mainNativeReturn(t, root, ref, tc.message)
-				for _, want := range []string{`"accepted":false`, `"work_complete":false`, "Stop 的具名作者", "具体字段/来源诊断", "续跑原 Reviewer", "不能把已结束但未接收的责任当作仍在后台运行"} {
+				for _, want := range []string{tc.want, p.ID, p.Binding.OwnerAgentID, `"accepted":false`, `"work_complete":false`, "Stop 的具名作者", "具体字段/来源诊断", "续跑原 Reviewer", "不能把已结束但未接收的责任当作仍在后台运行"} {
 					if !strings.Contains(text, want) {
 						t.Fatalf("Main lost unfinished recovery %q: %s", want, text)
 					}

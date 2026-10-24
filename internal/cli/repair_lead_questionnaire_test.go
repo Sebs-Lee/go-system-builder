@@ -473,6 +473,10 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if len(blockedRefs) != 1 {
 			t.Fatalf("blocked Runtime references = %#v, want the original failed attempt", blockedRefs)
 		}
+		blockedMain, err := nativeReturnSummary(root, blockedSnapshot, nativeReturnSubject{kind: "Targeted", id: selections[0].performingAssignmentID, ref: targetPath, targeted: &selections[0]})
+		if err != nil || strings.Contains(blockedMain, "runtime repair handoff complete") {
+			t.Fatalf("blocked Targeted incorrectly offered Handoff recovery: %v %s", err, blockedMain)
+		}
 		blockedArtifactPath := filepath.Join(root, filepath.FromSlash(blockedRefs[0].Path))
 		blockedBytes, err := os.ReadFile(blockedArtifactPath)
 		if err != nil {
@@ -512,9 +516,75 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		}
 		writeRepairLeadJSON(t, targetPath, persistedBlocked)
 		feedback.Reset()
+		// Force a partial success: the independent PASS is accepted while the
+		// automatic Handoff cannot create its original artifact directory.
+		handoffDir := filepath.Join(root, ".claude/review/repair/handoffs")
+		if err := os.WriteFile(handoffDir, []byte("temporary preparation blocker"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		nativeReturn.AgentID = "opaque-targeted-id-after-native-resume"
 		if handled, code := nativeS9Hook(root, nativeReturn, &bytes.Buffer{}, &feedback); !handled || code != 0 || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
 			t.Fatalf("resolved blocker did not resume/create/commit the pass result: handled=%v feedback=%s", handled, feedback.String())
+		}
+		partial, err := runtime.NewStore(statePath, journalPath).Snapshot()
+		if err != nil || stringValue(repairPointerCLI(partial.State)["status"]) != "ready_for_full_review" || !strings.Contains(feedback.String(), "runtime repair handoff complete") {
+			t.Fatalf("partial reception lost recovery: %v %s", err, &feedback)
+		}
+		refsBefore := repairArtifactRefs(repairPointerCLI(partial.State), "targeted_reverification_artifacts", "", "")
+		mainPartial, _ := nativeReturnSummary(root, partial, nativeReturnSubject{kind: "Targeted", id: selections[0].performingAssignmentID, ref: targetPath, targeted: &selections[0]})
+		if !strings.Contains(mainPartial, "runtime repair handoff complete") || !strings.Contains(mainPartial, handoffDir) {
+			t.Fatalf("Main return omitted partial completion recovery: %s", mainPartial)
+		}
+		stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, partial)
+		unchanged, _ := runtime.NewStore(statePath, journalPath).Snapshot()
+		if unchanged.Revision != partial.Revision {
+			t.Fatal("ordinary projection retried Handoff")
+		}
+		// Exhaust the actual budget at the same completion boundary. Preparing
+		// its application must not choose an increase or open another round.
+		configuration := mapFieldCLI(partial.State, "configuration")
+		if configuration == nil {
+			configuration = map[string]any{}
+			partial.State["configuration"] = configuration
+		}
+		configuration["repair"] = map[string]any{"max_full_review_rounds": integerValue(nestedStateValue(partial.State, "review", "round"))}
+		writeRepairLeadJSON(t, statePath, partial.State)
+		_, exitErr := completeRepairExit(root)
+		if exitErr == nil {
+			t.Fatal("blocked completion unexpectedly succeeded")
+		}
+		applicationPath, app, appErr := s7BudgetDecisionApplicationForState(root, partial.State)
+		if appErr != nil {
+			t.Fatal(appErr)
+		}
+		var prepared s7BudgetDecisionApplication
+		readRepairLeadJSON(t, applicationPath, &prepared)
+		if prepared.Decision != "" || prepared.NewMaxFullReviewRounds != nil {
+			t.Fatal("completion invented budget approval")
+		}
+		if err := os.Remove(handoffDir); err != nil {
+			t.Fatal(err)
+		}
+		// The unchanged real budget still blocks Handoff even after the source
+		// preparation problem is repaired.
+		if _, err := completeRepairExit(root); err == nil {
+			t.Fatal("Handoff bypassed actual budget")
+		}
+		newMax := app.PreviousMaxFullReviewRounds + 1
+		prepared.Decision, prepared.Reason, prepared.NewMaxFullReviewRounds = runtime.S7BudgetDecisionIncrease, "Human explicitly approved one additional round", &newMax
+		writeRepairLeadJSON(t, applicationPath, prepared)
+		feedback.Reset()
+		if handled, code := runSavedS7BudgetDecisionQuestionnaire(root, repairLeadSaveInput(root, applicationPath, ""), &feedback, &bytes.Buffer{}); !handled || code != 0 {
+			t.Fatalf("budget decision did not resume original completion: %s", &feedback)
+		}
+		feedback.Reset()
+
+		if code := runRuntimeRepairHandoffComplete([]string{"--root", root}, &feedback, &bytes.Buffer{}); code != 0 {
+			t.Fatalf("explicit completion failed: %s", &feedback)
+		}
+		recovered, _ := runtime.NewStore(statePath, journalPath).Snapshot()
+		if integerValue(nestedStateValue(recovered.State, "review", "round")) != integerValue(nestedStateValue(partial.State, "review", "round"))+1 || len(repairArtifactRefs(repairPointerCLI(recovered.State), "targeted_reverification_artifacts", "", "")) != len(refsBefore) {
+			t.Fatal("recovery repeated Targeted or review rounds")
 		}
 		handoffContext = feedback.String()
 		var persistedPass repair.TargetedReverificationRequest
@@ -630,9 +700,26 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	if _, err := os.Stat(seedPath); err != nil {
 		t.Fatalf("registered S7 seed is missing at its reported path: %v", err)
 	}
+	for _, path := range []string{reviewPlanQuestionnairePath(root, handoffSnapshot.State), reviewPlanGuidePath(reviewPlanQuestionnairePath(root, handoffSnapshot.State))} {
+		if _, err := os.Stat(path); err != nil || !strings.Contains(handoffContext, path) {
+			t.Fatalf("completion did not deliver S7 preparation %s: %v %s", path, err, handoffContext)
+		}
+	}
+	var mainReturn bytes.Buffer
+	mainEvent := policy.Input{Event: "PostToolUse", ToolName: "Agent", CWD: root, ToolInput: map[string]any{"prompt": "Return the independent Targeted answer " + targetPaths[0]}}
+	if handled, code := nativeMainReturnHook(root, mainEvent, &mainReturn); !handled || code != 0 || !strings.Contains(mainReturn.String(), seedPath) || !strings.Contains(mainReturn.String(), reviewPlanQuestionnairePath(root, handoffSnapshot.State)) {
+		t.Fatalf("Main Agent return did not deliver the completed S7 entry: %t %d %s", handled, code, &mainReturn)
+	}
 	committedAgain, replayed, err := completeRepairHandoff(root)
 	if err != nil || committedAgain.Path != handoffRef.Path || replayed.Revision != handoffSnapshot.Revision {
 		t.Fatalf("repeated automatic Handoff changed the result: ref=%#v revision=%d want=%d err=%v", committedAgain, replayed.Revision, handoffSnapshot.Revision, err)
+	}
+	// A later no-change S8 return can preserve the historical repair pointer.
+	// Its own S7 entry must not be described using this old repair's seed.
+	entry := mapFieldCLI(mapFieldCLI(handoffSnapshot.State, "review"), "round_entry")
+	entry["transition_id"] = "S8-ROUTE-CONSUME"
+	if guidance := repairHandoffProjectionContext(root, handoffSnapshot.State); strings.Contains(guidance, "Fresh S7 seed") || strings.Contains(guidance, "ReviewPlan questionnaire") {
+		t.Fatalf("historical repair offered its seed for a later S7 entry: %s", guidance)
 	}
 }
 

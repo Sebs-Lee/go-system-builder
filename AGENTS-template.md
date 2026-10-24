@@ -26,8 +26,15 @@ clean round, but S9 never goes directly to S10.
 
 ## Native S9 dispatch
 
-Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
-
+Identify the current responsibility from its exact original brief or Targeted
+request. Follow `.claude/skills/agent-dispatch/SKILL.md#native-s9` for native handoff and `docs/control/agent-protocol.md#s9`
+for completion and recovery. Builders own private PlanReport/Result and real
+self-checks; an independent verifier, including test-builder in that role, owns
+only Targeted observations and conclusions. Ordinary Worker saves do not receive
+these artifacts; SubagentStop invokes their original consumers. Main owns actual
+dispatch, integration/checks, Impact and the fresh S7 handoff. First incomplete
+returns preserve rejection and exact gaps for Main without manufacturing completion.
+Existing registered frozen execution keeps its original sources and recovery.
 
 ## Native S5 / S7 / S8 professional work
 
@@ -132,9 +139,9 @@ does not execute a merge, deployment, publication, or release.
 
 ## Native S6 delivery (s6-native-v1)
 
-For a newly prepared native S6 TASK, Main uses `s6 prepare --task <TASK> --role <role> --root <Main>` and carries the exact returned task brief into Claude Code's native Agent prompt. Claude Code owns creation, foreground/background execution, messaging and resume. No Team, opaque platform ID, workspace prepare/launch, team launch, generic readback, begin or activation is required.
+For a newly prepared native S6 TASK, Main uses `s6 prepare --task <TASK> --role <role> --root <Main>` and carries the exact returned brief into Claude Code native Agent with worktree isolation. Follow [agent-dispatch](skills/agent-dispatch/SKILL.md#native-s6-s6-native-v1) for dispatch and original reception/integration; the brief supplies this instance's source, paths, author fields and normal/blocked return. SubagentStart adds only a bounded reminder for an exact existing responsibility. Claude Code owns execution and resume; no extra activation or save receipt is required.
 
-The Builder reads the brief and actual TASK inputs, saves its professional plan, continues implementation and actual self-checks, commits deliverables and saves the professional Result. Ordinary saves do not register an execution lifecycle. Return the exact task brief / delivery path. SubagentStart supplies bounded engineering guidance; SubagentStop receives actual professional artifacts through the original domain Writer. Main integrates separately and the original full-batch Gate remains. A real blocker may be handed back; never fabricate PASS or approval.
+Main completes original integration and checks. Its successful completion outlet checks the entire TR-003 batch, follows TR-006 when qualified and supplies the exact S7 ReviewPlan/guide in the same response. Preserve completed work on failure. Re-enter the original `runtime task-integrate` command when directed to resume unfinished integration/checks or the S6 exit; checkpoints prevent duplicate merge/reception. For a preserved/blocked checkpoint after Main check failure, resolve its environment/check cause and follow the original pending command with `--retry-preserved`; bare replay retains the failure. Successful integration needing only exit continuation has no such retry prerequisite. After migration to S7, use the supplied original `s7 draft` entry for missing materials. An unrelated tool call is not the continuation trigger.
 
 This section applies only to `s6-native-v1`. Keep the original frozen recovery behavior for existing workspace/legacy assignments and other stages until migrated. The legacy sections below are not prerequisites of native S6.
 
@@ -280,7 +287,7 @@ S0 requirement_design
 The clean path is `S7 clean round → S10 acceptance/audit → S11`. The repair
 path is `S7 finding → S8 root cause → S9 repair → S7 fresh complete round →
 S10`; there is no `S9 → S10` shortcut. Failure routes: S5/S6 spec defect →
-S2/S3 rework; S10 defect → S8/S9/S7; REQ change or irreversible decision →
+S2/S3/S4 rework at the affected layer; S10 defect → S8/S9/S7; REQ change or irreversible decision →
 the matching human Gateway.
 
 ## Human Gateway types
@@ -327,6 +334,17 @@ the whole-round outcome. Reissue after controlled Plan
 revision and after queued Assignments become dispatched. Never fill another
 Reviewer's verdict or select a producer from an answer body.
 
+For the S7→S10 clean path, final valid Result reception forms CleanRound and
+its original completion outlet evaluates the gate/TR-009 and prepares the exact
+S10 acceptance questionnaire in the same handoff. Read the accepted Result,
+transition and material facts separately. Follow the named original continuation
+(`loop-harness runtime review-continue --root <Main>`) or current S10 material
+recovery (`loop-harness runtime audit-prepare --root <Main>`) for a concrete failure, preserving accepted work
+and existing reports. An ordinary tool call is not required to trigger the exit;
+Main does not resubmit Reviewer answers or copy clean_round bindings. Main owns
+whole-round coverage; each Reviewer performs its assigned Claims/CASEs using the
+actual browser, API, command or state-based method.
+
 For the S7→S8 handoff, a sealed batch advances through TR-008 on the next Main
 PreToolUse. Main then reads the supplied Batch and Findings, fills the exact S8
 intake's grouping_rationale and saves it; the original consumer creates the Case.
@@ -336,8 +354,15 @@ with the prepared exact view/answer. The Investigator saves its professional
 causal result and returns the reference for SubagentStop reception, without a
 generic PLAN_REPORT. An explicit `plan_approval_required` assignment keeps its
 original approval. The original Case Writer records the result and receipt;
-new questions still require Main dispatch. Follow the original Case route and
-scoped contract approval; an answer is not repair authorization.
+new questions still require Main dispatch. Put experiment-specific scope,
+stopping and unresolved conditions in the original `discriminator`, and
+predictions in `expected_outcomes`. The first native return may hand unfinished
+work and diagnostics to Main without accepting the answer or advancing the Case.
+Main restores missing sources or resumes the author. Preserve the one active
+Case's source set; mixed causes do not imply arbitrary split/merge support.
+Follow the original Case route and actual contract approval: the designated
+Driver may be Main, while an undesignated Main organizes and faithfully records
+the review. An answer or saved Contract is not repair authorization.
 
 1. Read the Hook's current responsibility, exact questionnaire view/answer
    paths, missing duties and next action.
@@ -427,13 +452,35 @@ must still deliver the actionable context; display caching never grants authorit
 A Worker plan checkpoint requiring no approval does not silence progress
 reports to the user.
 
+## S4 planning handoff
+
+Main completes the current REQ's TASK batch and waves-v1 index from the supplied
+frozen inputs, commits the formal outputs on the bound branch, and saves the
+original three-field answer. Use numeric TASK IDs such as `TASK-009` or
+`TASK-009-01`. Ordinary planning needs no fresh human approval; keep actual REQ
+amendments and decisions beyond existing authorization at their human boundary.
+The original consumer checks and receives the batch, then follows TR-002.
+
+If accepted S4 planning needs a professional TASK/index correction while S4 is
+still current, use `runtime stage-answer rework --target tasks --reason "<concrete TASK/index correction>" --root . --agent Main`.
+Preserve valid REQ/S2/S3 inputs; true design/contract gaps return to their own
+layer. After entry into S5 follow its independent review/document-rework route.
+For accepted work with a pending outlet, follow the supplied complete `recover`
+command; after transition with incomplete S5 preparation, follow the supplied
+complete `issue` command. Keep the accepted answer and completed preparation.
+Successful handoff supplies two exact view/answer/source-root sets; Main
+actually dispatches the two independent native reviewers via `team-planning`.
+Necessary status/next diagnostics remain available for concrete uncertainty.
+
 ## Bounded planning continuation
 
 S3/S4 work does not require another user approval merely because a stage
 changed or drafting is substantial. Main Stop provides one continuation
 reminder when a locked REQ has a current unblocked planning milestone and
 no delegated agent. `stop_hook_active` always permits the next Stop; this
-is not an unattended scheduler or proof of completion. Honor explicit user
+is not an unattended scheduler or proof of completion. The reminder is
+separate from ordinary tool permissions: continue authorized professional work
+and self-review using available tools, without a new planning approval. Honor explicit user
 stop requests and explain actual permission/external waits. Unresolved S2
 direction decisions and other stages retain their original authority boundaries;
 reuse an existing applicable human decision without asking again.
@@ -473,20 +520,19 @@ generate from them. Do not create a per-REQ model copy or an extra registry.
 
 ### S9 repair questionnaires
 
-After the approved RepairContract, original Session/RepairPlan and Builder
-dispatch, use the Hook's exact PlanReport view and answer paths. Fill and save
-only the professional plan, actual pre-fix checks or blockers and proposed paths.
-Saving directly records these pre-execution facts and advances the current work
-when reports are ready; do not send another generic PLAN_REPORT or reconstruct
-a packet path or command.
+Use the current native brief or independent Targeted request as the exact authoring
+entry, following `.claude/skills/bug-resolution/SKILL.md`. Main reads its own
+questions and accepted artifacts; it does not fill Worker answers. Builder Plan
+and Result are flat private outputs in the actual native worktree; Main-root
+questions supply read-only inputs. Save before/after actual work and return the
+original references for SubagentStop. Independent Targeted uses its original answer
+only, without a Builder PlanReport or product changes. Ordinary Worker saves do not
+receive work. Main saves its ChangeImpact through its original consumer.
 
-Once the original S9 graph reaches `fixing`, implement only the approved repair
-scope. Use the Hook's exact RepairResult view and answer paths to report the
-professional verdict, frozen assertion results, unit results, evidence, scope,
-risk, migration and rollback. Saving directly records this professional result.
-Run actual required checks; actual source changes use Git delivery and Main
-integration, while no-change testing requires no new commit. Do not send a separate
-generic completion report or infer completion from green checks. Main retains
-actual integration when needed, required Main checks, explicit human decisions,
-independent targeted verification and the fresh complete S7 round.
-Never guess paths or run manual `stage-answer issue/consume` commands.
+Keep accepted Candidates, Final, Impact, Targeted and Handoff distinct. Resume only
+the unfinished original responsibility or completion outlet identified by feedback;
+do not repeat accepted observations or use ordinary status/Pre to run handoff.
+After successful TR-012, Main fills and saves the supplied original S7 ReviewPlan
+questionnaire; the seed is input, not PASS or a second manual registration task.
+Never guess paths or manually issue/consume. Registered frozen executions keep
+their original answer shapes, sources and named recovery.

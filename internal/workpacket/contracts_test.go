@@ -2,6 +2,7 @@ package workpacket
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,6 +36,23 @@ func TestContractProjectionFreezesInputsAndRequiresExplicitApplicability(t *test
 	if len(issues) > 0 {
 		t.Fatal(issues)
 	}
+	t.Run("large complete delivery and empty adaptation gap", func(t *testing.T) {
+		large := p.Draft
+		large.Answer = answer
+		large.Answer.ContractPaths = nil
+		for i := 1; i <= 96; i++ {
+			large.Answer.ContractPaths = append(large.Answer.ContractPaths, fmt.Sprintf("docs/dev/contracts/BE-%03d.md", i))
+		}
+		encoded, _ := json.Marshal(large)
+		if _, issues := ValidateContractAnswer(p, encoded); len(issues) != 0 {
+			t.Fatalf("legal large delivery rejected: %v", issues)
+		}
+		large.Answer.ContractPaths = []string{}
+		encoded, _ = json.Marshal(large)
+		if _, issues := ValidateContractAnswer(p, encoded); len(issues) == 0 || issues[0].Pointer != "/answer/contract_paths" || !strings.Contains(issues[0].Expected, "adaptation gap") {
+			t.Fatalf("empty delivery lacks adaptation diagnostic: %v", issues)
+		}
+	})
 	if answer.Applicability["BE"].Disposition != "required" {
 		t.Fatal("professional applicability changed")
 	}

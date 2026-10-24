@@ -107,7 +107,7 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 	}
 	answer, issues := workpacket.ValidateTaskPlanningAnswer(p, data)
 	if len(issues) > 0 {
-		err := fmt.Errorf("S4 task-planning answer %s: %s", issues[0].Pointer, issues[0].Expected)
+		err := fmt.Errorf("S4 task-planning answer %s", planningFieldDiagnostic(issues[0]))
 		r := s.rejectedTaskPlanning(snap, p, err)
 		r.FieldErrors = issues
 		return r, err
@@ -126,13 +126,12 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 		if prior.ContentHash != digest {
 			return s.rejectedTaskPlanning(snap, p, runtime.ErrSubmissionConflict), runtime.ErrSubmissionConflict
 		}
+		RecordPlanningDiagnostic(s.Root, snap.State, "reception", "")
 		life, _ := snap.State["lifecycle"].(map[string]any)
 		baseline, _ := snap.State["baseline"].(map[string]any)
 		if (prior.ControlStatus == "pending" || prior.ControlStatus == "no_transition") && snap.State["runtime_id"] == p.Binding.RuntimeID && number(baseline["generation"]) == p.Binding.Generation && life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
 			result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: prior.FollowupID, Files: s.Files})
-			if controlErr == nil && result.Error == "" {
-				snap = result.Snapshot
-			}
+			return s.taskPlanningControlReceipt(snap, p, result, controlErr)
 		}
 		return s.taskPlanningReceipt(snap, p)
 	} else {
@@ -140,6 +139,9 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 		baseline, _ := snap.State["baseline"].(map[string]any)
 		if snap.State["runtime_id"] != p.Binding.RuntimeID || number(baseline["generation"]) != p.Binding.Generation || life["state"] != "planning" || life["phase"] != "tasks" || number(life["phase_revision"]) != p.Binding.StageEntry {
 			err := fmt.Errorf("S4 answer is not for the current task-planning responsibility")
+			return s.rejectedTaskPlanning(snap, p, err), err
+		}
+		if err := runtime.ValidateIssuedTaskPlanningPacket(s.Root, snap.State, p, s.Files); err != nil {
 			return s.rejectedTaskPlanning(snap, p, err), err
 		}
 		if err := s.validateTaskPlanningChecks(snap.State, p); err != nil {
@@ -164,21 +166,21 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 	}
 	next, err := runtime.RecordEvidence(s.Root, s.StatePath, s.JournalPath, runtime.EvidenceRequest{Context: ctx, ExpectedRevision: -1, ID: id, Kind: "planning_task", Path: envelopePath, ProducedBy: []string{"Main"}, ResponsibilityID: "Orchestrator", Validator: s.Validator, Submission: &runtime.SubmissionRequest{PacketID: p.ID, Owner: "Main", AnswerJSON: data, Files: s.Files}})
 	if err != nil {
-		return rejected(snap, p.ID, err), err
+		r := s.rejectedTaskPlanning(snap, p, err)
+		if ctx.Err() != nil {
+			r.ConsumerOwner, r.ConsumerPending = "Main", true
+			r.NextAction = "S4 接收事务中断，尚不能确认最终接收状态：" + err.Error() + "。保留原答卷；Main 使用 " + PlanningRecoveryCommand(s.Root, "recover") + " 恢复原事务并核实接收/阶段事实，再决定是否仍需保存。"
+			RecordPlanningDiagnostic(s.Root, snap.State, "reception", r.NextAction)
+		}
+		return r, err
 	}
 	record, found, err := runtime.FindSubmission(next.State, p.ID)
 	if err != nil || !found {
 		return Receipt{}, fmt.Errorf("S4 reception has no durable original record")
 	}
 	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: record.FollowupID, Files: s.Files})
-	if controlErr == nil && result.Error == "" {
-		next = result.Snapshot
-	}
-	r, err := s.taskPlanningReceipt(next, p)
-	if err != nil {
-		return Receipt{}, err
-	}
-	return r, nil
+	return s.taskPlanningControlReceipt(next, p, result, controlErr)
+
 }
 
 func currentTaskPlanningPacket(state map[string]any, binding workpacket.PlanningBinding) (workpacket.TaskPlanningPacket, bool, error) {
@@ -209,6 +211,7 @@ func currentTaskPlanningPacket(state map[string]any, binding workpacket.Planning
 }
 
 func (s *Service) rejectedTaskPlanning(snapshot runtime.Snapshot, p workpacket.TaskPlanningPacket, err error) Receipt {
+	RecordPlanningDiagnostic(s.Root, snapshot.State, "reception", err.Error())
 	r := rejected(snapshot, p.ID, err)
 	answerPath := filepath.Join(s.Root, filepath.FromSlash(p.AnswerPath))
 	r.NextAction = fmt.Sprintf("按具体错误修复 S4 交付或来源，再保存原答案 %s。冻结上游变化须按原阶段流程处理。", answerPath)
@@ -244,7 +247,9 @@ func (s *Service) taskPlanningReceipt(snap runtime.Snapshot, p workpacket.TaskPl
 		return r, err
 	}
 	if !found {
-		return rejected(snap, p.ID, fmt.Errorf("S4 answer not received")), nil
+		r := rejected(snap, p.ID, fmt.Errorf("S4 answer not received"))
+		r.NextAction = "按具体原因修复后保存原答卷 " + filepath.Join(s.Root, p.AnswerPath) + "。" + PlanningDiagnostic(s.Root, snap.State, "reception")
+		return r, nil
 	}
 	r.SubmissionKey = record.Key
 	r.Accepted = true
@@ -261,14 +266,24 @@ func (s *Service) taskPlanningReceipt(snap runtime.Snapshot, p workpacket.TaskPl
 		r.WorkComplete = false
 		r.ResponsibilityStatus = "replaced"
 	}
+	for _, ev := range evidenceRows(snap.State) {
+		if ev["id"] == record.EvidenceID && ev["status"] == "invalid" {
+			r.WorkComplete = false
+			r.ResponsibilityStatus = "replaced"
+			break
+		}
+	}
 	if !r.WorkComplete {
 		r.NextAction = "这是旧代或已替换的 S4 接收记录；按当前监听给出的问卷继续，不重交此旧卷。"
 	} else if r.WorkComplete && (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && life["state"] == "planning" && life["phase"] == "tasks" && number(life["phase_revision"]) == p.Binding.StageEntry {
 		r.ConsumerOwner, r.ConsumerPending = "main", true
-		r.NextAction = "S4 本人交付已接收，可以结束本责任；Main 检查原 TR-002 门与 system_followup " + record.FollowupID + " 的具体缺项。真实材料修复后由原 Post 接续；技术中断沿已有 runtime stage-answer recover 恢复，不重交已接收答案，也不制造工具事件等待推进。"
+		r.NextAction = "S4 本人交付已接收，可以结束本责任；Main 检查原 TR-002 门与 system_followup " + record.FollowupID + " 的具体缺项。真实材料修复后使用 " + PlanningRecoveryCommand(s.Root, "recover") + " 接续原出口，不重交已接收答案，也不制造工具事件等待推进。"
 		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
 	} else if record.ControlStatus == "advanced" {
 		r.NextAction = "S4 本人交付已接收，TR-002 已推进至 S5；后续由 S5 独立审查。"
+	}
+	if r.ConsumerPending {
+		r.NextAction += PlanningDiagnostic(s.Root, snap.State, "outlet")
 	}
 	return r, nil
 }
@@ -289,4 +304,46 @@ func (s *Service) TaskPlanningReceipt(path, packetID string) (Receipt, error) {
 		return Receipt{}, fmt.Errorf("no original S4 issuance")
 	}
 	return s.taskPlanningReceipt(snap, p)
+}
+
+// Keep reception, transition and its diagnostic distinct. Prefer the original
+// Controller's snapshot; if a later read fails, retain the last known facts and
+// name the uncertainty. Observation never receives a second answer.
+func (s *Service) taskPlanningControlReceipt(origin runtime.Snapshot, p workpacket.TaskPlanningPacket, result controller.ControlResult, controlErr error) (Receipt, error) {
+	RecordPlanningDiagnostic(s.Root, origin.State, "reception", "")
+	latest := origin
+	var snapshotErr error
+	if result.Snapshot.State != nil {
+		latest = result.Snapshot
+	} else {
+		var observed runtime.Snapshot
+		observed, snapshotErr = s.snapshot()
+		if snapshotErr == nil {
+			latest = observed
+		}
+	}
+	r, err := s.taskPlanningReceipt(latest, p)
+	if err != nil {
+		return r, err
+	}
+	message := ""
+	if controlErr != nil {
+		message = controlErr.Error()
+	}
+	if result.Error != "" {
+		message += "；" + result.Error
+	}
+	if !result.QualityGate.TransitionCommitted && len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
+		message += fmt.Sprintf("；原门 %s：缺项 %v；冲突 %v", result.QualityGate.GateID, result.QualityGate.Missing, result.QualityGate.Conflicts)
+	}
+	if snapshotErr != nil {
+		message += "；最终 Runtime 读取未完成：" + snapshotErr.Error() + "；当前阶段仅投影最后已知事实，原事务状态需具名恢复核实"
+	}
+	if message != "" {
+		r.NextAction = "S4 答卷已接收；原 TR-002 系统接续需检查。具体原因：" + message + "。修复后使用 " + PlanningRecoveryCommand(s.Root, "recover") + "；保留已接收答案，无需重交。"
+		RecordPlanningDiagnostic(s.Root, origin.State, "outlet", r.NextAction)
+	} else if result.QualityGate.TransitionCommitted {
+		RecordPlanningDiagnostic(s.Root, origin.State, "outlet", "")
+	}
+	return r, nil
 }

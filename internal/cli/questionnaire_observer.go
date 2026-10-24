@@ -103,16 +103,29 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 						path := filepath.Join(root, stringValue(row["answer_path"]))
 						service, serviceErr := submission.New(root)
 						if serviceErr == nil {
-							ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
+							ctx, cancel := context.WithTimeout(contextForHook(request), 12*time.Second)
 							defer cancel()
-							receipt, saveErr := service.SaveTaskPlanning(ctx, path)
+							// Continue the durable original reception, without reading or
+							// receiving the author's answer again on an unrelated Post.
+							recovered, saveErr := service.Recover(ctx, "Main", 2)
+							receipt, receiptErr := service.TaskPlanningReceipt("", record.PacketID)
+							for _, candidate := range recovered {
+								if candidate.PacketID == record.PacketID {
+									receipt = candidate
+									receiptErr = nil
+									break
+								}
+							}
+							if saveErr == nil {
+								saveErr = receiptErr
+							}
 							if saveErr != nil {
 								fmt.Fprintf(stderr, "S4 original followup pending: %v\n", saveErr)
 								if receipt.Error == "" {
 									receipt.Error = saveErr.Error()
 								}
 							}
-							prepareS5PlanningHandoff(ctx, root, &receipt)
+							continueS5PlanningHandoff(contextForHook(request), root, &receipt)
 							return true, renderStageAnswerHook(stdout, path, receipt, "S4")
 						}
 					}

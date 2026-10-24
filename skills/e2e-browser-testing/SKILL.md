@@ -6,17 +6,19 @@ description: Use when translating a module's current flows and scenario cases in
 ## Authority
 Tests prove flow behavior in a real browser; they do not redefine the design. This reusable method was distilled from prior project E2E work without retaining instance-artifact references. The current ReviewPlan owns assigned coverage and the original S7 consumer owns round qualification. This Skill explains flow-to-spec methods and evidence quality; `playwright-e2e` owns Playwright test-code, fixture, locator, and debugging practice. The flow-to-spec translation, hybrid CDP wiring, and evidence-bundle contracts below are the canonical shape a QA Reviewer checks during S7.
 ## Applicability
-Apply to `behavior-change` risk on UI-impacting REQs, the QA-E2E responsibility, and any cross-REQ module-flow regression sweep.
+Apply to the browser portion of `behavior-change`, QA-E2E and cross-REQ module-flow regression responsibilities. An E2E lens may instead verify API, command or state-based behavior: use its assigned contract and actual request/command/state evidence, with `testing-strategy` and applicable `integration-verification`. Browser URLs, HTML, selectors, CDP and Playwright assets are prerequisites only for browser work.
 ## Required Inputs
-Read the assigned module's complete current package: `scenario-model.json`, `cases.json`,
+For assigned browser work, read the module's complete current package: `scenario-model.json`, `cases.json`,
 `scenario-coverage.json`, `fixture-contract.json`, `flows.md`, `stories.md`, `*.html`,
 and `index.html`. REQs appear only in `source_refs`; module definitions are not copied per
 REQ or round. Also read existing specs under `web/e2e/{module}/`, the locked SYNC contract
 (for wire-shape parity assertions), the running frontend URL, and the auth strategy.
+Main owns full-round module and affected-surface coverage. Each Reviewer executes the exact assigned Claims/CASEs and reports a missing surface to Main; complete inventory checks do not assign every CASE to every Reviewer. S7 reads locked scenario/flow sources; it does not regenerate or rewrite them.
+
 ## Scenario Inventory and Path Contract
 
-- Treat `cases.json` as the sole inventory of current scenario cases. Enumerate
-  every `browser_required: true` CASE together with its branch mapping,
+- Treat `cases.json` as the sole inventory of current scenario cases. Main enumerates
+  every required browser CASE for the round; the Reviewer selects the assigned CASEs with their branch mapping,
   polarity, oracle, and `flow_refs`.
 - Keep the flow and path references separate: a case may reference `F-NNN` and
   one or more `PATH-*` IDs as independent `flow_refs`; never concatenate these
@@ -33,8 +35,9 @@ REQ or round. Also read existing specs under `web/e2e/{module}/`, the locked SYN
 
 ## Quality Criteria
 
-Map every browser-required CASE and its branch mapping from `cases.json` to a
-current module Playwright spec. Each spec binding must carry the exact CASE ID,
+Map every assigned browser-required CASE and its branch mapping from `cases.json` to
+the actual selected Playwright spec, whether an existing regression asset or a
+cold-start script in the declared verification workspace. Each spec binding must carry the exact CASE ID,
 and every referenced `PATH-*` ID in the same actual test callback body. Retain
 the separate `F-NNN` ref in `cases.json` only for structural membership
 validation against `flows.md`; it is not part of the callback-binding gate.
@@ -42,7 +45,9 @@ Cover positive paths and assert every negative oracle's `visible`,
 `terminal_state`, `persisted_effects`,
 `forbidden_side_effects`, `rejection`, `expected_state`, and `recovery`;
 represent the no-recovery value exactly as `recovery: "N/A"` and require its
-source refs and reason. Capture CDP events for network / console / runtime
+source refs and reason. A passing expected rejection is recorded in `ClaimResult.observed`
+and real evidence references; Finding encounter fields are used only for a failed
+Claim. Capture CDP events for network / console / runtime
 exceptions and produce idempotent re-runnable evidence. Required allow/reject
 branch coverage must be 100%.
 ## Outputs
@@ -58,7 +63,7 @@ into a round-named location.
 ## N/A Criteria
 N/A only when no UI-impacting behavior change occurred AND no cross-REQ module sweep is required.
 ## Stop Conditions
-Return a concrete source/environment blocker to Main when the frozen input has drifted, the frontend is unreachable, or required selectors prevent deterministic checks. An observed flow/spec mismatch becomes a Finding; continue the remaining safe assigned checks without silently rewriting the specification. Real P0 stops dangerous work and retains unobserved coverage as described below.
+Return the affected Claim and concrete source/environment blocker to Main when frozen input drift, an unreachable frontend or missing required selectors prevents a conclusion. Stop the affected checks and continue other safe assigned coverage. An observed flow/spec mismatch becomes a Finding; continue the remaining safe assigned checks without silently rewriting the specification. Real P0 stops dangerous work and retains unobserved coverage as described below.
 ## Non-Goals
 Do not use Cypress or other frameworks when the project standard is Playwright. Do not bind selectors to CSS classes or copy text (use `data-test`). Do not skip the cross-REQ regression sweep. Do not mask CDP-captured errors to force a green.
 
@@ -79,14 +84,16 @@ gate. Preserve browser coverage and real independence when work is partitioned.
 
 ## Core Principle
 
-Main 提供原 `s7-review-result-v1` 题目与准确私人答案位置。读取真实材料，完成本人的独立浏览器验证，只填写专业 `answer`，保存后返回同一引用，由 `SubagentStop` 调原消费者接收。新原生责任不增加通用 PLAN／激活或保存回执前置。保留机器预填与 `verification_artifact_digest=null`；消费者从实际执行来源固定并校验摘要，作者不计算或抄写。真实浏览器执行、证据来源、完整当前模块 CASE/PATH 覆盖和本人专业结论仍须完成。
+Main 提供原 `s7-review-result-v1` 题目与准确私人答案位置。读取真实材料，完成本人的独立浏览器验证，只填写专业 `answer`，保存后返回同一引用，由 `SubagentStop` 调原消费者接收。新原生责任不增加通用 PLAN／激活或保存回执前置。保留机器预填与 `verification_artifact_digest=null`；消费者从实际执行来源固定并校验摘要，作者不计算或抄写。浏览器责任仍须完成本人分配 Claims/CASE/PATH 的真实执行、证据来源和专业结论；完整当前模块覆盖由 Main 在整轮计划与结果中核对。
 
 E2E tests are the **executable transcription of current module `flows.md` and CASE oracle**.
 The current module package is the source of truth; the spec is its compiled, runnable form.
 Therefore:
 
-- **Specs live under the module path** and bind `CASE ID + PATH ID`; never create a REQ,
-  round, v1/v2, or ad-hoc scenario copy.
+- **Existing permanent specs live under the module path** and bind `CASE ID + PATH ID`.
+  S7 reads/runs those assets there; permitted cold-start scripts live in the declared
+  verification workspace. Neither branch creates a REQ-owned or duplicate scenario
+  specification to replace current module truth.
 - **Exact callback binding is mandatory**: only exact CASE and PATH tokens inside
   the actual `test()` callback body count. IDs present only in a test title,
   `test.describe` label, comment, fixture, or another callback do not satisfy
@@ -94,10 +101,10 @@ Therefore:
 - **Hybrid Playwright + CDP**: Playwright drives user-journey actions; CDP captures low-level events (network, console, runtime exceptions) on the same Chrome instance for forensic evidence.
 - **Deterministic selectors via `data-test`** — never bind to CSS classes, copy text, or DOM structure that visual redesigns would break.
 - **Evidence is idempotent**: anyone can rerun the spec and get the same shape of evidence (JSONL + PNG + status counts).
-- **Cross-REQ regression is mandatory**: when a REQ touches a module, run every
-  current browser-required CASE and every separately referenced `PATH-*` journey
-  from `cases.json`, after validating each `F-NNN` structural membership against
-  `flows.md`; do not limit execution to the newly changed behavior.
+- **Cross-REQ regression is mandatory**: Main plans every required browser CASE
+  and referenced PATH in affected modules across the round. Each Reviewer runs
+  its assigned coverage, validating the separate F-NNN membership against flows.md;
+  the full round must not shrink to only the newly changed behavior.
 
 ## Flow-to-Spec Translation
 
@@ -114,7 +121,7 @@ supplies the path actions and checkpoints.
 | flows.md element | Playwright spec element |
 |---|---|
 | `## F-001 KYC 审核员处理 P0 case` | validates the CASE's structural flow membership; an optional `test.describe` label does not count as callback binding |
-| `source_refs: [REQ-031/FR-003]` | recorded in the narrative report and case mapping as origin, never as spec ownership |
+| `source_refs: [REQ-031/FR-003]` | retained in the original answer or referenced case-mapping evidence as origin, never as spec ownership |
 | `**触发**: 审核员登录后看到 P0 case 标记` | `test.beforeEach` login + navigate |
 | `**角色**: kyc-reviewer` | auth fixture (per-persona token) |
 | `**前置**: fixture FX-...` | seed step via API before the test, not via UI |
@@ -170,7 +177,7 @@ await page.click('.el-button--primary')                    // CSS-framework-boun
 await page.click('div.card > div.footer > button')         // structure-bound
 ```
 
-If `data-test` is missing on an element the flow needs, **stop and surface as a frontend-engineering finding** — do not fall back to brittle selectors. Add the `data-test` requirement to the FE contract before the spec can pass.
+If `data-test` is missing on an element the assigned flow needs, stop that affected check and surface the observed gap with its evidence; continue other safe assigned checks without brittle-selector workarounds. During implementation, add the required `data-test` hook through the assigned FE contract work. During read-only S7 review, report the observed missing hook and affected check to Main; do not edit the locked FE contract or product to obtain PASS.
 
 ## Hybrid CDP Wiring
 
@@ -286,16 +293,18 @@ A complete witness → journey → persistence/forbidden-effects example, includ
 
 ## Full-Module Regression Sweep
 
-When a REQ touches `docs/design/prototypes/<module>/`, **every** current
-browser-required CASE and its mapped branch/path journey from `cases.json` must
-be exercised, not only the newly changed behavior. Validate and execute each
+When a REQ touches `docs/design/prototypes/<module>/`, Main must arrange execution
+of **every** required browser CASE and its mapped branch/path journey from
+`cases.json` across the complete round, not only newly changed behavior. A Reviewer
+executes only the assigned Claim/CASE slice; a full sweep applies to that Reviewer
+only when the original Assignment gives it that scope. Validate and execute each
 referenced path against `flows.md`, and use `scenario-coverage.json` only as the
 aggregate gate for counts, polarity ratio, and required-branch coverage. This is
 the regression sweep mandated by `docs/rules/ui-prototype.md §8`.
 
 ### Sweep mechanics
 
-1. Enumerate browser-required CASE IDs, branch mappings, and their separate
+1. Read Main's assigned slice of the required browser CASE inventory, branch mappings, and separate
    `F-NNN` and `PATH-*` refs from `docs/design/prototypes/<module>/cases.json`.
 2. Use each separate `F-NNN` ref to validate structural membership against
    `flows.md`, including that every referenced `PATH-*` belongs to that flow;
@@ -303,13 +312,20 @@ the regression sweep mandated by `docs/rules/ui-prototype.md §8`.
    from `flows.md` or `scenario-coverage.json`.
 3. Check `scenario-coverage.json` as an aggregate gate only: required allow/reject
    coverage and the configured polarity ratio must pass.
-4. For each CASE, ensure a current module spec under `web/e2e/<module>/` binds the
-   exact CASE ID and every full PATH ID in one actual callback. Do not require
-   the `F-NNN` token in that callback.
-5. If a required spec is missing, fail the sweep loudly; do not create a round-named
-   placeholder or silently skip it.
-6. Run the full sweep: `pnpm playwright test web/e2e/<module>/ --grep 'CASE-|PATH-'`
-7. Capture positive/negative branch and per-flow pass/fail counts in the round report.
+4. For each assigned CASE, verify the actual selected spec binds its exact CASE
+   and every full PATH ID in one callback; F-NNN need not occur in the callback.
+   Existing `web/e2e/<module>/` assets remain read/run-only. For `cold_start`,
+   implement missing scripts/fixtures in `verification_artifact_workspace`,
+   then run those real files alongside any selected reusable assets.
+5. A missing required existing asset is a concrete gap; do not silently skip it
+   or create a placeholder. A declared cold-start missing script is authored in
+   its permitted workspace before execution, without editing product or contracts.
+6. Use the actual selected paths and configured Playwright runner. For an assigned
+   complete existing module sweep, for example: `pnpm playwright test web/e2e/<module>/ --grep 'CASE-|PATH-'`.
+   For cold start, pass the real `<verification_artifact_workspace>/<spec>.spec.ts`
+   and required project/config options; ensure the runner discovers that directory.
+   A sliced Assignment uses its actual CASE selection, not an unassigned module sweep.
+7. Record actual assigned coverage, command and per-CASE results in the original answer/evidence; Main assesses aggregate coverage.
 
 ### Why mandatory
 
@@ -317,7 +333,8 @@ A module's flow set is shared across REQs. REQ-A adds a tab; REQ-B refactors dat
 
 ## Auth Strategy
 
-Document the token strategy in the narrative report up front:
+For assigned authenticated browser behavior, explain the actual token strategy
+in the original answer or its referenced existing evidence:
 
 - **localStorage key**: e.g. `localStorage 'token'`
 - **Request header**: e.g. `x-token: <jwt>`
@@ -369,11 +386,10 @@ docker compose up -d   # if backend services needed
 pnpm run seed:test
 
 # Run
-pnpm playwright test web/e2e/{module}/ --grep 'CASE-|PATH-'
+pnpm playwright test <actual-selected-spec-paths> --grep <assigned-CASE-pattern>
 
 # Evidence lands at
-ls docs/reports/e2e/evidence/*.jsonl
-ls docs/reports/e2e/screenshots/*.png
+ls <assigned-evidence-directory>
 ```
 
 State the actual repeatability observed. Nondeterminism, changed state and unsafe
@@ -386,8 +402,8 @@ Assess the assigned E2E evidence against the applicable criteria below. The orig
 S7 consumer and exit gate decide whole-round qualification; an E2E bundle alone
 cannot clear delivery and QA obligations or authorize repair:
 
-- [ ] Every browser-required CASE and every `PATH-*` ref from `cases.json` is bound in one actual callback; each separate `F-NNN` ref validates structural flow membership against `flows.md` but is not required in the callback (full-module sweep complete)
-- [ ] Required allow and reject branches both have 100% execution/coverage evidence, and the module positive/negative ratio passes
+- [ ] Every assigned browser-required CASE and every `PATH-*` ref from `cases.json` is bound in one actual callback; each separate `F-NNN` ref validates structural flow membership against `flows.md` but is not required in the callback (assigned slice complete; Main checks the full-module aggregate)
+- [ ] Assigned required allow and reject branches have 100% execution evidence; Main checks the complete module aggregate and configured ratio
 - [ ] Selectors use `data-test` exclusively; no CSS-class or copy-text binding
 - [ ] Hybrid CDP wiring captures Network + Page + Runtime events for every test
 - [ ] The original answer and referenced evidence contain actual environment, coverage, observations and safe continuation instructions; no duplicate narrative is required

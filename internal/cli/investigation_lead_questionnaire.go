@@ -39,10 +39,22 @@ type investigationLeadQuestion struct {
 	EvidenceRefs     []string          `json:"evidence_refs"`
 }
 
-func stageInvestigationLeadQuestionnaireContext(root string, request policy.Input, snapshot runtime.Snapshot) string {
+func stageInvestigationLeadQuestionnaireContext(root string, request policy.Input, snapshot runtime.Snapshot) (context string) {
+	// Contract review and an approved S9 handoff no longer ask Main to
+	// register an investigation route. Keep that budget with its own work.
 	if context := stageInvestigationLeadContractContext(root, request, snapshot); context != "" {
 		return context
 	}
+	defer func() {
+		if context == "" || !mainQuestionnaireViewer(request) || strings.Contains(context, "S8 investigation reentry budget:") {
+			return
+		}
+		_, document, _, err := investigationLeadSource(root, snapshot.State)
+		if err == nil && document != nil {
+			context += investigationLeadBudgetContext(root, snapshot.State, document)
+		}
+	}()
+
 	if context := stageInvestigationLeadDispositionContext(root, request, snapshot); context != "" {
 		return context + " Optional registered evidence examples (the route keeps its original reference semantics): " + investigationLeadEvidenceIndexContext(root, snapshot.State)
 	}
@@ -75,10 +87,10 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 			rows = append(rows, investigationLeadQuestion{ExpectedOutcomes: map[string]string{"support": "", "refute": ""}, SourceFindingIDs: []string{}, EvidenceRefs: []string{}})
 		}
 		draft = rows
-		questions = "Each array row is one falsifiable causal question: fill statement, invariant, discriminator, expected_outcomes as an object with support/refute strings, source_finding_ids as Finding IDs, and evidence_refs as the registered evidence IDs or real execution anchors described below. Both reference fields are string arrays. Explain the read-only investigation bounds and when the discriminator must stop or return inconclusive. Consider credible competing mechanisms; do not manufacture an alternative merely to fill rows. Select the professional division of work; agent_id is optional when no owner has been selected. Existing hypothesis_id values are supplied from the Case; new rows need no ID, and rows may be reordered. Save this file to register the questions and their original Investigator dispatches. Main must then use the platform to actually start/resume the named investigators; registration does not prove a platform launch."
+		questions = "Each array row is one falsifiable causal question: fill statement, invariant, discriminator, expected_outcomes as an object with support/refute strings, source_finding_ids as Finding IDs, and evidence_refs as the selected Findings’ frozen evidence_refs reused unchanged, registered evidence IDs, already captured S8 path references, or real execution anchors described below. Both reference fields are string arrays. The issued Investigator question supplies the general product/spec/test/config read-only boundary. Put this discriminator’s specific experiment scope, stop conditions and inconclusive conditions in discriminator; put concrete supporting/refuting observations in expected_outcomes.support/refute. Do not invent scope or stop_condition fields. Consider credible competing mechanisms; do not manufacture an alternative merely to fill rows. Select the professional division of work; agent_id is optional when no owner has been selected. Existing hypothesis_id values are supplied from the Case; new rows need no ID, and rows may be reordered. Save this file to register the questions and their original Investigator dispatches. Main must then use the platform to actually start/resume the named investigators; registration does not prove a platform launch."
 	}
 	if human != nil && document != nil {
-		questions = "Fill each actual causal question using statement, invariant, discriminator and expected_outcomes (support/refute strings). source_finding_ids may stay [] when no actual Findings exist; evidence_refs may use the actual human decision ID/path shown here. Other references retain their existing semantics. Explain actual read-only bounds and inconclusive cases; no invented competing hypothesis is required. Save, then Main actually dispatches the chosen investigators."
+		questions = "Fill each actual causal question using statement, invariant, discriminator and expected_outcomes (support/refute strings). source_finding_ids may stay [] when no actual Findings exist; evidence_refs may use the actual human decision ID/path shown here. Other references retain their existing semantics. The issued question supplies the general product/spec/test/config read-only boundary. Put specific experiment scope, stop conditions and inconclusive conditions in discriminator, with support/refute observations in expected_outcomes; do not invent scope or stop_condition fields. No invented competing hypothesis is required. Save, then Main actually dispatches the chosen investigators."
 	}
 	if repairLeadPreparationEvent(request.Event) {
 		var err error
@@ -115,7 +127,7 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 		}
 	}
 	routeHint := ""
-	if routePaths := investigationLeadDispositionPaths(root, snapshot.State); len(routePaths) != 0 {
+	if routePaths := investigationLeadDispositionPaths(root, snapshot.State); len(routePaths) != 0 && !investigationLeadReentryExhausted(snapshot.State, document) {
 		routeHint = " Current professional route entry: " + routePaths[0] + ". Main may choose an earlier specification/REQ/duplicate/investigate_more disposition there; the original route consumer checks its actual conditions."
 	}
 	return "S8 Main questionnaire: " + path + ". " + sources.String() + questions + routeHint
@@ -125,7 +137,40 @@ func stageInvestigationLeadQuestionnaireContext(root string, request policy.Inpu
 // no attestation, registration or new qualification check; the original save
 // consumer still checks the referenced evidence and physical source bytes.
 func investigationLeadEvidenceReferenceContext(root string, state map[string]any) string {
-	return "For Hypothesis.evidence_refs only: values are registered evidence IDs or real existing execution anchors (test://<actual-run-or-check> only for an execution that actually exists). Finding/evidence file paths are reading sources, not evidence_refs values. Do not invent an execution anchor to fill a question. The original Hypothesis consumer verifies applicability and source SHA on save. " + investigationLeadEvidenceIndexContext(root, state)
+	return investigationLeadFindingReferencesContext(root, state) + "For Hypothesis.evidence_refs only: values may reuse the selected Findings’ frozen evidence_refs unchanged, or registered evidence IDs or real existing execution anchors (test://<actual-run-or-check> only for an execution that actually exists). Unbound Finding/evidence file paths are reading sources; a bare path is not a registered or captured Hypothesis evidence reference. Already captured S8 path:<shared-evidence-path>#sha256=<fixed-digest> references from accepted Case results may also be reused unchanged; do not copy hashes from elsewhere or register an alias. Do not invent an execution anchor to fill a question. The original Hypothesis consumer verifies applicability and source SHA on save. " + investigationLeadEvidenceIndexContext(root, state)
+}
+
+// Read the immutable Finding selected by the original Batch; never derive an
+// evidence alias or digest. Save remains responsible for source applicability.
+func investigationLeadFindingReferencesContext(root string, state map[string]any) string {
+	batch, _, _, err := investigationLeadSource(root, state)
+	if err != nil {
+		return "Original Finding references require Main/system source recovery: " + err.Error() + ". "
+	}
+	selected := stringSliceAny(batch["finding_ids"])
+	var out strings.Builder
+	for _, row := range objectSliceAny(mapFieldCLI(state, "entities")["findings"]) {
+		id := stringValue(row["finding_id"])
+		if !slices.Contains(selected, id) {
+			continue
+		}
+		finding, err := investigationLeadReadObject(root, stringValue(row["path"]), stringValue(row["sha256"]))
+		if err != nil {
+			fmt.Fprintf(&out, "Finding %s frozen source needs Main/system recovery: %v. ", id, err)
+			continue
+		}
+		refs, _ := json.Marshal(stringSliceAny(finding["evidence_refs"]))
+		fmt.Fprintf(&out, "Selected Finding %s frozen evidence_refs=%s (source %s); copy applicable values unchanged into Hypothesis.evidence_refs alongside that source_finding_ids. ", id, refs, resolveRootPath(root, stringValue(row["path"])))
+	}
+	return out.String()
+}
+
+func investigationLeadContinueQuestionsContext(root string, state map[string]any) string {
+	paths := investigationLeadQuestionnairePathsForQuestions(root, state)
+	if len(paths) == 0 {
+		return "Main/system must recover the original hypotheses.json path before further questions. "
+	}
+	return "For an unresolved explanation, directly append the next discriminating question to the original hypotheses answer at " + paths[0] + ", save and actually dispatch its Investigator. No investigate_more route registration is a prerequisite. "
 }
 
 func investigationLeadEvidenceIndexContext(root string, state map[string]any) string {
@@ -148,7 +193,7 @@ func investigationLeadEvidenceIndexContext(root string, state map[string]any) st
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
-		out.WriteString("No valid current-generation/current-round evidence IDs are recorded. Main/system owns any missing registered source evidence. The original field-specific consumer retains its reference requirements.")
+		out.WriteString("No valid current-generation/current-round evidence IDs are recorded. This does not invalidate the supplied frozen sources or accepted S8 file evidence; use the reference forms described for the current field.")
 	} else {
 		example, _ := json.Marshal([]string{ids[0]})
 		fmt.Fprintf(&out, "Available registered-ID array example: evidence_refs=%s; read the corresponding path when assessing that evidence.", example)
@@ -602,4 +647,24 @@ func investigationLeadDispatch(root string, state map[string]any, hypothesis map
 		}
 	}
 	return "", "", false, nil
+}
+
+func investigationLeadBudgetContext(root string, state, document map[string]any) string {
+	budget, err := investigation.InvestigationReentryBudget(state, document)
+	if err != nil {
+		return " S8 investigation reentry budget: Main/system must resolve " + err.Error()
+	}
+	context := fmt.Sprintf(" S8 investigation reentry budget: used=%d, limit=%d, remaining=%d. This counts consecutive investigate_more route registrations, not questions, results or S7 rounds.", budget.Used, budget.Limit, budget.Remaining)
+	if budget.Exhausted {
+		context += " Reentry limit reached: do not register investigate_more again. Preserve accepted facts. " + investigationLeadContinueQuestionsContext(root, state) + " If still unresolved, Main explains the actual gap to the human; do not invent a route or increase S7 budget."
+	}
+	return context
+}
+
+func investigationLeadReentryExhausted(state, document map[string]any) bool {
+	if document == nil {
+		return false
+	}
+	budget, err := investigation.InvestigationReentryBudget(state, document)
+	return err == nil && budget.Exhausted
 }

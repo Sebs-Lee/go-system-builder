@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/controlproof"
+	"github.com/entroforge/go-system-builder/internal/evidence"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
@@ -273,6 +274,9 @@ func verifyCheckpointHypothesisReceipt(root string, state map[string]any, journa
 		if text, ok := value.(string); ok {
 			value = strings.TrimSpace(text)
 		}
+		if key == "evidence_refs" && matchesS8EvidenceProjection(p.ID, value, row[key]) {
+			continue
+		}
 		if !hypothesisJSONEqual(row[key], value) {
 			return fmt.Errorf("S8 result projection differs from complete answer: %s", key)
 		}
@@ -291,6 +295,16 @@ func verifyCheckpointHypothesisReceipt(root string, state map[string]any, journa
 			"expected_outcomes":  map[string]any{"support": strings.TrimSpace(question.ExpectedOutcomes.Support), "refute": strings.TrimSpace(question.ExpectedOutcomes.Refute)},
 			"source_finding_ids": question.SourceFindingIDs, "evidence_refs": question.EvidenceRefs, "status": "open",
 		})
+	}
+	projectedQuestions, _ := row["new_hypotheses"].([]any)
+	if len(projectedQuestions) == len(expectedNew) {
+		for i, projected := range projectedQuestions {
+			actual, _ := projected.(map[string]any)
+			expected, _ := expectedNew[i].(map[string]any)
+			if matchesS8EvidenceProjection(p.ID, expected["evidence_refs"], actual["evidence_refs"]) {
+				expected["evidence_refs"] = actual["evidence_refs"]
+			}
+		}
 	}
 	if !hypothesisJSONEqual(row["new_hypotheses"], expectedNew) {
 		return fmt.Errorf("S8 server-assigned new hypotheses differ from complete answer")
@@ -390,4 +404,18 @@ func verifyCheckpointHypothesisReceipt(root string, state map[string]any, journa
 		}
 	}
 	return nil
+}
+
+func matchesS8EvidenceProjection(packetID string, authored, projected any) bool {
+	a, aok := checkpointStringSlice(authored)
+	b, bok := checkpointStringSlice(projected)
+	if !aok || !bok || len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] && !evidence.MatchesS8PathBinding(packetID, a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }

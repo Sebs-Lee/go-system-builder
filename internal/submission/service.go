@@ -103,10 +103,11 @@ func (s *Service) IssueContext(ctx context.Context, owner string) ([]workpacket.
 	if err != nil {
 		return nil, err
 	}
-	packets, err := runtime.S5Packets(s.Root, snapshot.State, owner)
+	packets, err := runtime.S5PacketsWithFiles(s.Root, snapshot.State, owner, s.Files)
 	if err != nil {
 		return nil, err
 	}
+	analysis := map[string]*workpacket.TaskAnalysisRef{}
 	for i, p := range packets {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -115,10 +116,22 @@ func (s *Service) IssueContext(ctx context.Context, owner string) ([]workpacket.
 			return nil, findErr
 		} else if !issued {
 			bound, _ := snapshot.State["bound_req"].(map[string]any)
-			p, err = s.freezeTaskAnalysis(p, text(bound["id"]))
+			// This call pins every packet through the original Runtime writer.
+			// Analysis itself is identical for exactly the same frozen read set.
+			keyBytes, _ := json.Marshal(p.Inputs)
+			key := string(keyBytes)
+			if ref := analysis[key]; ref != nil {
+				p, err = workpacket.BindTaskAnalysis(p, ref)
+			} else {
+				p, err = s.freezeTaskAnalysis(p, text(bound["id"]))
+				if err == nil {
+					analysis[key] = p.TaskAnalysis
+				}
+			}
 			if err != nil {
 				return nil, err
 			}
+
 			packets[i] = p
 		}
 		if _, err := runtime.RecordWorkPacketContext(ctx, s.Root, s.StatePath, s.JournalPath, p, s.Files, s.Validator); err != nil {

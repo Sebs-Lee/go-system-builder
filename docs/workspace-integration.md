@@ -135,13 +135,13 @@ loop-harness s6 prepare --root <Main> --task <TASK> --role backend-builder
 
 Builder 按 brief 的固定源提交，在本人 worktree 读取其中列明的 TASK、规格与产品相对路径；准确 brief 和方法入口可以位于 Main 控制根，但 Main 后续变化不替换本责任来源。在自己实际 worktree 的私人 `.claude/assignments/native/` 路径先保存专业计划，再实现、自检、提交真实产品改动、保存 Result。私人草稿不进入 Git，不写回 Main。返回准确 brief 和 Result 的绝对路径；保存不代表激活或接收，Stop 才通过原适配器提交实际产物。不要增加手工 begin、task-complete、report/deliver 步骤。
 
-PLAN 沿 brief 给出的字段填写 `objective`、`planned_paths`、`assertion_checks`、`dependencies`、`risks_blockers`。每项 assertion 包含 `assertion`、`oracle`、`done_when_indexes`，覆盖 Done when 的零基索引。没有依赖或风险时按实际情况填空数组，不补机器绑定。
+当前私人 Plan 沿 brief 填写 `objective`、`planned_paths`、`assertion_checks`、`risks_blockers`。每项 assertion 包含 `assertion`、`oracle`、`done_when_indexes`，覆盖 Done when 的零基索引。登记依赖由系统带入 canonical Plan，不在私人 Plan/Result 填写 `dependencies`；无风险时 `risks_blockers` 填空数组。
 
-Result 按原草稿填写 `summary`、`assertion_evidence`、`risks_blockers`、`scope_deviations`、`closing_assessment`。每项 assertion/oracle 与计划逐字一致；`evidence_refs` 是实际 worktree 内、本人写范围或已列阅读范围中的精确存在文件路径，不带行号、说明或命令。命令及观察写入 summary 或 rationale，不能虚构日志文件引用。
+Result 按原草稿填写 `summary`、`assertion_evidence`、`risks_blockers`、`scope_deviations`、`closing_assessment`。每项 `assertion_evidence` 使用本人 Plan 的零基 `plan_assertion_index` 和非空 `evidence_refs`；系统从原 Plan 派生 assertion/oracle，不要求抄写。`evidence_refs` 是实际 worktree 内、本人写范围或已列阅读范围中的精确存在文件路径，不带行号、说明或命令。命令及观察写入 summary 或 rationale，不能虚构日志文件引用。
 
-`closing_assessment.disposition` 为 `complete`、`incomplete` 或 `blocked`；每条条件填写 `done_when_index`、`judgment` 和具体 `rationale`；`plan_assertion_indexes` 可由原 Plan 映射派生，显式填写仍核对原关系。complete 要求所有条件 satisfied，且没有未决阻断或范围偏差。这是本人专业闭合判断，不能替代 Main 必需检查或 fresh S7。默认准备的原 closing contract 明确使用空 `worker_checks`、`post_merge` 和 Main 检查位置；Builder 仍执行 TASK 自检并如实报告，不能把空 runner 列表解释成不用验证。
+`closing_assessment.disposition` 为 `complete`、`incomplete` 或 `blocked`；每条条件填写 `done_when_index`、`judgment` 和具体 `rationale`；`plan_assertion_indexes` 可由原 Plan 映射派生，显式填写仍核对原关系。历史完整 assertion/oracle 证据行及显式 closing 映射仅作接收兼容，仍严格核对原 Plan；同一证据行不混用 compact index 和全文字段，不把旧格式当当前必填。complete 要求所有条件 satisfied，且没有未决阻断或范围偏差。这是本人专业闭合判断，不能替代 Main 必需检查或 fresh S7。默认准备的原 closing contract 明确使用空 `worker_checks`、`post_merge` 和 Main 检查位置；Builder 仍执行 TASK 自检并如实报告，不能把空 runner 列表解释成不用验证。
 
-真实阻塞可以发生在形成 Plan 前或之后。按 brief 在原 Result 路径保存最小 blocked Result：`summary` 说明进展与未完成工作，非空 `risks_blockers` 说明原因，`closing_assessment.disposition` 为 `blocked`。保留已有 Plan/真实证据，返回原 brief 与实际 Result 的绝对路径；不要编造检查、证据或计划。这是交 Main 恢复的未接收交接。已按完整报告合同填写的 blocked Result 仍走原校验，记录未完成不等于可集成。
+真实阻塞可以发生在形成 Plan 前或之后。按 brief 在原 Result 路径保存最小 blocked Result：`summary` 说明进展与未完成工作，非空 `risks_blockers` 说明原因，`closing_assessment.disposition` 为 `blocked`。保留已有 Plan/真实证据，返回原 brief 与实际 Result 的绝对路径；不要编造检查、证据或计划。这是交 Main 恢复的未接收交接。已按完整报告合同填写的 blocked/incomplete Result 仍走原校验，接收不等于可集成，也不能原地改写已接收答案。需要后继修订时，若已有原返工检查点依据，直接沿下节具名修订；若尚无该依据，Main 先运行原 `loop-harness runtime task-integrate --root <Main> --assignment-id <assignment-id>`，由原消费者记录 closing blocker 检查点并拒绝 merge，再运行下节 `s6 prepare --revise-assignment`。保留已接收报告及真实阻塞，不把这次记录阻塞解释成合并或完成。
 
 原登记中的非空 runner 检查、回执耐久副本与静态复用条件见[底层检查参考](workspace-execution-recovery.md#显式-checkprofile)。仅在当前原来源确实提供对应命令时使用，不把冻结执行的命令复制给新责任。
 
@@ -175,6 +175,10 @@ Main 完成原 ReviewPlan 与专业登记，原准备入口确保当前 dispatch
 计划草稿、登记与修订共用绑定 REQ 和当前冻结 TASK 的明确模块范围，读取其中必需浏览器 CASE。TASK 仅以原 `Module current truth` 和 `Module Impact` 的 `Modules touched` 声明选模块，背景阅读及说明链接不扩大范围。每个已知 CASE 在 E2E Claim 的 `source_refs` 使用完整 `cases.json#CASE` 引用，安排实际验证或用原理由/检查表明确 N/A；笼统 `ui_impact=none` 不代替逐 CASE 处置。缺明确来源交 Main 恢复，不全库兜底；Main 仍须分析未显式记录的消费者影响。
 
 新只读责任可直接使用原 Main 根下私人问卷，不创建 execution。已登记独立 Worker 使用其确切来源，缺失时不能回落 Main；cold-start E2E 必须如实报告实际执行来源，`verification_artifact_digest` 由原消费者自动固定并验证，作者保留原卷机器预填或 null，不计算、复制摘要。显式 `plan_approval_required` 等待原审批。
+
+Main 组织整轮完整模块和受影响面，Reviewer 只执行本人分配的 Claims/CASE；浏览器、API、命令和状态型行为各使用实际入口与方法。S7 读取锁定场景/流程及契约，缺项反馈 Main，不重写规格或 FE 契约。cold_start 所需新脚本/夹具写入原 `verification_artifact_workspace`（`e2e-workspace/` 下），命令指向实际文件和适用 runner/config；既有 `web/e2e/<module>/` 资产在原路径只读执行。正常负向 PASS 的状态、副作用、拒绝和恢复写 `ClaimResult.observed` 与真实证据；失败才产生 Finding。普通 Finding 继续其余安全检查，真实 P0／危险操作停止并保留观察及采集缺口。
+
+最后有效 Result 接收形成 CleanRound 后，原完成出口在同次交接检查原 Gate/TR-009，准备并返回 S10 当前验收问卷准确路径。原接收、迁移与材料准备是分别成立的事实；门或迁移失败按原 `loop-harness runtime review-continue --root <Main>` 复核当前干净出口，已进 S10 的缺稿按 `loop-harness runtime audit-prepare --root <Main>` 恢复当前缺失材料，保留已有报告。Main 不重交 Reviewer 答案、不手工复制 clean_round 绑定，也不靠下一次普通 Read/Bash 制造事件；旧 PreToolUse 自动转换只保留兼容恢复。
 
 相同已接收答卷重放不追加 Result/Finding，不同答案沿原冲突/具名修订处理。`runtime stage-answer receipt --agent <owner> --path <issued-path> --root <Main>` 只读恢复事实；普通工作不手动 issue/consume。原 explicit/冻结 teammate 保存入口继续服务其原兼容责任。专业验收须记录实际产品、平台和执行范围。
 
@@ -210,7 +214,7 @@ loop-harness runtime workspace pending --root <Main>
 loop-harness runtime task-integrate --root <Main> --assignment-id <assignment-id>
 ```
 
-Main 在绑定开发分支集成实际贡献、执行全部原必需检查，再由原检查点和 Writer 确认接收。Result 的路径、摘要及实际受测 HEAD 一起决定回执适用性；产品、结果或受测 HEAD 变化不能复用旧 PASS。已有确认后的纯清理重试保留原验证事实，不因为 Main 后续合法推进而重新要求 Builder 工作。Hook 不同步执行长合并；PreCompact 不代收答卷或另建阶段 checkpoint。
+Main 在绑定开发分支集成实际贡献、执行全部原必需检查，再由原检查点和 Writer 确认接收。Result 的路径、摘要及实际受测 HEAD 一起决定回执适用性；产品、结果或受测 HEAD 变化不能复用旧 PASS。中断或失败后允许按原反馈重入同一 `runtime task-integrate` 命令，恢复尚未完成的合并、检查、确认或出口；原检查点避免重复合并和接收。Main 检查失败留下 preserved/blocked 检查点时，先解决原环境/检查原因，再按原 pending 的具名命令带 `--retry-preserved` 重试；裸重入会保留原失败。已成功集成仅需接续出口时，不增加该重试前置。已迁移 S7 后的材料准备缺口沿反馈给出的原 `s7 draft --root <Main> --out <原路径>` 恢复。已有确认后的纯清理重试保留原验证事实，不因为 Main 后续合法推进而重新要求 Builder 工作。Hook 不同步执行长合并；PreCompact 不代收答卷或另建阶段 checkpoint。
 
 两种检查位置沿原登记选择，不能为省时把 Worker 自检抄成 Main PASS。原 closing 未闭合、有风险/偏差或缺实际必需检查时，不放行 ACK 或阶段转换。S6 完成进入 S7 后，Main 仍要完成专业 ReviewPlan；S9 Main 集成、独立 Targeted 与原 Handoff 成立后进入 fresh S7，不能由候选接收跳过。
 

@@ -172,6 +172,19 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 		CaseID:               request.CaseID,
 		Operation:            "hypothesis_registered",
 		OccurredAt:           request.OccurredAt,
+		validateCurrent: func(lockedRoot string, state, document map[string]any, _ []byte) error {
+			if stringField(document["observation_batch_id"]) == "" {
+				return nil
+			}
+			remaining, err := remainingFindingQuestionRefs(lockedRoot, state, document, sourceIDs, evidenceRefs)
+			if err != nil {
+				return err
+			}
+			if len(remaining) == 0 {
+				return nil
+			}
+			return ValidateEvidenceRefs(remaining, EvidenceAttestationOptions{AllowPaths: true, State: state, Root: lockedRoot, RequireSHA: true, RequireReviewRound: currentReviewRound(state)})
+		},
 		Mutate: func(document map[string]any) error {
 			if len(sourceIDs) == 0 && stringField(document["observation_batch_id"]) != "" {
 				return errors.New("Hypothesis.source_finding_ids must contain at least one Finding ID for a Batch Case")
@@ -183,11 +196,16 @@ func RegisterHypothesis(root, statePath, journalPath string, request HypothesisR
 					return err
 				}
 				refsToValidate = withoutHumanSource(evidenceRefs, source)
-
+			} else {
+				var err error
+				refsToValidate, err = remainingFindingQuestionRefs(root, snapshot.State, document, sourceIDs, evidenceRefs)
+				if err != nil {
+					return err
+				}
 			}
 			if len(refsToValidate) > 0 {
 				if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{
-					State: snapshot.State, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(snapshot.State),
+					AllowPaths: true, State: snapshot.State, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(snapshot.State),
 				}); err != nil {
 					return fmt.Errorf("Hypothesis.evidence_refs: %w", err)
 				}
@@ -274,6 +292,7 @@ func SubmitHypothesisResult(root, statePath, journalPath string, request Hypothe
 
 	if len(refsToValidate) > 0 {
 		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{
+			AllowPaths:         true,
 			State:              snapshot.State,
 			Root:               root,
 			RequireSHA:         true,
@@ -449,43 +468,6 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 	if err := validateEvidenceReferences(root, request.CausalReassessmentEvidenceRefs); err != nil {
 		return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "%v", err)
 	}
-	// RC-15 (S9-M1/T2/L1): investigate_more is the one intentional Case
-	// re-entry point, but an unbounded chain of investigate_more routes is a
-	// livelock. Cap the attempt chain before the CAS transaction starts: the
-	// number of prior investigate_more entries in route_history is checked
-	// against configuration.repair.max_full_review_rounds (independent
-	// default 5 when the configuration is absent), and over the limit the
-	// caller is routed to the blocked/duplicate decision instead of another
-	// silent re-entry.
-	if strings.TrimSpace(request.Route) == "investigate_more" {
-		if snapshot, readErr := runtime.NewStore(statePath, journalPath).WithContext(request.Context).Snapshot(); readErr == nil {
-			if pointer, pointerErr := mutableCasePointer(snapshot.State, request.CaseID, "case_routed"); pointerErr == nil {
-				if document, docErr := readCaseDocument(root, stringField(pointer["path"])); docErr == nil {
-					if history, histErr := objectArrayAllowEmpty(document["route_history"], "InvestigationCase.route_history"); histErr == nil {
-						// Count only the CONSECUTIVE TRAILING investigate_more
-						// entries: the livelock this cap exists to prevent is
-						// an unbroken chain of re-entries without convergence.
-						// A concrete route (s9_repair etc.) that was later
-						// followed by real repair work demonstrates
-						// convergence and must not inflate the counter for a
-						// new, legitimately-motivated re-entry.
-						attempts := 0
-						for _, entry := range history {
-							if stringField(entry["to"]) == "investigate_more" {
-								attempts++
-							} else if concrete := stringField(entry["to"]); concrete != "" && concrete != "investigate_more" {
-								attempts = 0
-							}
-						}
-						maxAttempts := configuredMaxInvestigateAttempts(snapshot.State)
-						if attempts >= maxAttempts {
-							return runtime.Snapshot{}, caseWorkflowError(request.CaseID, "investigate_more attempts exhausted: %d of max %d; the Case must converge on a concrete disposition — route it to duplicate (with canonical_case_id), s2_spec_rework, human_req_change, or pause for a human decision", attempts, maxAttempts)
-						}
-					}
-				}
-			}
-		}
-	}
 	return updateCaseRevision(root, statePath, journalPath, CaseRevisionRequest{
 		Context:              request.Context,
 		ExpectedRevision:     request.ExpectedRevision,
@@ -494,11 +476,28 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 		CaseID:               request.CaseID,
 		Operation:            "case_routed",
 		OccurredAt:           request.OccurredAt,
+		validateCurrent: func(_ string, state, document map[string]any, _ []byte) error {
+			route := strings.TrimSpace(request.Route)
+			if route == "" {
+				route = deterministicCaseRoute(document)
+			}
+			if route != "investigate_more" {
+				return nil
+			}
+			budget, err := InvestigationReentryBudget(state, document)
+			if err != nil {
+				return err
+			}
+			if budget.Exhausted {
+				return fmt.Errorf("investigate_more route-registration budget exhausted: %d of %d (%s); this limits consecutive route registrations, not professional investigation. Keep the same Case, register a genuinely different discriminator where needed and accept actual results through the original consumer; once evidence supports a disposition, submit that route. New evidence remains progress and is not discarded. Do not invent a duplicate, specification change, requirement change or causal conclusion to bypass this limit", budget.Used, budget.Limit, budget.Source)
+			}
+			return nil
+		},
 		Mutate: func(document map[string]any) error {
 			existing := stringField(document["route"])
 			reassessment := existing == "s9_repair" && strings.TrimSpace(stringField(document["status"])) == "contract_approved" && strings.TrimSpace(request.Route) == "investigate_more" && len(request.CausalReassessmentEvidenceRefs) > 0
 			if existing != "" && existing != "investigate_more" && !reassessment {
-				return fmt.Errorf("deterministic route update rejected: Case already has terminal route %q; create a new Case only if the source Finding set is re-grouped", existing)
+				return fmt.Errorf("deterministic route update rejected: Case already has terminal route %q; Main must inspect the recorded disposition and its original consumer or recovery path. A real non-blocked S9 targeted failure reopens this same Case through the original causal-reassessment evidence entry; preserve the source Finding set and do not create a regrouped Case to bypass the recorded route", existing)
 			}
 			route := strings.TrimSpace(request.Route)
 			if route == "" {
@@ -973,49 +972,6 @@ func updateCaseRevision(root, statePath, journalPath string, request CaseRevisio
 	return snapshot, nil
 }
 
-// defaultMaxInvestigateAttempts is the independent livelock cap for the
-// investigate_more route chain when the runtime does not configure a limit.
-const defaultMaxInvestigateAttempts = 5
-
-// configuredMaxInvestigateAttempts reads the investigate_more attempt cap
-// from configuration.repair.max_full_review_rounds and falls back to the
-// independent S8 default when the configuration is absent.
-func configuredMaxInvestigateAttempts(state map[string]any) int {
-	configuration, _ := state["configuration"].(map[string]any)
-	repair, ok := configuration["repair"].(map[string]any)
-	if !ok {
-		return defaultMaxInvestigateAttempts
-	}
-	switch v := repair["max_full_review_rounds"].(type) {
-	case float64:
-		if int(v) >= 1 {
-			return int(v)
-		}
-	case int:
-		if v >= 1 {
-			return v
-		}
-	}
-	return defaultMaxInvestigateAttempts
-}
-
-// readCaseDocument loads the on-disk Case document the Runtime pointer pins.
-func readCaseDocument(root, caseRel string) (map[string]any, error) {
-	casePath, err := repositoryPath(root, caseRel)
-	if err != nil {
-		return nil, err
-	}
-	caseBytes, err := os.ReadFile(casePath)
-	if err != nil {
-		return nil, err
-	}
-	var document map[string]any
-	if err := json.Unmarshal(caseBytes, &document); err != nil {
-		return nil, err
-	}
-	return document, nil
-}
-
 // driftJournalMessage appends the RC-18 baseline-drift warning (S8-H3) to the
 // journal message when present. Empty warnings leave the message unchanged.
 func driftJournalMessage(operation, caseID string, revision int, driftWarning string) string {
@@ -1411,6 +1367,7 @@ func validateCausalClosureEvidence(root string, state, document map[string]any) 
 	detectionGap, _ := document["detection_gap"].(map[string]any)
 	refs := stringSliceValues(detectionGap["evidence_refs"])
 	if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{
+		AllowPaths:         true,
 		State:              state,
 		Root:               root,
 		RequireSHA:         true,

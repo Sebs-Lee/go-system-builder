@@ -185,8 +185,8 @@ func TestExplainListsEligibleCurrentEvidenceCandidates(t *testing.T) {
 	for _, want := range []string{
 		"GATE MISSING-TOKEN LEGEND (GATE-BUILDER-BATCH-READY):",
 		"`integration_checkpoint:<id>`",
-		"Main integrates the named Assignment",
-		"using the exact Main action shown in the current progress context",
+		"Main follows the named Assignment's exact action",
+		"resolve unfinished Builder work through its original rework path",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("explain TR-006 must carry the token legend (%q missing), got:\n%s", want, output)

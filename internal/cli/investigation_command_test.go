@@ -95,6 +95,10 @@ func TestRuntimeInvestigationIngestCLICommitsCasePointer(t *testing.T) {
 	if !ok || board["unexplained_finding_ids"] == nil || !strings.Contains(status["next"].(string), "hypothesis") {
 		t.Fatalf("status must expose the investigation board and next action: %#v", status)
 	}
+	budget, ok := board["investigation_reentry_budget"].(map[string]any)
+	if !ok || budget["limit"] != float64(5) || budget["used"] != float64(0) || budget["source"] != "independent_s8_default" {
+		t.Fatalf("active status must expose the independent legacy S8 budget: %#v", board)
+	}
 	stdout.Reset()
 	stderr.Reset()
 	code = cli.Run([]string{"runtime", "investigation", "status", "--all", "--root", root}, strings.NewReader(""), &stdout, &stderr)
@@ -113,6 +117,9 @@ func TestRuntimeInvestigationIngestCLICommitsCasePointer(t *testing.T) {
 		// dispatch_unknown rather than pending or awaiting_result. This
 		// ingest-only root has no hypotheses, so the buckets must all be
 		// empty rather than misclassified.
+		if budget := cases[0].(map[string]any)["investigation_reentry_budget"]; budget != nil {
+			t.Fatalf("historical aggregate must not guess active Runtime budget: %#v", budget)
+		}
 		board := cases[0].(map[string]any)["hypothesis_summary"].(map[string]any)
 		for _, key := range []string{"pending", "awaiting_result", "dispatch_unknown"} {
 			if bucket := board[key].([]any); len(bucket) != 0 {

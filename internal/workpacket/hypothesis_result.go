@@ -274,15 +274,19 @@ func HypothesisCaseRouteDigest(route HypothesisResultCaseRoute) (string, error) 
 // Callers must prove the supplied hashes and evidence metadata from original
 // authority bytes before issuing this projection.
 func BuildHypothesisResult(binding HypothesisResultBinding, inputs HypothesisResultInputs) (HypothesisResultPacket, error) {
+	templateBytes, err := schema.ReadAsset("stage-form-s8-template.json")
+	if err != nil {
+		return HypothesisResultPacket{}, err
+	}
+	return buildHypothesisResultWithTemplate(binding, inputs, templateBytes)
+}
+
+func buildHypothesisResultWithTemplate(binding HypothesisResultBinding, inputs HypothesisResultInputs, templateBytes []byte) (HypothesisResultPacket, error) {
 	binding = cloneHypothesisResultBinding(binding)
 	if err := validateHypothesisResultBinding(binding); err != nil {
 		return HypothesisResultPacket{}, err
 	}
 	canonicalInputs, err := canonicalHypothesisResultInputs(binding, inputs)
-	if err != nil {
-		return HypothesisResultPacket{}, err
-	}
-	templateBytes, err := schema.ReadAsset("stage-form-s8-template.json")
 	if err != nil {
 		return HypothesisResultPacket{}, err
 	}
@@ -342,7 +346,18 @@ func BuildHypothesisResult(binding HypothesisResultBinding, inputs HypothesisRes
 }
 
 func RebuildHypothesisResult(packet HypothesisResultPacket) (HypothesisResultPacket, error) {
-	return BuildHypothesisResult(packet.Binding, packet.Inputs)
+	// Only known embedded templates can restore an issuance. Frozen author
+	// questions are never accepted as a new template or refreshed in place.
+	for _, name := range []string{"stage-form-s8-template.json", "stage-form-s8-template-before-guidance.json"} {
+		data, err := schema.ReadAsset(name)
+		if err != nil {
+			return HypothesisResultPacket{}, err
+		}
+		if Digest(data) == packet.TemplateSHA {
+			return buildHypothesisResultWithTemplate(packet.Binding, packet.Inputs, data)
+		}
+	}
+	return HypothesisResultPacket{}, fmt.Errorf("unsupported frozen S8 template digest")
 }
 
 func HypothesisResultPacketDigest(packet HypothesisResultPacket) (string, error) {
@@ -562,6 +577,27 @@ func validateHypothesisEvidenceRefs(binding HypothesisResultBinding, question Hy
 	if len(want) == 0 || len(refs) != len(want) || len(refs) > 4096 {
 		return fmt.Errorf("S8 EvidenceRef tuples must exactly preserve the Hypothesis and Finding source references")
 	}
+	selectedSources := map[string]bool{}
+	for _, finding := range findings {
+		chosen := false
+		for _, id := range question.SourceFindingIDs {
+			if id == finding.FindingID {
+				chosen = true
+			}
+		}
+		if !chosen {
+			continue
+		}
+		var doc struct {
+			Refs []string `json:"evidence_refs"`
+		}
+		if err := decodeOneJSON(finding.Document, &doc); err != nil {
+			return err
+		}
+		for _, ref := range doc.Refs {
+			selectedSources[ref] = true
+		}
+	}
 	seen := map[string]bool{}
 	for i, item := range want {
 		ref := refs[i]
@@ -573,9 +609,16 @@ func validateHypothesisEvidenceRefs(binding HypothesisResultBinding, question Hy
 			return fmt.Errorf("S8 EvidenceRef tuple %d is duplicated", i)
 		}
 		seen[key] = true
+		if ref.Attestation == "file_source" {
+			source, typed, err := evidence.ParseFindingReference(ref.Ref)
+			if err != nil || !typed || ref.Origin != "hypothesis" || !strings.HasPrefix(ref.Ref, "path:") || ref.Path != source.Path || ref.SHA256 != source.SHA256 || ref.Kind != "" || ref.Status != "" || ref.BaselineGeneration != nil || ref.ReviewRound != nil || ref.InvalidatedBy != nil {
+				return fmt.Errorf("invalid S8 frozen local file source")
+			}
+			continue
+		}
 		if ref.Attestation == "finding_source" {
 			source, typed, err := evidence.ParseFindingReference(ref.Ref)
-			if err != nil || !typed || ref.Origin != "finding" || ref.SourceFindingID == "" || ref.Path != source.Path || ref.SHA256 != source.SHA256 || ref.Kind != "" || ref.Status != "" || ref.BaselineGeneration != nil || ref.ReviewRound != nil || ref.InvalidatedBy != nil {
+			if err != nil || !typed || (ref.Origin == "hypothesis" && !selectedSources[ref.Ref]) || (ref.Origin == "finding" && ref.SourceFindingID == "") || ref.Path != source.Path || ref.SHA256 != source.SHA256 || ref.Kind != "" || ref.Status != "" || ref.BaselineGeneration != nil || ref.ReviewRound != nil || ref.InvalidatedBy != nil {
 				return fmt.Errorf("S8 Finding source %q must preserve its original type, Finding binding and content tuple without fabricated index metadata", ref.Ref)
 			}
 			continue
@@ -673,8 +716,12 @@ func makeHypothesisResultRead(binding HypothesisResultBinding, inputs Hypothesis
 		paths = append(paths, struct{ path, purpose string }{finding.Ref, "Read this immutable Finding, including its encounter and failure boundary."})
 	}
 	for _, ref := range inputs.EvidenceRefs {
-		if ref.Attestation == "runtime_index" {
-			paths = append(paths, struct{ path, purpose string }{ref.Path, "Read the indexed evidence artifact at the exact registered SHA; execution anchors remain external references."})
+		if ref.Attestation == "runtime_index" || ref.Attestation == "file_source" {
+			purpose := "Read the indexed evidence artifact at the exact registered SHA; execution anchors remain external references."
+			if ref.Attestation == "file_source" {
+				purpose = "Read the original captured investigation file at its fixed SHA; reuse its exact ref without another evidence registration."
+			}
+			paths = append(paths, struct{ path, purpose string }{ref.Path, purpose})
 		}
 	}
 	seen := map[string]bool{}

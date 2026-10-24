@@ -30,7 +30,7 @@
 - `requirements_unchanged`、`business_semantics_unchanged`、`reversible`、`scope_complete` 四项真实专业判断。
 - 选择真实、已登记、当前代际且原字节仍一致的 `evidence_refs`，并给出 `rationale`。
 
-这些字段不是系统语义证明；Driver 必须解释实际入口、事务边界、兼容性、完整文件范围与可逆性。未知或改变的业务语义不能沿本路线批准。指定 Driver 可以是承担该原责任的 Main，不新增一个强制 Worker 角色；人类授权人与技术审查者仍按原约束区分。
+这些字段不是系统语义证明；Driver 按本合同实际边界解释入口、事务、兼容性、完整文件范围与可逆性，不无条件增加无关实验。未知或改变的业务语义不能沿本路线批准。指定 Driver 可以是承担该原责任的 Main；未经指定的 Main 负责组织与忠实记录，不能替代本人技术判断。不新增强制 Worker 角色或第二 reviewer；人类授权人与技术审查者仍按原约束区分。当前申请应明确显示实际指定责任，不能把所有 Main 会话都视为指定 Driver。若指定 Driver 就是 Main，由 Main 填写并保存原申请；否则 Main 交付准确固定最终稿与原审查字段，指定 Driver 本人返回四项判断、证据与理由，Main 忠实记录并保存原申请。Worker 保存事件不消费 Main 的申请，不另建 Worker 问卷或第二报告。
 
 系统承接 Runtime／Case／Contract、指定 reviewer、授权引用、最终稿 `approval_hash`、scope 和证据登记，再调用原批准消费者。作者不复制 SHA、全局 revision、binding-policy 摘要或证据封套，也不执行批准命令。多份现有授权存在真实歧义时，Main 先处理准确原来源，不任选其一或新建授权登记表。
 

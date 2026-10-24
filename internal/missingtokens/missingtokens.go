@@ -55,7 +55,7 @@ var builderBatchMissingTokenRules = []missingTokenRule{
 	{
 		prefix:   "integration_checkpoint:",
 		meaning:  "that TASK has no durable worktree integration checkpoint at `verified` or beyond",
-		nextStep: "Main integrates the named Assignment and runs its required checks using the exact Main action shown in the current progress context",
+		nextStep: "Main follows the named Assignment's exact action in the current progress context: resolve unfinished Builder work through its original rework path, or integrate eligible delivery and run required Main checks",
 	},
 }
 

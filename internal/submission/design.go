@@ -246,6 +246,14 @@ func (s *Service) designReceipt(snap runtime.Snapshot, p workpacket.DesignPacket
 	r.ResponsibilityStatus = "accepted"
 	r.WorkComplete = record.ControlStatus != "pending" && record.ControlStatus != "no_transition"
 	r.NextAction = "Design report was recorded; follow the current stage's actual professional work. Acceptance is not independent certification of every design task."
+	for _, ev := range evidenceRows(snap.State) {
+		if ev["id"] == record.EvidenceID && ev["status"] == "invalid" {
+			r.WorkComplete = false
+			r.ResponsibilityStatus = "replaced"
+			r.NextAction = "This design reception remains recorded, but professional rework has replaced its responsibility. Follow the current questionnaire; do not restore or replay the old design report."
+			return r, nil
+		}
+	}
 	if (record.ControlStatus == "pending" || record.ControlStatus == "no_transition") && runtime.ValidateDesignPacket(s.Root, snap.State, p, nil) != nil {
 		r.ResponsibilityStatus = "replaced"
 		r.NextAction = "This design reception remains recorded, but the current stage responsibility has changed. Follow its current questionnaire; do not replay the old stage outlet."
@@ -329,7 +337,7 @@ func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.
 	}
 	preparationFailed := func(err error) (string, []Waiting) {
 		RecordPlanningDiagnostic(s.Root, result.Snapshot.State, "preparation", err.Error())
-		return " The preceding report and stage transition are recorded; the original next-stage questionnaire preparation failed: " + err.Error() + ". Main/system must continue the existing questionnaire preparation through the original listener after resolving this actual error. Do not resubmit the completed report, invent a questionnaire path, or fabricate inapplicable materials.", []Waiting{{Reason: "system_followup", Owner: "Main", Ref: id}}
+		return " The preceding report and stage transition are recorded; the original next-stage questionnaire preparation failed: " + err.Error() + ". Main/system must repair the named source, then resume original questionnaire preparation with " + PlanningRecoveryCommand(s.Root, "issue") + ". Do not resubmit the completed report, invent a questionnaire path, or fabricate inapplicable materials.", []Waiting{{Reason: "system_followup", Owner: "Main", Ref: id}}
 	}
 	service := *s
 	if service.Files == nil {
@@ -346,16 +354,22 @@ func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.
 			return preparationFailed(err)
 		}
 	}
-	var view, answer string
+	var view, answer, delivery string
 	var err error
 	if id == "PTR-PLAN-01" {
 		var packet workpacket.ContractPacket
 		packet, err = service.IssueContracts(ctx)
 		view, answer = packet.ViewPath, packet.AnswerPath
+		if err == nil {
+			delivery = ContractDeliveryGuidance(s.Root, packet, service.Files, result.Snapshot.State)
+		}
 	} else {
 		var packet workpacket.TaskPlanningPacket
 		packet, err = service.IssueTaskPlanning(ctx)
 		view, answer = packet.ViewPath, packet.AnswerPath
+		if err == nil {
+			delivery = TaskPlanningDeliveryGuidance(s.Root, packet, service.Files, result.Snapshot.State)
+		}
 	}
 	if err != nil {
 		return preparationFailed(err)
@@ -365,9 +379,90 @@ func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.
 	if err == nil {
 		result.Snapshot = current
 	}
-	message := fmt.Sprintf(" Current next-stage questionnaire: read %s; answer %s. Fill its professional answers and save normally.", filepath.Join(s.Root, view), filepath.Join(s.Root, answer))
+	message := fmt.Sprintf(" Current next-stage questionnaire: read %s; answer %s. Fill its professional answers and save normally.", filepath.Join(s.Root, view), filepath.Join(s.Root, answer)) + delivery
 	if err != nil {
 		message += " Preparation recorded, but current Runtime could not be read: " + err.Error()
 	}
 	return message, nil
+}
+
+func TaskPlanningDeliveryGuidance(root string, packet workpacket.TaskPlanningPacket, files fileview.Reader, state map[string]any) string {
+	index := "docs/dev/tasks/index-" + packet.Binding.Requirement.ID + ".md"
+	paths := []string{index}
+	label := "Required dispatch index"
+	candidates := ""
+	fieldDiagnostic := ""
+	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.TaskPlanningAnswerReadLimit(packet)); err == nil {
+		if namedPaths, named := taskPlanningDraftDeliveryPaths(packet, data); named {
+			paths = namedPaths
+			label = "Your named TASK delivery (safe draft paths; reception still requires the complete answer)"
+		}
+		if _, issues := workpacket.ValidateTaskPlanningAnswer(packet, data); len(issues) > 0 {
+			fieldDiagnostic = " Current answer field: " + planningFieldDiagnostic(issues[0]) + "."
+		}
+	}
+	if label == "Required dispatch index" && files != nil {
+		if entries, err := files.ReadDir(filepath.Join(root, "docs/dev/tasks")); err == nil {
+			var existing []string
+			for _, entry := range entries {
+				if !entry.IsDir() && strings.HasPrefix(entry.Name(), "TASK-") && strings.HasSuffix(entry.Name(), ".md") && !strings.Contains(strings.ToLower(entry.Name()), "template") {
+					existing = append(existing, filepath.Join(root, "docs/dev/tasks", entry.Name()))
+				}
+			}
+			if len(existing) > 0 {
+				candidates = " Existing TASK candidates (verify current REQ membership): " + strings.Join(existing, ", ") + "."
+			}
+		}
+	}
+	sourceHint := planningDeclaredSourceGuidance(root, paths, state, "S4", false)
+	if view, ok := files.(*fileview.View); ok {
+		var committed []string
+		for _, path := range paths {
+			if source, err := view.Source(path); err == nil && source == "git_tree" {
+				committed = append(committed, filepath.Join(root, filepath.FromSlash(path)))
+			}
+		}
+		if len(committed) > 0 {
+			sourceHint = fmt.Sprintf("\nS4 TASK outputs and the index can change in this entry. Before saving this answer, commit the completed Git-sourced TASK files in your current REQ delivery and its index to bound development branch %s (current named Git paths: %s). REQ/S3 and other upstream inputs stay frozen. The answer and Runtime use their supplied disk paths.", strings.TrimPrefix(view.Ref, "refs/heads/"), strings.Join(committed, ", "))
+		}
+	}
+	pathValues := ""
+	if strings.HasPrefix(label, "Your named") {
+		pathValues = planningAnswerPathValues("", paths, "task_paths", "index-")
+	}
+	for i, path := range paths {
+		paths[i] = filepath.Join(root, filepath.FromSlash(path))
+	}
+	return fmt.Sprintf("\n%s: %s.%s TASK output directory: %s; choose TASK IDs and professional scope from the frozen contracts, and include the full current REQ batch in task_paths. Templates: %s, %s. Dispatch rules: %s. Complete task granularity, Closing Contracts, clause coverage, dependencies and waves; save the professional answer once. Ordinary planning within the locked REQ needs no additional human approval; any inherited questionnaire reference to human gates applies only to actual requirement changes or decisions outside existing authorization. The original consumer runs tasks check, records evidence and resumes TR-002. Manual check commands support self-review or diagnostics, not additional submissions.%s", label, strings.Join(paths, ", "), candidates, filepath.Join(root, "docs/dev/tasks"), filepath.Join(root, "docs/dev/tasks/TASK-template.md"), filepath.Join(root, "docs/dev/tasks/index-template.md"), filepath.Join(root, "docs/rules/dispatch-plan.md"), sourceHint+" Tool file paths above are absolute. In answer.index_path and answer.task_paths, use repository-relative values without the root prefix; for example index_path=\""+index+"\", task_paths=[\"docs/dev/tasks/TASK-009-01.md\"]. Use canonical numeric TASK IDs such as TASK-009 or TASK-009-01; Source REQ refs binds each task to the actual REQ."+pathValues+fieldDiagnostic+PlanningProfessionalReworkGuidance(root))
+}
+
+// Display safe draft paths without requiring a professional pass or claiming acceptance.
+func taskPlanningDraftDeliveryPaths(packet workpacket.TaskPlanningPacket, data []byte) ([]string, bool) {
+	if int64(len(data)) > workpacket.TaskPlanningAnswerReadLimit(packet) || workpacket.ValidateUniqueJSON(data) != nil {
+		return nil, false
+	}
+	var draft struct {
+		Answer struct {
+			IndexPath *string  `json:"index_path"`
+			TaskPaths []string `json:"task_paths"`
+		} `json:"answer"`
+	}
+	if json.Unmarshal(data, &draft) != nil {
+		return nil, false
+	}
+	answer := draft.Answer
+	named := answer.IndexPath != nil || len(answer.TaskPaths) > 0
+	paths := []string{}
+	if answer.IndexPath != nil && *answer.IndexPath == "docs/dev/tasks/index-"+packet.Binding.Requirement.ID+".md" {
+		paths = append(paths, *answer.IndexPath)
+	}
+	seen := map[string]bool{}
+	for _, path := range answer.TaskPaths {
+		if filepath.IsAbs(path) || strings.Contains(path, "\\") || filepath.ToSlash(filepath.Clean(path)) != path || filepath.ToSlash(filepath.Dir(path)) != "docs/dev/tasks" || !strings.HasPrefix(filepath.Base(path), "TASK-") || !strings.HasSuffix(path, ".md") || strings.Contains(strings.ToLower(path), "template") || seen[path] {
+			continue
+		}
+		paths = append(paths, path)
+		seen[path] = true
+	}
+	return paths, named
 }

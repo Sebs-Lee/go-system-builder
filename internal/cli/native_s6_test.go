@@ -104,7 +104,7 @@ func TestNativeS6StartStopReceivesWithoutActivationOrSaveHook(t *testing.T) {
 		}
 	}
 	before := stageSnapshot(t, root)
-	if code, output := nativeEvent(t, source, source, "SubagentStart", "", false); code != 0 || !strings.Contains(output, "without activation") {
+	if code, output := nativeEvent(t, source, source, "SubagentStart", filepath.Join(root, brief), false); code != 0 || !strings.Contains(output, "without activation") {
 		t.Fatalf("start %d %s", code, output)
 	}
 	if stageSnapshot(t, root).Revision != before.Revision {
@@ -119,12 +119,13 @@ func TestNativeS6StartStopReceivesWithoutActivationOrSaveHook(t *testing.T) {
 		t.Fatal("save hook received native delivery")
 	}
 	text := filepath.Join(root, brief) + "\n" + filepath.Join(source, result)
-	if code, output := nativeEvent(t, root, source, "SubagentStop", text, false); code != 0 {
-		t.Fatalf("native end %d %s", code, output)
+	code, stopOutput := nativeEvent(t, root, source, "SubagentStop", text, false)
+	if code != 0 {
+		t.Fatalf("native end %d %s", code, stopOutput)
 	}
 	accepted := stageSnapshot(t, root)
 	if accepted.Revision <= before.Revision {
-		t.Fatal("end did not receive delivery")
+		t.Fatalf("end did not receive delivery: %s", stopOutput)
 	}
 	for _, raw := range accepted.State["entities"].(map[string]any)["agents"].([]any) {
 		row := raw.(map[string]any)
@@ -539,8 +540,28 @@ func TestNativeS6SameRoleConcurrentWorktreesDoNotBorrowDeliveries(t *testing.T) 
 	nativeAnswer(t, source1, first)
 	brief1, _, result1 := assignmentrecord.NativePaths(first)
 	brief2, _, _ := assignmentrecord.NativePaths(other)
+	for _, event := range []string{"SubagentStart", "SubagentStop"} {
+		payload, _ := json.Marshal(map[string]any{"hook_event_name": event, "cwd": source1, "agent_id": first.OwnerAgentID, "agent_type": "backend-builder", "last_assistant_message": filepath.Join(root, brief2)})
+		var output, diagnostic bytes.Buffer
+		code := cli.Run([]string{"hook", "--root", root, "--event", event}, bytes.NewReader(payload), &output, &diagnostic)
+		if code != 0 || !strings.Contains(output.String()+diagnostic.String(), "responsibility mismatch") || strings.Contains(output.String(), "commit and save Result") {
+			t.Fatalf("known owner adopted another exact responsibility: %d %s %s", code, &output, &diagnostic)
+		}
+	}
+	for _, brief := range []string{brief1, brief2} {
+		context := mainNativeReturn(t, root, filepath.Join(root, brief))
+		if !strings.Contains(context, "responsibility mismatch") || !strings.Contains(context, first.OwnerAgentID) || !strings.Contains(context, filepath.Join(root, brief1)) || !strings.Contains(context, filepath.Join(root, brief2)) {
+			t.Fatalf("Main lost owner/brief mismatch: %s", context)
+		}
+	}
+	if stageSnapshot(t, root).Revision != snap.Revision {
+		t.Fatal("owner/brief mismatch received another responsibility")
+	}
 	if code, _ := nativeEvent(t, root, source2, "SubagentStop", "backend-builder completed", false); code != 0 {
 		t.Fatal("role-only stop was guessed")
+	}
+	if code, out := nativeEvent(t, root, source1, "SubagentStart", filepath.Join(root, brief1)+"\n"+filepath.Join(root, brief2), false); code != 0 || strings.Contains(out, "commit and save Result") {
+		t.Fatalf("ambiguous Start adopted a queued responsibility: %d %s", code, out)
 	}
 	if code, out := nativeEvent(t, root, source1, "SubagentStop", filepath.Join(root, brief1)+"\n"+filepath.Join(root, brief2), false); code != 0 || !strings.Contains(out, "multiple exact task briefs") {
 		t.Fatalf("ambiguous task: %d %s", code, out)

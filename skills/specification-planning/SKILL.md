@@ -16,6 +16,11 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
   compute or copy a Runtime fingerprint before starting professional work.
 
 ## Required Inputs
+
+Use the rows relevant to the current stage and supplied responsibility. The
+source inventory is not a requirement to read every file or reauthor upstream
+materials; the stage routing below identifies the necessary entry.
+
 | Input | Path / field | Why |
 |:---|:---|:--|
 | Locked REQ | exact path in the supplied current view/brief | source of acceptance criteria and scope; no Runtime metadata lookup required |
@@ -27,9 +32,23 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 | Rules | `docs/rules/*.md` | naming, security, api-design, state-machine, design-foundation constraints |
 | Loop Definition | `docs/control/loop-definition.json` | planning exit transition and executable guards |
 
-## Procedure — dual-track convergence (v2.0.0)
+## Procedure — route by current responsibility
 
-**Step 0 — route by UI impact before doing anything else**: read the bound
+Use the exact current view/answer and its supplied inputs. In `planning.design`
+(S2), read the locked REQ, actual architecture batch, applicable module packages
+and conditional Foundation materials, then use steps 0–9 below. In
+`planning.contracts` (S3), read the frozen REQ/S2 view, existing boundaries and
+consumers, [API contracts](../api-contracts/SKILL.md),
+[shared-model rules](../../docs/rules/shared-model-contracts.md) and the supplied
+four contract templates; start at step 10. In `planning.tasks` (S4), read the
+frozen REQ/S3 sources and supplied TASK/index templates; start at steps 11–12.
+S3/S4 consume established design; they do not repeat S2's Foundation derivation,
+scenario generation or architecture lock. Read additional rules when the actual
+operation or diagnostic requires them, rather than all rule files up front.
+
+### S2 — dual-track convergence
+
+**Step 0 — route S2 by UI impact**: read the bound
 REQ's top `UI impact` field. `unknown` → resolve the missing direction through
 the original REQ clarification/amendment gateway before a design pass; do not
 silently edit the locked baseline (the `ui_impact_resolved` guard blocks
@@ -173,8 +192,13 @@ bring a genuinely unresolved direction or requirement change to its human gatewa
    PTR-PLAN-01 gate remain authoritative.
 
 **S3/S4 steps:**
-10. For S3, converge the shared data model and SYNC protocol first, then derive
-    the applicable FE/BE responsibilities from the four templates under
+10. For S3, decide FE, BE and SYNC applicability independently from the actual
+    delivery. Only where a shared operation exists, converge its applicable
+    data model and SYNC behavior before finalizing FE/BE responsibilities.
+    FE-only local behavior or BE-only internal work may need no SYNC; SYNC may
+    exist without separate FE/BE contracts. With no shared data, declare
+    `Shared model policy: none` and its concrete reason; create no Schema or
+    example just to fill a template. Use the applicable templates under
     `docs/dev/contracts/` (CONTRACTS / BE / FE / SYNC). Each contract traces to
     the bound REQ and applicable current-truth inputs. The CONTRACTS index
     coverage matrix is for this REQ's clause universe — one `{id} §{n}` cell
@@ -185,7 +209,9 @@ bring a genuinely unresolved direction or requirement change to its human gatewa
     supported source references. This project-wide module scope matches the
     original bridge; it is not limited to modules referenced by this REQ or its
     architecture. It does not expand this requirement's design changes or ask
-    you to redesign unrelated modules. Do not delete historical materials or
+    you to redesign unrelated modules. The complete source inventory supports
+    traceability; read the slices relevant to current operations and follow actual
+    dependencies, without recursively reading every listed module. Do not delete historical materials or
     split the REQ to reduce that source set. S3 does not use its own
     not-yet-authored CONTRACTS index as an issuance prerequisite. The Hook
     supplies the exact answer path and known or candidate output paths/templates.
@@ -193,15 +219,18 @@ bring a genuinely unresolved direction or requirement change to its human gatewa
     complete applicable contract set for the bound REQ. S3-created shared
     models/examples are outputs: saving the supplied answer runs the original
     shared-model checker, which discovers their dependencies and records them
-    in the existing evidence subjects. Do not change an already frozen S2
-    model. Set finalized contracts to `locked`, fill the existing professional
+    in the existing evidence subjects. Refine or create models within the established S2 meaning in S3. Do not
+    modify frozen S2 models or their source membership; a required change to
+    those inputs returns through formal design rework, and a change to REQ
+    semantics uses requirement amendment. Set finalized contracts to `locked`, fill the existing professional
     answer. The original consumer reads the declared source view: commit Git-sourced professional outputs to
     the exact development branch named by the Hook before saving that answer.
     S3 outputs can change during the current entry; REQ/S2 inputs remain frozen.
-    Save the answer once. The gate evaluates the full current set; PTR-PLAN-02 performs the original
-    registration. Do not hand-create evidence, copy machine metadata, or run
-    the same checks as ordinary steps. Run `contracts check` or `scenario
-    bridge` only to diagnose a specific reported failure. See [S3](../../docs/control/agent-protocol.md#s3)
+    Save the completed answer. The gate evaluates the full current set; PTR-PLAN-02 performs the original
+    registration. Do not hand-create evidence or copy machine metadata. Use
+    `contracts check` and `scenario bridge` freely for professional self-review
+    or diagnosis; successful manual checks are not an extra submission step
+    or a substitute for the original consumer checks. See [S3](../../docs/control/agent-protocol.md#s3)
     for the current packet workflow; packet-off legacy handling is below.
 11. Decompose into TASKs: each TASK binds one primary contract, declares
     its Delivered Clauses (§3) and Module Impact (§3.1), has a Closing
@@ -218,16 +247,17 @@ bring a genuinely unresolved direction or requirement change to its human gatewa
     drift checks remain strict; it is not a normal S4 authoring obligation.
     Absence of that optional historical index does not block ordinary authorized
     engineering choices or change TASK coverage and gates.
-12. For S4, complete the TASK batch and current REQ index at the exact paths and
+12. Use numeric TASK IDs such as `TASK-009` or `TASK-009-01`; keep module/service
+    names in the objective. For S4, complete the TASK batch and current REQ index at the exact paths and
     templates supplied by the Hook. Mark each TASK document `complete` or
     `cancelled`; these document values do not change a work responsibility's
     status. Commit declared Git-sourced outputs to the Hook-named branch, fill
     the existing S4 answer, and save it once. The original consumer runs
     `tasks check`, projects planning evidence, and evaluates the existing gate
-    and `TR-002`; do not run those checks, create an evidence envelope, or
-    recover Runtime state as ordinary authoring steps. Existing `tasks check`
-    and `tasks check --json` output remains available for a specific diagnosis
-    or professional review of granularity and source-backed advisories. Read
+    and `TR-002`. Do not create an evidence envelope or recover Runtime state
+    as ordinary authoring steps. `tasks check` and `tasks check --json` remain
+    available for autonomous self-review, diagnosis, granularity and
+    source-backed advisories; they are not additional submission procedures. Read
     concrete observations against the actual responsibility; byte counts are
     not token measurements or split thresholds. Unresolved assertions still
     require a professional oracle, and the analysis never executes them.
@@ -291,13 +321,55 @@ professional answer through their original consumer; do not guess directories
 or duplicate an envelope. The frozen packet-off recovery boundary below is not an
 S2 normal authoring obligation or a producer-name whitelist for S2.
 
+For S3/S4, tool access uses the exact supplied absolute filesystem paths;
+answer fields `index_path`, `contract_paths` and `task_paths` contain
+repository-relative values. For example, read/write
+`/work/project/docs/dev/contracts/CONTRACTS-042.md` with a tool, but put
+`docs/dev/contracts/CONTRACTS-042.md` in `index_path`. Save the questionnaire at
+its exact supplied absolute answer path. Markdown links remain relative to
+the containing document; do not convert them to answer-field root-relative paths.
+
+Professional S3/S4 rework is separate from technical continuation. Within the
+same bound REQ, use
+`.claude/bin/loop-harness runtime stage-answer rework --target design --reason "<concrete design correction>" --root . --agent Main`
+when frozen S2 inputs must change. Use
+`.claude/bin/loop-harness runtime stage-answer rework --target contracts --reason "<concrete contract correction>" --root . --agent Main`
+when accepted contracts must change while S2 stays valid. While S4 is still current, use
+`.claude/bin/loop-harness runtime stage-answer rework --target tasks --reason "<concrete TASK/index correction>" --root . --agent Main`
+when accepted TASKs or the dispatch plan need professional correction and the
+frozen REQ/S2/S3 inputs remain valid. Keep correct upstream work; a tasks return
+does not refresh drifted upstream sources. After entry into S5, follow the
+independent review and original document-rework route. These explicit routes
+preserve the accepted history, invalidate affected downstream planning, and
+supply the new current view/answer paths. If preparation fails after the
+return is recorded, follow the supplied `runtime stage-answer issue` command.
+No packet/entry ID or authored evidence envelope is required. Current
+unreceived outputs are ordinary professional corrections, followed by required
+Git delivery and saving the original answer, even if marked `locked`.
+`issue` repairs missing issuance/preparation; `recover` resumes an accepted
+pending outlet. Neither changes an accepted professional judgment or authorizes
+editing frozen sources. `revise` is not an S3/S4 professional rework route.
+REQ semantic changes retain the actual human amendment boundary; ordinary
+contract gaps and compatibility choices within authorization remain professional work.
+Any questionnaire reminder about human decisions means an actual unresolved
+REQ amendment or decision outside existing authorization. It does not require
+a fresh approval for every ADR, compatibility choice, N/A rationale or S3/S4 run;
+reuse applicable existing decisions.
+
 For S4, the Hook also supplies the current REQ index path, TASK candidate paths
 and templates, frozen source inputs, and the bound Git branch. Main decides the
 task breakdown and professional contents, commits the declared outputs to that
 branch, fills the existing answer once, and lets the original consumer perform
-the checks and `TR-002` registration. Do not manually repeat `tasks check` or
-recover a received answer; follow the precise missing items and next action in
-the Hook feedback. `complete/cancelled` apply to TASK documents, not the shared
+the checks and `TR-002` registration. Use `tasks check` for autonomous self-review or diagnosis when useful; it is
+not a required duplicate submission check. If S3 reception has succeeded but its gate remains pending, preserve the
+accepted answer, repair the named gap and execute the complete original
+`runtime stage-answer recover` command supplied by feedback. For accepted S4 work whose TR-002 outlet remains pending, repair the concrete
+gap and execute the complete original `runtime stage-answer recover` command
+supplied by feedback; ordinary observations do not continue that outlet. Do not refill or resave an accepted answer. If transition has already committed but next-stage preparation failed, repair
+its named source gap and execute the complete original `runtime stage-answer issue` command supplied by feedback; `recover` continues a pending gate outlet.
+Ordinary reads or
+arbitrary material saves do not promise followup recovery. Before reception,
+finish required Git delivery and save the original answer normally. `complete/cancelled` apply to TASK documents, not the shared
 work-responsibility states.
 
 ### Frozen packet-off planning recovery

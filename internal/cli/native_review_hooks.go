@@ -16,6 +16,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
+	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
 func nativeReviewStage(state map[string]any) string {
@@ -77,7 +78,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			}
 		}()
 	}
-	if in.Event == "SubagentStart" {
+	if in.Event == "SubagentStart" && stage != "S7" {
 		_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": stage + " native professional work: follow the exact original questionnaire view and answer references in Main's task prompt. Read its actual frozen subjects, perform your independent review/investigation and save the professional answer at the supplied path. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate or receive work. Claude Code owns execution/resume; no Team, platform ID lookup, workspace launcher or generic report is required. Real domain approval and independence remain. Unrelated native work follows its own task; do not infer a formal responsibility from your role."}})
 		return true, 0
 	}
@@ -86,6 +87,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		packet                string
 		refs                  []string
 		err                   error
+		diagnosticOnly        bool
 	}
 	var candidates []candidate
 	var sourceErr error
@@ -142,7 +144,13 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			sourceErr = err
 		}
 		for _, p := range packets {
+			row := mapFieldCLI(mapFieldCLI(snap.State, "review"), "assignments")[p.Binding.AssignmentID]
+			assignment, _ := row.(map[string]any)
+			if in.Event == "SubagentStart" && workstate.ReviewAssignmentActivity(assignment) == "consumed" {
+				continue // Reception history is not a new professional task.
+			}
 			selectAnswer(p.Binding.OwnerAgentID, p.Binding.AssignmentID, p.ViewPath, p.AnswerPath, p.Binding.BaselineGeneration, p.Binding.RuntimeID)
+			candidates[len(candidates)-1].packet = p.ID
 			if candidates[len(candidates)-1].err != nil {
 				// Report the exact issued reference even when its execution source
 				// cannot be resolved. The source error still prevents reception.
@@ -150,15 +158,37 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			}
 		}
 	case "S8":
-		packets, err := runtime.CurrentHypothesisResultPackets(root, snap.State, "")
+		current, currentErr := runtime.CurrentHypothesisResultPackets(root, snap.State, "")
+		currentIDs := map[string]bool{}
+		for _, p := range current {
+			currentIDs[p.ID] = true
+		}
+		// A damaged Case or changed question must not erase the original
+		// responsibility from the return. Registry references identify only
+		// the diagnostic owner here; only a current packet can be received.
+		packets, err := runtime.HypothesisResultPackets(snap.State)
 		if err != nil {
 			sourceErr = err
 		}
 		for _, p := range packets {
-			if p.Binding.RuntimeID != snap.State["runtime_id"] || p.Binding.BaselineGeneration != workspace.Generation(snap.State) || p.Binding.CaseID != investigationPointer(snap.State)["case_id"] {
+			if p.Binding.RuntimeID != snap.State["runtime_id"] || p.Binding.BaselineGeneration != workspace.Generation(snap.State) || p.Binding.ReviewRound != tolerantInt(mapFieldCLI(snap.State, "review")["round"]) || p.Binding.CaseID != investigationPointer(snap.State)["case_id"] {
 				continue
 			}
 			selectAnswer(p.Binding.OwnerAgentID, p.Binding.AssignmentID, p.ViewPath, p.AnswerPath, p.Binding.BaselineGeneration, p.Binding.RuntimeID)
+			candidates[len(candidates)-1].packet = p.ID
+			candidates[len(candidates)-1].diagnosticOnly = currentErr != nil || !currentIDs[p.ID]
+			if candidates[len(candidates)-1].err == nil {
+				if currentErr != nil {
+					candidates[len(candidates)-1].err = currentErr
+				} else if !currentIDs[p.ID] {
+					candidates[len(candidates)-1].err = fmt.Errorf("S8 questionnaire %s is no longer a current responsibility; Main must inspect the original Case question, source and route before resuming; no answer was received", p.ID)
+				}
+			}
+			if candidates[len(candidates)-1].source == "" {
+				// Keep the issued reference actionable when its original source
+				// is unavailable. This does not permit reception from Main.
+				candidates[len(candidates)-1].answer = filepath.Join(root, p.AnswerPath)
+			}
 		}
 	}
 	var refs []string
@@ -168,9 +198,20 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 	text := nativeReviewTaskText(in, refs)
 	owner, answer, source, packet := "", "", "", ""
 	matched := 0
+	matchedCurrent := false
 	for _, c := range candidates {
 		for _, ref := range c.refs {
 			if nativeS6ExactReference(text, ref) {
+				// A resumed task may mention a superseded question alongside
+				// its current one. Historical references supply diagnostics only
+				// when no current responsibility was identified.
+				if c.diagnosticOnly && matchedCurrent {
+					break
+				}
+				if !c.diagnosticOnly && !matchedCurrent {
+					matched = 0
+					matchedCurrent = true
+				}
 				matched++
 				owner, answer, source, sourceErr = c.owner, c.answer, c.source, c.err
 				packet = c.packet
@@ -178,10 +219,48 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			}
 		}
 	}
+	// An exact task reference cannot override an existing owner binding to a
+	// different current packet. As in S6, surface the handoff mismatch without
+	// selecting either responsibility or restricting ordinary tools.
+	if stage == "S7" && in.Event == "SubagentStart" && matched == 1 {
+		for _, c := range candidates {
+			if c.owner == in.AgentID && c.packet != packet {
+				message := fmt.Sprintf("S7 native lifecycle handoff responsibility mismatch: actor %s is the registered owner of packet %s (answer %s), but the exact task reference selects packet %s (owner %s, answer %s). Main resolves the original actor/reference conflict before resuming either responsibility. No answer was inspected or received.", in.AgentID, c.packet, c.answer, packet, owner, answer)
+				_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": message}})
+				fmt.Fprintln(diagnostic, message)
+				return true, 0
+			}
+		}
+	}
+	// A platform ID may be the exact registered owner. Role names and the
+	// number of pending packets never establish this binding.
+	if stage == "S7" && in.Event == "SubagentStart" && matched == 0 {
+		for _, c := range candidates {
+			if c.owner == in.AgentID {
+				matched++
+				owner, answer, source, sourceErr, packet = c.owner, c.answer, c.source, c.err, c.packet
+			}
+		}
+	}
 	if matched != 1 {
 		if matched > 1 {
-			fmt.Fprintln(diagnostic, stage+" return has multiple exact professional responsibility references; Main must resolve the handoff")
+			fmt.Fprintln(diagnostic, stage+" lifecycle handoff has multiple exact professional responsibility references; Main must resolve the handoff")
 		}
+		return true, 0
+	}
+	if in.Event == "SubagentStart" {
+		view := ""
+		if p, found, err := runtime.FindReviewResultPacket(snap.State, packet); err == nil && found {
+			view = filepath.Join(source, p.ViewPath)
+			if source == "" {
+				view = filepath.Join(root, p.ViewPath)
+			}
+		}
+		message := "S7 current professional responsibility for " + owner + ": packet " + packet + "; view " + view + "; answer " + answer + ". Read that exact original questionnaire, review only its assigned Claims against the frozen subjects, save the professional answer and return that reference. SubagentStop calls the original consumer. Ordinary tools are freely available; no activation or platform ID lookup is required."
+		if sourceErr != nil {
+			message += " Main must restore the original source: " + nativeFailureDetail(sourceErr)
+		}
+		_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": message}})
 		return true, 0
 	}
 	if sourceErr == nil {
@@ -215,12 +294,33 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			return true, nativeS5HandoffFailure(owner, answer, sourceErr, diagnostic)
 		}
 		if stage == "S7" {
+			submission.RecordPlanningDiagnostic(root, snap.State, nativeS7DiagnosticKind(packet), fmt.Sprintf("owner %s; packet %s; answer %s: %s", owner, packet, answer, nativeFailureDetail(sourceErr)))
 			return true, nativeS7HandoffFailure(owner, answer, sourceErr, diagnostic)
+		}
+		if stage == "S8" {
+			submission.RecordPlanningDiagnostic(root, snap.State, "S8 native Stop "+packet, fmt.Sprintf("owner %s; answer %s: %s", owner, answer, nativeFailureDetail(sourceErr)))
+			return true, nativeS8HandoffFailure(owner, answer, sourceErr, diagnostic)
 		}
 		return true, nativeStopFailure(stage+" native professional handoff", in.StopHookActive, sourceErr, diagnostic)
 	}
 	if stage == "S5" {
 		submission.RecordPlanningDiagnostic(root, snap.State, nativeS5DiagnosticKind(packet), "")
+	}
+	if stage == "S7" {
+		submission.RecordPlanningDiagnostic(root, snap.State, nativeS7DiagnosticKind(packet), "")
+		// Reception is already durable. Continue only the original clean-round
+		// exit; a continuation failure never turns it into an unreceived answer.
+		statePath := filepath.Join(root, ".claude/loop-state.json")
+		journalPath := filepath.Join(root, ".claude/loop-events.jsonl")
+		current, err := runtime.NewStore(statePath, journalPath).Snapshot()
+		if err != nil {
+			fmt.Fprintln(diagnostic, "S7 ReviewResult is received; Main restores current Runtime access before continuing the original clean-round exit: "+err.Error()+". Recovery: "+s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness"))+" runtime review-continue --root "+s7CaptureShellQuote(root))
+		} else if _, handoff := continueS7Acceptance(contextForHook(in), root, statePath, journalPath, current); handoff != "" {
+			fmt.Fprintln(diagnostic, handoff)
+		}
+	}
+	if stage == "S8" {
+		submission.RecordPlanningDiagnostic(root, snap.State, "S8 native Stop "+packet, "")
 	}
 	return true, 0
 }

@@ -129,17 +129,18 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 	if subject.record != nil {
 		r := *subject.record
 		agent := contextAgent(snap.State, r.OwnerAgentID)
-		ref := stringValue(agent["completion_reported_ref"])
-		if ref == "" {
-			return "No Result reception is recorded for " + r.Task.ID + ". A background launch can return before completion; Main continues other work and checks the original native execution/Stop diagnostics rather than guessing or re-dispatching.", nil
-		}
 		current, found, err := assignmentrecord.ForOwner(snap.State, r.OwnerAgentID)
 		if err != nil || !found || current.Reference() != r.Reference() || r.RuntimeID != snap.State["runtime_id"] || r.BaselineGeneration != workspace.Generation(snap.State) {
-			return "", fmt.Errorf("this exact TASK reference is historical or replaced; Main follows the original current revision rather than applying another Result to it")
+			return "This exact TASK reference is historical or replaced; Main preserves its history and follows the current responsibility without resuming this old revision.", nil
 		}
 		if workstate.AgentActivity(agent) == "cancelled" || workstate.AgentActivity(agent) == "stopped" {
 			return "Original TASK is closed; Main preserves its history without re-dispatching it.", nil
 		}
+		ref := stringValue(agent["completion_reported_ref"])
+		if ref == "" {
+			return nativeS6ReturnDiagnostic(root, snap.State, r), nil
+		}
+
 		return nativeS6RecordGuidance(root, snap.State, r) + " This projects the recorded reference; original task-receipt/integration checks remain authoritative.", nil
 	}
 	if subject.targeted != nil {
@@ -154,9 +155,9 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			}
 		}
 		if len(records) == 0 {
-			return "No original Targeted reception recorded; Main checks the actual native execution/Stop diagnostics without re-dispatching by guess.", nil
+			return nativeS9ReturnDiagnostic(root, snap, subject.ref) + " No original Targeted reception recorded. Main reads this exact answer and the actual return, restores sources/prerequisites or continues the original verifier for professional omissions; an unfinished Stop does not establish completion.", nil
 		}
-		return "Original Targeted records: " + strings.Join(records, "; ") + ". Main follows the original repair status " + stringValue(repairPointerCLI(snap.State)["status"]) + " and Handoff to the next complete S7 round; a Targeted result does not replace S7.", nil
+		return nativeS9ReturnDiagnostic(root, snap, subject.ref) + " Original Targeted records: " + strings.Join(records, "; ") + ". Main follows the original repair status " + stringValue(repairPointerCLI(snap.State)["status"]) + " and Handoff to the next complete S7 round; a Targeted result does not replace S7. " + repairHandoffProjectionContext(root, snap.State), nil
 	}
 	s, err := submission.NewReadOnly(root)
 	if err != nil {
@@ -180,26 +181,48 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			return "", e
 		}
 		receipt, err = s.ReviewResultReceipt(p.Binding.OwnerAgentID, p.ID)
+		if err == nil && receipt.Accepted {
+			receipt.NextAction += nativeS7AcceptedOutletContext(root, snap, p)
+		}
+		if err == nil && !receipt.Accepted {
+			current, currentErr := runtime.CurrentReviewResultPackets(snap.State, p.Binding.OwnerAgentID)
+			isCurrent := false
+			for _, candidate := range current {
+				isCurrent = isCurrent || candidate.ID == p.ID
+			}
+			if currentErr != nil || !isCurrent {
+				return "This exact S7 questionnaire is historical or replaced; preserve its history and follow the current responsibility without resuming this old revision.", nil
+			}
+			prefix = nativeS7ReturnDiagnostic(root, snap.State, p)
+		}
+
 	case "s8-hypothesis-result-v1":
 		p, _, e := runtime.FindHypothesisResultPacket(snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
 		receipt, err = s.HypothesisResultReceipt(p.Binding.OwnerAgentID, p.ID)
+		if err == nil && !receipt.Accepted {
+			if diagnostic := submission.PlanningDiagnostic(root, snap.State, "S8 native Stop "+p.ID); diagnostic != "" {
+				prefix = diagnostic + ". This describes the last attempted reception, not a new validation or an accepted result. "
+			}
+		}
 	case "s9-repair-result-v1":
 		p, _, e := runtime.FindRepairResultPacket(snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
 		receipt, err = s.RepairResultReceipt(p.Binding.Sources.OwnerAgentID, p.ID)
+		prefix = nativeS9ReturnDiagnostic(root, snap, subject.id) + " "
 	case "s9-plan-report-v1":
+		prefix = nativeS9ReturnDiagnostic(root, snap, subject.id) + " "
 		p, _, e := runtime.FindRepairPlanReportPacket(snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
 		packets, e := runtime.CurrentRepairResultPackets(root, snap.State, p.Binding.OwnerAgentID)
 		if e != nil {
-			return "", e
+			return prefix + "Original Result source is unavailable; Main restores this exact source without re-submitting accepted work: " + e.Error(), nil
 		}
 		var ids []string
 		for _, result := range packets {
@@ -214,13 +237,24 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			receipt, err = s.RepairResultReceipt(p.Binding.OwnerAgentID, ids[0])
 		} else {
 			receipt, err = s.RepairPlanReportReceipt(p.Binding.OwnerAgentID, p.ID)
-			prefix = "Only the PlanReport receipt is available, not the Builder Result. Main inspects the original Stop/source failure; do not re-submit the accepted PlanReport. "
+			if receipt.Accepted {
+				prefix += "Only the PlanReport receipt is accepted, not the Builder Result. Main inspects the original Stop/source failure; do not re-submit the accepted PlanReport. "
+			} else {
+				prefix += "Neither PlanReport nor Builder Result is accepted. Main follows the exact Stop gap and original responsibility. "
+			}
 		}
 	}
 	if err != nil {
+		if strings.HasPrefix(subject.kind, "s9-") {
+			return prefix + "Original receipt is unavailable; Main preserves the actual return and restores the original source: " + err.Error(), nil
+		}
 		return "", err
 	}
-	if !receipt.Accepted && subject.kind != "s5-document-review-v1" {
+	if !receipt.Accepted && subject.kind == "s8-hypothesis-result-v1" {
+		receipt.NextAction = "后台派发即时返回不代表执行结束；先核对实际原生执行。 " + receipt.NextAction
+	} else if !receipt.Accepted && strings.HasPrefix(subject.kind, "s9-") {
+		receipt.NextAction = "S9 result is not accepted. Main reads the exact brief, private answer and last Stop diagnostic, restores sources/prerequisites or resumes the original Builder to complete professional omissions. An unfinished return does not establish completion; preserve accepted PlanReport facts and use original Main integration/checks for accepted Results."
+	} else if !receipt.Accepted && subject.kind != "s5-document-review-v1" {
 		receipt.NextAction = "尚无原接收事实；后台派发即时返回不代表执行结束。Main 继续可开展的工作，核对实际原生执行与 Stop 诊断，不凭此次返回猜测重派或要求重填。"
 		if subject.kind == "s7-review-result-v1" {
 			receipt.NextAction += " S7 实际未完成返回仍属于原责任；Main 阅读实际返回和 Stop 的具名作者、原答案路径及具体字段/来源诊断，恢复来源或环境前提，或续跑原 Reviewer 修正专业缺项。已记录 site_lost 时先用原 blocker_resolved 入口解除真实阻塞，再由同一 Reviewer 恢复。不能把已结束但未接收的责任当作仍在后台运行，也不凭 prose 推定验收、重派或编造 verdict/Finding。"

@@ -65,3 +65,29 @@ func TestFormatDoctorIgnoresMissingHookTimingOutbox(t *testing.T) {
 		t.Fatalf("missing hook timing outbox must be non-fatal, out=%q err=%v", out, err)
 	}
 }
+
+func TestFormatDoctorUsesPostToolUsePlatformBudget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".claude/hook-decisions.jsonl")
+	for _, tc := range []struct {
+		data string
+		warn bool
+	}{
+		{`{"hook_event":"PostToolUse","elapsed_ms":5000}`, false},
+		{`{"hook_event":"PostToolUse","elapsed_ms":12000}`, true},
+	} {
+		if err := os.WriteFile(path, []byte(tc.data+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := metrics.FormatDoctor(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "WARNING") != tc.warn || (tc.warn && !strings.Contains(out, "30000ms")) || strings.Contains(out, "bypass PreToolUse") {
+			t.Fatalf("misleading PostToolUse timing warning: %s", out)
+		}
+	}
+}

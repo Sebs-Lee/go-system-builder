@@ -50,7 +50,7 @@ func TestNotReadyBuilderPacketCarriesTokenLegend(t *testing.T) {
 		"dispatches or resumes its original brief",
 		"resolves the actual returned blocker",
 		"an absent Result is not proof of a running Builder",
-		"Main integrates the named Assignment and runs its required checks",
+		"Main follows the named Assignment's exact action",
 	} {
 		if !strings.Contains(payload.Specific.Context, want) {
 			t.Fatalf("model context missing %q:\n%s", want, payload.Specific.Context)

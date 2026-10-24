@@ -93,7 +93,17 @@ func investigationLeadAtRouteRevision(document map[string]any) bool {
 	return len(history) > 0 && stringValue(history[len(history)-1]["operation"]) == "case_routed"
 }
 
-func stageInvestigationLeadDispositionContext(root string, request policy.Input, snapshot runtime.Snapshot) string {
+func stageInvestigationLeadDispositionContext(root string, request policy.Input, snapshot runtime.Snapshot) (context string) {
+	defer func() {
+		if context == "" || !mainQuestionnaireViewer(request) || strings.Contains(context, "S8 investigation reentry budget:") {
+			return
+		}
+		_, document, _, err := investigationLeadSource(root, snapshot.State)
+		if err == nil && document != nil {
+			context += investigationLeadBudgetContext(root, snapshot.State, document)
+		}
+	}()
+
 	if !mainQuestionnaireViewer(request) {
 		return ""
 	}
@@ -141,7 +151,7 @@ func stageInvestigationLeadDispositionContext(root string, request policy.Input,
 			}
 			waiting = append(waiting, stringValue(h["hypothesis_id"])+" from "+owner)
 		}
-		if len(waiting) > 0 {
+		if len(waiting) > 0 && !investigationLeadReentryExhausted(snapshot.State, document) {
 			paths := investigationLeadQuestionnairePathsForQuestions(root, snapshot.State)
 			if len(paths) != 0 {
 				return "S8 Main questionnaire: " + paths[0] + ". Main's registered questions are awaiting Investigator results: " + strings.Join(waiting, "; ") + ". Each Investigator owns its exact HypothesisResult answer delivered by the original listener. Registration does not establish platform launch; Main follows the actual platform execution. The current Main questions need no repeated save while waiting. Current professional route entry: " + path + ". Main may choose an earlier specification/REQ/duplicate/investigate_more disposition here; the original route consumer decides its actual qualification, including s9_repair causal closure." + preparationNote
@@ -149,11 +159,15 @@ func stageInvestigationLeadDispositionContext(root string, request policy.Input,
 		}
 		return ""
 	}
-	note := ""
+	note := investigationLeadContinueQuestionsContext(root, snapshot.State)
 	if !repairLeadPreparationEvent(request.Event) && questionnaireMissing(path) {
-		note = "Not prepared yet; the next Main SessionStart or PreToolUse creates the draft. This event is read-only. "
+		note += "Not prepared yet; the next Main SessionStart or PreToolUse creates the draft. This event is read-only. "
 	}
-	return "S8 Main route questionnaire: " + path + ". " + note + "Current Case: " + resolveRootPath(root, stringValue(investigationPointer(snapshot.State)["path"])) + ". All current registered questions have one actual result; supported, refuted and inconclusive remain their original professional conclusions. Main chooses route and route_reason. An earlier inconclusive answer is not supporting or refuting evidence and must not be rewritten; explain how later accepted observations resolve its gap, or continue investigation. Unanswered current questions still block repair. For s9_repair, fill primary_root_cause as your professional causal conclusion. A causal_model chain shape is {\"trigger\":\"actual initiating condition\",\"violated_invariant\":\"the invariant that failed\",\"faulty_mechanism\":\"how it failed\",\"propagation\":\"how the failure reached the observed boundary\",\"symptoms\":[\"actual source Finding ID or observed symptom\"]}. blast_radius is an object with paths as a non-empty string array of actual paths or surface IDs, for example {\"paths\":[\"internal/module\"]}. detection_gap is an object: gap_type selects the original detection layer test | contract | type | monitoring | process, and evidence_refs is a non-empty string array. Reference array shape: {\"evidence_refs\":[\"path:<actual-source-path>#<actual-sha256>\"]}; use your actual source reference or an applicable registered-ID array example displayed with the sources. These are examples, not an exclusive route requirement for indexed IDs or execution anchors; the original route consumer retains its existing reference semantics. The concrete missing assertion is a professional explanation, not another gap_type value. Causal closure uses an actually refuted hypothesis result or no_competing_hypothesis: when no result is refuted, fill that string with your evidence-backed reason why no alternative mechanism was credible. A second supported hypothesis is not a refutation. Do not invent a refuted result or an absence of credible alternatives to advance; use investigate_more if the actual explanation remains unresolved. Keep these professional objects in this same answer. Choose investigate_more for an unresolved explanation, s2_spec_rework for specification errors, human_req_change for a real REQ change, s7_no_change only when no artifact change is needed, or duplicate with canonical_case_id. For s7_no_change, use route_reason to explain the actual observation, why no product/spec/test/config artifact needs changing, and what evidence would disprove that judgment; a required test or configuration edit is not no-change. This professional reason does not require the s9 causal objects or a new proof form. Save; original route/causal checks and downstream consumers decide whether the chosen disposition can proceed. Saving does not approve a Contract or authorize a REQ change."
+	routeBudgetHint := "When budget remains, investigate_more records an unresolved disposition; it is optional before adding questions. "
+	if investigationLeadReentryExhausted(snapshot.State, document) {
+		routeBudgetHint = "The investigate_more budget is exhausted; do not register that route again. "
+	}
+	return "S8 Main route questionnaire: " + path + ". " + note + "Current Case: " + resolveRootPath(root, stringValue(investigationPointer(snapshot.State)["path"])) + ". All current registered questions have one actual result; supported, refuted and inconclusive remain their original professional conclusions. Main chooses route and route_reason. An earlier inconclusive answer is not supporting or refuting evidence and must not be rewritten; explain how later accepted observations resolve its gap, or continue investigation. Unanswered current questions still block repair. For s9_repair, fill primary_root_cause as your professional causal conclusion. A causal_model chain shape is {\"trigger\":\"actual initiating condition\",\"violated_invariant\":\"the invariant that failed\",\"faulty_mechanism\":\"how it failed\",\"propagation\":\"how the failure reached the observed boundary\",\"symptoms\":[\"actual source Finding ID or observed symptom\"]}. causal_model may include evidence_refs to associate the causal chain with its actual evidence. blast_radius is an object with paths as a non-empty string array of actual paths or surface IDs, for example {\"paths\":[\"internal/module\"]}. Recommended blast_radius fields are paths, inclusion_reason (why these surfaces belong), and excluded_surfaces as objects with surface/reason/evidence_refs (why each examined surface is excluded). detection_gap is an object: gap_type selects the original detection layer test | contract | type | monitoring | process, and evidence_refs is a non-empty string array. Use detection_gap.explanation for why the mechanism escaped detection and detection_gap.missing_assertion for the concrete absent check. These recommended explanation fields add no required schema gate. Reference array shape: {\"evidence_refs\":[\"path:<actual-source-path>#sha256=<actual-sha256>\"]}; reuse the fixed reference supplied by the accepted Case result or an applicable registered ID displayed with the sources. The path and digest in a fixed reference are supplied by the original consumer; do not calculate or assemble them. These are examples, not an exclusive route requirement for indexed IDs or execution anchors; the original route consumer retains its existing reference semantics. The concrete missing assertion is a professional explanation, not another gap_type value. Causal closure uses an actually refuted hypothesis result or no_competing_hypothesis: when no result is refuted, fill that string with your evidence-backed reason why no alternative mechanism was credible. A second supported hypothesis is not a refutation. Do not invent a refuted result or an absence of credible alternatives to advance; append another discriminating question at the original hypotheses path if the actual explanation remains unresolved. Keep these professional objects in this same answer. " + routeBudgetHint + "Choose s2_spec_rework for specification errors, human_req_change for a real REQ change, s7_no_change only when no artifact change is needed, or duplicate with canonical_case_id. For s7_no_change, use route_reason to explain the actual observation, why no product/spec/test/config artifact needs changing, and what evidence would disprove that judgment; a required test or configuration edit is not no-change. This professional reason does not require the s9 causal objects or a new proof form. Save; original route/causal checks and downstream consumers decide whether the chosen disposition can proceed. Saving does not approve a Contract or authorize a REQ change."
 }
 
 func runSavedInvestigationLeadDisposition(root string, request policy.Input, stdout io.Writer) (bool, int) {

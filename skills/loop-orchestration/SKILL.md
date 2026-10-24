@@ -17,12 +17,44 @@ This S6 section applies to `s6-native-v1`. Existing frozen workspace/legacy assi
 
 ## Native S9 dispatch
 
-Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. The professional PlanReport and Result are private outputs in the actual native worktree. The Main-root question is read-only input; an isolated Worker never writes Main. At Stop the adapter imports the actual worktree Plan payload into the existing questionnaire and invokes the original consumer, without Main authoring the answer. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
+Identify the current responsibility from its exact original brief or Targeted
+request. Follow [agent-dispatch](../agent-dispatch/SKILL.md#native-s9) for native handoff and [S9 protocol](../../docs/control/agent-protocol.md#s9)
+for completion and recovery. Builders own private PlanReport/Result and real
+self-checks; an independent verifier, including test-builder in that role, owns
+only Targeted observations and conclusions. Ordinary Worker saves do not receive
+these artifacts; SubagentStop invokes their original consumers. Main owns actual
+dispatch, integration/checks, Impact and the fresh S7 handoff. First incomplete
+returns preserve rejection and exact gaps for Main without manufacturing completion.
+Existing registered frozen execution keeps its original sources and recovery.
 
+## S7 clean-round completion
+
+Main organizes complete-round module and affected-surface coverage; Reviewers
+perform only assigned Claims/CASEs through the actual browser, API, command or
+state-based method. Final valid Result reception forms CleanRound and the same
+original completion outlet evaluates the gate/TR-009 and prepares the exact S10
+acceptance questionnaire. Report reception, transition and preparation separately.
+For a concrete exit failure, `loop-harness runtime review-continue --root <Main>`
+rechecks the current clean-round exit. After entry into S10,
+`loop-harness runtime audit-prepare --root <Main>` restores missing current
+materials while preserving accepted results and existing reports. No next ordinary tool
+call, repeated Reviewer answer or copied clean_round binding is required.
 
 ## Native S5 / S7 / S8 professional work
 
 Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+
+For S8, follow the current Main intake → hypotheses/actual dispatch → causal
+route → Contract → actual decision questionnaires. Put experiment-specific scope,
+stopping and unresolved conditions in `discriminator`; predictions belong in
+`expected_outcomes`. Main owns synthesis and routing, while Investigators own
+their results. One active Case preserves its source set; mixed mechanisms do not
+authorize arbitrary Case split/merge. An incomplete first native return hands
+work to Main without accepting it. Restore sources or resume the author from the
+exact reference and diagnostic. Contract approval follows its actual authority:
+a designated Driver may be Main; an undesignated Main cannot substitute its own
+review. Read [S8 protocol](../../docs/control/agent-protocol.md#s8) for exact shapes
+and [bounded authority](../../docs/bounded-repair-autonomy.md) when applicable.
 
 ## Authority
 
@@ -177,7 +209,7 @@ DRIVE()
 
 Main passes the original exact inputs and output references into native Agent. The Worker performs its professional work and saves its original artifacts; Start/Stop connect them to the original consumer. Main follows actual native return, continues unrelated ready work, and handles integration or blockers. Do not create a framework wait/activation queue, infer a task from role, or self-author delegated independent judgments.
 
-Professional S6/S9 plans precede implementation but do not require a generic readback/activation exchange. S5/S7/S8 read-only responsibility uses its domain questionnaire directly. A missing artifact is a concrete handoff for that responsibility, not a human approval request or a reason to re-wake an invented teammate. Use native messaging/resume with exact references when more work is needed. A returned actor ID may differ after resume; keep the same original engineering responsibility.
+Professional S6/S9 Builder plans precede implementation but do not require a generic readback/activation exchange. S5/S7/S8 read-only responsibility uses its domain questionnaire directly. A missing artifact is a concrete handoff for that responsibility, not a human approval request or a reason to re-wake an invented teammate. Use native messaging/resume with exact references when more work is needed. A returned actor ID may differ after resume; keep the same original engineering responsibility.
 
 Real explicit approval remains in its original domain before applicable work. A frozen pre-migration teammate/execution alone uses [agent-dispatch's frozen recovery](../agent-dispatch/frozen-execution.md); do not copy that procedure into new native work. Main never reports a delegated independent conclusion on the reviewer's behalf.
 
@@ -238,7 +270,7 @@ For a concrete technical failure, use
 `.claude/bin/loop-harness runtime stage-answer receipt --agent Main --packet <packet_id> --root .`
 to diagnose the original receipt, or
 `.claude/bin/loop-harness runtime stage-answer recover --agent Main --root .`
-for its supported followup. Use the packet ID supplied by the original context.
+for its supported followup; execute the complete recovery command supplied by feedback.
 Neither is a routine authoring step.
 Keep the original human amendment for unknown UI impact and later independent
 review duties. A design receipt does not authorize ending the project.
@@ -259,8 +291,10 @@ Issuance freezes the locked REQ, registered S2 design inputs and conditional
 sources those inputs reference. It does not use the S3 index or contracts as
 their own issuance prerequisite. S3-created shared models and examples are
 outputs. On save, the original shared-model checker finds their full dependency
-closure and records it in the existing evidence subjects; an already frozen S2
-model remains unchanged. For outputs declared `git_tree`, first commit completed professional files to
+closure and records it in the existing evidence subjects. S3 may create or
+refine new models within the established design; changing frozen S2 content or
+source membership requires formal design rework. REQ semantic changes retain
+the original human amendment boundary. For outputs declared `git_tree`, first commit completed professional files to
 the bound development branch named by the Hook. S3 outputs can change in this
 entry. Save the supplied answer once; correct an unreceived answer at its original path.
 No manual issue/consume or parallel evidence envelope is needed. Progress feedback gives
@@ -269,17 +303,54 @@ commands are for diagnosing or resuming an explicitly pending system followup.
 
 The original consumer and gate run the contract/source checks and PTR-PLAN-02
 registers the current locked contract set when its full gate passes. A Main
-`pass` is not a gate result. Run `contracts check` or `scenario bridge` only to
-diagnose a specific reported failure; do not repeat checks already run by the
-consumer or gate. REQ or breaking decisions stay on their original human
-gateway, and S5's independent review remains separate. Same-content replay
+`pass` is not a gate result. `contracts check` and `scenario bridge` are
+available for autonomous professional self-review and diagnosis; they are not
+mandatory duplicate submission checks and do not replace the consumer or gate. Only an actual REQ semantic change or an unresolved decision outside existing
+authorization uses its original human gateway; ordinary compatibility and
+breaking-risk analysis is S3 professional work within the approved requirement, and S5's independent review remains separate. Same-content replay
 returns the original receipt; different content conflicts. The command/Hook/
 receipt/recovery mechanism has directed verification; live model consumption
 remains separate.
 
+For S3/S4, tool access uses the exact supplied absolute filesystem paths;
+answer fields `index_path`, `contract_paths` and `task_paths` contain
+repository-relative values. For example, read/write
+`/work/project/docs/dev/contracts/CONTRACTS-042.md` with a tool, but put
+`docs/dev/contracts/CONTRACTS-042.md` in `index_path`. Save the questionnaire at
+its exact supplied absolute answer path. Markdown links remain relative to
+the containing document; do not convert them to answer-field root-relative paths.
+
+Professional S3/S4 rework is separate from technical continuation. Within the
+same bound REQ, use
+`.claude/bin/loop-harness runtime stage-answer rework --target design --reason "<concrete design correction>" --root . --agent Main`
+when frozen S2 inputs must change. Use
+`.claude/bin/loop-harness runtime stage-answer rework --target contracts --reason "<concrete contract correction>" --root . --agent Main`
+when accepted contracts must change while S2 stays valid. While S4 is still current, use
+`.claude/bin/loop-harness runtime stage-answer rework --target tasks --reason "<concrete TASK/index correction>" --root . --agent Main`
+when accepted TASKs or the dispatch plan need professional correction and the
+frozen REQ/S2/S3 inputs remain valid. Keep correct upstream work; a tasks return
+does not refresh drifted upstream sources. After entry into S5, follow the
+independent review and original document-rework route. These explicit routes
+preserve the accepted history, invalidate affected downstream planning, and
+supply the new current view/answer paths. If preparation fails after the
+return is recorded, follow the supplied `runtime stage-answer issue` command.
+No packet/entry ID or authored evidence envelope is required. Current
+unreceived outputs are ordinary professional corrections, followed by required
+Git delivery and saving the original answer, even if marked `locked`.
+`issue` repairs missing issuance/preparation; `recover` resumes an accepted
+pending outlet. Neither changes an accepted professional judgment or authorizes
+editing frozen sources. `revise` is not an S3/S4 professional rework route.
+REQ semantic changes retain the actual human amendment boundary; ordinary
+contract gaps and compatibility choices within authorization remain professional work.
+Any questionnaire reminder about human decisions means an actual unresolved
+REQ amendment or decision outside existing authorization. It does not require
+a fresh approval for every ADR, compatibility choice, N/A rationale or S3/S4 run;
+reuse applicable existing decisions.
+
 In `planning.tasks`, use the Hook's exact view and answer paths, current REQ
 index path, TASK candidate paths and templates, frozen upstream inputs, bound
-Git branch, missing items, and next action. Main decides the TASK IDs and
+Git branch, missing items, and next action. Use numeric TASK IDs such as
+`TASK-009` or `TASK-009-01`. Main decides the TASK IDs and
 professional breakdown, completes the TASK/index outputs, marks TASK document
 statuses `complete` or `cancelled`, and commits Git-sourced outputs to the named
 branch. Keep the supplied REQ/S3 source closure frozen; do not replace a missing
@@ -287,11 +358,16 @@ or stale registered source with a live workspace file. Fill the existing
 answer's `conclusion`, `index_path`, and complete `task_paths` once, then save
 it. The original consumer performs `tasks check`,
 projects planning evidence, and continues through its gate and `TR-002`. Use
-check output only for a specific diagnostic or professional judgment; do not
-add manual checks, envelopes, issue/consume, or recovery to the normal path.
-TASK document statuses remain separate from the shared work states. A pending
-followup continues through the original system path without resubmitting the
-answer. Explicit packet-off legacy Runtime flows retain their legacy procedure.
+check output for autonomous self-review, diagnosis or professional judgment;
+do not add mandatory duplicate checks, envelopes or issue/consume procedures.
+TASK document statuses remain separate from the shared work states. For S3 or
+S4 accepted work with pending gate followup, repair the named gap and execute
+the complete original `runtime stage-answer recover` command supplied by
+feedback, without refilling or resaving the accepted answer. If transition has already committed but next-stage preparation failed, repair
+its named source gap and execute the complete original `runtime stage-answer issue` command supplied by feedback; `recover` continues a pending gate outlet.
+Ordinary reads or
+arbitrary material saves do not promise automatic recovery. Before reception,
+complete required Git delivery and save the original answer normally. Explicit packet-off legacy Runtime flows retain their legacy procedure.
 
 ## Outputs
 

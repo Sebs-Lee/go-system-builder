@@ -34,7 +34,7 @@ PostToolUse 的工具集合为 `SendMessage|Agent|Task|SubagentHandback|Bash|Wri
 
 ### 2.2 注册存在，不代表所有分支都执行
 
-当前注册均为同步 command Hook，超时为 10 秒，未配置 `async` 或 `onFailure`。`worktree.baseRef: head` 配合原生工作区使用，未注册 WorktreeCreate 来替换默认创建。PermissionRequest、TaskCompleted 等也不属于当前注册集；平台有某项能力，不构成本项目必须启用它的理由。
+当前注册均为同步 command Hook；PostToolUse 平台超时为 30 秒，其他事件为 10 秒，未配置 `async` 或 `onFailure`。较长上限用于 [S4 接收及 S5 当次准备](L4-agent-guidance.md#s4-s5-guidance)的有限内部预算，普通事件仍受原 6/8 秒工作/进程预算约束，不是每次工具调用的等待目标。`worktree.baseRef: head` 配合原生工作区使用，未注册 WorktreeCreate 来替换默认创建。PermissionRequest、TaskCompleted 等也不属于当前注册集；平台有某项能力，不构成本项目必须启用它的理由。
 
 同一事件可能被原生专用接线提前处理，也可能进入 Main 的投影、专业消费者或旧记录恢复。注册表不能被解释为“每个事件都跑整个 Controller”。相同角色并发、前后台原生执行和恢复事件都要保留这种分支关系。
 

@@ -55,6 +55,14 @@ func nativeS7HandoffFailure(owner, answer string, err error, diagnostic io.Write
 	return 0
 }
 
+// A discriminator may end without enough evidence for a receivable answer.
+// Preserve the original rejection while returning the responsibility to Main;
+// an incomplete native return neither supplies evidence nor completes S8.
+func nativeS8HandoffFailure(owner, answer string, err error, diagnostic io.Writer) int {
+	fmt.Fprintf(diagnostic, "S8 reception incomplete; Main owns recovery for %s at %s. Preserve the original answer, observations and any accepted receipt; this return does not establish investigation completion. Inspect the actual native return and this diagnostic: restore missing or stale sources and discriminator prerequisites, or resume the original Investigator to correct professional omissions. A supported/refuted/inconclusive result still requires its actual evidence and source boundary. Do not invent evidence or a conclusion to exit. %s\n", owner, answer, nativeFailureDetail(err))
+	return 0
+}
+
 func nativeFailureDetail(err error) string {
 	detail := err.Error()
 	var fields *workpacket.AnswerError
@@ -62,4 +70,17 @@ func nativeFailureDetail(err error) string {
 		detail += " " + fields.Fields[0].Repair
 	}
 	return detail
+}
+
+// S9 returns unfinished professional work on the first Stop while the original
+// consumer continues to reject it. No blocker fields or forced conclusion are
+// needed to end the native turn, and an accepted partial result stays accepted.
+func nativeS9HandoffFailure(owner, references string, err error, diagnostic io.Writer) int {
+	var completion *repairExitFailure
+	if errors.As(err, &completion) {
+		fmt.Fprintf(diagnostic, "S9 Targeted is accepted; Main owns the incomplete original Handoff/S7 preparation. Preserve the independent observations and resume the supplied completion recovery, without another verifier report. %s\n", completion.Error())
+		return 0
+	}
+	fmt.Fprintf(diagnostic, "S9 reception incomplete; Main owns recovery for %s. Exact brief/answer references: %s. Preserve original artifacts and any accepted PlanReport/Targeted receipt; this return does not establish repair completion. Restore missing or stale sources/prerequisites, resume the original professional responsibility for omissions, or complete Main integration/Handoff when the professional result is already accepted. Consumer rejection: %s\n", owner, references, nativeFailureDetail(err))
+	return 0
 }

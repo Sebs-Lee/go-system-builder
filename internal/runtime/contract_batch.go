@@ -21,6 +21,7 @@ const contractsDirectory = "docs/dev/contracts"
 var (
 	contractIDPattern = regexp.MustCompile(`^(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
 	contractIndexIDRE = regexp.MustCompile(`^CONTRACTS-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+	contractTitleIDRE = regexp.MustCompile(`^(?:FE|BE|SYNC|CONTRACTS)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
 	contractTokenRE   = regexp.MustCompile(`\b(FE|BE|SYNC)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
 )
 
@@ -61,8 +62,16 @@ func ContractArtifacts(root string, state map[string]any, p workpacket.ContractP
 	if err != nil {
 		return nil, fmt.Errorf("read S3 contract checkout: %w", err)
 	}
+	viewEntries, err = contractCandidateEntries(files, viewEntries)
+	if err != nil {
+		return nil, err
+	}
+	diskEntries, err = contractCandidateEntries(fileview.Disk{Root: root}, diskEntries)
+	if err != nil {
+		return nil, err
+	}
 	if !sameContractDirectory(viewEntries, diskEntries) {
-		return nil, fmt.Errorf("S3 contract source view and checkout directory differ")
+		return nil, fmt.Errorf("S3 contract source view and checkout directory differ: %s", contractDirectoryDifference(viewEntries, diskEntries))
 	}
 
 	indexPath := *answer.IndexPath
@@ -156,6 +165,70 @@ func validateBridgeBinding(root string, state map[string]any, p workpacket.Contr
 	return nil
 }
 
+// contractCandidateEntries limits anti-omission scans to actual contract
+// candidates. Notes, editor files and arbitrary subdirectories are not batch
+// members. Family-prefixed names remain candidates even with malformed IDs;
+// titled identities also catch descriptive filenames rather than guessing that
+// those documents belong to the delivery.
+func contractCandidateEntries(files fileview.Reader, entries []os.DirEntry) ([]os.DirEntry, error) {
+	candidates := []os.DirEntry{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".md") || strings.Contains(strings.ToLower(name), "template") || strings.EqualFold(name, "README.md") {
+			continue
+		}
+		candidate := false
+		for _, prefix := range []string{"FE-", "BE-", "SYNC-", "CONTRACTS-"} {
+			candidate = candidate || strings.HasPrefix(name, prefix)
+		}
+		if !candidate {
+			data, err := files.ReadFile(contractsDirectory + "/" + name)
+			if err != nil {
+				return nil, fmt.Errorf("inspect S3 contract candidate %s: %w", name, err)
+			}
+			for _, line := range strings.Split(string(contractReferenceText(data)), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "# ") {
+					title := strings.TrimSpace(strings.TrimPrefix(line, "# "))
+					candidate = contractTitleIDRE.MatchString(title)
+					break
+				}
+			}
+		}
+		if candidate {
+			candidates = append(candidates, entry)
+		}
+	}
+	return candidates, nil
+}
+
+// contractDirectoryDifference names only meaningful candidates after filtering.
+func contractDirectoryDifference(view, disk []os.DirEntry) string {
+	source, checkout := map[string]bool{}, map[string]bool{}
+	for _, entry := range view {
+		source[entry.Name()] = entry.IsDir()
+	}
+	for _, entry := range disk {
+		checkout[entry.Name()] = entry.IsDir()
+	}
+	differences := []string{}
+	for name, isDir := range source {
+		other, exists := checkout[name]
+		if !exists {
+			differences = append(differences, "missing from checkout: "+contractsDirectory+"/"+name)
+		} else if other != isDir {
+			differences = append(differences, "file type differs: "+contractsDirectory+"/"+name)
+		}
+	}
+	for name := range checkout {
+		if _, exists := source[name]; !exists {
+			differences = append(differences, "missing from declared source: "+contractsDirectory+"/"+name)
+		}
+	}
+	sort.Strings(differences)
+	return strings.Join(differences, "; ")
+}
+
 func sameContractDirectory(view, disk []os.DirEntry) bool {
 	if len(view) != len(disk) {
 		return false
@@ -175,6 +248,11 @@ func sameContractDirectory(view, disk []os.DirEntry) bool {
 }
 
 func validateCurrentREQDeliveryCoverage(files fileview.Reader, entries []os.DirEntry, indexPath string, contractPaths []string, requirementID string) error {
+	var err error
+	entries, err = contractCandidateEntries(files, entries)
+	if err != nil {
+		return err
+	}
 	pathSet := map[string]bool{indexPath: true}
 	idSet := map[string]bool{}
 	for _, path := range contractPaths {
@@ -214,51 +292,6 @@ func validateCurrentREQDeliveryCoverage(files fileview.Reader, entries []os.DirE
 		}
 		sort.Strings(missing)
 		return fmt.Errorf("S3 delivery omits current-index documents: %s", strings.Join(missing, ", "))
-	}
-	for id := range idSet {
-		if !contractIDPattern.MatchString(id) {
-			return fmt.Errorf("S3 delivery has an unsupported contract name %s", id)
-		}
-	}
-	return nil
-}
-
-// validateDeliveryCoverage retains S4's original repository-wide registration
-// closure. S3 uses validateCurrentREQDeliveryCoverage before its accepted
-// artifact set exists; S4 validates the already-registered set against the
-// original global contracts scan.
-func validateDeliveryCoverage(entries []os.DirEntry, indexPath string, contractPaths []string) error {
-	pathSet := map[string]bool{indexPath: true}
-	idSet := map[string]bool{}
-	for _, path := range contractPaths {
-		if pathSet[path] {
-			return fmt.Errorf("S3 delivery repeats path %s", path)
-		}
-		pathSet[path] = true
-		id := strings.TrimSuffix(filepath.Base(path), ".md")
-		if idSet[id] {
-			return fmt.Errorf("S3 delivery repeats contract name %s", id)
-		}
-		idSet[id] = true
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".md") || strings.Contains(name, "template") || name == "README.md" {
-			continue
-		}
-		path := contractsDirectory + "/" + name
-		if !pathSet[path] {
-			return fmt.Errorf("S3 delivery omits docs/dev/contracts/%s scanned by contracts check", name)
-		}
-		delete(pathSet, path)
-	}
-	if len(pathSet) != 0 {
-		missing := make([]string, 0, len(pathSet))
-		for path := range pathSet {
-			missing = append(missing, path)
-		}
-		sort.Strings(missing)
-		return fmt.Errorf("S3 delivery contains paths outside the contracts-check scan: %s", strings.Join(missing, ", "))
 	}
 	for id := range idSet {
 		if !contractIDPattern.MatchString(id) {

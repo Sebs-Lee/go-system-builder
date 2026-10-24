@@ -188,6 +188,10 @@ func runSavedS7BudgetDecisionQuestionnaire(root string, request policy.Input, st
 		if !runtime.HumanDecisionEvidenceConsumed(entry) {
 			return feedback("The original budget evidence has no completed consumption; Main/system restores its original receipt before any retry.")
 		}
+		if app.Decision == runtime.S7BudgetDecisionIncrease && app.RuntimeID == stringValue(snapshot.State["runtime_id"]) && app.ReviewRound == integerValue(nestedStateValue(snapshot.State, "review", "round")) && newMax == s7MaxRounds(snapshot.State) && lifecycleState(snapshot.State) == "bug_resolution" && stringValue(repairPointerCLI(snapshot.State)["status"]) == "ready_for_full_review" {
+			message, _ := completeRepairExit(root)
+			return feedback("The same original human decision is already recorded and consumed. Reusing the accepted decision grants no new budget; resuming its original pending TR-012 successor. " + message)
+		}
 		return feedback("The same original human decision is already recorded and consumed. Read-only replay did not change the current budget, record another approval or repeat a completed exit.")
 	}
 	expectedPath, expected, err := s7BudgetDecisionApplicationForState(root, snapshot.State)
@@ -216,6 +220,10 @@ func runSavedS7BudgetDecisionQuestionnaire(root string, request policy.Input, st
 		Pending string `json:"pending_transition"`
 	}
 	_ = json.Unmarshal(result.Bytes(), &recorded)
+	if recorded.Pending == "TR-012" {
+		message, _ := completeRepairExit(root)
+		return feedback(fmt.Sprintf("The original Writer recorded the actual human increase to %d; original pending TR-012 completion: %s", newMax, message))
+	}
 	control := runControlCycleForHook(root, request)
 	if control.QualityGate.TransitionCommitted {
 		message := fmt.Sprintf("The original Writer recorded the actual human increase to %d, then the original consumer committed %s; current cursor %s.", newMax, control.QualityGate.CandidateTransition, control.QualityGate.NextCursor)

@@ -44,6 +44,7 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 	result := phase == "fixing"
 	packetPhase := phase == "planning" || phase == "reproducing" || phase == "fixing" && (status == "repairing" || status == "blocked")
 	if packets, err := s9CurrentQuestionnaires(root, state, owner, result); err == nil && packetPhase {
+		nativePackets := nativeS9PlanPackets(root, state)
 		for _, packet := range packets {
 			fact, factErr := s9ListenerAcceptance(root, state, packet)
 			if main || fact.kind != "" {
@@ -59,13 +60,17 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 					}
 				}
 				if main && factErr == nil && fact.kind == "" {
-					for _, native := range nativeS9PlanPackets(root, state) {
-						if native.Binding.RepairAssignmentID == packet.binding.RepairAssignmentID && native.Binding.OwnerAgentID == packet.binding.OwnerAgentID {
-							brief, _, _ := nativeS9Paths(native)
-							appendPath(resolveRootPath(root, brief))
-						}
+					if native, ok := s9ListenerNativePacket(state, nativePackets, packet); ok {
+						brief, _, _ := nativeS9Paths(native)
+						appendPath(resolveRootPath(root, brief))
 					}
 				}
+				continue
+			}
+			if native, ok := s9ListenerNativePacket(state, nativePackets, packet); ok {
+				brief, _, _ := nativeS9Paths(native)
+				appendPath(resolveRootPath(root, brief))
+				appendPath(resolveRootPath(root, native.ViewPath))
 				continue
 			}
 			source, _, _ := s9ListenerResultSource(root, state, packet)

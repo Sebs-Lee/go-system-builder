@@ -66,6 +66,8 @@ Runtime、REQ、generation、阶段入口、完整已登记文档的版本和摘
 
 系统交付准确引用后，Main 直接携带各自 view／answer 派发两个 Claude Code 原生 Agent。工程 owner 只是责任标签，`platform_team_id` 只是原结构的逻辑分组；不用创建实际 Team 或寻找平台 ID，不用 workspace prepare／launch。审查者本人读取资料，只填原答卷 `conclusion`／`findings`，保存并原生返回准确答案引用，由 `SubagentStop` 调原消费者接收。
 
+普通 S4→S5 拆分和派发不需要另一次人类审批；实际 REQ 变更或超出授权的决定保留人类边界。若 S4 已接收但 TR-002 待续，Main 修复具体缺口后执行反馈给出的完整 `runtime stage-answer recover --root . --agent Main`；若已进入 S5 而准备不完整，执行反馈给出的完整 `runtime stage-answer issue --root . --agent Main`。成功保存和具名恢复均应交付两项责任各自准确的 view／answer／source root，Main 随即实际派发。
+
 当前材料缺失、漂移或入口未完成时，由 Main／系统按具体路径恢复原来源或原准备出口；不能用当前文件重新计算摘要刷新原承诺，不能让 agent 写补元数据脚本。普通读取和 Stop 不重新登记默认责任；重放准备保留原 manifest、原责任和本人答案，复用原发行。
 
 默认全批责任已经登记后，Main 不再编辑原 manifest 的 scope、risk、技能或 owner。实际项目风险的阅读重点可在原生任务中说明，仍覆盖原完整输入、不改变责任；Main 选择真正独立的两个平台上下文，工程 owner 标签无需更换。原 `stage-answer revise` 修订审查答案，不修订 manifest；`register-workgroup --revise-assignment` 的 canonical Builder 修订也不适用于 S5。不能教作者先改文件、再期待保存自动重签。

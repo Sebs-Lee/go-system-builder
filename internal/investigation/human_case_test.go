@@ -147,15 +147,16 @@ func humanRoutedContractFixture(t *testing.T) (*intakeFixture, runtime.Snapshot,
 	if err := os.WriteFile(decisionPath, decisionBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// A guessed boundary is an author-owned field error, not a source privilege.
+	// A guessed boundary is still rejected. Its author-owned correction goes
+	// back through Main without forcing another native Stop or granting a source.
 	answer.SourceBoundaryRefs = []string{"README.md"}
 	p.Draft.Answer, _ = json.Marshal(answer)
 	writeInvestigationJSON(t, filepath.Join(f.root, p.AnswerPath), p.Draft)
-	if code, output := callStop(); code != 2 || !strings.Contains(output, "/answer/source_boundary_refs") {
+	if code, output := callStop(); code != 0 || !strings.Contains(output, "/answer/source_boundary_refs") || !strings.Contains(output, "Main owns recovery") {
 		t.Fatalf("unfrozen boundary was accepted or misattributed: %d %s", code, output)
 	}
-	if !bytes.Equal(beforeSourceState, mustRead(t, f.statePath)) {
-		t.Fatal("guessed boundary changed Runtime")
+	if !bytes.Equal(beforeSourceState, mustRead(t, f.statePath)) || !bytes.Equal(beforeSourceJournal, mustRead(t, f.journalPath)) {
+		t.Fatal("guessed boundary changed Runtime or journal")
 	}
 	answer.SourceBoundaryRefs = []string{"hd-human-defect"}
 	p.Draft.Answer, _ = json.Marshal(answer)

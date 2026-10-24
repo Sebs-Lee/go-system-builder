@@ -9,6 +9,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/submission"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
@@ -107,7 +108,7 @@ func stageS5ObservedContext(root string, state map[string]any) string {
 		missing := false
 		for _, path := range []string{view, answer} {
 			if _, err := os.Stat(path); err != nil {
-				recovery := fmt.Sprintf("Main restores the original files with `loop-harness runtime stage-answer issue --root %s`; preserve existing authored answers.", s7CaptureShellQuote(root))
+				recovery := "Main restores the original files with " + submission.PlanningRecoveryCommand(root, "issue") + "; preserve existing authored answers."
 				if frozen {
 					recovery = fmt.Sprintf("Main restores this registered frozen execution's original files and source using %s; stage-answer issue in Main does not restore a frozen execution copy. Preserve existing authored answers and the original execution; do not replace it with Main authoring.", filepath.Join(root, ".claude/skills/agent-dispatch/frozen-execution.md"))
 				}
@@ -126,10 +127,10 @@ func stageS5ObservedContext(root string, state map[string]any) string {
 	}
 	for _, responsibility := range []string{"DV-SPEC-CONSISTENCY", "DV-TASK-EXECUTABILITY"} {
 		if !responsibilities[responsibility] {
-			lines = append(lines, fmt.Sprintf("S5 %s has no current issued questionnaire. Main restores the original preparation with `loop-harness runtime stage-answer issue --root %s`; preserve the other current responsibility and do not guess an answer path.", responsibility, s7CaptureShellQuote(root)))
+			lines = append(lines, fmt.Sprintf("S5 %s has no current issued questionnaire. Main restores the original preparation with %s; preserve the other current responsibility and do not guess an answer path.", responsibility, submission.PlanningRecoveryCommand(root, "issue")))
 		}
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n") + submission.PlanningDiagnostic(root, state, "preparation")
 }
 
 func applyS5ObservedGuidance(guidance *policy.Guidance) {

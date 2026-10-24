@@ -81,3 +81,50 @@ func TestHookContextCarriesCancellationWithoutAuthorBudgetFields(t *testing.T) {
 		t.Fatal("existing nested Hook calls lost parent cancellation")
 	}
 }
+
+func TestS4HookBudgetIncludesPathlessSaveAndLeavesOtherEventsBounded(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, ".claude/loop-state.json")
+	if err := os.WriteFile(statePath, []byte(`{"lifecycle":{"state":"planning","phase":"tasks"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		payload string
+		want    time.Duration
+	}{
+		{`{"hook_event_name":"PostToolUse","tool_name":"mcp__files__execute"}`, s4HookProcessBudget},
+		{`{"hook_event_name":"PostToolUse","tool_name":"Read"}`, s4HookProcessBudget}, // pending original followup
+		{`{"hook_event_name":"PreToolUse","tool_name":"Write"}`, hookProcessBudget},
+		{`{"hook_event_name":"Stop"}`, hookProcessBudget},
+		{`{"hook_event_name":"PostToolUseFailure","tool_name":"Write"}`, hookProcessBudget},
+		{`{"hook_event_name":"PostToolUse","tool_response":{"is_error":true}}`, hookProcessBudget},
+		{`{"hook_event_name":"PostToolUse","agent_id":"worker"}`, hookProcessBudget},
+	} {
+		var input policy.Input
+		if err := json.Unmarshal([]byte(tc.payload), &input); err != nil {
+			t.Fatal(err)
+		}
+		if got := hookBudget(root, input); got != tc.want {
+			t.Fatalf("%s budget=%s want=%s", tc.payload, got, tc.want)
+		}
+	}
+	if err := os.WriteFile(statePath, []byte(`{"lifecycle":{"state":"document_verification"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	input := policy.Input{Event: "PostToolUse", ToolName: "Write", ToolInput: map[string]any{"file_path": filepath.Join(root, ".claude/submissions/REQ-039/S4/Main/answer.json")}}
+	if hookBudget(root, input) != s4HookProcessBudget {
+		t.Fatal("original S4 replay lost its handoff budget after the transition")
+	}
+	input.ToolInput = nil
+	if hookBudget(root, input) != hookProcessBudget {
+		t.Fatal("unrelated S5 event inherited S4 budget")
+	}
+	for _, args := range [][]string{{"--root", root, "--event", "PostToolUse"}, {"--event=PostToolUse", "--root=" + root}} {
+		if hookRootForBudget(args) != root {
+			t.Fatal("native process and worker selected different roots")
+		}
+	}
+}

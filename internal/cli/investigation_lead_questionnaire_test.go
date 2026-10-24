@@ -259,7 +259,7 @@ func TestS8InvestigationLeadEvidenceReferencesExposeOriginalIDsAndPaths(t *testi
 	before, _ := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
 	answerBefore, _ := os.ReadFile(questionsPath)
 	context := stageInvestigationLeadQuestionnaireContext(root, policy.Input{Event: "Stop"}, current)
-	for _, expected := range []string{questionsPath, "EVID-S8-CURRENT -> " + filepath.Join(root, ".claude/evidence/findings/finding-1.json"), `evidence_refs=["EVID-S8-CURRENT"]`, "not evidence_refs values", "test://<actual-run-or-check>", "Both reference fields are string arrays"} {
+	for _, expected := range []string{questionsPath, "EVID-S8-CURRENT -> " + filepath.Join(root, ".claude/evidence/findings/finding-1.json"), `evidence_refs=["EVID-S8-CURRENT"]`, "a bare path is not a registered or captured Hypothesis evidence reference", "test://<actual-run-or-check>", "Both reference fields are string arrays"} {
 		if !strings.Contains(context, expected) {
 			t.Fatalf("Main authoring context omitted %q: %s", expected, context)
 		}
@@ -276,7 +276,30 @@ func TestS8InvestigationLeadEvidenceReferencesExposeOriginalIDsAndPaths(t *testi
 	}
 	current.State["evidence"] = []any{}
 	context = investigationLeadEvidenceReferenceContext(root, current.State)
-	if !strings.Contains(context, "No valid current-generation/current-round evidence IDs") || !strings.Contains(context, "Main/system owns") {
-		t.Fatalf("missing evidence was not identified as its original system gap: %s", context)
+	if !strings.Contains(context, "No valid current-generation/current-round evidence IDs") || !strings.Contains(context, "does not invalidate the supplied frozen sources") {
+		t.Fatalf("absence of an index entry incorrectly invalidated supplied original evidence: %s", context)
+	}
+}
+
+func TestS8FirstQuestionReusesDeliveredFrozenFindingReference(t *testing.T) {
+	root := investigationLeadTestRoot(t)
+	_, path := investigationLeadTestIngest(t, root)
+	current := investigationLeadTestSnapshot(t, root)
+	context := stageInvestigationLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, current)
+	if !strings.Contains(context, `Selected Finding finding-1 frozen evidence_refs=["evidence://finding-1"]`) || !strings.Contains(context, filepath.Join(root, ".claude/evidence/findings/finding-1.json")) {
+		t.Fatalf("first question omitted reusable original source: %s", context)
+	}
+	question := investigationLeadTestQuestion("the original frozen boundary explains the symptom")
+	question.EvidenceRefs = []string{"evidence://finding-1"}
+	writeRepairLeadJSON(t, path, []investigationLeadQuestion{question})
+	feedback := investigationLeadTestSave(t, root, path)
+	current = investigationLeadTestSnapshot(t, root)
+	_, document, _, err := investigationLeadSource(root, current.State)
+	if err != nil || len(objectSliceAny(document["hypotheses"])) != 1 {
+		t.Fatalf("delivered frozen reference could not register first question: %v %s", err, feedback)
+	}
+	registered := objectSliceAny(document["hypotheses"])[0]
+	if refs := stringSliceAny(registered["evidence_refs"]); len(refs) != 1 || refs[0] != "evidence://finding-1" {
+		t.Fatalf("original reference changed: %#v", registered)
 	}
 }

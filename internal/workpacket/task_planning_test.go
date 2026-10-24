@@ -2,6 +2,7 @@ package workpacket
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +234,17 @@ func TestTaskPlanningEvidenceIncludesActualCancelledTaskWithoutChangingProfessio
 	}
 	if !found {
 		t.Fatal("actual cancelled TASK fact omitted")
+	}
+}
+
+func TestTaskPlanningInheritsLargeAcceptedContractSet(t *testing.T) {
+	p := taskPlanningFixture(t)
+	inputs := p.Inputs
+	for i := 2; i <= 96; i++ {
+		id := fmt.Sprintf("FE-%03d", i)
+		inputs.Contracts = append(inputs.Contracts, Reference{ID: id, Path: "docs/dev/contracts/" + id + ".md", Version: "v1.0.0", SHA256: Digest([]byte(id))})
+	}
+	if got, err := BuildTaskPlanning(p.Binding, inputs); err != nil || len(got.Inputs.Contracts) != 97 {
+		t.Fatalf("large accepted S3 set cannot enter S4: size=%d err=%v", len(got.Inputs.Contracts), err)
 	}
 }

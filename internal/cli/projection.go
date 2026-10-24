@@ -197,6 +197,11 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 		// Stay inside the current stage until its quality gate commits the
 		// advance. A filename (even a locked one) is not current REQ evidence.
 		contract.Missing = []string{"locked_contract_set", "planning_contract_record"}
+		if row, err := registeredPlanningRow(state); err == nil && row != nil {
+			if record, found, err := runtime.FindSubmission(state, stringValue(row["packet_id"])); err == nil && found && record.Owner == "Main" && record.OriginState == "planning" && record.OriginPhase == "contracts" && record.OriginEntry == tolerantInt(mapFieldCLI(state, "lifecycle")["phase_revision"]) {
+				contract.Missing = nil
+			}
+		}
 	case "S4":
 		switch {
 		case !hasMarkdownArtifact(root, projectlayout.Contracts, "CONTRACTS-*.md", "locked"):

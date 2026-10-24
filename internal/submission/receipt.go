@@ -315,7 +315,7 @@ func receipt(root string, snapshot runtime.Snapshot, p workpacket.Packet, r runt
 func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Receipt, error) {
 	s = s.WithContext(ctx)
 	if limit < 1 || limit > 2 {
-		return nil, fmt.Errorf("S5 recovery limit must be 1 or 2")
+		return nil, fmt.Errorf("stage-answer recovery limit must be 1 or 2")
 	}
 	snapshot, err := s.snapshot()
 	if err != nil {
@@ -332,8 +332,16 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 		if owner != "" && row["owner"] != owner {
 			continue
 		}
+		if row["origin_state"] == "planning" {
+			if _, followupErr := runtime.SubmissionFollowup(snapshot.State, text(row["followup_event_id"])); errors.Is(followupErr, runtime.ErrSubmissionFollowupOriginChanged) || errors.Is(followupErr, runtime.ErrSubmissionFollowupProcessed) {
+				// A new planning entry preserves old receptions as history.
+				// They must neither block recovery of current work nor consume
+				// the bounded recovery budget with an obsolete outlet.
+				continue
+			}
+		}
 		if row["control_status"] != "pending" {
-			// Compatibility for S2/S3 answers received before not-ready gates
+			// Compatibility for S2/S3/S4 answers received before not-ready gates
 			// retained their followup. Never revive a historical stage entry.
 			if row["control_status"] != "no_transition" {
 				continue
@@ -344,7 +352,11 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 				if _, design, err := runtime.FindDesignPacket(snapshot.State, text(row["packet_id"])); err != nil {
 					return results, err
 				} else if !design {
-					continue
+					if _, tasks, err := runtime.FindTaskPlanningPacket(snapshot.State, text(row["packet_id"])); err != nil {
+						return results, err
+					} else if !tasks {
+						continue
+					}
 				}
 			}
 			if _, err := runtime.SubmissionFollowup(snapshot.State, text(row["followup_event_id"])); err != nil {
@@ -360,21 +372,12 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if owner != "" && owner != "Main" {
 				continue
 			}
-			result, err := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: text(row["followup_event_id"]), Files: s.Files})
+			result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: text(row["followup_event_id"]), Files: s.Files})
+			r, err := s.taskPlanningControlReceipt(snapshot, taskPlanning, result, controlErr)
 			if err != nil {
 				return results, err
 			}
-			latest, err := s.snapshot()
-			if err != nil {
-				return results, err
-			}
-			r, err := s.taskPlanningReceipt(latest, taskPlanning)
-			if err != nil {
-				return results, err
-			}
-			if result.Error != "" {
-				r.NextAction += " Main 检查原接续失败：" + result.Error
-			}
+
 			results = append(results, r)
 			if len(results) == limit {
 				break
@@ -389,6 +392,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			}
 			result, err := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: text(row["followup_event_id"]), Files: s.Files})
 			if err != nil {
+				RecordPlanningDiagnostic(s.Root, snapshot.State, "outlet", err.Error())
 				return results, err
 			}
 			preparation, preparationWaiting := s.preparePlanningOutlet(ctx, &result)
@@ -401,7 +405,15 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 				return results, err
 			}
 			if result.Error != "" {
-				r.NextAction = "Main 恢复原 contract followup；无需重新提交专业判断。原因：" + result.Error
+				r.NextAction = "Main 恢复原 contract followup；无需重新提交专业判断。原因：" + result.Error + "；修复后使用 " + PlanningRecoveryCommand(s.Root, "recover")
+			}
+			if result.Error == "" && !result.QualityGate.TransitionCommitted && len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
+				r.NextAction = fmt.Sprintf("S3 答卷已接收，阶段尚未推进。原门 %s：缺项 %v；冲突 %v。修复后使用 %s 接续原出口；无需重交答案。", result.QualityGate.GateID, result.QualityGate.Missing, result.QualityGate.Conflicts, PlanningRecoveryCommand(s.Root, "recover"))
+			}
+			if result.Error != "" || len(result.QualityGate.Missing)+len(result.QualityGate.Conflicts) > 0 {
+				RecordPlanningDiagnostic(s.Root, snapshot.State, "outlet", r.NextAction)
+			} else if result.QualityGate.TransitionCommitted {
+				RecordPlanningDiagnostic(s.Root, snapshot.State, "outlet", "")
 			}
 			r.NextAction += preparation
 			r.WaitingOn = append(r.WaitingOn, preparationWaiting...)

@@ -71,7 +71,7 @@ func s6EntryPreparationContext(root string, state map[string]any, request policy
 }
 
 func dispatchGuidanceCheckpoint(event string, input policy.Input) bool {
-	if input.EffectiveAgentID() != "" {
+	if owner := input.EffectiveAgentID(); owner != "" && owner != "Main" {
 		return false
 	}
 	switch event {

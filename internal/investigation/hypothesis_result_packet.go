@@ -551,6 +551,12 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 			}
 		}
 	}
+	if batchRef != "" {
+		refsToValidate, err = remainingFindingQuestionRefs(root, state, current.document, question.SourceFindingIDs, refsToValidate)
+		if err != nil {
+			return workpacket.HypothesisResultPacket{}, err
+		}
+	}
 	if batchRef == "" {
 		source, err := humanCaseSource(root, state, current.document)
 		if err != nil {
@@ -559,11 +565,11 @@ func buildCurrentHypothesisResultPacket(root string, state map[string]any, curre
 		refsToValidate = withoutHumanSource(refsToValidate, source)
 	}
 	if len(refsToValidate) > 0 {
-		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
+		if err := ValidateEvidenceRefs(refsToValidate, EvidenceAttestationOptions{AllowPaths: true, State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
 			return workpacket.HypothesisResultPacket{}, fmt.Errorf("S8 frozen evidence source closure: %w", err)
 		}
 	}
-	evidenceRefs, err := buildS8EvidenceRefTuples(state, allRefs, question.EvidenceRefs, findingRows)
+	evidenceRefs, err := buildS8EvidenceRefTuples(state, allRefs, question.EvidenceRefs, findingRows, question.SourceFindingIDs)
 	if err != nil {
 		return workpacket.HypothesisResultPacket{}, err
 	}
@@ -902,7 +908,7 @@ func readS8FindingDocuments(root string, state map[string]any, findingIDs []stri
 	return result, nil
 }
 
-func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string, findings []workpacket.HypothesisResultFinding) ([]workpacket.HypothesisEvidenceRef, error) {
+func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string, findings []workpacket.HypothesisResultFinding, selected []string) ([]workpacket.HypothesisEvidenceRef, error) {
 	entries, _ := state["evidence"].([]any)
 	byID := map[string]map[string]any{}
 	for _, raw := range entries {
@@ -931,6 +937,43 @@ func buildS8EvidenceRefTuples(state map[string]any, refs, questionRefs []string,
 				result = append(result, workpacket.HypothesisEvidenceRef{Ref: ref, Origin: origin, SourceFindingID: sourceFinding, Attestation: "finding_source", Path: source.Path, SHA256: source.SHA256})
 				return nil
 			}
+		}
+		if origin == "hypothesis" {
+			for _, finding := range findings {
+				chosen := false
+				for _, id := range selected {
+					if id == finding.FindingID {
+						chosen = true
+					}
+				}
+				if !chosen {
+					continue
+				}
+				var doc struct {
+					Refs []string `json:"evidence_refs"`
+				}
+				if err := json.Unmarshal(finding.Document, &doc); err != nil {
+					return err
+				}
+				for _, original := range doc.Refs {
+					source, typed, err := evidence.ParseFindingReference(ref)
+					if err != nil {
+						return err
+					}
+					if original == ref && typed {
+						result = append(result, workpacket.HypothesisEvidenceRef{Ref: ref, Origin: origin, Attestation: "finding_source", Path: source.Path, SHA256: source.SHA256})
+						return nil
+					}
+				}
+			}
+		}
+		if origin == "hypothesis" && strings.HasPrefix(ref, "path:") {
+			source, _, err := evidence.ParseFindingReference(ref)
+			if err != nil {
+				return err
+			}
+			result = append(result, workpacket.HypothesisEvidenceRef{Ref: ref, Origin: origin, Attestation: "file_source", Path: source.Path, SHA256: source.SHA256})
+			return nil
 		}
 		id, indexed, err := evidence.ReferenceID(ref)
 		if err != nil {

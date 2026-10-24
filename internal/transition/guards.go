@@ -114,6 +114,7 @@ func GuardNames() []string {
 // forbidden until that inventory lands.
 func InitGuardRegistry() {
 	newFns := map[string]GuardFn{
+		"planning_rework_scope": guardPlanningReworkScope,
 		// Top-level / planning / verification / bug guards.
 		// TR-001's former stub guards (req_exists / req_locked /
 		// req_questions_non_blocking / pm_context_matches_req) were removed:

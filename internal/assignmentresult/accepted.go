@@ -75,7 +75,7 @@ func validRelative(ref string) bool {
 // read must be the caller's original authority file view. This function
 // does not mark assertions true or authorize a Runtime mutation.
 func LoadAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error)) (AcceptedResult, error) {
-	return loadAccepted(state, record, resultRef, read, false)
+	return loadAccepted(state, record, resultRef, read, false, false)
 }
 
 // LoadContribution reads the immutable delivery history for a product baseline.
@@ -83,10 +83,18 @@ func LoadAccepted(state map[string]any, record assignmentrecord.Record, resultRe
 // current quality verdict. Callers must still verify the original Main receipt
 // and review the current full product surface. No evidence status is changed.
 func LoadContribution(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error)) (AcceptedResult, error) {
-	return loadAccepted(state, record, resultRef, read, true)
+	return loadAccepted(state, record, resultRef, read, true, false)
 }
 
-func loadAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error), contribution bool) (AcceptedResult, error) {
+// LoadRecordedAccepted reads the original registered professional answer with
+// current Assignment and immutable envelope binding. It does not revalidate the
+// PLAN, Worker checks or evidence closure, and proves no current completion or
+// integration eligibility. Use LoadAccepted for those original validations.
+func LoadRecordedAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error)) (AcceptedResult, error) {
+	return loadAccepted(state, record, resultRef, read, false, true)
+}
+
+func loadAccepted(state map[string]any, record assignmentrecord.Record, resultRef string, read func(string) ([]byte, error), contribution, recordedOnly bool) (AcceptedResult, error) {
 	var result AcceptedResult
 	if err := assignmentrecord.ValidateRecord(record); err != nil {
 		return result, err
@@ -122,10 +130,13 @@ func loadAccepted(state map[string]any, record assignmentrecord.Record, resultRe
 		return result, fmt.Errorf("Result evidence identity is ambiguous: %w", err)
 	}
 	data, err := boundedRead(resultRef)
-	if err != nil || digestBytes(data) != index["sha256"] {
-		return result, fmt.Errorf("registered Result source is missing or changed")
+	if err != nil {
+		return result, fmt.Errorf("registered Result source %s is unavailable: %w", resultRef, err)
 	}
-	return validateAcceptedEnvelope(record, index, data, boundedRead)
+	if digestBytes(data) != index["sha256"] {
+		return result, fmt.Errorf("registered Result source %s changed", resultRef)
+	}
+	return validateAcceptedEnvelopeMode(record, index, data, boundedRead, recordedOnly)
 }
 
 // LoadSupersededAccepted validates an immutable Result from previousRecord,
@@ -271,6 +282,10 @@ func validateSupersededRecordPair(state map[string]any, previous, successor assi
 // readers. Registry status/current-owner authority remains in the public
 // wrappers above.
 func validateAcceptedEnvelope(record assignmentrecord.Record, index map[string]any, data []byte, read func(string) ([]byte, error)) (AcceptedResult, error) {
+	return validateAcceptedEnvelopeMode(record, index, data, read, false)
+}
+
+func validateAcceptedEnvelopeMode(record assignmentrecord.Record, index map[string]any, data []byte, read func(string) ([]byte, error), recordedOnly bool) (AcceptedResult, error) {
 	var result AcceptedResult
 	if index["kind"] != "completion_report" || number(index["baseline_generation"]) != record.BaselineGeneration || index["responsibility_id"] != "BUILD-WORK-PACKAGE" {
 		return result, fmt.Errorf("Result has invalid original evidence registration")
@@ -307,6 +322,13 @@ func validateAcceptedEnvelope(record assignmentrecord.Record, index map[string]a
 	}
 	if len(result.SubjectRefs) != 1 || result.SubjectRefs[0] != (SubjectReference{ID: record.Task.ID, Kind: "task", Path: record.Task.Ref, Version: record.Task.Version, SHA256: record.Task.SHA256}) {
 		return result, fmt.Errorf("Result subjects differ from the registered TASK")
+	}
+	if recordedOnly {
+		answerSHA, err := AnswerDigest(result.Answer)
+		if err != nil || answerSHA != result.AnswerDigest {
+			return result, fmt.Errorf("Result professional answer digest changed")
+		}
+		return result, nil
 	}
 	if !validRelative(result.PlanRef) {
 		return result, fmt.Errorf("Result plan source must be authority relative")
@@ -398,7 +420,7 @@ func acceptedHistory(state map[string]any, record assignmentrecord.Record, read 
 		if binding.AssignmentRecord != record.Reference() {
 			continue
 		}
-		result, err := loadAccepted(state, record, ref, read, contribution)
+		result, err := loadAccepted(state, record, ref, read, contribution, false)
 		if err != nil {
 			return nil, err
 		}

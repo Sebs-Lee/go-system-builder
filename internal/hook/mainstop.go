@@ -170,7 +170,7 @@ func planningStopDecision(state map[string]any) (policy.Decision, bool) {
 	return policy.Decision{
 		Decision: "deny", RuleID: rule, MatchedRuleIDs: []string{rule},
 		Reason:   "Current planning stage still has work. Stage handoff or workload size does not require another user approval.",
-		Recovery: []string{"Continue DRIVE at the current S3/S4 contract; produce the next deliverable and evidence, without calling status/next or forcing a transition.", "If the user explicitly requested a stop, or an actual approval/external wait is required, explain that fact and end. This is one bounded reminder: stop_hook_active allows the next Stop, including repeated failure or no progress."},
+		Recovery: []string{"Continue the current S3/S4 responsibility using its exact guidance. If the professional answer is already accepted, follow its named recovery instead of creating another delivery. Use status/next when needed to diagnose a concrete gap; repeated unchanged queries do not advance the stage.", "If the user explicitly requested a stop, or an actual approval/external wait is required, explain that fact and end. This is one bounded reminder: stop_hook_active allows the next Stop, including repeated failure or no progress."},
 		Retry:    policy.RetryAfterRecoveryValidation,
 	}, true
 }

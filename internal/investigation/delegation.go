@@ -174,6 +174,12 @@ func validateDelegatedApproval(root string, state, draft map[string]any, req Con
 		if id == req.ApprovalEvidenceID || id == req.DelegationEvidenceID {
 			return nil, fmt.Errorf("technical review evidence cannot be its own authority")
 		}
+		if strings.HasPrefix(id, "path:") {
+			if err := ValidateEvidenceRefs([]string{id}, EvidenceAttestationOptions{AllowPaths: true, State: state, Root: root, RequireSHA: true, RequireReviewRound: currentReviewRound(state)}); err != nil {
+				return nil, fmt.Errorf("technical review supporting file evidence: %w", err)
+			}
+			continue
+		}
 		rows, _ := state["evidence"].([]any)
 		kind := ""
 		for _, raw := range rows {
