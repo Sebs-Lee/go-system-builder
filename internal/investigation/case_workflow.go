@@ -120,7 +120,10 @@ type RouteRequest struct {
 	// no competing hypothesis was credible enough to warrant a discriminator;
 	// it substitutes for the refuted-hypothesis result in causal closure.
 	NoCompetingHypothesis string
-	OccurredAt            time.Time
+	// CompetingHypothesisAssessment explains how accepted discriminators handled
+	// credible alternatives; it must reference current conclusive results.
+	CompetingHypothesisAssessment map[string]any
+	OccurredAt                    time.Time
 }
 
 // UpdateCase commits an arbitrary, package-local Case revision mutation. The
@@ -513,6 +516,9 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 			if strings.TrimSpace(request.NoCompetingHypothesis) != "" {
 				candidate["no_competing_hypothesis"] = strings.TrimSpace(request.NoCompetingHypothesis)
 			}
+			if request.CompetingHypothesisAssessment != nil {
+				candidate["competing_hypothesis_assessment"] = cloneMap(request.CompetingHypothesisAssessment)
+			}
 			if len(request.CausalModel) > 0 {
 				candidate["causal_model"] = cloneMap(request.CausalModel)
 			}
@@ -550,6 +556,9 @@ func UpdateCaseRoute(root, statePath, journalPath string, request RouteRequest) 
 			}
 			if strings.TrimSpace(request.NoCompetingHypothesis) != "" {
 				document["no_competing_hypothesis"] = strings.TrimSpace(request.NoCompetingHypothesis)
+			}
+			if request.CompetingHypothesisAssessment != nil {
+				document["competing_hypothesis_assessment"] = cloneMap(request.CompetingHypothesisAssessment)
 			}
 			if len(request.CausalModel) > 0 {
 				document["causal_model"] = cloneMap(request.CausalModel)
@@ -1310,32 +1319,48 @@ func validateDetectionGap(detectionGap map[string]any) error {
 	return nil
 }
 
-// competingHypothesisState answers whether the Case demonstrates that the
-// leading hypothesis survived contact with at least one competing hypothesis.
-// It is satisfied either by at least one refuted hypothesis result or by the
-// explicit no_competing_hypothesis declaration on the Case.
-func competingHypothesisState(document map[string]any) (refuted int, declaredNone bool) {
-	results, _ := currentHypothesisResults(document)
-	for _, result := range results {
-		if stringField(result["result"]) == "refuted" {
-			refuted++
-		}
-	}
-	if strings.TrimSpace(stringField(document["no_competing_hypothesis"])) != "" {
-		declaredNone = true
-	}
-	return refuted, declaredNone
-}
-
-// requireCompetingHypothesisClosure enforces the S8-4 repair contract: a
-// single supported result must never be the only discriminative evidence
-// behind an s9_repair route.
+// requireCompetingHypothesisClosure keeps absence distinct from a professional
+// assessment of credible alternatives handled by current actual discriminators.
 func requireCompetingHypothesisClosure(document map[string]any) error {
-	refuted, declaredNone := competingHypothesisState(document)
-	if refuted >= 1 || declaredNone {
+	results, _ := currentHypothesisResults(document)
+	declaredNone := strings.TrimSpace(stringField(document["no_competing_hypothesis"])) != ""
+	raw, assessed := document["competing_hypothesis_assessment"]
+	if assessed {
+		if declaredNone {
+			return errors.New("competing_hypothesis_assessment and no_competing_hypothesis are mutually exclusive")
+		}
+		assessment, ok := raw.(map[string]any)
+		if !ok || len(assessment) != 2 || strings.TrimSpace(stringField(assessment["conclusion"])) == "" {
+			return errors.New("competing_hypothesis_assessment requires only hypothesis_ids and a non-empty conclusion explaining how credible alternatives were discriminated")
+		}
+		ids, err := stringSlice(assessment["hypothesis_ids"], "competing_hypothesis_assessment.hypothesis_ids")
+		if err != nil {
+			return err
+		}
+		ids, err = normalizeSet(ids, "competing_hypothesis_assessment.hypothesis_ids")
+		if err != nil {
+			return err
+		}
+		current := map[string]string{}
+		for _, result := range results {
+			current[stringField(result["hypothesis_id"])] = stringField(result["result"])
+		}
+		for _, id := range ids {
+			if !oneOf(current[id], "supported", "refuted") {
+				return fmt.Errorf("competing_hypothesis_assessment hypothesis %q requires a current accepted supported or refuted result; unknown, unanswered and inconclusive questions cannot close alternatives", id)
+			}
+		}
 		return nil
 	}
-	return errors.New("causal closure requires the leading hypothesis to be discriminated: record at least one refuted hypothesis result, or declare no_competing_hypothesis with the reason no alternative mechanism was credible")
+	for _, result := range results {
+		if stringField(result["result"]) == "refuted" {
+			return nil
+		}
+	}
+	if declaredNone {
+		return nil
+	}
+	return errors.New("causal closure requires a current refuted hypothesis result, competing_hypothesis_assessment of current conclusive discriminators, or no_competing_hypothesis with the reason no alternative mechanism was credible")
 }
 
 // validateCausalClosure composes the structural S8 causal-material checks
@@ -1366,6 +1391,18 @@ func validateCausalClosureEvidence(root string, state, document map[string]any) 
 	}
 	detectionGap, _ := document["detection_gap"].(map[string]any)
 	refs := stringSliceValues(detectionGap["evidence_refs"])
+	// Reuse exact original Finding sources through their original sealed Batch,
+	// rather than demanding that S8 recapture or register an alias for S7 facts.
+	if stringField(document["observation_batch_ref"]) != "" {
+		var err error
+		refs, err = remainingFindingQuestionRefs(root, state, document, stringSliceAnyToStrings(document["source_finding_ids"]), refs)
+		if err != nil {
+			return fmt.Errorf("detection_gap.evidence_refs: %w", err)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
 	if err := ValidateEvidenceRefs(refs, EvidenceAttestationOptions{
 		AllowPaths:         true,
 		State:              state,

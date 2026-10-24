@@ -154,7 +154,17 @@ Main 的假设工序接收专业问题数组。新行不需要自拟 Hypothesis 
 
 ### 5.3 不为凑形式制造竞争假设
 
-关键替代解释必须处理，支持结论不能只因为“暂时没被反驳”。通常应有能够区分主要竞争机制的实际结果。如果确实没有可信替代机制，Main 通过 `no_competing_hypothesis` 解释搜索过什么、为何没有合理替代，不能为了填表编造一个容易反驳的原因。
+关键替代解释必须处理，支持结论不能只因为“暂时没被反驳”。通常应有能够区分主要竞争机制的实际结果。如果确实没有可信替代机制，Main 通过 `no_competing_hypothesis` 解释搜索过什么、为何没有合理替代，不能为了填表编造一个容易反驳的原因。 因果收口可使用当前 `refuted` 结果，或独立的 `competing_hypothesis_assessment` 对象：`hypothesis_ids` 引用当前已有实际 `supported` / `refuted` 结果的判别问题，`conclusion` 解释这些实际观察如何处置可信替代机制（可保留竞争对照面并定位缺口，不必谎称已反驳）。未知、历史 Assignment 的结果和 `inconclusive` 不能满足这一对象。它与 `no_competing_hypothesis` 互斥。一个实验可区分的竞争解释写进 `discriminator`；只有需要独立可证伪问题与独立结果时才另登记 Hypothesis。
+
+Main 填表速查（三选一，满足其一即可，②③互斥）：
+
+| 情形 | 填什么 | 写法 |
+| --- | --- | --- |
+| 已有当前 `refuted` 结果 | 什么都不用加 | 收口自动满足 |
+| 有可信竞争，但已被判别式处理 | `competing_hypothesis_assessment` | `hypothesis_ids` 指当前 `supported`/`refuted` 的判别问题 ID，`conclusion` 写观察如何处置对照面；`--competing-hypothesis-assessment-file` 收问卷 JSON 文件路径，不手填 digest |
+| 真没有可信竞争 | `no_competing_hypothesis` | 写搜过什么、为何无合理替代；有判别式处理时禁用此项 |
+
+路由的 `detection_gap.evidence_refs` 可复用当前 Case 的封存 ObservationBatch / Finding 中原样引用；消费者核对原来源、当前代次/轮次和实际 SHA，不要求把 S7 原证据复制或重登记为 S8。新路径仍由原 S8 消费者捕获并固定摘要。
 
 当前收口校验要求至少一项 refuted 结果，或上述明确声明。这个结构条件只能证明作者处理过该事项，不能证明被反驳的是重要竞争解释，也不能证明声明理由充分。因果质量仍由 Main 与合同技术审查承担。
 

@@ -61,6 +61,15 @@ Existing canonical Case/Contract references support the original duplicate route
   concrete observation supports/refutes each explanation. When no credible
   competing hypothesis exists, Main explains the search and absence in the
   supplied `no_competing_hypothesis` field rather than inventing a weak alternative.
+  When credible alternatives were handled by an accepted discriminator, Main uses
+  `competing_hypothesis_assessment` with `hypothesis_ids` for current accepted
+  supported/refuted results and a `conclusion` explaining their actual treatment.
+  This may retain a contrast while locating the gap; it does not assert absence
+  or refutation. Inconclusive and historical-only results cannot close this
+  assessment; do not combine it with `no_competing_hypothesis`. Put a contrast
+  in `discriminator` when the same experiment distinguishes mechanisms; register
+  another Hypothesis only for an independently falsifiable question needing its
+  own actual result.
 - Put the particular experiment's read/command scope, stopping and unresolved
   conditions in the existing `discriminator`; put support/refute predictions in
   `expected_outcomes`. Do not add unsupported scope/stop fields. General product,

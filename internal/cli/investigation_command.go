@@ -549,7 +549,8 @@ func runRuntimeInvestigationRoute(args []string, stdout, stderr io.Writer) int {
 	detectionGapFile := flags.String("detection-gap-file", "", "s9_repair: JSON file with the detection gap")
 	canonicalCaseID := flags.String("canonical-case-id", "", "duplicate: the canonical Case id")
 	reassessmentEvidence := flags.String("reassessment-evidence", "", "S9 targeted-failure artifact path(s), comma-separated; required when reopening an approved Case")
-	noCompetingHypothesis := flags.String("no-competing-hypothesis", "", "explicit declaration that no competing hypothesis was credible; substitutes for a refuted result in causal closure (S8-4)")
+	competingAssessmentFile := flags.String("competing-hypothesis-assessment-file", "", "s9_repair: JSON file path with {hypothesis_ids, conclusion}; IDs must be current accepted supported/refuted discriminator results (never inconclusive or historical-only); mutually exclusive with --no-competing-hypothesis; use when credible alternatives were handled by accepted discriminators")
+	noCompetingHypothesis := flags.String("no-competing-hypothesis", "", "explicit declaration that no competing hypothesis was credible; substitutes for a refuted result in causal closure (S8-4); use only for actual absence, never when credible alternatives were handled by competing-hypothesis-assessment")
 	occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
 	if wantsHelp(args) {
 		flags.SetOutput(stdout)
@@ -605,6 +606,11 @@ func runRuntimeInvestigationRoute(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, formatFailure("runtime investigation route", err))
 		return 1
 	}
+	competingAssessment, err := loadObject("competing-hypothesis-assessment-file", *competingAssessmentFile)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("runtime investigation route", err))
+		return 1
+	}
 	reassessmentRefs, err := loadCausalReassessmentEvidence(*root, *reassessmentEvidence)
 	if err != nil {
 		fmt.Fprintln(stderr, formatFailure("runtime investigation route", err))
@@ -624,6 +630,7 @@ func runRuntimeInvestigationRoute(args []string, stdout, stderr io.Writer) int {
 		CanonicalCaseID:                strings.TrimSpace(*canonicalCaseID),
 		CausalReassessmentEvidenceRefs: reassessmentRefs,
 		NoCompetingHypothesis:          strings.TrimSpace(*noCompetingHypothesis),
+		CompetingHypothesisAssessment:  competingAssessment,
 		OccurredAt:                     occurredAt,
 	})
 	if err != nil {

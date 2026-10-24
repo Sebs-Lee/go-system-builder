@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,8 +177,8 @@ func investigationLeadDispositionResults(t *testing.T, verdicts ...string) (stri
 	root := investigationLeadTestRoot(t)
 	_, questions := investigationLeadTestIngest(t, root)
 	var authored []investigationLeadQuestion
-	for _, verdict := range verdicts {
-		authored = append(authored, investigationLeadTestQuestion("test mechanism "+verdict))
+	for index, verdict := range verdicts {
+		authored = append(authored, investigationLeadTestQuestion(fmt.Sprintf("test mechanism %s #%d", verdict, index+1)))
 	}
 	writeRepairLeadJSON(t, questions, authored)
 	investigationLeadTestSave(t, root, questions)
@@ -200,7 +201,7 @@ func TestS8InvestigationLeadDispositionExplainsOriginalCausalAnswerShape(t *test
 	root, _ := investigationLeadDispositionResults(t, "supported")
 	current := investigationLeadTestSnapshot(t, root)
 	context := stageInvestigationLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, current)
-	for _, field := range []string{`"trigger"`, `"violated_invariant"`, `"faulty_mechanism"`, `"propagation"`, `"symptoms":[`, `"paths":[`, "test | contract | type | monitoring | process", "evidence_refs is a non-empty string array", "reuse the fixed reference supplied by the accepted Case result", "do not calculate or assemble them", `path:<actual-source-path>#sha256=<actual-sha256>`, "not an exclusive route requirement", "no_competing_hypothesis", "when no result is refuted", "A second supported hypothesis is not a refutation", "Do not invent a refuted result"} {
+	for _, field := range []string{`"trigger"`, `"violated_invariant"`, `"faulty_mechanism"`, `"propagation"`, `"symptoms":[`, `"paths":[`, "test | contract | type | monitoring | process", "evidence_refs is a non-empty string array", "reuse the fixed reference supplied by the accepted Case result", "do not calculate or assemble them", `path:<actual-source-path>#sha256=<actual-sha256>`, "not an exclusive route requirement", "no_competing_hypothesis", "Use no_competing_hypothesis only when no alternative mechanism was credible", "competing_hypothesis_assessment", "A second supported hypothesis is not a refutation", "Do not invent a refuted result"} {
 		if !strings.Contains(context, field) {
 			t.Fatalf("route authoring guidance omitted original professional shape %q: %s", field, context)
 		}
@@ -269,5 +270,52 @@ func TestS8UnresolvedResultsAppendDirectlyWithoutRoutePrerequisite(t *testing.T)
 	_, document, _, err = investigationLeadSource(root, current.State)
 	if err != nil || len(objectSliceAny(document["hypotheses"])) != 3 {
 		t.Fatalf("budget exhausted legitimate questions: %v %s", err, feedback)
+	}
+}
+
+func TestS8InvestigationLeadDispositionCompetingAssessmentOriginalRouteAndReplay(t *testing.T) {
+	root, _ := investigationLeadDispositionResults(t, "supported", "supported")
+	current := investigationLeadTestSnapshot(t, root)
+	context := stageInvestigationLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, current)
+	paths := investigationLeadDispositionPaths(root, current.State)
+	if len(paths) != 1 || !strings.Contains(filepath.Base(paths[0]), "route-") || !strings.Contains(context, "causal_model") || strings.Contains(context, "fill statement") {
+		t.Fatalf("completed investigators did not hand Main the single route answer: %s", context)
+	}
+	path := paths[0]
+	answer := investigationLeadRouteAnswer{Route: "s9_repair", RouteReason: "the supported mechanism explains the exact Finding set", PrimaryRootCause: "the first boundary drops source authority", CausalModel: map[string]any{"trigger": "request", "violated_invariant": "source authority", "faulty_mechanism": "boundary discards authority", "propagation": "downstream reads a fallback", "symptoms": []any{"finding-1"}}, BlastRadius: map[string]any{"paths": []any{"internal/example"}}, DetectionGap: map[string]any{"gap_type": "test", "evidence_refs": []any{"evidence://gap"}}}
+	_, sourceCase, _, err := investigationLeadSource(root, current.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hypothesis := objectSliceAny(sourceCase["hypotheses"])[0]
+	answer.CompetingHypothesisAssessment = map[string]any{"hypothesis_ids": []any{hypothesis["hypothesis_id"]}, "conclusion": "The discriminator located the gap while retaining the credible contrast as propagation."}
+	writeRepairLeadJSON(t, path, answer)
+	feedback := investigationLeadTestSave(t, root, path)
+	if !strings.Contains(feedback, "s9_repair") || !strings.Contains(feedback, "not approval") {
+		t.Fatalf("original route did not preserve the Contract boundary: %s", feedback)
+	}
+	accepted := investigationLeadTestSnapshot(t, root)
+	_, document, _, _ := investigationLeadSource(root, accepted.State)
+	if stringValue(document["route"]) != "s9_repair" || document["causal_model"] == nil || stringValue(investigationPointer(accepted.State)["status"]) != "investigating" {
+		t.Fatalf("original Case route/model not persisted: %#v", document)
+	}
+	if next := investigationLeadDispositionPaths(root, accepted.State); len(next) != 1 || next[0] != path {
+		t.Fatalf("committed route lost its original source-bound replay path: %#v", next)
+	}
+	before, _ := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	journal, _ := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	investigationLeadTestSave(t, root, path)
+	after, _ := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	journalAfter, _ := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if !bytes.Equal(before, after) || !bytes.Equal(journal, journalAfter) {
+		t.Fatal("route replay created another domain write")
+	}
+	answer.PrimaryRootCause = "a different professional conclusion"
+	writeRepairLeadJSON(t, path, answer)
+	if feedback := investigationLeadTestSave(t, root, path); !strings.Contains(feedback, "conflicts") {
+		t.Fatalf("changed route was silently accepted: %s", feedback)
+	}
+	if investigationLeadTestSnapshot(t, root).Revision != accepted.Revision {
+		t.Fatal("changed professional conclusion rewrote Runtime")
 	}
 }
