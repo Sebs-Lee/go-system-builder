@@ -87,13 +87,22 @@ func nativeDeliveryProjection(mainRoot, workerRoot string, restoring bool) (map[
 			return nil, err
 		}
 		_, planPath, resultPath := assignmentrecord.NativePaths(r)
+		var planMap map[string]any
+		if err := json.Unmarshal(plan, &planMap); err != nil {
+			return nil, fmt.Errorf("accepted Plan %s: %w", accepted.PlanRef, err)
+		}
 		for _, item := range []struct {
 			path     string
 			accepted []byte
 			keys     []string
+			project  func(map[string]any) error
 		}{
-			{planPath, plan, []string{"objective", "planned_paths", "assertion_checks", "dependencies", "risks_blockers"}},
-			{resultPath, answer, []string{"summary", "assertion_evidence", "risks_blockers", "scope_deviations", "closing_assessment"}},
+			{planPath, plan, []string{"objective", "planned_paths", "assertion_checks", "dependencies", "risks_blockers"}, nil},
+			// The receiver stores the expanded Answer while the Worker keeps the
+			// compact professional file. Compare the canonical form on both sides.
+			{resultPath, answer, []string{"summary", "assertion_evidence", "risks_blockers", "scope_deviations", "closing_assessment"}, func(actual map[string]any) error {
+				return assignmentresult.ProjectCompactResult(planMap, actual, len(r.DoneWhen))
+			}},
 		} {
 			raw, err := workpacket.ReadFile(workerRoot, item.path, 1<<20)
 			// Stop has already persisted and validated these professional
@@ -110,6 +119,26 @@ func nativeDeliveryProjection(mainRoot, workerRoot string, restoring bool) (map[
 			var actual, original map[string]json.RawMessage
 			if json.Unmarshal(raw, &actual) != nil || actual == nil || json.Unmarshal(item.accepted, &original) != nil {
 				return nil, fmt.Errorf("invalid native professional file %s", item.path)
+			}
+			if item.project != nil {
+				projected := map[string]any{}
+				for key, value := range actual {
+					var decoded any
+					if json.Unmarshal(value, &decoded) != nil {
+						return nil, fmt.Errorf("invalid native professional file %s", item.path)
+					}
+					projected[key] = decoded
+				}
+				if err := item.project(projected); err != nil {
+					return nil, fmt.Errorf("native professional file %s differs from accepted delivery: %w", item.path, err)
+				}
+				encoded, err := json.Marshal(projected)
+				if err != nil {
+					return nil, err
+				}
+				if json.Unmarshal(encoded, &actual) != nil {
+					return nil, fmt.Errorf("invalid native professional file %s", item.path)
+				}
 			}
 			for key, value := range actual {
 				allowed := false

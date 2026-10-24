@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
+	"github.com/entroforge/go-system-builder/internal/cli"
+	"github.com/entroforge/go-system-builder/internal/integration"
 )
 
 func TestNativeS6CompactResultReceivesThroughOriginalConsumerAndReplays(t *testing.T) {
@@ -83,5 +86,50 @@ func TestNativeS6CompactResultReceivesThroughOriginalConsumerAndReplays(t *testi
 	}
 	if stageSnapshot(t, root).Revision != accepted.Revision {
 		t.Fatal("identical compact Result replay created another reception")
+	}
+}
+
+// TestNativeS6CompactResultPassesTheOriginalIntegrationGate covers the step
+// the compact authoring path previously never reached. The receiver stores the
+// expanded Answer while the Worker keeps the compact professional file, so the
+// native delivery comparison must canonicalize both sides the same way. A
+// compact Result that is accepted must still integrate.
+func TestNativeS6CompactResultPassesTheOriginalIntegrationGate(t *testing.T) {
+	root, source, r := nativeDeliveryFixture(t)
+	nativeCommit(t, source)
+	nativeAnswer(t, source, r)
+	brief, _, result := assignmentrecord.NativePaths(r)
+	path := filepath.Join(source, result)
+	full, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var answer map[string]any
+	if err := json.Unmarshal(full, &answer); err != nil {
+		t.Fatal(err)
+	}
+	row := answer["assertion_evidence"].([]any)[0].(map[string]any)
+	delete(row, "assertion")
+	delete(row, "oracle")
+	row["plan_assertion_index"] = float64(0)
+	condition := answer["closing_assessment"].(map[string]any)["conditions"].([]any)[0].(map[string]any)
+	delete(condition, "plan_assertion_indexes")
+	stageJSON(t, source, result, answer)
+
+	text := filepath.Join(root, brief) + "\n" + path
+	if code, output := nativeEvent(t, root, source, "SubagentStop", text, false); code != 0 {
+		t.Fatalf("compact Result was not received: %d %s", code, output)
+	}
+	var integrateOut, integrateErr bytes.Buffer
+	if code := cli.Run([]string{"runtime", "task-integrate", "--root", root, "--assignment-id", r.AssignmentID, "--agent-id", r.OwnerAgentID}, nil, &integrateOut, &integrateErr); code != 0 {
+		t.Fatalf("Main integration of a compact Result: %d %s %s", code, &integrateOut, &integrateErr)
+	}
+	cp, found, err := integration.DefaultCheckpointStore().Load(assignmentrecord.IntegrationCheckpointPath(root, r.Reference()))
+	if err != nil || !found || cp.State != integration.StateComplete {
+		t.Fatalf("compact Result did not complete the original Gate: %+v %v / %s %s", cp, err, &integrateOut, &integrateErr)
+	}
+	receipt := stageCLI(t, "runtime", "task-receipt", "--root", root, "--assignment-id", r.AssignmentID, "--agent-id", r.OwnerAgentID)
+	if !strings.Contains(receipt, `"integrated":true`) {
+		t.Fatalf("compact Result did not reach an integrated receipt: %s", receipt)
 	}
 }
