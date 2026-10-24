@@ -63,6 +63,10 @@ func graphControlForHook(root string, request policy.Input) (controller.ControlR
 		return controller.ControlResult{}, false
 	}
 	switch lifecycle["state"] {
+	case "document_verification":
+		if !mainQuestionnaireViewer(request) {
+			return controller.ControlResult{}, false
+		}
 	case "planning":
 		if lifecycle["phase"] != "design" && lifecycle["phase"] != "contracts" && lifecycle["phase"] != "tasks" {
 			return controller.ControlResult{}, false
@@ -98,8 +102,10 @@ func graphGuidance(root string, state map[string]any, request policy.Input) poli
 	guidance := BuildGuidanceForState(root, state, "PreToolUse", request)
 	guidance.Event = request.Event
 	lifecycle, _ := state["lifecycle"].(map[string]any)
-	if lifecycle["state"] == "verification" {
-		applyS7RecoveryProjection(state, &guidance)
+	if lifecycle["state"] == "document_verification" {
+		applyS5ObservedGuidance(&guidance)
+	} else if lifecycle["state"] == "verification" {
+		applyS7RecoveryProjection(root, state, &guidance)
 	} else {
 		if runtime.PacketEnabled(state) && lifecycle["state"] == "bug_resolution" && lifecycle["phase"] == "investigation" {
 			guidance.ReadOrder = s8QuestionnaireReadOrder(root, state, request)
@@ -398,7 +404,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// carry the S7-specific recovery projection (current round, assignment
 	// buckets, unconsumed Results, Claim coverage gaps, single next action).
 	if lifecycleState == "verification" && (event == "SessionStart" || event == "PreCompact") {
-		applyS7RecoveryProjection(state, &guidance)
+		applyS7RecoveryProjection(root, state, &guidance)
 	}
 
 	// S8 entry source line: when the lifecycle flipped into bug_resolution
@@ -546,7 +552,7 @@ func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
 // shared control plane (state.review: plan pointer, claim dispositions,
 // assignment rows, finding entities) — no new state file is introduced.
 // Other lifecycle phases and events are untouched.
-func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) {
+func applyS7RecoveryProjection(root string, state map[string]any, guidance *policy.Guidance) {
 	reviewMap, _ := state["review"].(map[string]any)
 	if reviewMap == nil {
 		return
@@ -569,7 +575,7 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 		fmt.Sprintf("S7 review round %d: plan %s", round, planDesc),
 	)
 	if planStatus == "stale" {
-		guidance.Action = s7RecoveryNextAction(planStatus, round, nil, nil, nil, nil, nil)
+		guidance.Action = s7RecoveryNextAction(root, state, planStatus, round, nil, nil, nil, nil, nil)
 		guidance.Missing = []string{"Main: recover the frozen baseline and original stale ReviewPlan"}
 		guidance.Recovery = append([]string{fmt.Sprintf("S7 recovery: round %d, plan %s; next: %s", round, planDesc, guidance.Action)}, guidance.Recovery...)
 		return
@@ -604,6 +610,9 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 			// Not yet dispatched: platform capacity may queue work but never
 			// drops required coverage (L3-S7 §4.5).
 			queued = append(queued, id)
+		case "blocked":
+			blocked = append(blocked, label)
+			unconsumed = append(unconsumed, id)
 		case "dispatched":
 			if blockedAgents[agent] {
 				blocked = append(blocked, label)
@@ -628,24 +637,18 @@ func applyS7RecoveryProjection(state map[string]any, guidance *policy.Guidance) 
 		guidance.Missing = appendUnique(guidance.Missing, "claim:"+claimID)
 	}
 
-	// cannot_clean / discovery_draining: the round is NOT closed — the
-	// ObservationBatch has been opened (when present) and the round is
-	// draining with drain_policy=complete_required_claims. Surface that
-	// invariant so a compacted Agent treats "draining" as continuing the
-	// remaining required Claims, not as the round ending.
+	// Ordinary Findings make the round non-clean before the original consumer
+	// seals its Batch. A missing Batch pointer during draining is normal.
 	if planStatus == "cannot_clean" || planStatus == "discovery_draining" {
-		invariant := "S7 round status=" + planStatus + ": ObservationBatch is open with drain_policy=complete_required_claims; cannot_clean/discovery_draining ≠ end — finish the remaining required Claims listed in Missing"
-		batchLine := s7ObservationBatchLine(reviewMap)
-		if strings.Contains(batchLine, "not yet opened") {
-			// The plan status already proves a batch exists; a missing
-			// pointer is a control-plane inconsistency, not a fact to
-			// state — saying both lines would contradict the invariant.
-			batchLine = "S7 ObservationBatch: pointer missing from state.review despite " + planStatus + " — run `loop-harness doctor` to diagnose the control plane"
-		}
-		guidance.Automation = append(guidance.Automation, invariant, batchLine)
+		guidance.Automation = append(guidance.Automation,
+			"S7 round status="+planStatus+": confirmed Findings retain safe remaining required Claims; cannot_clean/discovery_draining ≠ end — finish the remaining required Claims listed in Missing",
+			s7ObservationBatchLine(reviewMap))
+	}
+	for _, label := range blocked {
+		guidance.Automation = append(guidance.Automation, s7BlockedAssignmentGuidance(root, state, firstAssignmentID(label)))
 	}
 
-	next := s7RecoveryNextAction(planStatus, round, running, queued, blocked, unconsumed, gaps)
+	next := s7RecoveryNextAction(root, state, planStatus, round, running, queued, blocked, unconsumed, gaps)
 	guidance.Action = next
 	guidance.Recovery = append([]string{
 		fmt.Sprintf("S7 recovery: round %d, plan %s; coverage gaps=%d; next: %s", round, planDesc, len(gaps), next),
@@ -695,14 +698,12 @@ func applyS8EntryProjection(state map[string]any, guidance *policy.Guidance) {
 }
 
 // s7ObservationBatchLine renders the current ObservationBatch pointer (id,
-// drain_policy, finding count) as one compact recovery line. Returns a
-// placeholder when no batch has been opened yet (the round will open one
-// on the next seal-triggering ReviewResult when the round surfaces an
-// ordinary Finding).
+// drain_policy, finding count) as one compact recovery line. Absence is
+// normal until the original consumer seals the round's findings.
 func s7ObservationBatchLine(reviewMap map[string]any) string {
 	batch, _ := reviewMap["observation_batch"].(map[string]any)
 	if batch == nil {
-		return "S7 ObservationBatch: not yet opened (round continues with drain_policy=complete_required_claims)"
+		return "S7 ObservationBatch: not sealed yet; no Batch pointer is required while remaining required Claims drain"
 	}
 	id := stringValue(batch["batch_id"])
 	if id == "" {
@@ -719,7 +720,7 @@ func s7ObservationBatchLine(reviewMap map[string]any) string {
 // s7RecoveryNextAction computes the single next action for a verification
 // recovery packet. The order is deterministic: finish in-flight Results
 // first, then unblock, then dispatch queued coverage, then close the round.
-func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked, unconsumed, gaps []string) string {
+func s7RecoveryNextAction(root string, state map[string]any, planStatus string, round int, running, queued, blocked, unconsumed, gaps []string) string {
 	switch planStatus {
 	case "stale":
 		return "Main must resolve the original baseline drift feedback and recover the original ReviewPlan through its existing revive/revise path; queued dispatch and old answers await a valid plan"
@@ -735,13 +736,13 @@ func s7RecoveryNextAction(planStatus string, round int, running, queued, blocked
 	// running / cannot_clean / discovery_draining: coverage continues even
 	// after an ordinary finding (drain_policy=complete_required_claims).
 	if len(running) > 0 {
-		return fmt.Sprintf("Reviewer %s must complete the assigned checks, fill and save the exact ReviewResult answer, then return its reference for SubagentStop and the original consumer", running[0])
+		return fmt.Sprintf("Reviewer %s uses the exact ReviewResult answer: ordinarily finish required safe checks; a real P0 stops dangerous continuation and records actual capture gaps; a real incomplete return names the missing observation/source and returns to Main for the same responsibility. Save and return that original reference for SubagentStop and the original consumer", running[0])
 	}
 	if len(blocked) > 0 {
-		return fmt.Sprintf("assignment %s is blocked: fix the capture conditions, record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>`, then resubmit the same review result; blocked coverage must still be consumed before the round can close", blocked[0])
+		return strings.TrimSpace(s7BlockedAssignmentGuidance(root, state, firstAssignmentID(blocked[0])))
 	}
 	if len(queued) > 0 {
-		return fmt.Sprintf("dispatch queued assignment %s via `runtime register-workgroup`; queued coverage is never dropped (L3-S7 §4.5)", queued[0])
+		return strings.TrimSpace(s7PendingReviewGuidance(root, state))
 	}
 	if len(unconsumed) > 0 {
 		return fmt.Sprintf("Main checks the native return and original receipt for %s; report the exact missing reference or consumer feedback, without authoring or sweeping the Worker answer", unconsumed[0])

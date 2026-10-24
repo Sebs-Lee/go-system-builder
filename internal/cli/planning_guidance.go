@@ -34,7 +34,7 @@ func mainPlanningNextForState(state map[string]any, stage string) *mainPlanningN
 			return &mainPlanningNext{Action: stage + " current entry: " + err.Error(), Automation: "Read registered facts; no packet rebuild or source qualification during ordinary observation"}
 		}
 		if row == nil {
-			return &mainPlanningNext{Action: stage + " current questionnaire is missing from its successful entry outlet; complete the named professional materials and report the preparation gap, without guessing paths or issuing a packet", Automation: "Ordinary Pre/Stop reads existing work and does not prepare or restore questionnaires"}
+			return &mainPlanningNext{Action: stage + " current questionnaire is missing from its successful entry outlet; resolve the named preparation error and continue the original entry, without guessing paths or resubmitting the preceding report", Automation: "Ordinary Pre/Stop reads existing work and does not prepare or restore questionnaires"}
 		}
 		view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
 		if record, found, err := runtime.FindSubmission(state, stringValue(row["packet_id"])); err == nil && found {
@@ -96,7 +96,7 @@ func mainPlanningNextForState(state map[string]any, stage string) *mainPlanningN
 			return unverifiedPlanningRecord(stageName)
 		}
 		if stage == "S2" && (submission.ControlStatus == "pending" || submission.ControlStatus == "no_transition") {
-			return &mainPlanningNext{Action: fmt.Sprintf("S2 answer already received at %s; save the same professional answer to continue its pending original outlet; resolve the reported real missing work", answerPath), Automation: "Reception is recorded; no new issue or registration is needed"}
+			return &mainPlanningNext{Action: fmt.Sprintf("S2 answer already received at %s; resolve the reported material gaps, preserving the original answer; an interrupted outlet can use runtime stage-answer recover", answerPath), Automation: "Reception is recorded; no new issue or registration is needed"}
 		}
 		return &mainPlanningNext{
 			Action:     fmt.Sprintf("%s answer for the current Main packet was already received; do not edit or resubmit it, and continue from the existing gate result", stageName),

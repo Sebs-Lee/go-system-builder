@@ -48,7 +48,7 @@ Hook 不是越多越可靠。选得过早，事实还没形成就要求交卷；
 | --- | --- | --- |
 | `SessionStart` | 无限制 | Main 新进入或恢复时重建当前责任、准确材料与下一步，完成该入口必要准备 |
 | `PreToolUse` | `*` | 在正常工作前提供当前进度与缺项；不按工具、平台身份或 scope 授权／拒绝 |
-| `PostToolUse` | 下述工具集合 | 从成功保存及相关材料变化衔接 Main 本人消费者，观察适用父返回和进度 |
+| `PostToolUse` | `*` | 从成功保存及相关材料变化衔接 Main 本人消费者，观察适用父返回和进度 |
 | `SubagentStart` | 无角色限制 | 给原生 Worker 短工程提示，说明按实际任务材料工作 |
 | `SubagentStop` | 无角色限制 | 按准确当前引用接收本人实际专业产物，反馈缺项或真实 blocker |
 | `TeammateIdle` | 无限制 | 保留已有旧团队及固定责任的收尾语义，新原生流程不依赖它开工或收卷 |
@@ -57,7 +57,7 @@ Hook 不是越多越可靠。选得过早，事实还没形成就要求交卷；
 | `ConfigChange` | `*` | 对适用配置变化保留审计观察，不由配置事件自动创建业务责任 |
 | `PreCompact` | 无限制 | 既有诊断维护后静默结束；后续入口从原持久事实恢复 |
 
-PostToolUse 的实际工具集合为 `SendMessage|Agent|Task|SubagentHandback|Bash|Write|Edit|MultiEdit|Read|Glob|Grep`。PreToolUse 的 `*` 覆盖工具事件，不要求再出现一个特定 MCP 正则字串来证明可以监听 MCP；matcher 的语义应结合事件理解，不能只按文本包含判断。
+PreToolUse 与 PostToolUse 的 `*` 都覆盖工具事件，包括 MCP 等自定义工具；不能只给 Pre 注册全工具，就声称自定义工具保存已经接入。Post 消费者继续检查成功状态、本人当前责任、准确答案及实际变化，不因注册扩大而扫描或抢收其他人的私人答案。matcher 的语义应结合事件理解，不能只按文本包含某个 MCP 正则字串判断。
 
 ### 3.2 会话恢复与普通工具为什么分开
 

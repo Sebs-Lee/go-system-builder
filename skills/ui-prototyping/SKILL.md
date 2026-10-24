@@ -93,8 +93,8 @@ BUG or report bodies. The `ui` risk tag selects the complementary
 `ui-prototyping`, `user-story-design`, and `user-flow-design` Skills.
 Routing order: current runtime state and phase -> pending legal event -> one
 primary Methodology Skill -> Agent Definition kind -> task artifact and risk
-tags -> smallest applicable Best-practice set -> two-phase activation when a
-subagent is involved. Composition rules: one workflow event that requires
+tags -> smallest applicable Best-practice set -> the original native task and
+professional delivery contract. Composition rules: one workflow event that requires
 reusable procedure has exactly one primary Methodology Skill; at most two
 secondary Methodology dependencies should be active for one action.
 Anti-patterns include `builder`, `verifier` or `qa` as a general-purpose

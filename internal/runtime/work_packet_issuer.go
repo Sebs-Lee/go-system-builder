@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/catalog"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -80,9 +81,10 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 			WorkgroupID string `json:"workgroup_id"`
 			Kind        string `json:"workgroup_kind"`
 			Assignments []struct {
-				ID             string `json:"assignment_id"`
-				Owner          string `json:"agent_id"`
-				Responsibility string `json:"responsibility_id"`
+				ID             string   `json:"assignment_id"`
+				Owner          string   `json:"agent_id"`
+				Responsibility string   `json:"responsibility_id"`
+				SkillRefs      []string `json:"skill_refs"`
 			} `json:"assignments"`
 		}
 		if err := json.Unmarshal(data, &m); err != nil {
@@ -138,6 +140,16 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 			if found && tips != 1 {
 				return nil, fmt.Errorf("issued responsibility has no unique current revision tip")
 			}
+			if !found && len(assignment.SkillRefs) > 0 {
+				methods, err := s5MethodReferences(root, assignment.SkillRefs)
+				if err != nil {
+					return nil, err
+				}
+				p, err = workpacket.BindMethods(p, methods)
+				if err != nil {
+					return nil, err
+				}
+			}
 			packets = append(packets, p)
 		}
 		if matches == 0 {
@@ -157,6 +169,21 @@ func S5Packets(root string, state map[string]any, owner string) ([]workpacket.Pa
 	}
 	sort.Slice(selected, func(i, j int) bool { return strings.Compare(selected[i].ID, selected[j].ID) < 0 })
 	return selected, nil
+}
+
+// The registered Skill list already owns method selection. Deliver its actual
+// installed paths without turning methods into formal review subjects.
+func s5MethodReferences(root string, skillRefs []string) ([]workpacket.ReadItem, error) {
+	methods := make([]workpacket.ReadItem, 0, len(skillRefs))
+	for _, name := range skillRefs {
+		_, path, err := catalog.ReadSkillAsset(root, name)
+		if err != nil {
+			return nil, fmt.Errorf("S5 registered method %s: %w", name, err)
+		}
+		methods = append(methods, workpacket.ReadItem{Path: path, Purpose: "应用本责任已登记的专业方法；技能不是被审规格或新的审批步骤。"})
+	}
+	sort.Slice(methods, func(i, j int) bool { return methods[i].Path < methods[j].Path })
+	return methods, nil
 }
 
 func numberBindingGeneration(b map[string]any) int {

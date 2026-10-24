@@ -50,6 +50,12 @@ func TestNativeS5IndependentAnswersReachOriginalGateWithoutPrepareOrActivation(t
 		if err != nil || !accepted || record.ContentHash == "" {
 			t.Fatalf("original S5 Writer did not receive answer: %+v %v", record, err)
 		}
+		if code, _, diagnostic := nativeReviewEvent(t, f.root, "SubagentStop", actor, filepath.Join(f.root, p.ViewPath)); code != 0 {
+			t.Fatalf("accepted return replay: %d %s", code, diagnostic)
+		}
+		if replay := stageSnapshot(t, f.root); replay.Revision != snapshot.Revision {
+			t.Fatal("accepted return replay created another evidence or transition")
+		}
 		if executions, _ := snapshot.State["workspace"].(map[string]any)["executions"].(map[string]any); len(executions) != 0 {
 			t.Fatal("native independent context created a framework execution")
 		}
@@ -155,15 +161,73 @@ func TestNativeS5ReceiverSourceFailureBelongsToMain(t *testing.T) {
 	}
 }
 
-func TestNativeS5ProfessionalMistakeGetsBoundedCorrection(t *testing.T) {
-	f := newStageAnswerFixture(t)
-	p := f.packets[0]
-	before := stageSnapshot(t, f.root).Revision
-	code, _, diagnostic := nativeReviewEvent(t, f.root, "SubagentStop", "native-reviewer", filepath.Join(f.root, p.ViewPath))
-	if code != 2 || !strings.Contains(diagnostic, "correct") {
-		t.Fatalf("author mistake lacks correction: %d %s", code, diagnostic)
-	}
-	if stageSnapshot(t, f.root).Revision != before {
-		t.Fatal("incomplete professional answer was accepted")
+func TestNativeS5IncompleteReturnHandsBackWithoutInventingReviewCompletion(t *testing.T) {
+	for _, tc := range []struct {
+		name, message, want string
+		prepare             func(t *testing.T, root string, p workpacket.Packet)
+	}{
+		{
+			name:    "lost_independence",
+			message: "我参与了被审材料的编写，无法独立签字。请 Main 重新安排独立审查者。",
+			want:    "/answer/conclusion",
+		},
+		{
+			name:    "prose_does_not_supply_conclusion",
+			message: "PASS. Review complete.",
+			want:    "/answer/conclusion",
+		},
+		{
+			name:    "professional_field_error",
+			message: "The reviewed contract needs correction; see my actual answer.",
+			want:    "/answer/findings",
+			prepare: func(t *testing.T, root string, p workpacket.Packet) {
+				draft := completedDraft(p, "fix_required")
+				draft.Answer.Findings = []workpacket.Finding{{Path: p.Inputs[0].Path}}
+				stageJSON(t, root, p.AnswerPath, draft)
+			},
+		},
+		{
+			name:    "missing_answer",
+			message: "The supplied answer is missing; Main must restore its original preparation.",
+			want:    "no such file",
+			prepare: func(t *testing.T, root string, p workpacket.Packet) {
+				if err := os.Remove(filepath.Join(root, p.AnswerPath)); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStageAnswerFixture(t)
+			p := f.packets[0]
+			if tc.prepare != nil {
+				tc.prepare(t, f.root, p)
+			}
+			before := stageSnapshot(t, f.root).Revision
+			ref := filepath.Join(f.root, p.ViewPath)
+			for _, active := range []bool{false, true} {
+				body, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "agent_id": "native-reviewer", "session_id": "native-review-parent", "cwd": f.root, "stop_hook_active": active, "last_assistant_message": tc.message + "\n" + ref})
+				var out, diagnostic bytes.Buffer
+				code := cli.Run([]string{"hook", "--root", f.root, "--event", "SubagentStop"}, bytes.NewReader(body), &out, &diagnostic)
+				if code != 0 || out.Len() != 0 {
+					t.Fatalf("unreceived responsibility blocked native handoff: active=%t code=%d stdout=%s stderr=%s", active, code, &out, &diagnostic)
+				}
+				for _, want := range []string{"Main owns recovery", p.Binding.Owner, filepath.Join(f.root, p.AnswerPath), tc.want, "does not establish review completion"} {
+					if !strings.Contains(diagnostic.String(), want) {
+						t.Fatalf("unreceived handoff lost %q: %s", want, &diagnostic)
+					}
+				}
+				snapshot := stageSnapshot(t, f.root)
+				if _, accepted, err := runtime.FindSubmission(snapshot.State, p.ID); err != nil || accepted || snapshot.Revision != before || snapshot.State["lifecycle"].(map[string]any)["state"] != "document_verification" {
+					t.Fatalf("unreceived handoff changed acceptance or stage: accepted=%t revision=%d/%d err=%v", accepted, snapshot.Revision, before, err)
+				}
+			}
+			text := mainNativeReturn(t, f.root, ref, tc.message)
+			for _, want := range []string{`"accepted":false`, `"work_complete":false`, "独立性或来源阻塞", "专业答案缺项"} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("Main missed original unreceived responsibility guidance %q: %s", want, text)
+				}
+			}
+		})
 	}
 }

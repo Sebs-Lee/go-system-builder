@@ -143,12 +143,14 @@ func roleFamilyDefinitionRef(roleFamily string) string {
 // visible without asking the Worker to infer it from a role name.
 func assignmentDoneWhen(kind, assignmentID string, claimIDs []string) []string {
 	claims := strings.Join(claimIDs, ", ")
-	result := fmt.Sprintf("fill and save the exact issued professional answer for %s covering exactly Claims [%s], accepted by the original consumer", assignmentID, claims)
-	evidence := "each Claim has a disposition and the required evidence is referenced"
+	result := fmt.Sprintf("fill and save the exact issued professional answer for %s for assigned Claims [%s], and return its exact reference for original-consumer reception; ending the native turn does not establish acceptance", assignmentID, claims)
+	evidence := "for an ordinary complete result, each assigned Claim has a disposition and the required evidence is referenced"
 	if kind == "e2e_browser" {
-		evidence = "each assigned user flow has executable evidence, or an explicit applicability and rationale"
+		evidence = "follow the original Plan's applicability decisions; for an ordinary complete result, execute assigned required user flows and reference their actual evidence, with every assigned Claim answered as pass/fail or a legitimate product-blocked Claim; unclear applicability goes to Main for original Plan recovery, not a new Claim conclusion"
 	}
-	return []string{result, evidence, "run every declared required check before reporting completion"}
+	return []string{result, evidence,
+		"run every declared required check before reporting ordinary completion; for a real P0, stop dangerous work, preserve observed Claim conclusions and the actual P0 Finding with genuine capture gaps, and omit unanswered Claim rows; the original consumer validates the P0 and derives unobserved Claims",
+		"if sources or the environment prevent a conclusion, preserve actual observations and return the original responsibility reference and obstacle to Main; leave the responsibility incomplete without inventing a verdict, product Finding or blocked Claim"}
 }
 
 // DraftManifest scaffolds a register-workgroup team manifest for one

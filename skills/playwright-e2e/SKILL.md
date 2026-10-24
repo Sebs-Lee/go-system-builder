@@ -6,7 +6,7 @@ version: 0.3.1
 ---
 # Playwright E2E
 ## Authority
-Technical practice only. S7 evidence ownership remains in `docs/control/agent-protocol.md`; route dispatch and clean-round adjudication remain in `e2e-browser-testing`.
+Technical practice only. S7 responsibility and evidence ownership remain in `docs/control/agent-protocol.md`; `e2e-browser-testing` supplies browser verification methods. Main dispatches under the current ReviewPlan, and the original S7 consumer and exit gate decide clean-round qualification.
 ## Applicability
 Apply to browser automation, executable user flows, fixtures, selectors, or E2E evidence.
 ## Required Inputs
@@ -33,7 +33,7 @@ Do not replace S7 responsibility assignment or clean-round decisions.
 1. Read the assigned CASE, branch polarity, oracle, PATH, controls, and fixture contract from the module package; define isolated persona/data fixtures and the initial browser state.
 2. Implement each human action using role, label, or approved `data-test` locators. Use direct API/URL operations only to establish fixtures, never to skip the route under test.
 3. Assert visible checkpoints and relevant request outcomes with auto-waited conditions, not sleeps. Add trace, screenshot, or video on failure for diagnosis.
-4. Rerun the spec independently and hand route-level evidence to `e2e-browser-testing` for S7 reporting.
+4. Run the assigned independent verification, retain its actual browser evidence and reference it in the original S7 answer using the methods in `e2e-browser-testing`. Repeat only when needed to resolve a real observation; do not repeat unsafe P0 actions or create another report.
 
 ## Evidence Checklist
 - Module, CASE ID, branch polarity, flow/PATH ID, personas, fixture setup/cleanup, and control-to-locator map.

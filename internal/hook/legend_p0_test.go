@@ -46,13 +46,19 @@ func TestNotReadyBuilderPacketCarriesTokenLegend(t *testing.T) {
 		"MISSING TOKENS:",
 		"evidence:completion_report:TASK-039-02",
 		"integration_checkpoint:TASK-039-02",
-		"its assigned Builder implements the TASK",
-		"fills and saves its own exact Result questionnaire",
-		"at the path shown in this Hook",
+		"s6 prepare if eligible and unprepared",
+		"dispatches or resumes its original brief",
+		"resolves the actual returned blocker",
+		"an absent Result is not proof of a running Builder",
 		"Main integrates the named Assignment and runs its required checks",
 	} {
 		if !strings.Contains(payload.Specific.Context, want) {
 			t.Fatalf("model context missing %q:\n%s", want, payload.Specific.Context)
+		}
+	}
+	for _, misleading := range []string{"waits for its Result", "at the path shown in this Hook", "its assigned Builder implements the TASK"} {
+		if strings.Contains(payload.Specific.Context, misleading) {
+			t.Fatalf("a missing Result invented a running Builder or an unavailable answer path: %s", payload.Specific.Context)
 		}
 	}
 }

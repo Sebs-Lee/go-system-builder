@@ -4688,7 +4688,6 @@
                 "designs": {
                   "type": "array",
                   "minItems": 1,
-                  "maxItems": 128,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -4723,7 +4722,6 @@
                     "array",
                     "null"
                   ],
-                  "maxItems": 128,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -4749,10 +4747,8 @@
                 },
                 "directories": {
                   "type": "object",
-                  "maxProperties": 32,
                   "additionalProperties": {
                     "type": "array",
-                    "maxItems": 256,
                     "items": {
                       "type": "string",
                       "minLength": 1
@@ -5077,7 +5073,6 @@
                     "array",
                     "null"
                   ],
-                  "maxItems": 130,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
@@ -5103,10 +5098,8 @@
                 },
                 "directories": {
                   "type": "object",
-                  "maxProperties": 64,
                   "additionalProperties": {
                     "type": "array",
-                    "maxItems": 256,
                     "items": {
                       "type": "string",
                       "minLength": 1
@@ -6093,6 +6086,29 @@
                     }
                   }
                 }
+              }
+            }
+          }
+        },
+        "methods": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "purpose"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^(\\.claude/)?skills/[A-Za-z0-9._-]+/SKILL\\.md$"
+              },
+              "purpose": {
+                "type": "string",
+                "minLength": 1
               }
             }
           }

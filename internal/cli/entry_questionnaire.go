@@ -311,6 +311,9 @@ func currentQuestionnaireLifecycleContextFromSnapshot(root string, request polic
 			return context
 		}
 		lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "document_verification" && mainQuestionnaireViewer(request) {
+			return stageS5ObservedContext(root, snapshot.State)
+		}
 		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "planning" {
 			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
 				return ""

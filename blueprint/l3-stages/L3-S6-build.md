@@ -140,6 +140,8 @@ Main 不需要先指定官方 Agent/Team ID。现有结构中的 owner、workgro
 
 简报应给出：实际 TASK 和读序、角色及必要方法、准确范围、Done when、本人检查、工作区起点，以及 plan/result 的确定路径和完整专业形状。不能只给一个空数组或一个“返回报告”的名字，让 Builder 猜嵌套字段。
 
+方法交付必须落实到实际加载位置：角色 frontmatter 只预加载恒常核心，brief 给原登记方法的准确路径及角色的专项触发条件。数据库、协议、安全等专项按本 TASK 的真实内容读取，不因为有 Builder 身份就默认加载所有技能。未分类的风险由执行者根据明确条件判断，系统不能将未知项声明为已完成判断。内容归属和交付时机遵循 [Agent 指引分层](../l4-mechanisms/L4-agent-guidance.md#s5-s6-guidance)。
+
 Done when 是本次本人条件。系统从 TASK 收尾契约提取可识别的专业断言，机器维护的范围关联不要求作者再抄；Main 如需明确表达本人条件，仍须忠实于原任务，不以覆盖参数减少承诺。无法识别某条自由文本，不表示业务条件已经不适用。
 
 当前准备从原登记来源读取版本和摘要，按角色投影默认技能，生成内部身份、数量及校验时间；Main 不手填同一组机器事实。识别到的任务检查装配为 Main 合并后检查及其 CheckProfiles，采用整树输入、禁止复用，fixtures／dependencies 文件集合为空，不要求作者为正常准备补文件 SHA。Worker 声明空的 runner 检查集。专业上仍要求 Builder 运行本人实际自检，在 Result 说明命令、结果和未执行原因；空 runner 配置不是免检，也不是已机械证明全部本人检查。
@@ -163,6 +165,8 @@ Main 将准确 brief 引用及原生隔离要求带入实际 Agent 任务。前�
 ### 5.2 Builder 在本人执行根工作
 
 Builder 从实际 TASK 按必要链接展开，确认自己读的是哪份规格、能改哪些产品、怎样判断完成。控制根和执行根不同：前者保存 Runtime、原接收和 Main 集成事实，后者保存实际实现和私人草稿。
+
+brief 应分别标明这两个根的用途：原 brief 和安装方法可以从准确控制路径读取；TASK、规格及产品读集按固定源提交在本人 worktree 中读取，给出明确的 worktree 相对路径。Main 后续集成不能改变本责任的来源。不要用 Main 的活动绝对产品路径充当冻结读集，也不要要求 Builder 寻找 brief 未提供的 `source_root`/`input_read_order` 字段。
 
 专业结果应返回准确 Main brief 和实际 worktree 中 Result 的绝对路径。相同角色可以并发承担不同任务，平台恢复也可以产生新 actor；关联依靠原任务及真实来源，不能按角色名、启动顺序或“只有一个待办”猜测。
 
@@ -247,7 +251,9 @@ Builder 按断言定位实际入口、服务或事务、持久化和结果返回
 
 ### 8.1 结果逐项对应原计划
 
-Result 保留摘要、每条原计划断言的依据、风险与偏差，以及对全部 Done when 的完成判断。每个 `assertion_evidence` 的 `assertion` 和 `oracle` 使用本人原计划的准确文本，避免工作后悄悄换判据。
+Result 保留摘要、每条原计划断言的依据、风险与偏差，以及对全部 Done when 的完成判断。原生私人 Result 使用 `plan_assertion_index` 指向本人原 Plan 的断言顺序，不再逐字抄写 `assertion` 和 `oracle`。原接收者先验证 Plan，再把准确原文本投影到既有 canonical Result，交原 Schema 和领域消费者校验；索引不代表断言已经成立。
+
+每个条件仍由作者填写 `done_when_index`、`judgment` 和 `rationale`。省略的 `plan_assertion_indexes` 从 Plan 的 `done_when_indexes` 反向关联取得，不重复抄写同一关系。显式提供的旧字段继续按原合同核对，不能覆盖错值来让它通过；重复、越界或缺失断言、没有证据、没有作者判断均不因此获得完成资格。完整旧 assertion/oracle 格式及已准备旧 brief 仍保持原兼容，不改写已接受来源。
 
 `evidence_refs` 是实际 worktree 内存在的相对文件引用，落在本任务写域或明确 Read paths；不是命令、输出文字、描述、行号、锚点或 URL。执行命令和观察写在摘要或理由，真实文件引用承担可定位来源的责任。
 
@@ -258,8 +264,7 @@ Result 保留摘要、每条原计划断言的依据、风险与偏差，以及�
   "summary": "完成服务授权范围与越权拒绝实现；实际执行 go test ./internal/export -count=1，通过对应服务测试。",
   "assertion_evidence": [
     {
-      "assertion": "导出只包含授权范围的数据，并拒绝越权请求。",
-      "oracle": "给定两个组织的订单，授权请求只返回本人组织的数据；越权请求得到契约规定的拒绝。",
+      "plan_assertion_index": 0,
       "evidence_refs": ["internal/export/service_test.go"]
     }
   ],
@@ -271,7 +276,6 @@ Result 保留摘要、每条原计划断言的依据、风险与偏差，以及�
       {
         "done_when_index": 0,
         "judgment": "satisfied",
-        "plan_assertion_indexes": [0],
         "rationale": "授权与拒绝用例均符合共同判据，执行命令及结果见摘要。"
       }
     ]
@@ -316,6 +320,10 @@ Result 的 `risks_blockers` 或 `scope_deviations` 非空会阻止完成与集�
 ### 9.3 真实阻塞与错误重试都有边界
 
 接收器只把准确私人产物中的可补文件、JSON 与专业字段缺项反馈为本人继续补齐；系统来源、准备、控制面和未知故障直接保留诊断交 Main。`stop_hook_active` 用于避免无限循环，放行后仍由 Main 处理未完成工作；实际错误边界见 [L4 原生接收](../l4-mechanisms/L4-agent-dispatch-governance.md)。缺计划但已有明确实际 blocker 的专业结果可以诚实交回 Main，不强造完成回执。
+
+Builder 收到的 brief 必须直接说明正常完成、形成 Plan 前受阻和已有 Plan 后受阻三种交付。真实阻塞的最低 Result 包含说明当前进展/未完成工作的 `summary`、非空真实原因 `risks_blockers`，以及 `closing_assessment.disposition: blocked`，保存到原 Result 路径并返回原 brief 与实际 Result 绝对引用。已有 Plan 和真实证据保留；没有完成的检查不编造 evidence，不为退出补一个虚假计划。只有口头 blocker 而缺 Result 时，反馈须指出这个准确路径及最小形状。阻塞交接沿原来源与责任核对，不放宽正常完成的 Plan、证据、条件和集成校验。
+
+最小阻塞形状是未完成工作的交接，不是完整 Result 的免检入口。既有完整 `blocked` 报告仍按原专业报告合同校验、记录未完成结果；它的额外字段、证据和关联不能被最小分支忽略。接收一份有效的未完成报告仍不等于完成或可集成。
 
 这类阻塞交接只说明 Main 已得到具体问题，不能推断 Runtime 已登记成功完成、自动取消工作或已经满足 TR-006。Main 保留实际 worktree 与未完成事项，决定补环境、修订责任或返回规划。本人无需因无关同事、未来 S7 或 Main 集成尚未完成而继续空转。
 
@@ -436,6 +444,8 @@ S9 后的影响处置可能使某些 S6 证据失去当前质量资格，却不�
 接收、集成耗时和待消费积压帮助 Main 判断反馈是否及时、并行是否超过消费能力；它们不是另一个平台存活探针。没有 Stop 不能推断代理死亡，日志存在也不能自行宣布完成。
 
 反馈应给准确 TASK、Assignment 修订、实际来源、缺失条件和下一动作，不要求作者维护长消息哈希链。本人 JSON、额外字段与 Schema 缺项应指出实际 Plan 或 Result 路径及具体字段；专业字段误放另一份文件不能泛称为需要作者补齐的机器元数据。工作状态和证据资格从权威事实投影；冻结 TASK 和计划不回填 owner、复选框或执行历史。
+
+尚无准备记录时，下一步应指出当前就绪 TASK 及 `s6 prepare`；有准确 brief 而无交付时，指出原生派发/恢复，并由 Main 结合平台实际执行判断是否等待；已接收待集成时，给原集成动作。不得把“未准备”说成“等待已派发 Builder”，也不能要求 Main 在原准备已负责登记后另跑一次 register-workgroup。这些区别来自既有进度与接收事实，不新增提示专用状态机。
 
 ## 14. 实现落点与能力边界
 

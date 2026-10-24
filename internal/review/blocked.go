@@ -30,7 +30,7 @@ import (
 
 // validateBlockedClaims enforces the full §3.5 validation chain for every
 // blocked_claims entry. Anything missing rejects the whole submit atomically.
-func validateBlockedClaims(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result) error {
+func validateBlockedClaims(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result, pathRoots ...string) error {
 	if len(result.BlockedClaims) == 0 {
 		return nil
 	}
@@ -125,30 +125,25 @@ func validateBlockedClaims(root string, state map[string]any, plan *Plan, assign
 				if len(finding.EvidenceRefs) == 0 {
 					return fmt.Errorf("blocked claim %s uses current finding %s as evidence, but that Finding has no evidence_refs", blocked.ClaimID, ref)
 				}
+				if err := validateEvidenceRefs(root, state, finding.EvidenceRefs, "blocked claim "+blocked.ClaimID, pathRoots...); err != nil {
+					return err
+				}
 				continue
 			}
-			entry, ok := confirmedEvidence[ref]
+			// Local evidence has already been bound by the original answer
+			// adapter. It need not be registered again under an unrelated ID.
+			if strings.HasPrefix(ref, "path:") || strings.HasPrefix(ref, "command_output:") {
+				if err := validateEvidenceRefs(root, state, []string{ref}, "blocked claim "+blocked.ClaimID, pathRoots...); err != nil {
+					return err
+				}
+				continue
+			}
+			entry, ok := confirmedEvidence[strings.TrimPrefix(ref, "runtime:")]
 			if !ok {
 				return fmt.Errorf("blocked claim %s references evidence %s which is not a valid current-round evidence entry", blocked.ClaimID, ref)
 			}
-			path, ok := entry["path"].(string)
-			if !ok || strings.TrimSpace(path) == "" {
-				return fmt.Errorf("blocked claim %s evidence %s has no artifact path", blocked.ClaimID, ref)
-			}
-			sha, ok := entry["sha256"].(string)
-			if !ok || len(sha) != 64 {
-				return fmt.Errorf("blocked claim %s evidence %s has no artifact digest", blocked.ClaimID, ref)
-			}
-			artifactPath, err := repositoryContainedPath(root, path)
-			if err != nil {
-				return fmt.Errorf("blocked claim %s evidence %s path is outside repository: %w", blocked.ClaimID, ref, err)
-			}
-			data, err := os.ReadFile(artifactPath)
-			if err != nil {
-				return fmt.Errorf("blocked claim %s evidence %s artifact is unreadable: %w", blocked.ClaimID, ref, err)
-			}
-			if sha256Of(data) != sha {
-				return fmt.Errorf("blocked claim %s evidence %s artifact digest drifted", blocked.ClaimID, ref)
+			if err := validateIndexedEvidence(root, entry, ref, "blocked claim "+blocked.ClaimID); err != nil {
+				return err
 			}
 		}
 		if !blocked.AfterRepairRequired {

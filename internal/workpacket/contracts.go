@@ -53,8 +53,8 @@ func BuildContracts(binding PlanningBinding, inputs ContractInputs) (ContractPac
 	if _, err := BuildDesign(probe); err != nil || binding.Stage != "S3" {
 		return ContractPacket{}, fmt.Errorf("S3 requires actual Main stage and frozen REQ")
 	}
-	if len(inputs.Designs) == 0 || len(inputs.Designs)+len(inputs.Sources) > 128 || len(inputs.Directories) > 32 {
-		return ContractPacket{}, fmt.Errorf("bounded original design/source closure required")
+	if len(inputs.Designs) == 0 {
+		return ContractPacket{}, fmt.Errorf("original registered design/source closure required")
 	}
 	// Copy and sort source sets; caller mutation and discovery order cannot
 	// change the packet or its identity after construction.
@@ -73,7 +73,7 @@ func BuildContracts(binding PlanningBinding, inputs ContractInputs) (ContractPac
 		seen[ref.Path] = true
 	}
 	for dir, names := range inputs.Directories {
-		if !safeRelative(dir) || len(names) > 256 {
+		if !safeRelative(dir) {
 			return ContractPacket{}, fmt.Errorf("invalid source directory manifest")
 		}
 		copyNames := append([]string(nil), names...)
@@ -123,8 +123,8 @@ func ValidateContractAnswer(p ContractPacket, data []byte) (ContractAnswer, []Fi
 	issue := func(pointer, expected, observed string) (ContractAnswer, []FieldError) {
 		return ContractAnswer{}, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，补全本人合同交付与适用性判断。"}}
 	}
-	if len(data) > 256<<10 {
-		return issue("/", "JSON <= 256KiB", "oversized")
+	if int64(len(data)) > ContractAnswerReadLimit(p) {
+		return issue("/", "issued questionnaire plus bounded professional answer", "oversized")
 	}
 	if err := ValidateUniqueJSON(data); err != nil {
 		return issue("/", "unique keys", err.Error())

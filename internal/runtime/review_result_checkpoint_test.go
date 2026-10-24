@@ -327,7 +327,7 @@ func TestReviewResultCheckpointVerifiesPacketBoundDurableAcceptance(t *testing.T
 	if err := rewriteCheckpointResultWithIncompleteClaims(root, resultRef, resultBytes, state, packet); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := validateReviewResultCheckpointIndices(root, state, journal); err == nil || !strings.Contains(err.Error(), "omits an original Assignment Claim") {
+	if _, err := validateReviewResultCheckpointIndices(root, state, journal); err == nil || !strings.Contains(err.Error(), "missing claim-reset") {
 		t.Fatalf("consume event and recomputed receipt accepted an incomplete professional answer: %v", err)
 	}
 	restoredReceipt := state["review"].(map[string]any)["assignments"].(map[string]any)[packet.Binding.AssignmentID].(map[string]any)["result_receipt"].(map[string]any)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/identity"
@@ -43,12 +44,21 @@ type ReviewResultBinding struct {
 	VerificationArtifactDigest *string  `json:"verification_artifact_digest"`
 }
 
-// ReviewResultInputs copies only the already frozen questions and subject
-// set. RawMessage retains their complete original JSON shape without importing
-// the S7 review domain package into this neutral projection package.
+// ReviewResultInputs copies the frozen questions, subject set, and optional
+// original method selection. RawMessage retains the complete original source
+// JSON without importing the S7 review domain into this neutral package.
 type ReviewResultInputs struct {
 	Claims         json.RawMessage `json:"claims"`
 	FrozenSubjects json.RawMessage `json:"frozen_subjects"`
+	// Optional for pre-method issuances: absence preserves their original identity.
+	Methods      []ReadItem          `json:"methods,omitempty"`
+	MethodSource *ReviewMethodSource `json:"method_source,omitempty"`
+}
+
+// ReviewMethodSource pins the original registered selection, not a new approval.
+type ReviewMethodSource struct {
+	ManifestRef string `json:"manifest_ref"`
+	SHA256      string `json:"sha256"`
 }
 
 func (inputs *ReviewResultInputs) UnmarshalJSON(data []byte) error {
@@ -68,8 +78,14 @@ func (inputs *ReviewResultInputs) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("S7 packet frozen subjects: %w", err)
 	}
-	*inputs = ReviewResultInputs{Claims: claims, FrozenSubjects: subjects}
+	decoded.Claims, decoded.FrozenSubjects = claims, subjects
+	*inputs = ReviewResultInputs(decoded)
 	return nil
+}
+
+// ReviewMethodPurpose is fixed method guidance, not an author field.
+func ReviewMethodPurpose(name string) string {
+	return "应用本责任已选择的专业方法（" + name + "）检查已分配 Claims；这是方法指引，不是被审对象或额外审批。"
 }
 
 type ReviewResultDraft struct {
@@ -118,15 +134,19 @@ type ReviewResultPacket struct {
 // current Plan/Assignment projection. It validates the supplied Claim IDs
 // against the frozen question JSON and derives all identifiers and paths.
 func BuildReviewResult(binding ReviewResultBinding, inputs ReviewResultInputs) (ReviewResultPacket, error) {
+	templateBytes, err := schema.ReadAsset("stage-form-s7-template.json")
+	if err != nil {
+		return ReviewResultPacket{}, err
+	}
+	return buildReviewResultWithTemplate(binding, inputs, templateBytes)
+}
+
+func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewResultInputs, templateBytes []byte) (ReviewResultPacket, error) {
 	binding = cloneReviewResultBinding(binding)
 	if err := validateReviewResultBinding(binding); err != nil {
 		return ReviewResultPacket{}, err
 	}
 	canonicalInputs, claimMethods, err := canonicalReviewResultInputs(binding, inputs)
-	if err != nil {
-		return ReviewResultPacket{}, err
-	}
-	templateBytes, err := schema.ReadAsset("stage-form-s7-template.json")
 	if err != nil {
 		return ReviewResultPacket{}, err
 	}
@@ -173,6 +193,7 @@ func BuildReviewResult(binding ReviewResultBinding, inputs ReviewResultInputs) (
 	for _, subject := range subjects {
 		read = append(read, ReadItem{Path: subject.Path, Purpose: "Use this source frozen by the current ReviewPlan while answering the assigned Claims."})
 	}
+	read = append(read, canonicalInputs.Methods...)
 	packet := ReviewResultPacket{
 		ID: packetID, TemplateID: reviewResultTemplateID, TemplateSHA: templateSHA,
 		Binding: binding, Inputs: canonicalInputs,
@@ -195,11 +216,21 @@ func BuildReviewResult(binding ReviewResultBinding, inputs ReviewResultInputs) (
 	return packet, nil
 }
 
-// RebuildReviewResult reconstructs every machine-controlled field from the
-// embedded template and frozen packet inputs. Consumers compare the returned
-// packet with the durable row to reject edited issue views.
+// RebuildReviewResult reconstructs every machine-controlled field from a known
+// embedded template and frozen inputs. A supported historical template is only
+// for restoring its original issuance; new work always uses BuildReviewResult.
+// Never trust the caller's questions as a new template or refresh its digest.
 func RebuildReviewResult(old ReviewResultPacket) (ReviewResultPacket, error) {
-	return BuildReviewResult(old.Binding, old.Inputs)
+	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-safety-stop.json"} {
+		data, err := schema.ReadAsset(name)
+		if err != nil {
+			return ReviewResultPacket{}, err
+		}
+		if Digest(data) == old.TemplateSHA {
+			return buildReviewResultWithTemplate(old.Binding, old.Inputs, data)
+		}
+	}
+	return ReviewResultPacket{}, fmt.Errorf("unsupported frozen S7 template digest")
 }
 
 // ReviewResultPacketDigest returns the canonical SHA-256 of the complete
@@ -329,6 +360,16 @@ func bindReviewFindingMetadata(packet ReviewResultPacket, answer []byte) ([]byte
 	return json.Marshal(raw)
 }
 
+// ValidateReviewResultCompleteness shares the issued answer's Claim closure
+// contract with durable receipt validation. It does not establish evidence or
+// Finding validity; those remain the original domain consumer's responsibility.
+func ValidateReviewResultCompleteness(binding ReviewResultBinding, data []byte) error {
+	if pointer, expected, observed := validateCompleteReviewResultAnswer(binding, data); pointer != "" {
+		return fmt.Errorf("%s: %s (%s)", pointer, expected, observed)
+	}
+	return nil
+}
+
 func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte) (pointer, expected, observed string) {
 	var answer struct {
 		ClaimResults []struct {
@@ -339,6 +380,10 @@ func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte
 		BlockedClaims []struct {
 			ClaimID string `json:"claim_id"`
 		} `json:"blocked_claims"`
+		Findings []struct {
+			ClaimID  string `json:"claim_id"`
+			Severity string `json:"severity"`
+		} `json:"findings"`
 		VerificationArtifactDigest *string `json:"verification_artifact_digest"`
 		Verdict                    *string `json:"verdict"`
 	}
@@ -350,6 +395,7 @@ func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte
 		want[id] = true
 	}
 	seen := map[string]bool{}
+	failed := map[string]bool{}
 	for i, claim := range answer.ClaimResults {
 		if !want[claim.ClaimID] || seen[claim.ClaimID] {
 			return fmt.Sprintf("/answer/claim_results/%d/claim_id", i), "one assigned Claim ID", claim.ClaimID
@@ -361,6 +407,7 @@ func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte
 		if strings.TrimSpace(claim.Observed) == "" {
 			return fmt.Sprintf("/answer/claim_results/%d/observed", i), "actual observation", "empty"
 		}
+		failed[claim.ClaimID] = *claim.Conclusion == "fail"
 	}
 	for i, blocked := range answer.BlockedClaims {
 		if !want[blocked.ClaimID] || seen[blocked.ClaimID] {
@@ -368,8 +415,19 @@ func validateCompleteReviewResultAnswer(binding ReviewResultBinding, data []byte
 		}
 		seen[blocked.ClaimID] = true
 	}
+	// This is only a candidate for the P0 stop exception. The original domain
+	// consumer still validates the Finding, evidence, source and safety gaps
+	// before accepting anything or projecting the omitted Claims as unobserved.
+	safetyStop := false
+	if answer.Verdict != nil && *answer.Verdict == "finding" {
+		for _, finding := range answer.Findings {
+			if finding.Severity == "P0" && failed[finding.ClaimID] {
+				safetyStop = true
+			}
+		}
+	}
 	for _, id := range binding.ClaimIDs {
-		if !seen[id] {
+		if !seen[id] && !safetyStop {
 			return "/answer/claim_results", "each frozen Claim answered exactly once", "missing " + id
 		}
 	}
@@ -468,7 +526,26 @@ func canonicalReviewResultInputs(binding ReviewResultBinding, inputs ReviewResul
 		}
 		seen[key] = true
 	}
-	return ReviewResultInputs{Claims: json.RawMessage(claimsJSON), FrozenSubjects: json.RawMessage(subjectsJSON)}, methods, nil
+	selected := append([]ReadItem(nil), inputs.Methods...)
+	var source *ReviewMethodSource
+	if inputs.MethodSource != nil {
+		copySource := *inputs.MethodSource
+		source = &copySource
+		if !safeRelative(source.ManifestRef) || source.ManifestRef == "." || !digestPattern.MatchString(source.SHA256) {
+			return ReviewResultInputs{}, nil, fmt.Errorf("S7 selected methods require a valid frozen manifest source")
+		}
+	}
+	if len(selected) > 256 || len(subjects)+len(selected) > 16384 || (len(selected) > 0 && source == nil) {
+		return ReviewResultInputs{}, nil, fmt.Errorf("S7 selected methods require a bounded registered source")
+	}
+	sort.Slice(selected, func(i, j int) bool { return selected[i].Path < selected[j].Path })
+	for i, method := range selected {
+		parts := strings.Split(strings.TrimPrefix(method.Path, ".claude/"), "/")
+		if !safeRelative(method.Path) || len(parts) != 3 || parts[0] != "skills" || !safeComponent(parts[1]) || parts[2] != "SKILL.md" || strings.TrimSpace(method.Purpose) == "" || len(method.Purpose) > 4096 || (i > 0 && selected[i-1].Path == method.Path) {
+			return ReviewResultInputs{}, nil, fmt.Errorf("invalid or duplicate S7 selected method reference")
+		}
+	}
+	return ReviewResultInputs{Claims: json.RawMessage(claimsJSON), FrozenSubjects: json.RawMessage(subjectsJSON), Methods: selected, MethodSource: source}, methods, nil
 }
 
 func cloneReviewResultBinding(binding ReviewResultBinding) ReviewResultBinding {

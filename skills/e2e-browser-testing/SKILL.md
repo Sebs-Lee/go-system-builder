@@ -4,7 +4,7 @@ description: Use when translating a module's current flows and scenario cases in
 ---
 # E2E Browser Testing
 ## Authority
-Tests prove flow behavior in a real browser; they do not redefine the design. This reusable method was distilled from prior project E2E work without retaining instance-artifact references. This Skill owns S7 flow-to-spec coverage and evidence-bundle requirements; `playwright-e2e` owns Playwright test-code, fixture, locator, and debugging practice. The flow-to-spec translation, hybrid CDP wiring, and evidence-bundle contracts below are the canonical shape a QA Reviewer checks during S7.
+Tests prove flow behavior in a real browser; they do not redefine the design. This reusable method was distilled from prior project E2E work without retaining instance-artifact references. The current ReviewPlan owns assigned coverage and the original S7 consumer owns round qualification. This Skill explains flow-to-spec methods and evidence quality; `playwright-e2e` owns Playwright test-code, fixture, locator, and debugging practice. The flow-to-spec translation, hybrid CDP wiring, and evidence-bundle contracts below are the canonical shape a QA Reviewer checks during S7.
 ## Applicability
 Apply to `behavior-change` risk on UI-impacting REQs, the QA-E2E responsibility, and any cross-REQ module-flow regression sweep.
 ## Required Inputs
@@ -58,7 +58,7 @@ into a round-named location.
 ## N/A Criteria
 N/A only when no UI-impacting behavior change occurred AND no cross-REQ module sweep is required.
 ## Stop Conditions
-Stop when `flows.md` fingerprint differs from the supplied frozen input, when frontend is unreachable, when `data-test` hooks are absent blocking deterministic selection, or when a flow step contradicts the actual UI (surface as DV finding, do not work around).
+Return a concrete source/environment blocker to Main when the frozen input has drifted, the frontend is unreachable, or required selectors prevent deterministic checks. An observed flow/spec mismatch becomes a Finding; continue the remaining safe assigned checks without silently rewriting the specification. Real P0 stops dangerous work and retains unobserved coverage as described below.
 ## Non-Goals
 Do not use Cypress or other frameworks when the project standard is Playwright. Do not bind selectors to CSS classes or copy text (use `data-test`). Do not skip the cross-REQ regression sweep. Do not mask CDP-captured errors to force a green.
 
@@ -67,12 +67,15 @@ Do not use Cypress or other frameworks when the project standard is Playwright. 
 Apply `playwright-e2e` together with this Skill whenever Playwright specs,
 fixtures, locators, traces, or execution failures are in scope. It does not
 decide which routes S7 must run, whether evidence is sufficient, or the
-clean-round outcome; those decisions remain here and in the assigned S7
-responsibility.
+clean-round outcome. The ReviewPlan defines assigned coverage, this Skill guides
+evidence assessment, and the original domain consumer and exit gate decide the round.
 
-## Inlined Methodology
+## Responsibility boundary
 
-Team planning uses a mandatory responsibility baseline plus risk-triggered responsibilities plus scope partitioning plus conflict-graph constraints yielding one single-responsibility assignment per teammate. The `QA-E2E` responsibility maps to this skill. Risk-tag derivation: UI-impacting change or `flows.md` modified -> `ui`, `behavior-change`; existing module touched -> `regression`. Conflict-graph `must_separate` edges when responsibilities require different conclusion enums, one responsibility checks the other's authored or repaired output, or combining them would exceed workload limits. One assignment may not exceed 30 files or 3 material modules. Teammate reuse requires same role family and responsibility ID, unchanged scope, matching fingerprints, and non-stale teammate state.
+Use the assigned CASE/PATH set and its current module source package. Main chooses
+compatible grouping and independent execution under the original ReviewPlan;
+reading this Skill does not create another dispatch, file-count or tool-permission
+gate. Preserve browser coverage and real independence when work is partitioned.
 
 ## Core Principle
 
@@ -239,34 +242,34 @@ Rule of thumb: if Playwright's `expect()` can prove it, use Playwright. If you n
 
 ## Evidence Bundle
 
-Every e2e spec run produces a bundle that a Verifier walks to sign off the round. Shape:
+Each run retains actual browser and test evidence in the locations supplied by the
+current responsibility. Reference those files from the original S7 answer; an
+existing narrative report may be reused, but a second report is not a prerequisite
+for reception. Do not invent a parallel round-named report or copy Runtime revision
+and source hashes into it.
 
-```text
-docs/reports/e2e/{AGENT-{ROLE}-{FEATURE}-R{N}}.md   ← narrative report
-docs/reports/e2e/evidence/{RUN_ID}.jsonl             ← CDP + PW event stream
-docs/reports/e2e/screenshots/{RUN_ID}-{step}.png     ← per-step screenshot
-```
+### Information to retain
 
-### Narrative report sections (mandatory)
+Keep these facts legible in the answer and its referenced evidence, where applicable:
 
-1. **Header** — REQ ID + round + bound runtime revision + spec file path
-2. **Stack-state table** — containers / ports / running versions (proves the environment)
-3. **Test-architecture diagram** — agent assignments + journey sequence (one box per `test()`)
-4. **API CRUD walk table** — `# · Method · Path · Status · Notes` with real HTTP codes observed (not expected — observed)
-5. **CDP findings section** — bugs caught only at browser level (silent 4xx, uncaught exceptions, console errors). Each finding cites the JSONL line.
-6. **Evidence inventory** — paths to JSONL + PNG + (optional) video
-7. **Status-code distribution counts** — sanity check on coverage (e.g. `2xx: 47, 3xx: 3, 4xx: 2 (expected), 5xx: 0`)
-8. **Finding records** — operation path, visible symptom, terminal state, persisted and
-   forbidden side effects, evidence refs, and capture gaps; no root-cause or BUG claim
-9. **Idempotent re-execution instructions** — env vars, start commands, exact `pnpm playwright test` invocation
+- The actual spec and CASE/PATH coverage, execution command and relevant environment.
+- The frontend/API instance and build actually exercised; real versus mocked dependencies.
+- User actions, observed request outcomes, console/runtime events and terminal state.
+- Evidence paths for actual JSONL, screenshots, trace or video; reuse existing capture.
+- Findings with the first deviation, persistence/forbidden effects and genuine capture gaps.
+- Safe setup, test-data/fixture and rerun instructions sufficient to continue the original work.
+
+A sequence diagram or status-code summary can help explain a complex run, but neither
+is a mandatory second deliverable or a substitute for actual observation. Counts and
+machine metadata come from existing outputs; the author explains their significance.
 
 ### Bind dynamic observations to the service actually running
 
-In the existing stack-state table, identify the frontend/API URL and the build actually serving it, plus which database, queue and external dependencies are real or mocked. Reuse an existing build ID, version endpoint, container image identity, or controlled startup/build log that connects the running instance to the claimed product revision. A checkout's current HEAD, a spec digest or a successful HTTP response alone does not identify the running service. Read the existing evidence; do not add a mandatory endpoint, probe command or second provenance registry.
+In the existing answer or referenced execution evidence, identify the frontend/API URL and the build actually serving it, plus which database, queue and external dependencies are real or mocked. Reuse an existing build ID, version endpoint, container image identity, or controlled startup/build log that connects the running instance to the claimed product revision. A checkout's current HEAD, a spec digest or a successful HTTP response alone does not identify the running service. Read the existing evidence; do not add a mandatory endpoint, probe command or second provenance registry.
 
 If a run targets an older build, mark its result against that build; do not use it as proof of the new change. If the mapping cannot be established, state the evidence limitation and return the environment/source gap to Main before claiming the current behavior verified. Keep observations already obtained and any original receipt; do not silently relabel them or change hashes. After the intended service is available, repeat only the affected dynamic observations through their original responsibility.
 
-Mocked dependencies can support the boundary they actually exercise, but do not prove the omitted real integration. Distinguish real browser/server/persistence observations from fixtures, local stubs and static source checks in the existing narrative. This runtime-version check applies to browser/API/service execution; static review or schema checks do not require a service launch, network probe or health endpoint.
+Mocked dependencies can support the boundary they actually exercise, but do not prove the omitted real integration. Distinguish real browser/server/persistence observations from fixtures, local stubs and static source checks in the original answer or referenced evidence. This runtime-version check applies to browser/API/service execution; static review or schema checks do not require a service launch, network probe or health endpoint.
 
 ### JSONL event stream shape
 
@@ -328,7 +331,7 @@ Anti-patterns:
 
 ## Finding Handoff from Failures
 
-脚本失败时，在原答卷中记录可以交给调查者的 Finding：实际入口、首次偏差、终态和证据。S8 负责归并、因果判断及后续 BUG 投射，S7 不手写 BUG 文件。实际经过可以直接写入 timeline；已有 `capture step` 缓冲只补无作者时间线且关联准确的 Finding，原 `capture exec` 保留真正命令执行与输出来源。证据作者选择实际 `path:<相对路径>` 或 `command_output:<原捕获路径>`，摘要、字节数和截断元数据由原接收／捕获机制承接；不得让作者手填，也不得从文件存在推断命令执行。冷启动资产的摘要由原消费者从本人实际工作区绑定，执行后改动脚本或夹具仍须重做受影响流程。P0 Finding 如实写 `capture_gaps`，说明不能安全采集的内容和原因：
+脚本失败时，在原答卷中记录可以交给调查者的 Finding：实际入口、首次偏差、终态和证据。S8 负责归并、因果判断及后续 BUG 投射，S7 不手写 BUG 文件。实际经过可以直接写入 timeline；已有 `capture step` 缓冲只补无作者时间线且关联准确的 Finding，原 `capture exec` 保留真正命令执行与输出来源。证据作者选择实际 `path:<相对路径>` 或 `command_output:<原捕获路径>`，摘要、字节数和截断元数据由原接收／捕获机制承接；不得让作者手填，也不得从文件存在推断命令执行。冷启动资产的摘要由原消费者从本人实际工作区绑定，执行后改动脚本或夹具仍须重做受影响流程。P0 Finding 如实写 `capture_gaps`，说明不能安全采集的内容和原因。同一 Reviewer 尚未执行的 Claim 可从答卷的空白项中移除，原消费者在接收真实 P0 后从计划推导未观察集合；不补造 pass/fail 或产品阻塞。以下清单帮助整理原答卷的事实，不要求另交 Markdown 报告：
 
 ```markdown
 ### Finding record: {short title}
@@ -353,7 +356,9 @@ investigation and an explicit repair contract.
 
 ## Idempotent Re-Execution
 
-The evidence bundle must be reproducible. Include in the narrative report:
+Retain safe rerun instructions in the original answer or referenced evidence. Adapt
+this example to the actual supplied environment and artifact paths; it is not an
+instruction to start unassigned services or rerun a dangerous P0 operation:
 
 ```bash
 # Environment
@@ -371,25 +376,33 @@ ls docs/reports/e2e/evidence/*.jsonl
 ls docs/reports/e2e/screenshots/*.png
 ```
 
-Anyone running these commands should see the same flow pass/fail pattern and produce the same shape of evidence (timestamps differ, but counts and verdicts match).
+State the actual repeatability observed. Nondeterminism, changed state and unsafe
+re-execution remain explicit limits; do not promise identical counts or outcomes
+without evidence or repeat unsafe work merely to fill the record.
 
 ## Quality Bar (QA Reviewer checklist)
 
-An e2e evidence bundle clears S7 when ALL hold:
+Assess the assigned E2E evidence against the applicable criteria below. The original
+S7 consumer and exit gate decide whole-round qualification; an E2E bundle alone
+cannot clear delivery and QA obligations or authorize repair:
 
 - [ ] Every browser-required CASE and every `PATH-*` ref from `cases.json` is bound in one actual callback; each separate `F-NNN` ref validates structural flow membership against `flows.md` but is not required in the callback (full-module sweep complete)
 - [ ] Required allow and reject branches both have 100% execution/coverage evidence, and the module positive/negative ratio passes
 - [ ] Selectors use `data-test` exclusively; no CSS-class or copy-text binding
 - [ ] Hybrid CDP wiring captures Network + Page + Runtime events for every test
-- [ ] Narrative report has all 9 mandatory sections with real observed data (not expected)
+- [ ] The original answer and referenced evidence contain actual environment, coverage, observations and safe continuation instructions; no duplicate narrative is required
 - [ ] JSONL event stream lands at the documented path; one JSON object per line; sortable by `ts`
 - [ ] Screenshots at every step that asserts visibility
 - [ ] Auth strategy documented; per-persona fixtures; no shared admin token; no hardcoded user IDs
 - [ ] Every failure is an investigation-ready Finding with operation path + evidence refs; no root-cause or BUG draft is asserted in S7
-- [ ] Idempotent re-execution instructions produce the same pass/fail pattern
-- [ ] Cross-REQ regression sweep results enumerated in the report (every `F-NNN` listed with PASS/FAIL)
+- [ ] Safe re-execution instructions and the actually observed repeatability or limits are recorded
+- [ ] Assigned cross-REQ regression coverage is accounted for in the answer/evidence; unexecuted Claims are not relabeled PASS/FAIL
 
-Failing any item is a QA finding; the bundle returns to S6 / S9 rework. No Clean Round without a passing e2e bundle.
+Report an observed product deviation as a Finding; missing environment or evidence
+requires its actual recovery owner. Ordinary Findings continue safe coverage and
+reach S8 through a sealed batch. Repair requires the original investigation and
+approval route. Valid P0 early termination retains unobserved Claims and gaps; it
+is not a clean round, and none of these criteria requires unsafe recapture.
 
 ## Selecting existing assets
 

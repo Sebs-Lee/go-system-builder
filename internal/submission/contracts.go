@@ -66,7 +66,7 @@ func (s *Service) IssueContracts(ctx context.Context) (workpacket.ContractPacket
 	}
 	view, _ := json.MarshalIndent(p, "", "  ")
 	view = append(view, '\n')
-	actual, err := workpacket.Publish(s.Root, p.ViewPath, view)
+	actual, err := workpacket.PublishBounded(s.Root, p.ViewPath, view, int64(len(view)))
 	if err != nil {
 		return p, err
 	}
@@ -74,7 +74,7 @@ func (s *Service) IssueContracts(ctx context.Context) (workpacket.ContractPacket
 		return p, fmt.Errorf("published contract view differs from original issuance")
 	}
 	draft, _ := json.MarshalIndent(p.Draft, "", "  ")
-	if _, err := workpacket.Publish(s.Root, p.AnswerPath, append(draft, '\n')); err != nil {
+	if _, err := workpacket.PublishBounded(s.Root, p.AnswerPath, append(draft, '\n'), workpacket.ContractAnswerReadLimit(p)); err != nil {
 		return p, err
 	}
 	return p, nil
@@ -119,7 +119,7 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 	if err != nil {
 		return Receipt{}, err
 	}
-	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, 256<<10)
+	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, workpacket.ContractAnswerReadLimit(p))
 	if err != nil {
 		return rejected(snap, p.ID, err), err
 	}
@@ -168,7 +168,7 @@ func (s *Service) SaveContracts(ctx context.Context, path string) (Receipt, erro
 		encoded, _ := json.MarshalIndent(envelope, "", "  ")
 		encoded = append(encoded, '\n')
 		envelopePath = ".claude/evidence/submissions/" + p.ID + "/" + workpacket.Digest(encoded) + ".json"
-		stored, err := workpacket.Publish(s.Root, envelopePath, encoded)
+		stored, err := workpacket.PublishBounded(s.Root, envelopePath, encoded, int64(len(encoded)))
 		if err != nil {
 			return Receipt{}, err
 		}
@@ -265,7 +265,7 @@ func (s *Service) contractReceipt(snap runtime.Snapshot, p workpacket.ContractPa
 		if ev["id"] != record.EvidenceID {
 			continue
 		}
-		data, err := workpacket.ReadFile(s.Root, text(ev["path"]), 1<<20)
+		data, err := workpacket.ReadFile(s.Root, text(ev["path"]), workpacket.ContractEvidenceReadLimit(p))
 		if err != nil || workpacket.Digest(data) != ev["sha256"] || ev["kind"] != "planning_contract" {
 			return r, fmt.Errorf("original contract evidence no longer matches")
 		}

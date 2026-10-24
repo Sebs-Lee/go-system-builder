@@ -190,32 +190,27 @@ its permanent prompt.
 
 ## 4. Subagents
 
-Claude Code subagents use `.claude/agents/*.md`. Every assignment is singular
-and fingerprinted. `plan_checkpoint` means work continues without a second
-approval; the required professional answer depends on the stage. S5/S7/S8 use
-their exact domain questionnaire, S9 uses its PlanReport/RepairResult answers,
-and S6 Builders retain their professional PLAN_REPORT. A generic PLAN_REPORT
-is sent only when the original role contract requires it. An explicit
-`plan_approval_required` assignment keeps its original read-back and approval
-flow; phase one is read-only and phase two is bound to the approved assignment.
+Claude Code subagents use `.claude/agents/*.md`. Main follows
+`.claude/skills/team-planning/SKILL.md` to preserve professional scope,
+independence and real dependencies, then carries the original references into
+native Agent. Engineering registration alone does not start a platform Agent.
 
-After dispatch, the Driver follows the role's original receiver: watch for a
-generic PLAN_REPORT only when that role requires one, otherwise follow the
-Hook's exact domain-answer path and save feedback. In approval mode, collect
-and review the read-back before the original approval/activation. The main
-session must not take over or mark the delegated responsibility `done`; follow
-its current Runtime projection and original result receiver. Reassignment or
-replacement requires the original lifecycle path.
+S5/S7/S8 Workers read their exact domain view, save their own private answer
+and return the original reference for SubagentStop reception. Main does not
+write an independent judgment on their behalf. For S6, Main runs
+`loop-harness s6 prepare --root <Main> --task <TASK> --role <role>` and passes
+the returned brief into a native Agent with worktree isolation. S6/S9 Builders
+save their professional plan before implementation, continue with real work
+and self-checks, commit actual products and return the supplied Result.
+Main separately integrates and performs its required checks.
 
-Team construction uses `.claude/skills/team-planning/SKILL.md` and a manifest
-validated by:
-
-```bash
-loop-harness validate --all --root .
-loop-harness team launch --root . \
-  --manifest <manifest.json> \
-  --request-template <readback-request.json>
-```
+Ordinary native work has no generic read-back, activation or per-save receipt.
+An explicit `plan_approval_required` responsibility retains its actual domain
+approval; only an already registered frozen execution uses the recovery steps
+in [workspace execution recovery](../workspace-execution-recovery.md).
+Follow the actual return and original reception feedback. Report real blockers
+and unfinished work; platform exit is not proof that the responsibility or
+stage is complete.
 
 ## 5. Progressive Disclosure
 
@@ -227,7 +222,7 @@ Load procedures only when their trigger applies:
 | first UI REQ, missing/stale DESIGN.md, new product surface | `design-foundation` |
 | design, UI, contracts, candidate tasks | `specification-planning` |
 | contract/task batch review | `document-verification` |
-| teammate spawn or reactivation | `agent-dispatch` |
+| native dispatch, return or recovery | `agent-dispatch` |
 | workgroup planning | `team-planning` |
 | blocking finding and repair | `bug-resolution` |
 | changed artifact or stale evidence | `impact-analysis` |
@@ -244,7 +239,7 @@ Best Practices are selected from risk tags and the assigned responsibility.
   `/goal` is required.
 - Loop automation cannot change or lock the REQ.
 - UI-impacting work first records `design investment` (`local / core / extended / N/A`). Local one-shot UI does not publish `docs/design/DESIGN.md`. Core/Extended need a published Project Design Foundation before later `UI impact=changed` REQs inherit it, then a reviewed final UI design package (`docs/design/prototypes/{module}/` with `index.html` + page HTML files with the 4-field header, plus `stories.md` and `flows.md` carrying S-NNN / F-NNN entries each with its REQ-id) before contract lock.
-- No side effect occurs before activation.
+- Implementation follows the reviewed baseline, assigned scope and actual domain approvals; ordinary tools do not require generic activation.
 - Delivery Verifier, QA, and E2E Tester work uses single-responsibility assignments.
 - Blocking findings create or reference a canonical BUG before repair.
 - Repair invalidates affected evidence and is followed by targeted re-verification and a new complete review round.

@@ -62,15 +62,17 @@ for the compatibility boundary.
 
 ## What to do right now
 
-**For a dispatched Worker:** read your registered Assignment and its frozen
-inputs. Apply the quality checks to your declared scope, assertions and required
-coverage. Outside S9, commit source changes through the original adapter before
-submitting the Result. In S9, use ordinary `git add` and `git commit` for actual
-source changes, then save the supplied RepairResult answer; no-change tests need
-no new commit. S9 requires no extra commit form or generic completion report.
-Main owns its real integration and necessary checks. Record concrete unknowns
-with their evidence, impact and original responsible consumer; a risk that blocks
-your own acceptance requires the original BLOCKER path. Register your own Result before ending execution.
+**For a dispatched Worker:** read the original view or brief and its actual
+input references. Apply the quality checks for your professional responsibility.
+S5/S7/S8 read-only Workers save their own professional answer. Native S6/S9
+Builders save their plan before implementation, perform actual self-checks,
+commit real product changes with ordinary Git and save the supplied Result;
+an allowed no-change result does not require a new commit. Return the original
+references so SubagentStop can receive the artifacts. Ordinary saves need no
+receipt, and you do not manually register a duplicate Result. Main owns its
+integration and necessary checks. Report a real blocker with its evidence,
+impact and unfinished work to Main; do not manufacture a conclusion to exit.
+Only an existing frozen execution uses its original named recovery contract.
 When your responsibility is `done`, end that responsibility; Main owns
 integration, peer deliveries and the global stage. A report's existence alone
 does not prove completion. Follow an explicit original rework assignment if
@@ -88,14 +90,17 @@ Main's integration requirements.
    carries the canonical current state, objective, missing item and next action.
 3. Run `DRIVE()` (below). Do not stop because evidence is missing, a Hook returned `warn` or `block`, or several compliant implementations exist. Do not mistake “most-forward” for “fastest”: complete the current stage's declared coverage before advancing.
 
-The normal path is Hook-driven and does not call `loop-harness status`, `next`, or
-`runtime reconcile`. Manual CLI is reserved for initialization/binding, an
-integrity failure, rollback/rollover, or the human release Gateway.
-Main runs native S6 preparation and Agent dispatch, then explicit integration and checks. Other stage contracts retain their exact Hook-supplied workspace commands; S9 original prepare supplies the Result questionnaire, listening does not perform workspace startup, and authors still do not manually issue/consume.
+The normal path follows the current Hook responsibility and needs no repeated
+`status`, `next`, or `runtime reconcile` cycle. Read-only diagnostics and the
+original technical recovery commands remain available for a concrete failure;
+they are not additional authoring steps or approvals.
+Main runs native S6 preparation and Agent dispatch, then explicit integration and checks. S5/S7/S8 use their original prepared view/answer references; S9 uses its original prepared brief. Preparation does not start a platform Agent, and authors do not manually issue/consume. Existing frozen executions retain only their original recovery commands.
 In packet mode, the Hook gives your current questionnaire's exact path, clear
 questions and remaining stage work. Fill the professional answers and actual
-artifact paths there, then save. The listener prepares missing questionnaires
-and preserves saved answers; do not run issue/consume commands or manufacture
+artifact paths there, then save and follow that responsibility's original
+reception boundary. The original stage entry prepares questionnaires and
+preserves saved answers; an ordinary observation does not create a new assignment.
+Do not run issue/consume commands or manufacture
 evidence envelopes for normal continuation.
 
 **If the Runtime is a fresh inactive Runtime with no bound REQ:**
@@ -138,11 +143,11 @@ This section applies only to `s6-native-v1`. Keep the original frozen recovery b
 This is the Main-session loop. Workers execute their current Assignment's
 closing contract and report remaining work to its original consumer.
 
-For S0–S2, follow the current short stage contract instead of the generic
-source-hash recheck, approval barrier or next-Pre instruction below. Preserve
-actual human decisions and applicable professional work; S1/S2 normal save
-records and completes the original outlet. Ordinary Pre/Stop are read only,
-and an accepted report with unfinished outlet continues on the same save.
+Follow the current stage's original completion contract. S1/S2 normal save
+records the professional result and runs its original outlet; ordinary
+planning Pre/Stop are read only. Preserve actual human decisions and applicable
+professional work. If reception succeeds but the outlet remains unfinished,
+follow its specific missing work and original continuation path.
 
 Re-enter this driver at a real stage handoff, native return or concrete blocker.
 Ordinary tools continue the current professional task; do not rerun the full
@@ -169,17 +174,25 @@ conditions live in `.claude/skills/loop-orchestration/SKILL.md`.
    primary Skill (named by Hook/`next.primary_skill`) + risk-triggered Best Practices.
 6. Execute the action (self, or one single-responsibility subagent assignment
    via `agent-dispatch`).
-7. Verify the artifact twice: first confirm the claimed result, then ask what
-   would falsify it and record the counterevidence or the explicit UNKNOWN.
-   Write the deliverable and the evidence only after that review.
+7. Verify the artifact against its actual oracle and relevant counterexamples.
+   Preserve observations as work occurs; record real uncertainty in the original
+   deliverable. Do not repeat checks or create another report merely to satisfy
+   a generic second-review procedure.
 8. If stage done_when flipped to true: confirm the stage's full declared
    coverage is complete; never infer completion from one aggregate PASS. Then
-   wait for the next PreToolUse to
-   auto-commit the advance. Do not hand-push `runtime transition`.
+   follow the original receiver's transition result and next responsibility.
+   Distinguish accepted work, committed transition, and next-material preparation;
+   resolve the actual unfinished step. Do not wait for an unrelated tool call or
+   hand-push `runtime transition`.
 9. Loop back to step 2.
 ```
 
-## Three-layer architecture
+## Three-layer runtime delivery
+
+These three layers describe how execution, scheduled wake-up and event listening
+cooperate. They are not a partition of instruction authority: entry routing,
+stage contracts, professional methods, concrete responsibilities, event delivery
+and result/recovery feedback each retain their own source of truth.
 
 ```text
 Layer 1  Main-session Driver   this file + agent-protocol.md + loop-orchestration Skill    (drives)
@@ -187,9 +200,10 @@ Layer 2  Wake-up Recovery      .claude/loop.md (delivered by Claude /loop)      
 Layer 3  Graph listener        Hooks + Runtime Milestone                                  (observes, reminds, advances)
 ```
 
-Layer 3 is an active control plane. Hook events trigger Runtime reconciliation,
-the canonical `status/next` projection, Milestone persistence, and a positive
-recovery packet with the exact questionnaire path and remaining duties.
+Layer 3 routes events to original consumers and current-state projections.
+Successful Main saves and native returns can record facts and run their original
+outlets; ordinary planning observation only reads current responsibility.
+Recovery context gives the exact questionnaire path and remaining duties.
 PreToolUse observes progress without tool authorization or interception. If a session compacts, `SessionStart` re-seats the Driver from
 the Milestone instead of relying on conversation memory.
 
@@ -224,29 +238,30 @@ the Milestone instead of relying on conversation memory.
 ## Agent role selection
 
 Prefer the predefined role-bearing agents over `general-purpose`. Each
-`.claude/agents/<role>.md` declares a fixed tool set, allowed write paths,
-frontmatter-loaded Skills, and a stable `model:` (opus for review and test
-work, sonnet for implementation). Routing a Builder / Verifier
-responsibility through `general-purpose` skips those bindings and the
-agent dispatch gate, and the resulting agent runs without Hook scope
-checks, message envelope discipline, or the role-specific Skills preload.
+`.claude/agents/<role>.md` supplies its professional mission, work boundaries,
+Skills and declared model. Tools follow the actual platform configuration;
+the role name does not establish a separate Hook tool ACL. Main carries the
+original brief or exact view/answer paths into the native task so the role
+can perform its registered responsibility and return the original artifact.
+Using `general-purpose` does not replace the required expertise, independent
+judgment or original consumer's source and responsibility checks.
 
 Use `general-purpose` only when:
 
 - The work is genuinely outside every predefined role (one-off research,
   ad-hoc scaffolding that no role owns).
-- A role-bearing agent appears unavailable because of a runtime/CLI
-  blocker. **First** verify the blocker per `.claude/skills/agent-dispatch/SKILL.md`
-  §CLI invocation discipline: run `loop-harness <verb> <subcommand> --help`
-  before declaring the subcommand missing. Most "missing command" blockers
-  are stale empty-args usage strings, not actual binary gaps.
+- A role-bearing agent is actually unavailable. Inspect its concrete platform
+  error and installed role before choosing an equivalent independent context.
+  For a CLI syntax error, use that command's `--help` to diagnose the real gap;
+  a CLI check is not a prerequisite for every native Agent dispatch.
 
 If a role-bearing agent gets stuck mid-assignment (no usable professional
-artifact or a concrete blocker), follow the `agent-dispatch` Skill's stop
-conditions: surface the blocker to the human or revoke/reassign the
-assignment. Do **not** silently swap to `general-purpose` to bypass the
-activation envelope — that hides the real cause and breaks the audit
-trail.
+artifact or a concrete blocker), preserve its original work and inspect the
+actual return and reception feedback. Main restores preparation or sources;
+the author corrects professional omissions and can resume the same native
+responsibility. Reassignment follows the original domain rules when needed.
+Only an unresolved human decision requires a human gateway. Changing the
+role does not repair a missing source or authorize bypassing a real approval.
 
 ## Stage route (summary)
 
@@ -270,7 +285,7 @@ the matching human Gateway.
 
 ## Human Gateway types
 
-For exceptional blockers, the main session uses the Gateway types below. Explicit stage authority boundaries (S2 sign-off, S8 approval without a valid delegation, and review-budget decisions) also remain in force; do not invent additional human gates for ordinary technical recovery.
+For exceptional blockers, the main session uses the Gateway types below. Explicit stage authority boundaries (unresolved S2 direction decisions, S8 approval without a valid delegation, and review-budget decisions) also remain in force; do not invent additional human gates for ordinary technical recovery.
 
 | Type | Trigger |
 |:---|:---|
@@ -301,8 +316,9 @@ Do not infer runtime state from this file, `project.yaml`, project-map, a TASK b
 
 In packet mode, after S7 Reviewer registration, the Hook automatically prepares
 their current questionnaires and supplies the exact view and answer paths.
-Give each Reviewer its immutable view and exact answer path. The Reviewer fills
-the professional fields and reads save feedback; ordinary `plan_checkpoint`
+Give each Reviewer its immutable view and exact answer path. The Reviewer performs
+the checks, fills the professional fields, saves and returns the exact reference;
+SubagentStop invokes the original consumer. Ordinary `plan_checkpoint`
 reviewers do not send a separate generic PLAN_REPORT first. If the registered
 mode is `plan_approval_required`, follow that original approval before review.
 An accepted Result projects that Reviewer's responsibility to `done` when the
@@ -311,15 +327,17 @@ the whole-round outcome. Reissue after controlled Plan
 revision and after queued Assignments become dispatched. Never fill another
 Reviewer's verdict or select a producer from an answer body.
 
-In S8 packet mode, first register the Hypothesis and dispatch its real
-Investigator manifest/TASK/owner; the Hook then prepares the current questionnaire
-and supplies its exact view and answer paths. On ordinary `plan_checkpoint`, the
-Investigator saves the professional causal result directly, without a separate
+For the S7→S8 handoff, a sealed batch advances through TR-008 on the next Main
+PreToolUse. Main then reads the supplied Batch and Findings, fills the exact S8
+intake's grouping_rationale and saves it; the original consumer creates the Case.
+Main uses the supplied hypothesis questions to define actual investigation work
+and register its professional division, then dispatches each native Investigator
+with the prepared exact view/answer. The Investigator saves its professional
+causal result and returns the reference for SubagentStop reception, without a
 generic PLAN_REPORT. An explicit `plan_approval_required` assignment keeps its
-original approval step. The original Case Writer records the result
-and receipt; new questions still require Main dispatch. Follow the original
-Case route and scoped contract approval after investigation; an answer is
-not an approval or a repair authorization.
+original approval. The original Case Writer records the result and receipt;
+new questions still require Main dispatch. Follow the original Case route and
+scoped contract approval; an answer is not repair authorization.
 
 1. Read the Hook's current responsibility, exact questionnaire view/answer
    paths, missing duties and next action.
@@ -347,7 +365,8 @@ Compatibility/recovery commands (normal S1 uses the supplied four-question appli
 ```bash
 .claude/bin/loop-harness req bind --req <locked-req> --approved-by <actual-approver> --dev-branch <development-branch> --release-upstream <release-destination>
 # Replace each placeholder before execution; a remote release destination includes its remote.
-# Exceptions only: initialization/binding, integrity recovery, rollback/rollover, release Gateway.
+# Stage-specific preparation and integration use their named commands above.
+# Additional commands below are diagnostics or concrete recovery, not a routine checklist.
 # Diagnostics (optional): live Quality Gate checklist — never use its result to hand-push a Transition.
 .claude/bin/loop-harness ready --root .
 .claude/bin/loop-harness status --root .   # coarse projection only
@@ -402,8 +421,9 @@ Hook `systemMessage` is a user notice; model recovery instructions belong in
 `hookSpecificOutput.additionalContext` for supported events. Full recovery
 context is retained at session/agent start and stage transitions. Ordinary
 PreToolUse calls provide the current gate conflicts, missing work, and a
-compact checkpoint. Repeated user notices may be suppressed within one
-session/agent, but safety denials and model context must never be suppressed.
+compact checkpoint. Repeated unchanged guidance may be shortened within the
+same session and responsibility. New errors, changed paths and session recovery
+must still deliver the actionable context; display caching never grants authority.
 A Worker plan checkpoint requiring no approval does not silence progress
 reports to the user.
 
@@ -414,12 +434,13 @@ changed or drafting is substantial. Main Stop provides one continuation
 reminder when a locked REQ has a current unblocked planning milestone and
 no delegated agent. `stop_hook_active` always permits the next Stop; this
 is not an unattended scheduler or proof of completion. Honor explicit user
-stop requests and explain actual permission/external waits. S2 design
-sign-off and other stages retain their existing domain-specific rules.
+stop requests and explain actual permission/external waits. Unresolved S2
+direction decisions and other stages retain their original authority boundaries;
+reuse an existing applicable human decision without asking again.
 
 ## Optional bounded repair authority
 
-For a new bound REQ, an explicit finite human grant may delegate ordinary S8 contract reviews to the Driver under docs/bounded-repair-autonomy.md. Do not infer this grant from the approver name, install it on old REQs, or manufacture human_decision for technical review. No grant preserves the existing explicit contract approval requirement. S2 ADR sign-off, requirement changes, budgets, external permissions and release retain their own boundaries. Within a valid grant, recoverable task/scope-planning issues go to the Driver, not repeated user A/B/C menus.
+For a new bound REQ, an explicit finite human grant may delegate ordinary S8 contract reviews to the Driver under docs/bounded-repair-autonomy.md. Do not infer this grant from the approver name, install it on old REQs, or manufacture human_decision for technical review. No grant preserves the existing explicit contract approval requirement. Unresolved S2 direction decisions, requirement changes, budgets, external permissions and release retain their own boundaries. Within a valid grant, recoverable task/scope-planning issues go to the Driver, not repeated user A/B/C menus.
 
 ## Approved repair policy at new requirement binding
 

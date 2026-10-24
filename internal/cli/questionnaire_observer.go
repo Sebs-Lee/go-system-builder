@@ -120,7 +120,7 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 			}
 		}
 	}
-	if len(progress) == 2 && progress[0] && !progress[1] {
+	if len(progress) == 2 && progress[0] && !progress[1] && !planningChangeFrom(request).Active {
 		return false, 0
 	}
 	switch request.ToolName {
@@ -133,11 +133,17 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
 		return false, 0
 	}
-	if _, explicit := savedQuestionnairePath(request); explicit && (len(progress) != 2 || !progress[0]) {
+	if _, explicit := savedQuestionnairePath(request); explicit && (len(progress) != 2 || !progress[0]) && !planningChangeFrom(request).Active {
 		return false, 0
 	}
 	snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
 	if err != nil {
+		return false, 0
+	}
+	life := mapFieldCLI(snapshot.State, "lifecycle")
+	strictPlanning := life["state"] == "planning" && (life["phase"] == "design" || life["phase"] == "contracts")
+	change := planningChangeFrom(request)
+	if strictPlanning && (!change.Known || len(change.SavedAnswers) == 0) {
 		return false, 0
 	}
 	var contexts []string
@@ -153,6 +159,9 @@ func runObservedQuestionnaireSaves(root string, request policy.Input, stdout, st
 	}
 questionnaires:
 	for _, q := range questionnaires {
+		if strictPlanning && !change.SavedAnswers[filepath.Clean(q.path)] {
+			continue
+		}
 		// Main tools observe Main forms only. A ready Worker answer is not a
 		// save by Main and must wait for its actual native SubagentStop.
 		if mainQuestionnaireViewer(request) && q.professionalWorker {

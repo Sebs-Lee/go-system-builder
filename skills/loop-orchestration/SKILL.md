@@ -144,7 +144,8 @@ DRIVE()
    - The current stage's direct upstream specs.
    - Exactly one primary Methodology Skill — the one named by
      Hook/`next.primary_skill`.
-   - Best-practice Skills only if this action's risk tags trigger them.
+   - Best-practice Skills when the responsibility's risk tags or its actual
+     TASK/inputs meet the role's stated conditions; read the supplied paths.
 
 6. Execute the action.
    - Self-execute, or
@@ -167,7 +168,8 @@ DRIVE()
      advance. Do not hand-push `loop-harness runtime transition`.
 
 9. Loop.
-   - Re-read Hook progress context (or `ready` if the checklist is unclear) and recompute.
+   - Continue from the latest reception or progress feedback. Use `ready` only
+     for a concrete diagnostic gap; unchanged guidance needs no repeated read.
      Continue until a real stop condition.
 ```
 
@@ -225,14 +227,21 @@ it matches `docs/control/agent-protocol.md`.
 `primary_skill` is the only method-naming field. Legacy `method` is rejected.
 Unknown Skill IDs are rejected.
 
-For a packet-enabled Runtime in `planning.design`, the Hook automatically
-prepares Main's S2 design questionnaire and gives its exact view and answer paths. Complete the architecture using `specification-planning`, then fill
-only the issued answer's explicit conclusion and architecture path. A successful
-Main save uses the original planning evidence consumer and original design gate.
-Use `stage-answer receipt --agent Main --packet <packet_id>` for the original
-receipt and `stage-answer recover --agent Main` for a pending system followup.
-Keep the original human amendment for unknown UI impact and the later independent
-review responsibilities. A design receipt does not authorize ending the project.
+For a packet-enabled Runtime in `planning.design`, original responsibility
+preparation supplies Main's exact S2 view and answer paths. Complete the design
+using `specification-planning` and commit formal upstream inputs to the bound
+development branch before saving pass. Fill only the original answer's conclusion
+and architecture path; normal Main save uses the original evidence consumer and
+design gate. Reception, PTR-PLAN-01 and preparation of S3 inputs are separate
+outcomes. Follow the precise missing work or original continuation in feedback.
+For a concrete technical failure, use
+`.claude/bin/loop-harness runtime stage-answer receipt --agent Main --packet <packet_id> --root .`
+to diagnose the original receipt, or
+`.claude/bin/loop-harness runtime stage-answer recover --agent Main --root .`
+for its supported followup. Use the packet ID supplied by the original context.
+Neither is a routine authoring step.
+Keep the original human amendment for unknown UI impact and later independent
+review duties. A design receipt does not authorize ending the project.
 
 For packet-enabled Main at `planning.contracts`, use the current S3 answer
 delivered by the Hook. It provides the exact view and answer paths, along with
@@ -366,8 +375,9 @@ not a professional acceptance or a substitute for the original stage gate.
 | Stop/idle reminder for this owner's incomplete responsibility | Finish or report that responsibility, using its delivered answer/result path. Other owners' missing work does not reopen a completed responsibility. |
 | Stale or unreadable Runtime context | Follow the original Runtime recovery or human gateway when the source authority is genuinely unrecoverable. |
 
-Saving an answer still runs the original domain consumer, evidence and binding
-checks, and Writer/CAS. Only those original consumers produce acceptance facts;
+Main's answer save and a native Worker's SubagentStop each use their original
+domain consumer, evidence and binding checks, and Writer/CAS. An ordinary
+Worker save is not reception. Only those original consumers produce acceptance facts;
 the Hook reminder itself does not register evidence, approve a professional
 judgment, or advance a stage. Stage transitions continue through the existing
 graph and transition path after their original prerequisites hold.
@@ -437,10 +447,10 @@ Hook `systemMessage` is a user notice; model recovery instructions belong in
 context is retained at session/agent start and stage transitions. Ordinary
 PreToolUse calls provide the current owner responsibilities, exact questionnaire
 path, missing work, and a compact checkpoint. Keep the exact path intact when
-summarizing. Repeated user notices may be suppressed within one session/agent,
-but model context and a Stop reminder for that owner's own missing Result must
-remain available. A Worker plan checkpoint requiring no approval does not
-silence progress reports to the user.
+summarizing. Repeated unchanged guidance may be shortened within the same
+session and responsibility. New errors, changed paths, session recovery and a
+Stop reminder for that owner's own missing Result must remain available. A Worker
+plan checkpoint requiring no approval does not silence progress reports to the user.
 
 ## Technical barriers and progress
 

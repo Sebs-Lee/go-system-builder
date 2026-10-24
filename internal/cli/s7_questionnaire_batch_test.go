@@ -84,6 +84,43 @@ func TestS7MainPreparesAllDispatchedQuestionnairesInOneOriginalHandoff(t *testin
 			t.Fatal(err)
 		}
 		assignments[a.AssignmentID] = row
+		if owner != "" {
+			// Synthetic dispatch still records its original selection source.
+			// This fixture explicitly selects no additional methods; production
+			// issuance must never infer an empty selection from a missing source.
+			entities := f.state["entities"].(map[string]any)
+			teamID := "team-" + a.AssignmentID
+			manifestRef := ".claude/workgroups/" + a.AssignmentID + ".json"
+			role := map[string]string{"delivery": "delivery-verifier", "qa": "qa"}[a.Lens]
+			manifest := review.ManifestDraft{
+				RuntimeID: f.state["runtime_id"].(string), BaselineGeneration: plan.BaselineGeneration, ReviewRound: plan.ReviewRound,
+				WorkgroupID: teamID, WorkgroupKind: review.LensToWorkgroupKind(a.Lens),
+				Assignments: []review.ManifestAssignment{{AssignmentID: a.AssignmentID, AgentID: owner, RoleFamily: role, ClaimIDs: a.ClaimIDs, SkillRefs: []string{}}},
+			}
+			manifestBytes, err := json.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifestPath := filepath.Join(f.root, manifestRef)
+			if err := os.MkdirAll(filepath.Dir(manifestPath), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(manifestPath, manifestBytes, 0600); err != nil {
+				t.Fatal(err)
+			}
+			teams, _ := entities["teams"].([]any)
+			entities["teams"] = append(teams, map[string]any{
+				"id": teamID, "platform_team_id": teamID, "kind": manifest.WorkgroupKind, "status": "planned",
+				"manifest_ref": manifestRef, "manifest_sha256": workpacket.Digest(manifestBytes),
+				"responsibility_ids": []string{}, "agent_ids": []string{owner}, "review_round": plan.ReviewRound,
+			})
+			for _, raw := range entities["agents"].([]any) {
+				agent := raw.(map[string]any)
+				if agent["id"] == owner {
+					agent["team_id"], agent["prompt_ref"] = teamID, manifestRef+"#"+a.AssignmentID
+				}
+			}
+		}
 	}
 	f.state["review"] = map[string]any{"round": 1, "clean_round": nil, "claims": map[string]any{}, "assignments": assignments, "plan": map[string]any{"plan_id": plan.ReviewPlanID, "path": planRel, "sha256": workpacket.Digest(data), "revision": 1, "review_round": 1, "status": "running", "e2e_coverage_state": "not_applicable", "submitted_at": "2026-10-23T00:00:00Z"}}
 	f.persist(t)
@@ -106,6 +143,9 @@ func TestS7MainPreparesAllDispatchedQuestionnairesInOneOriginalHandoff(t *testin
 	if err != nil || len(packets) != 2 {
 		t.Fatalf("single original handoff issued %d/2 responsibilities: %v\n%s", len(packets), err, output)
 	}
+	if !strings.Contains(output, "Optional capture") || !strings.Contains(output, "source/environment blockers to Main") {
+		t.Fatalf("new issuance did not carry the complete native task: %s", output)
+	}
 	for _, packet := range packets {
 		if packet.Binding.AssignmentID == "assignment-queued" {
 			t.Fatal("queued dependency was issued early")
@@ -122,7 +162,14 @@ func TestS7MainPreparesAllDispatchedQuestionnairesInOneOriginalHandoff(t *testin
 	if err := os.WriteFile(path, author, 0600); err != nil {
 		t.Fatal(err)
 	}
-	stageReviewResultLifecycleContext(context.Background(), f.root, policy.Input{Event: "PreToolUse", CWD: f.root}, service, after, "Main")
+	repeated := stageReviewResultLifecycleContext(context.Background(), f.root, policy.Input{Event: "PreToolUse", CWD: f.root}, service, after, "Main")
+	if strings.Contains(repeated, "Optional capture") || !strings.Contains(repeated, path) {
+		t.Fatalf("ordinary reminder repeated long instructions or lost the actual answer: %s", repeated)
+	}
+	restored := stageReviewResultLifecycleContext(context.Background(), f.root, policy.Input{Event: "SessionStart", CWD: f.root}, service, after, "Main")
+	if !strings.Contains(restored, "Optional capture") || !strings.Contains(restored, path) {
+		t.Fatalf("new session lost the complete task: %s", restored)
+	}
 	latest, err := runtime.NewStore(f.statePath, f.journalPath).Snapshot()
 	got, readErr := os.ReadFile(path)
 	if err != nil || readErr != nil || latest.Revision != after.Revision || string(got) != string(author) {

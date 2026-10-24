@@ -85,6 +85,11 @@ func TestMainReviewPlanQuestionnaireSaveUsesOriginalRegistrationAndReplay(t *tes
 	if !strings.Contains(result, "review-plan-questionnaire-save") || !strings.Contains(result, path) {
 		t.Fatalf("save did not return original registration/path: %s", result)
 	}
+	for _, expected := range []string{"prepares and registers", "manifest-draft", "assignment-e2e-1 waits", "static Claims"} {
+		if !strings.Contains(result, expected) {
+			t.Fatalf("registered plan did not provide its actual preparation/dependency step %q: %s", expected, result)
+		}
+	}
 	statePath := filepath.Join(root, ".claude/loop-state.json")
 	before, err := os.ReadFile(statePath)
 	if err != nil {

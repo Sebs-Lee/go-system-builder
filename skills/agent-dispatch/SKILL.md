@@ -69,7 +69,7 @@ The delegated responsibility returned its actual artifacts or honest blocker. Ma
 
 ## Stop Conditions
 
-Report missing actual sources, lost independence, explicit approval still pending, or an ambiguous original reference to Main. Do not manufacture completion.
+Report missing actual sources, lost independence, explicit approval still pending, or an ambiguous original reference to Main with the actual unfinished work and exact original reference. A blocked native return may end the platform turn without completing the engineering responsibility. Main resolves the source or assignment and resumes original work as appropriate; do not manufacture a verdict to satisfy an exit check.
 
 ## Non-Goals
 

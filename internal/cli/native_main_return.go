@@ -171,6 +171,9 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			return "", e
 		}
 		receipt, err = s.ReceiptPacket(p.Binding.Owner, p.ID)
+		if err == nil && !receipt.Accepted {
+			prefix, receipt.NextAction = nativeS5ReturnDiagnostic(root, snap.State, p)
+		}
 	case "s7-review-result-v1":
 		p, _, e := runtime.FindReviewResultPacket(snap.State, subject.id)
 		if e != nil {
@@ -217,8 +220,11 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 	if err != nil {
 		return "", err
 	}
-	if !receipt.Accepted {
+	if !receipt.Accepted && subject.kind != "s5-document-review-v1" {
 		receipt.NextAction = "尚无原接收事实；后台派发即时返回不代表执行结束。Main 继续可开展的工作，核对实际原生执行与 Stop 诊断，不凭此次返回猜测重派或要求重填。"
+		if subject.kind == "s7-review-result-v1" {
+			receipt.NextAction += " S7 实际未完成返回仍属于原责任；Main 阅读实际返回和 Stop 的具名作者、原答案路径及具体字段/来源诊断，恢复来源或环境前提，或续跑原 Reviewer 修正专业缺项。已记录 site_lost 时先用原 blocker_resolved 入口解除真实阻塞，再由同一 Reviewer 恢复。不能把已结束但未接收的责任当作仍在后台运行，也不凭 prose 推定验收、重派或编造 verdict/Finding。"
+		}
 	}
 	data, err := json.Marshal(receipt)
 	return prefix + string(data), err

@@ -80,7 +80,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		return false, 0
 	}
 	var output, commandErr bytes.Buffer
-	next := "Main dispatches native Agents with the registered exact view/answer paths; each Reviewer saves and returns its own answer for SubagentStop reception."
+	next := "Main prepares and registers eligible Reviewer assignments before native dispatch; each Reviewer saves and returns its own answer for SubagentStop reception."
 	roundFacts, _ := snapshot.State["review"].(map[string]any)
 	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) {
 		_, _, loadErr := review.LoadPlan(root, snapshot.State)
@@ -94,6 +94,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 			fmt.Fprintln(&output, "The current ReviewPlan is already registered; changed answers require the original named revision/rework path. Preserve the accepted plan.")
 		} else {
 			fmt.Fprintln(&output, "The same ReviewPlan was already received; no Runtime write or duplicate registration was performed.")
+			next += "\n" + s7PendingReviewGuidance(root, snapshot.State)
 		}
 	} else {
 		received, err := review.RegisterPlan(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), review.PlanRequest{Context: contextForHook(request), ExpectedRevision: -1, PlanPath: path})
@@ -108,6 +109,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		} else {
 			ptr := review.PlanPointerFromState(received.State)
 			fmt.Fprintf(&output, "review-plan: registered %s for round %d (status %s).\n", ptr.PlanID, ptr.ReviewRound, ptr.Status)
+			next += "\n" + s7PendingReviewGuidance(root, received.State)
 		}
 	}
 	context := fmt.Sprintf("S7 Main ReviewPlan questionnaire saved at %s. Next: %s\n%s", path, next, output.String()+commandErr.String())

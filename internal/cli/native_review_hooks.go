@@ -83,6 +83,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 	}
 	type candidate struct {
 		owner, answer, source string
+		packet                string
 		refs                  []string
 		err                   error
 	}
@@ -94,7 +95,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		if err == nil {
 			refs = append(refs, filepath.Join(actual, view), filepath.Join(actual, path))
 		}
-		candidates = append(candidates, candidate{id, filepath.Join(actual, path), actual, refs, err})
+		candidates = append(candidates, candidate{owner: id, answer: filepath.Join(actual, path), source: actual, refs: refs, err: err})
 	}
 	switch stage {
 	case "S5":
@@ -130,6 +131,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 				}
 			}
 			selectAnswer(p.Binding.Owner, p.Binding.AssignmentID, p.ViewPath, p.AnswerPath, p.Binding.Generation, p.Binding.RuntimeID, aliases...)
+			candidates[len(candidates)-1].packet = p.ID
 			if frozenAnswer != "" {
 				candidates[len(candidates)-1].answer, candidates[len(candidates)-1].source = frozenAnswer, frozenSource
 			}
@@ -141,6 +143,11 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		}
 		for _, p := range packets {
 			selectAnswer(p.Binding.OwnerAgentID, p.Binding.AssignmentID, p.ViewPath, p.AnswerPath, p.Binding.BaselineGeneration, p.Binding.RuntimeID)
+			if candidates[len(candidates)-1].err != nil {
+				// Report the exact issued reference even when its execution source
+				// cannot be resolved. The source error still prevents reception.
+				candidates[len(candidates)-1].answer = filepath.Join(root, p.AnswerPath)
+			}
 		}
 	case "S8":
 		packets, err := runtime.CurrentHypothesisResultPackets(root, snap.State, "")
@@ -159,13 +166,14 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		refs = append(refs, c.refs...)
 	}
 	text := nativeReviewTaskText(in, refs)
-	owner, answer, source := "", "", ""
+	owner, answer, source, packet := "", "", "", ""
 	matched := 0
 	for _, c := range candidates {
 		for _, ref := range c.refs {
 			if nativeS6ExactReference(text, ref) {
 				matched++
 				owner, answer, source, sourceErr = c.owner, c.answer, c.source, c.err
+				packet = c.packet
 				break
 			}
 		}
@@ -202,7 +210,17 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		}
 	}
 	if sourceErr != nil {
+		if stage == "S5" {
+			submission.RecordPlanningDiagnostic(root, snap.State, nativeS5DiagnosticKind(packet), fmt.Sprintf("owner %s; answer %s: %s", owner, answer, nativeFailureDetail(sourceErr)))
+			return true, nativeS5HandoffFailure(owner, answer, sourceErr, diagnostic)
+		}
+		if stage == "S7" {
+			return true, nativeS7HandoffFailure(owner, answer, sourceErr, diagnostic)
+		}
 		return true, nativeStopFailure(stage+" native professional handoff", in.StopHookActive, sourceErr, diagnostic)
+	}
+	if stage == "S5" {
+		submission.RecordPlanningDiagnostic(root, snap.State, nativeS5DiagnosticKind(packet), "")
 	}
 	return true, 0
 }

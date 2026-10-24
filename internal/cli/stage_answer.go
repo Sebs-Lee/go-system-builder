@@ -101,6 +101,13 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 			} else {
 				result, err = s.IssueDesign(ctx)
 			}
+			if life["phase"] == "contracts" || life["phase"] == "tasks" {
+				message := ""
+				if err != nil {
+					message = err.Error()
+				}
+				submission.RecordPlanningDiagnostic(s.Root, snapshot.State, "preparation", message)
+			}
 		} else if life["state"] == "verification" && runtime.PacketEnabled(snapshot.State) {
 			if *owner != "" && *owner != "Main" {
 				err = fmt.Errorf("S7 ReviewResult issuance requires the original Main entry")
@@ -125,6 +132,12 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 				break
 			}
 			result, err = s.IssueRepairResults(ctx, "")
+		} else if life["state"] == "document_verification" && runtime.PacketEnabled(snapshot.State) && (*owner == "" || *owner == "Main") {
+			// The named recovery entry reuses the original S5 preparation.
+			// Ordinary Main observations never register or issue responsibilities.
+			if err = prepareS5ReviewResponsibilities(ctx, s.Root, snapshot.State); err == nil {
+				result, err = s.IssueContext(ctx, "")
+			}
 		} else {
 			result, err = s.IssueContext(ctx, *owner)
 		}
@@ -218,7 +231,7 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		if *packetID != "" {
 			result, err = s.ReceiptPacket(*owner, *packetID)
 		} else {
-			result, err = s.ReceiptContext(ctx, *owner, *path)
+			result, err = s.DiagnoseReceiptContext(ctx, *owner, *path)
 		}
 	case "recover":
 		result, err = s.Recover(ctx, *owner, 2)
@@ -345,6 +358,13 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 		return false, 0
 	}
 	rel = filepath.ToSlash(rel)
+	// The path identifies a candidate responsibility, not a write. In the
+	// S2/S3 boundary an unknown tool must have changed this exact answer in
+	// its matching Pre/Post observation; reading an existing PASS is inert.
+	if (strings.Contains(rel, "/S2/") || strings.Contains(rel, "/S3/")) && !actualPlanningAnswerSave(request, path) {
+		writePlanningPostOutput(stdout, nil, planningUnobservedSaveGuidance(root, request, path))
+		return true, 0
+	}
 	workerAnswer := filepath.ToSlash(path)
 	if rel != ".claude/submissions" && !strings.HasPrefix(rel, ".claude/submissions/") &&
 		!strings.HasSuffix(workerAnswer, "/"+workpacket.WorkerAnswerPath) && !strings.HasSuffix(workerAnswer, "/"+workpacket.LegacyWorkerAnswerPath) {
@@ -353,6 +373,12 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 	// Legacy plan/completion inputs keep their original adapters.
 	if rel == ".claude/submissions/plan.json" || rel == ".claude/submissions/completion.json" {
 		return false, 0
+	}
+	// An exact Main answer path locates work; it does not turn a Worker's
+	// ordinary tool event into Main's professional submission. This routing
+	// boundary leaves the underlying tool allowed and emits no permission gate.
+	if !mainQuestionnaireViewer(request) && (strings.Contains(rel, "/S2/") || strings.Contains(rel, "/S3/") || strings.Contains(rel, "/S4/")) {
+		return true, 0
 	}
 	if strings.Contains(rel, "/S2/") {
 		ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
@@ -367,8 +393,8 @@ func runSavedStageAnswerHook(root string, request policy.Input, stdout, stderr i
 		}
 		return true, renderStageAnswerHook(stdout, path, r, "S2")
 	}
-	// The original packet at this exact path owns S2/S3/S4 Main authoring;
-	// Hook actor and CWD metadata do not select or authorize its consumer.
+	// The original packet at this exact path selects S2/S3/S4 Main authoring;
+	// native Worker events were excluded above. CWD does not invent ownership.
 	s, err := submission.New(root)
 	if err == nil {
 		if _, found, findErr := s.TaskPlanningForPath(path); findErr == nil && found {
@@ -786,6 +812,9 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 	// prepares the questionnaire; ordinary observation never issues it.
 	if snapshot, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); err == nil {
 		life, _ := snapshot.State["lifecycle"].(map[string]any)
+		if life["state"] == "document_verification" && mainQuestionnaireViewer(request) {
+			return stageS5ObservedContext(root, snapshot.State)
+		}
 		if life["state"] == "planning" && life["phase"] == "design" {
 			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
 				return ""
@@ -951,7 +980,7 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 
 func stageS5PreparationGuidance(root string, state map[string]any) string {
 	life := mapFieldCLI(state, "lifecycle")
-	return fmt.Sprintf("S5 entry %d: 原两项独立责任尚未准备完成。系统沿当前 S5 入口在 %s 准备原 manifest、登记并发行准确问卷；Main 直接携带准确 view/answer 分别派发原生 Agent。普通读取与 Stop 不补登记；如入口准备失败，由 Main／系统恢复原来源或具名入口，不抄 Runtime、SHA、版本、编号或时间。工程 owner 仅为标签，不能证明平台已启动或实际独立。", stageAnswerEntry(life["phase_revision"]), s5ManifestQuestionnairePath(root, state))
+	return fmt.Sprintf("S5 entry %d: DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY 的原独立责任尚未准备完成。原入口使用当前 accepted S4 来源，在 %s 准备分工、登记并发行准确问卷。Main 检查具体准备错误；技术恢复用 `loop-harness runtime stage-answer issue --root %s` 复用原入口，不手填 manifest 或机器字段。方法入口：%s。准备后携带准确 view/answer 分别派发独立原生 Agent；登记不证明平台已启动或实际独立。普通读取与 Stop 不补登记。", stageAnswerEntry(life["phase_revision"]), s5ManifestQuestionnairePath(root, state), s7CaptureShellQuote(root), filepath.Join(root, ".claude/skills/team-planning/SKILL.md"))
 }
 
 // stageDesignQuestionnaireContext projects current work, not issuance proof.
@@ -973,7 +1002,7 @@ func stageDesignQuestionnaireContext(root string, snapshot runtime.Snapshot) str
 		answer := filepath.Join(root, packet.AnswerPath)
 		if record, accepted, err := runtime.FindSubmission(snapshot.State, packet.ID); err == nil && accepted {
 			service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl")}
-			if receipt, err := service.DesignReceipt("", packet.ID); err == nil {
+			if receipt, err := service.DesignReceiptForSnapshot(snapshot, packet.ID); err == nil {
 				message := "S2 design report is already recorded at " + answer + ". " + receipt.NextAction
 				if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
 					bound, _ := snapshot.State["bound_req"].(map[string]any)
@@ -982,13 +1011,15 @@ func stageDesignQuestionnaireContext(root string, snapshot runtime.Snapshot) str
 						message += " Current actual gap: REQ UI impact remains unknown; resolve that professional question before progressing."
 					}
 				}
-				return message
+				return message + stageDesignSourceDelivery(snapshot.State) + stageDesignScopeContext(root, snapshot.State)
 			}
 			return "S2 design report is already recorded. Its current material reference cannot be read; Main must restore that material, not repeat the report."
 		}
 		var missing []string
+		missingFiles := false
 		for _, path := range []string{view, answer} {
 			if _, err := os.Stat(path); err != nil {
+				missingFiles = true
 				missing = append(missing, path+": "+err.Error())
 			}
 		}
@@ -1013,22 +1044,40 @@ func stageDesignQuestionnaireContext(root string, snapshot runtime.Snapshot) str
 		if metadata["ui_impact"] == "unknown" {
 			missing = append(missing, "current REQ UI impact remains unknown; resolve the actual design/requirement question before progressing")
 		}
-		return "S2 current design questionnaire: read " + view + "; fill only conclusion and architecture_path in " + answer + " and save. Complete the actual architecture, relevant ADR/human direction judgment and applicable module/scenario work described in the view. Templates: " + filepath.Join(root, "docs/architecture/ARCHITECTURE-template.md") + ", " + filepath.Join(root, "docs/design/decisions/ADR-template.md") + ", " + filepath.Join(root, "docs/design/prototypes/README.md") + ". Current missing work/material: " + strings.Join(missing, "; ") + ". Empty conclusion is a draft, not failure or PASS. No issue/register/recovery command is required."
+		recovery := "No routine issue/register/recovery command is required."
+		if missingFiles {
+			recovery = "The registered files above are missing. A successful material change retries the original preparation; for this technical gap, run " + submission.PlanningRecoveryCommand(root, "issue") + " to restore missing files while preserving existing answers. Do not construct a replacement questionnaire."
+		}
+		delivery := stageDesignSourceDelivery(snapshot.State)
+		return "S2 current design questionnaire: read " + view + "; fill only conclusion and architecture_path in " + answer + " and save. Complete the actual architecture, relevant ADR/human direction judgment and applicable module/scenario work described in the view. Templates: " + filepath.Join(root, "docs/architecture/ARCHITECTURE-template.md") + ", " + filepath.Join(root, "docs/design/decisions/ADR-template.md") + ", " + filepath.Join(root, "docs/design/prototypes/README.md") + ". Current missing work/material: " + strings.Join(missing, "; ") + ". Empty conclusion is a draft, not failure or PASS. " + recovery + delivery + stageDesignScopeContext(root, snapshot.State)
 	}
-	return "S2 entry questionnaire has not been prepared by the system entry outlet. Main/system maintenance must finish that preparation and provide its actual view/answer paths; do not guess a path, manually issue a packet or invent evidence. Existing requirement material: " + filepath.Join(root, stringValue(mapFieldCLI(snapshot.State, "bound_req")["path"])) + "."
+	return "S2 entry questionnaire has not been prepared by the system entry outlet. A successful material change retries the original entry; for this technical gap, run " + submission.PlanningRecoveryCommand(root, "issue") + " to prepare its actual view/answer paths. Do not guess a path or invent evidence. Existing requirement material: " + filepath.Join(root, stringValue(mapFieldCLI(snapshot.State, "bound_req")["path"])) + "."
 }
 
 func stagePlanningQuestionnaireLifecycleContext(ctx context.Context, service *submission.Service, phase string) string {
 	var stage, viewPath, answerPath, delivery string
+	var preparationErr error
+	snapshot, snapshotErr := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()
+	if phase == "contracts" || phase == "tasks" {
+		defer func() {
+			if snapshotErr == nil {
+				message := ""
+				if preparationErr != nil {
+					message = preparationErr.Error()
+				}
+				submission.RecordPlanningDiagnostic(service.Root, snapshot.State, "preparation", message)
+			}
+		}()
+	}
 	switch phase {
 	case "design":
-		snapshot, err := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()
-		if err != nil {
-			return "S2 current design context could not be read: " + err.Error()
+		if snapshotErr != nil {
+			return "S2 current design context could not be read: " + snapshotErr.Error()
 		}
 		return stageDesignQuestionnaireContext(service.Root, snapshot)
 	case "contracts":
 		packet, err := service.IssueContracts(ctx)
+		preparationErr = err
 		if err != nil {
 			if packet.AnswerPath != "" {
 				return fmt.Sprintf("S3 original questionnaire: read %s; answer %s. Preparation needs repair: %s. Keep the original answer; do not invent a new path or envelope.", filepath.Join(service.Root, filepath.FromSlash(packet.ViewPath)), filepath.Join(service.Root, filepath.FromSlash(packet.AnswerPath)), err)
@@ -1042,6 +1091,7 @@ func stagePlanningQuestionnaireLifecycleContext(ctx context.Context, service *su
 		delivery = contractDeliveryGuidance(service.Root, packet, service.Files)
 	case "tasks":
 		packet, err := service.IssueTaskPlanning(ctx)
+		preparationErr = err
 		if err != nil {
 			if packet.AnswerPath != "" {
 				return fmt.Sprintf("S4 original questionnaire: read %s; answer %s. Preparation needs repair: %s. Keep the original answer; do not invent a new path or envelope.", filepath.Join(service.Root, filepath.FromSlash(packet.ViewPath)), filepath.Join(service.Root, filepath.FromSlash(packet.AnswerPath)), err)
@@ -1069,7 +1119,7 @@ func taskPlanningDeliveryGuidance(root string, packet workpacket.TaskPlanningPac
 	paths := []string{index}
 	label := "Required dispatch index"
 	candidates := ""
-	if data, err := workpacket.ReadFile(root, packet.AnswerPath, 256<<10); err == nil {
+	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.TaskPlanningAnswerReadLimit(packet)); err == nil {
 		if answer, issues := workpacket.ValidateTaskPlanningAnswer(packet, data); len(issues) == 0 {
 			paths = append([]string{*answer.IndexPath}, answer.TaskPaths...)
 			label = "Your named TASK delivery"
@@ -1113,7 +1163,7 @@ func contractDeliveryGuidance(root string, packet workpacket.ContractPacket, fil
 	// Before then these are conventional starting paths, not an applicability
 	// decision or a requirement to produce all three contract families.
 	label := "Conventional output candidates (choose contract IDs and FE/BE/SYNC applicability from the frozen scope)"
-	if data, err := workpacket.ReadFile(root, packet.AnswerPath, 256<<10); err == nil {
+	if data, err := workpacket.ReadFile(root, packet.AnswerPath, workpacket.ContractAnswerReadLimit(packet)); err == nil {
 		if answer, issues := workpacket.ValidateContractAnswer(packet, data); len(issues) == 0 {
 			paths = append([]string{*answer.IndexPath}, answer.ContractPaths...)
 			label = "Your named contract delivery"
@@ -1352,7 +1402,10 @@ func stageBuilderQuestionLifecycleContext(root string, request policy.Input, sna
 	}
 	if strings.TrimSpace(b.String()) == "" {
 		if request.EffectiveAgentID() == "" || request.EffectiveAgentID() == "Main" {
-			return "S6 has no current Builder questionnaire awaiting an answer. Main follows the current stage and receipt progress; an accepted delivery needs no repeated Builder answer. Inspect `loop-harness s6 status --advice`; use `loop-harness s6 prepare --help` only for a TASK the original progress marks ready for dispatch. The original register-workgroup remains the registration step. No Builder answer path was inferred."
+			if entry := s6EntryPreparationContext(root, snapshot.State, request); entry != "" {
+				return entry
+			}
+			return "S6 has no current prepared Builder questionnaire awaiting an answer. Main checks `loop-harness s6 status --advice`, selects an eligible TASK and prepares it with `loop-harness s6 prepare --root <Main-root> --task <TASK> --role <Builder-role>`. Preparation performs the original registration and supplies the exact brief for native Agent/worktree dispatch; no separate register-workgroup step is needed. No Builder has been inferred to be running, and no answer path was guessed. Received deliveries retain their original integration step."
 		}
 		return fmt.Sprintf("S6 has no current registered Builder questionnaire for %s. Main should inspect the original TASK registration and dispatch; no Builder answer path was inferred.", request.EffectiveAgentID())
 	}
@@ -1539,6 +1592,14 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 			feedback := "Runtime records status=stale; original feedback: " + journalPath + " event=" + eventID
 			return fmt.Sprintf("S7 Main: original ReviewPlan %s is stale. Main questionnaire: %s. Original system feedback: %s. Main resolves the original baseline/Plan recovery through existing revive/revise; queued dispatch and old answers await a valid plan.", planPath, questionnaire, feedback)
 		}
+		if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil {
+			switch ptr.Status {
+			case "observation_sealed":
+				return "S7 ObservationBatch is sealed. Main continues the original TR-008 handoff on the next PreToolUse, then fills the supplied S8 intake; no further Reviewer dispatch belongs to this round."
+			case "paused", "clean":
+				return "S7 ReviewPlan is " + ptr.Status + "; Main follows its original pause or stage-exit route. Do not dispatch the old queue."
+			}
+		}
 		for attempt := 0; attempt < 2; attempt++ {
 			packets, err := runtime.CurrentReviewResultPackets(snapshot.State, "")
 			if err != nil {
@@ -1549,23 +1610,26 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 			seen := map[string]bool{}
 			needIssueOwner := ""
 			var b strings.Builder
+			completed := 0
 			fmt.Fprintln(&b, "S7 Main current ReviewResult responsibilities:")
 			for _, packet := range packets {
 				assignmentID := packet.Binding.AssignmentID
 				seen[assignmentID] = true
 				row, _ := assignments[assignmentID].(map[string]any)
 				activity := workstate.ReviewAssignmentActivity(row)
+				if activity == "consumed" {
+					completed++
+					continue
+				}
 				view, answer, err := reviewResultLifecyclePaths(ctx, root, snapshot.State, packet, request.CWD, request.SessionID)
 				if err != nil {
 					fmt.Fprintf(&b, "S7 %s/%s: questionnaire preparation gap: %s\n", packet.Binding.OwnerAgentID, assignmentID, err)
 					continue
 				}
-				if activity == "consumed" {
-					fmt.Fprintf(&b, "S7 Reviewer %s assignment=%s: Runtime records this responsibility done for answer %s; Main owns the next review-control step.\n", packet.Binding.OwnerAgentID, assignmentID, answer)
-					continue
-				}
+
 				if activity != "dispatched" {
-					fmt.Fprintf(&b, "S7 Reviewer %s assignment=%s is blocked; Main must resolve its recorded blocker.\n", packet.Binding.OwnerAgentID, assignmentID)
+					// The shared pending projection below includes blocked owners,
+					// their exact original source and recovery entry once.
 					continue
 				}
 				ready := true
@@ -1583,33 +1647,21 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 					fmt.Fprintf(&b, "S7 %s/%s: questionnaire preparation gap at %s (missing or unreadable regular file: %v).\n", packet.Binding.OwnerAgentID, assignmentID, path, err)
 				}
 				if ready {
-					fmt.Fprintf(&b, "S7 Reviewer %s assignment=%s: Main carries exact view %s and private answer %s into native Agent. Reviewer performs its actual independent Claim/lens work, saves the original professional answer and returns its reference; SubagentStop invokes the original consumer. Frozen registered sources keep their original recovery.\n", packet.Binding.OwnerAgentID, assignmentID, view, answer)
-				}
-			}
-			for assignmentID, raw := range assignments {
-				row, _ := raw.(map[string]any)
-				switch workstate.ReviewAssignmentActivity(row) {
-				case "queued", "pending", "planned":
-					round := tolerantInt(reviewState["round"])
-					baseline, _ := snapshot.State["baseline"].(map[string]any)
-					generation := tolerantInt(baseline["generation"])
-					if generation < 1 || round < 1 || assignmentID == "" || filepath.Base(assignmentID) != assignmentID || assignmentID == "." || assignmentID == ".." {
-						fmt.Fprintf(&b, "S7 assignment=%s: Main/system must restore the current ReviewPlan generation, round and Assignment before manifest preparation.\n", assignmentID)
+					source, err := questionnaireSourceRoot(root, snapshot.State, packet.Binding.AssignmentID, packet.Binding.OwnerAgentID, packet.Binding.RuntimeID, packet.Binding.BaselineGeneration)
+					if err != nil {
+						fmt.Fprintf(&b, "S7 assignment=%s: Main restores the original source: %s\n", assignmentID, err)
 						continue
 					}
-					manifest := filepath.Join(mainRoot, ".claude/workgroups", fmt.Sprintf("manifest-g%d-r%d-%s.json", generation, round, assignmentID))
-					if _, err := os.Lstat(manifest); err == nil {
-						fmt.Fprintf(&b, "S7 assignment=%s: read the existing manifest %s; Main selects the real Reviewer and professional division of work, then follows its original registration guidance. Do not overwrite it.\n", assignmentID, manifest)
-					} else if !os.IsNotExist(err) {
-						fmt.Fprintf(&b, "S7 assignment=%s: Main/system must restore manifest access at %s: %v.\n", assignmentID, manifest, err)
-					} else if info, err := os.Stat(filepath.Dir(manifest)); err != nil || !info.IsDir() {
-						fmt.Fprintf(&b, "S7 assignment=%s: Main/system must restore the original workgroup directory %s before manifest preparation.\n", assignmentID, filepath.Dir(manifest))
-					} else {
-						command := s7CaptureShellQuote(filepath.Join(mainRoot, ".claude/bin/loop-harness")) + " s7 manifest-draft --root " + s7CaptureShellQuote(mainRoot) + " --assignment " + s7CaptureShellQuote(assignmentID) + " --out " + s7CaptureShellQuote(manifest)
-						fmt.Fprintf(&b, "S7 assignment=%s: prepare the manifest with %s. Read the saved JSON file; stdout also contains guidance and is not a JSON document. Main chooses the real Reviewer and professional division of work, then uses the returned registration command when dependencies allow.\n", assignmentID, command)
-					}
-					continue
+					fullHandoff := attempt > 0 || request.Event == "SessionStart" || request.Event == "PreCompact" || request.Event == "SubagentStart"
+					b.WriteString(s7ReviewerTaskGuidance(mainRoot, source, view, answer, packet, fullHandoff))
 				}
+			}
+			if completed > 0 {
+				fmt.Fprintf(&b, "S7 accepted Reviewer responsibilities: %d; no repeat answer is required. Main owns the remaining round/handoff work.\n", completed)
+			}
+			b.WriteString(s7PendingReviewGuidance(mainRoot, snapshot.State))
+			for assignmentID, raw := range assignments {
+				row, _ := raw.(map[string]any)
 				if !seen[assignmentID] && workstate.ReviewAssignmentActivity(row) == "dispatched" {
 					if needIssueOwner == "" {
 						needIssueOwner = stringValue(row["agent_id"])
@@ -1756,7 +1808,7 @@ func questionnaireSourceRoot(root string, state map[string]any, assignment, owne
 // its packet, checking historical sources or accepting an answer during a read.
 func registeredPlanningRow(state map[string]any) (map[string]any, error) {
 	life, _ := state["lifecycle"].(map[string]any)
-	template := map[string]string{"contracts": "s3-contract-v1", "tasks": "s4-task-planning-v1"}[stringValue(life["phase"])]
+	template := map[string]string{"design": "s2-design-v1", "contracts": "s3-contract-v1", "tasks": "s4-task-planning-v1"}[stringValue(life["phase"])]
 	if life["state"] != "planning" || template == "" {
 		return nil, nil
 	}
@@ -1787,11 +1839,12 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 	if err != nil {
 		return stage + " current entry: " + err.Error()
 	}
+	preparation := submission.PlanningDiagnostic(root, snapshot.State, "preparation")
 	if row == nil {
-		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path, manually issue or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage))
+		return stage + " current questionnaire is not prepared by its successful entry outlet. Main completes the actual named materials; a real professional save/Git change can finish preparation. Do not guess a path or resubmit the completed preceding report. Material entry: " + filepath.Join(root, "docs/control/agent-protocol.md#"+strings.ToLower(stage)) + preparation + ". For a technical retry, use " + submission.PlanningRecoveryCommand(root, "issue") + "; this reuses the original entry."
 	}
 	view, answer := stringValue(row["view_path"]), stringValue(row["answer_path"])
-	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer))
+	message := fmt.Sprintf("%s current questionnaire: read %s; answer %s. Ordinary Pre/Stop reads existing facts only.", stage, filepath.Join(root, view), filepath.Join(root, answer)) + preparation
 	for _, path := range []string{view, answer} {
 		if path == "" {
 			message += " Current registered questionnaire path is missing; Main must finish entry preparation."
@@ -1803,7 +1856,7 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 	}
 	if record, found, err := runtime.FindSubmission(snapshot.State, stringValue(row["packet_id"])); err == nil && found {
 		if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
-			message += " The professional answer is already recorded; do not resubmit it. Main owns the original outlet " + record.FollowupID + ": inspect the actual gate/material failure, repair genuine material gaps through the original save path; technical interruption uses the existing runtime stage-answer recover. Do not create saves or tools just to trigger progress."
+			message += " The professional answer is already recorded; do not resubmit it. Main owns the original outlet " + record.FollowupID + ": inspect the actual gate/material failure, repair genuine material gaps through the original save path; technical interruption uses " + submission.PlanningRecoveryCommand(root, "recover") + ". Do not create saves or tools just to trigger progress."
 		} else {
 			message += " This answer is already received; follow the current stage responsibility without resubmitting it."
 		}
@@ -1818,6 +1871,9 @@ func stageCurrentPlanningContext(root string, snapshot runtime.Snapshot) string 
 // Only a genuine Post save/material change calls this existing preparation
 // outlet. Reads do not issue, repair, or reconstruct questionnaires.
 func prepareCurrentPlanningAfterChange(root string, request policy.Input) string {
+	if !successfulPlanningTool(request) {
+		return ""
+	}
 	switch request.ToolName {
 	case "Read", "Glob", "Grep":
 		return ""
@@ -1827,7 +1883,10 @@ func prepareCurrentPlanningAfterChange(root string, request policy.Input) string
 		return ""
 	}
 	life := mapFieldCLI(snapshot.State, "lifecycle")
-	if life["state"] != "planning" || (life["phase"] != "contracts" && life["phase"] != "tasks") || !mainQuestionnaireViewer(request) {
+	if life["state"] != "planning" || (life["phase"] != "design" && life["phase"] != "contracts" && life["phase"] != "tasks") || !mainQuestionnaireViewer(request) {
+		return ""
+	}
+	if (life["phase"] == "design" || life["phase"] == "contracts") && !planningMaterialSave(request, root) {
 		return ""
 	}
 	row, err := registeredPlanningRow(snapshot.State)
@@ -1841,8 +1900,20 @@ func prepareCurrentPlanningAfterChange(root string, request policy.Input) string
 			return ""
 		}
 	}
+	if life["phase"] == "design" {
+		service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
+		if _, err := service.IssueDesign(contextForHook(request)); err != nil {
+			return "S2 original questionnaire preparation needs repair: " + err.Error()
+		}
+		current, err := runtime.NewStore(service.StatePath, service.JournalPath).Snapshot()
+		if err != nil {
+			return "S2 questionnaire preparation finished, but current context could not be read: " + err.Error()
+		}
+		return stageDesignQuestionnaireContext(root, current)
+	}
 	service, err := submission.New(root)
 	if err != nil {
+		submission.RecordPlanningDiagnostic(root, snapshot.State, "preparation", err.Error())
 		return "Current planning entry preparation needs: " + err.Error()
 	}
 	return stagePlanningQuestionnaireLifecycleContext(contextForHook(request), service, stringValue(life["phase"]))

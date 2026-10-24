@@ -105,7 +105,7 @@ func TestS7ManifestDraftEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	writeManifestDraftFixture(t, root)
 
-	out := filepath.Join(root, "manifest-draft.json")
+	out := filepath.Join(root, "new-manifest-directory", "manifest-draft.json")
 	var stdout, stderr bytes.Buffer
 	code := runS7Command([]string{"manifest-draft", "--root", root, "--assignment", "assignment-qa-static", "--out", out}, &stdout, &stderr)
 	if code != 0 {
@@ -124,6 +124,13 @@ func TestS7ManifestDraftEndToEnd(t *testing.T) {
 	data, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var duplicate bytes.Buffer
+	if code := runS7Command([]string{"manifest-draft", "--root", root, "--assignment", "assignment-qa-static", "--out", out}, &duplicate, &stderr); code != 0 || !strings.Contains(duplicate.String(), "preserved existing manifest") {
+		t.Fatalf("repeated preparation should preserve original authoring: code=%d %s", code, duplicate.String())
+	}
+	if after, err := os.ReadFile(out); err != nil || !bytes.Equal(after, data) {
+		t.Fatalf("repeated preparation overwrote the original manifest: %v", err)
 	}
 	// The emitted draft passes the register-workgroup schema gate.
 	if err := schema.NewValidator(root).ValidateBytes("team-manifest.schema.json", data); err != nil {
@@ -184,5 +191,52 @@ func TestS7ManifestDraftRequiresAssignment(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--assignment") {
 		t.Errorf("stderr should name the missing flag, got:\n%s", stderr.String())
+	}
+}
+
+func TestS7ExistingEditedManifestRecoversRegistrationWithoutOverwrite(t *testing.T) {
+	root := t.TempDir()
+	writeManifestDraftFixture(t, root)
+	out := filepath.Join(root, ".claude/workgroups/manifest-g1-r1-assignment-qa-static.json")
+	var stdout, stderr bytes.Buffer
+	if code := runS7Command([]string{"manifest-draft", "--root", root, "--assignment", "assignment-qa-static", "--out", out}, &stdout, &stderr); code != 0 {
+		t.Fatal(stdout.String(), stderr.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var edited map[string]any
+	if err := json.Unmarshal(data, &edited); err != nil {
+		t.Fatal(err)
+	}
+	edited["quantity_rationale"] = "The actual reviewer specializes in state-error propagation."
+	edited["documents"] = []any{map[string]any{"id": "TASK-039-02", "path": "docs/dev/tasks/actual edited task.md", "version": "v1.0.0", "sha256": strings.Repeat("b", 64)}}
+	data, _ = json.MarshalIndent(edited, "", "  ")
+	if err := os.WriteFile(out, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if code := runS7Command([]string{"manifest-draft", "--root", root, "--assignment", "assignment-qa-static", "--out", out}, &stdout, &stderr); code != 0 {
+		t.Fatal(stdout.String(), stderr.String())
+	}
+	stateData, err := os.ReadFile(filepath.Join(root, ".claude/loop-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(stateData, &state); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{stdout.String(), s7ManifestPreparationHint(root, state, "assignment-qa-static")} {
+		for _, want := range []string{"runtime register-workgroup", "--manifest " + s7CaptureShellQuote(out), "--task-id 'TASK-039-02'", "--task 'docs/dev/tasks/actual edited task.md'"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("existing edited manifest recovery lacks %s: %s", want, text)
+			}
+		}
+	}
+	after, err := os.ReadFile(out)
+	if err != nil || !bytes.Equal(after, data) {
+		t.Fatal("recovery rewrote professional manifest")
 	}
 }

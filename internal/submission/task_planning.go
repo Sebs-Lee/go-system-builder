@@ -51,7 +51,7 @@ func (s *Service) IssueTaskPlanning(ctx context.Context) (workpacket.TaskPlannin
 	}
 	view, _ := json.MarshalIndent(p, "", "  ")
 	view = append(view, '\n')
-	actual, err := workpacket.Publish(s.Root, p.ViewPath, view)
+	actual, err := workpacket.PublishBounded(s.Root, p.ViewPath, view, int64(len(view)))
 	if err != nil {
 		return p, err
 	}
@@ -59,7 +59,7 @@ func (s *Service) IssueTaskPlanning(ctx context.Context) (workpacket.TaskPlannin
 		return p, fmt.Errorf("published S4 view differs from original issuance")
 	}
 	draft, _ := json.MarshalIndent(p.Draft, "", "  ")
-	if _, err := workpacket.Publish(s.Root, p.AnswerPath, append(draft, '\n')); err != nil {
+	if _, err := workpacket.PublishBounded(s.Root, p.AnswerPath, append(draft, '\n'), workpacket.TaskPlanningAnswerReadLimit(p)); err != nil {
 		return p, err
 	}
 	return p, nil
@@ -101,7 +101,7 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 	if err != nil {
 		return Receipt{}, err
 	}
-	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, 256<<10)
+	data, err := workpacket.ReadFile(s.Root, p.AnswerPath, workpacket.TaskPlanningAnswerReadLimit(p))
 	if err != nil {
 		return s.rejectedTaskPlanning(snap, p, err), err
 	}
@@ -154,7 +154,7 @@ func (s *Service) SaveTaskPlanning(ctx context.Context, path string) (Receipt, e
 			return Receipt{}, err
 		}
 		encoded, _ := json.MarshalIndent(envelope, "", "  ")
-		_, err = workpacket.Publish(s.Root, envelopePath, append(encoded, '\n'))
+		_, err = workpacket.PublishBounded(s.Root, envelopePath, append(encoded, '\n'), int64(len(encoded)+1))
 		if err != nil {
 			return Receipt{}, err
 		}

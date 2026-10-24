@@ -408,34 +408,8 @@ func validateCheckpointReviewAnswer(root string, packet workpacket.ReviewResultP
 	if err := schema.NewValidator(root).ValidateBytes("review-result.schema.json", raw); err != nil {
 		return fmt.Errorf("S7 %s is not a complete canonical ReviewResult: %w", name, err)
 	}
-	var answer struct {
-		ClaimResults []struct {
-			ClaimID string `json:"claim_id"`
-		} `json:"claim_results"`
-		BlockedClaims []struct {
-			ClaimID string `json:"claim_id"`
-		} `json:"blocked_claims"`
-	}
-	if err := json.Unmarshal(raw, &answer); err != nil {
-		return fmt.Errorf("decode S7 %s Claim closure: %w", name, err)
-	}
-	want := make(map[string]bool, len(packet.Binding.ClaimIDs))
-	for _, id := range packet.Binding.ClaimIDs {
-		want[id] = true
-	}
-	seen := make(map[string]bool, len(want))
-	for _, group := range [][]struct {
-		ClaimID string `json:"claim_id"`
-	}{answer.ClaimResults, answer.BlockedClaims} {
-		for _, item := range group {
-			if !want[item.ClaimID] || seen[item.ClaimID] {
-				return fmt.Errorf("S7 %s does not answer each original Claim exactly once", name)
-			}
-			seen[item.ClaimID] = true
-		}
-	}
-	if len(seen) != len(want) {
-		return fmt.Errorf("S7 %s omits an original Assignment Claim", name)
+	if err := workpacket.ValidateReviewResultCompleteness(packet.Binding, raw); err != nil {
+		return fmt.Errorf("S7 %s Claim closure: %w", name, err)
 	}
 	return nil
 }

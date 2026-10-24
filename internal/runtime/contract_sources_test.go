@@ -1,6 +1,7 @@
 package runtime_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,47 @@ import (
 	"github.com/entroforge/go-system-builder/internal/sharedmodel"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
+
+func TestResolveContractInputsPreservesLargeProjectSourceClosure(t *testing.T) {
+	root, state := contractSourceFixture(t, true)
+	// This unrelated module is still part of the original project-wide bridge
+	// input. Its growth must not force the author to delete historical sources.
+	for i := 0; i < 257; i++ {
+		writeContractSourceFile(t, root, fmt.Sprintf("docs/design/prototypes/unrelated/note-%03d.md", i), "# Existing module note\n")
+	}
+	for i := 0; i < 33; i++ {
+		writeContractSourceFile(t, root, fmt.Sprintf("docs/design/prototypes/unrelated/group-%03d/note.md", i), "# Nested module note\n")
+	}
+	files := fileview.Disk{Root: root}
+	inputs, err := runtime.ResolveContractInputs(root, state, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs.Sources) <= 128 || len(inputs.Directories) <= 32 || len(inputs.Directories["docs/design/prototypes/unrelated"]) <= 256 {
+		t.Fatal("the large project closure was truncated")
+	}
+	binding, _, err := runtime.CurrentContractBinding(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := workpacket.BuildContracts(binding, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.ValidateIssuedContractPacket(root, state, p, files); err != nil {
+		t.Fatalf("large valid closure could not be revalidated: %v", err)
+	}
+	path := "docs/design/prototypes/unrelated/note-256.md"
+	writeContractSourceFile(t, root, path, "# Changed historical source\n")
+	if err := runtime.ValidateIssuedContractPacket(root, state, p, files); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("large closure lost source drift protection: %v", err)
+	}
+	writeContractSourceFile(t, root, path, "# Existing module note\n")
+	writeContractSourceFile(t, root, "docs/design/prototypes/unrelated/new-note.md", "# Added source\n")
+	if err := runtime.ValidateIssuedContractPacket(root, state, p, files); err == nil || !strings.Contains(err.Error(), "source directory changed") {
+		t.Fatalf("large closure lost directory membership protection: %v", err)
+	}
+}
 
 func TestResolveContractInputsClosesScenarioAndLocalDesignDependencies(t *testing.T) {
 	root, state := contractSourceFixture(t, true)

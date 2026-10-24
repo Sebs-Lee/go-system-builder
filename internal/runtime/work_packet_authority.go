@@ -42,7 +42,7 @@ func ValidateWorkPacket(root string, state map[string]any, packet workpacket.Pac
 	if err := workpacket.ValidateTaskAnalysisSources(root, packet, files); err != nil {
 		return err
 	}
-	if err := validatePacketAssignment(root, state, b); err != nil {
+	if err := validatePacketAssignment(root, state, b, packet.Methods); err != nil {
 		return err
 	}
 	formalInputs, err := S5FormalInputs(root, state, files)
@@ -95,7 +95,7 @@ func ValidateWorkPacket(root string, state map[string]any, packet workpacket.Pac
 	return nil
 }
 
-func validatePacketAssignment(root string, state map[string]any, b workpacket.Binding) error {
+func validatePacketAssignment(root string, state map[string]any, b workpacket.Binding, methods []workpacket.ReadItem) error {
 	entities, _ := state["entities"].(map[string]any)
 	agents, _ := entities["agents"].([]any)
 	var agent map[string]any
@@ -154,9 +154,10 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 		WorkgroupID string `json:"workgroup_id"`
 		Kind        string `json:"workgroup_kind"`
 		Assignments []struct {
-			ID             string `json:"assignment_id"`
-			Owner          string `json:"agent_id"`
-			Responsibility string `json:"responsibility_id"`
+			ID             string   `json:"assignment_id"`
+			Owner          string   `json:"agent_id"`
+			Responsibility string   `json:"responsibility_id"`
+			SkillRefs      []string `json:"skill_refs"`
 		} `json:"assignments"`
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
@@ -167,6 +168,17 @@ func validatePacketAssignment(root string, state map[string]any, b workpacket.Bi
 	}
 	for _, a := range manifest.Assignments {
 		if a.ID == b.AssignmentID && a.Owner == b.Owner && a.Responsibility == b.Responsibility {
+			// Old issued questionnaires have no method projection and retain
+			// their original bytes. New projections must match the manifest.
+			if len(methods) > 0 {
+				expected, err := s5MethodReferences(root, a.SkillRefs)
+				if err != nil {
+					return err
+				}
+				if !reflect.DeepEqual(methods, expected) {
+					return fmt.Errorf("S5 methods differ from the registered assignment")
+				}
+			}
 			return nil
 		}
 	}

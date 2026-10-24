@@ -6,17 +6,16 @@ version: 2.0.0
 ---
 # S8 Investigation and Bug Projection
 
+## Native S8 handoff
 
-## Native S9 dispatch
-
-Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. The professional PlanReport and Result are private outputs in the actual native worktree. The Main-root question is read-only input; an isolated Worker never writes Main. At Stop the adapter imports the actual worktree Plan payload into the existing questionnaire and invokes the original consumer, without Main authoring the answer. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
-
-Main reads its own division/recovery questions, the exact native dispatch brief and accepted professional artifacts. Worker private Plan/Result questions remain that Worker's authoring responsibility; an accepted answer is not another fill task. After candidate reception Main performs the original integration and actual checks immediately, then reads the original Final/Impact. Do not wait for Final before integration or dispatch the completed Builder to fill another Result. A recorded blocker retains Main's original recovery question.
-
-
-## Native S5 / S7 / S8 professional work
-
-Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+Main saves its own intake, hypothesis, route and Contract questions through their
+original consumers, then performs actual native Investigator dispatch. Carry each
+person's exact view/answer paths in the task; that Investigator saves the original
+answer and returns its reference for SubagentStop reception. Ordinary Worker tools
+remain available and do not activate or receive work. Source/preparation failures
+belong to Main; professional answer corrections belong to their author. Existing
+frozen responsibilities retain their original sources and recovery, and genuine
+Contract approval remains separate from authoring.
 
 ## Authority
 
@@ -45,7 +44,7 @@ sealed S7 Finding / ObservationBatch OR original S11 defect decision
 - The Loop is in S8/`bug_resolution`.
 - Existing Cases and approved Contracts have been checked for overlap and duplicates.
 
-An incomplete but safe S7 batch enters S8 with explicit `capture_gaps`; do not silently turn a gap into a reproduction task. If the Finding set is not sealed or cannot be identified exactly, stop intake and repair the S7 handoff first.
+A legitimately sealed S7 batch carries its actual capture_gaps; a P0 batch may also carry unobserved_claim_ids. Ordinary incomplete review is not eligible for sealing. Preserve these limits instead of silently turning a gap into a reproduction task. If the Finding set is not sealed or cannot be identified exactly, stop intake and repair the S7 handoff first.
 
 A human-source Case uses the original decision ID/path and the existing frozen
 ReviewPlan product baseline. The system preserves that source through the original
@@ -63,7 +62,7 @@ the original final-contract approval remains necessary before S9.
 
 | Input | Use |
 |:---|:---|
-| Finding exact set and hashes | Bind the Case without changing S7 facts |
+| Original Batch and exact Finding paths | Read S7 facts; the original intake consumer binds and verifies identity, exact set and hashes |
 | Original S11 defect decision, for human-source Cases | Preserve the actual report without manufacturing a Finding or Batch |
 | Encounter/raw evidence | Read `last_good -> wall_action -> first_bad`, timeline, state delta, side effects, and terminal state before considering reproduction |
 | Baseline and traceability refs | Bound the affected implementation/specification surface |
@@ -80,23 +79,21 @@ the original final-contract approval remains necessary before S9.
 
 ## Procedure
 
-The normal authoring contract follows L3-S8's 2026-10-17 minimum workflow.
+Use the current S8 professional questionnaires in their original order.
 Main sees the current professional questions in the original order: intake/grouping,
 competing hypotheses and real dispatch, causal model/route, then Contract content
 and genuine approval. Known IDs, hashes, revisions and source bindings come from
-the system. Main and Investigator save their professional answers once; neither
-manually issues/consumes, splits the same content into three route JSON files,
-or assembles duplicate registration commands/reports. The listener supplies the
-exact current questionnaire paths; fill the professional content and save for
-the original consumers. A missing questionnaire or unresolved source is a
+the system. Main saves its questions through the original save consumers; each
+Investigator saves and returns its own answer for native SubagentStop reception.
+Neither manually issues/consumes, splits the same content into three route JSON
+files, nor assembles duplicate registration commands/reports. Use the exact
+current paths supplied to Main and carried into each native task. A missing questionnaire or unresolved source is a
 specific Main/system preparation gap to recover through the original flow.
-Implementation and acceptance evidence are tracked in the S8 mechanism review;
-final candidate, full S8 and platform acceptance depend on their recorded scope.
 
-1. **Ingest and bind.** Main reads the sealed Batch and immutable Findings, or the original S11 defect decision, and supplies the intake/grouping rationale. The system binds or resumes the original `InvestigationCase` using that source and its real frozen baseline. Batch sources retain the exact Finding set and ObservationBatch hash; human sources retain the original decision with an empty Finding set. Reject changed or ambiguous input. Do not create a BUG at this point.
+1. **Ingest and bind.** After the S7 sealed-batch handoff enters S8 through the next Main PreToolUse, Main reads the supplied sealed Batch and immutable Findings, or the original S11 defect decision, fills grouping_rationale in the exact intake.json and saves it. The system binds or resumes the original `InvestigationCase` using that source and its real frozen baseline. Batch sources retain the exact Finding set and ObservationBatch hash; human sources retain the original decision with an empty Finding set. Reject changed or ambiguous input. Do not create a BUG at this point.
 2. **Group reversibly.** Group by a shared candidate mechanism and compatible repair boundary, never merely by file, symptom wording, or agent ownership. Record the grouping rationale. Split or merge by Case revision while preserving prior hashes and the exact Finding coverage.
 3. **Form competing hypotheses.** Each hypothesis must state the invariant or authority it may violate, the evidence that would support/refute it, and a discriminator. Do not write a root cause as an untested conclusion.
-4. **Dispatch independent questions.** Main assigns investigators by evidence question, not one agent per Finding, and performs the real platform spawn/resume. The system reuses original Hypothesis registration and `runtime investigation dispatch` consumers to generate/bind the unique Assignment to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. These bindings are not questionnaire author fields. On ordinary `plan_checkpoint`, the Investigator fills the Hook's exact professional HypothesisResult questionnaire and saves it; do not ask for a duplicate generic `PLAN_REPORT`. An explicit `plan_approval_required` assignment still waits for its original approval. Workers fill only the existing professional `answer`; Hook listening does not perform or pretend to complete the platform spawn.
+4. **Dispatch independent questions.** Main assigns investigators by evidence question, not one agent per Finding, and performs the real platform spawn/resume. The system reuses original Hypothesis registration and `runtime investigation dispatch` consumers to generate/bind the unique Assignment to the Investigator workgroup/Task/Agent lifecycle. An assignment includes Finding IDs, boundary refs, hypothesis, discriminator, read/command scope, expected evidence, stop condition, and forbidden product changes. These bindings are not questionnaire author fields. On ordinary `plan_checkpoint`, the Investigator fills the exact professional HypothesisResult questionnaire carried in Main's task, saves it and returns its reference; do not ask for a duplicate generic `PLAN_REPORT`. An explicit `plan_approval_required` assignment still waits for its original approval. Workers fill only the existing professional `answer`; Hook listening does not perform or pretend to complete the platform spawn.
    In packet mode, the Hook automatically prepares each eligible registered
    question and supplies its exact view and answer paths. The Investigator
    fills only the professional result fields, saves that exact file, and returns
@@ -150,7 +147,7 @@ Verify: <status/readback command or artifact>
 
 Use these recovery rules:
 
-- **Unsealed or changed Finding set:** stop before Case creation; return to S7 to seal or re-export the exact batch, then verify the batch hash.
+- **Unsealed or changed Finding set:** Main restores the original S7 handoff or follows its actual revision path before Case creation. Do not re-export changed bytes under the accepted identity or ask the Investigator to compute a replacement hash.
 - **Missing discriminator:** append a `FindingSupplement` for the named discriminator; if it is unsafe or unavailable, route `investigate_more` instead of repeating the symptom.
 - **Original finder unavailable:** resume from the saved Case/checkpoint with an authorized replacement investigator; do not discard the Case or require a fresh reproduction.
 - **Case revision conflict:** Main/system reloads the original current Case and preserves its source Finding exact set through the existing CAS recovery; authors do not calculate a new revision or overwrite a newer one.
@@ -224,6 +221,12 @@ Trace every promised slot family through the real production entry and transacti
 ## Optional bounded repair delegation
 
 已绑定项目策略或有效有限授权由系统沿原 Runtime 关联识别，并准备原指定 Driver 的技术审查申请。作者只给真实技术判断，系统承接授权引用和规范证据；不手填 binding-policy 摘要，不手工登记审查。预算、有效期、完整范围和语义约束仍由原消费者检查；没有有效授权时回逐稿真人决定，不伪造 human_decision。
+
+## Native S9 dispatch
+
+Main passes the exact prepared S9 brief to Claude Code native Agent with worktree isolation. The Builder saves its professional PlanReport and real prechecks before implementation, continues repair/self-checks without activation or per-tool receipts, commits products and returns its professional Result. The professional PlanReport and Result are private outputs in the actual native worktree. The Main-root question is read-only input; an isolated Worker never writes Main. At Stop the adapter imports the actual worktree Plan payload into the existing questionnaire and invokes the original consumer, without Main authoring the answer. SubagentStop receives the original professional artifacts; Main integrates and runs actual necessary checks separately. An independent Targeted verifier receives its exact original answer path and returns it for Stop reception. No Team, workspace prepare/launch, generic readback, platform ID or session reservation is required. Existing installed workspace responsibilities keep their frozen recovery contract. Keep actual professional independence, Contract assertions and the fresh S7 exit. S8 retains its own investigation and approval responsibilities.
+
+Main reads its own division/recovery questions, the exact native dispatch brief and accepted professional artifacts. Worker private Plan/Result questions remain that Worker's authoring responsibility; an accepted answer is not another fill task. After candidate reception Main performs the original integration and actual checks immediately, then reads the original Final/Impact. Do not wait for Final before integration or dispatch the completed Builder to fill another Result. A recorded blocker retains Main's original recovery question.
 
 ## Issued S9 PlanReport adapter
 

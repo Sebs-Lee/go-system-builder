@@ -111,7 +111,7 @@ func validateContractCheckpointIndices(root string, state map[string]any, journa
 		if e == nil || e["kind"] != "planning_contract" || e["responsibility_id"] != "Orchestrator" || genErr != nil || generation != p.Binding.Generation || len(producers) != 1 || producers[0] != "Main" {
 			return nil, fmt.Errorf("S3 checkpoint has no original domain evidence")
 		}
-		data, err := workpacket.ReadFile(root, stringValue(e["path"]), 1<<20)
+		data, err := workpacket.ReadFile(root, stringValue(e["path"]), workpacket.ContractEvidenceReadLimit(p))
 		if err != nil || workpacket.Digest(data) != e["sha256"] {
 			return nil, fmt.Errorf("S3 checkpoint original evidence unavailable")
 		}

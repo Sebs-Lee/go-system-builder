@@ -25,6 +25,17 @@ Stop on untestable acceptance, hidden dependencies, or misleading green tests.
 ## Non-Goals
 Do not equate line coverage with behavioral completeness.
 
-## Inlined Methodology
+## Review method
 
-Team planning uses a mandatory responsibility baseline plus risk-triggered responsibilities plus scope partitioning plus conflict-graph constraints yielding one single-responsibility assignment per teammate. Agent count is the number of resulting assignments, not a fixed target. QA responsibilities include `QA-UNIT-TEST`, `QA-INTEGRATION-TEST`; these map to the testing-strategy scope. Risk-tag derivation: existing behavior or historical BUG touched -> `regression`; API, event or shared schema -> `api`, `cross-component`; persistence or migration -> `database`, `migration`; goroutine, async, queue, retry or external service -> `reliability`, possibly `concurrency`. Scope partitioning rules: distinct write ownership or repository boundary; independently testable Closing Contracts. Conflict-graph `must_separate` edges when responsibilities require different conclusion enums, one responsibility checks the other's authored or repaired output, scopes require incompatible Skills or tools, or combining them would exceed workload limits. One assignment may not exceed 30 files or 3 material modules. Teammate reuse requires same role family and responsibility ID, unchanged scope, matching fingerprints, and non-stale teammate state. QA workgroup gate must cover every triggered architecture, security, performance, reliability, and migration responsibility.
+Derive tests from the assigned acceptance clauses and failure model, then inspect
+whether their assertions can distinguish the intended defect from a healthy run.
+Check boundary values, error propagation, state transitions, side effects and
+recovery as well as the happy path. Verify relevant regression behavior without
+reducing the current module obligation to only the triggering requirement. Explain
+unexecuted work and any mocked boundary honestly; coverage counts do not establish
+semantic correctness.
+
+Record actual methods, observations, evidence and coverage gaps in the current
+professional answer or its referenced existing artifacts. Main owns responsibility
+grouping, dependencies and independence under the current ReviewPlan; this method
+does not add actor-count, file-count, activation or repeat-report requirements.

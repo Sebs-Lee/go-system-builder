@@ -6,7 +6,7 @@
 
 - **Path**: `loop-harness.md`
 - **Harness version**: dev
-- **Loop definition SHA-256**: `f730690126dfced31cdb9dd9eeb47ec1bee2e892a13451fb1e9fb1b44e2cced0`
+- **Loop definition SHA-256**: `282ea9af33949591b640e3533c40761df0073520be7b32d66b637672ce7925d0`
 
 ---
 
@@ -83,7 +83,7 @@ Human approval records release authorization only. Harness has no squash merge, 
 - [`TR-005`](#tr-005) document_verification → paused — REQ changes always return control to the human.
 - [`TR-006`](#tr-006) building → verification — Start a complete review round after every TASK in the TR-003 exact execution batch has a Builder Result with passing checks, no unapproved scope deviations, and a verified integration checkpoint.
 - [`TR-007`](#tr-007) building → planning — Non-REQ execution conflicts return through planning and document verification.
-- [`TR-008`](#tr-008) verification → bug_resolution — A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor.
+- [`TR-008`](#tr-008) verification → bug_resolution — A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 on the next Main PreToolUse.
 - [`TR-009`](#tr-009) verification → acceptance — Acceptance requires the machine CleanRound: every required Claim of the current ReviewPlan has a consumed pass Result, no current-round Finding exists, and the clean-round snapshot is recomputed by the clean_round_valid guard at promotion time.
 - [`TR-010`](#tr-010) verification → paused — A ReviewResult verdict of req_change_required pauses the loop for a human REQ decision.
 - [`TR-011`](#tr-011) verification → paused — A ReviewResult verdict of release_blocked pauses the loop for a human release decision.
@@ -122,7 +122,7 @@ See [Legacy (PTR-BUG)](#legacy-ptr-bug) at the end of this Manual for the legacy
 
 _Phase: planning_
 
-- [`PTR-PLAN-01`](#ptr-plan-01) design → contracts — Advance formal planning from design to contracts after the design quality gate passes.
+- [`PTR-PLAN-01`](#ptr-plan-01) design → contracts — Advance formal planning from design to contracts after the original design quality gate passes.
 - [`PTR-PLAN-02`](#ptr-plan-02) contracts → tasks — Advance contracts to tasks through the original S3 gate and PTR-PLAN-02.
 
 _Global_
@@ -258,18 +258,18 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _verification → bug_resolution_
 
-A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor. TR-008 records the cursor handoff; the next mandatory S8 verb is `runtime investigation ingest`, which creates the InvestigationCase after exact-set/hash/baseline validation. S8 consumes the facts and does not re-reproduce symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.
+A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 on the next Main PreToolUse. TR-008 records only the cursor handoff. Main then reads the supplied Batch/Findings and saves grouping_rationale in the exact S8 intake questionnaire; its original ingest consumer creates the InvestigationCase after exact-set/hash/baseline validation. The runtime investigation ingest command remains a direct domain/recovery entry, not a second required submission. S8 consumes the observed facts without re-reproducing symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.
 
 - `observation_batch_sealed` [semantic_check] — _no spec_
 
 Evidence: `observation_batch_record`
 
-Evidence bindings (copy into `runtime transition`):
+Diagnostic evidence slots for the original sealed batch. The next Main PreToolUse invokes the original transition; authors do not copy these bindings or submit another Result.
 
 - `observation_batch_record`: `--evidence observation_batch_record=<reference>`
   Accepted kinds: `observation_batch`
 
-If a binding is missing, retry with the command above; run `loop-harness explain TR-008` to inspect current candidates.
+If the handoff is incomplete, Main inspects the original sealed batch and `loop-harness explain TR-008` feedback. Preserve accepted Reviewer answers. After the transition, fill and save the supplied S8 intake; its original consumer creates the Case.
 
 ### `TR-009` {#tr-009}
 
@@ -837,7 +837,7 @@ If a binding is missing, retry with the command above; run `loop-harness explain
 
 _design → contracts_
 
-Advance formal planning from design to contracts after the design quality gate passes. Gate readiness facts: an ARCHITECTURE-*.md whose top status line (状态/Status) declares `locked` plus a valid planning_design JSON envelope (responsibility Architect, conclusion pass — a markdown file as --path yields `evidence:<id>:schema`). Missing tokens `document:design:locked` / `evidence:planning_design_record` mean one of these is absent.
+Advance formal planning from design to contracts after the original design quality gate passes. Main saves the issued S2 answer with architecture_path and conclusion pass; the original consumer records planning_design evidence and runs this outlet. The gate requires current design evidence and a real ARCHITECTURE-*.md whose top status line (状态/Status) declares locked, plus the bound requirement conditions. Missing tokens document:design:locked / evidence:planning_design_record identify the remaining gate work. Reception, committed transition and S3 material preparation are separate outcomes; authors do not create evidence envelopes or qualify by producer label.
 
 - `ui_impact_resolved` [semantic_check] — runtime.bound_req.metadata.ui_impact is not `unknown`, so the planning phase is not paused on the SM-003 gate waiting for §11 of the REQ to clarify UI impact.
 

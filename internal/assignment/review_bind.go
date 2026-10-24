@@ -49,6 +49,8 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		return fmt.Errorf("runtime review projection missing; re-register the ReviewPlan")
 	}
 
+	// A single binding evaluates the wave against its incoming snapshot;
+	// earlier rows in this same manifest must not rewrite that decision.
 	staticSettled := review.StaticClaimsSettled(state, plan)
 	for _, item := range value.Assignments {
 		row, _ := assignmentsProjection[item.AssignmentID].(map[string]any)
@@ -72,21 +74,16 @@ func bindReviewPlanAssignments(root string, state map[string]any, value manifest
 		if err := exactClaimSet(row["claim_ids"], item.ClaimIDs); err != nil {
 			return fmt.Errorf("assignment %s claim set mismatch: %w", item.AssignmentID, err)
 		}
-		planAssignment := findPlanAssignmentByID(plan, item.AssignmentID)
-		if planAssignment != nil && planAssignment.ExecutionWave == "behavior" && !staticSettled {
-			return fmt.Errorf("assignment %s is a behavior-wave (E2E/specialty) Assignment but required static Claims are not all dispositioned yet; behavior E2E unlocks only after the static set settles (L3-S7 §5.2-5.3)", item.AssignmentID)
-		}
-		if planAssignment != nil {
-			if err := review.DependenciesSettled(state, plan, planAssignment); err != nil {
-				return err
-			}
+		conflict, err := reviewDispatchPrerequisite(state, plan, item.AssignmentID, staticSettled)
+		if err != nil {
+			return err
 		}
 		// Resource-lock conflict: another running assignment already
 		// holds the keys this assignment declares. Per L3-S7 §4.5 the
 		// round may queue but never trim coverage, so we record the
 		// conflict and stay planned. queue_reason names the held keys
 		// so the next register-workgroup attempt sees exactly why.
-		if conflict := findResourceLockConflict(item.AssignmentID, row, assignmentsProjection); conflict != "" {
+		if conflict != "" {
 			if err := workstate.RecordReviewAssignmentActivity(state, row, "planned", "workgroup_registered"); err != nil {
 				return fmt.Errorf("record queued Review Assignment work state: %w", err)
 			}

@@ -347,6 +347,7 @@ func TestContractAnswerCommittedDesignCorrectionAfterS2UsesOriginalOutlet(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	planningBoundaryEvent(t, root, "PreToolUse", "Bash", "", false)
 	current := append(data, []byte("\nThe accepted ADR direction is recorded with status accepted.\n")...)
 	writeContractSource(t, root, arch, string(current))
 	writeContractSource(t, root, adr, "> 状态: accepted\n> 关联需求: `REQ-039`\n\nThe same operator direction is accepted.\n")
@@ -355,7 +356,7 @@ func TestContractAnswerCommittedDesignCorrectionAfterS2UsesOriginalOutlet(t *tes
 	fixtures.CommitCurrentFixture(t, root)
 	// A normal successful tool observes the real commit and finishes the original
 	// issuer. No issue/recover command or historical document rewrite is used.
-	observedQuestionnaireHook(t, root, "Bash", map[string]any{"command": "ordinary script"}, nil)
+	planningBoundaryEvent(t, root, "PostToolUse", "Bash", "", false)
 	prepared := stageSnapshot(t, root)
 	var packet workpacket.ContractPacket
 	for _, raw := range prepared.State["entities"].(map[string]any)["work_packets"].([]any) {

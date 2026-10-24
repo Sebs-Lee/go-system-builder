@@ -48,16 +48,34 @@ func (s *Service) Receipt(owner, path string) (Receipt, error) {
 }
 
 func (s *Service) ReceiptContext(ctx context.Context, owner, path string) (Receipt, error) {
+	return s.receiptContext(ctx, owner, path, false)
+}
+
+// DiagnoseReceiptContext is the explicit read-only receipt command. Unlike
+// ordinary receipt projections, it diagnoses an unreceived answer and its
+// original sources. It never calls Save or records completion.
+func (s *Service) DiagnoseReceiptContext(ctx context.Context, owner, path string) (Receipt, error) {
+	reader := *s
+	reader.readOnly = true
+	return reader.receiptContext(ctx, owner, path, true)
+}
+
+func (s *Service) receiptContext(ctx context.Context, owner, path string, diagnose bool) (Receipt, error) {
 	s = s.WithContext(ctx)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
 	}
-	p, _, err := s.source(ctx, snapshot.State, owner, path)
+	p, source, err := s.source(ctx, snapshot.State, owner, path)
 	if errors.Is(err, runtime.ErrSubmissionSuperseded) {
 		return s.ReceiptPacket(owner, p.ID)
 	}
 	if err != nil {
+		if diagnose {
+			r := rejected(snapshot, p.ID, err)
+			r.NextAction = "Main 按具体错误恢复原责任的准确来源或路径；此只读诊断未接收答案，不改用其他来源。"
+			return r, err
+		}
 		return rejected(snapshot, "", err), err
 	}
 	r, ok, err := runtime.FindSubmission(snapshot.State, p.ID)
@@ -65,6 +83,30 @@ func (s *Service) ReceiptContext(ctx context.Context, owner, path string) (Recei
 		return Receipt{}, err
 	}
 	if !ok {
+		if diagnose {
+			data, err := workpacket.ReadFile(source.Root, source.Path, 256<<10)
+			if err != nil {
+				return rejected(snapshot, p.ID, err), err
+			}
+			if _, fields := workpacket.ValidateAnswer(p, data); len(fields) > 0 {
+				err := &workpacket.AnswerError{Label: "S5 answer", Fields: fields}
+				r := rejected(snapshot, p.ID, err)
+				r.FieldErrors = fields
+				r.NextAction = "仅按实际审查判断修正原答案；真实独立性或来源阻塞交 Main 恢复，不能为退出编造结论。此诊断未接收答案。"
+				return r, err
+			}
+			if err := runtime.ValidateWorkPacket(s.Root, snapshot.State, p, s.Files); err != nil {
+				r := rejected(snapshot, p.ID, err)
+				r.NextAction = "Main 按具体错误恢复原责任和准确来源，再续跑原审查；此只读诊断未接收答案。"
+				return r, err
+			}
+			if err := validateS5ApprovalMode(s.Root, snapshot.State, owner); err != nil {
+				return rejected(snapshot, p.ID, err), err
+			}
+			r := rejected(snapshot, p.ID, fmt.Errorf("answer has not been accepted"))
+			r.NextAction = "当前答案字段及原来源检查未发现缺项；这不是接收或专业质量证明。Main 结合实际原生执行确认原 Stop 是否完成，不凭此诊断代收或重派。"
+			return r, nil
+		}
 		return rejected(snapshot, p.ID, fmt.Errorf("answer has not been accepted")), nil
 	}
 	return receipt(s.Root, snapshot, p, r)
@@ -291,7 +333,7 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			continue
 		}
 		if row["control_status"] != "pending" {
-			// Compatibility for S3 answers received before not-ready gates
+			// Compatibility for S2/S3 answers received before not-ready gates
 			// retained their followup. Never revive a historical stage entry.
 			if row["control_status"] != "no_transition" {
 				continue
@@ -299,7 +341,11 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if _, found, err := runtime.FindContractPacket(snapshot.State, text(row["packet_id"])); err != nil {
 				return results, err
 			} else if !found {
-				continue
+				if _, design, err := runtime.FindDesignPacket(snapshot.State, text(row["packet_id"])); err != nil {
+					return results, err
+				} else if !design {
+					continue
+				}
 			}
 			if _, err := runtime.SubmissionFollowup(snapshot.State, text(row["followup_event_id"])); err != nil {
 				continue
@@ -371,24 +417,14 @@ func (s *Service) Recover(ctx context.Context, owner string, limit int) ([]Recei
 			if owner != "" && owner != "Main" {
 				continue
 			}
-			result, err := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: text(row["followup_event_id"]), Files: s.Files})
+			record, _, err := runtime.FindSubmission(snapshot.State, design.ID)
 			if err != nil {
 				return results, err
 			}
-			preparation, preparationWaiting := s.preparePlanningOutlet(ctx, &result)
-			latest, err := s.snapshot()
+			r, err := s.continueDesignOutlet(ctx, snapshot, design, record)
 			if err != nil {
 				return results, err
 			}
-			r, err := s.designReceipt(latest, design)
-			if err != nil {
-				return results, err
-			}
-			if result.Error != "" {
-				r.NextAction = "Main 恢复原 design followup；无需重新提交专业判断。"
-			}
-			r.NextAction += preparation
-			r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
 			results = append(results, r)
 			if len(results) == limit {
 				break

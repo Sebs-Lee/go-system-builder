@@ -166,14 +166,8 @@ func ResolveContractInputs(root string, state map[string]any, files fileview.Rea
 				queue = append(queue, dependency)
 			}
 		}
-		if len(inputs.Designs)+len(inputs.Sources) > 128 {
-			return workpacket.ContractInputs{}, fmt.Errorf("S3 source closure exceeds the 128-input bound; narrow or split the authored source closure")
-		}
 	}
 
-	if len(inputs.Sources) > 128-len(inputs.Designs) {
-		return workpacket.ContractInputs{}, fmt.Errorf("S3 source closure exceeds the 128-input bound")
-	}
 	sort.Slice(inputs.Sources, func(i, j int) bool { return inputs.Sources[i].Path < inputs.Sources[j].Path })
 	if _, err := workpacket.BuildContracts(binding, inputs); err != nil {
 		return workpacket.ContractInputs{}, fmt.Errorf("S3 source closure is not representable by the registered contract packet: %w", err)
@@ -187,7 +181,7 @@ func ResolveContractInputs(root string, state map[string]any, files fileview.Rea
 }
 
 // contractModuleDirectories mirrors scenario's module source enumeration.
-// If the prototypes root is absent, the bounded docs/design manifest records
+// If the prototypes root is absent, the docs/design manifest records
 // that absence without requiring a schema field for missing paths.
 func contractModuleDirectories(root string, files fileview.Reader, manifests map[string][]string) ([]string, error) {
 	entries, err := files.ReadDir(contractScenarioRoot)
@@ -208,6 +202,13 @@ func contractModuleDirectories(root string, files fileview.Reader, manifests map
 	if err := recordContractDirectory(root, files, contractScenarioRoot, entries, manifests); err != nil {
 		return nil, err
 	}
+	return ContractModulePaths(entries)
+}
+
+// ContractModulePaths selects the module paths consumed by the original S3
+// source resolver. Guidance may use the same selection without reading source
+// contents or claiming that a frozen source closure has been validated.
+func ContractModulePaths(entries []os.DirEntry) ([]string, error) {
 	modules := []string{}
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -259,14 +260,8 @@ func collectContractPackage(root string, files fileview.Reader, modulePath strin
 			known[path] = true
 			loaded[path] = data
 			inputs.Sources = append(inputs.Sources, workpacket.Subject{Path: path, SHA256: workpacket.Digest(data)})
-			if len(inputs.Designs)+len(inputs.Sources) > 128 {
-				return fmt.Errorf("S3 scenario source closure exceeds the 128-input bound")
-			}
 		}
 		return nil
-	}
-	if len(inputs.Directories) >= 32 {
-		return fmt.Errorf("S3 source directory closure exceeds the 32-directory bound")
 	}
 	return walk(modulePath)
 }
@@ -274,9 +269,6 @@ func collectContractPackage(root string, files fileview.Reader, modulePath strin
 func recordContractDirectory(root string, files fileview.Reader, path string, entries []os.DirEntry, manifests map[string][]string) error {
 	if previous, ok := manifests[path]; ok {
 		return fmt.Errorf("S3 source directory was selected more than once: %s (%d existing members)", path, len(previous))
-	}
-	if len(manifests) >= 32 {
-		return fmt.Errorf("S3 source directory closure exceeds the 32-directory bound")
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -289,9 +281,6 @@ func recordContractDirectory(root string, files fileview.Reader, path string, en
 	}
 	if !sameDirectoryEntries(entries, liveEntries) {
 		return fmt.Errorf("S3 source directory differs between original file view and authority checkout: %s", path)
-	}
-	if len(names) > 256 {
-		return fmt.Errorf("S3 source directory exceeds the 256-member manifest bound: %s", path)
 	}
 	manifests[path] = names
 	return nil

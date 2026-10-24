@@ -948,36 +948,16 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 	}
 	registered := 0
 	for _, entry := range entries {
-		name := entry.Name()
-		id := strings.TrimSuffix(name, ".md")
-		if entry.IsDir() || !strings.HasSuffix(name, ".md") ||
-			strings.Contains(strings.ToLower(name), "template") ||
-			strings.EqualFold(name, "README.md") ||
-			!hasAnyPrefix(id, prefixes) {
-			continue
-		}
-		rel := filepath.ToSlash(filepath.Join(dirRel, name))
-		data, err := files.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return registered, fmt.Errorf("read %s: %w", rel, err)
-		}
 		bound, _ := state["bound_req"].(map[string]any)
 		boundID, _ := bound["id"].(string)
-		if !docscope.Belongs(data, boundID) {
+		doc, member, err := registrationDocument(files, entry, dirRel, prefixes, boundID)
+		if err != nil {
+			return registered, err
+		}
+		if !member {
 			continue
 		}
-		status := ParseMarkdownField(string(data), "状态", "Status")
-		if status == "" {
-			// No status field: the file declares no batch membership (legacy
-			// fixture, README-like stub). Not part of this batch — skip.
-			continue
-		}
-		if status == "cancelled" {
-			// Cancelled declares the task out of the batch (S4 document
-			// status vocabulary) — skip instead of failing the partial-batch
-			// check, matching tasks check / TaskBatchComplete semantics.
-			continue
-		}
+		id, rel, status, data := doc.ID, doc.Path, doc.Status, doc.data
 		if status != wantStatus {
 			// Declares a different state: a real partial batch (e.g. a draft
 			// contract at TR-003). Failing here keeps subject fingerprint matching honest.

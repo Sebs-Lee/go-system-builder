@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
-// savedQuestionnairePath recognizes a successful file save. Domain consumers
-// decide whether this exact registered path contains a valid professional answer.
+// savedQuestionnairePath normalizes a successful tool's candidate file path.
+// A path is not proof of a write: S2/S3 additionally require native save
+// semantics or a matching before/after observation at their original receiver.
+// Other stage adapters retain their existing event contracts.
 func savedQuestionnairePath(request policy.Input) (string, bool) {
 	if request.Event != "PostToolUse" || request.Error != "" {
 		return "", false

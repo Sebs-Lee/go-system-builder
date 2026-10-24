@@ -34,9 +34,22 @@ Current stage, frozen specifications/implementation, original responsibilities, 
 
 - S6 (`s6-native-v1`): `s6 prepare --root <Main> --task <TASK> --role <role>` supplies the exact brief. Builder uses native worktree, professional plan, actual implementation/self-checks and Result. Main uses original task-integrate. Source/report revisions use the original revision Writer.
 - S5: 原入口准备、登记两项已确定独立责任并发行准确 view／answer，Main 直接携带原引用派发两个独立原生上下文；不用组装元数据、额外确认或 workspace prepare。
-- S7: ReviewPlan owns Claims, lenses, waves and dependencies; original manifest draft/registration prepares the engineering responsibility and exact question. Reviewer returns the original professional answer for Stop reception. A post-S9 seed is an unfinished Planner input, not a dispatchable professional decision. Resolve PLANNER-REFINE fields against the current scope and submit the first professional Plan through original `runtime review-plan --file <professional-plan.json>` while preserving the seed id/round/generation/baseline. Only the exact unstarted seed is eligible; later discovery revisions retain their normal budget and workspace constraints. If E2E is genuinely inapplicable, set e2e_coverage_state=not_applicable, keep the explicit N/A Claim with source_refs/na_rationale/na_checklist_id, set verification_artifact_workspace null; do not add the Runtime-only verification_artifact_digest to the Plan, and remove only its E2E Assignment. Keep all applicable delivery/QA Claims. The conservative cold_start seed hint must not manufacture a browser surface or mandatory browser task.
-- S8: Main's Case/Hypothesis dispatch supplies the exact Investigator question. Investigator performs its discriminator without product writes and returns the original answer. Main owns routing/Contract approval.
+- S7: Main completes and saves the supplied ReviewPlan; original reception fixes Claims, lenses, waves and dependencies. The original manifest draft/registration then prepares each selected responsibility and exact view/answer before Main actually starts the native Reviewer. Reviewer saves and returns the original answer for SubagentStop reception. Queued work waits for its real dependencies; a sealed, paused or superseded round does not release new review work.
+- S8: After TR-008 enters investigation, Main reads the supplied Batch/Findings and saves the exact intake questionnaire's grouping_rationale. Original reception creates the Case and supplies hypotheses.json; Main saves its actual questions and then dispatches each Investigator with exact view/answer paths. Investigator performs its discriminator without product writes and returns its original answer for SubagentStop reception. Main owns routing and genuine Contract approval.
+
 - S9: professional division prepares each exact native brief. Builder saves PlanReport before implementation, continues in native worktree, self-checks and commits actual product changes when present, then returns Result. An allowed no-change result does not manufacture a commit. Main integrates/checks separately. Targeted is a separate independent native task; original handoff leads to fresh S7.
+
+A post-S9 S7 seed is unfinished Planner input, not a dispatchable decision. Resolve
+PLANNER-REFINE against current change impact, preserve the supplied seed identity,
+round, generation and baseline, then save the original Main ReviewPlan questionnaire.
+The original consumer handles seed adoption; manual runtime review-plan registration
+is an explicit integration/recovery route, not a second normal submission. Later
+discovery revisions retain their original budget and workspace constraints. If E2E
+is genuinely inapplicable, retain its explicit N/A Claim with source_refs,
+na_rationale and na_checklist_id, choose e2e_coverage_state=not_applicable and a null
+verification_artifact_workspace, and omit only the E2E Assignment. Keep applicable
+delivery/QA Claims. A conservative cold_start hint does not invent a browser surface;
+verification_artifact_digest remains a system result field, not a Plan author field.
 
 Before registering the first S7 professional Plan, review the generated Assignment grouping. The default one-Claim-per-Assignment split is a starting point, not a required actor count. Compatible QA Claims may share one original Assignment's `claim_ids` when their reading/methods fit and no result dependency would become self-waiting; retain every Claim, its original identity, oracle, evidence and per-Claim result. Update the existing scope/focus/boundary fields to match. Keep delivery/QA/E2E lenses, waves, independence and real specialist needs separate. Do not add headcount fields, a second planning table or an empty actor for an N/A Claim.
 

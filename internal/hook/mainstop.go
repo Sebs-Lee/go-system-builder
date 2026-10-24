@@ -6,7 +6,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/policy"
+	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
@@ -37,15 +39,26 @@ func MainStopDecision(root string, input policy.Input) (policy.Decision, bool) {
 	if err != nil {
 		return policy.Decision{}, false
 	}
-	return mainStopDecisionForState(snapshot.State, input)
+	var plan *review.Plan
+	if assignment.ReviewRoundOpenForDispatch(snapshot.State) {
+		plan, _, _ = review.LoadPlan(root, snapshot.State)
+	}
+	return mainStopDecisionForState(snapshot.State, input, plan)
 }
 
-func mainStopDecisionForState(state map[string]any, input policy.Input) (policy.Decision, bool) {
+func mainStopDecisionForState(state map[string]any, input policy.Input, plans ...*review.Plan) (policy.Decision, bool) {
 	if input.Event != "Stop" || input.StopHookActive || state == nil {
 		return policy.Decision{}, false
 	}
 	if decision, blocked := planningStopDecision(state); blocked {
 		return decision, true
+	}
+	if !assignment.ReviewRoundOpenForDispatch(state) {
+		return policy.Decision{}, false
+	}
+	var plan *review.Plan
+	if len(plans) > 0 {
+		plan = plans[0]
 	}
 
 	review, ok := state["review"].(map[string]any)
@@ -68,8 +81,10 @@ func mainStopDecisionForState(state map[string]any, input policy.Input) (policy.
 			continue
 		}
 		version := stringValue(state["schema_version"])
-		if pendingDispatch(id, row, version) {
-			return mainStopPendingDispatch(id), true
+		if pendingDispatch(id, row, version) && plan != nil {
+			if locks, err := assignment.ReviewDispatchPrerequisite(state, plan, id); err == nil && locks == "" {
+				return mainStopPendingDispatch(id), true
+			}
 		}
 		if unconsumedResult(id, row, version) {
 			return mainStopUnconsumedResult(id), true
@@ -83,6 +98,7 @@ func pendingDispatch(id string, row map[string]any, versions ...string) bool {
 		return false
 	}
 	return strings.TrimSpace(stringValue(row["agent_id"])) == "" &&
+		strings.TrimSpace(stringValue(row["queued_agent_id"])) == "" &&
 		strings.TrimSpace(stringValue(row["result_ref"])) == ""
 }
 
@@ -102,7 +118,7 @@ func mainStopPendingDispatch(id string) policy.Decision {
 		Decision:       "deny",
 		RuleID:         RuleMainStopPendingDispatch,
 		Reason:         fmt.Sprintf("Main cannot finish while ReviewPlan assignment %s is ready but has not been dispatched", id),
-		Recovery:       []string{"continue DRIVE and dispatch the highest-priority queued assignment", "after dispatch, let the next Stop check re-evaluate the remaining ReviewPlan work"},
+		Recovery:       []string{fmt.Sprintf("continue the current S7 preparation and dispatch ready assignment %s with its exact view/answer references; preserve waiting assignments", id), "after dispatch, let the next Stop check re-evaluate the remaining ReviewPlan work"},
 		Retry:          policy.RetryAfterRecoveryValidation,
 		MatchedRuleIDs: []string{RuleMainStopPendingDispatch},
 	}

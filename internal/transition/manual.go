@@ -306,6 +306,8 @@ func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
 	catalog := evidence.DefaultCatalog()
 	if t.ID == "TR-020" {
 		fmt.Fprint(b, "Low-level diagnostic evidence slots only; not the normal amendment entry. Follow [Approved requirement amendment](#approved-requirement-amendment); the original receiver binds these facts, not the author.\n\n")
+	} else if t.ID == "TR-008" {
+		fmt.Fprint(b, "Diagnostic evidence slots for the original sealed batch. The next Main PreToolUse invokes the original transition; authors do not copy these bindings or submit another Result.\n\n")
 	} else {
 		fmt.Fprintf(b, "Evidence bindings (copy into `runtime transition`):\n\n")
 	}
@@ -319,6 +321,8 @@ func writeEvidenceBindings(b *strings.Builder, t TransitionSpec) {
 	}
 	if t.ID == "TR-020" {
 		fmt.Fprint(b, "\nThese slots describe the original transaction for diagnosis; use the normal amendment entry above rather than composing or retrying a transition.\n\n")
+	} else if t.ID == "TR-008" {
+		fmt.Fprint(b, "\nIf the handoff is incomplete, Main inspects the original sealed batch and `loop-harness explain TR-008` feedback. Preserve accepted Reviewer answers. After the transition, fill and save the supplied S8 intake; its original consumer creates the Case.\n\n")
 	} else {
 		fmt.Fprintf(b, "\nIf a binding is missing, retry with the command above; run `loop-harness explain %s` to inspect current candidates.\n\n", t.ID)
 	}

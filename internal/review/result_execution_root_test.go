@@ -108,6 +108,8 @@ func TestRegisteredResultPacketSourceRootBindsCurrentExecution(t *testing.T) {
 		t.Fatalf("durable receipt did not bind actual Worker root: root=%q err=%v", receipt.ExecutionRoot, err)
 	}
 
+	seedResultMethodSources(t, mainRoot, snapshot.State, plan)
+	writeMethodState(t, statePath, snapshot.State)
 	issuedPackets, err := IssueResultPackets(mainRoot, statePath, journalPath, snapshot.Revision, packet.Binding.OwnerAgentID)
 	if err != nil || len(issuedPackets) != 1 {
 		t.Fatalf("issue original S7 answer for registered Worker: packets=%d err=%v", len(issuedPackets), err)

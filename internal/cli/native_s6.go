@@ -111,10 +111,8 @@ func registerNativeS6Delivery(root, manifest, taskID, taskPath, base string, std
 func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.Record, base string, out io.Writer) error {
 	brief, plan, result := assignmentrecord.NativePaths(r)
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s — %s\n\nContract: %s\n\nRead the actual TASK at %s and its linked inputs. Implement only its reviewed scope: %s.\n\n", r.Task.ID, r.RoleFamily, r.Contract, filepath.Join(root, r.Task.Ref), strings.Join(r.EffectiveWritePaths, ", "))
-	for _, ref := range r.ReadPaths {
-		fmt.Fprintf(&b, "- Read %s\n", filepath.Join(root, ref))
-	}
+	methods := nativeS6MethodGuidance(root, r)
+	b.WriteString(methods)
 	fmt.Fprintf(&b, "\nDone when:\n")
 	for _, condition := range r.DoneWhen {
 		fmt.Fprintf(&b, "- %s\n", condition)
@@ -128,10 +126,13 @@ func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.
 		return err
 	}
 	fmt.Fprintf(&b, "\nRegistered workgroup-local Assignment dependencies (read-only): %s. The receiver supplies this exact set to the canonical Plan; do not copy dependencies into either private JSON file. TASK prerequisites have already been satisfied by dispatch. Explain actual input or environment assumptions in objective/oracles and unresolved risks_blockers instead.\n", dependencies)
-	fmt.Fprintf(&b, "\nUse Claude Code native worktree isolation from Main HEAD %s. Save the following professional JSON files relative to your actual worktree; do not write these drafts into Main. Plan before implementation; save does not activate anything. Implement, self-test, commit only actual TASK products and save Result. Keep these private professional files out of Git; do not force-add them. Return this exact brief reference %s and the absolute path to your Result. Do not run workspace launch, agent-begin or task-complete.\n\nPlan: %s\n```json\n{\"objective\":null,\"planned_paths\":[],\"assertion_checks\":[{\"assertion\":null,\"oracle\":null,\"done_when_indexes\":[]}],\"risks_blockers\":[]}\n```\nPlan fields are objective, planned_paths, assertion_checks and risks_blockers only. Plan.risks_blockers is an array of strings. Registered dependencies are system facts, not a private Plan question. Each assertion has assertion, oracle and done_when_indexes (zero-based indices into Done when). Cover each required condition.\n\nResult: %s\n```json\n{\"summary\":null,\"assertion_evidence\":[{\"assertion\":null,\"oracle\":null,\"evidence_refs\":[]}],\"risks_blockers\":[],\"scope_deviations\":[],\"closing_assessment\":{\"disposition\":null,\"conditions\":[{\"done_when_index\":0,\"judgment\":null,\"plan_assertion_indexes\":[],\"rationale\":null}]}}\n```\nResult fields are summary, assertion_evidence, risks_blockers, scope_deviations and closing_assessment only. Result has no dependencies field. Use exactly the shown field names; no extra nested fields. Each assertion_evidence item has assertion and oracle copied verbatim from its plan assertion, plus nonempty evidence_refs containing exact existing file paths relative to your worktree, within this TASK write scope or its listed Read paths. These are file references: omit line numbers, fragments, descriptions, command text and output. Put commands, outputs and observations in summary or closing rationale; cite their actual evidence file only when it exists within the allowed scope. Result.risks_blockers and Result.scope_deviations are arrays of strings. Any unresolved Result risk/blocker or scope deviation prevents completion/integration; report real ones honestly. Put non-blocking context, scope limitations and resolved-risk explanations in summary/closing rationale, without hiding unfinished obligations. Replace nulls with your own professional answers; do not copy placeholder values. closing_assessment has disposition (complete/incomplete/blocked) and conditions; each condition has done_when_index, judgment (satisfied/incomplete/blocked), plan_assertion_indexes and rationale. Include real self-check commands/results in summary. When blocked, also state the actual blocker and unfinished work directly in your native return. A real blocker is an honest handoff, never a fabricated PASS.\n", base, filepath.Join(root, brief), plan, result)
-	if published, err := workpacket.PublishBounded(root, brief, []byte(b.String()), 1<<20); err != nil {
+	current := nativeS6BriefInputs(root, r, false) + b.String() + nativeS6ProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
+	previousInputs := nativeS6BriefInputs(root, r, true) + b.String()
+	compact := previousInputs + fmt.Sprintf(nativeS6CompactProfessionalFormat, base, filepath.Join(root, brief), plan, result)
+	legacy := previousInputs + nativeS6LegacyProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
+	if published, err := workpacket.PublishBounded(root, brief, []byte(current), 1<<20); err != nil {
 		return err
-	} else if !bytes.Equal(published, []byte(b.String())) {
+	} else if !nativeS6BriefMatches(published, methods, current, compact, legacy) {
 		return fmt.Errorf("original native task brief differs; preserve it for Main recovery")
 	}
 	bound, _ := state["bound_req"].(map[string]any)
@@ -151,6 +152,43 @@ func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.
 	}
 	fmt.Fprintf(out, "Native S6 TASK registered: %s\nMain: use Claude Code's native Agent (%s) with worktree isolation. Carry this exact task brief in its prompt: %s\nBuilder saves professional plan/result in its own worktree. SubagentStop receives them; Main integrates separately. No Team, platform Agent ID or launcher is required.\n", r.Task.ID, r.RoleFamily, filepath.Join(root, brief))
 	return nil
+}
+
+// Product and specification reads share the implementation's fixed worktree
+// source. The control brief and installed methods retain their exact Main paths.
+// The old input rendering is only for preserving already-issued brief bytes.
+func nativeS6BriefInputs(root string, r assignmentrecord.Record, legacy bool) string {
+	var b strings.Builder
+	if legacy {
+		fmt.Fprintf(&b, "# %s — %s\n\nContract: %s\n\nRead the actual TASK at %s and its linked inputs. Implement only its reviewed scope: %s.\n\n", r.Task.ID, r.RoleFamily, r.Contract, filepath.Join(root, r.Task.Ref), strings.Join(r.EffectiveWritePaths, ", "))
+		for _, ref := range r.ReadPaths {
+			fmt.Fprintf(&b, "- Read %s\n", filepath.Join(root, ref))
+		}
+		return b.String()
+	}
+	fmt.Fprintf(&b, "# %s — %s\n\nContract: %s\n\nRead the actual TASK at worktree-relative path %s and its linked inputs. Implement only its reviewed scope: %s.\n\nSource reads below are relative to your actual native worktree at the fixed source commit stated below; read TASK, specifications and product sources there. Main's control root %s supplies this brief and the exact installed method paths, not a replacement product/specification read root. Preserve the original source when Main advances; missing worktree inputs belong to Main recovery.\n\n", r.Task.ID, r.RoleFamily, r.Contract, filepath.ToSlash(r.Task.Ref), strings.Join(r.EffectiveWritePaths, ", "), root)
+	for _, ref := range r.ReadPaths {
+		fmt.Fprintf(&b, "- Read worktree-relative: %s\n", filepath.ToSlash(ref))
+	}
+	return b.String()
+}
+
+// Deliver the original Record's method sources. Specialty conditions stay in
+// the actual role definition, where the author can apply them to real inputs;
+// no prose classifier or second Skill authorization registry is introduced.
+func nativeS6MethodGuidance(root string, r assignmentrecord.Record) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nProfessional methods: use the core preloaded by your role. Its Skill Contract at %s lists exact installed specialty paths and the TASK/input conditions for reading them. Apply those conditions to your actual work; do not preload unrelated methods or seek another activation.\n", filepath.Join(root, r.AgentDefinition.Ref))
+	registered := make(map[string]bool, len(r.SkillRefs))
+	for _, name := range r.SkillRefs {
+		registered[name] = true
+	}
+	for _, source := range r.ContextSources {
+		if source.Kind == "authorized_skill" && registered[source.ID] {
+			fmt.Fprintf(&b, "- Registered method %s: %s\n", source.ID, filepath.Join(root, source.Ref))
+		}
+	}
+	return b.String()
 }
 
 func nativeS6Records(state map[string]any) []assignmentrecord.Record {
@@ -312,7 +350,7 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		}
 	}
 	if in.Event == "SubagentStart" {
-		body := map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "SubagentStart", "additionalContext": "Native S6: follow the exact task brief in your native Agent prompt. Read actual inputs, save your professional plan before implementation, continue work and real self-checks without activation, commit and save Result in your own worktree. Return the exact brief and absolute Result reference. Main integrates separately. No framework launch, begin or per-tool receipt is required."}}
+		body := map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "SubagentStart", "additionalContext": "Native S6: follow the exact task brief in your native Agent prompt. Read actual inputs, save your professional plan before implementation, continue work and real self-checks without activation, commit and save Result in your own worktree. Return the exact brief and absolute Result reference. If blocked before or after forming a Plan, follow the brief’s minimal blocked Result handoff and preserve existing work; Main owns recovery. Main integrates separately. No framework launch, begin or per-tool receipt is required."}}
 		_ = json.NewEncoder(out).Encode(body)
 		return true, 0
 	}
@@ -395,27 +433,37 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	if err := workspace.ValidateCheckout(root, source); err != nil {
 		return err
 	}
+	coordinatePath := filepath.Join(root, ".claude/assignments", r.AssignmentID+".json")
+	coordinateBytes, err := os.ReadFile(coordinatePath)
+	if err != nil {
+		return err
+	}
+	var coordinate map[string]any
+	if err := json.Unmarshal(coordinateBytes, &coordinate); err != nil {
+		return err
+	}
+	if previous, _ := coordinate["worktree_path"].(string); previous != "" && previous != source {
+		return fmt.Errorf("delivery belongs to a different recorded worktree; Main must resolve it")
+	}
+	if base, _ := coordinate["base_commit"].(string); base == "" {
+		return fmt.Errorf("missing original source commit")
+	} else if _, err := workspace.Git(contextForHook(in), source, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
+		return fmt.Errorf("native worktree does not contain the declared source commit")
+	}
+	branch, err := workspace.Git(contextForHook(in), source, "branch", "--show-current")
+	if err != nil || branch == "" {
+		return fmt.Errorf("native worktree requires a real source branch")
+	}
 	resultData, err := workpacket.ReadFile(source, resultRel, 1<<20)
 	if err != nil {
-		return nativeArtifactReadError("read professional Result "+filepath.Join(source, resultRel), err)
+		return nativeArtifactReadError("read professional Result "+filepath.Join(source, resultRel)+". For ordinary delivery use the full Plan/Result in the original brief. For a real blocker: "+nativeS6BlockerInstructions(filepath.Join(source, resultRel)), err)
+	}
+	if reason, blocked := nativeS6Blocker(resultData); blocked {
+		return &nativeS6Handoff{reason: reason}
 	}
 	planData, err := workpacket.ReadFile(source, planRel, 1<<20)
 	if err != nil {
-		var blocked struct {
-			Summary string   `json:"summary"`
-			Risks   []string `json:"risks_blockers"`
-			Closing struct {
-				Disposition string `json:"disposition"`
-			} `json:"closing_assessment"`
-		}
-		if json.Unmarshal(resultData, &blocked) == nil && strings.TrimSpace(blocked.Summary) != "" && len(blocked.Risks) > 0 && blocked.Closing.Disposition == "blocked" {
-			for _, risk := range blocked.Risks {
-				if strings.TrimSpace(risk) != "" {
-					return &nativeS6Handoff{reason: blocked.Summary + " / " + risk + "; professional plan unavailable"}
-				}
-			}
-		}
-		return nativeArtifactReadError("read professional Plan "+filepath.Join(source, planRel), err)
+		return nativeArtifactReadError("read professional Plan "+filepath.Join(source, planRel)+". For a real blocker: "+nativeS6BlockerInstructions(filepath.Join(source, resultRel)), err)
 	}
 	projected, err := agentcontext.ApplyRecord(agentcontext.Assignment{}, r)
 	if err != nil {
@@ -437,6 +485,11 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 		label, definition, path string
 		message                 map[string]any
 	}{{"Plan", "s6PlanReport", filepath.Join(source, planRel), plan}, {"Result", "s6CompletionReport", filepath.Join(source, resultRel), result}} {
+		if candidate.label == "Result" {
+			if err := projectNativeS6Result(plan, result, len(r.DoneWhen)); err != nil {
+				return &nativeAuthorError{fmt.Errorf("professional Result fields at %s: %w", candidate.path, err)}
+			}
+		}
 		data, err := json.Marshal(candidate.message)
 		if err != nil {
 			return err
@@ -468,27 +521,6 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	} else if !bytes.Equal(published, resultBytes) {
 		return fmt.Errorf("immutable native Result source differs")
 	}
-	coordinatePath := filepath.Join(root, ".claude/assignments", r.AssignmentID+".json")
-	coordinateBytes, err := os.ReadFile(coordinatePath)
-	if err != nil {
-		return err
-	}
-	var coordinate map[string]any
-	if err := json.Unmarshal(coordinateBytes, &coordinate); err != nil {
-		return err
-	}
-	if previous, _ := coordinate["worktree_path"].(string); previous != "" && previous != source {
-		return fmt.Errorf("delivery belongs to a different recorded worktree; Main must resolve it")
-	}
-	if base, _ := coordinate["base_commit"].(string); base == "" {
-		return fmt.Errorf("missing original source commit")
-	} else if _, err := workspace.Git(contextForHook(in), source, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
-		return fmt.Errorf("native worktree does not contain the declared source commit")
-	}
-	branch, err := workspace.Git(contextForHook(in), source, "branch", "--show-current")
-	if err != nil || branch == "" {
-		return fmt.Errorf("native worktree requires a real source branch")
-	}
 	coordinate["worktree_path"] = source
 	coordinate["branch"] = branch
 	updated, _ := json.MarshalIndent(coordinate, "", "  ")
@@ -497,6 +529,40 @@ func receiveNativeS6(root string, in policy.Input, r assignmentrecord.Record, te
 	}
 	_, _, err = assignment.CompleteTaskWithReceipt(root, filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), assignment.CompletionRequest{Context: contextForHook(in), ExpectedRevision: -1, AgentID: r.OwnerAgentID, MessagePath: filepath.Join(root, resultRef), NativePlanPath: planRef, NativeAgentID: in.AgentID, NativeSessionID: in.SessionID})
 	return err
+}
+
+// A blocker is an honest handoff from the original worktree, not an accepted
+// Result. It needs neither fabricated Plan assertions nor completed evidence.
+func nativeS6Blocker(data []byte) (string, bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil || len(fields) != 3 {
+		return "", false
+	}
+	for _, key := range []string{"summary", "risks_blockers", "closing_assessment"} {
+		if _, ok := fields[key]; !ok {
+			return "", false
+		}
+	}
+	var closing map[string]json.RawMessage
+	if json.Unmarshal(fields["closing_assessment"], &closing) != nil || len(closing) != 1 {
+		return "", false
+	}
+	var blocked struct {
+		Summary string   `json:"summary"`
+		Risks   []string `json:"risks_blockers"`
+		Closing struct {
+			Disposition string `json:"disposition"`
+		} `json:"closing_assessment"`
+	}
+	if json.Unmarshal(data, &blocked) != nil || strings.TrimSpace(blocked.Summary) == "" || len(blocked.Risks) == 0 || blocked.Closing.Disposition != "blocked" {
+		return "", false
+	}
+	for _, risk := range blocked.Risks {
+		if strings.TrimSpace(risk) == "" {
+			return "", false
+		}
+	}
+	return blocked.Summary + " / " + strings.Join(blocked.Risks, "; "), true
 }
 
 func publishNativeS6Plan(root, ref string, plan map[string]any) error {
@@ -563,6 +629,9 @@ func nativeS6MainGuidance(root string, state map[string]any) string {
 	for _, r := range nativeS6Records(state) {
 		lines = append(lines, nativeS6RecordGuidance(root, state, r))
 	}
+	if len(lines) > 0 {
+		lines = append(lines, "For any remaining unprepared TASKs, use the original `loop-harness s6 status --advice` to identify readiness, then `s6 prepare` for an eligible TASK. Do not wait for unrelated tasks solely because they are in an earlier wave.")
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -575,9 +644,9 @@ func nativeS6RecordGuidance(root string, state map[string]any, r assignmentrecor
 		return fmt.Sprintf("S6 %s: Main acknowledged the original delivery; continue the reviewed batch.", r.Task.ID)
 	}
 	if ref := stringValue(agent["completion_reported_ref"]); ref != "" {
-		return fmt.Sprintf("S6 %s: professional Result received in the original Runtime record at %s; inspect its original task-receipt for blockers and own checks. Main uses original task-integrate --assignment-id %s; required Main checks and full-batch Gate remain.", r.Task.ID, filepath.Join(root, ref), r.AssignmentID)
+		return fmt.Sprintf("S6 %s: professional Result received in the original Runtime record at %s; inspect its original task-receipt for blockers and own checks. A qualified completed delivery is ready for Main's `loop-harness runtime task-integrate --root %s --assignment-id %s --agent-id %s`; an incomplete or blocked result needs its actual recovery first. Required Main checks and full-batch Gate remain; do not ask the Builder to resubmit a received Result.", r.Task.ID, filepath.Join(root, ref), s7CaptureShellQuote(root), s7CaptureShellQuote(r.AssignmentID), s7CaptureShellQuote(r.OwnerAgentID))
 	}
-	return fmt.Sprintf("S6 %s: Main uses Claude Code native Agent (%s), passing exact brief %s; use native execution/resume, no workspace launcher. Builder owns professional plan, implementation/self-checks and Result; Stop receives delivery.", r.Task.ID, r.RoleFamily, filepath.Join(root, brief))
+	return fmt.Sprintf("S6 %s: original brief is prepared at %s for Claude Code native Agent (%s) with worktree isolation. Preparation does not prove the Agent has started. Main dispatches this exact brief if no actual native task exists, otherwise follows that task's execution/resume and actual blocker. Builder owns professional plan, implementation/self-checks and Result; SubagentStop receives delivery. No workspace launcher or activation is required.", r.Task.ID, filepath.Join(root, brief), r.RoleFamily)
 }
 
 func nativeS6Assignment(state map[string]any, owner string) bool {

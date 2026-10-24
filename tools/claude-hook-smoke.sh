@@ -118,12 +118,13 @@ for event in events:
         if timeout > limit or timeout <= 0:
             raise SystemExit(f"platform smoke: {event} timeout {timeout}s outside 1..{limit}s")
 
-if not any(
-    recognized_mcp_coverage(registration.get("matcher"))
-    and any(targets_event(hook, "PreToolUse") for hook in registration.get("hooks", []))
-    for registration in hooks.get("PreToolUse", [])
-):
-    raise SystemExit("platform smoke: no recognized match-all or MCP-wide PreToolUse Harness registration; other matcher forms require Claude platform verification")
+for event in ("PreToolUse", "PostToolUse"):
+    if not any(
+        recognized_mcp_coverage(registration.get("matcher"))
+        and any(targets_event(hook, event) for hook in registration.get("hooks", []))
+        for registration in hooks.get(event, [])
+    ):
+        raise SystemExit(f"platform smoke: no recognized match-all or MCP-wide {event} Harness registration; other matcher forms require Claude platform verification")
 print(f"PASS Harness registrations (static; limited matcher forms): {path}")
 PY
 
@@ -163,6 +164,11 @@ run_case pretool-read PreToolUse \
   '{"hook_event_name":"PreToolUse","session_id":"platform-smoke-session","tool_name":"Read","tool_use_id":"platform-smoke-tool","tool_input":{"file_path":"README.md"}}' 0
 run_case pretool-mcp PreToolUse \
   '{"hook_event_name":"PreToolUse","session_id":"platform-smoke-session","tool_name":"mcp__memory__search_nodes","tool_use_id":"platform-smoke-mcp","tool_input":{"query":"hook smoke"}}' 0
+# A failed non-writing payload checks the PostToolUse process boundary without
+# receiving any author-edited questionnaire already present in this root.
+# Successful custom-tool reception is exercised in disposable test fixtures.
+run_case posttool-mcp-failed PostToolUse \
+  '{"hook_event_name":"PostToolUse","session_id":"platform-smoke-session","tool_name":"mcp__sandbox__execute","tool_use_id":"platform-smoke-mcp-save","tool_input":{},"tool_response":{"is_error":true}}' 0
 
 echo "PASS direct Harness payload processes (no Claude event routing or MCP server invoked)"
 

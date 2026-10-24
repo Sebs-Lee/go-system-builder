@@ -199,7 +199,7 @@ func acceptedCurrentS4(root string, state map[string]any, files fileview.Reader)
 	if workpacket.Digest(data) != stringValue(evidence["sha256"]) {
 		return workpacket.TaskPlanningPacket{}, workpacket.TaskPlanningAnswer{}, nil, fmt.Errorf("accepted S4 envelope differs from its registered hash")
 	}
-	disk, err := workpacket.ReadFile(root, path, 1<<20)
+	disk, err := workpacket.ReadFile(root, path, workpacket.TaskPlanningEvidenceReadLimit(selected.packet))
 	if err != nil {
 		return workpacket.TaskPlanningPacket{}, workpacket.TaskPlanningAnswer{}, nil, fmt.Errorf("read accepted S4 envelope checkout %s: %w", path, err)
 	}

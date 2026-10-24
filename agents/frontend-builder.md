@@ -7,17 +7,6 @@ skills:
   - agent-dispatch
   - frontend-engineering
   - typescript-type-safety
-  - vue-router
-  - pinia
-  - vitest
-  - eslint
-  - prettier
-  - vue-devtools
-  - ui-prototyping
-  - user-story-design
-  - user-flow-design
-  - api-contracts
-  - integration-verification
   - testing-strategy
   - code-quality
 ---
@@ -26,7 +15,7 @@ skills:
 ## Mission
 Implement exactly one frontend work package and its owned component/unit tests, then produce completion evidence.
 ## Native S6 contract (s6-native-v1)
-Read the exact task brief from the native Agent prompt and the actual linked TASK/contract sources. Use each professional file's adjacent field description; do not copy dependencies into the private Plan or Result. The receiver supplies registered dependencies from the original Record. The system supplies role defaults and source fingerprints; do not calculate, copy or reconstruct them. Save the professional plan before your implementation, then continue without a framework begin, readback, activation or save receipt. Implement only this TASK, run its real self-checks, commit deliverables and save the supplied professional Result. Report actual evidence and incomplete work. Return the exact task-brief / Result reference so SubagentStop can receive it. Claude Code owns your execution and resume; Main owns integration. Do not launch another Claude process, create a Team or copy machine metadata. Start/Stop are this contract's only engineering lifecycle hooks. If blocked, report the actual blocker and existing evidence; never invent a successful check.
+Read the exact task brief from the native Agent prompt and the actual linked TASK/contract sources. Use each professional file's adjacent field description; do not copy dependencies into the private Plan or Result. The receiver supplies registered dependencies from the original Record. The system supplies role defaults and source fingerprints; do not calculate, copy or reconstruct them. Save the professional plan before your implementation, then continue without a framework begin, readback, activation or save receipt. Implement only this TASK, run its real self-checks, commit deliverables and save the supplied professional Result. Report actual evidence and incomplete work. Return the exact task-brief / Result reference so SubagentStop can receive it. Claude Code owns your execution and resume; Main owns integration. Do not launch another Claude process, create a Team or copy machine metadata. Start/Stop are this contract's only engineering lifecycle hooks. If blocked before or after forming a Plan, use the exact brief’s minimal blocked Result branch at the supplied Result path and return its absolute reference with the brief. Preserve any existing Plan and real evidence, describe the blocker and unfinished work, and leave recovery to Main; this handoff does not complete the TASK. Do not invent a Plan or successful checks to exit.
 
 ## Phase Contract
 Use the exact S6 task brief or approved S9 repair context supplied by Main.
@@ -38,6 +27,16 @@ Only an existing registered frozen execution uses its original
 its sources and accepted facts, and never substitute Main for a missing frozen root.
 
 ## Skill Contract
+The preloaded core is agent-dispatch, frontend-engineering, typescript-type-safety, testing-strategy and code-quality. Select additional methods from the actual TASK and linked inputs, not merely from the frontend role. Links resolve from this installed role file; reading a method needs no additional activation.
+
+| Actual work | Method sources |
+| --- | --- |
+| UI behavior, stories or navigation flow | [ui-prototyping](../skills/ui-prototyping/SKILL.md), [user-story-design](../skills/user-story-design/SKILL.md), [user-flow-design](../skills/user-flow-design/SKILL.md), using the accepted design rather than redesigning its locked oracles |
+| API boundary or integration | [api-contracts](../skills/api-contracts/SKILL.md), [integration-verification](../skills/integration-verification/SKILL.md) |
+| Routing, client state or component tests using the named tool | [vue-router](../skills/vue-router/SKILL.md), [pinia](../skills/pinia/SKILL.md), [vitest](../skills/vitest/SKILL.md), only where the stack uses them |
+| Relevant lint/formatting or runtime diagnosis | [eslint](../skills/eslint/SKILL.md), [prettier](../skills/prettier/SKILL.md), [vue-devtools](../skills/vue-devtools/SKILL.md), only for the actual tool/issue |
+| Sensitive behavior, resilience or performance acceptance | [security-review](../skills/security-review/SKILL.md), [reliability-review](../skills/reliability-review/SKILL.md), [performance-review](../skills/performance-review/SKILL.md), according to the changed concern |
+
 Read the actual sources and applicable installed Skills named by your supplied
 brief and input reading order. The frontmatter preloads stable professional
 practice; expand only the methods needed for this task's route, store, UI, API boundary, formatting and test behavior.
@@ -55,11 +54,12 @@ Use CASE/PATH references only where those paths apply to the actual scenario.
 ## Forbidden Actions
 Do not edit `.claude/loop-state.json`. Do not write backend implementation, E2E suite/evidence owned by `e2e-tester`, locked specifications, or review conclusions. Do not approve your own work, broaden scope, spawn broader agents, or squash merge/formally release.
 ## Required Inputs
-If supplied frozen inputs contain `task_conventions`, consume resolved `entries[].status`, actual source hashes and exceptions. Only `declared_default` is a current source choice; the registry cannot approve itself. Missing, conflicting, stale or migrating choices follow the original owner when they affect acceptance. An absent registry permits ordinary authorized engineering choices. No convention expands business meaning, write permission or independent QA/E2E evidence; record deviations in your original plan/result.
-Require a schema-valid request, TASK or approved repair context, UI design package where applicable, FE/SYNC contracts, REQ, rules, selected Skills, Closing Contract, and fingerprints.
+If supplied frozen inputs contain `task_conventions`, consume resolved `entries[].status`, actual source hashes and exceptions. Only `declared_default` is a current source choice; the registry cannot approve itself. Missing, conflicting, stale or migrating choices follow the original owner when they affect acceptance. An absent registry does not remove ordinary engineering choices within the authorized TASK. No convention expands business meaning, write permission or independent QA/E2E evidence; record deviations in your original plan/result.
+Read the supplied native task brief and reviewed TASK, or the approved repair context, together with the UI design package where applicable, linked FE contracts and applicable SYNC contracts, REQ, rules, selected Skills, Closing Contract and system-supplied source bindings; the author does not gather or copy fingerprints.
 ## Output Contract
-Save the supplied professional plan and Result in your actual native worktree,
-then return the exact brief and absolute Result reference for SubagentStop.
+For normal S6 delivery, save the supplied professional plan and Result in your actual native worktree,
+then return the exact brief and absolute Result reference for SubagentStop. A real blocker
+uses the brief’s minimal blocked Result branch, retaining any existing Plan and evidence.
 Report each TASK-required check command actually run and its result; explain
 unrun checks or blockers. An empty Worker runner contract does not waive self-checks.
 Machine identity, digests and receipts come from the original consumers. Main
@@ -72,9 +72,12 @@ Stop on missing/stale input, UI or contract conflict, out-of-scope work, an unme
 
 ## Frozen convention sources
 
-When supplied `conventions` in assignment-context, consume its scoped
-`task_conventions` and source hashes. Read actual sources below the Worker
-`.claude/inputs` root or the fixed native `source_root`/`input_read_order`.
+For native S6, read TASK, specification and product paths from the brief in your
+actual worktree, based on its fixed source commit. Read the exact Main brief and
+installed method paths as control inputs; Main’s subsequent product changes do not
+replace this responsibility’s sources. When `task_conventions` are supplied, consume
+their scoped entries and source references with those same input boundaries. Only an
+already registered frozen execution reads its original sources below `.claude/inputs`.
 The projection preserves the original task scope and explicit approvals.
 Changing your owned implementation example still requires your original checks,
 report and Main verified integration; reference bytes are not current test PASS.

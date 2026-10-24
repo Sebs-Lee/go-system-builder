@@ -82,8 +82,8 @@ prepare/launch 给出完整命令及以下路径：
 | 字段 | 用途 |
 | --- | --- |
 | work_packet_ref | `.claude/inputs/work-packet.json`，含原 packet 与不可变 execution view |
-| frozen_input_root | packet read[].path 从此目录下读取，题干中的权威相对路径保持原样 |
-| answer_path | 本执行独占 `.claude/submissions/stage-answer.json`，只填写 answer |
+| frozen_input_root | execution view 的 `packet.draft.read[].path` 和 `packet.task_analysis.path` 从此目录下读取，题干中的权威相对路径保持原样 |
+| answer_path | 本执行上下文给出的独占路径，与 view 的 `authoring_path` 一致；按原登记可为 `.loop-submissions/stage-answer.json` 或历史 `.claude/submissions/stage-answer.json`，只填写 answer |
 | review_check_command | 原 TASK 语义检查的只读结果，不执行产品命令、不登记测试 PASS |
 | receipt_command | 领域事实的只读回执 |
 

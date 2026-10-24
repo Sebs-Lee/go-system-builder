@@ -13,8 +13,8 @@ import (
 
 const (
 	readyEvaluationScope        = "quality_gate"
-	readyInstructionNotReady    = "produce listed missing work; do not call transition CLI; PreToolUse re-evaluates the quality gate"
-	readyInstructionSatisfied   = "quality gate evidence conditions are satisfied; ready did not evaluate transition guards or verify commitability; next PreToolUse may attempt the transition; do not call transition CLI"
+	readyInstructionNotReady    = "follow each listed missing responsibility through its original preparation, reception or recovery boundary; do not call transition CLI or repeat an accepted answer"
+	readyInstructionSatisfied   = "quality gate evidence conditions are satisfied; ready did not evaluate transition guards or verify commitability; the original stage reception/followup may attempt the transition; follow its actual receipt, not another observation; do not call transition CLI"
 	readyInstructionNoCandidate = "no automatic transition candidate exists at this cursor; ready is read-only and does not evaluate transition guards; continue from current cursor guidance; do not call transition CLI"
 	readyInstructionUnknown     = "quality gate could not determine readiness; inspect error_code/conflicts and continue from the current cursor; ready does not evaluate transition guards; do not call transition CLI"
 )

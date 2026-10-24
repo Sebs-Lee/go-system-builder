@@ -19,6 +19,7 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 | Input | Path / field | Why |
 |:---|:---|:--|
 | Locked REQ | exact path in the supplied current view/brief | source of acceptance criteria and scope; no Runtime metadata lookup required |
+| Architecture batch | actual `docs/architecture/ARCHITECTURE-*.md` paths and statuses supplied by the current responsibility | reuse existing decisions and resolve the exact registration gaps; a report's one architecture path does not define the whole batch |
 | Existing design | `docs/design/**` | reuse and conflict detection |
 | Design Foundation | `docs/design/DESIGN.md` **§0 Next-agent card first**, then `design-language.md` and the Surface row if needed | inherit interaction/visual constraints when UI impact is `changed`; do not invent brand from a library hex; Foundation does not replace architecture |
 | Derivation template | `docs/design/derivation/DERIVATION-template.md` | write `docs/design/derivation/REQ-<id>.md` before expanding HTML |
@@ -29,8 +30,10 @@ The locked REQ is the baseline. Design, contracts, and tasks must trace back to 
 ## Procedure — dual-track convergence (v2.0.0)
 
 **Step 0 — route by UI impact before doing anything else**: read the bound
-REQ's top `UI impact` field. `unknown` → stop, resolve it in the REQ's §D
-first (the `ui_impact_resolved` guard blocks PTR-PLAN-01). `none` → skip
+REQ's top `UI impact` field. `unknown` → resolve the missing direction through
+the original REQ clarification/amendment gateway before a design pass; do not
+silently edit the locked baseline (the `ui_impact_resolved` guard blocks
+PTR-PLAN-01). `none` → skip
 Foundation derivation and UI assets (page HTML, `index.html`, PATH, and browser
 specs). If any AC targets an FR, still run the behavior steps and build/update
 the module's 7-file service package: `scenario-model.json`,
@@ -74,21 +77,23 @@ PTR-PLAN-01 predicate. It does not replace the architecture track. The cold-star
 handoff packet is only `§0 + SUR-* diff + current Derivation` (together
 ≤120 lines / ≤12 KB); later implementers read that packet, not the full thesis.
 
-The S2 portion runs as two tracks with free ordering within one agent (not
-subagent parallelism), converging twice. "Free ordering" means either track
-may start first — inside Convergence 1 there is a hard order: **stories.md
+Main coordinates the two S2 tracks and their two convergences; the tracks are
+not a default split into two independent agents. Main may delegate a bounded
+investigation while retaining the shared design context and integration.
+"Free ordering" means either track may start first — inside Convergence 1 there is a hard order: **stories.md
 must exist before rules/branches** (every branch's `story_refs` cites an
 S-NNN; writing rules first means citing stories that do not exist yet).
 Architecture constrains journeys; when a story challenges the architecture,
-escalate that trade-off to the ADR human gate — never silently let one side
-win.
+record the trade-off in the ADR. Reuse an applicable existing human direction;
+bring a genuinely unresolved direction or requirement change to its human gateway.
 
 **Track system (architecture → facts):**
 1. Draft the architecture: components, data model, state machines, data
    flow. Record decisions as ADRs (decision/risk/consequence/alternative)
-   under `docs/design/decisions/` — the single human gate of S2 is the
-   ADR direction sign-off; the N/A list of the AC bridge joins the same
-   sign-off package.
+   under `docs/design/decisions/`. Resolve ordinary engineering choices within
+   the authorized requirement. When a direction needs a human decision, present
+   that ADR and its relevant AC-bridge N/A basis together; preserve an existing
+   applicable decision instead of requiring another sign-off for every S2 run.
 2. Land facts partitions from the architecture vocabulary.
 
 **Track user (REQ §A → behavior-role stories):**
@@ -144,9 +149,11 @@ win.
    seven oracle dimensions? (visible, terminal_state, persisted_effects,
    forbidden_side_effects — plus, for negative branches, rejection,
    expected_state, recovery)"; maintainer: "which rule will clash with
-   module evolution?" Record the conclusion as one paragraph under a
-   `## Depth Self-Review` heading in the ADR package. These are three views
-   of one semantic review, not three reports. Reference generated counts and
+   module evolution?" Record the conclusion as one paragraph in the existing
+   ADR's `## Depth Self-Review` section when an ADR is applicable, otherwise in
+   the actual architecture material. Do not create an ADR, another report or
+   an answer field just to hold this review. These are three views of one
+   semantic review, not three reports. Reference generated counts and
    coverage instead of copying statistics into multiple documents; do not add
    direct-AC or count proofs. Profile positive/negative ratios are risk
    references, not quotas; retain every real required allow/reject branch.
@@ -172,10 +179,17 @@ win.
     the bound REQ and applicable current-truth inputs. The CONTRACTS index
     coverage matrix is for this REQ's clause universe — one `{id} §{n}` cell
     per clause, matching the clause number declared by the target contract.
-    S3 freezes only the locked REQ, registered S2 design, and conditional
-    sources they reference; it does not use its own not-yet-authored CONTRACTS
-    index as an issuance prerequisite. The Hook supplies the exact answer path
-    and known or candidate output paths/templates. Create one index and the
+    S3 freezes the locked REQ, registered S2 architectures, the complete file
+    sets of all non-template modules under `docs/design/prototypes/`, accepted
+    ADRs associated with the bound REQ, and dependencies reached through actual
+    supported source references. This project-wide module scope matches the
+    original bridge; it is not limited to modules referenced by this REQ or its
+    architecture. It does not expand this requirement's design changes or ask
+    you to redesign unrelated modules. Do not delete historical materials or
+    split the REQ to reduce that source set. S3 does not use its own
+    not-yet-authored CONTRACTS index as an issuance prerequisite. The Hook
+    supplies the exact answer path and known or candidate output paths/templates.
+    Create one index and the
     complete applicable contract set for the bound REQ. S3-created shared
     models/examples are outputs: saving the supplied answer runs the original
     shared-model checker, which discovers their dependencies and records them
@@ -238,15 +252,38 @@ win.
 
 For S2, complete the actual applicable architecture/UI/service/ADR work. The
 original responsibility-start/binding completion supplies the exact current
-view/answer paths, full duties and conditional material pointers. Fill only the
-existing `architecture_path` and `conclusion`; empty conclusion is draft. Normal
-save records the original professional report and runs its original outlet.
-Already recorded but unfinished S2 work continues on the same save without
-re-registration; completed old-stage replay is read only. Ordinary Pre/Stop
+view/answer paths, full duties and conditional material pointers. It also shows
+the architecture registration batch with its actual paths and unlocked items,
+and the project-wide module source paths S3 will consume. `architecture_path`
+identifies the architecture reviewed by this report; other architectures in
+the supplied registration batch can also affect the outlet, including legacy
+documents without explicit REQ ownership. Resolve those actual document gaps.
+Keep an unused alternative as an explicitly unadopted discussion in the actual
+architecture or ADR, rather than a separate active architecture awaiting
+registration; do not label it `locked` or invent an ownership change just to
+pass the outlet. Fill only the existing `architecture_path` and `conclusion`;
+do not copy the system's
+batch inventory into new answer fields. Empty conclusion is draft. Before
+saving a final pass, commit the locked architecture, accepted applicable ADRs,
+and other formal S2 inputs to the development branch selected by the original
+S1 binding. S3 reads that committed source and checks the current files against
+it; the Hook does not commit for you. Do not include unrelated changes.
+Normal save records the professional report and runs its original outlet.
+If S2 reception succeeded but its outlet is unfinished, repair the named
+material gap and follow the original continuation. When that continuation
+explicitly uses the same answer save, it resumes the outlet without registering
+the report again; do not repeatedly resave unchanged work just to trigger
+progress. Completed old-stage replay is read only. Ordinary Pre/Stop
 only remind from current facts, without preparation or source reproof. Missing
 actual material is reported precisely; pass alone cannot replace the design.
 Main/Architect labels, packet equality and source hashes do not qualify authors.
-Do not copy metadata, create envelopes, issue/consume or manually recover.
+Normal authoring needs no metadata copying, envelope creation, issue/consume,
+or recovery command. For an actual technical failure, use the precise original
+recovery named by the feedback. A receipt, PTR-PLAN-01 and prepared S3 inputs are
+separate outcomes: fix an unmet lock condition in the actual document, or a
+missing committed source on the bound branch, rather than rewriting an accepted
+answer. A lost issued file is a system preparation gap, not a request to invent
+an answer path or its metadata.
 
 S3/S4 retain their existing questionnaires and professional duties. Read the
 supplied exact view/answer paths and concrete missing items, then save the
@@ -280,8 +317,9 @@ missing typed preparation is a system gap, not a request to fall back to a
 hand-filled legacy DTO.
 
 ## Outputs
-- Architecture and ADR records (with the depth self-review paragraph and
-  the endorsed-N/A list) under `docs/design/`.
+- Locked architecture at `docs/architecture/ARCHITECTURE-<id>.md`; applicable
+  ADR records under `docs/design/decisions/`, including the depth self-review
+  paragraph and endorsed-N/A basis.
 - Design Derivation Note at `docs/design/derivation/REQ-<id>.md` when UI
   impact is `changed`.
 - Locked current module package when needed: five authored behavior sources
@@ -295,20 +333,26 @@ hand-filled legacy DTO.
 
 ## Exit Conditions
 - The planning checkpoint is committed and the Loop transitioned to `document_verification`.
-- Next (NOT your job): dispatch two document-verifier subagents per `docs/control/agent-protocol.md #s5` — planning does not continue into S5; the exact native review task should name any Triggered Deep-Dives (see the document-verification SKILL) whose conditions the REQ/contracts meet.
+- Main continues with S5 orchestration per `docs/control/agent-protocol.md #s5`: dispatch two independent document-verifier subagents using their supplied responsibilities. This planning method ends at the handoff; the native review tasks name applicable Triggered Deep-Dives from the document-verification skill.
 
 ## Stop Conditions
-Stop immediately and surface to the human if any of:
-- The REQ is ambiguous about a core acceptance criterion.
-- A design decision conflicts with an immutable rule and cannot be resolved without REQ clarification.
-- A story challenges the architecture in a way that changes the ADR direction (escalate to the human gate).
-- An AC cannot reach a CASE and has no endorseable N/A (category + pointer) — surface the criterion, do not free-text it away.
-- A behavior-role story, operation flow, and applicable prototype contradict each other in a way that changes product semantics.
-- A contract cannot trace to a REQ clause.
+Bring the affected decision to the existing human gateway when:
+- A core acceptance criterion cannot be resolved from the approved REQ and existing decisions, or the required solution changes the REQ's scope or acceptance semantics.
+- A design cannot comply with an immutable rule without a requirement change or a choice outside the existing authorization.
+- A product or architecture direction genuinely requires a human choice that has not already been made; reuse an applicable existing decision.
+
+Continue professional repair within the authorized requirement: complete missing
+AC-to-CASE coverage, repair contract-to-REQ traceability, and reconcile stories,
+flows, prototypes and architecture. An ADR change or an incomplete trace alone
+does not require another approval. If repair reveals a real requirement or
+product-semantics change, present that specific change and its impact to the
+gateway. Never substitute free-text N/A or a passing answer for missing work.
+After S3 freezes upstream sources, use the original specification rework route
+for an S2 correction; do not silently edit the frozen inputs.
 
 ## Non-Goals
-- Do not implement code (that is the Builder Agent's job).
-- Do not verify contracts (that is `document-verification`).
+- Product implementation belongs to the Builder Agent; S2 still authors its applicable HTML prototypes and scenario sources.
+- Independent contract verification belongs to `document-verification`; planning still performs its own required checks and self-review.
 - Do not create the Agent Team (that is `team-planning`).
 
 ## Inlined Methodology

@@ -3,17 +3,17 @@
   "stage": "S7",
   "adapter": "review_result",
   "title": "S07 验证 · ReviewResult",
-  "instruction": "只修改 answer。对本卷列出的每个 Claim 给出本人实际判断；blocked_claims 只用于被本轮已确认 Finding 阻断的 Claim。明确填写 Result verdict。保留所有机器题干与来源。 本地证据只选择真实 path:相对路径 或 command_output:原捕获路径；摘要、bytes、truncated 和资产 digest 由原接收机制绑定，不手算或抄 Runtime。",
+  "instruction": "只修改 answer。普通结果对本卷列出的每个 Claim 给出本人实际判断；本次真实 P0 中止时保留已观察结论及 Finding，删除未执行 Claim 的空白项，系统保留其未观察状态，不补写 pass/fail 或虚假 blocked；blocked_claims 只用于被本轮已确认 Finding 阻断的 Claim。明确填写 Result verdict。保留所有机器题干与来源。 本地证据只选择真实 path:相对路径 或 command_output:原捕获路径；摘要、bytes、truncated 和资产 digest 由原接收机制绑定，不手算或抄 Runtime。",
   "questions": {
     "claim_results": {
-      "question": "逐项执行本 Assignment 的 Claim，逐项填写 {\"claim_id\":\"本卷实际Claim ID\",\"conclusion\":\"pass\",\"method\":\"实际采用的方法\",\"observed\":\"实际观察\",\"evidence_refs\":[\"path:docs/reports/review/实际证据.txt\"]}；conclusion 只用 pass/fail。无法执行且被本轮已确认 Finding 阻断的 Claim 改填 blocked_claims，同一 Claim 不在两处重复。不要把未执行写成 pass。",
+      "question": "逐项执行本 Assignment 的 Claim，逐项填写 {\"claim_id\":\"本卷实际Claim ID\",\"conclusion\":\"pass\",\"method\":\"实际采用的方法\",\"observed\":\"实际观察\",\"evidence_refs\":[\"path:docs/reports/review/实际证据.txt\"]}；conclusion 只用 pass/fail。无法执行且被本轮已确认 Finding 阻断的 Claim 改填 blocked_claims，同一 Claim 不在两处重复。不要把未执行写成 pass。仅本次 verdict=finding 且已观察的 fail Claim 有真实 P0 Finding 时，可删除未执行 Claim 的空白项；不得保留 null 伪结论，未观察集合由系统计算。",
       "choices": [
         "pass",
         "fail"
       ]
     },
     "blocked_claims": {
-      "question": "没有被本轮已确认 Finding 阻断的 Claim 时保留 []。仅在该 Finding 使 build/start/entry/precondition 无法执行时，按需添加 {\"claim_id\":\"实际Claim ID\",\"blocking_finding_ids\":[\"本轮已确认finding-ID\"],\"failed_precondition\":{\"kind\":\"start\",\"detail\":\"实际失效前提\"},\"evidence_refs\":[\"path:docs/reports/review/实际证据.txt\"],\"after_repair_required\":true}；kind 只用 build/start/entry/precondition，after_repair_required 必须为 true。时间、预算或人手不足不能填写为 Finding 阻断。",
+      "question": "没有被本轮已确认 Finding 阻断的 Claim 时保留 []。仅在该 Finding 使 build/start/entry/precondition 无法执行时，按需添加 {\"claim_id\":\"实际Claim ID\",\"blocking_finding_ids\":[\"本轮已确认finding-ID\"],\"failed_precondition\":{\"kind\":\"start\",\"detail\":\"实际失效前提\"},\"evidence_refs\":[\"path:docs/reports/review/实际证据.txt\"],\"after_repair_required\":true}；kind 只用 build/start/entry/precondition，after_repair_required 必须为 true。证据也可使用 runtime:本轮实际证据ID；不要求为本地 path: 另行登记证据。若关联同卷新 Finding，可在该 Finding 显式填写实际 finding_id 标签并在 blocking_finding_ids 引用。时间、预算或人手不足不能填写为 Finding 阻断。",
       "example": {
         "path": "answer.blocked_claims",
         "expected": "每个阻断项指向本轮已确认 Finding，并要求修复后重做。",

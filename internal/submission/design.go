@@ -27,6 +27,27 @@ func (s *Service) IssueDesign(ctx context.Context) (workpacket.DesignPacket, err
 	if err != nil {
 		return p, err
 	}
+	// Recovery uses the original issued template, even after a binary update.
+	entities, _ := snap.State["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	found := false
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["template_id"] != "s2-design-v1" {
+			continue
+		}
+		original, exists, readErr := runtime.FindDesignPacket(snap.State, text(row["packet_id"]))
+		if readErr != nil {
+			return p, readErr
+		}
+		if !exists || runtime.ValidateDesignPacket(s.Root, snap.State, original, nil) != nil {
+			continue
+		}
+		if found {
+			return p, fmt.Errorf("multiple design questionnaires belong to the current entry")
+		}
+		p, found = original, true
+	}
 	if err := ctx.Err(); err != nil {
 		return p, err
 	}
@@ -41,6 +62,14 @@ func (s *Service) IssueDesign(ctx context.Context) (workpacket.DesignPacket, err
 	}
 	if !bytes.Equal(actual, view) {
 		return p, fmt.Errorf("published design view differs from original issuance")
+	}
+	if _, accepted, err := runtime.FindSubmission(snap.State, p.ID); err != nil {
+		return p, err
+	} else if accepted {
+		if _, err := workpacket.ReadFile(s.Root, p.AnswerPath, 256<<10); err != nil {
+			return p, fmt.Errorf("accepted design answer is unavailable at %s: %w; restore its original authored bytes, not a blank draft", filepath.Join(s.Root, p.AnswerPath), err)
+		}
+		return p, nil
 	}
 	draft, _ := json.MarshalIndent(p.Draft, "", "  ")
 	if _, err := workpacket.Publish(s.Root, p.AnswerPath, append(draft, '\n')); err != nil {
@@ -158,10 +187,17 @@ func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) 
 			return Receipt{}, fmt.Errorf("design reception has no durable record")
 		}
 	}
+	return s.continueDesignOutlet(ctx, next, p, prior)
+}
+
+// S2 reception and explicit recovery use the same disk design authority.
+// Only the downstream S3 preparation introduces its committed Git source.
+func (s *Service) continueDesignOutlet(ctx context.Context, snap runtime.Snapshot, p workpacket.DesignPacket, prior runtime.SubmissionRecord) (Receipt, error) {
+	next := snap
 	if (prior.ControlStatus != "pending" && prior.ControlStatus != "no_transition") || runtime.ValidateDesignPacket(s.Root, next.State, p, nil) != nil {
 		return s.designReceipt(next, p)
 	}
-	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: prior.FollowupID, Files: s.Files})
+	result, controlErr := controller.RunControlCycle(ctx, controller.ControlRequest{Root: s.Root, CWD: s.Root, StatePath: s.StatePath, JournalPath: s.JournalPath, Event: "PostToolUse", ToolName: "Write", SubmissionFollowupID: prior.FollowupID})
 	preparation := ""
 	var preparationWaiting []Waiting
 	if controlErr == nil && result.Error == "" {
@@ -170,15 +206,25 @@ func (s *Service) SaveDesign(ctx context.Context, path string) (Receipt, error) 
 	if controlErr == nil && result.Error == "" {
 		next = result.Snapshot
 	}
+	RecordPlanningDiagnostic(s.Root, snap.State, "outlet", "")
 	r, err := s.designReceipt(next, p)
 	if err != nil {
 		return Receipt{}, err
 	}
 	if controlErr != nil || result.Error != "" {
-		r.NextAction = "Design was recorded; the original stage outlet remains pending. Save this same answer to continue; do not repeat the design report."
+		detail := result.Error
+		if controlErr != nil {
+			detail = controlErr.Error()
+		}
+		r.NextAction = "Design was recorded; the original stage outlet remains pending: " + detail + ". Restore the named material or use " + PlanningRecoveryCommand(s.Root, "recover") + " for this interrupted outlet; do not repeat the design report."
 	}
 	if len(result.QualityGate.Missing) > 0 || len(result.QualityGate.Conflicts) > 0 {
 		r.NextAction = "Design report was recorded. Complete the actual current design/material gaps before progressing: " + strings.Join(append(result.QualityGate.Missing, result.QualityGate.Conflicts...), "; ") + ". Keep the same answer and its recorded observations; save it to continue the original outlet when ready."
+	}
+	if r.WorkComplete {
+		RecordPlanningDiagnostic(s.Root, snap.State, "outlet", "")
+	} else {
+		RecordPlanningDiagnostic(s.Root, snap.State, "outlet", r.NextAction)
 	}
 	r.NextAction += preparation
 	r.WaitingOn = append(r.WaitingOn, preparationWaiting...)
@@ -206,8 +252,12 @@ func (s *Service) designReceipt(snap runtime.Snapshot, p workpacket.DesignPacket
 		return r, nil
 	}
 	if record.ControlStatus == "pending" || record.ControlStatus == "no_transition" {
-		r.NextAction = "Design report was recorded; the original stage outlet is pending. Save this same answer to continue the original outlet without another report."
+		r.NextAction = "Design report was recorded; the original stage outlet is pending. Resolve the named material gaps; save the same answer when ready, or use " + PlanningRecoveryCommand(s.Root, "recover") + " for an interrupted outlet. Do not repeat the professional report."
+		r.NextAction += PlanningDiagnostic(s.Root, snap.State, "outlet")
 		r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
+		if _, err := workpacket.ReadFile(s.Root, p.AnswerPath, 256<<10); err != nil {
+			r.NextAction += " The original accepted answer is unavailable at " + filepath.Join(s.Root, p.AnswerPath) + ": " + err.Error() + ". Restore its original authored bytes before saving it again; explicit recovery continues from recorded evidence. Do not replace it with a blank draft."
+		}
 	}
 	for _, ev := range evidenceRows(snap.State) {
 		if ev["id"] == record.EvidenceID {
@@ -256,6 +306,16 @@ func (s *Service) DesignReceipt(path, packetID string) (Receipt, error) {
 	return s.designReceipt(snap, p)
 }
 
+// DesignReceiptForSnapshot projects the observer's already-read authority.
+// It cannot recover a pending Writer transaction while rendering guidance.
+func (s *Service) DesignReceiptForSnapshot(snap runtime.Snapshot, packetID string) (Receipt, error) {
+	p, found, err := runtime.FindDesignPacket(snap.State, packetID)
+	if err != nil || !found {
+		return Receipt{}, fmt.Errorf("no original design issuance")
+	}
+	return s.designReceipt(snap, p)
+}
+
 // preparePlanningOutlet completes only the next responsibility of an actual
 // committed planning transition. Old-answer replay never calls this outlet.
 func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.ControlResult) (string, []Waiting) {
@@ -268,6 +328,7 @@ func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.
 		return "", nil
 	}
 	preparationFailed := func(err error) (string, []Waiting) {
+		RecordPlanningDiagnostic(s.Root, result.Snapshot.State, "preparation", err.Error())
 		return " The preceding report and stage transition are recorded; the original next-stage questionnaire preparation failed: " + err.Error() + ". Main/system must continue the existing questionnaire preparation through the original listener after resolving this actual error. Do not resubmit the completed report, invent a questionnaire path, or fabricate inapplicable materials.", []Waiting{{Reason: "system_followup", Owner: "Main", Ref: id}}
 	}
 	service := *s
@@ -299,6 +360,7 @@ func (s *Service) preparePlanningOutlet(ctx context.Context, result *controller.
 	if err != nil {
 		return preparationFailed(err)
 	}
+	RecordPlanningDiagnostic(s.Root, result.Snapshot.State, "preparation", "")
 	current, err := s.snapshot()
 	if err == nil {
 		result.Snapshot = current

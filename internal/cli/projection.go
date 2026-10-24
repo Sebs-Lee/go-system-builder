@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/change"
+	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // stageContract is the executable projection contract consumed by status and
@@ -181,10 +183,14 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 		// Keep the projection scoped to S2. An architecture artifact on disk
 		// does not prove that the current design was accepted, and it cannot
 		// imply the S3 contract set or S4 task batch.
+		if currentDesignReceived(state) {
+			// Reception is authoritative even when its original stage outlet
+			// still needs work. The questionnaire feedback names that work.
+			contract.Missing = nil
+		}
 		if boundREQHasUIImpact(state) {
-			complete, _ := hasCompleteUIDesignPackageForREQ(root, boundREQPathFromState(state))
-			if !complete {
-				contract.Missing = appendUnique(contract.Missing, "ui_design_package")
+			if err := inspectUIDesignPackageFilesForREQ(root, boundREQPathFromState(state)); err != nil {
+				contract.Missing = appendUnique(contract.Missing, "ui_design_package: "+err.Error())
 			}
 		}
 	case "S3":
@@ -221,6 +227,30 @@ func contractFor(stage string, state map[string]any, root string) stageContract 
 		}
 	}
 	return contract
+}
+
+// currentDesignReceived reads only the current responsibility and reception
+// facts. A document on disk or an older stage's accepted answer is insufficient.
+func currentDesignReceived(state map[string]any) bool {
+	if !runtime.PacketEnabled(state) {
+		return false
+	}
+	baseline, _ := state["baseline"].(map[string]any)
+	lifecycle, _ := state["lifecycle"].(map[string]any)
+	if lifecycle["state"] != "planning" || lifecycle["phase"] != "design" {
+		return false
+	}
+	binding := workpacket.PlanningBinding{
+		RuntimeID:  stringValue(state["runtime_id"]),
+		Generation: integerValue(baseline["generation"]),
+		StageEntry: integerValue(lifecycle["phase_revision"]),
+	}
+	packet, issued, conflict := currentDesignPlanningPacket(state, workpacket.DesignPacket{Binding: binding})
+	if !issued || conflict {
+		return false
+	}
+	record, found, err := runtime.FindSubmission(state, packet.ID)
+	return err == nil && found && record.PacketID == packet.ID && record.OriginState == "planning" && record.OriginPhase == "design" && record.OriginEntry == binding.StageEntry
 }
 
 func cloneStrings(values []string) []string {

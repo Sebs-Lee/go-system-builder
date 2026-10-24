@@ -12,7 +12,6 @@ import (
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/transition"
-	"github.com/entroforge/go-system-builder/internal/workpacket"
 	fixtures "github.com/entroforge/go-system-builder/tests/fixtures/req039"
 )
 
@@ -35,16 +34,22 @@ func observedQuestionnaireHookAs(t *testing.T, root, owner, tool string, input, 
 }
 
 func TestQuestionnaireObserverReceivesScriptAndCustomToolSaves(t *testing.T) {
-	for _, tool := range []string{"Bash", "mcp__sandbox__execute", "mcp__sandbox__write_file"} {
+	for _, tool := range []string{"Bash", "mcp__sandbox__execute", "mcp__sandbox__write_file", "mcp__sandbox__transform"} {
 		t.Run(tool, func(t *testing.T) {
 			root, packet := newDesignFixture(t, "none")
 			path := filepath.Join(root, packet.AnswerPath)
-			stageJSON(t, root, packet.AnswerPath, designDraft(packet))
-			input := map[string]any{"command": "script writes the existing questionnaire; its text is not parsed"}
+			saved := ""
 			if tool == "mcp__sandbox__write_file" {
-				input = map[string]any{"file_path": path}
+				saved = packet.AnswerPath
 			}
-			out := observedQuestionnaireHook(t, root, tool, input, map[string]any{})
+			if tool == "mcp__sandbox__transform" {
+				// A tool's input path need not be the answer it actually changed.
+				// Its paired mutation, not the path label, selects the receiver.
+				saved = "docs/architecture/ARCHITECTURE-039.md"
+			}
+			planningBoundaryEvent(t, root, "PreToolUse", tool, saved, false)
+			stageJSON(t, root, packet.AnswerPath, designDraft(packet))
+			out, _ := planningBoundaryEvent(t, root, "PostToolUse", tool, saved, false)
 			if !strings.Contains(out, path) || !strings.Contains(out, "S2 SUBMISSION RECEIPT") {
 				t.Fatalf("no exact observed-save receipt: %s", out)
 			}
@@ -203,19 +208,12 @@ func TestS7ObserverSkipsMachineDraftAndReceivesProfessionalScriptSave(t *testing
 }
 
 func TestPlanningObserverUsesAnswerAndBoundCommitWithoutRepeatingUnchangedSave(t *testing.T) {
-	for _, stage := range []string{"S3", "S4"} {
+	// S4 retains its existing observer contract; S3 now requires a matching
+	// tool mutation (covered by TestS3PlanningObserverRequiresActualAnswerChange).
+	for _, stage := range []string{"S4"} {
 		t.Run(stage, func(t *testing.T) {
-			var root, path, packetID string
-			var complete any
-			if stage == "S3" {
-				var p workpacket.ContractPacket
-				root, p = newContractAnswerFixture(t)
-				path, packetID, complete = p.AnswerPath, p.ID, completedContractDraft(p)
-			} else {
-				var p workpacket.TaskPlanningPacket
-				root, p = newTaskPlanningAnswerFixture(t)
-				path, packetID, complete = p.AnswerPath, p.ID, completedTaskPlanningDraft(p)
-			}
+			root, p := newTaskPlanningAnswerFixture(t)
+			path, packetID, complete := p.AnswerPath, p.ID, completedTaskPlanningDraft(p)
 			// These fixtures copy the repository's actual default source declarations.
 			catalog, err := transition.LoadCatalog(root)
 			if err != nil {
@@ -353,37 +351,35 @@ func TestPlanningObserverMissingPacketWaitsForCommitAndPreservesReadChange(t *te
 		t.Fatal(err)
 	}
 	fixtures.CommitCurrentFixture(t, root)
-	hook := func(tool string) string {
+	hook := func(event, tool string) string {
 		t.Helper()
-		input := map[string]any{"command": "ordinary script"}
+		path := ""
 		if tool == "Read" || tool == "Write" {
-			input = map[string]any{"file_path": filepath.Join(root, source)}
+			path = source
 		}
-		body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": tool, "cwd": root, "session_id": "missing-packet-observer", "tool_input": input})
-		var out, stderr bytes.Buffer
-		if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &stderr); code != 0 {
-			t.Fatalf("hook %d: %s %s", code, &out, &stderr)
-		}
-		return stderr.String()
+		out, _ := planningBoundaryEvent(t, root, event, tool, path, false)
+		return out
 	}
-	if diagnostic := hook("Bash"); diagnostic == "" {
-		t.Fatal("first missing packet observation did not try its original preparation")
-	}
-	for i := 0; i < 9; i++ {
-		if diagnostic := hook("Bash"); diagnostic != "" {
-			t.Fatalf("unchanged missing packet Bash %d repeated preparation: %s", i, diagnostic)
-		}
-	}
-	// A normal explicit save still retries a temporarily incomplete original outlet.
-	if diagnostic := hook("Write"); diagnostic == "" {
-		t.Fatal("explicit save lost its original preparation outlet")
+	// Missing observation is not a successful source mutation.
+	if out := hook("PostToolUse", "Bash"); strings.Contains(out, "S3 Contracts questionnaire could not") {
+		t.Fatalf("unobserved tool retried preparation: %s", out)
 	}
 	writeContractSource(t, root, source, string(original))
+	if out := hook("PostToolUse", "Write"); !strings.Contains(out, "additionalContext") || !strings.Contains(out, "read Git blob "+source) {
+		t.Fatalf("explicit source repair lost preparation feedback: %s", out)
+	}
+	for i := 0; i < 3; i++ {
+		hook("PreToolUse", "Bash")
+		if out := hook("PostToolUse", "Bash"); strings.Contains(out, "S3 Contracts questionnaire could not") {
+			t.Fatalf("unchanged tool repeated preparation: %s", out)
+		}
+	}
+	hook("PreToolUse", "Bash")
 	fixtures.CommitCurrentFixture(t, root)
-	hook("Read") // Must not consume the changed commit observation.
-	preparation := hook("Bash")
-	if preparation == "" {
-		t.Fatal("real commit did not retry the original issuer")
+	hook("PostToolUse", "Read") // A read cannot consume the commit observation.
+	preparation := hook("PostToolUse", "Bash")
+	if !strings.Contains(preparation, "/S3/") {
+		t.Fatalf("real commit lost same-event next paths: %s", preparation)
 	}
 	snapshot := stageSnapshot(t, root)
 	var currentPath string
@@ -404,12 +400,18 @@ func TestPlanningObserverMissingPacketWaitsForCommitAndPreservesReadChange(t *te
 	if err := os.Remove(filepath.Join(root, currentPath)); err != nil {
 		t.Fatal(err)
 	}
-	hook("Bash")
-	if _, err := os.Stat(filepath.Join(root, currentPath)); err != nil {
-		t.Fatal("missing answer was not restored:", err)
+	hook("PreToolUse", "Bash")
+	hook("PostToolUse", "Bash")
+	if _, err := os.Stat(filepath.Join(root, currentPath)); !os.IsNotExist(err) {
+		t.Fatalf("unchanged Bash restored missing answer: %v", err)
 	}
-	hook("Bash") // New draft replaces missing marker; preparation has no work.
-	if diagnostic := hook("Bash"); diagnostic != "" {
-		t.Fatalf("restored answer repeated preparation: %s", diagnostic)
+	writeContractSource(t, root, source, string(original))
+	hook("PostToolUse", "Write")
+	if _, err := os.Stat(filepath.Join(root, currentPath)); err != nil {
+		t.Fatal("source save did not restore original answer:", err)
+	}
+	hook("PreToolUse", "Bash")
+	if out := hook("PostToolUse", "Bash"); strings.Contains(out, "S3 Contracts current questionnaire") {
+		t.Fatalf("restored answer repeated preparation: %s", out)
 	}
 }

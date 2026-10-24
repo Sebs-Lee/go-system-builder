@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
+	"sort"
+	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/reviewmeta"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -100,6 +103,73 @@ func verifyReviewResultPacketSources(root string, packet workpacket.ReviewResult
 	packetSubjects, err := canonicalRuntimeJSON(packet.Inputs.FrozenSubjects)
 	if err != nil || !bytes.Equal(subjectSource, packetSubjects) {
 		return errors.New("S7 packet frozen subject inputs differ from the original pinned Plan")
+	}
+	return verifyReviewResultMethodSource(root, packet, original.Lens)
+}
+
+// The packet freezes selected paths at issuance. Historical verification reads
+// the original manifest, never today's role profile/catalog and never rewrites
+// the original packet when installed method sources subsequently move.
+func verifyReviewResultMethodSource(root string, packet workpacket.ReviewResultPacket, lens string) error {
+	source := packet.Inputs.MethodSource
+	if source == nil {
+		return nil
+	} // pre-method issuance, with its original ID
+	data, err := workpacket.ReadFile(root, source.ManifestRef, 4<<20)
+	if err != nil || workpacket.Digest(data) != source.SHA256 {
+		return errors.New("S7 original selected-method manifest is missing or differs from its frozen digest")
+	}
+	if err := workpacket.ValidateUniqueJSON(data); err != nil {
+		return err
+	}
+	var manifest struct {
+		RuntimeID          string `json:"runtime_id"`
+		BaselineGeneration int    `json:"baseline_generation"`
+		ReviewRound        int    `json:"review_round"`
+		WorkgroupKind      string `json:"workgroup_kind"`
+		Assignments        []struct {
+			ID     string   `json:"assignment_id"`
+			Owner  string   `json:"agent_id"`
+			Role   string   `json:"role_family"`
+			Claims []string `json:"claim_ids"`
+			Skills []string `json:"skill_refs"`
+		} `json:"assignments"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return err
+	}
+	b := packet.Binding
+	kind := map[string]string{"delivery": "delivery_verifier", "qa": "qa", "e2e": "e2e_browser"}[lens]
+	role := map[string]string{"delivery": "delivery-verifier", "qa": "qa", "e2e": "e2e-tester"}[lens]
+	if manifest.RuntimeID != b.RuntimeID || manifest.BaselineGeneration != b.BaselineGeneration || manifest.ReviewRound != b.ReviewRound || manifest.WorkgroupKind != kind {
+		return errors.New("S7 original method source differs from the Runtime/round/lens")
+	}
+	found := false
+	for _, item := range manifest.Assignments {
+		if item.ID != b.AssignmentID {
+			continue
+		}
+		claims, bound := append([]string(nil), item.Claims...), append([]string(nil), b.ClaimIDs...)
+		sort.Strings(claims)
+		sort.Strings(bound)
+		if found || item.Owner != b.OwnerAgentID || item.Role != role || !reflect.DeepEqual(claims, bound) || item.Skills == nil || hasDuplicateStrings(item.Skills) || len(item.Skills) != len(packet.Inputs.Methods) {
+			return errors.New("S7 original method source differs from the Assignment/owner/selected set")
+		}
+		found = true
+		selected := map[string]bool{}
+		for _, name := range item.Skills {
+			selected[name] = true
+		}
+		for _, method := range packet.Inputs.Methods {
+			parts := strings.Split(strings.TrimPrefix(method.Path, ".claude/"), "/")
+			if len(parts) != 3 || parts[0] != "skills" || parts[2] != "SKILL.md" || !selected[parts[1]] || method.Purpose != workpacket.ReviewMethodPurpose(parts[1]) {
+				return errors.New("S7 delivered method differs from the original manifest selection")
+			}
+			delete(selected, parts[1])
+		}
+	}
+	if !found {
+		return errors.New("S7 original method source omits the issued Assignment")
 	}
 	return nil
 }

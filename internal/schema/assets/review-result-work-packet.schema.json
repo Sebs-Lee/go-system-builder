@@ -43,6 +43,23 @@
       "additionalProperties": false,
       "required": ["claims", "frozen_subjects"],
       "properties": {
+        "methods": {
+          "type": "array", "maxItems": 256,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["path", "purpose"],
+            "properties": {
+              "path": {"type": "string", "pattern": "^(\\.claude/)?skills/[A-Za-z0-9][A-Za-z0-9._-]*/SKILL\\.md$"},
+              "purpose": {"type": "string", "minLength": 1, "maxLength": 4096}
+            }
+          }
+        },
+        "method_source": {
+          "type": "object", "additionalProperties": false, "required": ["manifest_ref", "sha256"],
+          "properties": {
+            "manifest_ref": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+          }
+        },
         "claims": {
           "type": "array",
           "minItems": 1,

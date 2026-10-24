@@ -154,10 +154,10 @@ func TestS2DualTrackConvergenceE2E(t *testing.T) {
 		t.Fatalf("validate (full bridge incl.) failed: %s %s", out, stderr)
 	}
 
-	// --- completeness gate sees the eight-file package ---
+	// --- keep the same S2 authority after author-run design checks ---
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	state := readJSONMap(t, statePath)
-	writeJSONMap(t, statePath, state) // no-op; package already complete per hasCompleteUIDesignPackageForREQ path used by projection
+	writeJSONMap(t, statePath, state) // no-op; passive projection inventories files without rerunning scenario validation
 
 	// --- doctor: AutoSpecs — spec tree absent, expected before S6, must stay green ---
 	// validate --all checks the skill catalog too; seed it from the repo.

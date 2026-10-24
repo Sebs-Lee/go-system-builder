@@ -34,13 +34,13 @@ var builderBatchMissingTokenRules = []missingTokenRule{
 	{
 		prefix:   "evidence:completion_report",
 		exact:    true,
-		meaning:  "one or more assigned Builders have not submitted a qualified Result",
-		nextStep: "Main coordinates each original registered Builder execution and waits for its Result; each assigned Builder implements its TASK and fills and saves its own exact Result questionnaire at the path shown in this Hook, then Main integrates",
+		meaning:  "one or more reviewed TASKs have no qualified Builder Result; this does not prove a Builder has been prepared or started",
+		nextStep: "Main follows the current TASK progress: prepare an eligible unprepared TASK with s6 prepare, dispatch or resume its exact native brief, or resolve the actual returned blocker; integrate only a qualified received delivery",
 	},
 	{
 		prefix:   "evidence:completion_report:",
-		meaning:  "the named TASK has no qualified Result from its assigned Builder",
-		nextStep: "Main coordinates the original registered Builder execution for that TASK and waits; its assigned Builder implements the TASK and fills and saves its own exact Result questionnaire at the path shown in this Hook, then Main integrates",
+		meaning:  "the named TASK has no qualified Builder Result; its preparation and native execution must be determined from actual progress",
+		nextStep: "Main prepares this TASK with s6 prepare if eligible and unprepared, otherwise dispatches or resumes its original brief or resolves the actual returned blocker; an absent Result is not proof of a running Builder",
 	},
 	{
 		prefix:   "checks:",

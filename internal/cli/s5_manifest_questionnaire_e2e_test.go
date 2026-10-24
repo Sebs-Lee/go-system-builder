@@ -53,11 +53,25 @@ func s5EntryHook(t *testing.T, root string) string {
 	return out.String() + diag.String()
 }
 
-func TestS5EntryAutomaticallyPreparesAndIssuesOriginalIndependentReviews(t *testing.T) {
+func s5EntryRecovery(t *testing.T, root string, wantCode int) string {
+	t.Helper()
+	var out, diagnostic bytes.Buffer
+	if code := cli.Run([]string{"runtime", "stage-answer", "issue", "--root", root}, nil, &out, &diagnostic); code != wantCode {
+		t.Fatalf("original S5 preparation recovery: got %d want %d: %s %s", code, wantCode, &out, &diagnostic)
+	}
+	return out.String() + diagnostic.String() + s5EntryHook(t, root)
+}
+
+func TestS5NamedRecoveryPreparesOriginalResponsibilitiesWhileSessionOnlyObserves(t *testing.T) {
 	root := newUnregisteredS5InputFixture(t)
 	before := stageSnapshot(t, root)
-	// No Main metadata questionnaire, synthetic SHA or confirmation save.
-	output := s5EntryHook(t, root)
+	observed := s5EntryHook(t, root)
+	if stageSnapshot(t, root).Revision != before.Revision || !strings.Contains(observed, "runtime stage-answer issue") {
+		t.Fatalf("session observation prepared work or omitted named recovery: %s", observed)
+	}
+	// Recover the interrupted original S4 -> S5 preparation without authoring
+	// a metadata questionnaire, synthetic SHA or another confirmation save.
+	output := s5EntryRecovery(t, root, 0)
 	after := stageSnapshot(t, root)
 	packets, err := runtime.S5Packets(root, after.State, "")
 	if err != nil || len(packets) != 2 {
@@ -130,7 +144,7 @@ func TestS5EntryAutomaticallyPreparesAndIssuesOriginalIndependentReviews(t *test
 	}
 }
 
-func TestS5EntryRejectsAcceptedSourceDriftWithoutRefreshingSHA(t *testing.T) {
+func TestS5PreparationRecoveryRejectsAcceptedSourceDriftWithoutRefreshingSHA(t *testing.T) {
 	root := newUnregisteredS5InputFixture(t)
 	before := stageSnapshot(t, root)
 	source := "docs/dev/tasks/TASK-039-01.md"
@@ -141,7 +155,7 @@ func TestS5EntryRejectsAcceptedSourceDriftWithoutRefreshingSHA(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, source), append(data, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
-	output := s5EntryHook(t, root)
+	output := s5EntryRecovery(t, root, 1)
 	after := stageSnapshot(t, root)
 	for _, key := range []string{"documents", "evidence", "lifecycle"} {
 		if !reflect.DeepEqual(after.State[key], before.State[key]) {
@@ -163,7 +177,7 @@ func TestS5EntryRejectsAcceptedSourceDriftWithoutRefreshingSHA(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, source), data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	output = s5EntryHook(t, root)
+	output = s5EntryRecovery(t, root, 0)
 	packets, err = runtime.S5Packets(root, stageSnapshot(t, root).State, "")
 	if err != nil || len(packets) != 2 {
 		t.Fatalf("restoring original source did not recover preparation: %v %s", err, output)
@@ -179,7 +193,7 @@ func TestS5EntryAcceptsProfessionalOnlyManifestWithoutMachineFields(t *testing.T
 		map[string]any{"scope": []string{"整批规格链，特别核对无权限拒绝语义"}},
 		map[string]any{"scope": []string{"整批任务，特别核对错误路径的真实验证责任"}},
 	}})
-	output := s5EntryHook(t, root)
+	output := s5EntryRecovery(t, root, 0)
 	packets, err := runtime.S5Packets(root, stageSnapshot(t, root).State, "")
 	if err != nil || len(packets) != 2 {
 		t.Fatalf("professional choices without machine fields rejected: %v %s", err, output)
@@ -204,7 +218,7 @@ func TestS5EntryAcceptsProfessionalOnlyManifestWithoutMachineFields(t *testing.T
 // registered manifest is a frozen original source, not another editable answer.
 func TestS5RegisteredManifestSaveRejectsChangedAssociationsAndReplaysUnchanged(t *testing.T) {
 	root := newUnregisteredS5InputFixture(t)
-	s5EntryHook(t, root)
+	s5EntryRecovery(t, root, 0)
 	before := stageSnapshot(t, root)
 	manifest := ""
 	for _, raw := range before.State["entities"].(map[string]any)["teams"].([]any) {

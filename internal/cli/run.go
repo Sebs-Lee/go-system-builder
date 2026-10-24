@@ -15,7 +15,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -562,7 +561,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 	case "document_verification":
 		return "S5", "document-verification", "complete independent document verification"
 	case "building":
-		return "S6", "agent-dispatch", "Main coordinates the original registered Builder executions and waits for each assigned Builder to implement its TASK, fill and save its own exact PLAN/Result questionnaires using the paths supplied by the listener; Main then performs the original integration and required checks"
+		return "S6", "agent-dispatch", "Main follows actual TASK progress: prepare an eligible unprepared TASK with s6 prepare, dispatch its exact brief through native Agent/worktree, or integrate a received delivery. Use s6 status --advice when readiness is not yet shown; registration alone does not prove a Builder is running."
 	case "verification":
 		switch phase {
 		case "planned":
@@ -1566,14 +1565,15 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		journalPath := flags.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
 		expectedRevision := flags.Int("expected-revision", -1, "expected runtime revision")
 		agentID := flags.String("agent-id", "", "Agent ID")
-		event := flags.String("event", "", "readback_submitted, understanding_approved, or activated")
+		event := flags.String("event", "", "original Agent lifecycle event, including blocker_resolved")
 		messagePath := flags.String("message", "", "Agent message path")
+		body := flags.String("body", "", "S7 blocker_resolved professional restoration explanation; machine message facts come from the original blocked responsibility")
 		occurredAtValue := flags.String("occurred-at", "", "RFC3339 event time")
 		if err := parseWorkspaceFlags(flags, args[1:]); err != nil {
 			return 2
 		}
-		if *agentID == "" || *event == "" || *messagePath == "" {
-			fmt.Fprintln(stderr, "runtime agent-event requires --agent-id, --event and --message")
+		if *agentID == "" || *event == "" || (*messagePath == "" && *body == "") || (*messagePath != "" && *body != "") {
+			fmt.Fprintln(stderr, "runtime agent-event requires --agent-id, --event and exactly one of --message or --body (S7 blocker_resolved only)")
 			return 2
 		}
 		resolvedRevision := *expectedRevision
@@ -1586,13 +1586,20 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			}
 			occurredAt = parsedAt
 		}
-		next, err := assignment.AdvanceAgent(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), assignment.AgentEventRequest{
+		request := assignment.AgentEventRequest{
 			ExpectedRevision: resolvedRevision,
 			AgentID:          *agentID,
 			Event:            *event,
 			MessagePath:      resolveRootPath(*root, *messagePath),
 			OccurredAt:       occurredAt,
-		})
+		}
+		var next runtime.Snapshot
+		var err error
+		if *body != "" {
+			next, err = advanceS7BlockerWithBody(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), request, *body)
+		} else {
+			next, err = assignment.AdvanceAgent(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), request)
+		}
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime agent-event", err))
 			return 1
@@ -3074,6 +3081,13 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		// Professional facts are already owned by their original Writers.
 		// Do not receive private drafts, run a control cycle or emit context
 		// as a substitute for persistence. SessionStart reads current facts.
+		// This boundary precedes the optional Main session-owner lookup.
+		// Clear both Main aliases so the next observation can redeliver full
+		// guidance even when compaction is not followed by SessionStart.
+		for _, owner := range []string{request.EffectiveAgentID(), "", "Main"} {
+			_, reset := hook.PreparePlanningContext(root, request.SessionID, owner, request.Event, "", nil)
+			reset()
+		}
 		return 0
 	}
 	// A separately launched top-level Claude session has no native agent_id.
@@ -3096,24 +3110,37 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 	if request.AgentID == "" {
 		request.AgentID = request.TeammateName
 	}
+	request = observePlanningToolChange(root, request, stderr)
 	// PostToolUse(SendMessage) is a pure observer (L3-S7 §8, L4 §7.4): it
 	// never runs the Quality Gate, never persists a gate milestone, and
 	// never denies. It short-circuits here so no control-cycle machinery
 	// runs for it.
 	if request.Event == "PostToolUse" {
+		var postOutput bytes.Buffer
+		originalStdout := stdout
+		stdout = &postOutput
+		preparation := ""
+		defer func() { writePlanningPostOutput(originalStdout, postOutput.Bytes(), preparation) }()
 		// Observe ordinary successful tools before non-checkpoint Bash exits.
 		// The sampler owns only diagnostic caches and never a control cycle.
 		progressNotice, progressKnown, progressChanged := observeWorkProgress(root, request, stderr)
 		_, explicitSave := savedQuestionnairePath(request)
-		if explicitSave || !progressKnown || progressChanged {
-			if preparation := prepareCurrentPlanningAfterChange(root, request); preparation != "" {
-				fmt.Fprintln(stderr, preparation)
-			}
+		change := planningChangeFrom(request)
+		if (change.Active && planningMaterialSave(request, root)) || (!change.Active && (explicitSave || !progressKnown || progressChanged)) {
+			preparation = prepareCurrentPlanningAfterChange(root, request)
 		}
 		if handled, code := receiveSavedQuestionnaire(root, request, stdout, stderr); handled {
+			// Its receipt already describes the resulting stage and next work;
+			// do not append the now-obsolete pre-reception responsibility.
+			if postOutput.Len() > 0 {
+				preparation = ""
+			}
 			return code
 		}
 		if handled, code := runObservedQuestionnaireSaves(root, request, stdout, stderr, progressKnown, progressChanged); handled {
+			if postOutput.Len() > 0 {
+				preparation = ""
+			}
 			return code
 		}
 		if progressNotice != nil && len(progressNotify) > 0 && progressNotify[0] {
@@ -3390,6 +3417,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, message)
 	}
 	deliveredReminder := func() {}
+	reminderPending := false
 	if request.Event == "PreToolUse" || request.Event == "SessionStart" {
 		if request.Event == "PreToolUse" && stageAnswerContext == "" && controlResult.QualityGate.Status == controller.StatusNotReady {
 			if dev, err := fileview.DevelopmentRef(controlResult.Snapshot.State); err == nil {
@@ -3398,6 +3426,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		}
 		msg, delivered := reminderDelivery(root, request)
 		if msg != "" {
+			reminderPending = true
 			if request.Event == "SessionStart" {
 				before := decision.AdditionalContext
 				decision.AdditionalContext = hook.AppendLifecycleContext(before, msg)
@@ -3438,6 +3467,20 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "render Hook output: %v\n", err)
 		return 1
 	}
+	// Only the verified S2/S5 read-only Main projections use this delivery policy.
+	// Responsibility identity excludes observation revision churn. Reminders
+	// and control failures retain full delivery even when their text repeats.
+	responsibility := ""
+	contextStage := ""
+	if graphObserved && mainQuestionnaireViewer(request) && decision.Guidance != nil && (decision.Guidance.Stage == "S2" || decision.Guidance.Stage == "S5") && !reminderPending && controlResult.Error == "" {
+		state := controlResult.Snapshot.State
+		baseline, _ := state["baseline"].(map[string]any)
+		lifecycle, _ := state["lifecycle"].(map[string]any)
+		identity, _ := json.Marshal([]any{state["runtime_id"], baseline["generation"], lifecycle["phase_revision"]})
+		responsibility = string(identity)
+		contextStage = decision.Guidance.Stage
+	}
+	output, commitContext := hook.PrepareResponsibilityContext(root, request.SessionID, request.EffectiveAgentID(), request.Event, contextStage, responsibility, output)
 	output, commitNotice := hook.PrepareNotice(root, request.SessionID, request.EffectiveAgentID(), request.Event, output)
 	if len(output) > 0 {
 		if _, err := stdout.Write(append(output, '\n')); err != nil {
@@ -3448,6 +3491,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 			return 1
 		}
 	}
+	commitContext()
 	commitNotice()
 	if request.Event != "PreToolUse" && isDenyingHookDecision(decision.Decision) {
 		return 2
@@ -4155,58 +4199,6 @@ func hookTargetPath(input map[string]any) string {
 		}
 	}
 	return ""
-}
-
-// hasProtoMetaHeader enforces the 4-field header mandate from
-// docs/rules/ui-prototype.md §5: 设计代数 / 更新 / 路由 / index 链接.
-// All four tokens must appear in the file (any ordering); each is matched as a
-// fixed substring so the check stays decoupled from HTML structure.
-func hasProtoMetaHeader(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	body := string(data)
-	for _, marker := range []string{"设计代数", "更新", "路由", "index.html"} {
-		if !strings.Contains(body, marker) {
-			return false
-		}
-	}
-	return true
-}
-
-// hasStoryIDWithReqID verifies stories.md carries at least one S-NNN entry
-// referencing a REQ-id, per docs/rules/ui-prototype.md §6.
-func hasStoryIDWithReqID(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	body := string(data)
-	storyRe := regexp.MustCompile(`(?m)^#+\s*S-\d{3,}\b`)
-	reqRe := regexp.MustCompile(`REQ-\d{3,}`)
-	loc := storyRe.FindStringIndex(body)
-	if loc == nil {
-		return false
-	}
-	return reqRe.MatchString(body[loc[0]:])
-}
-
-// hasFlowIDWithReqID verifies flows.md carries at least one F-NNN entry
-// referencing a REQ-id, per docs/rules/ui-prototype.md §7.
-func hasFlowIDWithReqID(path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	body := string(data)
-	flowRe := regexp.MustCompile(`(?m)^#+\s*F-\d{3,}\b`)
-	reqRe := regexp.MustCompile(`REQ-\d{3,}`)
-	loc := flowRe.FindStringIndex(body)
-	if loc == nil {
-		return false
-	}
-	return reqRe.MatchString(body[loc[0]:])
 }
 
 // runReleaseGraph validates a staged release tree by walking its Skill

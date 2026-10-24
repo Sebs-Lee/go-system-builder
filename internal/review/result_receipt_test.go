@@ -36,6 +36,8 @@ func packetModeFixture(t *testing.T) (string, string, string, loopruntime.Snapsh
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedResultMethodSources(t, root, snapshot.State, plan)
+	writeMethodState(t, statePath, snapshot.State)
 	return root, statePath, journalPath, snapshot, plan
 }
 

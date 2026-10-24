@@ -420,7 +420,6 @@
         "designs": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 128,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -455,7 +454,6 @@
             "array",
             "null"
           ],
-          "maxItems": 128,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -481,10 +479,8 @@
         },
         "directories": {
           "type": "object",
-          "maxProperties": 32,
           "additionalProperties": {
             "type": "array",
-            "maxItems": 256,
             "items": {
               "type": "string",
               "minLength": 1

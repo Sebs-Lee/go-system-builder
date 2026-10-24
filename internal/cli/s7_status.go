@@ -295,13 +295,7 @@ func runS7Status(root string, stdout io.Writer, explain bool) int {
 		// (the recovery verb is `runtime agent-event blocker_resolved`).
 		line := fmt.Sprintf("  %s [%s] status=%s agent=%s", id, row["lens"], status, agent)
 		if status == "blocked" {
-			if ref, _ := row["blocker_ref"].(string); ref != "" {
-				if packetMode {
-					line += fmt.Sprintf("\n    blocker_ref=%s; Main/Reviewer must resolve this recorded blocker through its original recovery path", ref)
-				} else {
-					line += fmt.Sprintf("\n    blocker_ref=%s (record `runtime agent-event --event blocker_resolved --agent-id <id> --message <file>` after the capture conditions are fixed, then resubmit)", ref)
-				}
-			}
+			line += "\n    " + strings.TrimSpace(s7BlockedAssignmentGuidance(root, state, id))
 		}
 		if queuedAgent, _ := row["queued_agent_id"].(string); queuedAgent != "" {
 			line += fmt.Sprintf("\n    queue_reason=%v (the platform TeammateIdle hook re-wakes %s with this Assignment envelope after the lock is released)", row["queue_reason"], queuedAgent)

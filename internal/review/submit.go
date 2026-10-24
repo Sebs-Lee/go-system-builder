@@ -288,7 +288,7 @@ func submitResult(
 	if err := validateSiteLostDeclarations(&result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateBlockedClaims(root, current, plan, assignment, &result); err != nil {
+	if err := validateBlockedClaims(root, current, plan, assignment, &result, artifactRoot); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateProducerIndependence(current, &result); err != nil {
@@ -690,10 +690,10 @@ func planAssignmentIDs(plan *Plan) []string {
 	return ids
 }
 
-// validateClaimResultSet proves claim_results + blocked_claims == the
-// Assignment's exact Claim set: every Claim is answered exactly once, either
-// by a pass/fail conclusion or by a blocked_by_confirmed_finding declaration;
-// no missing, no extras, no duplicates (L3-S7 §3.5).
+// validateClaimResultSet requires exactly one pass/fail or confirmed-blocker
+// declaration for each assigned Claim, with no extras or duplicates. A P0
+// safety stop may omit unobserved Claims; all Findings and evidence are still
+// validated before any acceptance.
 func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 	want := map[string]bool{}
 	for _, claimID := range assignment.ClaimIDs {
@@ -718,8 +718,21 @@ func validateClaimResultSet(assignment *PlanAssignment, result *Result) error {
 		}
 		seen[blocked.ClaimID] = true
 	}
+	safetyStop := false
+	if result.Verdict == "finding" {
+		for _, finding := range result.Findings {
+			if finding.Severity != "P0" {
+				continue
+			}
+			for _, claim := range result.ClaimResults {
+				if claim.ClaimID == finding.ClaimID && claim.Conclusion == "fail" {
+					safetyStop = true
+				}
+			}
+		}
+	}
 	for claimID := range want {
-		if !seen[claimID] {
+		if !seen[claimID] && !safetyStop {
 			return fmt.Errorf("claim_results is missing %s; the Assignment's Claim set must be answered exactly (pass/fail or a blocked_by_confirmed_finding declaration, L3-S7 §3.5)", claimID)
 		}
 	}
@@ -773,10 +786,10 @@ func validateClaimEvidenceRequirements(plan *Plan, assignment *PlanAssignment, r
 }
 
 // validateResultEvidenceReferences validates references whose syntax declares
-// a local immutable artifact (`path:<repo-relative-path>#sha256=<64 hex>`) or an indexed runtime
-// Evidence row. Bare refs remain symbolic/external refs for compatibility
-// with browser traces and platform-provided evidence IDs; the explicit path
-// prefix is the low-complexity contract that makes local evidence auditable.
+// a local immutable artifact (`path:<repo-relative-path>#sha256=<64 hex>`) or
+// an indexed Runtime evidence row. Bare IDs must resolve to that index;
+// blocked Claims also have a bounded same-result Finding reference handled
+// by validateBlockedClaims. No arbitrary symbolic reference proves evidence.
 func validateResultEvidenceReferences(root string, state map[string]any, result *Result, pathRoots ...string) error {
 	for _, claimResult := range result.ClaimResults {
 		if err := validateEvidenceRefs(root, state, claimResult.EvidenceRefs, fmt.Sprintf("claim %s", claimResult.ClaimID), pathRoots...); err != nil {
@@ -798,11 +811,9 @@ func validateResultEvidenceReferences(root string, state map[string]any, result 
 			}
 		}
 	}
-	for _, blocked := range result.BlockedClaims {
-		if err := validateEvidenceRefs(root, state, blocked.EvidenceRefs, fmt.Sprintf("blocked claim %s", blocked.ClaimID), pathRoots...); err != nil {
-			return err
-		}
-	}
+	// Blocked evidence is validated together with its current-round Finding
+	// association in validateBlockedClaims. That boundary also resolves the
+	// supported same-result Finding reference before using the typed validator.
 	return nil
 }
 

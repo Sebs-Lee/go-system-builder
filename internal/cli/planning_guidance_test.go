@@ -61,8 +61,10 @@ const planningGuidanceDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 func TestS5PreparationGuidanceNamesCurrentEntryManifestAndOriginalSkill(t *testing.T) {
 	root := t.TempDir()
 	state := map[string]any{
-		"lifecycle": map[string]any{"state": "document_verification", "phase_revision": 8},
-		"bound_req": map[string]any{"id": "REQ-001"},
+		"schema_version": "1.3.0",
+		"configuration":  map[string]any{"optimization": map[string]any{"packet": true}},
+		"lifecycle":      map[string]any{"state": "document_verification", "phase_revision": 8},
+		"bound_req":      map[string]any{"id": "REQ-001"},
 	}
 	guidance := stageS5PreparationGuidance(root, state)
 	for _, path := range []string{".claude/workgroups/REQ-001/review-e8/manifest.json", ".claude/skills/team-planning/SKILL.md"} {
@@ -70,7 +72,7 @@ func TestS5PreparationGuidanceNamesCurrentEntryManifestAndOriginalSkill(t *testi
 			t.Fatalf("S5 preparation omitted exact path %s: %s", path, guidance)
 		}
 	}
-	for _, want := range []string{"S5 entry 8", "entry-specific", "DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY", "distinct reviewers", "current accepted S4 sources"} {
+	for _, want := range []string{"S5 entry 8", "DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY", "accepted S4", "runtime stage-answer issue", "普通读取与 Stop 不补登记"} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("S5 preparation lost %q: %s", want, guidance)
 		}

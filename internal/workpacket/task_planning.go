@@ -138,7 +138,7 @@ func validTaskPlanningRequirementPath(id, path string) bool {
 }
 
 func canonicalTaskPlanningInputs(binding PlanningBinding, inputs TaskPlanningInputs) (TaskPlanningInputs, error) {
-	if len(inputs.Contracts) == 0 || len(inputs.Contracts) > 65 || len(inputs.Sources) > 130 || len(inputs.Contracts)+len(inputs.Sources) > 195 || len(inputs.Directories) > 64 || len(inputs.ClauseUniverse) == 0 || len(inputs.ClauseUniverse) > 16384 {
+	if len(inputs.Contracts) == 0 || len(inputs.Contracts) > 65 || len(inputs.ClauseUniverse) == 0 || len(inputs.ClauseUniverse) > 16384 {
 		return TaskPlanningInputs{}, fmt.Errorf("S4 requires bounded locked contracts, frozen sources, directories and clause universe")
 	}
 	out := TaskPlanningInputs{
@@ -178,7 +178,7 @@ func canonicalTaskPlanningInputs(binding PlanningBinding, inputs TaskPlanningInp
 		seenPath[source.Path] = true
 	}
 	for dir, names := range inputs.Directories {
-		if !safeRelative(dir) || len(names) > 512 {
+		if !safeRelative(dir) {
 			return TaskPlanningInputs{}, fmt.Errorf("S4 source directory manifest is invalid")
 		}
 		copyNames := append([]string(nil), names...)
@@ -220,8 +220,8 @@ func ValidateTaskPlanningAnswer(p TaskPlanningPacket, data []byte) (TaskPlanning
 	issue := func(pointer, expected, observed string) (TaskPlanningAnswer, []FieldError) {
 		return TaskPlanningAnswer{}, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，填写本人自审结论和实际 TASK/索引产物。"}}
 	}
-	if len(data) > 256<<10 {
-		return issue("/", "JSON <= 256KiB", "oversized")
+	if int64(len(data)) > TaskPlanningAnswerReadLimit(p) {
+		return issue("/", "issued questionnaire plus bounded professional answer", "oversized")
 	}
 	if err := ValidateUniqueJSON(data); err != nil {
 		return issue("/", "unique keys", err.Error())

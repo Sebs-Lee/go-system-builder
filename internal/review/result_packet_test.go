@@ -477,6 +477,9 @@ func TestIssuedE2ENilArtifactDigestAcceptsAndReplaysWithoutMutableWorkspace(t *t
 	if err := os.WriteFile(filepath.Join(root, workspaceRel, "fixture.txt"), []byte("actual artifact"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	state = snapshotState(t, statePath, journalPath)
+	seedResultMethodSources(t, root, state, plan)
+	writeMethodState(t, statePath, state)
 	packets, err := IssueResultPackets(root, statePath, journalPath, -1, "agent-e2e-1")
 	if err != nil || len(packets) != 1 {
 		t.Fatalf("issue E2E packet: count=%d err=%v", len(packets), err)

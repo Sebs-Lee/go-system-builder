@@ -27,13 +27,11 @@ Main 保持在用户当前项目 checkout，目标是需求绑定的开发分支
 
 ### S2 Main 设计答卷
 
-启用问卷的 v1.2/v1.3 Runtime（新 install/init 默认开启）在 `planning.design` 由 Hook 根据当前 Main/runtime/generation/stage-entry 自动确保原设计问卷。PreToolUse 提供当前 `view_path` 与 `answer_path` 的绝对路径；Main 读取 view，在原架构文档中完成设计与 locked 声明，只在 answer 的 `answer` 填写 `conclusion=pass` 和真实 `architecture_path`，然后保存。成功的 Write/Edit/MultiEdit 由原 PostToolUse consumer 接收；不需要手工运行 `stage-answer issue` 或 `consume`。这些 CLI 命令保留为显式诊断/兼容入口，不属于正常作者流程。
+启用问卷的 v1.2/v1.3 Runtime（新 install/init 默认开启）在原 S2 责任准备时提供设计问卷，普通 PreToolUse 只读展示当前 `view_path` 与 `answer_path`。Main 读取 view，完成适用设计并锁定 `docs/architecture/ARCHITECTURE-*.md`，将架构、适用 accepted ADR 和模块材料等正式上游提交到原绑定选定的开发分支，再在原 answer 的 `answer` 填写 `conclusion=pass` 与真实 `architecture_path` 并保存。S3 读取已提交来源并与磁盘核对；Hook 不替作者提交文件。成功保存由原 PostToolUse consumer 接收，不需要手工运行 `stage-answer issue` 或 `consume`；具体技术故障仍可使用受支持的诊断和恢复入口。
 
-接收登记原 `planning_design` 和 pending followup，原门决定
-`PTR-PLAN-01`，原动作登记架构文档。未答完、REQ 漂移、架构未 locked、
-UI impact=unknown 都不能有效接收；需求澄清沿原人闸处理。同内容重放
-返回原回执，已接收后中断只恢复 followup。Main 的阶段回执不等于项目
-可结束，也不替代后续独立验证。默认旧实例保持原流程。
+接收、迁移和下一材料准备分别成立。未答完的答案仍为草稿；完整专业答案可被接收并登记 `planning_design` 和 pending followup，但架构未 locked 或 UI impact=unknown 等条件仍会使原门拒绝 `PTR-PLAN-01`。需求澄清沿原人闸处理。S2 接收不以开发来源摘要相等为资格；正式来源问题会影响后续 S3 准备，不能误报为答卷未接收。原转换动作登记架构，随后准备 S3；准备失败时修复反馈指出的实际来源并提交，不改写已经接收的结论。同内容重放返回原回执，未完成出口沿原 continuation 继续，不重复登记。Main 阶段回执不等于项目可结束，也不替代后续独立验证；旧实例保留原兼容合同。
+
+`architecture_path` 是当前报告审查的架构，不把登记范围缩成单个文件。系统给出实际架构登记批次和未锁定项，包括兼容规则纳入的无明确需求归属文档；作者处理这些真实缺口，不手填批次清单，也不把未采用方案伪标为 locked。S3 正式来源包括锁定 REQ、已登记架构、`docs/design/prototypes/` 下全部非模板模块的完整文件集合、当前 REQ 的 accepted ADR 及真实引用指向的条件依赖。全项目模块消费与原桥一致，不要求本次重新设计无关模块，也不要求删历史资料或拆需求来缩小来源集合。
 
 ### S3 Main 契约答卷
 
@@ -95,11 +93,11 @@ Main 保留原独立审查分工与冻结资料，将当前 view、私人 answer
 
 只读审查可以使用 Main 下的私人问卷，不需要 execution、bootstrap 或独立 Claude session。若这项责任原来已登记独立来源，就保留原路径；来源丢失交 Main 恢复，不能换成 Main 来源。Finding 被合法接收且本人检查满足后，本人责任可为 `done`；同事未交、系统接续或人类需求决定由回执指定的 owner 继续。
 
-原 packet 可以包含以下只读参考投影，它们不代替审查结论：
+当前原生 packet 的 `draft.read` 给读集，`answer_path` 给私人答案，`task_analysis.path` 给单独的分析文件；相对路径按 Main 带入的准确来源根解析。以下只读资料中，行为与惯例投影在分析文件内，不是 packet 的顶层字段；它们不代替审查结论：
 
 | 原资料 | 提供什么 | 使用边界 |
 | --- | --- | --- |
-| `task_analysis` | 正式 TASK 输入、读集、粒度建议和固定解析器版本 | 读取原冻结分析；机械 Problems、条款覆盖与 DAG 仍独立检查；不签署 PASS |
+| `task_analysis.path` 指向的分析文件 | 正式 TASK 输入、读集、粒度建议和固定解析器版本 | 读取原冻结分析；机械 Problems、条款覆盖与 DAG 仍独立检查；不签署 PASS |
 | `behavior_projection_version` / `behavior_examples` | TASK Manifest 明确引用并经场景包验证的 CASE、witness、oracle、fixture 及实际来源摘要 | 阅读模式和未知条件保留；这是可执行预期的参考，不是产品或浏览器已运行的证据 |
 | `conventions_resolver_version` / `task_conventions` | 原 Rules 或登记规范支持的选择、例外及来源 | registry 自称 approved 不是批准；candidate/conflict/stale 等不能当当前默认；有影响的决定缺口交原 Architect |
 
@@ -135,13 +133,15 @@ loop-harness s6 prepare --root <Main> --task <TASK> --role backend-builder
 
 将返回的准确 brief 交给 Claude Code 原生 Agent，并使用原生 worktree 隔离写入。准备会复用原 Register Writer 登记工程责任，不要求 Team ID、预选平台 Agent ID 或 workspace launcher。具体示例见 [S6 Builder](examples/s6-builder/README.md)。
 
-Builder 读取真实 TASK 及链接资料，在自己实际 worktree 的私人 `.claude/assignments/native/` 路径先保存专业计划，再实现、自检、提交真实产品改动、保存 Result。私人草稿不进入 Git，不写回 Main。返回准确 brief 和 Result 的绝对路径；保存不代表激活或接收，Stop 才通过原适配器提交实际产物。不要增加手工 begin、task-complete、report/deliver 步骤。
+Builder 按 brief 的固定源提交，在本人 worktree 读取其中列明的 TASK、规格与产品相对路径；准确 brief 和方法入口可以位于 Main 控制根，但 Main 后续变化不替换本责任来源。在自己实际 worktree 的私人 `.claude/assignments/native/` 路径先保存专业计划，再实现、自检、提交真实产品改动、保存 Result。私人草稿不进入 Git，不写回 Main。返回准确 brief 和 Result 的绝对路径；保存不代表激活或接收，Stop 才通过原适配器提交实际产物。不要增加手工 begin、task-complete、report/deliver 步骤。
 
 PLAN 沿 brief 给出的字段填写 `objective`、`planned_paths`、`assertion_checks`、`dependencies`、`risks_blockers`。每项 assertion 包含 `assertion`、`oracle`、`done_when_indexes`，覆盖 Done when 的零基索引。没有依赖或风险时按实际情况填空数组，不补机器绑定。
 
 Result 按原草稿填写 `summary`、`assertion_evidence`、`risks_blockers`、`scope_deviations`、`closing_assessment`。每项 assertion/oracle 与计划逐字一致；`evidence_refs` 是实际 worktree 内、本人写范围或已列阅读范围中的精确存在文件路径，不带行号、说明或命令。命令及观察写入 summary 或 rationale，不能虚构日志文件引用。
 
-`closing_assessment.disposition` 为 `complete`、`incomplete` 或 `blocked`；每条条件填写 `done_when_index`、`judgment`、`plan_assertion_indexes` 和具体 `rationale`。complete 要求所有条件 satisfied，且没有未决阻断或范围偏差。这是本人专业闭合判断，不能替代 Main 必需检查或 fresh S7。默认准备的原 closing contract 明确使用空 `worker_checks`、`post_merge` 和 Main 检查位置；Builder 仍执行 TASK 自检并如实报告，不能把空 runner 列表解释成不用验证。
+`closing_assessment.disposition` 为 `complete`、`incomplete` 或 `blocked`；每条条件填写 `done_when_index`、`judgment` 和具体 `rationale`；`plan_assertion_indexes` 可由原 Plan 映射派生，显式填写仍核对原关系。complete 要求所有条件 satisfied，且没有未决阻断或范围偏差。这是本人专业闭合判断，不能替代 Main 必需检查或 fresh S7。默认准备的原 closing contract 明确使用空 `worker_checks`、`post_merge` 和 Main 检查位置；Builder 仍执行 TASK 自检并如实报告，不能把空 runner 列表解释成不用验证。
+
+真实阻塞可以发生在形成 Plan 前或之后。按 brief 在原 Result 路径保存最小 blocked Result：`summary` 说明进展与未完成工作，非空 `risks_blockers` 说明原因，`closing_assessment.disposition` 为 `blocked`。保留已有 Plan/真实证据，返回原 brief 与实际 Result 的绝对路径；不要编造检查、证据或计划。这是交 Main 恢复的未接收交接。已按完整报告合同填写的 blocked Result 仍走原校验，记录未完成不等于可集成。
 
 原登记中的非空 runner 检查、回执耐久副本与静态复用条件见[底层检查参考](workspace-execution-recovery.md#显式-checkprofile)。仅在当前原来源确实提供对应命令时使用，不把冻结执行的命令复制给新责任。
 

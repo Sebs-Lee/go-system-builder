@@ -114,6 +114,36 @@ func TestBuildReviewResultPacketIsStableAndSchemasCompile(t *testing.T) {
 	}
 }
 
+func TestHistoricalReviewResultTemplateOnlyRestoresKnownFrozenQuestions(t *testing.T) {
+	data, err := schema.ReadAsset("stage-form-s7-template-before-safety-stop.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := buildReviewResultWithTemplate(reviewResultTestBinding(), reviewResultTestInputs(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := RebuildReviewResult(old)
+	if err != nil || !reflect.DeepEqual(rebuilt, old) {
+		t.Fatalf("known frozen template: %v", err)
+	}
+	if _, err := ReviewResultPacketDigest(old); err != nil {
+		t.Fatal(err)
+	}
+	current, err := BuildReviewResult(old.Binding, old.Inputs)
+	if err != nil || current.ID == old.ID || current.TemplateSHA == old.TemplateSHA {
+		t.Fatalf("new work did not use current template: %v", err)
+	}
+	old.Draft.Instruction = "replace the original questions"
+	if _, err := ReviewResultPacketDigest(old); err == nil {
+		t.Fatal("tampered historical questions accepted")
+	}
+	old.TemplateSHA = strings.Repeat("f", 64)
+	if _, err := RebuildReviewResult(old); err == nil {
+		t.Fatal("arbitrary author-supplied template accepted")
+	}
+}
+
 func TestValidateReviewResultAnswerAcceptsOnlyCompleteProfessionalAnswer(t *testing.T) {
 	p, err := BuildReviewResult(reviewResultTestBinding(), reviewResultTestInputs())
 	if err != nil {

@@ -376,7 +376,7 @@ func acceptedS3ForTaskPlanning(root string, state map[string]any, binding workpa
 		if evidence == nil || evidence["status"] != "valid" || evidence["kind"] != "planning_contract" || evidence["responsibility_id"] != "Orchestrator" || genErr != nil || generation != binding.Generation || len(producers) != 1 || producers[0] != "Main" || !hasInvalidatedBy || invalidatedBy != nil || !hasInvalidationRule || invalidationRule != nil || !hasInvalidationReason || invalidationReason != nil || !hasReviewRound || reviewRound != nil {
 			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 accepted evidence is incomplete")
 		}
-		evidenceData, err := workpacket.ReadFile(root, stringValue(evidence["path"]), 1<<20)
+		evidenceData, err := workpacket.ReadFile(root, stringValue(evidence["path"]), workpacket.ContractEvidenceReadLimit(p))
 		if err != nil {
 			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("read S4 original S3 evidence artifact: %w", err)
 		}

@@ -73,6 +73,7 @@ type Draft struct {
 
 type Packet struct {
 	TaskAnalysis *TaskAnalysisRef `json:"task_analysis,omitempty"`
+	Methods      []ReadItem       `json:"methods,omitempty"`
 	ID           string           `json:"packet_id"`
 	TemplateID   string           `json:"template_id"`
 	TemplateSHA  string           `json:"template_sha256"`
@@ -81,6 +82,34 @@ type Packet struct {
 	AnswerPath   string           `json:"answer_path"`
 	ViewPath     string           `json:"view_path"`
 	Draft        Draft            `json:"draft"`
+}
+
+// BindMethods adds the original assignment's reading guidance to a new packet.
+// Methods are not reviewed subjects or author fields. Nil preserves old packets
+// byte-for-byte; the binding participates in identity and named revisions.
+func BindMethods(p Packet, methods []ReadItem) (Packet, error) {
+	if len(methods) == 0 {
+		return p, nil
+	}
+	methods = append([]ReadItem(nil), methods...)
+	sort.Slice(methods, func(i, j int) bool { return methods[i].Path < methods[j].Path })
+	for i, method := range methods {
+		path := strings.TrimPrefix(method.Path, ".claude/")
+		parts := strings.Split(path, "/")
+		if !safeRelative(method.Path) || len(parts) != 3 || parts[0] != "skills" || parts[2] != "SKILL.md" || strings.TrimSpace(method.Purpose) == "" || (i > 0 && methods[i-1].Path == method.Path) {
+			return Packet{}, fmt.Errorf("invalid or duplicate S5 method reference")
+		}
+	}
+	data, err := json.Marshal(methods)
+	if err != nil {
+		return Packet{}, err
+	}
+	oldID := p.ID
+	p.ID = "packet-" + Digest(append([]byte(oldID+":methods:"), data...))
+	p.ViewPath = strings.Replace(p.ViewPath, oldID, p.ID, 1)
+	p.AnswerPath = strings.Replace(p.AnswerPath, oldID, p.ID, 1)
+	p.Methods = methods
+	return p, nil
 }
 
 type TaskAnalysisRef struct {
@@ -115,7 +144,7 @@ func BindTaskAnalysis(p Packet, ref *TaskAnalysisRef) (Packet, error) {
 func RebuildS5(p Packet) (Packet, error) {
 	// Wording updates apply to new questionnaires. Reconstruct an issued
 	// packet from its original bundled template, including named revisions.
-	for _, name := range []string{"stage-form-s5-template.json", "stage-form-s5-template-legacy.json"} {
+	for _, name := range []string{"stage-form-s5-template.json", "stage-form-s5-template-save-guidance-legacy.json", "stage-form-s5-template-legacy.json"} {
 		data, err := schema.ReadAsset(name)
 		if err != nil {
 			return Packet{}, fmt.Errorf("read S5 template: %w", err)
@@ -124,6 +153,10 @@ func RebuildS5(p Packet) (Packet, error) {
 			continue
 		}
 		base, err := buildS5(p.Binding, p.Inputs, data)
+		if err != nil {
+			return Packet{}, err
+		}
+		base, err = BindMethods(base, p.Methods)
 		if err != nil {
 			return Packet{}, err
 		}

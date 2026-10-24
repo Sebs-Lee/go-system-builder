@@ -50,19 +50,15 @@ func TestS7MainManifestHintUsesExistingWorkgroupDirectoryWithoutOverwrite(t *tes
 				"plan":        map[string]any{"plan_id": "review-plan-current", "path": "original-plan.json"},
 				"assignments": map[string]any{"assignment-qa-static": map[string]any{"status": "planned"}},
 			}}
-			output := stageReviewResultLifecycleContext(context.Background(), root, policy.Input{Event: "PreToolUse", CWD: root}, nil, runtime.Snapshot{State: state}, "Main")
+			output := s7ManifestPreparationHint(root, state, "assignment-qa-static")
 			switch scenario {
-			case "missing-directory":
-				if !strings.Contains(output, directory) || !strings.Contains(output, "Main/system") || strings.Contains(output, "--out") {
-					t.Fatalf("missing directory was not a preparation gap: %s", output)
-				}
-			case "prepare":
+			case "missing-directory", "prepare":
 				command := " s7 manifest-draft --root " + s7CaptureShellQuote(root) + " --assignment 'assignment-qa-static' --out " + s7CaptureShellQuote(manifest)
 				if !strings.Contains(output, command) || !strings.Contains(output, "stdout also contains guidance") {
 					t.Fatalf("missing exact file-output command: %s", output)
 				}
 			case "existing-manifest":
-				if !strings.Contains(output, manifest) || !strings.Contains(output, "Do not overwrite") || strings.Contains(output, "--out") {
+				if !strings.Contains(output, manifest) || !strings.Contains(output, "preserve existing manifest") || !strings.Contains(output, "restore its original source") || strings.Contains(output, "--out") {
 					t.Fatalf("existing manifest was not preserved: %s", output)
 				}
 				data, err := os.ReadFile(manifest)

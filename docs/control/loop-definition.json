@@ -163,7 +163,7 @@
             "max_per_event": 1,
             "human_required": false
           },
-          "description": "Advance formal planning from design to contracts after the design quality gate passes. Gate readiness facts: an ARCHITECTURE-*.md whose top status line (状态/Status) declares `locked` plus a valid planning_design JSON envelope (responsibility Architect, conclusion pass — a markdown file as --path yields `evidence:<id>:schema`). Missing tokens `document:design:locked` / `evidence:planning_design_record` mean one of these is absent."
+          "description": "Advance formal planning from design to contracts after the original design quality gate passes. Main saves the issued S2 answer with architecture_path and conclusion pass; the original consumer records planning_design evidence and runs this outlet. The gate requires current design evidence and a real ARCHITECTURE-*.md whose top status line (状态/Status) declares locked, plus the bound requirement conditions. Missing tokens document:design:locked / evidence:planning_design_record identify the remaining gate work. Reception, committed transition and S3 material preparation are separate outcomes; authors do not create evidence envelopes or qualify by producer label."
         },
         {
           "id": "PTR-PLAN-02",
@@ -256,7 +256,7 @@
       "phases": {
         "investigation": {
           "description": "Investigators consume S7 encounter/raw evidence, form competing hypotheses and answer independent discriminator questions. Reproduction is an exception for missing or contradictory evidence, not an intake requirement.",
-          "entry_condition": "TR-008 or a human defect decision has opened an InvestigationCase with an exact source Finding set and a frozen baseline.",
+          "entry_condition": "TR-008 has handed the sealed ObservationBatch to investigation, or an actual human defect decision has entered the original intake route. Main saves the supplied intake rationale; the original consumer validates the source set and frozen baseline before creating the InvestigationCase.",
           "exit_condition": "The Case has a supported causal model, or an explicit route to investigate_more, specification rework, REQ decision, duplicate, or no-change."
         },
         "bug_report_review": {
@@ -1331,7 +1331,7 @@
         "max_per_event": 1,
         "human_required": false
       },
-      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into the S8 Runtime cursor. TR-008 records the cursor handoff; the next mandatory S8 verb is `runtime investigation ingest`, which creates the InvestigationCase after exact-set/hash/baseline validation. S8 consumes the facts and does not re-reproduce symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.",
+      "description": "A sealed ObservationBatch carries the exact immutable Finding set (with encounters, wall actions and evidence refs) into S8 on the next Main PreToolUse. TR-008 records only the cursor handoff. Main then reads the supplied Batch/Findings and saves grouping_rationale in the exact S8 intake questionnaire; its original ingest consumer creates the InvestigationCase after exact-set/hash/baseline validation. The runtime investigation ingest command remains a direct domain/recovery entry, not a second required submission. S8 consumes the observed facts without re-reproducing symptoms by default. No per-Finding BUG draft is created; any legacy BUG draft is only a compatibility projection of the Case.",
       "from_phase": "observation_sealed"
     },
     {
@@ -2252,7 +2252,7 @@
     {
       "event": "write_before_agent_activation",
       "enforcement": "strong_block",
-      "reason": "Phase one is read-only."
+      "reason": "An existing frozen execution retains its recorded phase-one approval boundary. New native responsibilities follow their original professional contract without generic activation or ordinary-tool interception."
     },
     {
       "event": "write_outside_allowed_paths",
@@ -2318,7 +2318,7 @@
     },
     {
       "id": "INV-006",
-      "statement": "Agent phase one is read-only and phase two activation is explicit.",
+      "statement": "Native responsibilities follow their original professional inputs and actual domain approvals without a generic activation handshake. Only existing frozen executions retain their recorded phase-one and activation recovery boundary.",
       "enforcement": "combined"
     },
     {

@@ -25,7 +25,7 @@ func TestS7StalePlanRecoveryPrecedesQueuedDispatchAndAnswers(t *testing.T) {
 		}},
 	}
 	guidance := policy.Guidance{Missing: []string{"claim_results", "claim:static"}}
-	applyS7RecoveryProjection(state, &guidance)
+	applyS7RecoveryProjection(root, state, &guidance)
 	if !strings.Contains(guidance.Action, "Main must resolve") || len(guidance.Missing) != 1 || !strings.Contains(guidance.Missing[0], "stale ReviewPlan") || strings.Contains(strings.Join(guidance.Automation, " "), "assignments queued") {
 		t.Fatalf("stale plan did not take recovery priority: %+v", guidance)
 	}
@@ -43,7 +43,8 @@ func TestS7StalePlanRecoveryPrecedesQueuedDispatchAndAnswers(t *testing.T) {
 		}
 	}
 	for _, status := range []string{"running", "cannot_clean", "discovery_draining"} {
-		if action := s7RecoveryNextAction(status, 1, nil, []string{"assignment-e2e"}, nil, nil, nil); !strings.Contains(action, "dispatch queued assignment assignment-e2e") {
+		plan["status"] = status
+		if action := s7RecoveryNextAction(root, state, status, 1, nil, []string{"assignment-e2e"}, nil, nil, nil); !strings.Contains(action, "original ReviewPlan source") {
 			t.Fatalf("existing %s behavior changed: %s", status, action)
 		}
 	}

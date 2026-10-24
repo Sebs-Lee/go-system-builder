@@ -3,6 +3,7 @@ package workpacket
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -39,10 +40,10 @@ func ReadTaskAnalysis(root string, p Packet) (TaskAnalysisArtifact, error) {
 	}
 	data, err := ReadFile(root, p.TaskAnalysis.Path, 2<<20)
 	if err != nil {
-		return artifact, fmt.Errorf("frozen analysis unavailable; restore original bytes: %w", err)
+		return artifact, fmt.Errorf("frozen analysis unavailable; restore original bytes at %s: %w", filepath.Join(root, p.TaskAnalysis.Path), err)
 	}
 	if Digest(data) != p.TaskAnalysis.SHA256 {
-		return artifact, fmt.Errorf("frozen task analysis digest differs")
+		return artifact, fmt.Errorf("frozen task analysis digest differs at %s", filepath.Join(root, p.TaskAnalysis.Path))
 	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes("task-analysis-artifact.schema.json", data); err != nil {
 		return artifact, err

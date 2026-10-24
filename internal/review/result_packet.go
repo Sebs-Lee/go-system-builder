@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/agentauth"
+	"github.com/entroforge/go-system-builder/internal/catalog"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -71,6 +72,29 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 		if err != nil {
 			return nil, err
 		}
+		// A wording upgrade must not reissue an already frozen responsibility.
+		// Reuse only the exact current binding/inputs; the original issue proof
+		// and immutable packet are verified below before restoring any files.
+		issued, err := loopruntime.CurrentReviewResultPackets(snapshot.State, owner)
+		if err != nil {
+			return nil, err
+		}
+		reused := false
+		for _, old := range issued {
+			if old.Binding.AssignmentID != a.AssignmentID {
+				continue
+			}
+			if !sameReviewResponsibility(old, packet) {
+				return nil, errors.New("S7 frozen packet differs from current responsibility")
+			}
+			packet, reused = old, true
+		}
+		if !reused {
+			packet, err = bindCurrentReviewMethods(root, snapshot.State, a, packet)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if old, found, err := loopruntime.FindReviewResultPacket(snapshot.State, packet.ID); err != nil {
 			return nil, err
 		} else if found {
@@ -80,7 +104,7 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 			if err := verifyFrozenSubjects(root, plan, snapshot.State); err != nil {
 				return nil, err
 			}
-			if err := verifyResultPacketIssue(root, snapshot.State, packet); err != nil {
+			if err := verifyCurrentResultPacket(root, snapshot.State, packet, true); err != nil {
 				return nil, err
 			}
 		} else {
@@ -279,6 +303,109 @@ func buildCurrentResultPacket(root string, state map[string]any, plan *Plan, ptr
 	}, workpacket.ReviewResultInputs{Claims: claimsJSON, FrozenSubjects: subjectsJSON})
 }
 
+// sameReviewResponsibility deliberately excludes method guidance. An already
+// issued responsibility keeps its frozen selection and issuance proof; it is
+// never silently reissued with today's catalog or defaults.
+func sameReviewResponsibility(a, b workpacket.ReviewResultPacket) bool {
+	return reflect.DeepEqual(a.Binding, b.Binding) && bytes.Equal(a.Inputs.Claims, b.Inputs.Claims) && bytes.Equal(a.Inputs.FrozenSubjects, b.Inputs.FrozenSubjects)
+}
+
+func bindCurrentReviewMethods(root string, state map[string]any, a *PlanAssignment, p workpacket.ReviewResultPacket) (workpacket.ReviewResultPacket, error) {
+	fail := func(detail string) (workpacket.ReviewResultPacket, error) {
+		return workpacket.ReviewResultPacket{}, fmt.Errorf("S7 Main preparation: registered methods for %s: %s", a.AssignmentID, detail)
+	}
+	entities, _ := state["entities"].(map[string]any)
+	agents, _ := entities["agents"].([]any)
+	var owner map[string]any
+	for _, raw := range agents {
+		row, _ := raw.(map[string]any)
+		if row["id"] == p.Binding.OwnerAgentID {
+			owner = row
+		}
+	}
+	teams, _ := entities["teams"].([]any)
+	var registered map[string]any
+	for _, raw := range teams {
+		row, _ := raw.(map[string]any)
+		if owner != nil && row["id"] == owner["team_id"] {
+			if registered != nil {
+				return fail("owner has ambiguous registered workgroup")
+			}
+			registered = row
+		}
+	}
+	if registered == nil {
+		return fail("owner has no original registered workgroup")
+	}
+	ref := stringField(registered["manifest_ref"])
+	if ref == "" || owner["prompt_ref"] != ref+"#"+a.AssignmentID {
+		return fail("original manifest/Assignment source is missing or mismatched")
+	}
+	data, err := workpacket.ReadFile(root, ref, 4<<20)
+	if err != nil {
+		return fail(err.Error())
+	}
+	digest := workpacket.Digest(data)
+	// Old registrations did not pin a SHA. A first issuance still validates
+	// their named manifest and freezes its bytes here; existing old packets
+	// bypass this projection altogether. New registrations pin it at dispatch.
+	if pinned := stringField(registered["manifest_sha256"]); pinned != "" && pinned != digest {
+		return fail("manifest changed after original registration")
+	}
+	if err := workpacket.ValidateUniqueJSON(data); err != nil {
+		return fail(err.Error())
+	}
+	var manifest ManifestDraft
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fail(err.Error())
+	}
+	if manifest.RuntimeID != p.Binding.RuntimeID || manifest.BaselineGeneration != p.Binding.BaselineGeneration || manifest.ReviewRound != p.Binding.ReviewRound || manifest.WorkgroupID != registered["id"] || manifest.WorkgroupKind != LensToWorkgroupKind(a.Lens) || registered["kind"] != manifest.WorkgroupKind {
+		return fail("manifest no longer names the original Runtime/round/workgroup/lens")
+	}
+	var selected *ManifestAssignment
+	for i := range manifest.Assignments {
+		item := &manifest.Assignments[i]
+		if item.AssignmentID == a.AssignmentID {
+			if selected != nil {
+				return fail("duplicate original Assignment in manifest")
+			}
+			selected = item
+		}
+	}
+	if selected == nil || selected.AgentID != p.Binding.OwnerAgentID || selected.RoleFamily != owner["role"] || !sameReviewClaimSet(selected.ClaimIDs, p.Binding.ClaimIDs) {
+		return fail("manifest no longer names the original owner/Claim set")
+	}
+	methods := make([]workpacket.ReadItem, 0, len(selected.SkillRefs))
+	seen := map[string]bool{}
+	for _, name := range selected.SkillRefs {
+		if seen[name] {
+			return fail("duplicate selected Skill " + name)
+		}
+		seen[name] = true
+		_, source, err := catalog.ReadSkillAsset(root, name)
+		if err != nil {
+			return fail(err.Error())
+		}
+		methods = append(methods, workpacket.ReadItem{Path: source, Purpose: workpacket.ReviewMethodPurpose(name)})
+	}
+	if selected.SkillRefs == nil {
+		return fail("original selected skill_refs are missing")
+	}
+	p.Inputs.Methods = methods
+	p.Inputs.MethodSource = &workpacket.ReviewMethodSource{ManifestRef: ref, SHA256: digest}
+	return workpacket.BuildReviewResult(p.Binding, p.Inputs)
+}
+
+func sameReviewClaimSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	left, right := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(left)
+	sort.Strings(right)
+	return reflect.DeepEqual(left, right)
+}
+
 func validateResultPacketOwner(state map[string]any, a *PlanAssignment, owner string) error {
 	entities, _ := state["entities"].(map[string]any)
 	agents, _ := entities["agents"].([]any)
@@ -313,8 +440,20 @@ func verifyCurrentResultPacket(root string, state map[string]any, p workpacket.R
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(expected, p) {
+	// Legacy issued packets have no method source: keep their exact original
+	// identity rather than retroactively attaching today's selection.
+	if !issued || p.Inputs.MethodSource != nil {
+		expected, err = bindCurrentReviewMethods(root, state, a, expected)
+		if err != nil {
+			return err
+		}
+	}
+	if !reflect.DeepEqual(expected.Binding, p.Binding) || !reflect.DeepEqual(expected.Inputs, p.Inputs) {
 		return errors.New("S7 issuance no longer matches current Plan/Assignment/owner/subjects")
+	}
+	rebuilt, err := workpacket.RebuildReviewResult(p)
+	if err != nil || !reflect.DeepEqual(rebuilt, p) {
+		return errors.New("S7 issuance differs from its original frozen template")
 	}
 	if issued {
 		return verifyResultPacketIssue(root, state, p)

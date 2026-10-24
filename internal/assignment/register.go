@@ -439,7 +439,7 @@ func registerWithReceipt(root, statePath, journalPath string, request Request, r
 				"agent_ids":          agentIDs,
 				"review_round":       value.ReviewRound,
 			}
-			if loopruntime.PacketEnabled(state) && (value.WorkgroupKind == "document_verifier" || value.WorkgroupKind == "investigator" || (value.WorkgroupKind == "builder" && request.RepairAssignmentID != "")) {
+			if loopruntime.PacketEnabled(state) && (value.WorkgroupKind == "document_verifier" || value.WorkgroupKind == "delivery_verifier" || value.WorkgroupKind == "qa" || value.WorkgroupKind == "e2e_browser" || value.WorkgroupKind == "investigator" || (value.WorkgroupKind == "builder" && request.RepairAssignmentID != "")) {
 				teamRow["manifest_sha256"] = transition.SHA256(manifestData)
 			}
 			if loopruntime.PacketEnabled(state) && value.WorkgroupKind == "document_verifier" {
