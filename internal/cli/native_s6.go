@@ -129,13 +129,30 @@ func prepareNativeS6Brief(root string, state map[string]any, r assignmentrecord.
 	fmt.Fprintf(&b, "\nRegistered workgroup-local Assignment dependencies (read-only): %s. The receiver supplies this exact set to the canonical Plan; do not copy dependencies into either private JSON file. TASK prerequisites have already been satisfied by dispatch. Explain actual input or environment assumptions in objective/oracles and unresolved risks_blockers instead.\n", dependencies)
 	previousCurrent := nativeS6BriefInputs(root, r, false) + b.String() + nativeS6ProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
 	previousAligned := previousCurrent + nativeS6LegacySourceAlignment(r, base, plan, result)
-	current := nativeS6SourceAlignment(r, base, plan, result) + previousCurrent
+	previousSourceAligned := nativeS6SourceAlignment(r, base, plan, result) + previousCurrent
+	// Historical bytes remain recognized; new briefs separate owner-run checks
+	// from Main's integration checks and explain the private Plan write scope.
+	oldChecks := "\nRun the actual TASK self-checks (Main repeats its checks at integration):\n"
+	for _, check := range r.RequiredChecks {
+		oldChecks += "- " + check + "\n"
+	}
+	workerChecks := oldChecks
+	if r.ClosingContract != nil {
+		workerChecks = "\nRun these Worker self-checks from the TASK Closing Contract (Main owns its separate integration checks):\n"
+		for _, check := range r.ClosingContract.WorkerChecks {
+			workerChecks += "- " + check.Command + "\n"
+		}
+		if len(r.ClosingContract.WorkerChecks) == 0 {
+			workerChecks += "- No Worker runner checks were assigned. Main-only checks are not Worker execution duties; still assess every Done when condition honestly.\n"
+		}
+	}
+	current := strings.Replace(previousSourceAligned, oldChecks, workerChecks, 1) + nativeS6CurrentAuthoringGuidance
 	previousInputs := nativeS6BriefInputs(root, r, true) + b.String()
 	compact := previousInputs + fmt.Sprintf(nativeS6CompactProfessionalFormat, base, filepath.Join(root, brief), plan, result)
 	legacy := previousInputs + nativeS6LegacyProfessionalInstructions(base, filepath.Join(root, brief), plan, result)
 	if published, err := workpacket.PublishBounded(root, brief, []byte(current), 1<<20); err != nil {
 		return err
-	} else if !nativeS6BriefMatches(published, methods, current, previousAligned, previousCurrent, compact, legacy) {
+	} else if !nativeS6BriefMatches(published, methods, current, previousSourceAligned, previousAligned, previousCurrent, compact, legacy) {
 		return fmt.Errorf("original native task brief differs; preserve it for Main recovery")
 	}
 	bound, _ := state["bound_req"].(map[string]any)

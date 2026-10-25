@@ -20,7 +20,7 @@ func TestS6TaskDoneWhenReadsNumberedClosingContractFromTaskTemplate(t *testing.T
 	}
 
 	got := s6TaskDoneWhen([]byte(text))
-	want := []string{"BE-001 §1 == satisfied", "go test ./internal/example/... == pass"}
+	want := []string{"BE-001 §1 == satisfied", "go test ./internal/example/... == pass", "actual changes stay within the reviewed TASK and assigned write scope", "completion_result explains each condition and any actual scope deviation"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("S6 done_when projection = %#v, want %#v", got, want)
 	}
