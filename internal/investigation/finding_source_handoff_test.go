@@ -110,6 +110,26 @@ func TestS8TypedFindingSourceHandoffNeedsNoIndexAlias(t *testing.T) {
 	if err == nil {
 		t.Fatal("new Hypothesis silently accepted an unrelated unindexed path")
 	}
+	// The causal route reuses this same original S7 path with its sealed source
+	// authority. Neither another capture nor an index alias is needed.
+	seedCausalClosure(t, f, investigationPointer(t, f), func(doc map[string]any) error {
+		doc["detection_gap"] = map[string]any{"gap_type": "test", "evidence_refs": []any{refs[0]}}
+		return nil
+	})
+	routeRequest := investigation.RouteRequest{ExpectedRevision: -1, CaseID: currentResultsCase, Route: "s9_repair", RouteReason: "Original S7 evidence establishes the detection gap.", NoCompetingHypothesis: "The accepted boundary search found no other credible mechanism."}
+	beforeState, beforeJournal = mustRead(t, f.statePath), mustRead(t, f.journalPath)
+	writeInvestigationBytes(t, f.root, "observation.txt", []byte("drift at route\n"))
+	if _, err := investigation.UpdateCaseRoute(f.root, f.statePath, f.journalPath, routeRequest); err == nil {
+		t.Fatal("causal route accepted a drifted original S7 source")
+	}
+	if !bytes.Equal(beforeState, mustRead(t, f.statePath)) || !bytes.Equal(beforeJournal, mustRead(t, f.journalPath)) {
+		t.Fatal("failed route changed Runtime")
+	}
+	writeInvestigationBytes(t, f.root, "observation.txt", content)
+	if _, err := investigation.UpdateCaseRoute(f.root, f.statePath, f.journalPath, routeRequest); err != nil {
+		t.Fatalf("route rejected original S7 source: %v", err)
+	}
+
 }
 
 func TestFirstS8QuestionReusesOnlySelectedFrozenFindingSource(t *testing.T) {
