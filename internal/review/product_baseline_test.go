@@ -14,7 +14,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
-func TestFrozenSubjectsForProductBaselineIncludesTasksAndDeletedPaths(t *testing.T) {
+func TestFrozenSubjectsForProductBaselineIncludesTasksAndSkipsDeletedPaths(t *testing.T) {
 	snapshot := &buildsurface.Snapshot{
 		Tasks: []buildsurface.Task{
 			{ID: "TASK-B", Path: "tasks/B.md", SHA256: "b"},
@@ -34,7 +34,6 @@ func TestFrozenSubjectsForProductBaselineIncludesTasksAndDeletedPaths(t *testing
 	want := []FrozenSubject{
 		{Path: "internal/add.go", SHA256: "c", Kind: "changed_surface"},
 		{Path: "internal/change.go", SHA256: "h", Kind: "changed_surface"},
-		{Path: "internal/remove.go", SHA256: "d", Kind: "deleted"},
 		{Path: "tasks/A.md", SHA256: "a", Kind: "task"},
 		{Path: "tasks/B.md", SHA256: "b", Kind: "task"},
 	}
@@ -43,13 +42,19 @@ func TestFrozenSubjectsForProductBaselineIncludesTasksAndDeletedPaths(t *testing
 	}
 }
 
-func TestFrozenSubjectsForProductBaselineRejectsDeletedTaskCollision(t *testing.T) {
-	_, err := frozenSubjectsForProductBaseline(&buildsurface.Snapshot{
+func TestFrozenSubjectsForProductBaselineSkipsDeletedSurfaceKeepsTask(t *testing.T) {
+	got, err := frozenSubjectsForProductBaseline(&buildsurface.Snapshot{
 		Tasks: []buildsurface.Task{{ID: "TASK-A", Path: "tasks/A.md", SHA256: "task"}},
 		Paths: []buildsurface.Path{{Path: "tasks/A.md", Status: "deleted", SHA256: "preimage"}},
 	})
-	if err == nil {
-		t.Fatal("deleted TASK source collision was accepted")
+	if err != nil {
+		t.Fatalf("frozenSubjectsForProductBaseline: %v", err)
+	}
+	// Deleted surface never enters frozen subjects; the TASK source itself
+	// stays frozen. A missing TASK file fails closed at disk verification.
+	want := []FrozenSubject{{Path: "tasks/A.md", SHA256: "task", Kind: "task"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("frozen subjects = %#v, want %#v", got, want)
 	}
 }
 

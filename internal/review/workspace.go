@@ -208,7 +208,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, context
 			return fmt.Errorf("frozen subject %s is unreadable: %w", subject.Path, readErr)
 		}
 		if subject.Kind == "deleted" {
-			return fmt.Errorf("frozen deleted subject %s reappeared on disk", subject.Path)
+			return fmt.Errorf("frozen deleted subject %s reappeared on disk; restore its absence before registration", subject.Path)
 		}
 		actual := sha256Of(data)
 		if actual != subject.SHA256 {
@@ -221,7 +221,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, context
 			return err
 		}
 		if err == nil && len(drift) > 0 {
-			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; add them to frozen_subjects or revert the change (RC-03 dual-source: declared set ∪ git diff baseline)", strings.Join(drift, ", "))
+			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; they remain in full review coverage. Revert only actual TASK product changes; never delete unassigned process or note files to force registration", strings.Join(drift, ", "))
 		}
 	}
 	return nil

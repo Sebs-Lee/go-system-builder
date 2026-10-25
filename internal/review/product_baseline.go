@@ -45,21 +45,24 @@ func frozenSubjectsForProductBaseline(snapshot *buildsurface.Snapshot) ([]Frozen
 		if path.Path == "" || path.SHA256 == "" {
 			return nil, fmt.Errorf("canonical product baseline has an incomplete changed path")
 		}
-		kind := "changed_surface"
 		if path.Status == "deleted" {
-			kind = "deleted"
-		} else if path.Status != "added" && path.Status != "modified" {
+			// Unattributed deleted surface stays in review coverage through the
+			// baseline snapshot and drift notes; it is not a frozen subject, so
+			// its reappearance never blocks ReviewPlan registration. A TASK
+			// source colliding with a deleted surface is still rejected below.
+			continue
+		}
+		kind := "changed_surface"
+		if path.Status != "added" && path.Status != "modified" {
 			return nil, fmt.Errorf("canonical product baseline path %s has unknown status %q", path.Path, path.Status)
 		}
 		if previous, exists := byPath[path.Path]; exists {
 			if previous.SHA256 != path.SHA256 {
 				return nil, fmt.Errorf("TASK source and changed surface disagree on frozen bytes for %s", path.Path)
 			}
-			if kind == "deleted" {
-				return nil, fmt.Errorf("canonical TASK source %s cannot also be a deleted final surface", path.Path)
-			}
-			// The path remains a TASK source in frozen_subjects. Its product
-			// status and Git blob binding are separately covered by the snapshot.
+			// Deleted surface never reaches here (skipped above); a TASK path
+			// stays a TASK source in frozen_subjects. Its product status and
+			// Git blob binding are separately covered by the snapshot.
 			continue
 		}
 		byPath[path.Path] = FrozenSubject{Path: path.Path, SHA256: path.SHA256, Kind: kind}
@@ -109,8 +112,11 @@ func verifyCanonicalFrozenSubjectFiles(root string, plan *Plan) error {
 			return fmt.Errorf("frozen subject %s is outside repository: %w", subject.Path, err)
 		}
 		if subject.Kind == "deleted" {
+			// Deleted surface no longer enters frozen subjects from the
+			// canonical baseline; a surviving deleted subject is a legacy
+			// TASK-attributed deletion and must remain absent.
 			if _, statErr := os.Lstat(path); statErr == nil {
-				return fmt.Errorf("frozen deleted subject %s reappeared on disk", subject.Path)
+				return fmt.Errorf("frozen deleted subject %s reappeared on disk; restore its absence before registration", subject.Path)
 			} else if !os.IsNotExist(statErr) {
 				return fmt.Errorf("frozen deleted subject %s cannot be checked: %w", subject.Path, statErr)
 			}
