@@ -3,7 +3,7 @@
   "stage": "S8",
   "adapter": "hypothesis_result",
   "title": "S08 调查 · HypothesisResult",
-  "instruction": "只修改 answer 并保存本卷的准确路径；不手动 issue/consume、不另交 PLAN 或相同内容的报告。依据本卷冻结的 Case、Hypothesis、原来源边界与证据资料（S7 Finding encounter，或 S11 原人类缺陷决定），填写实际判别方法、证据、观察和结论。不要填写根因、路由、RepairContract、审批、ID 或 Assignment。新假设只写完整专业问题与来源，原消费者生成身份后等待 Main 派发。示例只说明 JSON 形状；finding-example 和示例文件路径必须替换为本卷真实来源与本人实际保存的证据，不能当作已存在的证据。 通用边界：产品代码、正式测试、锁定规格和正式环境配置只读；可读取、执行已有检查，在题目允许的安全隔离条件下实验并保存证据。临时探针不授权持久修改。该判别的实验范围、停止与未决条件在 inputs.hypothesis.discriminator；支持/反驳预期在 expected_outcomes。缺少安全条件则停止相关操作并如实返回，不猜造 scope/stop_condition 字段。",
+  "instruction": "只修改 answer 并保存本卷的准确路径；答卷顶层仅保留 title、instruction、read、questions、answer 五个字段，保持已发行题干不变，只填写 answer；不要把 view packet 的 packet_id、template_id、binding、inputs、draft、view_path 或 answer_path 抄入答卷。不手动 issue/consume、不另交 PLAN 或相同内容的报告。依据本卷冻结的 Case、Hypothesis、原来源边界与证据资料（S7 Finding encounter，或 S11 原人类缺陷决定），填写实际判别方法、证据、观察和结论。不要填写根因、路由、RepairContract、审批、ID 或 Assignment。新假设只写完整专业问题与来源，原消费者生成身份后等待 Main 派发。示例只说明 JSON 形状；finding-example 和示例文件路径必须替换为本卷真实来源与本人实际保存的证据，不能当作已存在的证据。 通用边界：产品代码、正式测试、锁定规格和正式环境配置只读；可读取、执行已有检查，在题目允许的安全隔离条件下实验并保存证据。临时探针不授权持久修改。该判别的实验范围、停止与未决条件在 inputs.hypothesis.discriminator；支持/反驳预期在 expected_outcomes。缺少安全条件则停止相关操作并如实返回，不猜造 scope/stop_condition 字段。",
   "questions": {
     "method": {
       "question": "你如何判别这个假设与竞争解释？填写字符串，写出实际采用的方法与比较对象，不要把计划当作执行结果。受阻且无法得出结论时选 inconclusive，在此写明实际已做、未执行和受阻的判别操作。",

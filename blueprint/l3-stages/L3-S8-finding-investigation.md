@@ -247,7 +247,7 @@ Main 保存问题数组后，原流程逐项登记假设和责任；前几项成
 
 ## 8. 调查结果应表达什么
 
-调查者只修改原答卷的 `answer`，保留题干。其字段包括实际方法、证据、原现场边界、实际观察、判别或反事实、`supported`／`refuted`／`inconclusive`、能解释与不能解释的 Finding，以及必要的新假设问题。
+调查者只修改原答卷的 `answer`，保留题干。答卷顶层仅保留 `title`、`instruction`、`read`、`questions`、`answer` 五个字段，不要把 view packet 的 `packet_id`、`template_id`、`binding`、`inputs`、`draft`、`view_path` 或 `answer_path` 抄入答卷。其字段包括实际方法、证据、原现场边界、实际观察、判别或反事实、`supported`／`refuted`／`inconclusive`、能解释与不能解释的 Finding，以及必要的新假设问题。
 
 `source_boundary_refs` 对 S7 来源使用 `finding:<原ID>`，或原 Finding 中确实存在的 `finding:<原ID>#/encounter/...` JSON Pointer；无人为 Finding 的人类来源使用本卷提供的原决定 ID 或准确路径。它说明本次调查从哪里起步；执行证据则放在 `evidence_refs`。任意 `test://...` 字符串不能代替来源边界。人类来源没有 Finding 时，解释与不能解释的 Finding 数组及后续假设的 `source_finding_ids` 填 `[]`，专业问题与判别证据仍须完整。
 
