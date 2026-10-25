@@ -44,7 +44,7 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 	before := repairDispatchRuntimeBytes(t, root)
 	context := stageRepairVerifierDispatchContext(root, policy.Input{Event: "PreToolUse"}, snapshot)
 	contractPath := resolveRootPath(root, stringValue(repairPointerCLI(snapshot.State)["contract_ref"]))
-	for _, want := range []string{path, contractPath, "all current Contract assertions", "not required for every Builder", "role_family=test-builder", "restore first authority", "ordinary Builder selection", "dispatch only when the current Targeted responsibility"} {
+	for _, want := range []string{path, contractPath, "all current Contract assertions", "not required for every Builder", "role_family=test-builder", "restore first authority", "ordinary Builder selection", "dispatch only when the current Targeted responsibility", "intentionally use the same Builder assignment_id", "Do not write a verifier assignment ID"} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("verifier professional view lacks %q: %s", want, context)
 		}
