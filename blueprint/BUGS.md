@@ -284,6 +284,10 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **建议修法.** 超时诊断与内容校验分两类措辞，并给出「原生 resume 同一 Worker 原样重交」的具体入口；同时把消费者超时与其派生出的下游提示合并成一条。
 
+**调查结论（2026-10-26，未修，留待 SIM-17 一并根治）.**
+超时不是内容错，也不是消费者判死刑，是 S7 大答卷的重活（验签名、跑消费者、写状态）塞进了 Claude Code 给 Hook 的 8 秒窗口，计时器到即 `context deadline exceeded`，答卷状态半写。同一份答卷下一轮原样重交即被接收（F-026）。
+近治是把 `hook_budget.go:fail()` 拆两类文案（超时：内容未判，原样 resume 同一 Worker 重交，禁重写；内容非法：按 field_errors 改 answer），不动预算；根治归 SIM-17（重活移出 Hook，走 `review-result submit` 外部调用，Hook 只做轻量检查）。退出码与连锁投影合并也在 SIM-17。
+
 **关联反馈.** `source-ledger` F-026。
 
 ---
