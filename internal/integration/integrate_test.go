@@ -221,6 +221,9 @@ func TestIntegrateDirtyTreeDuringVerifyPreserves(t *testing.T) {
 	if !errors.Is(err, ErrDirtyWorktree) {
 		t.Fatalf("dirty Main error = %v, want ErrDirtyWorktree", err)
 	}
+	if !strings.Contains(err.Error(), "Main integration checkout") || !strings.Contains(err.Error(), f.root) || !strings.Contains(err.Error(), f.wt) {
+		t.Fatalf("returned error lost checkout ownership: %v", err)
+	}
 	wantRoot := f.root
 	for _, want := range []string{
 		"Main integration checkout \"" + wantRoot + "\" is dirty",

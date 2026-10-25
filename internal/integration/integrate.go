@@ -914,6 +914,9 @@ func preserveAfterCAS(ctx context.Context, store *CheckpointStore, path string, 
 	if err != nil {
 		return Result{Checkpoint: preserved}, fmt.Errorf("persist preserved: %w", err)
 	}
+	if cause != nil {
+		return Result{Checkpoint: written}, fmt.Errorf("%v; Builder checkout %q preserved: %w", cause, written.WorktreePath, sentinel)
+	}
 	return Result{Checkpoint: written}, sentinel
 }
 

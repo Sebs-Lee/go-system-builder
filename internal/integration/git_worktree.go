@@ -565,7 +565,7 @@ func removeWorktree(ctx context.Context, repoRoot, worktreePath string) error {
 		return fmt.Errorf("verify clean: %w", err)
 	}
 	if !clean {
-		return ErrDirtyWorktree
+		return fmt.Errorf("Builder checkout %q is dirty; inspect with git -C %q status --short: %w", worktreePath, worktreePath, ErrDirtyWorktree)
 	}
 	if _, err := defaultRunner.Run(ctx, repoRoot, "worktree", "remove", worktreePath); err != nil {
 		// If the worktree is already gone we treat that as success

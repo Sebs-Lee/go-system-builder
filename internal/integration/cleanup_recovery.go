@@ -60,7 +60,7 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 			return err
 		}
 		if !clean {
-			return ErrDirtyWorktree
+			return fmt.Errorf("Builder checkout %q is dirty; inspect with git -C %q status --short: %w", path, path, ErrDirtyWorktree)
 		}
 		if len(projection) > 0 {
 			// Recheck the source coordinate immediately before restoring only the
@@ -77,7 +77,7 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 				return err
 			}
 			if !clean {
-				return ErrDirtyWorktree
+				return fmt.Errorf("Builder checkout %q is still dirty after bootstrap restore; inspect with git -C %q status --short: %w", path, path, ErrDirtyWorktree)
 			}
 		}
 		return removeWorktree(ctx, root, path)

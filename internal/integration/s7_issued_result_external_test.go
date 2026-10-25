@@ -534,6 +534,23 @@ func registerCanonicalPlanForPacketTest(t *testing.T, fixture *canonicalMainFixt
 	if draft == nil || draft.ProductBaseline == nil {
 		t.Fatalf("source-backed ReviewPlan draft missing product baseline: plan=%+v notes=%v", draft, notes)
 	}
+	// This mechanism fixture has no browser inventory. Make its synthetic
+	// non-browser verification responsibility explicit rather than treating the
+	// source draft's unresolved coverage decision as a registered Plan.
+	draft.E2ECoverageState = "cold_start"
+	workspace := "e2e-workspace/s7-packet-fixture"
+	draft.VerificationArtifactWorkspace = &workspace
+	for i := range draft.Assignments {
+		if draft.Assignments[i].Lens == "e2e" {
+			draft.Assignments[i].BehaviorSurface = "non_browser"
+		}
+	}
+	for i := range draft.Claims {
+		if draft.Claims[i].Lens == "e2e" {
+			draft.Claims[i].Target = canonicalSourceFile
+			draft.Claims[i].Method = "Inspect the committed mechanism-fixture product marker and record its actual file state; no browser surface is supplied."
+		}
+	}
 	for i := range draft.Claims {
 		claim := &draft.Claims[i]
 		if !strings.Contains(claim.Oracle, "TODO(planner)") {
