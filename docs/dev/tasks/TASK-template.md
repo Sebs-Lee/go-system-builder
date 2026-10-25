@@ -24,7 +24,8 @@ TASK ID 使用数字段：例如 `TASK-009` 或 `TASK-009-01`，文件名与标�
 
 Read order for the builder. Fingerprints, versions, and lock state live in
 runtime documents[] (.claude/loop-state.json) — this table never hand-copies
-them.
+them. Paths in this manifest resolve relative to this TASK file's directory,
+not the repository root.
 
 | Order | Kind | ID | Path | Clauses | Purpose | Mode |
 |:---|:---|:---|:---|:---|:---|:---|
@@ -144,6 +145,9 @@ An actual deviation must be reported and resolved through the original scope
 and change process; reporting it alone does not authorize a wider scope.
 
 ## 8. Dependencies
+
+When there are no dependencies, keep the table body empty; do not add placeholder
+rows such as `（无）` or `N/A`. Only valid `TASK-*` references are machine-tracked.
 
 | Dependency | Required artifact / verification |
 |:---|:---|
