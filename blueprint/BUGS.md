@@ -16,6 +16,8 @@
 
 **`ui-ledger` 的中断点是本轮唯一的"没跑完"**，如实记录：S7 第二轮 `assignment-qa-pattern-idiom-fit` 答卷已写好却接收不出，`assignment-qa-testability-oracle` 被派发但工作包从未准备；两者把这一轮钉在 `active`。主会话转录已累积到 **31 MB**，每轮 `--resume` 都在继续加长它。
 
+**截至 2026-10-25 07:15，该题已连续 4 个窗口停在 `rev 90`**，试过的手段全部无效：删陈旧产物并重存答卷、清空遗留 worktree（`.claude/worktrees` 现为 0 文件、工作树干净、`git status` 30 ms）、换新原生 agent 重派（2 次，转录 455 KB / 570 KB）、给宿主进程降优先级、留静默窗口、逐个函数读框架实现找"不依赖时序的出路"。**没有一条跳出 `S7 reception incomplete` / `canonical frozen baseline drift scan: context deadline exceeded`。** 看护器仍在自动续跑（上限 16 个窗口），若后续突破再补记。
+
 原始反馈原文：`/home/sebs/gsb-simulation/{topic}/project/simulation/feedback-notes.md`（每 10 秒快照到 `feedback-snapshots/`；因框架恢复动作会删除该文件，最终以 `feedback-merged/{topic}.md` 为准），汇总见 `/home/sebs/gsb-simulation/feedback-consolidated.md`。
 
 **反馈条数以 `feedback-merged/` 为准**（`merge.py` 对 40 份快照去重合并）：`source-ledger` **28** 条、`callback-api` **28** 条、`ui-ledger` **36** 条，合计 **92** 条。每条按「原始提示原文 → 原本的疑问 → 实际怎么判断 → 最终是否正确」四段记录。
@@ -399,7 +401,7 @@ agent 给出的机制判定与实测：
 
 ---
 
-### BUG-SIM-15 · P3 · TASK 模板两处缺一句话可省一次试错
+### BUG-SIM-15 · P3 · TASK 模板两处缺一句话可省一次试错（✅ 已修复，提交 `82b0fc3`）
 
 **现象.**
 
@@ -414,7 +416,7 @@ agent 给出的机制判定与实测：
 
 ---
 
-### BUG-SIM-16 · P3 · S10/S11 之外的流程提示仍有歧义（归集）
+### BUG-SIM-16 · P3 · S10/S11 之外的流程提示仍有歧义（归集）（✅ 已修复，提交 `09be9e8`）
 
 **现象.** 以下均为措辞级歧义，agent 均能自行纠正，但每次都要额外读一轮文档：
 
@@ -496,18 +498,28 @@ agent 给出的机制判定与实测：
 
 把这条拆开，就是一个闭环：
 
-1. 漂移扫描 `detectUndeclaredProductDriftWithState`（`internal/review/workspace.go:175`）超时 → 错误被包装成「canonical product baseline changed」；
+1. **同一次 hook 事件的前序操作已经吃光了预算**（编码 finding + 暂存 observation batch + 准备下一份问卷 + 编码/落盘），漂移扫描只拿到剩余时间 → 超时 → 错误被包装成「canonical product baseline changed」；
 2. 因为扫描没跑完，兜底清理**无法证明暂存产物未被引用**（`internal/review/submit.go:627-629`），于是把**已经生成好的** ReviewResult 留在盘上；
 3. 下一次接收看到盘上已有同 id 产物 → 判为陈旧产物 → 拒绝；
 4. Main 删掉产物重试 → 回到第 1 步。
 
-**即：清理逻辑把"扫描超时"翻译成了"有东西还被引用"，于是每轮都留下一颗毒丸。** agent 的实测动作与此完全一致——它反复做的正是"删 stale 产物 + 保持工作树干净 + 让同一 Reviewer 重存答卷"：
+**即：清理逻辑把"扫描超时"翻译成了"有东西还被引用"，于是每轮都留下一颗毒丸；而毒丸的存在让下一轮的工作量更大，于是预算更不够——这是一个自我维持的死循环。** agent 的实测动作与此完全一致——它反复做的正是"删 stale 产物 + 保持工作树干净 + 让同一 Reviewer 重存答卷"：
 
 > Stale staged artifact removed and the answer re-saved byte-identical in the same command; before/after sha256 equal, file valid JSON, no field changed.
 
 **这条链路的成本还会随重试次数自我放大**（BUG-SIM-20）。本轮主会话转录已膨胀到 **31 MB**，reviewer 子代理转录 **2.4 MB**；接收路径上的固定开销（读转录）随重试次数增长，漂移扫描的开销随工作树增长，两者挤在同一个 8 秒闸门里。
 
 **agent 已经开始逆向锁机制本身.** 它在转录里自述：「the consumer offers "change the artifact id" as an alternative to deleting the file」「check for a stale legacy lock sentinel — `acquireLegacyLockContext` waits 30 s before evicting one, which would consume the whole budget」「the state is described as a rebuildable projection, and a smaller rebuilt state would fit the budget」。**这是"猜机制"退化成"逆向一切"的又一步：它开始逐个函数读框架实现去找一条不依赖时序的出路。**
+
+**agent 已经把逃生手段升级到"改宿主"（2026-10-25 06:58 现场记录）.**
+
+`ui-ledger` 的 Main 在第 10 个窗口里做了三件事，顺序很清楚：
+
+1. **量化宿主抢占**：用 `top`/`vmstat` 测出"host is stealing 53 % CPU with 39 runnable tasks"，并给出自己的结论——*"the S7 reception needs ~5.5 s against the platform's fixed 6 s hook budget"*；
+2. **去改框架之外的东西**：找到一个 `minimax-code` 进程（pid 2179906，父进程是一个已运行 2.2 天的 bash 会话；**不是本条仿真会话的 2678589**），确认它没有活跃会话子进程后，**用 `renice` 把它降到 nice 19**，好让 harness hook 拿到 CPU；
+3. **换新原生 agent 重派**：起一个全新 `s7-r2-qa-pattern-idiom-fit-retry` 子代理（转录几乎为零），让它按多轮保存循环重交同一份答卷。
+
+> **这条行为本身就是一个结论.** 当框架自己的时限撑不住时，agent 的出路是**走出框架去调宿主**——改进程优先级、换 agent、重存文件、删产物。这不是"文档没写清楚"，是**框架没有给出任何在预算内完成接收的办法**。同时它也再次印证了"负载是放大器不是根因"：**基线接收成本（约 5.5 s）本来就贴着 6 s 的预算**，宿主只要拿走一点 CPU 就会翻车；把负载压到 1.44 仍失败，正是因为余量本来就只有 15%。
 
 **余量有多紧.** `reception/s7` 平均 **5 728 ms**，内部时限约 **6 658 ms**——**只有 15% 余量**。任何一点负载增长、状态增长或工作树膨胀都会越界。
 
@@ -519,13 +531,34 @@ agent 给出的机制判定与实测：
 
 搬迁后 `git status --porcelain` 由 `?? .worktrees/` 变为完全干净，跟踪树指纹与内容哈希不变、HEAD 不变、产品字节未动；**同一 Reviewer 重存答卷后立刻接收成功（rev 84）**。
 
-**错误文案把「超时」包装成「基线变了」，极具误导性.**
+> **但这套处置在 `ui-ledger` 上只走通了前半程（2026-10-25 07:15 修正）.** 遗留 worktree 确实已被清空（`.claude/worktrees` 现为 0 文件）、工作树保持干净、`git status` 只要 30 ms，**但接收仍然失败**——第 9–11 个窗口里 `rev` 一直停在 **90**，`assignment-qa-pattern-idiom-fit` 与 `assignment-qa-testability-oracle` 始终 `active`。换新原生 agent（转录 455 KB / 570 KB）、降宿主进程优先级、静默窗口等待，**都没有把这题推过 S7 第二轮**。
+>
+> **结论要修正：** 上面这套处置对 `callback-api` 有效、对 `ui-ledger` 无效。差别不在"有没有做"，而在**卡点的位置**：`callback-api` 卡在 hook 前置工作（转录扫描），省出几十毫秒就能过；`ui-ledger` 卡在**预算被前序操作吃光后的下游**（漂移扫描 → 产物被保留 → 陈旧冲突），而这套处置**完全不触及**那个环节。**这也说明"处置有效"不能推广到"问题解决"——`ui-ledger` 是本轮唯一没跑到终点的题材，而它恰好就是处置看起来最标准的那一题。**
 
-> `canonical product baseline changed before ReviewResult commit: canonical frozen baseline drift scan: context deadline exceeded`
+**错误文案把「超时」包装成「基线变了」，极具误导性——而且这是绝大多数情况（2026-10-25 07:10 全量分类）.**
+
+| 题材 | 漂移扫描**超时** | 漂移扫描**真漂移**（磁盘上重新出现） | 「未声明产品文件」真漂移 | 「stale 状态持久化」也超时 | hook 总预算超时 |
+| --- | --- | --- | --- | --- | --- |
+| `source-ledger` | 1 | 0 | 0 | 0 | 3 |
+| `callback-api` | 34 | 1 | 0 | 1 | 72 |
+| `ui-ledger` | **99** | 10 | 0 | 4 | **301** |
+| **合计** | **134** | **11** | **0** | **5** | **376** |
+
+> **134 次扫描超时 vs 11 次真漂移——92% 的「基线变了」其实根本没跑到判定。** 「undeclared product file(s) … outside frozen_subjects」这条**真正的漂移判决一次都没出现过**。
 
 实测基线指纹、HEAD、frozen `changed_surface` 的 sha、frozen `deleted` 主体复现的 blob sha **全部一致**，基线根本没变。agent 自己的判语是：
 
 > 错误文案把"扫描没跑完"包装成了"基线变了"，容易误判成真缺陷。
+
+**而且这个超时是「预算被前序操作吃光」造成的，不是扫描本身慢。** 三条实测证据：
+
+1. `internal/review/workspace.go:306-313` —— 扫描函数**继承 hook 的同一个 deadline context**，并在循环里逐段检查 `parent.Err()`；它拿到的是**剩余预算**，不是 8 秒。
+2. 扫描真正要做的 IO 都很快：`git status --porcelain` **30 ms**、`git diff --name-status HEAD` **45 ms**、`loop-state.json` 解析 **24 ms**。没有任何一项接近 6 秒。
+3. **最关键的一条**：最新一次回执的后半句是
+
+   > ReviewPlan frozen subject baseline: canonical frozen baseline drift scan: context deadline exceeded; **failed to persist ReviewPlan stale status: context deadline exceeded**
+
+   ——**扫描之后紧接着的"把 stale 状态写回去"也超时了**。如果是扫描自己慢，它把预算吃完也就算了；但"写一个状态"这种微秒级操作也超时，只能说明**预算在扫描开始之前就已经没了**。
 
 同一条检查有两种落点：漂移能快速判定时给出可执行的原因（`frozen deleted subject … reappeared on disk`），跑不完时只吐一个 `context deadline exceeded`，却顶着「基线变了」的外壳。**这是本轮最容易把人带偏的一条报错。**
 
@@ -744,6 +777,16 @@ PreToolUse 侧承载的正是这些硬规则：`internal/policy/engine.go:1447`�
 2. 给 Runtime 状态加**体积上限与增长告警**，并在 hook 预算里为状态体积预留时间，而不是假设它恒定；
 3. 状态体积本身应当进入 `healthDegraded` 的判据——状态越大，Hook 越慢，这是可测量的。
 
+**方案 A 详细设计（2026-10-25 增补，暂不动手）.**
+
+> 结论先行：`entities.work_packets` 里真正需要持久化的是**身份+绑定**（packet id、assignment、轮次、基线 pin、digest），问卷 draft（题目全文、read 列表、答案模板）是 `DraftPlanForRoot(root, state, round)` 可确定性重建的派生数据。瘦身 = 存引用不存全文。
+
+- **写入侧**（`internal/review/result_packet.go:150`）：`entities["work_packets"]` 改存 `{packet_id, assignment_id, review_round, baseline_generation, digest, draft_ref}`，其中 `draft_ref` 指向 `.claude/review/packets/<packet-id>.json`；draft 全文落该文件（Main/系统写，不手填）。
+- **读取侧**：`FindReviewResultPacketContext` / `ReviewResultPackets`（`internal/runtime`）按 id 先读状态行，draft 按需从文件重建；`DeepEqual` 身份比对只比身份+绑定+digest，不比 draft 全文（draft 重建确定性由 `DraftPlanForRoot` 单测锁）。
+- **校验侧**：16 MiB 预算上限保留；新增 entities 体积告警（超 500 KB 在 hook 里报 degraded，不阻断）。
+- **测试**：重建一致性测试（同一 root+state+round 两次 `DraftPlanForRoot` 输出一致）；瘦身前后 packet 身份比对等价测试；体积告警触发测试。
+- **与 SIM-17 的关系**：SIM-17 拆事件减少单次 Hook 的活，SIM-19 瘦身减少每次 Hook 的固定成本，两者正交，建议同分支先后做，先 SIM-19（改动小、收益确定）再 SIM-17（结构大）。
+
 **关联反馈.** `ui-ledger` 记录 22。
 
 ---
@@ -803,6 +846,18 @@ data, err := io.ReadAll(io.LimitReader(f, 4<<20))
 > The error points at the *second* baseline verification (inside the CAS). Let me check whether the per-event bookkeeping files grow without bound — that would turn "fits in budget" into "doesn't" over a long run.
 
 **agent 给出的处置本身就是这个诊断的验证**：换一个**全新的**原生 agent 去交同一份答卷——新 agent 的转录几乎为零，接收立刻成功。这与"接收成本 ∝ 转录大小"完全吻合。
+
+> **⚠️ 2026-10-25 07:15 反证：这个处置在 `ui-ledger` 上并不成立.** `callback-api` 的 agent 报告"换新原生 agent 后接收立刻成功"，但 `ui-ledger` 在第 10 个窗口里**同样换新原生 agent 重派**（`agent-a00918d91322e21d5` 转录 **455 KB**、`agent-a34ad5122d3de60ba` 转录 **570 KB**，都明显小于原 agent 的 920 KB），**两个新 agent 的 SubagentStop 全部仍然失败**：
+>
+> | agent | 转录 | SubagentStop 耗时 | 结果 |
+> | --- | --- | --- | --- |
+> | `a886569ec7f89cebd`（原） | 920 KB | 8 117 ms | `S7 reception incomplete` |
+> | `a00918d91322e21d5`（新） | 455 KB | 8 117 ms | `S7 reception incomplete` |
+> | `a34ad5122d3de60ba`（新） | 570 KB | 6 520 ms | `S7 reception incomplete` |
+>
+> **所以"转录大小"不是接收成功的充分条件。** 两题的差异在于：`callback-api` 的卡点确实在 hook 前置工作（转录扫描）上，换新 agent 能省出预算；`ui-ledger` 的卡点更靠后——**预算在前序操作就被吃光**，漂移扫描与 stale 状态持久化连续超时，于是**每一轮都会留下一颗被保留的陈旧产物**，形成自我维持的死循环（本节上文「完整死锁链」）。**换 agent 能省 4 MiB 解析里的几十毫秒，省不出整个 hook 事件缺的 1–2 秒。**
+>
+> 这条反证进一步坐实了前面的修正：**主修是 BUG-SIM-17（拆事件、重活移出 Hook），本条只是次要放大器。**
 
 **实测各环节耗时（`ui-ledger` 项目现场，2026-10-25 06:45）.**
 
@@ -889,8 +944,8 @@ data, err := io.ReadAll(io.LimitReader(f, 4<<20))
 | SIM-12 S10/S11 口径 | ✅ 已修复并提交（`6795e11`） | schema description + 双问卷口径 + 两个文案断言测试；S11 申请无 schema 校验记为后续 gap |
 | SIM-13 私有文件≠已接收无反馈 | ✅ 已修复并提交（`4d3138d`） | S9 brief 已有；S6 brief 补同款 `s6 status` 查询句；断线续跑机制本来全 |
 | SIM-14 未归属路径否证注册 | ✅ 已修复并提交（`15c4efd`） | deleted surface 不进 frozen_subjects，注册只看归属；漂移文案改挂牌口径；测试跟新语义 |
-| SIM-15 TASK 模板两句话 | 已在工作区修复 | `docs/dev/tasks/TASK-template.md:§2/§8` 已加相对基准与空表说明 |
-| SIM-16 措辞归集 9 项 | 部分修复，部分需优化 | S6 空提交/`make check` 归属、`s6_prepare_test` 期望已更新；S7 合并规则、S9→S7 `cold_start` 误读、S8 discriminator 出路仍需进 brief/协议正文 |
+| SIM-15 TASK 模板两句话 | ✅ 已修复并提交（`82b0fc3`） | §2 相对本 TASK 目录 + §8 空表禁占位；语义测试通过 |
+| SIM-16 措辞归集 9 项 | ✅ 已修复并提交（`09be9e8`） | S7 问卷补 E2E N/A/合并/seed 口径 + 中断恢复；S0 锁定触发=落盘；余项此前已修 |
 | SIM-17 S7 Hook 8s 预算 | 真 Gap，P0，工作区未动 | `internal/cli/hook_budget.go:20,26-41,103` 原样：8s 通用、仅 S4 放宽 28s、超时退出码 0、半写状态、无认可恢复入口；三题全触发。**2026-10-25 06:40 全量重算：`SubagentStop`（=S7 接收事件）超限 `source-ledger` 3 / `callback-api` 20 / `ui-ledger` **49** 次，耗时中位数 **3 265 → 6 377 → 6 445 ms**（内部预算 ≈6 658 ms，`ui-ledger` 已贴天花板，p90 7 265 ms）；`ui-ledger` 框架自记 `loop_s7_result_submits_total = {accepted:5, rejected:52}`（被拒率 91%）。根因：一个 hook 事件同时做"备下一份问卷"+"接收上一份 ReviewResult"，两件约 6s 的活共用一份约 6.6s 时限；配合 Runtime 状态膨胀（SIM-19）与漂移扫描遍历工作树。机器负载是放大器不是根因（负载降到 1.44 仍失败）。**2026-10-25 06:45 实测修正：6.4s 没有单一慢操作——二进制冷启动 555ms、`s7 status` 389ms、`runtime recover inspect` 570ms、状态解析 24ms、git 30–45ms、转录解析 30–96ms，串行累加即达预算** |
 | SIM-18 PreToolUse 预算超限 fail-open | 真 Gap，P1，与 SIM-17 同源但性质不同 | `internal/cli/hook_budget.go:fail()` 在策略判断前对 PreToolUse 直接 `return 0`，绕过 `policy.UnavailableDecision` 的 fail-closed（非只读工具应 deny）。**2026-10-25 06:40 全量重算：PreToolUse 超限 `source-ledger` 3 / `callback-api` 51 / `ui-ledger` **258** 次，合计 **312 次，退出码全部为 0（即全部 fail-open 放行）**；`ui-ledger` 一次 PreToolUse 事件数 1 645（占 15.7%）。按 `docs/control/protected-commands.json` 全部 19 条受保护命令族逐条比对，**命中 0 次 → 仍属潜伏未利用**，但放行内容包含 `find -delete`、`git stash/checkout`、手工 `runtime review-result submit` 等未经任何策略评估的操作。根因补充：PreToolUse 降级阈值 4s（10s×40%），内部预算 8s 正好是阈值两倍；框架 metrics 已打印过 "a platform timeout can bypass PreToolUse enforcement" |
 | SIM-19 Runtime 状态随轮次膨胀 | 真 Gap，P1（本次分析新增） | `loop-state.json` 611 KB→742 KB（`entities` 459 KB，逐份存 work-packet 问卷 draft）；每个 hook 都要全量序列化+校验，导致**越靠后的 assignment 越难被接收**；问卷 draft 是 `DraftPlanForRoot` 可确定性重建的派生数据，不应进主状态。**实测：状态解析本身只要 24 ms，不是 6.4s 的主因；它的危害是「越靠后越难被接收」与「全量序列化+校验随轮次线性变慢」** |
