@@ -49,6 +49,10 @@ func RevisePlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("read revised ReviewPlan: %w", err)
 	}
 
+	if !json.Valid(data) {
+		return loopruntime.Snapshot{}, &PlanAnswerError{fmt.Errorf("revised ReviewPlan file %s must contain JSON; --file expects a JSON file path, not Markdown or inline JSON", request.PlanPath)}
+	}
+
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
