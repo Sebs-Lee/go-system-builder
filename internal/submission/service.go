@@ -306,7 +306,7 @@ func (s *Service) Save(ctx context.Context, owner, path string) (Receipt, error)
 	if controlErr != nil || result.Error != "" {
 		if !r.ConsumerPending {
 			r.WaitingOn = append(r.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: record.FollowupID})
-			r.NextAction = "本人交付已接收，可以结束本责任；Main 检查原接续 " + record.FollowupID + " 与后继准备，无需重交已接收答案。"
+			r.NextAction = "本人交付已接收，可以结束本责任；阶段出口接续尚未完成，Main 检查原接续 " + record.FollowupID + " 与后继准备，无需重交已接收答案。"
 		}
 		r.ConsumerOwner, r.ConsumerPending = "main", true
 		if controlErr != nil {

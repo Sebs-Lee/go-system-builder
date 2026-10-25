@@ -260,7 +260,7 @@ func receipt(root string, snapshot runtime.Snapshot, p workpacket.Packet, r runt
 	}
 	if r.ControlStatus == "pending" {
 		result.ConsumerOwner, result.ConsumerPending = "main", true
-		result.NextAction = "本人审查交付已接收，可以结束本责任；Main 检查原 system_followup " + r.FollowupID + " 的具体错误，沿原接续恢复；技术中断可用已有 runtime stage-answer recover，无需重新提交审查答案。"
+		result.NextAction = "本人审查交付已接收，可以结束本责任；阶段出口接续尚未完成，Main 检查原 system_followup " + r.FollowupID + " 的具体缺项，沿原接续恢复；技术中断可用已有 runtime stage-answer recover，无需重新提交审查答案。"
 		result.WaitingOn = append(result.WaitingOn, Waiting{Reason: "system_followup", Owner: "Main", Ref: r.FollowupID})
 	}
 	life, _ := snapshot.State["lifecycle"].(map[string]any)

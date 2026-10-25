@@ -95,7 +95,7 @@ func stageS5ObservedContext(root string, state map[string]any) string {
 		if received {
 			line := prefix + "original reception recorded as " + receipt.Key + "; keep the received judgment unchanged. Main owns peer dispatch and stage followup; this observation does not revalidate or receive the answer."
 			if receipt.ControlStatus == "pending" {
-				line += fmt.Sprintf(" Pending system_followup %s: inspect its actual failure, then use `loop-harness runtime stage-answer recover --root %s`; do not ask the reviewer to submit again.", receipt.FollowupID, s7CaptureShellQuote(root))
+				line += fmt.Sprintf(" Review answer accepted; do not submit again. Stage exit followup remains pending (system_followup %s): Main inspects the stage exit failure, then uses `loop-harness runtime stage-answer recover --root %s`; do not ask the reviewer to submit again.", receipt.FollowupID, s7CaptureShellQuote(root))
 			}
 			lines = append(lines, line)
 			continue
