@@ -121,6 +121,10 @@ Use path:check.log or ./check.log for a local bare filename; bare tokens without
 path: or a slash remain opaque legacy IDs.
 Reception captures these actual bytes for Main. URI references remain unchanged;
 missing local source files must be restored for reception.
+Saving a private Plan/Result or returning its path does not establish reception.
+Only the original consumer receipt confirms acceptance; Main can query
+loop-harness runtime repair status --root <Main-root> for missing_reports and
+missing_results. Preserve the same Worker and artifacts if reception is pending.
 Return this exact brief %s and the absolute Result path. SubagentStop receives the
 professional artifacts; Main owns integration and necessary checks. No workspace
 prepare/launch, session reservation, Team, generic readback, begin or activation.
