@@ -20,6 +20,26 @@ import (
 	"github.com/entroforge/go-system-builder/internal/semantic"
 )
 
+func TestS9ImpactPrepareRejectsWrongResponsibilityWithoutMutation(t *testing.T) {
+	root := repairLeadFreshRoot(t)
+	statePath := filepath.Join(root, ".claude", "loop-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, diagnostic bytes.Buffer
+	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &out, &diagnostic); code != 1 || !strings.Contains(diagnostic.String(), "requires the current S9 impact_reconciliation") {
+		t.Fatalf("wrong-stage preparation was not refused: code=%d out=%s diagnostic=%s", code, &out, &diagnostic)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("wrong-stage preparation mutated Runtime: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "submissions", "s9")); !os.IsNotExist(err) {
+		t.Fatalf("wrong-stage preparation created S9 draft tree: %v", err)
+	}
+}
+
 func TestS9RepairLeadStopAndIdleDoNotGuessPathWithoutAuthority(t *testing.T) {
 	root := repairLeadFreshRoot(t)
 	state := repairLeadBaseState(t, root, "bug_resolution", "fixing", 0)
@@ -277,21 +297,73 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range []string{"Stop", "Idle"} {
+	// Final is already committed, but questionnaire preparation has not run.
+	// Passive listeners report the original recovery without manufacturing a draft.
+	for _, event := range []string{"Stop", "Idle", "PreToolUse"} {
 		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, resultSnapshot)
-		if !strings.Contains(context, impactPath) {
-			t.Fatalf("%s did not report the current sourced path as read-only: %s", event, context)
+		if !strings.Contains(context, impactPath) || !strings.Contains(context, "runtime repair impact prepare") {
+			t.Fatalf("%s omitted exact missing questionnaire/recovery: %s", event, context)
 		}
 		if _, err := os.Stat(impactPath); !os.IsNotExist(err) {
-			t.Fatalf("%s created the ChangeImpact questionnaire: %v", event, err)
+			t.Fatalf("%s created questionnaire: %v", event, err)
 		}
 	}
-	impactContext := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, resultSnapshot)
-	if !strings.Contains(impactContext, impactPath) {
-		t.Fatalf("Main context omitted the actual ChangeImpact path %s: %s", impactPath, impactContext)
-	}
-	if _, err := prepareRepairImpactQuestionnaire(root, resultSnapshot.State); err != nil {
+	stateBefore, err := os.ReadFile(statePath)
+	if err != nil {
 		t.Fatal(err)
+	}
+	journalBefore, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A filesystem failure after accepted Final is recoverable independently.
+	if err := os.MkdirAll(impactPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var prepareOut, prepareErr bytes.Buffer
+	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &prepareOut, &prepareErr); code != 1 || !strings.Contains(prepareErr.String(), "not a regular file") {
+		t.Fatalf("expected explicit preparation failure: code=%d out=%s err=%s", code, &prepareOut, &prepareErr)
+	}
+	if err := os.Remove(impactPath); err != nil {
+		t.Fatal(err)
+	}
+	prepareOut.Reset()
+	prepareErr.Reset()
+	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &prepareOut, &prepareErr); code != 0 || !strings.Contains(prepareOut.String(), impactPath) {
+		t.Fatalf("original preparation recovery failed: code=%d out=%s err=%s", code, &prepareOut, &prepareErr)
+	}
+	// Re-entry must preserve ongoing professional work exactly.
+	originalDraft, err := os.ReadFile(impactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authoredImpact repair.ChangeImpactRequest
+	if err := json.Unmarshal(originalDraft, &authoredImpact); err != nil {
+		t.Fatal(err)
+	}
+	authoredImpact.ChangeTypes = []string{"implementation"}
+	professionalDraft, err := json.MarshalIndent(authoredImpact, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	professionalDraft = append(professionalDraft, '\n')
+	if err := os.WriteFile(impactPath, professionalDraft, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &prepareOut, &prepareErr); code != 0 {
+		t.Fatalf("repeated preparation failed: %s", &prepareErr)
+	}
+	draftAfter, err := os.ReadFile(impactPath)
+	if err != nil || !bytes.Equal(professionalDraft, draftAfter) {
+		t.Fatalf("recovery rewrote professional draft: %v", err)
+	}
+	stateAfter, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalAfter, err := os.ReadFile(journalPath)
+	if err != nil || !bytes.Equal(stateBefore, stateAfter) || !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatalf("preparation replayed accepted Final or mutated Runtime: %v", err)
 	}
 	var impactAnswer repair.ChangeImpactRequest
 	readRepairLeadJSON(t, impactPath, &impactAnswer)

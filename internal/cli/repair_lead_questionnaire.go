@@ -65,9 +65,9 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			return "S9 ChangeImpact questionnaire path is unavailable from current Runtime: " + err.Error()
 		}
 		if questionnaireMissing(path) {
-			return "S9 ChangeImpact questionnaire is not prepared at " + path + "; Main/system must prepare the original request when this responsibility starts."
+			return "S9 ChangeImpact questionnaire is not prepared at " + path + "; Main/system resumes its original preparation with " + repairImpactPreparationRecovery(root) + ". Accepted Final Results remain recorded; do not resubmit Builder work or hand-author required_reverification_ids."
 		}
-		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the accepted Final batch changes, and the Contract-level reverification ID are supplied from the original sources. Complete the actual change types and professional impact/evidence dispositions with their rationales, then save this exact request. If the supplied accepted Final batch has no product changes, keep change_types=[] and explain the original Case/Contract retention or reverification decision; do not invent changed files or a change type. The original CreateChangeImpact and CommitChangeImpact consumers run on save." + repairLeadPreviousQuestionnaires(path) + repairLeadAnswerHelp(root, snapshot.State, false)
+		return "S9 ChangeImpact answer: " + path + ". Runtime/REQ/generation, source Case, the accepted Final batch changes, and required_reverification_ids (system-derived obligation IDs stable per RepairSession, not assertion IDs) are supplied from the original sources. Keep these supplied IDs; assertion_results in the separate Targeted answer carry the Contract assertion IDs. Complete the actual change types and professional impact/evidence dispositions with their rationales, then save this exact request. If the supplied accepted Final batch has no product changes, keep change_types=[] and explain the original Case/Contract retention or reverification decision; do not invent changed files or a change type. The original CreateChangeImpact and CommitChangeImpact consumers run on save." + repairLeadPreviousQuestionnaires(path) + repairLeadAnswerHelp(root, snapshot.State, false)
 
 	case "targeted_reverification":
 		pointer := repairPointerCLI(snapshot.State)
@@ -579,6 +579,11 @@ func prepareRepairImpactQuestionnaire(root string, state map[string]any) (string
 	path, err := repairLeadQuestionnairePath(root, state, "change-impact.json")
 	if err != nil {
 		return "", err
+	}
+	if info, statErr := os.Stat(path); statErr == nil && !info.Mode().IsRegular() {
+		return "", fmt.Errorf("original ChangeImpact questionnaire path %s is not a regular file", path)
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return "", statErr
 	}
 	pointer := repairPointerCLI(state)
 	sessionID := stringValue(pointer["session_id"])

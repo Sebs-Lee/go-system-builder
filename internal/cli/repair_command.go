@@ -66,9 +66,12 @@ func runRuntimeRepair(args []string, stdout, stderr io.Writer) int {
 		}
 		return runRuntimeRepairChangesetCompute(args[2:], stdout, stderr)
 	case "impact":
-		if len(args) < 2 || (args[1] != "commit" && args[1] != "create") {
-			fmt.Fprintln(stderr, "runtime repair impact requires <create|commit>")
+		if len(args) < 2 || (args[1] != "commit" && args[1] != "create" && args[1] != "prepare") {
+			fmt.Fprintln(stderr, "runtime repair impact requires <prepare|create|commit>")
 			return 2
+		}
+		if args[1] == "prepare" {
+			return runRuntimeRepairImpactPrepare(args[2:], stdout, stderr)
 		}
 		if args[1] == "create" {
 			return runRuntimeRepairImpactCreate(args[2:], stdout, stderr)
@@ -104,6 +107,40 @@ func runRuntimeRepair(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "runtime repair: unknown operation %q\n", args[0])
 		return 2
 	}
+}
+
+// runRuntimeRepairImpactPrepare resumes only the original preparation after
+// accepted Final integration. It neither replays Builder work nor commits Impact.
+func runRuntimeRepairImpactPrepare(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("runtime repair impact prepare", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	bindUsage(fs, "runtime repair impact prepare")
+	root := fs.String("root", ".", "repository root")
+	state := fs.String("state", ".claude/loop-state.json", "runtime state path")
+	journal := fs.String("journal", ".claude/loop-events.jsonl", "runtime journal path")
+	if err := parseWorkspaceFlags(fs, args); err != nil {
+		return 2
+	}
+	snapshot, err := runtime.NewStore(resolveRootPath(*root, *state), resolveRootPath(*root, *journal)).Snapshot()
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("runtime repair impact prepare", err))
+		return 1
+	}
+	if lifecycleState(snapshot.State) != "bug_resolution" || stringValue(repairPointerCLI(snapshot.State)["status"]) != "impact_reconciliation" {
+		fmt.Fprintln(stderr, "runtime repair impact prepare requires the current S9 impact_reconciliation responsibility; no questionnaire or Runtime was changed")
+		return 1
+	}
+	path, err := prepareRepairImpactQuestionnaire(*root, snapshot.State)
+	if err != nil {
+		fmt.Fprintln(stderr, formatFailure("runtime repair impact prepare", err))
+		return 1
+	}
+	fmt.Fprintln(stderr, "Original ChangeImpact questionnaire prepared; existing professional answers are preserved. Complete and save this exact file for its original consumer; no Builder resubmission or hand-authored machine IDs are needed.")
+	return encodeJSON(stdout, map[string]any{"questionnaire_path": path, "revision": snapshot.Revision})
+}
+
+func repairImpactPreparationRecovery(root string) string {
+	return "`loop-harness runtime repair impact prepare --root " + s7CaptureShellQuote(root) + "`"
 }
 
 type repairCLIFlags struct {
@@ -1314,7 +1351,7 @@ func repairAssignmentBoard(root string, pointer map[string]any, packetMode bool)
 	case "impact_reconciliation":
 		next = "compute the session-wide Changeset, then commit ChangeImpact"
 		if packetMode {
-			next = "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis"
+			next = "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis. If missing, resume original preparation with " + repairImpactPreparationRecovery(root)
 		}
 	case "targeted_reverification":
 		next = "submit the independent targeted reverification"
