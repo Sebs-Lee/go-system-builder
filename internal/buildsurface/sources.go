@@ -2,6 +2,7 @@ package buildsurface
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -19,6 +20,12 @@ import (
 )
 
 func sourceView(root string, state map[string]any) (*fileview.View, error) {
+	return sourceViewContext(context.Background(), root, state)
+}
+func sourceViewContext(ctx context.Context, root string, state map[string]any) (*fileview.View, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	def, _ := state["definition"].(map[string]any)
 	ref := textField(def["path"])
 	data, err := workpacket.ReadFile(root, ref, 16<<20)
@@ -35,10 +42,10 @@ func sourceView(root string, state map[string]any) (*fileview.View, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fileview.New(root, "refs/heads/"+strings.TrimPrefix(branch, "refs/heads/"), config.FileSources)
+	return fileview.NewContext(ctx, root, "refs/heads/"+strings.TrimPrefix(branch, "refs/heads/"), config.FileSources)
 }
 
-func currentTasks(state map[string]any, files *fileview.View) ([]Task, error) {
+func currentTasks(ctx context.Context, state map[string]any, files *fileview.View) ([]Task, error) {
 	baseline, _ := state["baseline"].(map[string]any)
 	generation := number(baseline["generation"])
 	rows, _ := state["documents"].([]any)
@@ -46,6 +53,9 @@ func currentTasks(state map[string]any, files *fileview.View) ([]Task, error) {
 	ids := map[string]bool{}
 	paths := map[string]bool{}
 	for _, raw := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		row, _ := raw.(map[string]any)
 		if row["kind"] != "task" || number(row["generation"]) != generation {
 			continue
@@ -55,7 +65,10 @@ func currentTasks(state map[string]any, files *fileview.View) ([]Task, error) {
 			return nil, fmt.Errorf("TASK denominator is missing, ambiguous or not locked")
 		}
 		data, err := files.ReadFile(task.Path)
-		if err != nil || hashBytes(data) != task.SHA256 {
+		if err != nil {
+			return nil, fmt.Errorf("read locked TASK source %s: %w", task.ID, err)
+		}
+		if hashBytes(data) != task.SHA256 {
 			return nil, fmt.Errorf("locked TASK source %s changed", task.ID)
 		}
 		ids[task.ID], paths[task.Path] = true, true
@@ -133,7 +146,7 @@ func contains(raw any, value string) bool {
 	return false
 }
 
-func currentResultRef(root string, state map[string]any, record assignmentrecord.Record, view *fileview.View) (string, error) {
+func currentResultRef(ctx context.Context, root string, state map[string]any, record assignmentrecord.Record, view *fileview.View) (string, error) {
 	registered, found, err := assignmentrecord.ForOwner(state, record.OwnerAgentID)
 	if err != nil || !found || registered.Reference() != record.Reference() {
 		return "", fmt.Errorf("canonical owner has no current registered Record")
@@ -158,6 +171,9 @@ func currentResultRef(root string, state map[string]any, record assignmentrecord
 		return "", fmt.Errorf("current canonical TASK/Owner/Team sources differ from the Record")
 	}
 	read := func(ref string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if strings.HasPrefix(ref, assignmentinputs.SchemaPrefix) || ref == assignmentinputs.ContextProfileRef {
 			return assignmentinputs.Read(root, ref)
 		}
@@ -238,12 +254,15 @@ func supersededResultRef(state map[string]any, record assignmentrecord.Record, e
 	return ref, nil
 }
 
-func verifySourceSnapshots(root string, record assignmentrecord.Record) error {
+func verifySourceSnapshots(ctx context.Context, root string, record assignmentrecord.Record) error {
 	if len(record.SourceSnapshots) == 0 {
 		return fmt.Errorf("historical Record lacks complete immutable source snapshots")
 	}
 	var total int
 	for _, source := range record.SourceSnapshots {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		data, err := workpacket.ReadFile(root, source.Path, 16<<20)
 		if err != nil || hashBytes(data) != source.SHA256 {
 			return fmt.Errorf("historical permission source snapshot changed: %s", source.SourceRef)

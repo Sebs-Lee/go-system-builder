@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
@@ -152,10 +153,12 @@ func prepareWorkspaceCandidate(ctx context.Context, root string, state map[strin
 	if err != nil {
 		return WorkspaceCandidate{}, err
 	}
-	statusArgs := append([]string{"status", "--porcelain", "--untracked-files=all", "--", "."}, workspace.WorkerSubmissionStatusExcludes()...)
-	status, err := workspace.Git(ctx, e.Path, statusArgs...)
-	if err != nil || status != "" {
-		return WorkspaceCandidate{}, fmt.Errorf("candidate requires a clean committed Worker: %s %v", status, err)
+	status, err := candidateProductStatus(ctx, root, e, a.Session, proposal)
+	if err != nil {
+		return WorkspaceCandidate{}, err
+	}
+	if status != "" {
+		return WorkspaceCandidate{}, fmt.Errorf("candidate requires a clean committed Worker: %s", status)
 	}
 	paths, err := workspace.GitBytes(ctx, e.Path, "diff", "--no-renames", "--name-only", "-z", e.BaseCommit, head)
 	if err != nil {
@@ -193,6 +196,107 @@ func prepareWorkspaceCandidate(ctx context.Context, root string, state map[strin
 		c.Provenance = &provenance
 	}
 	return c, nil
+}
+
+// Only this original consumer's captured log outputs may coexist with a clean
+// product commit. A directory, authored reference or filename alone grants no
+// exemption, and tracked/baseline product files always remain protected.
+func candidateProductStatus(ctx context.Context, root string, e workspace.Execution, session RepairSession, proposal RepairResultRequest) (string, error) {
+	args := append([]string{"status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", "."}, workspace.WorkerSubmissionStatusExcludes()...)
+	status, err := workspace.GitBytes(ctx, e.Path, args...)
+	if err != nil {
+		return "", err
+	}
+	captured := map[string]runtimepkg.RepairResultLocalEvidence{}
+	if proposal.issued != nil && e.Purpose == workspace.NativeDeliveryPurpose {
+		for _, local := range proposal.issued.provenance.LocalEvidence {
+			captured[local.SourcePath] = local
+		}
+	}
+	protected := map[string]bool{}
+	for _, artifact := range session.BaselineArtifacts {
+		protected[artifact.Path] = true
+	}
+	var remaining []string
+	for _, entry := range strings.Split(string(status), "\x00") {
+		if entry == "" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if len(entry) < 4 || entry[2] != ' ' {
+			return "", fmt.Errorf("invalid candidate Git status")
+		}
+		path := entry[3:]
+		local, found := captured[path]
+		if entry[:2] == "??" && found && candidateLogPath(path, e, protected) {
+			data, err := workpacket.ReadFile(e.Path, path, repairResultAnswerLimit)
+			if err != nil || workpacket.Digest(data) != local.SHA256 {
+				return "", fmt.Errorf("S9 captured log source changed before candidate: %s", path)
+			}
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			copy, err := workpacket.ReadFile(root, local.Path, repairResultAnswerLimit)
+			if err != nil || workpacket.Digest(copy) != local.SHA256 {
+				return "", fmt.Errorf("S9 captured log handoff unavailable before candidate: %s", path)
+			}
+			continue
+		}
+		remaining = append(remaining, entry)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(remaining, "; "), nil
+}
+
+// WorkspaceCandidateLogProjection carries only immutable, originally captured
+// log identities into Main's existing clean-tree check. It grants no product
+// scope, acceptance or permission to ignore tracked changes.
+func WorkspaceCandidateLogProjection(ctx context.Context, root string, state map[string]any, e workspace.Execution, candidate WorkspaceCandidate) (map[string]string, error) {
+	out := map[string]string{}
+	if e.Purpose != workspace.NativeDeliveryPurpose || candidate.Provenance == nil {
+		return out, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	authority, err := ResolveWorkspaceAuthority(root, state, e.AssignmentID, e.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	protected := map[string]bool{}
+	for _, artifact := range authority.Session.BaselineArtifacts {
+		protected[artifact.Path] = true
+	}
+	for _, local := range candidate.Provenance.LocalEvidence {
+		if !candidateLogPath(local.SourcePath, e, protected) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := workpacket.ReadFile(root, local.Path, repairResultAnswerLimit)
+		if err != nil || workpacket.Digest(data) != local.SHA256 {
+			return nil, fmt.Errorf("S9 captured log handoff unavailable before integration: %s", local.SourcePath)
+		}
+		out[local.SourcePath] = local.SHA256
+	}
+	return out, nil
+}
+
+func candidateLogPath(path string, e workspace.Execution, protected map[string]bool) bool {
+	if protected[path] || !(isRuntimeLogShape(path) || strings.HasPrefix(path, "logs/") && filepath.Ext(path) == ".txt") {
+		return false
+	}
+	for _, scope := range e.WritePaths {
+		if workspace.PathMatchesScope(path, scope) {
+			return false
+		}
+	}
+	return true
 }
 
 func ValidateWorkspaceCandidate(root string, state map[string]any, e workspace.Execution, ref ArtifactRef) (WorkspaceCandidate, error) {

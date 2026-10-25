@@ -76,7 +76,7 @@ func PrepareIssuedRepairResultBlocker(
 	if mainRoot := workspaceMainRoot(root, snapshot.State); !sameAbsolutePath(mainRoot, root) {
 		return nil, nil, errors.New("S9 blocker receiver root must be the original registered Main checkout")
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(snapshot.State, req.PacketID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), snapshot.State, req.PacketID)
 	if err != nil || !found {
 		return nil, nil, fmt.Errorf("S9 issued RepairResult packet %q is unavailable: %v", req.PacketID, err)
 	}

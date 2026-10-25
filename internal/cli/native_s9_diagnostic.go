@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,13 @@ func nativeS9FileObservation(path string) string {
 }
 
 func recordNativeS9Diagnostic(root string, snap runtime.Snapshot, key, owner string, paths []string, failure error) {
+	recordNativeS9DiagnosticContext(context.Background(), root, snap, key, owner, paths, failure)
+}
+
+func recordNativeS9DiagnosticContext(ctx context.Context, root string, snap runtime.Snapshot, key, owner string, paths []string, failure error) {
+	if ctx.Err() != nil {
+		return
+	}
 	parent, name, err := workpacket.OpenParent(root, nativeS9DiagnosticPath(key), failure != nil)
 	if err != nil {
 		return
@@ -47,12 +55,12 @@ func recordNativeS9Diagnostic(root string, snap runtime.Snapshot, key, owner str
 		_ = parent.Remove(name)
 		return
 	}
-	scope := nativeS9DiagnosticScope(root, snap.State, key)
+	scope := nativeS9DiagnosticScopeContext(ctx, root, snap.State, key)
 	if scope == "" {
 		return
 	}
 	value := nativeS9Diagnostic{Scope: scope, Runtime: stringValue(snap.State["runtime_id"]), Files: map[string]string{}}
-	value.Message = fmt.Sprintf("Last S9 Stop attempted reception for %s; exact brief/answer references: %v. Consumer diagnostic: %s. This is the last attempt, not a new validation or completion. Main restores sources/prerequisites or resumes the original professional responsibility; preserve any accepted partial result.", owner, paths, nativeFailureDetail(failure))
+	value.Message = fmt.Sprintf("Last S9 Stop attempted reception for %s; exact brief/answer references: %v. Consumer diagnostic: %s. This is the last attempt, not a new validation or completion. The original consumer owns interrupted transaction recovery; source/prerequisite gaps remain with Main. Only a specific professional omission requires an author correction; preserve any accepted partial result.", owner, paths, nativeFailureDetail(failure))
 	var completion *repairExitFailure
 	if errors.As(failure, &completion) {
 		value.Message = fmt.Sprintf("Original Targeted observations for %s are accepted; Main owns the unfinished completion outlet. Exact answer references: %v. %s Preserve the accepted independent observations and resume only the original Main completion; do not resume the verifier or repeat its observations. This describes the last completion attempt, not a new validation.", owner, paths, nativeFailureDetail(failure))
@@ -63,10 +71,13 @@ func recordNativeS9Diagnostic(root string, snap runtime.Snapshot, key, owner str
 		}
 	}
 	for _, path := range paths {
+		if ctx.Err() != nil {
+			return
+		}
 		value.Files[path] = nativeS9FileObservation(path)
 	}
 	data, err := json.Marshal(value)
-	if err != nil || len(data) > 64<<10 {
+	if ctx.Err() != nil || err != nil || len(data) > 64<<10 {
 		return
 	}
 	f, err := parent.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
@@ -78,18 +89,31 @@ func recordNativeS9Diagnostic(root string, snap runtime.Snapshot, key, owner str
 }
 
 func nativeS9ReturnDiagnostic(root string, snap runtime.Snapshot, key string) string {
+	return nativeS9ReturnDiagnosticContext(context.Background(), root, snap, key)
+}
+
+func nativeS9ReturnDiagnosticContext(ctx context.Context, root string, snap runtime.Snapshot, key string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	data, err := workpacket.ReadFile(root, nativeS9DiagnosticPath(key), 64<<10)
 	if err != nil {
 		return ""
 	}
 	var value nativeS9Diagnostic
-	if json.Unmarshal(data, &value) != nil || value.Scope == "" || value.Scope != nativeS9DiagnosticScope(root, snap.State, key) || value.Runtime != stringValue(snap.State["runtime_id"]) {
+	if json.Unmarshal(data, &value) != nil || value.Scope == "" || value.Scope != nativeS9DiagnosticScopeContext(ctx, root, snap.State, key) || value.Runtime != stringValue(snap.State["runtime_id"]) {
 		return ""
 	}
 	for path, observed := range value.Files {
+		if ctx.Err() != nil {
+			return ""
+		}
 		if nativeS9FileObservation(path) != observed {
 			return ""
 		}
+	}
+	if ctx.Err() != nil {
+		return ""
 	}
 	return value.Message
 }
@@ -98,13 +122,20 @@ func nativeS9ReturnDiagnostic(root string, snap runtime.Snapshot, key string) st
 // Builder's work must not erase this responsibility's unanswered Stop. These
 // are display coordinates only; source validation stays with the consumer.
 func nativeS9DiagnosticScope(root string, state map[string]any, key string) string {
+	return nativeS9DiagnosticScopeContext(context.Background(), root, state, key)
+}
+
+func nativeS9DiagnosticScopeContext(ctx context.Context, root string, state map[string]any, key string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	pointer := repairPointerCLI(state)
 	source := map[string]any{}
 	for _, field := range []string{"case_id", "case_ref", "case_sha256", "contract_id", "contract_ref", "contract_sha256", "session_id", "session_ref", "session_sha256", "plan_id", "plan_ref", "plan_sha256"} {
 		source[field] = pointer[field]
 	}
 	var responsibility any
-	packet, found, err := runtime.FindRepairPlanReportPacket(state, key)
+	packet, found, err := runtime.FindRepairPlanReportPacketContext(runtime.WithPacketBodyRoot(ctx, root), state, key)
 	if err != nil {
 		return ""
 	}

@@ -429,3 +429,22 @@ func TestHistoricalHypothesisResultTemplateRestoresOnlyKnownIssuance(t *testing.
 		t.Fatal("accepted unknown template")
 	}
 }
+
+func TestHypothesisResultBeforeShapeGuidanceRemainsFrozen(t *testing.T) {
+	data, err := schema.ReadAsset("stage-form-s8-template-before-answer-shape.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := buildHypothesisResultWithTemplate(hypothesisResultTestBinding(t), hypothesisResultTestInputs(), data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := RebuildHypothesisResult(old)
+	if err != nil || !reflect.DeepEqual(old, rebuilt) {
+		t.Fatalf("old issued questionnaire drifted: %v", err)
+	}
+	current, err := BuildHypothesisResult(old.Binding, old.Inputs)
+	if err != nil || current.ID == old.ID {
+		t.Fatalf("new guidance did not use a new template identity: %v", err)
+	}
+}

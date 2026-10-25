@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/entroforge/go-system-builder/internal/policy"
@@ -12,6 +13,10 @@ import (
 // Main's Agent return observes the original reception/continuation facts. It
 // cannot run the Controller, prepare material, or receive a private answer.
 func nativeS7AcceptedOutletContext(root string, snapshot runtime.Snapshot, packet workpacket.ReviewResultPacket) string {
+	return nativeS7AcceptedOutletForRequest(context.Background(), root, snapshot, packet)
+}
+
+func nativeS7AcceptedOutletForRequest(ctx context.Context, root string, snapshot runtime.Snapshot, packet workpacket.ReviewResultPacket) string {
 	state := snapshot.State
 	review := mapFieldCLI(state, "review")
 	plan := mapFieldCLI(review, "plan")
@@ -19,10 +24,10 @@ func nativeS7AcceptedOutletContext(root string, snapshot runtime.Snapshot, packe
 		packet.Binding.ReviewRound != tolerantInt(review["round"]) || packet.Binding.ReviewPlanID != stringValue(plan["plan_id"]) || packet.Binding.ReviewPlanRevision != tolerantInt(plan["revision"]) {
 		return " This accepted S7 Result belongs to an earlier responsibility; preserve its history and follow the current round/stage."
 	}
-	diagnostic := submission.PlanningDiagnostic(root, state, "S7 acceptance continuation")
+	diagnostic := submission.PlanningDiagnosticContext(ctx, root, state, "S7 acceptance continuation")
 	switch lifecycleState(state) {
 	case "acceptance":
-		return diagnostic + " Original TR-009 has entered S10 acceptance. " + stageAuditQuestionnaireContext(root, policy.Input{Event: "PostToolUse", AgentID: "Main", CWD: root}, snapshot)
+		return diagnostic + " Original TR-009 has entered S10 acceptance. " + stageAuditQuestionnaireContext(root, policy.Input{Context: ctx, Event: "PostToolUse", AgentID: "Main", CWD: root}, snapshot)
 	case "verification":
 		if state["pause"] != nil {
 			return diagnostic + nativeS7RemainingOutletContext(root, state)

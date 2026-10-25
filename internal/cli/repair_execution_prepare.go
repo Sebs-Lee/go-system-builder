@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -60,7 +61,7 @@ func repairExecutionProjectionContext(root string, state map[string]any, row rep
 	if _, err := os.Stat(contextPath); err == nil {
 		fmt.Fprintf(&b, "Assignment context: %s. ", contextPath)
 	}
-	packets, err := s9ListenerQuestionnaires(state, owner, true)
+	packets, err := s9ListenerQuestionnairesContext(context.Background(), root, state, owner, true)
 	if err != nil {
 		fmt.Fprintf(&b, "Current Result path projection is unavailable: %v. ", err)
 	} else {
@@ -173,7 +174,7 @@ func prepareRepairExecutionFromChoice(root string, state map[string]any, row rep
 		return projection + "Retain this execution and follow its original recovery responsibility. "
 	}
 	if status == "ready" {
-		packets, err := s9ListenerQuestionnaires(state, owner, true)
+		packets, err := s9ListenerQuestionnairesContext(context.Background(), root, state, owner, true)
 		if err == nil {
 			for _, packet := range packets {
 				if packet.binding.RepairAssignmentID != row.AssignmentID {

@@ -6,7 +6,9 @@ path supplied for your real task. Do not copy these example paths, IDs or machin
 metadata into it.
 
 The system supplies `schema_version`, kind, runtime/generation/round, row identity,
-owner, known `expected` and `source_refs`. It derives metrics and the readable
+owner, known `expected` and `source_refs`. `expected` is the system-prefilled
+original source commitment, often the full material text; preserve that baseline.
+Write your actual judgment in `disposition` and observations in `oracle`. It derives metrics and the readable
 Markdown projection; authors do not maintain a second report or envelope.
 
 - Row values for `coverage_inventory[].disposition`,
@@ -30,7 +32,11 @@ risks. Necessary independent review still requires real work and notification,
 not an owner label. Related counterevidence may reuse the same observation.
 
 The audit example references acceptance rather than repeating its full table.
-Eight audit topics are reading prompts, not eight mandatory tasks. Actual risks
+Eight audit topics are reading prompts, not eight mandatory tasks. If reporting
+a topic, name it in `audit_areas[].id` and use `audit_areas[].conclusion` for
+`pass` / `not_applicable` / `unknown` / `fail`; retain real `owner` and
+`evidence_refs` when available. Related observations or N/A explanations can
+reuse the existing coverage row's `oracle` / `na_reason`. Actual risks
 need impact, responsibility and handling, not prescribed ticket/recovery spelling.
 
 Save the same supplied current file using edits, scripts or MCP. Draft saving does

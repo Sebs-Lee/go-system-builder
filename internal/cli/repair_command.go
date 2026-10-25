@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -1035,7 +1036,7 @@ func s9RepairResultStage(state map[string]any) bool {
 }
 
 func repairResultPacketStatus(root string, state map[string]any) ([]any, string) {
-	packets, err := runtime.RepairResultPackets(state)
+	packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state)
 	if err != nil {
 		return []any{}, "Runtime S9 Result packet registry needs recovery before status can verify it: " + err.Error()
 	}

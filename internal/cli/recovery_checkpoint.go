@@ -57,6 +57,10 @@ func persistCheckpointRecoveryPlan(root string, inventory recovery.Inventory, pa
 		}
 		inventory.Inputs = append(inventory.Inputs, recovery.InventoryInput{Path: source, Kind: recovery.InputKindCheckpoint, SHA256: sha256Text(data), Size: int64(len(data))})
 	}
+	for ref, data := range pair.PacketBodies {
+		source := filepath.ToSlash(filepath.Dir(relative)) + "/packet-bodies/" + filepath.Base(ref)
+		inventory.Inputs = append(inventory.Inputs, recovery.InventoryInput{Path: source, Kind: recovery.InputKindCheckpoint, SHA256: sha256Text(data), Size: int64(len(data))})
+	}
 	life, _ := pair.State["lifecycle"].(map[string]any)
 	cursor := fmt.Sprint(life["state"])
 	if phase, ok := life["phase"].(string); ok && phase != "" {
@@ -75,6 +79,20 @@ func persistCheckpointRecoveryPlan(root string, inventory recovery.Inventory, pa
 		return recoveryPlanDocument{}, "", err
 	}
 	document := recoveryPlanDocument{Plan: plan, PlanID: id, Status: "planned", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), CandidateStatePath: dir + "/candidate-state.json", CandidateJournalPath: dir + "/candidate-events.jsonl", CandidateStateSHA256: pair.Manifest.StateSHA256, CandidateJournalSHA256: pair.Manifest.JournalSHA256, CheckpointPath: relative}
+	if len(pair.PacketBodies) > 0 {
+		document.CandidatePacketBodies = make(map[string]string, len(pair.PacketBodies))
+		for ref, data := range pair.PacketBodies {
+			sealed := dir + "/packet-bodies/" + filepath.Base(ref)
+			existing, publishErr := workpacket.PublishBounded(root, sealed, data, 20<<20)
+			if publishErr != nil {
+				return document, "", publishErr
+			}
+			if !bytes.Equal(existing, data) {
+				return document, "", invalidRecoveryPlan(fmt.Errorf("immutable recovery packet body differs: %s", ref))
+			}
+			document.CandidatePacketBodies[ref] = sealed
+		}
+	}
 	document.DocumentSHA256, err = recoveryPlanDocumentHash(document)
 	if err != nil {
 		return document, "", err
@@ -211,6 +229,14 @@ func checkpointRecoveryGuard(ctx context.Context, root string) (func(map[string]
 		packets, _ := entities["work_packets"].([]any)
 		for _, raw := range packets {
 			row, _ := raw.(map[string]any)
+			switch row["template_id"] {
+			case "s7-review-result-v1", "s8-hypothesis-result-v1", "s9-plan-report-v1", "s9-repair-result-v1":
+				// ApplyRecovery has already checked these exact typed packets,
+				// original issuance and receipts in ValidateCheckpointIndices.
+				// This loop adds live source checks for legacy planning/S5;
+				// those packets cannot be decoded as a generic S5 Packet.
+				continue
+			}
 			if row["template_id"] == "s4-task-planning-v1" {
 				p, ok, err := runtime.FindTaskPlanningPacket(state, fmt.Sprint(row["packet_id"]))
 				if err != nil || !ok {

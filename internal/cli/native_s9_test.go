@@ -181,7 +181,7 @@ func TestNativeS9BlockerResumesThroughOriginalResolutionWithoutPrepare(t *testin
 		t.Fatalf("real blocker not received: %t %d %s", handled, code, &diagnostic)
 	}
 	snapshot := repairDispatchSnapshot(t, root)
-	packets, err := runtime.RepairResultPackets(snapshot.State)
+	packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(t.Context(), root), snapshot.State)
 	if err != nil || len(packets) != 1 || workstate.AgentActivity(contextAgent(snapshot.State, p.Binding.OwnerAgentID)) != "blocked" {
 		t.Fatalf("original blocker not recorded: %v %s", err, &diagnostic)
 	}

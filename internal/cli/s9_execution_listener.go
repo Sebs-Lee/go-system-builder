@@ -43,8 +43,8 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 	status := stringValue(repairPointerCLI(state)["status"])
 	result := phase == "fixing"
 	packetPhase := phase == "planning" || phase == "reproducing" || phase == "fixing" && (status == "repairing" || status == "blocked")
-	if packets, err := s9CurrentQuestionnaires(root, state, owner, result); err == nil && packetPhase {
-		nativePackets := nativeS9PlanPackets(root, state)
+	if packets, err := s9CurrentQuestionnaires(root, state, owner, result, contextForHook(request)); err == nil && packetPhase {
+		nativePackets := s9ListenerNativePlans(root, state)
 		for _, packet := range packets {
 			fact, factErr := s9ListenerAcceptance(root, state, packet)
 			if main || fact.kind != "" {

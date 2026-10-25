@@ -221,7 +221,7 @@ func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewRes
 // for restoring its original issuance; new work always uses BuildReviewResult.
 // Never trust the caller's questions as a new template or refresh its digest.
 func RebuildReviewResult(old ReviewResultPacket) (ReviewResultPacket, error) {
-	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json", "stage-form-s7-template-before-safety-stop.json"} {
+	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json", "stage-form-s7-template-before-safety-stop.json"} {
 		data, err := schema.ReadAsset(name)
 		if err != nil {
 			return ReviewResultPacket{}, err
@@ -260,7 +260,7 @@ func ReviewResultPacketDigest(packet ReviewResultPacket) (string, error) {
 // remain with review.SubmitResult.
 func ValidateReviewResultAnswer(packet ReviewResultPacket, data []byte) (json.RawMessage, []FieldError) {
 	issue := func(pointer, expected, observed string) (json.RawMessage, []FieldError) {
-		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，只填写 answer 中的专业判断与观察。"}}
+		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留已发行题干，只填写 answer 中的专业判断与观察。答卷顶层仅为 title、instruction、read、questions、answer；不要提交含 packet_id、binding、inputs、draft 的 view packet。"}}
 	}
 	if len(data) > 20<<20 {
 		return issue("/", "JSON <= 20 MiB", "oversized")

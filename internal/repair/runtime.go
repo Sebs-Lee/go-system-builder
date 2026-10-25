@@ -449,7 +449,7 @@ func SubmitRepairResultToRuntime(root, statePath, journalPath string, req Submit
 			return runtimepkg.Snapshot{}, RepairResult{}, ArtifactRef{}, fmt.Errorf("RepairResult assignment %q is not in the current RepairPlan", req.Result.AssignmentID)
 		}
 		if req.issued == nil {
-			if err := rejectLegacyRepairResultForIssuedTarget(current.State, p, plan, planRef, req.Result.AssignmentID); err != nil {
+			if err := rejectLegacyRepairResultForIssuedTarget(root, current.State, p, plan, planRef, req.Result.AssignmentID); err != nil {
 				return runtimepkg.Snapshot{}, RepairResult{}, ArtifactRef{}, err
 			}
 		}
@@ -1337,6 +1337,7 @@ func checkS9HandoffBudget(state map[string]any) error {
 }
 
 func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffRequest) (runtimepkg.Snapshot, error) {
+	req.Context = buildsurface.WithReadCache(req.Context)
 	current, writer, err := readRepairRuntime(root, statePath, journalPath, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, err
@@ -1396,13 +1397,13 @@ func CommitRepairHandoff(root, statePath, journalPath string, req CommitHandoffR
 	}
 	var canonicalBaseline *buildsurface.Snapshot
 	if buildsurface.HasCanonical(current.State) {
-		baseline, readErr := buildsurface.Read(root, current.State)
+		baseline, readErr := buildsurface.ReadContext(req.Context, root, current.State)
 		if readErr != nil {
 			return runtimepkg.Snapshot{}, fmt.Errorf("read original canonical post-repair S7 baseline before TR-012: %w", readErr)
 		}
 		canonicalBaseline = &baseline
 	}
-	seedRef, err := createS7ReviewPlanSeed(root, integerValue(mapField(current.State, "review")["round"])+1, baselineGeneration(current.State), impactDocument, ContractRef{Path: handoff.ContractRef.Path, SHA256: handoff.ContractRef.SHA256}, taskIDs, handoff.ChangeImpactRef.Path, current.State, canonicalBaseline)
+	seedRef, err := createS7ReviewPlanSeed(root, integerValue(mapField(current.State, "review")["round"])+1, baselineGeneration(current.State), impactDocument, ContractRef{Path: handoff.ContractRef.Path, SHA256: handoff.ContractRef.SHA256}, taskIDs, handoff.ChangeImpactRef.Path, current.State, canonicalBaseline, req.Context)
 	if err != nil {
 		return runtimepkg.Snapshot{}, fmt.Errorf("create S7 ReviewPlan seed: %w", err)
 	}

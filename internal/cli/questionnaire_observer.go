@@ -196,6 +196,17 @@ questionnaires:
 		if q.s9Kind != "" && s9ObservedQuestionnaireUnchanged(root, snapshot.State, q, data) {
 			continue
 		}
+		if q.s9Packet != nil && q.draft == nil {
+			draft, draftErr := s9ListenerQuestionnaireDraft(contextForHook(request), root, snapshot.State, *q.s9Packet)
+			if draftErr != nil {
+				contexts = append(contexts, "S9 observation is incomplete for "+q.path+": its recorded responsibility and paths remain known; comparison with the original draft is unknown within this request: "+draftErr.Error()+". Preserve the professional answer. No answer rejection or missing questionnaire was inferred.")
+				continue
+			}
+			q.draft = draft
+			if s9ObservedQuestionnaireUnchanged(root, snapshot.State, q, data) {
+				continue
+			}
+		}
 		if strings.HasPrefix(filepath.Base(q.path), "hd-s7-budget-") {
 			var app s7BudgetDecisionApplication
 			if json.Unmarshal(data, &app) == nil && app.Decision == "" {

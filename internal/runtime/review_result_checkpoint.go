@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,35 +26,68 @@ const reviewResultArtifactLimit int64 = 20 << 20
 // was committed by the original Writer. It is a reader only: it neither
 // authorizes a save nor checks professional completion.
 func VerifyReviewResultPacketIssue(root string, state map[string]any, p workpacket.ReviewResultPacket) error {
-	journalBytes, err := controlproof.ReadJournalForState(root, state)
+	return VerifyReviewResultPacketIssueContext(context.Background(), root, state, p)
+}
+
+func VerifyReviewResultPacketIssueContext(ctx context.Context, root string, state map[string]any, p workpacket.ReviewResultPacket) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = WithPacketBodyRoot(ctx, root)
+	journalBytes, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return fmt.Errorf("read original Runtime journal for S7 packet: %w", err)
 	}
-	return verifyReviewResultPacketIssueJournal(root, state, p, journalBytes)
+	return verifyReviewResultPacketIssueJournalContext(ctx, root, state, p, journalBytes)
 }
 
 func verifyReviewResultPacketIssueJournal(root string, state map[string]any, p workpacket.ReviewResultPacket, journalBytes []byte) error {
-	stored, found, err := FindReviewResultPacket(state, p.ID)
+	return verifyReviewResultPacketIssueJournalContext(context.Background(), root, state, p, journalBytes)
+}
+
+func verifyReviewResultPacketIssueJournalContext(ctx context.Context, root string, state map[string]any, p workpacket.ReviewResultPacket, journalBytes []byte) error {
+	ctx = WithPacketBodyRoot(ctx, root)
+	stored, found, err := FindReviewResultPacketContext(ctx, state, p.ID)
 	if err != nil {
 		return err
 	}
 	if !found || !reflect.DeepEqual(stored, p) {
 		return errors.New("S7 ReviewResult packet is not the exact Runtime registry row")
 	}
+	if err := verifyCanonicalReviewResultPacketSources(ctx, root, state, p); err != nil {
+		return err
+	}
+	inspection, err := controlproof.InspectJournalSegmentDataFromContext(ctx, journalBytes, 1)
+	if err != nil {
+		return fmt.Errorf("inspect original Runtime journal for S7 packet: %w", err)
+	}
+	return verifyReviewResultPacketIssueEvent(state, p, inspection)
+}
+
+// The caller must first prove the exact canonical Runtime registry row.
+func verifyCanonicalReviewResultPacketSources(ctx context.Context, root string, state map[string]any, p workpacket.ReviewResultPacket) error {
 	if !PacketEnabled(state) {
 		return errors.New("S7 ReviewResult packet requires the explicit v1.2 packet marker")
 	}
-	digest, err := workpacket.ReviewResultPacketDigest(p)
-	if err != nil || digest == "" || p.IssuanceEventID != "evt-review-result-packet-"+p.ID {
+	// FindReviewResultPacketContext already decoded and canonically rebuilt
+	// this exact registry row. Rebuilding it again for an unused digest adds
+	// no proof; retain the independent original issuance-event identity check.
+	if p.IssuanceEventID != "evt-review-result-packet-"+p.ID {
 		return errors.New("S7 ReviewResult packet is not canonical")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := verifyReviewResultPacketSources(root, p); err != nil {
 		return err
 	}
-	inspection, err := controlproof.InspectJournalData(journalBytes)
-	if err != nil {
-		return fmt.Errorf("inspect original Runtime journal for S7 packet: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	return nil
+}
+
+func verifyReviewResultPacketIssueEvent(state map[string]any, p workpacket.ReviewResultPacket, inspection controlproof.JournalInspection) error {
 	if err := controlproof.ValidateStateJournalPair(state, inspection); err != nil {
 		return fmt.Errorf("S7 packet Runtime/journal cursor: %w", err)
 	}
@@ -113,11 +147,16 @@ type checkpointReviewResultReceipt struct {
 // packet-bound original Result receipt. It removes S7 rows only from the
 // temporary state passed to the older S5 validator; durable state is untouched.
 func validateReviewResultCheckpointIndices(root string, state map[string]any, journalBytes []byte) (map[string]any, error) {
-	packets, err := ReviewResultPackets(state)
+	return validateReviewResultCheckpointIndicesContext(context.Background(), root, state, journalBytes)
+}
+
+func validateReviewResultCheckpointIndicesContext(ctx context.Context, root string, state map[string]any, journalBytes []byte) (map[string]any, error) {
+	ctx = WithReviewResultReadCache(WithPacketBodyRoot(ctx, root))
+	packets, err := reviewResultPacketsContext(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	inspection, err := controlproof.InspectJournalData(journalBytes)
+	inspection, err := controlproof.InspectJournalSegmentDataFromContext(ctx, journalBytes, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +177,13 @@ func validateReviewResultCheckpointIndices(root string, state map[string]any, jo
 	issueRevision := make(map[string]int, len(packets))
 	byAssignmentTuple := map[string]string{}
 	for _, packet := range packets {
-		if err := verifyReviewResultPacketIssueJournal(root, state, packet, journalBytes); err != nil {
+		// packets and inspection belong to this exact local snapshot. Reuse
+		// their already validated identities without rehashing/redecoding the
+		// complete registry/journal for every historical row. Disk sources remain live.
+		if err := verifyCanonicalReviewResultPacketSources(ctx, root, state, packet); err != nil {
+			return nil, fmt.Errorf("S7 checkpoint packet %s: %w", packet.ID, err)
+		}
+		if err := verifyReviewResultPacketIssueEvent(state, packet, inspection); err != nil {
 			return nil, fmt.Errorf("S7 checkpoint packet %s: %w", packet.ID, err)
 		}
 		issueIndex := inspection.EventIndex[packet.IssuanceEventID]
@@ -155,13 +200,13 @@ func validateReviewResultCheckpointIndices(root string, state map[string]any, jo
 	if err := rejectOrphanReviewResultIssueEvents(inspection, byID); err != nil {
 		return nil, err
 	}
-	if err := validateReviewResultReceipts(root, state, inspection, packets, byID, issueSequence, issueRevision); err != nil {
+	if err := validateReviewResultReceipts(ctx, root, state, inspection, packets, byID, issueSequence, issueRevision); err != nil {
 		return nil, err
 	}
 	return withoutReviewResultPackets(state), nil
 }
 
-func validateReviewResultReceipts(root string, state map[string]any, journal controlproof.JournalInspection, packets []workpacket.ReviewResultPacket, byID map[string]workpacket.ReviewResultPacket, issueSequence, issueRevision map[string]int) error {
+func validateReviewResultReceipts(ctx context.Context, root string, state map[string]any, journal controlproof.JournalInspection, packets []workpacket.ReviewResultPacket, byID map[string]workpacket.ReviewResultPacket, issueSequence, issueRevision map[string]int) error {
 	reviewState, _ := state["review"].(map[string]any)
 	assignments, _ := reviewState["assignments"].(map[string]any)
 	if assignments == nil {
@@ -189,7 +234,7 @@ func validateReviewResultReceipts(root string, state map[string]any, journal con
 		rawReceipt, hasReceipt := assignment["result_receipt"]
 		if !hasReceipt || rawReceipt == nil {
 			if workstate.ReviewAssignmentActivity(assignment) == "consumed" {
-				currentPackets, currentErr := CurrentReviewResultPackets(state, stringValue(assignment["agent_id"]))
+				currentPackets, currentErr := CurrentReviewResultPacketsContext(ctx, state, stringValue(assignment["agent_id"]))
 				if currentErr != nil {
 					return currentErr
 				}

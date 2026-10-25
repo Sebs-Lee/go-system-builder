@@ -271,7 +271,7 @@ func withS9VerifiedMainCheckpoint(
 	if err != nil {
 		t.Fatalf("read original S9 Runtime before Main inspection: %v", err)
 	}
-	registeredPacket, found, err := runtime.FindRepairResultPacket(snapshot.State, packet.ID)
+	registeredPacket, found, err := runtime.FindRepairResultPacketContext(runtime.WithPacketBodyRoot(t.Context(), fixture.root), snapshot.State, packet.ID)
 	if err != nil || !found {
 		t.Fatalf("read original issued S9 RepairResult packet: found=%t err=%v", found, err)
 	}

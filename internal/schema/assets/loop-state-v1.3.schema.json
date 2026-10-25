@@ -5170,6 +5170,15 @@
         },
         {
           "$ref": "repair-result-work-packet.schema.json"
+        },
+        {
+          "$ref": "review-result-packet-index.schema.json"
+        },
+        {
+          "$ref": "repair-plan-report-packet-index.schema.json"
+        },
+        {
+          "$ref": "repair-result-packet-index.schema.json"
         }
       ]
     },

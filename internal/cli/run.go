@@ -20,7 +20,6 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/adapter"
 	"github.com/entroforge/go-system-builder/internal/assignment"
-	"github.com/entroforge/go-system-builder/internal/audit"
 	"github.com/entroforge/go-system-builder/internal/change"
 	"github.com/entroforge/go-system-builder/internal/controller"
 	"github.com/entroforge/go-system-builder/internal/hook"
@@ -1132,6 +1131,9 @@ func runTeam(args []string, stdout, stderr io.Writer) int {
 }
 
 func runRuntime(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "compact-packets" {
+		return runPacketBodyMaintenance(args[1:], stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "assignment-context" {
 		return runAssignmentContext(args[1:], stdout, stderr)
 	}
@@ -1199,7 +1201,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-receipt|worktree-create|task-integrate|review-plan|review-result|review-continue|audit-prepare|finding-supplement|investigation|repair|bug-event|fingerprint>")
+		fmt.Fprintln(stderr, "runtime requires <recover|reconcile|compact-packets|migrate-planning|reconcile-policy-ref|rollover|human-decision|s7-budget-decision|pause|resume|transition|change|evidence|register-workgroup|agent-begin|agent-event|task-complete|task-receipt|worktree-create|task-integrate|review-plan|review-result|review-continue|audit-prepare|finding-supplement|investigation|repair|bug-event|fingerprint>")
 		return 2
 	}
 	switch args[0] {
@@ -3090,6 +3092,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		request.Context, _ = metrics.WithCallTimings(request.Context)
 	}
 	request.Context = fileview.WithReadCache(contextForHook(request))
+	request.Context = runtime.WithPacketBodyRoot(runtime.WithReviewResultReadCache(request.Context), root)
 	// Resolve a registered Worker to its sole control Runtime without chdir.
 	rootContext, rootCancel := context.WithTimeout(contextForHook(request), 3*time.Second)
 	controlRoot, rootErr := workspace.ResolveControl(rootContext, root)
@@ -3100,16 +3103,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 0
 	}
 	root = nativeS6ControlRoot(controlRoot, request)
-	if handled, code := nativeMainReturnHook(root, request, stdout); handled {
-		return code
-	}
-	if handled, code := nativeS6Hook(root, request, stdout, stderr); handled {
-		return code
-	}
-	if handled, code := nativeS9Hook(root, request, stdout, stderr); handled {
-		return code
-	}
-	if handled, code := nativeReviewHook(root, request, stdout, stderr); handled {
+	if handled, code := nativeHookRoutes(root, request, stdout, stderr); handled {
 		return code
 	}
 	// Session boundaries maintain the diagnostic spool. This runs under the
@@ -3412,7 +3406,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		}
 		return 0
 	}
-	if err := audit.NewOutbox(filepath.Join(root, ".claude", "hook-decisions.jsonl")).Append(envelopeWithQualityGate); err != nil {
+	if err := appendHookAudit(contextForHook(request), root, envelopeWithQualityGate); err != nil {
 		// For denying decisions the deny payload is more important than the
 		// an audit-write error here would mask the deny. For all other decisions
 		// the audit trail is the only durable record, so its failure is fatal.
@@ -3626,7 +3620,7 @@ func runNativeObserverHook(root string, request policy.Input, stdout, stderr io.
 	}
 	decision := hook.NativeObserverDecision(request, time.Since(started))
 	envelope := engine.Envelope(request, decision, time.Now())
-	if err := audit.NewOutbox(filepath.Join(root, ".claude", "hook-decisions.jsonl")).Append(envelope); err != nil {
+	if err := appendHookAudit(contextForHook(request), root, envelope); err != nil {
 		fmt.Fprintf(stderr, "append %s audit: %v\n", hook.NativeObserverSummary(request), err)
 		// This event is observation-only. Losing an audit row is reported on
 		// stderr, but must not turn a non-vetoing observer into an accidental

@@ -20,6 +20,10 @@ type CheckpointStoreFactory func() *CheckpointStore
 
 // IntegrateConfig tunes Integrate's behaviour.
 type IntegrateConfig struct {
+	// WorkerLogEvidence is the original receiver's captured output projection.
+	// Verified cleanup may remove only these unchanged untracked copies; Main's
+	// immutable evidence remains the source for accepted Results.
+	WorkerLogEvidence map[string]string
 	// CheckpointStore selects the persistence backend. nil → default.
 	CheckpointStore *CheckpointStore
 	// CheckpointDir, when set, overrides the canonical evidence
@@ -851,7 +855,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		}
 		// The original cleanup helper owns the single coordinate/cleanliness
 		// check and recovery from an interrupted installation restoration.
-		if err := cleanupWorktree(ctx, gitRoot, req.Inspection.WorktreePath, current); err != nil {
+		if err := cleanupWorktree(ctx, gitRoot, req.Inspection.WorktreePath, current, cfg.WorkerLogEvidence); err != nil {
 			return deferCleanup(store, checkpointPath, current, next, err)
 		}
 		next.State = StateComplete

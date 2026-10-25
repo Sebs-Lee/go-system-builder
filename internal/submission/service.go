@@ -44,6 +44,7 @@ func NewReadOnly(root string) (*Service, error) {
 }
 
 func NewContext(ctx context.Context, root string, readOnly bool) (*Service, error) {
+	ctx = runtime.WithReviewResultReadCache(fileview.WithReadCache(ctx))
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -52,6 +53,7 @@ func NewContext(ctx context.Context, root string, readOnly bool) (*Service, erro
 	if err != nil {
 		return nil, err
 	}
+	ctx = runtime.WithPacketBodyRoot(ctx, abs)
 	s := &Service{ctx: ctx, Root: abs, StatePath: filepath.Join(abs, ".claude/loop-state.json"), JournalPath: filepath.Join(abs, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}, readOnly: readOnly}
 	snapshot, err := s.snapshot()
 	if err != nil {
@@ -381,7 +383,7 @@ func (s *Service) Context() context.Context {
 	return context.Background()
 }
 func (s *Service) WithContext(ctx context.Context) *Service {
-	ctx = fileview.WithReadCache(ctx)
+	ctx = runtime.WithPacketBodyRoot(runtime.WithReviewResultReadCache(fileview.WithReadCache(ctx)), s.Root)
 	copy := *s
 	copy.ctx = ctx
 	if v, ok := copy.Files.(*fileview.View); ok {

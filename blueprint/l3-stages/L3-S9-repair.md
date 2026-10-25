@@ -270,9 +270,16 @@ Main 完成必要集成和检查后，原消费者记录 Final。各责任的 Fi
 
 ChangeImpact 和自动 Handoff 都使用这份已接收批次事实，不重新扫描 Session 目录、缓存或工作区来制造第二套变化权威。删除、配置、依赖和其他实际产品变化应在真实交付与 Final 中准确表达；不能在影响判断时再由作者手工猜一份差异集合。
 
+私人 Plan／Result 的保存或路径返回不代表原消费者已接收。Main 使用 `loop-harness runtime repair status --root <Main-root>` 查询 `missing_reports`／`missing_results`；以原接收回执和 Runtime 状态区分缺少私人产物、待接收候选与已接收 Final。接收未完成时保留原 Worker 与产物，不能用路径存在代替接收。
+
+Builder 分工表和独立验证者分工表故意沿用同一 Builder `assignment_id` 作为锚点。先选择 Builder，再在验证者表保留原锚点；保存时系统派生独立 verification assignment 和 TASK，不要手写验证者 assignment ID。
+
 ## 8. ChangeImpact 怎样重建证据可信度
 
 ### 8.1 对已知实际变化作专业判断
+
+Final／Main 集成已记录而原 ChangeImpact 问卷缺失时，Main 修复提示中的来源或文件系统故障，然后执行 `loop-harness runtime repair impact prepare --root <Main-root>`。该入口只在当前 `impact_reconciliation` 恢复原准备：沿已接收 Final 批次与 Session 生成同一路径，保留已有专业答案，不重复登记结果、集成或改变 Runtime。普通 Pre／Stop／Idle 仍只读。`required_reverification_ids` 是系统从 Session 推导的合同级义务编号，与 Targeted 的合同断言 `assertion_id` 不同；缺卷时恢复准备，不从合同手拼这些机器编号。
+
 
 合同中的预期影响只是规划输入。实际完成后，Main 要判断已接收 Final 变化如何影响行为、契约、消费者、数据、配置、依赖和既有验证，而不是再次填写一份自报 diff。
 
@@ -534,3 +541,5 @@ Targeted 登记和 Handoff 完成是两个可能部分成功的步骤。最后�
 - **计划编译与完整多合同协调不同。** 当前主要按原单元生成责任与处理本批事实，不能将高级合并、跨合同治理或自动修订正式 TASK 来源写成已经落地的能力。
 
 本阶段是否完成由真实修复、集成、影响和独立必要复验及原交接共同决定。文档示例、Go 夹具、原生事件模拟、真实 Claude Code 运行与新 S7 产品验证分别具有自己的证据范围。
+
+S9 → S7 的 `PLANNER-REFINE` 是未回答的专业字段，`assertion`、`oracle`、`method` 均须由 Planner 按真实材料完善。`cold_start` 表示覆盖起点，不代表必须做浏览器验证；每个适用 E2E Assignment 的 `behavior_surface` 必须按真实行为来源选择 `browser` 或 `non_browser`，真实不适用时保留有来源的 N/A Claim 并移除相应 Assignment。

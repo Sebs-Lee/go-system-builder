@@ -430,7 +430,7 @@ func rewriteCheckpointResultWithIncompleteClaims(root, resultRef string, origina
 	return nil
 }
 
-func checkpointTestReviewPacket(t *testing.T, root string) workpacket.ReviewResultPacket {
+func checkpointTestReviewPacket(t testing.TB, root string) workpacket.ReviewResultPacket {
 	t.Helper()
 	claimBytes := json.RawMessage(`[
 		{"claim_id":"claim-login","lens":"qa","target":"login","assertion":"login works","oracle":"visible home","method":"submit credentials","required_evidence":[],"applicability":"required","na_rationale":"","source_refs":["REQ-041"],"focus_key":"","depends_on":[],"resource_locks":[]},
@@ -497,7 +497,7 @@ func checkpointTestReviewPacket(t *testing.T, root string) workpacket.ReviewResu
 	return p
 }
 
-func checkpointTestReviewState(t *testing.T, packet workpacket.ReviewResultPacket, otherEvents []map[string]any) (map[string]any, []byte) {
+func checkpointTestReviewState(t testing.TB, packet workpacket.ReviewResultPacket, otherEvents []map[string]any) (map[string]any, []byte) {
 	t.Helper()
 	packetJSON, err := json.Marshal(packet)
 	if err != nil {

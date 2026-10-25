@@ -1,6 +1,7 @@
 package assignment
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -12,11 +13,15 @@ import (
 // Agent slot has any historically issued S9 RepairResult packet. It is a
 // lifecycle guard only: it grants no permission and deliberately ignores
 // mutable source freshness, Agent state, worktree state, and answer files.
-func issuedRepairResultLifecycleTarget(state map[string]any, owner string) (bool, error) {
+func issuedRepairResultLifecycleTarget(state map[string]any, owner string, contexts ...context.Context) (bool, error) {
 	if strings.TrimSpace(owner) == "" {
 		return false, fmt.Errorf("S9 lifecycle target owner is required")
 	}
-	packets, err := loopruntime.RepairResultPackets(state)
+	ctx := context.Background()
+	if len(contexts) != 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	packets, err := loopruntime.RepairResultPacketsForOwnerContext(ctx, state, owner)
 	if err != nil {
 		return false, fmt.Errorf("read registered S9 RepairResult history: %w", err)
 	}

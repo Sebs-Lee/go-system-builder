@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
@@ -31,14 +34,18 @@ type PlanRequest struct {
 // allowed to use a lighter frozen-subject or regression-asset validation path.
 // Runtime-coordinate checks remain in RegisterPlan because the handoff builds
 // its next-round projection inside its own CAS transaction.
-func ValidatePlanArtifactForRegistration(root string, plan *Plan, state map[string]any) error {
+func ValidatePlanArtifactForRegistration(root string, plan *Plan, state map[string]any, contexts ...context.Context) error {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ValidatePlan(plan); err != nil {
 		return fmt.Errorf("ReviewPlan coverage: %w", err)
 	}
-	if err := verifyFrozenSubjects(root, plan, state); err != nil {
+	if err := verifyFrozenSubjects(root, plan, state, ctx); err != nil {
 		return fmt.Errorf("ReviewPlan frozen subject baseline: %w", err)
 	}
-	if err := validateKnownE2ECaseCoverage(nil, root, state, plan); err != nil {
+	if err := validateKnownE2ECaseCoverage(ctx, root, state, plan); err != nil {
 		return err
 	}
 	if err := verifyRegressionAssetFingerprints(root, plan); err != nil {
@@ -65,6 +72,47 @@ func RegisterPlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("read ReviewPlan: %w", err)
 	}
 
+	if request.OccurredAt.IsZero() {
+		request.OccurredAt = time.Now().UTC()
+	}
+	if request.Context == nil {
+		request.Context = context.Background()
+	}
+	request.Context = buildsurface.WithReadCache(request.Context)
+	input := &planRegistrationInput{data: data}
+	snapshot, err := registerPlanBytes(root, statePath, journalPath, request, input)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || request.Context.Err() == context.Canceled || input.initial == nil {
+		return snapshot, err
+	}
+	// This bounded tail belongs to the same original registration. It never
+	// reopens the author's file, refreshes their expected revision, or loops.
+	ctx, cancel := reviewDeadlineTail(request.Context, 400*time.Millisecond, 400*time.Millisecond)
+	defer cancel()
+	defer metrics.Span(ctx, "review/register_plan/deadline_tail")()
+	request.Context = ctx
+	recovered, recoveryErr := resumePlanRegistration(root, statePath, journalPath, request, input)
+	if recoveryErr == nil {
+		return recovered, nil
+	}
+	return snapshot, fmt.Errorf("%w; internal ReviewPlan handoff remains incomplete: %v", err, recoveryErr)
+}
+
+// data is the one author-file read, then the one prepared answer. Later
+// attempts reuse it verbatim; initial retains the original business cursor.
+type planRegistrationInput struct {
+	data          []byte
+	prepared      bool
+	initial       map[string]any
+	commitStarted bool
+	retry         bool
+}
+
+func registerPlanBytes(root, statePath, journalPath string, request PlanRequest, input *planRegistrationInput) (loopruntime.Snapshot, error) {
+	if err := request.Context.Err(); err != nil {
+		return loopruntime.Snapshot{}, err
+	}
+	data := input.data
+
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("read runtime: %w", err)
@@ -73,9 +121,18 @@ func RegisterPlan(
 	if err := json.Unmarshal(stateData, &current); err != nil {
 		return loopruntime.Snapshot{}, fmt.Errorf("decode runtime: %w", err)
 	}
-	data, err = preparePlanAssets(root, data, current, request.Context)
-	if err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
+	if input.initial == nil {
+		input.initial = current
+	}
+	if input.retry && (!samePlanRegistrationCoordinate(input.initial, current) || intField(current["revision"]) != intField(input.initial["revision"])) {
+		return loopruntime.Snapshot{}, loopruntime.ErrStaleRevision
+	}
+	if !input.prepared {
+		data, err = preparePlanAssets(root, data, current, request.Context)
+		if err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("prepare ReviewPlan assets: %w", err)
+		}
+		input.data, input.prepared = data, true
 	}
 	if err := schema.NewValidator(root).ValidateBytes("review-plan.schema.json", data); err != nil {
 		return loopruntime.Snapshot{}, &PlanAnswerError{fmt.Errorf("ReviewPlan schema: %w", err)}
@@ -127,7 +184,7 @@ func RegisterPlan(
 	if err := ValidatePlanTaskCoverage(current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateCoverageInventory(root, current, &plan); err != nil {
+	if err := validateCoverageInventory(root, current, &plan, request.Context); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
 	if err := validateKnownE2ECaseCoverage(request.Context, root, current, &plan); err != nil {
@@ -170,12 +227,15 @@ func RegisterPlan(
 
 	runtimeID, _ := current["runtime_id"].(string)
 	occurredAt := request.OccurredAt
-	if occurredAt.IsZero() {
-		occurredAt = time.Now().UTC()
-	}
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
-	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
+	commitExpected := request.ExpectedRevision
+	if input.retry && commitExpected < 0 {
+		// An omitted caller revision cannot let the retry adopt a newer one.
+		commitExpected = intField(input.initial["revision"])
+	}
+	input.commitStarted = true
+	snapshot, err := updateRuntime(store, commitExpected, loopruntime.Mutation{
 		EventID:        fmt.Sprintf("evt-review-plan-%s-r%d", plan.ReviewPlanID, commitRevision+1),
 		TransitionID:   "REVIEW-PLAN",
 		Event:          "review_plan_registered",
@@ -223,10 +283,10 @@ func RegisterPlan(
 		// fence preserves both durable pending and any concurrent accepted record.
 		removed, cleanupErr := removeStagedArtifactIfUnreferenced(store, current, commitRevision, planRel, planSHA)
 		if cleanupErr != nil {
-			return snapshot, fmt.Errorf("%w; Main must inspect original Plan/pending before cleanup: %v", err, cleanupErr)
+			return snapshot, fmt.Errorf("%w; original Writer retained Plan/pending recovery before cleanup: %v", err, cleanupErr)
 		}
 		if !removed {
-			return snapshot, fmt.Errorf("%w; cleanup was deferred by the original Writer fence; Main inspects the original Plan/pending before retrying", err)
+			return snapshot, fmt.Errorf("%w; cleanup was deferred by the original Writer fence; the original Plan and pending facts remain preserved for receiver recovery", err)
 		}
 		// An unregistered empty verification directory carries no authority; keep
 		// it rather than racing another caller's preparation with a directory unlink.
@@ -234,6 +294,65 @@ func RegisterPlan(
 		return snapshot, err
 	}
 	return snapshot, nil
+}
+
+func samePlanRegistrationCoordinate(original, current map[string]any) bool {
+	lifecycle, _ := current["lifecycle"].(map[string]any)
+	return stringField(original["runtime_id"]) != "" && original["runtime_id"] == current["runtime_id"] &&
+		baselineGeneration(original) == baselineGeneration(current) && currentReviewRound(original) == currentReviewRound(current) &&
+		lifecycle["state"] == "verification"
+}
+
+func resumePlanRegistration(root, statePath, journalPath string, request PlanRequest, input *planRegistrationInput) (loopruntime.Snapshot, error) {
+	// Only the original Writer may recover durable pending. An observation
+	// Store, staged file, or matching plan id alone is never an acceptance.
+	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
+	current, err := store.Snapshot()
+	if err != nil {
+		return current, err
+	}
+	if err := request.Context.Err(); err != nil {
+		return current, err
+	}
+	if !samePlanRegistrationCoordinate(input.initial, current.State) {
+		return current, fmt.Errorf("original ReviewPlan runtime, generation, round or stage changed")
+	}
+	if input.commitStarted && input.prepared {
+		var plan Plan
+		if err := json.Unmarshal(input.data, &plan); err != nil {
+			return current, err
+		}
+		planBytes := append(canonicalJSON(input.data), '\n')
+		planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", plan.ReviewPlanID+".json"))
+		ptr := PlanPointerFromState(current.State)
+		original := PlanPointerFromState(input.initial)
+		newReception := current.Revision > intField(input.initial["revision"])
+		if original != nil && original.Path == planRel && original.SHA256 == sha256Of(planBytes) {
+			// An untouched TR-012 seed can already pin these bytes. Its
+			// pointer alone cannot prove professional registration happened.
+			transition, _ := current.State["last_transition"].(map[string]any)
+			newReception = newReception && transition["transition_id"] == "REVIEW-PLAN" &&
+				transition["event_id"] == fmt.Sprintf("evt-review-plan-%s-r%d", plan.ReviewPlanID, intField(input.initial["revision"])+1)
+		}
+		if newReception && ptr != nil && ptr.PlanID == plan.ReviewPlanID && ptr.Path == planRel && ptr.SHA256 == sha256Of(planBytes) && ptr.Revision == 1 && ptr.ReviewRound == plan.ReviewRound && plan.ReviewRound == currentReviewRound(input.initial) && plan.BaselineGeneration == baselineGeneration(input.initial) {
+			stored, err := workpacket.ReadFile(root, planRel, 20<<20)
+			if err != nil {
+				return current, err
+			}
+			if err := request.Context.Err(); err != nil {
+				return current, err
+			}
+			if !bytes.Equal(stored, planBytes) {
+				return current, fmt.Errorf("original registered ReviewPlan bytes changed at %s", planRel)
+			}
+			return current, nil
+		}
+	}
+	if current.Revision != intField(input.initial["revision"]) {
+		return current, loopruntime.ErrStaleRevision
+	}
+	input.retry = true
+	return registerPlanBytes(root, statePath, journalPath, request, input)
 }
 
 // canonicalJSON re-marshals the plan so the pinned bytes are stable.

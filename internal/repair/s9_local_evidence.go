@@ -52,6 +52,9 @@ func captureS9LocalEvidence(mainRoot, workerRoot, packetID string, raw json.RawM
 		if err != nil {
 			return nil, fmt.Errorf("S9 local evidence source gap for %q in Builder root %s: %w", ref, workerRoot, err)
 		}
+		if err := evidence.ValidateLocalCaptureSource(source); err != nil {
+			return nil, err
+		}
 		data, err := workpacket.ReadFile(workerRoot, source, repairResultAnswerLimit)
 		if err != nil {
 			return nil, fmt.Errorf("S9 local evidence source gap for %q in Builder root %s: %w; restore the original source and retry reception", ref, workerRoot, err)

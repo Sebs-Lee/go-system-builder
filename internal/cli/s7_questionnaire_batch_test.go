@@ -139,7 +139,7 @@ func TestS7MainPreparesAllDispatchedQuestionnairesInOneOriginalHandoff(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	packets, err := runtime.CurrentReviewResultPackets(after.State, "")
+	packets, err := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), f.root), after.State, "")
 	if err != nil || len(packets) != 2 {
 		t.Fatalf("single original handoff issued %d/2 responsibilities: %v\n%s", len(packets), err, output)
 	}

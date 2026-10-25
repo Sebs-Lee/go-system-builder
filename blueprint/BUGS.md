@@ -2,6 +2,8 @@
 
 本文件记录 2026-10-24 三题材完整流转仿真（S0～S7～S9～S7～S10～S11）暴露的、**尚未修复**的框架缺陷。
 
+开头的仿真现象和计时保留其原执行环境含义；当前缺陷状态与修复边界以各条及定级表为准。尤其普通 PreToolUse 已按进度监听合同实现，不能从旧门禁措辞或历史 exit 0 统计推出需要恢复工具 deny。
+
 它不是设计文档，也不是调查流水账：每条只记录「现象 → 证据 → 落点 → 建议修法」，供后续修复与 blueprint 同步更新使用。修复完成后应把对应条目连同修复提交一起删除或标记为已修，不在本文件累积历史。
 
 仿真环境位于仓库外 `/home/sebs/gsb-simulation/`，三题材共用同一份发布包：
@@ -12,7 +14,7 @@
 | `callback-api` | 服务行为模块、UI impact=none | **`release_authorized`（终态）**，rev=23、clean_round=2 | 21 个机检 gate 全过，`mechanical_checks_passed=true`，`fixture_unchanged=true`，`registered_evidence_sources_intact=true` | 28 条 |
 | `ui-ledger` | UI impact=changed、无候选文档 | **未到终点**：`verification/running` rev=20，S7 第二轮 7 份责任里 5 份 `done`、2 份 `active` | — | 36 条 |
 
-`source-ledger` 的 S8 再次在 `no_competing_hypothesis` 上踩到同一个坑（见 BUG-SIM-01）。`callback-api` 的 S7 接收被 Hook 内部预算反复打断（见 BUG-SIM-17），连续多个窗口停在同一 revision，最后靠"删 stale 产物 + 清空工作树 + 换新原生 agent"突破并跑到终态；`ui-ledger` 同一缺陷在 S9 变成死路、在 S7 第二轮变成**闭环**（见 BUG-SIM-17 的死锁链）。
+`source-ledger` 的 S8 再次在 `no_competing_hypothesis` 上踩到同一个坑（见 BUG-SIM-01）。`callback-api` 的 S7 接收被 Hook 内部预算反复打断（见 BUG-SIM-17），连续多个窗口停在同一 revision，最后靠"删 stale 产物 + 清空工作树 + 换新原生 agent"突破并跑到终态；`ui-ledger` 同一缺陷在 S9 变成死路、在 S7 第二轮变成**闭环**（见 BUG-SIM-17 的接收与恢复问题）。
 
 **`ui-ledger` 的中断点是本轮唯一的"没跑完"**，如实记录：S7 第二轮 `assignment-qa-pattern-idiom-fit` 答卷已写好却接收不出，`assignment-qa-testability-oracle` 被派发但工作包从未准备；两者把这一轮钉在 `active`。主会话转录已累积到 **31 MB**，每轮 `--resume` 都在继续加长它。
 
@@ -304,17 +306,15 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 ---
 
-### BUG-SIM-11 · P2 · 消费者超时与内容非法未区分
+### BUG-SIM-11 · P2 · 接收中断、专业拒错和后继未完成混淆
 
-**现象.** `Consumer rejection: context deadline exceeded` 出现在**消费者侧**，且重试可能已经成功。同一份答卷在下一轮原生返回时被正常接收，同一份 plan 在随后保存中也注册成功——即超时不是内容非法。协议只说「不要重写」，却没说重试的具体入口，恢复者容易误以为要重写专业答卷。
+**现象.** 原仿真同一答案或 Plan 在后续接收成功，首次却收到 `Consumer rejection: context deadline exceeded`，并同时出现拒收、Plan 注册中断、材料准备延期等提示。超时不能证明内容非法，缺少回执也不能证明未提交。
 
-**证据.** `source-ledger` F-026。同时同一超时引发三条提示：消费者拒收、`runtime review-plan: context deadline exceeded; Main must inspect original Plan/pending before cleanup`、`S7 Main questionnaire preparation deferred …`，三者其实是同一件事的连锁投影。
+**设计.** 按 [Hook §10.2～§10.3](l4-mechanisms/L4-hook-platform-wiring.md#102-各层工作与复用边界)贯通一次准确输入与分段恢复：未提交时复用原输入，pending 形成后恢复原事务，接收成立后只续原出口／材料。反馈分别表达专业字段错误、来源故障、并发冲突、传输中断和已接收后继未完成；不要求作者改内容、重存、删产物或换 ID。
 
-**建议修法.** 超时诊断与内容校验分两类措辞，并给出「原生 resume 同一 Worker 原样重交」的具体入口；同时把消费者超时与其派生出的下游提示合并成一条。
+**实现状态.** 一次答案输入已贯通服务与原消费者，pending／回执／本次暂存按进度续接，基线 context 和取消错误链已接通。Result 尾段锚定原工作截止后 1.4 秒，Plan 为 400 毫秒，延迟返回不重新发放预算。冻结验收曾发现 OS 锁释放后，遗留兼容标记的 30 秒过期窗口超过新进程约 5 秒锁预算，阻断立即恢复。本轮原锁入口已改为：证明原 PID 退出后立即回收标记，已知活进程不因标记年龄被驱逐；未知旧格式仍沿原兼容规则。[真实进程回归](../internal/review/result_process_recovery_test.go)继续检验新进程原入口恢复、同答幂等与篡改／缺失 intent 拒绝，不能用执行 defer 的 panic 测试代替。仍无跨进程自动执行者，强制终止后的无人触发恢复不在已实现能力内。
 
-**调查结论（2026-10-26，未修，留待 SIM-17 一并根治）.**
-超时不是内容错，也不是消费者判死刑，是 S7 大答卷的重活（验签名、跑消费者、写状态）塞进了 Claude Code 给 Hook 的 8 秒窗口，计时器到即 `context deadline exceeded`，答卷状态半写。同一份答卷下一轮原样重交即被接收（F-026）。
-近治是把 `hook_budget.go:fail()` 拆两类文案（超时：内容未判，原样 resume 同一 Worker 重交，禁重写；内容非法：按 field_errors 改 answer），不动预算；根治归 SIM-17（重活移出 Hook，走 `review-result submit` 外部调用，Hook 只做轻量检查）。退出码与连锁投影合并也在 SIM-17。
+**验收.** 覆盖两层读取之间改文件、有限恢复固定原输入、各提交窗口中断、响应丢失和后继失败；同时保留真实专业拒错及同身份不同内容冲突。与 SIM-17 共用正常路径优化，故障语义仍须独立验证。
 
 **关联反馈.** `source-ledger` F-026。
 
@@ -434,465 +434,87 @@ agent 给出的机制判定与实测：
 
 ---
 
-### BUG-SIM-17 · P0 · S7 答卷接收的 hook 事件承担两件重活、共用一份时限，超时后静默降级逼 Main 代交
+### BUG-SIM-17 · P0 · 专业接收链重复处理历史与来源，耗尽 Hook 预算并放大恢复负担
 
-> **本条与 BUG-SIM-20 的关系（2026-10-25 06:45 实测修正）.** BUG-SIM-20（读转录并逐行解析）曾被写成本条的"根因"，但直接计时显示它**只占 30–96 ms**，不解释 6.4 秒。本条记录的是**时限机制本身**的缺陷（预算共用、超时退出码 0、无认可恢复入口、错误文案误导），**它才是主因**；SIM-20 只是让接收成本随重试次数上升的次要放大器。两条叠加才产生本轮观察到的现象。
+**现象.** 原仿真 S7／S9 接收多次耗尽内部预算，已填写答案不能稳定变成持久接收及后继交接。Main 曾通过删暂存、手工代交或换 Agent 排障，这些不是正常作者合同。历史 `ui-ledger` SubagentStop 中位约 6,445 ms、p90 约 7,265 ms；这些数值描述原现场，不是当前版本性能。
 
-**现象.** S7 的原生 review-result 接收跑在 PostToolUse Hook 里，而 Hook 的内部预算只有约 **6.6 秒**（`hookProcessBudget = 8s` 减去启动与前置开销；S4 另立了 28 秒特例）。超时时的回执是：
+**问题关系.** SIM-17 是整条正常接收与中断交接的主问题。SIM-11 是其故障分类／恢复侧，SIM-20 是转录历史成本放大器；SIM-18 必须按现行进度监听合同处理，不能恢复普通工具门禁。SIM-19 改善每次处理的状态体积，与调用链重复工作正交，二者可独立实施。
 
-> Harness Hook did not complete within its internal budget: context deadline exceeded. Main must inspect the original receipt, current responsibility and remaining handoff before retrying. A missing response does not prove no commit; preserve professional answers and do not repeat accepted work.
+**原排查位置与修复分工.**
 
-**超时后没有任何被指引认可的恢复入口，而且退出码是 0**：工具调用在 Claude 侧显示成功，但 Hook 里的编码与提交已被中止，框架状态只写了一半（finding 已编码、observation batch 已暂存、commit 未完成）。Main 只能自己清理并重放：
+| 位置 | 具体问题 | 修复方向 |
+| --- | --- | --- |
+| `submission.SaveReviewResultFrom` → `review.SubmitIssuedResult` | 相邻两层各读、校验答案 | 原边界固定一次输入，向下传实际字节及绑定，恢复沿同次输入 |
+| `detectUndeclaredProductDriftWithState` | 枚举全部历史 packet 后逐份验证；无请求 context 的入口又重建完整 registry／解析 journal | 按实际待判断路径选择证明，贯通 context，共用一次准确索引与解析 |
+| `buildsurface.Read／Verify`、`gitBytes` | 固定来源重复重建，部分调用另起 Background／局部时限 | 固定计算同次复用，当前连续性在原边界复核，Git／锁继承剩余预算 |
+| Writer、checkpoint | 重复完整候选处理，正文体积放大成本 | 相同候选下复用准确结构计算；独立恢复和落盘完整性仍校验，存储按 SIM-19 简化 |
+| 原生返回与后继 | 已接收和出口／材料失败须区别；重跑整链会放大故障 | 先认原事实再续未完成步骤，不重收作者答案 |
+| 审计追加 | 每次扫描历史去重，锁另设 30 秒上限 | 保留事件和去重，采用可验证复用／索引，等待受父请求约束 |
 
-> The QA result was encoded (finding + observation batch staged) but the commit timed out. Let me verify they're unindexed, then replay the reception.
+**设计依据.** [Hook §10.2](l4-mechanisms/L4-hook-platform-wiring.md#102-各层工作与复用边界)定义一次接收顺序、准确复用、当前连续性与外围读取；[§10.3](l4-mechanisms/L4-hook-platform-wiring.md#103-暂存中断与原事务续跑)定义恢复；[§10.4](l4-mechanisms/L4-hook-platform-wiring.md#104-实现落点依赖与尚未闭合的路径)标明现状和依赖；[§10.6](l4-mechanisms/L4-hook-platform-wiring.md#106-整条接收链的验收与观测)定义整链验收。各阶段保持原责任、原消费者和原 Writer，不新建接收状态机。
 
-**这使「原消费者接收」的责任事实上转移给 Main——而框架是刻意不把这条路交给 Main 的**，它自己就有两条测试锁死这一点：
+**范围与现状.** 一次输入、按实际路径批量证明、基线／固定 Git 的请求预算与复用、按进度恢复、审计索引及外层失败观测已在工作区接入生产调用链；锁内仍核实际磁盘证据，取消／局部超时不写成内容非法或 Plan stale。当前原生 S7 Stop 不无条件发行下一 Reviewer 问卷，最后结果仍可续 S10；不能继续用“每次接收必做两件重活”概括当前机制。主修是减少实际工作及按进度续接，不是增加预算、无条件拆成两个平台事件、等待下一普通工具或交给 Main 手工 submit。
 
-- `internal/cli/s7_status_test.go:156` — S7 packet status 里**不得**出现 `review-result submit`（"packet status requested manual delivery"）；
-- `internal/cli/controller_test.go:73` — S7 的 guidance **不得**包含 `review-result submit`。
+**验收缺口.** 需用当前版本复测完整链路、历史增长、并发和各中断窗口。组件缓存命中、旧仿真数字、单份答卷变小或换新 Agent 后偶次成功，均不能替代验收。
 
-也就是说：框架唯一认可的路径是 Hook 接收；Hook 超时后，Main 只能靠翻 CLI（甚至翻二进制）去找一条**被刻意排除在指引外**的代交通道。
+**冻结验收复现的机制缺口.** 除 SIM-11 的死亡进程兼容锁外，[Main 返回取消检查](../internal/cli/hook_acceptance_cancellation_linux_test.go)证明 S9 摘要在请求取消后仍打开原工作包正文，相关 lookup／diagnostic 仍另起 Background；[诊断与基线检查](../internal/integration/hook_diagnostic_acceptance_test.go)证明原机制发布的 `.claude/diagnostics/planning/` 准确诊断文件会进入未声明产品漂移，进而阻断原 Gate。两者都不能靠让作者补字段、删诊断或重开验证轮解决。[S9 证据路径检查](../internal/cli/hook_acceptance_s9_evidence_test.go)还证明，按指引推荐的 `path:logs/check.txt` 保存检查证据后，原候选消费者以未跟踪日志导致 Worker 不干净而拒收；不能用额外证据提交／清理掩盖交接缺口。
 
-**真正的成本结构（`ui-ledger` 逐项排除后给出，本条据此定稿）.**
+**验收后的定向收敛.** 按 [Hook §10.7](l4-mechanisms/L4-hook-platform-wiring.md#107-已复现交接断点的收敛设计)补齐上述边界：Main 返回的正文、只读回执与 S9 诊断继承父 context；显示诊断按准确文件和有限内容分类，共用于 S7 产品漂移、S9 基线和集成检查；S9 原消费者只投影本次已捕获且字节匹配的未跟踪日志输出，贯通候选、Main 集成及已验证后的清理，Main 不可变证据保留。未知邻居、源码、已跟踪或已在原 Session 基线中的文件、变更字节仍保留原拒绝条件；未增加作者字段、日志提交／忽略手续或工具门禁。[S9 交接回归](../internal/cli/s9_preferred_evidence_integration_test.go)覆盖推荐路径到 Main Final／清理及证据保留，补足仅候选通过的缺口。原 smoke 工具按 PostToolUse 30 秒、其他事件 10 秒校验，不改产品时限。四项原失败用例与相邻负例为本轮验收范围；真实 Claude S9、完整强杀窗口、整链增长及其他未归因红灯仍未闭合，SIM-17／11 保持开放。
 
-同一份 ReviewResult 连试 11 次收不进来，而同轮另外 5 份 1–3 次就过。`ui-ledger` 做了逐项排除，结论是**负载只是放大器，根因是 hook 事件的工作量结构**：
+**当前复验结论.** 四项原失败断言与相邻边界共 13 项已通过，原 smoke、安装检查及适用 race 复验通过；常规回归仍有红灯。真实 S9 最终形成 Main 集成检查、Final 和 complete，但经历首次 Stop 超时、未引用临时脚本拒收、额外本地忽略规则及替代原 actor 继续，原平台用例仍失败。模型工具请求携带的 `Agent.resume` 在实际 Hook 输入中消失且启动新 actor，须核对客户端继续接口，不能把模型自行替代当预定流程通过。另一个具名缺口是 [Main 集成入口](../internal/cli/workspace_delivery.go)：execution 尚无 DeliveryRef 时直接以空路径读取，只报 `invalid packet artifact path`，未交付“候选未形成”的前置事实和原恢复责任。展示 `Next: .` 与 Hook 文档 §12.2 的旧 smoke 描述也仍有残留。以上不由扩大日志豁免或增加作者手续解决；完整增长、中断与无额外指引的安装包流程仍待验。
 
-| 候选原因 | 排除依据 |
-| --- | --- |
-| 答卷体积 | 已压到本轮最小（10 600 B，staged 结果 5 463 B）；同项目姊妹工程被接收的 round-2 QA 结果是 **51 502 B** ⇒ 提交开销与载荷无关 |
-| 答卷内容/字段 | 失败件与已成功件的 staged 结果**逐字段 diff**，除 id 与正文外完全同形；消费者本已完整解析（补上了 4 条证据的 `#sha256=`、算出 `subject_digest`、写出完整 `effective_answer`），**只是没来得及提交** |
-| packet / manifest / plan | 与已成功件全量 diff：只有 id、名称、时间戳等身份字符串不同 |
-| 基线真的漂移 | **不是**：跟踪树指纹、内容哈希、HEAD、frozen `changed_surface` 的 sha、frozen `deleted` 主体从 git 历史复现的 blob sha 全部一致；`git fsck` 干净；`runtime recover inspect` 报 active runtime `readable` 且与 checkpoint 的 sha 一致 |
-| 机器负载 | load average 5.17→8.64（并发 `go build`）期间失败；**把负载降到 1.44/1.79 后重试仍然失败** ⇒ 负载是放大器，不是根因 |
+**执行清单.** 使用 [Hook 接收、指引与恢复验收清单](l4-mechanisms/L4-hook-acceptance-checklist.md)分别收集 SIM-17／11／18／20 与正交的 SIM-19 证据；特别检查实际模型渠道、接手责任、恢复动作及是否依赖额外作者步骤。未验条目保持待验，不因清单或实现存在就关闭缺陷。
 
-把剩下的三条串起来，就是根因：
-
-1. **一个 hook 事件干两件重活。** 同一次 hook 上下文里同时出现「把这一份责任带进原生 Agent」（= 接收上一份 ReviewResult）与「准备下一份问卷」，**两件各自约 6 秒的活共用一份约 6.6 秒的时限**。谁的活先被尝试，谁就吃掉预算。
-2. **Runtime 状态随轮次变大。** `loop-state.json` 达 **742 336 B**，其中 `entities` **459 463 B**，逐份存着 work-packet 问卷 draft。状态越大，每次 hook 要做的序列化+校验越慢——于是**越靠后的责任越难**（已完成的 5 份每份都要先经历一次「释放队列 → 备出下一份问卷」）。
-3. **基线漂移扫描遍历整个工作树**，包括**未跟踪**的遗留 S9 worktree（26 MB / 742 文件、3.7 MB）。每次扫描都要走它们。
-
-**「两件重活」的损伤在两侧都留了痕（`ui-ledger` 第二轮权威账本）.**
-
-`loop-state.json` 的 `review.assignments` 是权威账本，S7 第二轮 7 份责任的真实状态（2026-10-25 06:21 实读）：
-
-| assignment | status | 答卷 | 工作包 |
-| --- | --- | --- | --- |
-| `assignment-dv-traceability` | `done` | 有 | 有 |
-| `assignment-qa-debt-operability` | `done` | 有 | 有 |
-| `assignment-qa-design-boundary` | `done` | 有 | 有 |
-| `assignment-qa-logic-state-error` | `done` | 有 | 有 |
-| `assignment-qa-maintainability` | `done` | 有 | 有 |
-| `assignment-qa-pattern-idiom-fit` | **`active`** | 有（10 565 B，sha256 前后一致） | 有 |
-| `assignment-qa-testability-oracle` | **`active`** | **无** | **无** |
-
-两条 `active` 恰好各对应 hook 事件的两件重活：
-
-1. `qa-pattern-idiom-fit` = **接收侧**卡死：答卷早已写好并被反复重存（sha256 前后一致、字段未改），框架消费不出来；
-2. `qa-testability-oracle` = **准备侧**卡死：它的 activation 已落盘（`.claude/evidence/workgroup-qa-testability-oracle/TASK-001-01/activation-s7-g1-r2-qa-testability-oracle.json` 与 `.claude/workgroups/manifest-g1-r2-assignment-qa-testability-oracle.json`），说明 **Reviewer 已经被派发**，但**工作包从未准备出来**——它连问卷都没拿到，自然交不出答卷。
-
-**"准备下一份问卷"与"接收上一份 ReviewResult"共用一份时限，代价是可以对得上的**：同一轮里 5 份顺利进账、1 份卡在接收、1 份根本没发卷。这条账本把"一个 hook 事件干两件重活"从推测变成了可核对的事实。
-
-**完整死锁链（hook 自己的 stderr 逐环扣上，2026-10-25 06:18 实读）.**
-
-> S7 reception incomplete; Main owns recovery for s7-g1-r2-qa-pattern-idiom-fit at …. Preserve the original answer, observations and any accepted receipt; this return does not establish review completion. … Do not invent a verdict, product Finding or blocked Claim to exit. **canonical product baseline changed before ReviewResult commit: canonical frozen baseline drift scan: context deadline exceeded; staged ReviewResult artifacts were retained because lock-protected cleanup could not prove they were unreferenced: .claude/evidence/loop-REQ-001/g1/reviews/s7-g1-r2-qa-pattern-idiom-fit/review-result-a62f24be….json**
-
-把这条拆开，就是一个闭环：
-
-1. **同一次 hook 事件的前序操作已经吃光了预算**（编码 finding + 暂存 observation batch + 准备下一份问卷 + 编码/落盘），漂移扫描只拿到剩余时间 → 超时 → 错误被包装成「canonical product baseline changed」；
-2. 因为扫描没跑完，兜底清理**无法证明暂存产物未被引用**（`internal/review/submit.go:627-629`），于是把**已经生成好的** ReviewResult 留在盘上；
-3. 下一次接收看到盘上已有同 id 产物 → 判为陈旧产物 → 拒绝；
-4. Main 删掉产物重试 → 回到第 1 步。
-
-**即：清理逻辑把"扫描超时"翻译成了"有东西还被引用"，于是每轮都留下一颗毒丸；而毒丸的存在让下一轮的工作量更大，于是预算更不够——这是一个自我维持的死循环。** agent 的实测动作与此完全一致——它反复做的正是"删 stale 产物 + 保持工作树干净 + 让同一 Reviewer 重存答卷"：
-
-> Stale staged artifact removed and the answer re-saved byte-identical in the same command; before/after sha256 equal, file valid JSON, no field changed.
-
-**这条链路的成本还会随重试次数自我放大**（BUG-SIM-20）。本轮主会话转录已膨胀到 **31 MB**，reviewer 子代理转录 **2.4 MB**；接收路径上的固定开销（读转录）随重试次数增长，漂移扫描的开销随工作树增长，两者挤在同一个 8 秒闸门里。
-
-**agent 已经开始逆向锁机制本身.** 它在转录里自述：「the consumer offers "change the artifact id" as an alternative to deleting the file」「check for a stale legacy lock sentinel — `acquireLegacyLockContext` waits 30 s before evicting one, which would consume the whole budget」「the state is described as a rebuildable projection, and a smaller rebuilt state would fit the budget」。**这是"猜机制"退化成"逆向一切"的又一步：它开始逐个函数读框架实现去找一条不依赖时序的出路。**
-
-**agent 已经把逃生手段升级到"改宿主"（2026-10-25 06:58 现场记录）.**
-
-`ui-ledger` 的 Main 在第 10 个窗口里做了三件事，顺序很清楚：
-
-1. **量化宿主抢占**：用 `top`/`vmstat` 测出"host is stealing 53 % CPU with 39 runnable tasks"，并给出自己的结论——*"the S7 reception needs ~5.5 s against the platform's fixed 6 s hook budget"*；
-2. **去改框架之外的东西**：找到一个 `minimax-code` 进程（pid 2179906，父进程是一个已运行 2.2 天的 bash 会话；**不是本条仿真会话的 2678589**），确认它没有活跃会话子进程后，**用 `renice` 把它降到 nice 19**，好让 harness hook 拿到 CPU；
-3. **换新原生 agent 重派**：起一个全新 `s7-r2-qa-pattern-idiom-fit-retry` 子代理（转录几乎为零），让它按多轮保存循环重交同一份答卷。
-
-> **这条行为本身就是一个结论.** 当框架自己的时限撑不住时，agent 的出路是**走出框架去调宿主**——改进程优先级、换 agent、重存文件、删产物。这不是"文档没写清楚"，是**框架没有给出任何在预算内完成接收的办法**。同时它也再次印证了"负载是放大器不是根因"：**基线接收成本（约 5.5 s）本来就贴着 6 s 的预算**，宿主只要拿走一点 CPU 就会翻车；把负载压到 1.44 仍失败，正是因为余量本来就只有 15%。
-
-**余量有多紧.** `reception/s7` 平均 **5 728 ms**，内部时限约 **6 658 ms**——**只有 15% 余量**。任何一点负载增长、状态增长或工作树膨胀都会越界。
-
-> `callback-api` 独立测得同一组数字并给出了自己的结论：*"The phase metrics show `reception/s7` at ~5.4 s against a 6 s internal budget — marginal, and it scales with registry size."* 它还特意去**已安装的二进制**（`823743c`）而不是上游 HEAD 里验证漂移扫描的证明循环——因为上游 HEAD 已被并发修复改动过。这条与本清单的测量完全吻合。
-
-**实测有效的处置（`ui-ledger` 验证过）.**
-
-> （a）先删 stale staged 产物；（b）把仓库根下的遗留隔离 worktree 移进被忽略的 `.claude/worktrees/`，让工作树完全干净；（c）让同一 Reviewer 重存自己那份答卷。
-
-搬迁后 `git status --porcelain` 由 `?? .worktrees/` 变为完全干净，跟踪树指纹与内容哈希不变、HEAD 不变、产品字节未动；**同一 Reviewer 重存答卷后立刻接收成功（rev 84）**。
-
-> **但这套处置在 `ui-ledger` 上只走通了前半程（2026-10-25 07:15 修正）.** 遗留 worktree 确实已被清空（`.claude/worktrees` 现为 0 文件）、工作树保持干净、`git status` 只要 30 ms，**但接收仍然失败**——第 9–11 个窗口里 `rev` 一直停在 **90**，`assignment-qa-pattern-idiom-fit` 与 `assignment-qa-testability-oracle` 始终 `active`。换新原生 agent（转录 455 KB / 570 KB）、降宿主进程优先级、静默窗口等待，**都没有把这题推过 S7 第二轮**。
->
-> **结论要修正：** 上面这套处置对 `callback-api` 有效、对 `ui-ledger` 无效。差别不在"有没有做"，而在**卡点的位置**：`callback-api` 卡在 hook 前置工作（转录扫描），省出几十毫秒就能过；`ui-ledger` 卡在**预算被前序操作吃光后的下游**（漂移扫描 → 产物被保留 → 陈旧冲突），而这套处置**完全不触及**那个环节。**这也说明"处置有效"不能推广到"问题解决"——`ui-ledger` 是本轮唯一没跑到终点的题材，而它恰好就是处置看起来最标准的那一题。**
-
-**错误文案把「超时」包装成「基线变了」，极具误导性——而且这是绝大多数情况（2026-10-25 07:10 全量分类）.**
-
-| 题材 | 漂移扫描**超时** | 漂移扫描**真漂移**（磁盘上重新出现） | 「未声明产品文件」真漂移 | 「stale 状态持久化」也超时 | hook 总预算超时 |
-| --- | --- | --- | --- | --- | --- |
-| `source-ledger` | 1 | 0 | 0 | 0 | 3 |
-| `callback-api` | 34 | 1 | 0 | 1 | 72 |
-| `ui-ledger` | **99** | 10 | 0 | 4 | **301** |
-| **合计** | **134** | **11** | **0** | **5** | **376** |
-
-> **134 次扫描超时 vs 11 次真漂移——92% 的「基线变了」其实根本没跑到判定。** 「undeclared product file(s) … outside frozen_subjects」这条**真正的漂移判决一次都没出现过**。
-
-实测基线指纹、HEAD、frozen `changed_surface` 的 sha、frozen `deleted` 主体复现的 blob sha **全部一致**，基线根本没变。agent 自己的判语是：
-
-> 错误文案把"扫描没跑完"包装成了"基线变了"，容易误判成真缺陷。
-
-**而且这个超时是「预算被前序操作吃光」造成的，不是扫描本身慢。** 三条实测证据：
-
-1. `internal/review/workspace.go:306-313` —— 扫描函数**继承 hook 的同一个 deadline context**，并在循环里逐段检查 `parent.Err()`；它拿到的是**剩余预算**，不是 8 秒。
-2. 扫描真正要做的 IO 都很快：`git status --porcelain` **30 ms**、`git diff --name-status HEAD` **45 ms**、`loop-state.json` 解析 **24 ms**。没有任何一项接近 6 秒。
-3. **最关键的一条**：最新一次回执的后半句是
-
-   > ReviewPlan frozen subject baseline: canonical frozen baseline drift scan: context deadline exceeded; **failed to persist ReviewPlan stale status: context deadline exceeded**
-
-   ——**扫描之后紧接着的"把 stale 状态写回去"也超时了**。如果是扫描自己慢，它把预算吃完也就算了；但"写一个状态"这种微秒级操作也超时，只能说明**预算在扫描开始之前就已经没了**。
-
-同一条检查有两种落点：漂移能快速判定时给出可执行的原因（`frozen deleted subject … reappeared on disk`），跑不完时只吐一个 `context deadline exceeded`，却顶着「基线变了」的外壳。**这是本轮最容易把人带偏的一条报错。**
-
-**证据（三题全部触发，次数以 hook 观测文件为准；会话日志里的计数含 agent 复述，偏大）.**
-
-| 题材 | PreToolUse 超限 | PostToolUse 超限 | SubagentStop 超限 | S7 答卷提交 被拒 / 被接受 |
-| --- | --- | --- | --- | --- |
-| `callback-api` | 51 | 20 | 20 | — |
-| `ui-ledger` | **258** | 6 | **49** | **52 / 5** |
-| `source-ledger` | 3 | 1 | 3 | — |
-
-> **`ui-ledger` 的 `loop-metrics.json` 里记着 `loop_s7_result_submits_total = {accepted: 5, rejected: 52}`——被拒率 91%。** 这是框架自己记的账：同一轮 52 次提交被拒、5 次被接受。（`ui-ledger` 第一轮的 7 份责任里只有 2 份进了账，所以被拒数含第一轮。）
-
-**hook 各事件的耗时分布（`ui-ledger`，全量 3 500+ 次观测）.**
-
-| 事件 | 次数 | 中位 | p90 | max | ≥4 s | 预算超时 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `PreToolUse` | 1 645 | 1 876 ms | 8 169 ms | 8 604 ms | **542** | **247** |
-| `PostToolUse` | 1 624 | 796 ms | 2 711 ms | 10 708 ms | 31 | 6 |
-| **`SubagentStop`** | **75** | **6 445 ms** | **7 265 ms** | 8 296 ms | **60** | **49** |
-| `SubagentStart` | 74 | 635 ms | 1 074 ms | 1 590 ms | 0 | 0 |
-| `Stop` | 41 | 755 ms | 1 023 ms | 1 474 ms | 0 | 0 |
-
-三条读法：
-
-1. **`SubagentStop` 就是 S7 接收事件**，75 次里 **49 次超限**、中位 6 445 ms —— 内部预算 6 658 ms 已被吃满，p90 直接越过预算线。
-2. **`PreToolUse` 的中位只有 1.9 秒，但 p90 是 8.2 秒**——长尾极重，而且 247 次直接越过内部预算（这 247 次全部以退出码 0 放行，见 BUG-SIM-18）。Main 每做一次工具调用，都可能被自己的门禁评估拖住 8 秒。
-3. `PostToolUse` 中位 796 ms 很正常，**问题集中在 SubagentStop（接收）与 PreToolUse（评估）两个事件上**，与「一个 hook 事件干两件重活」的判断一致。
-
-**恢复代价（`callback-api` 逐条统计）.**
-
-- **7 次**删除已暂存的 `review-result-*.json` / finding / observation-batch 产物；
-- **6 次**手工调用 `runtime review-result submit`；
-- **2 次**重新注册 ReviewPlan。
-
-一个 S7 轮次因此反复重做，题目连续多个 45 分钟窗口停在同一 revision。
-
-**S9 变体：同一缺陷在 S9 是死路（`ui-ledger` 独立复现）.**
-
-`ui-ledger` 在 S9 撞上同一堵墙，并且一度**无法自行恢复**：
-
-> Original PlanReport preparation for Builder builder-s9-… remains pending: context deadline exceeded. Its successful dispatch was retained; save this same division answer after resolving the named original source.
-
-> S9 的发卷则多次重试仍未落盘 …… Runtime 里虽有 `plan_report_packets` 记录（status=issued），但 `view_path` 与 `answer_path` 两个文件都不存在，于是导入器找不到 brief，也就 "no current registered Plan responsibility"。
-
-核验结论：
-
-1. **答卷形状不是问题。** 接收器两种形状都接受——`internal/cli/native_s9.go:445-452` 允许 `{"answer":{…}}` 信封式，也允许顶层专业字段的扁平式。S9 brief 也明写「The private outputs below use top-level professional fields, without an answer envelope」。agent 写的扁平三字段形状是对的。
-2. **真正的问题是「写在哪里」。** `internal/cli/native_s9.go:425-432` 的接收器从**原生 worktree** 读，并明确拒绝 Main 根目录的副本：
-   > actual native worktree PlanReport is missing at %s; **Main's draft cannot substitute for the Worker artifact**
-3. **依赖链是闭环的。** work location 由 Main 在 PlanReport 被记录**之后**才准备（`internal/cli/repair_command.go:599`、`:1336`），而接收器又需要 worktree 才能读到那份产物；发卷准备一旦被 deadline 打断，登记与文件同时丢失，就没有可恢复的入口。
-4. **终点.** `runtime repair status` = `status: planning`、`missing_reports` 与 `missing_results` 同时非空、`report_ref` 为空；回执 `accepted: false`、`error: "PlanReport has not been accepted"`、**`field_errors: []`**——没有任何字段级诊断。
-
-> 值得肯定的是：S9 brief 本身写得清楚（相对 worktree 保存、Main 根目录只读、保存不等于接收、只有原消费者回执才算数），且 agent 没有放宽 Gate、没有伪造接收状态、没有改动产品字节——它只是被一个时间预算挡在了门外。
-
-**落点.**
-
-- `internal/cli/hook_budget.go:20`（`hookProcessBudget = 8 * time.Second`）
-- `internal/cli/hook_budget.go:24`（`s4HookProcessBudget = 28 * time.Second`）
-- `internal/cli/hook_budget.go:26-41`（`hookBudget()` 只对 `.claude/submissions/…/S4/` 路径放宽，其余一律 8 秒）
-- `internal/cli/hook_budget.go:103`（`context.WithTimeout(ctx, hookProcessBudget)`，第二道 8 秒闸门）与 `:125-139`（超时文案与 `PreToolUse` 的降级返回；PostToolUse 同样以退出码 0 收场）
-- `internal/cli/entry_questionnaire.go:263-266`（`mainQuestionnaireViewer` 决定哪些 PostToolUse 会走这条预算路径）
-- `internal/cli/s7_status_test.go:156` 与 `internal/cli/controller_test.go:73`（框架刻意不把 `review-result submit` 放进 Main 的指引）
-- 平台侧 `settings.json` 的 PostToolUse `timeout=30`（秒）——**抬高平台超时没有用**，内部 8 秒闸门先到期，与 `docs/framework-upgrade.md:23-24` 的说明一致
-- `docs/framework-upgrade.md:18-26`（设计意图：Hook 只做快速控制面检查，重活应在 Hook 之外跑；S7 显然没有做到）
-- **具体那个"重活"在哪：** `internal/review/workspace.go:175` 的 `detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)`——扫描 git diff 基线与未跟踪文件，找出未声明进 `frozen_subjects` 的产品文件。它是**整个仓库规模**的遍历，而它跑在 S7 ReviewPlan 注册路径里，也就是 Hook 的时限之内。
-
-**框架自己的阈值与这个预算直接矛盾.**
-
-`internal/metrics/metrics.go` 早就为"Hook 跑太慢"备好了判据与告警：
-
-- `internal/metrics/metrics.go:39`（`defaultHookTimeoutMS = 10000`）与 `:524-529`（`hookPlatformTimeoutMS`：PostToolUse 30s，其余 10s）；
-- `:400`（`healthDegraded`：任一 Hook 采样 ≥ 平台超时的 **40%** 即判定系统降级）与 `:512-520`（同样口径的 WARNING，且对 PreToolUse 额外打印 **"a platform timeout can bypass PreToolUse enforcement"**）。
-
-把三个数放在一起：
-
-| 事件 | 平台超时 | 框架降级阈值（40%） | 框架内部预算 | 关系 |
-| --- | --- | --- | --- | --- |
-| PreToolUse | 10 s | **4 s** | 8 s | **内部预算是降级阈值的 2 倍** |
-| PostToolUse | 30 s | **12 s** | 8 s | 内部预算**低于**阈值 |
-| PostToolUse（S4 特例） | 30 s | 12 s | 28 s | 已越过阈值 |
-
-两个后果：
-
-1. **PreToolUse**：任何触到内部预算的评估，按框架自己的标准就是"降级"，而框架的 metrics 模块恰恰为这个事件打印了"平台超时可以绕过 PreToolUse 强制"。框架知道这个失效模式，却让内部预算（8s）高于它自己设的降级线（4s）——这正是 BUG-SIM-18 fail-open 的成因。
-2. **PostToolUse**：真正的杀手是 8 秒内部闸门，而框架的观测阈值是 12 秒。**被内部预算掐掉的 Hook（实测 8 242 ms）永远低于告警线，`healthDegraded()` 返回 false，也不会打出 WARNING。** 框架对自己正在遭受的这种失败完全失明——`callback-api` 一题就发生了 8 次。
-
-**建议修法.**
-
-1. **把「备下一份问卷」与「接收上一份 ReviewResult」拆成两个 hook 事件**。这是 `ui-ledger` 给出的最直接推论：先在一次"只做准备"的事件里把待准备的问卷备出来，随后的 Stop 事件就不需要准备，整份预算留给接收。
-2. **超时必须让调用方看见失败**：现在退出码是 0，Claude 侧以为工具成功，实际状态只写了一半。应返回非零退出码或结构化的「未完成」标记，否则 Main 无从判断该不该重放。
-3. **超时与漂移要分开措辞**：漂移检查跑不完时应说"检查超时，未能判定基线"，而不是"基线变了"。
-4. 超时文案要给出**具体恢复命令**（当前只有「inspect the original receipt」这类无法直接执行的指示），并明确「不要由 Main 代交答卷」，否则超时会把接收责任悄悄转移给 Main。
-5. **让观测覆盖真实失效点**：降级阈值应按**内部预算**算（PostToolUse 取 8s 的 40% ≈ 2.6s），而不是平台超时的 40%；否则框架对自己最频繁的失败失明。
-6. 长期方向仍是 `docs/framework-upgrade.md` 写的那条：重活移出 Hook，按 SubagentStop → `runtime …` 外部调用路径走；给 S7 加预算只是治标。
-
-**关联反馈.** `callback-api` S7 第一轮（`hook-*.json` 中 30 次 `internal budget`；最慢 8 242 ms；7 次删产物 + 6 次手工 submit）；`ui-ledger` 记录 20/21/22/24/25/27（该题后半程的逐项排除表与"漂移≠超时"判据）；`source-ledger`、`ui-ledger` 各 3 次预算超限。
-
-**一份意外的旁证.** `callback-api` 的 agent 在读框架源码反推 S7 重派机制时，执行了
-
-> `cd /home/sebs/go-system-builder grep -n -i "revis" blueprint/BUGS.md | head -20`
-
-——它 grep 到了本文件（仿真环境与框架仓库同机，未提交的缺陷清单对它可见），并读走了 BUG-SIM-14/15/17 里关于 S7 基线漂移与重派恢复的描述。**agent 是靠这份缺陷清单解开自己的卡点的。**
-
-这件事有两层含义：
-
-1. **正面**：本清单记录的现象、恢复入口和代码落点，对真实使用者确实有用——它没有停在"这里有个坑"，而是写清了怎么绕过去、绕过去的代价是什么。
-2. **反面**：当文档答不上来时，agent 会穷尽一切可用信息源——协议文档 → 编译后的二进制 → 框架实现源码 → 缺陷记录。**"猜机制"实际上已经升级为"逆向一切"。** 真实部署里没有源码、也没有缺陷清单可读时，这条路直接断掉；本清单被 agent 读到这件事本身，也提醒不要把仓库里的未提交分析当作 agent 可用的信息来源。
+**关联反馈.** `callback-api` S7 接收；`ui-ledger` 记录 20／21／22／24／25／27；`source-ledger` F-026。
 
 ---
 
-### BUG-SIM-18 · P1 · PreToolUse 预算超限时 fail-open，绕过框架自己的 deny 策略
+### BUG-SIM-18 · P1 · PreToolUse 超时的旧门禁归因与现行监听合同冲突
 
-**现象.** 与 BUG-SIM-17 同源（8 秒内部预算），但后果性质不同：**PreToolUse 是框架的硬 deny 执行路径**，而预算超限分支在到达策略判断之前就放行了。
+**原记录.** 历史仿真统计到 312 次 PreToolUse 超限且 exit 0。这个记录可以证明观察经常未完成，不能仅凭退出码证明当前框架绕过了一项本应执行的工具 deny。
 
-框架自己对「策略不可用」的判定是 **fail-closed**——`internal/policy/unavailable.go:10-32`：
+**现行合同.** [Hook 普通入口](l4-mechanisms/L4-hook-platform-wiring.md#61-本人保存调用本人消费者)提供进度与准确材料；[PreToolUse 渲染器](../internal/hook/pretooluse.go)不输出 `permissionDecision`，[对应测试](../internal/hook/pretooluse_test.go)要求旧 block 反馈不转换为工具 deny。`UnavailableDecision` 和兼容 adapter 的旧能力不能推导当前入口必须限制工具。
 
-> With no usable policy we cannot trust shell classification or an MCP tool's name to prove that it is read-only. Preserve only explicit inspection tools.
+**仍需解决的问题.** 超时可能丢失当前进度、错误诊断或必要交接反馈；外层真实失败已接入现有 observation spool 和 health，低于平台告警线也保留。必须区分“工具继续”“观察未完成”“领域已接收”与“阶段已推进”，不把其中一个当作另一个的证明。
 
-```go
-if input.Event != "PreToolUse" { return decision }   // 非 PreToolUse → warn
-switch input.ToolName {
-case "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch":
-    return decision                                   // 只读工具 → warn
-default:
-    decision.Decision = "deny"                         // 其余 → deny
-    decision.MatchedRuleIDs = []string{RulePolicyUnavailable}
-    return decision
-}
-```
+**修复方向.** 与 SIM-17 共用轻量分流、准确状态复用和有界观测；按 [Hook §10.6](l4-mechanisms/L4-hook-platform-wiring.md#106-整条接收链的验收与观测)保留外层传输失败事实及已知接收信息。废弃“所有非只读工具 deny”和仅缩短 Pre 时限的旧建议。领域来源、批准、责任与转换条件继续由原消费者／Writer 核对，不能用放宽接收换取非阻断。
 
-但预算超限的分支先短路了：
-
-```go
-// internal/cli/hook_budget.go:130-141
-fail := func(err error) int {
-    ...
-    if input.Event == "PreToolUse" {
-        return 0            // ← 直接放行，根本没走到 UnavailableDecision
-    }
-    if decodeErr != nil || policy.UnavailableDecision(input, err).Decision == "deny" {
-        return 2
-    }
-    return 0
-}
-```
-
-也就是说：**PreToolUse 的门禁评估超时时，框架不但没有按自己的策略 deny，反而比「策略文件缺失」还宽松——任何工具都放行。**
-
-PreToolUse 侧承载的正是这些硬规则：`internal/policy/engine.go:1447`（protected-commands 表驱动硬 deny）、`:1013`（`phaseProductWriteFrozen` 冻结期写入禁止）、`:625` / `:666`（bug_resolution 阶段的写入约束）、`internal/policy/newnative_owned_check.go:27`（原生 Worker 自检归属）。
-
-**证据（本轮实际触发分布，2026-10-25 06:40 全量重算 `hook-*.json`）.**
-
-统计口径：逐个读 `{topic}/hook-*.json`，取 `started_ns`/`finished_ns` 算耗时，取 `stderr` 是否含 `internal budget` / `context deadline` 判定是否超限，取 `exit_code` 判定是否放行。
-
-| 题材 | PreToolUse 超限（**全部 exit 0 = fail-open**） | PostToolUse 超限 | SubagentStop 超限 | SubagentStop 耗时中位数 | 内部预算 |
-| --- | --- | --- | --- | --- | --- |
-| `source-ledger` | 3 | 1 | 3 | **3 265 ms** | ≈6 658 ms |
-| `callback-api` | 51 | 20 | 20 | **6 377 ms** | ≈6 658 ms |
-| `ui-ledger` | **258** | 6 | 49 | **6 445 ms** | ≈6 658 ms |
-| **合计** | **312** | 27 | 72 | | |
-
-**这张表里最关键的一列是 SubagentStop 耗时中位数：3 265 ms → 6 377 ms → 6 445 ms。** 它随题材复杂度单调上升，而内部预算是死的 6 658 ms——**`ui-ledger` 已经贴在天花板上运行**（p90 = 7 265 ms、max = 8 296 ms、75 次里 60 次 ≥4 s、49 次直接超限）。这不是"偶尔慢一下"，是**接收路径的常态耗时已经等于预算**。
-
-同时 `ui-ledger` 的 PreToolUse 超限达到 **258 次**（占其 1 645 次 PreToolUse 的 15.7%），每次都意味着**一次完整的门禁评估被丢弃**。
-
-**实际影响：本轮为潜伏，未造成越权（这一点本轮复核后仍然成立）。** 用 `docs/control/protected-commands.json` 的**完整 19 条受保护命令族**逐条比对三题全部 fail-open 事件（`git push` 到受保护分支、`git merge --squash`、`git tag`、`gh release create/edit/delete/upload`、`gh pr merge`、`npm publish`、`goreleaser release`、`terraform apply/destroy`、`kubectl apply/delete`、`aws s3 cp/sync`、`sh -c`、`bash -c`、`npx --`）——**命中 0 次**。那 258 次 fail-open 放行的是 `python3 - <<'PY'` 读取状态、`find ... -delete`、`git stash/checkout`、`timeout 60 ./.claude/bin/loop-harness runtime review-result submit`、读框架源码等操作。
-
-> **诚实口径.** 「命中 0 次」只能说明**本轮没有可利用的机会**，不能说明路径安全。实际暴露面比早先记录的「25 次」大了一个数量级（**312 次**），其中包含 `find -delete` 这类删除动作与手工 `runtime review-result submit` 这类代交通道——它们每次都在**未经任何策略评估**的情况下直接执行了。
-
-**落点.**
-
-- `internal/cli/hook_budget.go:130-141`（预算超限分支：`PreToolUse` 直接 `return 0`，根本没走到 `UnavailableDecision`）
-- `internal/policy/unavailable.go:10-32`（框架自己的 fail-closed 口径：非只读工具一律 deny）
-- `internal/policy/engine.go:1447`（protected-commands 表驱动硬 deny）、`:1013`（`phaseProductWriteFrozen` 冻结期写入禁止）、`:625` / `:666`（bug_resolution 阶段的写入约束）、`internal/policy/newnative_owned_check.go:27`（原生 Worker 自检归属）
-- `internal/metrics/metrics.go:39`（`defaultHookTimeoutMS = 10000`）、`:524-529`（`hookPlatformTimeoutMS`：PostToolUse 30s，其余 10s）、`:400`（`healthDegraded` 阈值 = 平台超时的 40% = **PreToolUse 4s**）、`:512-520`（WARNING 文案里已经明写 **"a platform timeout can bypass PreToolUse enforcement"**）
-
-**框架自己知道这个失效模式，却把内部预算设在降级线之上。** PreToolUse 的平台超时是 10s，框架自己的降级阈值是 4s，而内部预算是 **8s——正好是阈值的两倍**。也就是说：框架为「PreToolUse 被绕过强制」专门写了告警，却让内部预算允许这种情况发生两倍于自己的容忍线。
-
-> 这一段是 `callback-api` 的 agent 自己在读框架源码时挖出来的（它去翻 `internal/metrics/metrics.go` 是为了搞清楚"基线扫描的 8 秒耗在哪"）。它找到的是框架的**观测口径**，但没有意识到**内部预算与该口径的冲突本身**就是缺陷。
-
-**建议修法.**
-
-1. PreToolUse 的预算超限必须走 `policy.UnavailableDecision`：非只读工具一律 `deny`，与「策略文件缺失」保持同一口径；
-2. **把 PreToolUse 的内部预算降到降级阈值以内**（≤4s），否则框架自己的健康判据和它自己的预算互相打架；
-3. 预算闸门应按事件类型分别定值：PreToolUse 的评估通常很轻（读策略表 + 运行时事实），8 秒不该被触发；真正需要长预算的是 PostToolUse/SubagentStop 里的重活（见 BUG-SIM-17），不该让它们和 PreToolUse 共用一个常量；
-4. fail-open 必须在 stderr 与审计事件里留下**结构化标记**（哪条规则因超时未被评估），否则事后无法区分「评估通过」与「根本没评估」。
-
-**关联反馈.** 无独立反馈条目（agent 只看到 stderr 文案，看不出自己被放行了）；本条由本次分析从 hook 观测文件与代码路径推出。
+**验收.** 普通 Pre 超时／未知不新增工具 deny，不发布部分成功，不制造接收或阶段事实；真实领域缺项仍在原入口拒收。保持作者权限与交付动作不变。
 
 ---
 
-### BUG-SIM-19 · P1 · Runtime 状态随轮次膨胀，把每个 hook 的固定成本越推越高
+### BUG-SIM-19 · P1 · Runtime 内嵌历史工作包全文，放大后续读取与提交成本
 
-**现象.** S7 一个轮次里每多一个 assignment，`loop-state.json` 就变大一截，而**每个 hook 事件都要把整份状态序列化并校验一遍**。`ui-ledger` 在第二轮实测：
+**现象.** 已签发工作包的完整 `binding`、`inputs` 和 `draft` 随责任和轮次追加到 `entities.work_packets`。普通状态读取及上下文转换承担整份状态的解析成本，写事务还要复制、校验和持久化完整状态，并发布 checkpoint。每个 Hook 的路径不同，不能概括为“每次 Hook 都执行全部校验”；历史正文持续进入当前处理路径的问题仍然成立。
 
-| 题材 | `loop-state.json` 体积 |
-| --- | --- |
-| `source-ledger` | 611 186 B |
-| `callback-api` | 684 520 B |
-| `ui-ledger` | **742 336 B**（其中 `entities` 459 463 B） |
+**证据与归因边界.** 原仿真记录的 `ui-ledger` 状态为 742,336 B，Reviewer 后续接收反复接近或超过时限。体积增长是成本放大因素，但该记录不能单独证明全部超时由状态体积导致；SIM-17 的串行工作量、来源扫描和运行环境须分别测量。不能由一份较小答卷失败推导答卷体积永远不影响成本。
 
-`entities` 里逐份存着 work-packet 的问卷 draft（每份含完整的题目、read 列表与答案模板）。于是：
+工作包膨胀不仅来自 S7 题目；S9 PlanReport 与 RepairResult 还重复携带共同冻结来源。只移出 S7 draft，不能视为整个 Runtime 存储问题已经解决。
 
-1. **越靠后的责任越难被接收**——这解释了为什么同一轮里前 5 份 1–3 次就过，最后一份连试 11 次都过不来；
-2. **单份答卷的体积反而不重要**（被接收的 51 502 B 结果 vs 失败的 5 463 B staged 结果），真正吃时间的是**框架自己那份越来越大的状态**；
-3. 每多一个 reviewer assignment，就要多存一份完整问卷 draft，而问卷内容对状态机是**可再生的**（`DraftPlanForRoot` 随时能重建）。
+**落点.** [S7 签发](../internal/review/result_packet.go)保存完整 packet；[Runtime Writer](../internal/runtime/store.go)和 [checkpoint](../internal/runtime/checkpoint.go)处理完整状态；[S7 registry 缓存](../internal/runtime/review_result_read_cache.go)已减少同请求重复重建，但命中仍需计算完整 registry 的内容身份，且未改变持久化表示。
 
-**证据.** `ui-ledger` 记录 22 的原话：
+**修复设计.** 采用[运行控制面 §2.4～§2.6](l4-mechanisms/L4-runtime-control-plane.md#24-保留事实与保存全文是不同决策)的主状态索引与独立完整正文分工，按当前责任读取。保留专业产物、原签发／接收事实和历史问卷，不要求 Agent 改变输入、答案、保存、结束或恢复操作。优先移出完整 packet 并减少重复处理；共同来源去重按收益另行评估，不先引入全局对象库或后台队列。
 
-> Runtime 状态（`loop-state.json` 742336 B，其中 `entities` 459463 B、逐份存着 work-packet 问卷 draft）随之变大，两件重活的耗时一起抬升，落在时限边缘上。
+原问卷恢复依赖原冻结内容和受支持的模板身份。`DraftPlanForRoot` 生成当前 ReviewPlan 草稿，不是历史问卷恢复器；不得用当前 Plan 或最新模板补造旧题目。正文先发布、引用后提交，旧格式、缺失展示文件、pending、checkpoint 和归档的兼容要求由[状态机核心 §8.4](l4-mechanisms/L4-state-transition-core.md#84-工作包正文外置的事务与兼容边界)统一定义。
 
-**建议修法.**
+已有 16 MiB checkpoint 状态硬上限保留；不新增未经测量校准的固定 500 KB 降级阈值。验收按 [Hook §10.5](l4-mechanisms/L4-hook-platform-wiring.md#105-存储减负的行为等价与性能验收)同时检查作者行为等价、历史恢复、最终结果交接与增长场景下的实际成本，不能以缓存命中或文件缩小代替。
 
-1. **不要把问卷 draft 存进 Runtime 状态。** draft 是 `DraftPlanForRoot` 可以确定性重建的派生数据，应当按需重建、或落到 `.claude/` 下按 packet id 寻址的文件，而不是塞进主状态并每次全量序列化+校验；
-2. 给 Runtime 状态加**体积上限与增长告警**，并在 hook 预算里为状态体积预留时间，而不是假设它恒定；
-3. 状态体积本身应当进入 `healthDegraded` 的判据——状态越大，Hook 越慢，这是可测量的。
-
-**方案 A 详细设计（2026-10-25 增补，暂不动手）.**
-
-> 结论先行：`entities.work_packets` 里真正需要持久化的是**身份+绑定**（packet id、assignment、轮次、基线 pin、digest），问卷 draft（题目全文、read 列表、答案模板）是 `DraftPlanForRoot(root, state, round)` 可确定性重建的派生数据。瘦身 = 存引用不存全文。
-
-- **写入侧**（`internal/review/result_packet.go:150`）：`entities["work_packets"]` 改存 `{packet_id, assignment_id, review_round, baseline_generation, digest, draft_ref}`，其中 `draft_ref` 指向 `.claude/review/packets/<packet-id>.json`；draft 全文落该文件（Main/系统写，不手填）。
-- **读取侧**：`FindReviewResultPacketContext` / `ReviewResultPackets`（`internal/runtime`）按 id 先读状态行，draft 按需从文件重建；`DeepEqual` 身份比对只比身份+绑定+digest，不比 draft 全文（draft 重建确定性由 `DraftPlanForRoot` 单测锁）。
-- **校验侧**：16 MiB 预算上限保留；新增 entities 体积告警（超 500 KB 在 hook 里报 degraded，不阻断）。
-- **测试**：重建一致性测试（同一 root+state+round 两次 `DraftPlanForRoot` 输出一致）；瘦身前后 packet 身份比对等价测试；体积告警触发测试。
-- **与 SIM-17 的关系**：SIM-17 拆事件减少单次 Hook 的活，SIM-19 瘦身减少每次 Hook 的固定成本，两者正交，建议同分支先后做，先 SIM-19（改动小、收益确定）再 SIM-17（结构大）。
+**实现状态.** 工作区已实现 S7 ReviewResult、S9 PlanReport／RepairResult 的轻索引、完整不可变正文、按责任读取、原 Writer 新写及显式旧状态维护，并接入旧 pending 和独立 checkpoint／恢复计划正文副本。其他阶段仍内嵌，无 GC 或正文内部共同来源去重。主状态精简不等于删除完整恢复内容；按行为、状态体积与真实读取成本分别验收。
 
 **关联反馈.** `ui-ledger` 记录 22。
 
 ---
-### BUG-SIM-20 · P0 · 原生 agent 转录被整份读入并逐行 JSON 解析，与重试次数成正比地吃掉 Hook 时限
+### BUG-SIM-20 · P1 · 转录任务定位仍有整段读取与重复 fallback 成本
 
-**这是本轮最重要的一条，也是 SIM-17 的首要根因。**
+**现象与权重.** 原实现整段读取并逐行解析转录。历史测量解析约 30～96 ms，不能据此解释整个接收链约 6.4 秒，也不能以换 Agent 后偶次成功证明唯一根因。它是 SIM-17 的次要历史成本放大器；有界读取达到上限后，也不能继续宣称成本与会话总长度无限线性增长。
 
-> **2026-10-25 06:45 实测修正（重要）.** 本条最初被写成"首要根因"，但直接计时后**必须下调其权重**：转录解析本身**只占 30–96 ms**（见下方「实测各环节耗时」），**不是 6.4 秒的来源**。本条仍然成立且仍然是真实缺陷——它让接收成本**随重试次数单调上升**——但**6.4 秒的真正来源是"一次 hook 事件里串行做了 5–10 次框架级操作"**，即 BUG-SIM-17 描述的结构性问题。**修 SIM-17 的"拆两件重活"与"重活移出 Hook"是主修，本条是次要的成本放大器。**
+**当前落点.** [分块定位器](../internal/cli/native_task_transcript.go)已接入 Review 与 S6 入口，按 64 KiB 倒序读取，近尾准确命中立即停止；原尾／头各 4 MiB 覆盖范围保留，fallback 共用累计 8 MiB 上限及区间缓存，重叠字节不重复读取。普通无关事件继续跳过转录。诊断 helper 区分匹配、边界、读取失败与取消，兼容字符串入口保持原交付形式。
 
-**现象.** S7/S6 的原生接收在 hook 里调用 `nativeReviewTaskText` / `nativeS6TaskText`，为了"从转录里找出最后一条提到当前精确引用的真实任务"，会：
+**设计.** 按 [Hook §10.2.3](l4-mechanisms/L4-hook-platform-wiring.md#1023-转录与审计也属于接收成本)分块倒序读取，命中原准确任务即停，fallback 共用累计读取及时间预算。保留真实 user 任务、原引用边界、历史别名、多责任冲突和工具结果排除规则。任务定位不替代原 packet／owner／来源证明。
 
-1. 打开原生 agent 自己的**会话转录文件**（平台 payload 里的 `agent_transcript_path`）；
-2. 读入**最多 4 MiB**；
-3. 对**每一行**做一次 `json.Unmarshal`。
+不直接改成任意最后 200 行或 256 KB，不用最终助手消息无条件替代真实任务，也不要求作者缩短会话或换 Agent。无匹配、越界和 I/O 失败分别可诊断，不能静默选错责任。新路径须证明任务选择与恢复行为等价，并测实际读取字节、解析行数与整链耗时。
 
-代码里有明确的"限制 IO"的意图，但限制值定得太宽：
-
-```go
-// internal/cli/native_review_hooks.go:331-352
-func nativeReviewTaskText(in policy.Input, refs []string) string {
-    f, err := os.Open(in.AgentTranscriptPath)
-    ...
-    const limit = 4 << 20                       // 4 MiB
-    ...
-    data, err := io.ReadAll(io.LimitReader(f, limit))
-    lines := bytes.Split(data, []byte("\n"))
-    for _, line := range lines {
-        var row struct { ... }                  // ← 每行一次 json.Unmarshal
-        json.Unmarshal(line, &row)
-```
-
-```go
-// internal/cli/native_s6.go:272（S6 同一模式）
-data, err := io.ReadAll(io.LimitReader(f, 4<<20))
-```
-
-**为什么会形成死循环.** 转录文件随 agent 的每一次尝试**追加**。第一次接收失败 → 同一个 reviewer 被 resume/重派 → 它的转录变长 → 下一次接收要读+解析更多 → 更容易超时 → 再失败 → 再重派……**代价随重试次数自我放大**，而预算只有约 6 秒。
-
-**证据（转录大小与结果完全对应）.**
-
-| 题材 | reviewer 子代理转录 | 结果 |
-| --- | --- | --- |
-| `source-ledger` | `agent-a8fe8023….jsonl` **700 KB** | ✅ 走通 S0→S11 全程 |
-| `callback-api` | `agent-ab4d291d….jsonl` **831 KB** | 卡在 S7 第二轮 |
-| `ui-ledger` | `agent-afe8bd11….jsonl` **2.4 MB**（重派 11+ 次，持续增长） | 卡在 S7 第二轮 |
-
-主会话转录同向：`source-ledger` 7.3 MB、`callback-api` 22 MB、`ui-ledger` 28 MB。
-
-**两个 agent 各自独立定位到了这一点.**
-
-`callback-api`：
-
-> The error changed to `signal: killed` — the drift scan's git-status subprocess now gets *zero* remaining budget, because the hook's pre-work (**notably scanning my 706 KB resumed-agent transcript**) consumed the 6 s request context. A fresh native Agent has a tiny transcript, so let me dispatch a new one to deliver the same answer.
-
-`ui-ledger`：
-
-> The error points at the *second* baseline verification (inside the CAS). Let me check whether the per-event bookkeeping files grow without bound — that would turn "fits in budget" into "doesn't" over a long run.
-
-**agent 给出的处置本身就是这个诊断的验证**：换一个**全新的**原生 agent 去交同一份答卷——新 agent 的转录几乎为零，接收立刻成功。这与"接收成本 ∝ 转录大小"完全吻合。
-
-> **⚠️ 2026-10-25 07:15 反证：这个处置在 `ui-ledger` 上并不成立.** `callback-api` 的 agent 报告"换新原生 agent 后接收立刻成功"，但 `ui-ledger` 在第 10 个窗口里**同样换新原生 agent 重派**（`agent-a00918d91322e21d5` 转录 **455 KB**、`agent-a34ad5122d3de60ba` 转录 **570 KB**，都明显小于原 agent 的 920 KB），**两个新 agent 的 SubagentStop 全部仍然失败**：
->
-> | agent | 转录 | SubagentStop 耗时 | 结果 |
-> | --- | --- | --- | --- |
-> | `a886569ec7f89cebd`（原） | 920 KB | 8 117 ms | `S7 reception incomplete` |
-> | `a00918d91322e21d5`（新） | 455 KB | 8 117 ms | `S7 reception incomplete` |
-> | `a34ad5122d3de60ba`（新） | 570 KB | 6 520 ms | `S7 reception incomplete` |
->
-> **所以"转录大小"不是接收成功的充分条件。** 两题的差异在于：`callback-api` 的卡点确实在 hook 前置工作（转录扫描）上，换新 agent 能省出预算；`ui-ledger` 的卡点更靠后——**预算在前序操作就被吃光**，漂移扫描与 stale 状态持久化连续超时，于是**每一轮都会留下一颗被保留的陈旧产物**，形成自我维持的死循环（本节上文「完整死锁链」）。**换 agent 能省 4 MiB 解析里的几十毫秒，省不出整个 hook 事件缺的 1–2 秒。**
->
-> 这条反证进一步坐实了前面的修正：**主修是 BUG-SIM-17（拆事件、重活移出 Hook），本条只是次要放大器。**
-
-**实测各环节耗时（`ui-ledger` 项目现场，2026-10-25 06:45）.**
-
-| 环节 | 实测 | 说明 |
-| --- | --- | --- |
-| `loop-harness version`（**二进制冷启动**） | **555 ms** | 单是启动一个进程就要 0.55 s |
-| `loop-harness s7 status` | 389 ms | 一次只读状态查询 |
-| `loop-harness runtime recover inspect` | 570 ms | 一次只读运行时检查 |
-| `loop-state.json` 解析（499 KB） | 24 ms | **不是瓶颈** |
-| `git status --porcelain` | 30 ms | 工作树当前干净 |
-| `git diff --name-status HEAD` | 45 ms | |
-| 主会话转录尾部 4 MiB 逐行 `json.Unmarshal`（30.4 MiB 转录） | **44 ms**（1 460 行） | **不是瓶颈** |
-| 子代理转录逐行解析（最大 2.32 MiB / 715 行） | **96 ms** | **不是瓶颈** |
-| **`SubagentStop` 事件实测总耗时** | **中位 6 445 ms / p90 7 265 ms / max 8 296 ms** | 内部预算 ≈6 658 ms |
-
-**这张表给出的结论很明确：没有任何一个单独的慢操作。** 二进制启动 0.55 s × 若干次串行、每次状态查询 0.4–0.6 s、加上 Git 与文件 I/O，再叠加 S7 接收路径上「加载状态 → 扫工作树 → 编码 finding → 暂存 observation batch → 提交 → **再准备下一份问卷** → 写状态」，**在一次 8 秒的闸门里串行跑完，就是 6.4 秒的来源**。
-
-所以问题不是"某一处写得慢"，而是**"把一串各自 0.4–0.6 s 的框架操作塞进一次 hook 事件、并且给它们共用一份 6.6 s 的预算"**。这条修正直接强化了 BUG-SIM-17 的第 1、6 条建议（拆事件、重活移出 Hook），也说明**只优化转录读取（SIM-20）救不了这个场景**。
-
-**落点.**
-
-- `internal/cli/native_review_hooks.go:331-364`（S7：`nativeReviewTaskText`，4 MiB + 逐行 `json.Unmarshal`）
-- `internal/cli/native_s6.go:262-285`（S6：`nativeS6TaskText`，同样的 4 MiB + 逐行解析）
-- `internal/cli/hook_budget.go:20`（8 秒内部预算）、`:128`（`context.WithDeadline`）
-- `internal/policy/engine.go:322`（`AgentTranscriptPath` 来自平台 payload）
-
-**建议修法.**
-
-1. **不要整读整解析。** 目标只是"找到最后一条提到当前引用的真实任务"，应当**从文件尾部反向扫描、只解析有限行数**（例如最后 200 行），命中即停。现在的做法是读 4 MiB 再逐行解析全部。
-2. **把上限从 4 MiB 降到与预算匹配的量级**（例如 256 KB），并在截断时**明确报告"未能在预算内定位任务引用"**，而不是静默回退到 `nativeS6TaskText`。
-3. **优先用平台已经给好的 `last_assistant_message`**：payload 里本来就有它，`nativeS6TaskText` 已经优先用它；S7 侧应同样优先使用，避免为找一句话去翻整份历史。
-4. **更根本的**：接收不应依赖"从历史转录里猜"agent 到底做了什么。正确来源是**本次派发时写入的 packet/assignment 记录**——它本来就在 Runtime 里，转录只是旁证。
-5. 建议在 hook 时限之外做**独立的耗时分解**（转录读取 / 漂移扫描 / 状态序列化各占多少），否则每次超时都只能靠猜。
-
-**关联反馈.** `callback-api` 与 `ui-ledger` 后半程的逐项排除记录（由本次分析从会话与转录体积对照中坐实）；两者在 S7 第二轮的"最后一份答卷永远收不进来"现象即由此导致。
+**关联反馈.** `callback-api` 与 `ui-ledger` 的转录排障记录；完整接收故障仍归 SIM-17。
 
 ---
 ## 三、仿真夹具侧问题（非框架缺陷，记录以免复现时误判）
@@ -940,16 +562,16 @@ data, err := io.ReadAll(io.LimitReader(f, 4<<20))
 | SIM-08 `pending system_followup` 混义 | ✅ 已修复并提交（`bd95960`） | S5 板拆两句 + S2/S4/S5 回执加定语；整理见 `blueprint/SIM-08-followup-note.md` |
 | SIM-09 S9 两表同 `assignment_id` | ✅ 已修复并提交（`ff92af9`） | 验证者指引点名共用 Builder anchor + 禁手写验证者 ID；问卷测试锁两句 |
 | SIM-10 ChangeImpact「未准备」无入口 | ✅ 已修复并提交（`7f76365`） | 新增 `impact prepare` + 三处指路 + ID 双来源等价口径；顺手正 70 行措辞 |
-| SIM-11 超时 vs 内容非法未区分 | 真 Gap，SIM-17 的子集 | `internal/cli/hook_budget.go:fail()` 仍是同一句话 + 退出码 0；未区分「超时可原样 resume」vs「内容非法须重写」 |
+| SIM-11 接收中断与内容拒错 | 死亡兼容锁已定向修复；完整中断矩阵待验 | 原入口按已退出 PID 立即回收，活进程负例及真实强杀回归保留；无人触发自动执行尚未实现 |
 | SIM-12 S10/S11 口径 | ✅ 已修复并提交（`6795e11`） | schema description + 双问卷口径 + 两个文案断言测试；S11 申请无 schema 校验记为后续 gap |
 | SIM-13 私有文件≠已接收无反馈 | ✅ 已修复并提交（`4d3138d`） | S9 brief 已有；S6 brief 补同款 `s6 status` 查询句；断线续跑机制本来全 |
 | SIM-14 未归属路径否证注册 | ✅ 已修复并提交（`15c4efd`） | deleted surface 不进 frozen_subjects，注册只看归属；漂移文案改挂牌口径；测试跟新语义 |
 | SIM-15 TASK 模板两句话 | ✅ 已修复并提交（`82b0fc3`） | §2 相对本 TASK 目录 + §8 空表禁占位；语义测试通过 |
 | SIM-16 措辞归集 9 项 | ✅ 已修复并提交（`09be9e8`） | S7 问卷补 E2E N/A/合并/seed 口径 + 中断恢复；S0 锁定触发=落盘；余项此前已修 |
-| SIM-17 S7 Hook 8s 预算 | 真 Gap，P0，工作区未动 | `internal/cli/hook_budget.go:20,26-41,103` 原样：8s 通用、仅 S4 放宽 28s、超时退出码 0、半写状态、无认可恢复入口；三题全触发。**2026-10-25 06:40 全量重算：`SubagentStop`（=S7 接收事件）超限 `source-ledger` 3 / `callback-api` 20 / `ui-ledger` **49** 次，耗时中位数 **3 265 → 6 377 → 6 445 ms**（内部预算 ≈6 658 ms，`ui-ledger` 已贴天花板，p90 7 265 ms）；`ui-ledger` 框架自记 `loop_s7_result_submits_total = {accepted:5, rejected:52}`（被拒率 91%）。根因：一个 hook 事件同时做"备下一份问卷"+"接收上一份 ReviewResult"，两件约 6s 的活共用一份约 6.6s 时限；配合 Runtime 状态膨胀（SIM-19）与漂移扫描遍历工作树。机器负载是放大器不是根因（负载降到 1.44 仍失败）。**2026-10-25 06:45 实测修正：6.4s 没有单一慢操作——二进制冷启动 555ms、`s7 status` 389ms、`runtime recover inspect` 570ms、状态解析 24ms、git 30–45ms、转录解析 30–96ms，串行累加即达预算** |
-| SIM-18 PreToolUse 预算超限 fail-open | 真 Gap，P1，与 SIM-17 同源但性质不同 | `internal/cli/hook_budget.go:fail()` 在策略判断前对 PreToolUse 直接 `return 0`，绕过 `policy.UnavailableDecision` 的 fail-closed（非只读工具应 deny）。**2026-10-25 06:40 全量重算：PreToolUse 超限 `source-ledger` 3 / `callback-api` 51 / `ui-ledger` **258** 次，合计 **312 次，退出码全部为 0（即全部 fail-open 放行）**；`ui-ledger` 一次 PreToolUse 事件数 1 645（占 15.7%）。按 `docs/control/protected-commands.json` 全部 19 条受保护命令族逐条比对，**命中 0 次 → 仍属潜伏未利用**，但放行内容包含 `find -delete`、`git stash/checkout`、手工 `runtime review-result submit` 等未经任何策略评估的操作。根因补充：PreToolUse 降级阈值 4s（10s×40%），内部预算 8s 正好是阈值两倍；框架 metrics 已打印过 "a platform timeout can bypass PreToolUse enforcement" |
-| SIM-19 Runtime 状态随轮次膨胀 | 真 Gap，P1（本次分析新增） | `loop-state.json` 611 KB→742 KB（`entities` 459 KB，逐份存 work-packet 问卷 draft）；每个 hook 都要全量序列化+校验，导致**越靠后的 assignment 越难被接收**；问卷 draft 是 `DraftPlanForRoot` 可确定性重建的派生数据，不应进主状态。**实测：状态解析本身只要 24 ms，不是 6.4s 的主因；它的危害是「越靠后越难被接收」与「全量序列化+校验随轮次线性变慢」** |
-| SIM-20 原生 agent 转录被整读整解析 | 真 Gap，P0，**本次分析新增**；**2026-10-25 实测后由「SIM-17 首要根因」下调为「次要成本放大器」** | `internal/cli/native_review_hooks.go:331-352`（S7）与 `internal/cli/native_s6.go:272`（S6）每次接收都 `os.Open(AgentTranscriptPath)` → 读最多 **4 MiB** → **逐行 `json.Unmarshal`**；转录随重试次数追加，接收成本自我放大。走通全程的 `source-ledger` reviewer 转录 700 KB；卡住的 `callback-api` 831 KB、`ui-ledger` 2.4 MB（重派 11+ 次）、主会话 30.4 MB。**但直接计时：主会话尾部 4 MiB 解析 44 ms、子代理最大转录解析 96 ms——只占 6.4s 的 1.5%，不是首要根因。主修仍是 SIM-17 的「拆事件 / 重活移出 Hook」** |
+| SIM-17 接收链工作量与交接 | 四项及相邻复验通过；整体仍有红灯 | 推荐日志到 Main Final 已验；真实平台继续兼容、缺候选的集成诊断、全量回归及整链增长／中断矩阵未闭合 |
+| SIM-18 PreToolUse 超时归因 | 旧全局 deny 修法废弃；监听与观测仍需减负 | 现行入口不决定工具许可；超时不得误报接收／推进，领域条件仍由原消费者检查 |
+| SIM-19 Runtime 状态随轮次膨胀 | S7／两类 S9 外置和恢复已落盘，验证中 | 新写轻索引，旧状态显式维护，保留完整原题及独立恢复副本；其他阶段仍内嵌，无 GC 或内部共同来源去重 |
+| SIM-20 转录历史放大器 | 分块早停与共享 fallback 预算已落盘，验证中 | 保留准确任务与原尾／头覆盖范围，命中早停且重叠区间不重读；不增加作者动作 |
 | 存量 1–4 | 已在工作区修复 | `docs/rules/ui-prototype.md` + `skills/ui-prototyping/SKILL.md` 去四 token 校验说辞；`L4-hook-platform-wiring.md:33` 改 `*`；`review-plan.schema.json` 删 `behavior_surface`；`submission-receipt.schema.json` 补 `attempt_status=rejected` |
 | 存量 5–6 | 已在工作区修复 | `action_catalog.go` 已补新命令；`internal/evidence/local_path.go:+30 ValidateLocalCaptureSource` 黑名单已加 |
 | 存量 7（4 个失败测试） | 已在工作区修复，待跑全量 | `s6_prepare_test/integrate/investigation/repair_plan_report` 均有对应更新 |
@@ -959,23 +581,23 @@ data, err := io.ReadAll(io.LimitReader(f, 4<<20))
 
 1. 不新增手填字段：所有恢复/重交入口只接受问卷文件路径或登记 ID，digest/sha 由系统回填，CLI 拒收手写 `sha256=`。
 2. 问卷替代传参：`revive/revise/ChangeImpact/S9 division/超时重放` 全部走已发行问卷 `answer`，`--file` 只收问卷 JSON 路径，不收内联 JSON。
-3. 失败可见：Hook 超时、基线漂移、未归属介入必须非零或结构化 `unfinished` 标记 + 一条可复制命令，禁止退出码 0 + 半写状态。
+3. 失败可见：传输中断、来源漂移、专业拒错和已接收后继未完成分别反馈，保留准确原引用和具名缺口。退出码遵循事件合同，exit 0 不证明接收；不以统一非零、工具 deny 或要求作者代交作为恢复方案。
 4. 知识绑到人：brief/`instruction`/表单写清「谁、填什么、不填什么」，文档语义下沉到 Worker 眼前，不指望 Worker 读 blueprint。
 
-### 3. P0：先止血（SIM-17 + SIM-18 + SIM-11 + SIM-05 + SIM-14）
+### 3. 接收主线与相关修复（SIM-17／11，兼顾 SIM-18／20）
 
-A. S7 接收移出 Hook（SIM-17 根治，SIM-11 顺带）：
+A. S7 同步接收的机制减负（SIM-17／SIM-11，替代此前“移到手工 submit／加长预算”建议）：
 
-- S7 `review-result` 走 `SubagentStop → runtime review-result submit --questionnaire <已发行 answer 路径>` 外部调用，Hook 只做轻量存在性检查，不做编码提交。
-- 过渡期（若必须留 Hook）：按阶段判预算，不按路径：`planning/tasks→28s`（沿用 S4）、`verification→28s` 独立预算，删除 `/S4/` 路径嗅探；`hook_budget_test.go` 补 S7 大答卷用例。
-- `fail()`：PostToolUse 超时返回退出码 2 + `{"status":"unfinished","replay":"loop-harness runtime review-result submit --questionnaire <原 answer 路径>"}`，文案分两类：超时（内容未判，原样 resume 同一 Worker 重交，禁重写）vs 内容非法（按 `field_errors` 改 `answer`，禁改顶层形状）。
-- 合并连锁投影：消费者超时只发一条诊断，`review-plan deferred` 等下游提示收敛为同一 `causal_id`。
+- 原保存／SubagentStop 继续调用原消费者，正常本次完成适用出口与下一材料交接；不让 Main 代交、作者重存或等待下一普通工具触发。
+- 框架复用同次初始路由快照、准确不可变来源与已验证registry／journal解析；固定Git批读最多四路，当前来源与Writer仍核真实条件。
+- 暂存归属intent、原Writer互斥发布与消费、有限收尾和原输入续跑承担中断恢复。外层保留具体stderr，部分stdout不证明成功；超时和取消指标独立于内容拒错。
+- 不新增生命周期状态机、不改变工具权限、不增作者字段或手填摘要；无跨进程执行者时如实保留强制终止后的执行限制。SIM-18 遵循当前进度监听合同，不恢复普通工具门禁。
 
-D. PreToolUse 预算超限 fail-closed（SIM-18，与 A 同文件、可同分支）：
+D. PreToolUse 监听与传输观测（SIM-18）：
 
-- `fail()` 里 PreToolUse 分支改走 `policy.UnavailableDecision`：非只读工具一律 deny，与「策略文件缺失」同口径；只读工具（Read/Grep/Glob/LS/WebFetch/WebSearch/ToolSearch）维持 warn 放行。
-- 预算闸门按事件类型分别定值：PreToolUse 维持 8s（评估本就轻量，超限即视为异常）；PostToolUse/SubagentStop 的重活走独立长预算（见 A），不共用常量。
-- 超限放行/deny 必须在 stderr 与审计事件里留下结构化标记（哪条规则因超时未被评估），事后可区分「评估通过」与「根本没评估」。
+- 保持普通工具非阻断，移除将旧 `UnavailableDecision` 当作当前入口修法的建议。
+- 与 SIM-17 共用状态读取和预算减负；内部超时单独可见，不以平台告警线或 exit 0 推导观察完成。
+- 原具名领域消费者保持来源、责任、批准与转换检查，未知不得生成接收或推进事实。
 
 B. 安全恢复冻结源（SIM-05 代码护栏）：
 
@@ -1004,6 +626,6 @@ C. 未归属路径排除面（SIM-14）：
 ### 6. 验证与收尾
 
 1. `go test ./internal/...` 全量 + `TestS9* / TestS7* / hook_budget` 定向回归；
-2. 用 `callback-api`（S7 大答卷）重放超时场景：Hook 峰值超过 28s 不再半写；用 `ui-ledger` 重放恢复删除场景：现存文件保留 + 报告；
+2. 用当前版本重放 `callback-api`／`ui-ledger` 原接收及中断窗口，在既定事件预算内检查输入、暂存、pending、接收与后继；增长场景分别记录历史 packet、日志和转录的成本，不把 28 秒 S4 特例移用到 S7。恢复删除场景确认现存文件保留并准确报告；
 3. `blueprint/L3-S7/S8/S9、L4-hook-platform-wiring、L4-state-transition` 同步更新；
-4. 按本文件第 5 行约定，修复提交逐条删除对应条目，不累积历史；FIX-01～05 修仿真夹具（反馈文件移出产品树、`candidate-inputs.json` 补 stage）。落地顺序建议：P0（A→B→C）→ P1 → P2/P3；SIM-17 的 Hook 外移与 SIM-05/14 有耦合（都碰基线/产物状态），合在一个分支做，问卷与文案单独小分支做，避免大杂烩提交。
+4. 按本文件第 5 行约定，修复提交逐条删除对应条目，不累积历史；FIX-01～05 修仿真夹具（反馈文件移出产品树、`candidate-inputs.json` 补 stage）。落地顺序建议：P0（A→B→C）→ P1 → P2/P3；SIM-17 按原接收链的输入、来源、事务与反馈边界分层闭合；SIM-19 的格式改造独立验证兼容，不要求先外移 Hook 或新增作者步骤。

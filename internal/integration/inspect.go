@@ -25,7 +25,11 @@ type RequiredCheckRunner func(ctx context.Context, root, command string) error
 // production use; tests use it to inject a check runner and to skip the
 // completion-report check (which depends on a specific on-disk layout).
 type InspectConfig struct {
-	LockedArtifacts []string
+	// WorkerLogEvidence contains exact captured output identities supplied by the
+	// original domain receiver. Only untracked matching bytes may be projected;
+	// this is used only with ValidateDelivery, never as a general cleanliness bypass.
+	WorkerLogEvidence map[string]string
+	LockedArtifacts   []string
 	// RecoveryBase retains the original scope denominator for an already merged branch.
 	RecoveryBase string
 	// ReceivedSourceHead is an immutable source from the original domain
@@ -188,7 +192,11 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 				return out, fmt.Errorf("accepted native S6 checkout %q is missing; Main restores the original Git checkout/branch %q at accepted SourceHead %s, then retries the original task-integrate. The original Plan/Result are already retained in Main; do not recreate private answer caches, recapture HEAD, or add a new commit to repair source identity", req.Assignment.WorktreePath, req.Assignment.Branch, canonical.Accepted.SourceHead)
 			}
 		}
-		clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath)
+		var logEvidence map[string]string
+		if canonical == nil && cfg.ValidateDelivery != nil {
+			logEvidence = cfg.WorkerLogEvidence
+		}
+		clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath, logEvidence)
 		if err != nil {
 			workerRoot := req.Assignment.WorktreePath
 			return out, fmt.Errorf("Worker checkout %q clean check failed; inspect with git -C %q status --short: %w", workerRoot, workerRoot, err)

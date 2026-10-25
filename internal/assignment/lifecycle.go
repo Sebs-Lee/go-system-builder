@@ -241,7 +241,7 @@ func AdvanceAgentWithContext(ctx context.Context, root, statePath, journalPath s
 		if request.Event != "work_blocked" && request.Event != "blocker_resolved" {
 			return nil
 		}
-		protected, err := issuedRepairResultLifecycleTarget(state, request.AgentID)
+		protected, err := issuedRepairResultLifecycleTarget(state, request.AgentID, loopruntime.WithPacketBodyRoot(ctx, root))
 		if err != nil {
 			return err
 		}

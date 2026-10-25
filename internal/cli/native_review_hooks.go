@@ -1,16 +1,13 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/audit"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
@@ -41,7 +38,7 @@ func nativeReviewStage(state map[string]any) string {
 // Original packets and domain consumers own all responsibility and result facts;
 // there is no native actor registry, launcher, queue, activation or new Result.
 func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (bool, int) {
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
+	snap, err := nativeRoutingSnapshot(root, in)
 	if err != nil {
 		return false, 0
 	}
@@ -73,7 +70,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		auditStarted := time.Now()
 		defer func() {
 			observed.ElapsedMS = time.Since(auditStarted).Milliseconds()
-			if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
+			if err := appendHookAudit(contextForHook(in), root, engine.Envelope(in, observed, time.Now())); err != nil {
 				fmt.Fprintln(diagnostic, err)
 			}
 		}()
@@ -139,7 +136,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 			}
 		}
 	case "S7":
-		packets, err := runtime.CurrentReviewResultPackets(snap.State, "")
+		packets, err := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(contextForHook(in), root), snap.State, "")
 		if err != nil {
 			sourceErr = err
 		}
@@ -250,7 +247,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 	}
 	if in.Event == "SubagentStart" {
 		view := ""
-		if p, found, err := runtime.FindReviewResultPacket(snap.State, packet); err == nil && found {
+		if p, found, err := runtime.FindReviewResultPacketContext(runtime.WithPacketBodyRoot(contextForHook(in), root), snap.State, packet); err == nil && found {
 			view = filepath.Join(source, p.ViewPath)
 			if source == "" {
 				view = filepath.Join(root, p.ViewPath)
@@ -312,10 +309,12 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 		// exit; a continuation failure never turns it into an unreceived answer.
 		statePath := filepath.Join(root, ".claude/loop-state.json")
 		journalPath := filepath.Join(root, ".claude/loop-events.jsonl")
-		current, err := runtime.NewStore(statePath, journalPath).Snapshot()
+		completionContext, cancelCompletion := hookCompletionContext(contextForHook(in))
+		defer cancelCompletion()
+		current, err := runtime.NewStore(statePath, journalPath).WithContext(completionContext).Snapshot()
 		if err != nil {
 			fmt.Fprintln(diagnostic, "S7 ReviewResult is received; Main restores current Runtime access before continuing the original clean-round exit: "+err.Error()+". Recovery: "+s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness"))+" runtime review-continue --root "+s7CaptureShellQuote(root))
-		} else if _, handoff := continueS7Acceptance(contextForHook(in), root, statePath, journalPath, current); handoff != "" {
+		} else if _, handoff := continueS7Acceptance(completionContext, root, statePath, journalPath, current); handoff != "" {
 			fmt.Fprintln(diagnostic, handoff)
 		}
 	}
@@ -329,66 +328,7 @@ func nativeReviewHook(root string, in policy.Input, out, diagnostic io.Writer) (
 // actual task that names a current exact reference, never a tool_result or role.
 // Bound transcript IO, and keep the final message for explicit handoff evidence.
 func nativeReviewTaskText(in policy.Input, refs []string) string {
-	f, err := os.Open(in.AgentTranscriptPath)
-	if err != nil {
-		return nativeS6TaskText(in)
-	}
-	defer f.Close()
-	const limit = 4 << 20
-	info, err := f.Stat()
-	if err != nil {
-		return nativeS6TaskText(in)
-	}
-	truncated := info.Size() > limit
-	if truncated {
-		if _, err := f.Seek(-limit, io.SeekEnd); err != nil {
-			return nativeS6TaskText(in)
-		}
-	}
-	data, err := io.ReadAll(io.LimitReader(f, limit))
-	if err != nil {
-		return nativeS6TaskText(in)
-	}
-	lines := bytes.Split(data, []byte("\n"))
-	if truncated && len(lines) > 0 {
-		lines = lines[1:]
-	}
-	latest := ""
-	for _, line := range lines {
-		var row struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(line, &row) != nil || row.Type != "user" || row.Message.Role != "user" {
-			continue
-		}
-		var task string
-		if json.Unmarshal(row.Message.Content, &task) != nil {
-			var parts []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			}
-			if json.Unmarshal(row.Message.Content, &parts) != nil {
-				continue
-			}
-			for _, p := range parts {
-				if p.Type == "text" {
-					task += "\n" + p.Text
-				}
-			}
-		}
-		for _, ref := range refs {
-			if nativeS6ExactReference(task, ref) {
-				latest = task
-				break
-			}
-		}
-	}
-	if strings.TrimSpace(latest) == "" {
-		return nativeS6TaskText(in)
-	}
-	return in.LastAssistantMessage + "\n" + latest
+	defer metrics.Span(contextForHook(in), "hook/native_routes/task_text")()
+	text, _ := nativeTaskTextDiagnostic(in, refs, true)
+	return text
 }

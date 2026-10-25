@@ -78,3 +78,16 @@ func TestS9LocalEvidenceMissingSourceDoesNotUseMain(t *testing.T) {
 		t.Fatalf("legacy identifiers became mandatory files: %+v %v", refs, err)
 	}
 }
+
+func TestS9LocalEvidenceDoesNotCopyCredentialFiles(t *testing.T) {
+	mainRoot, workerRoot := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(workerRoot, ".env"), []byte("TOKEN=fixture-only"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureS9LocalEvidence(mainRoot, workerRoot, "packet-test", json.RawMessage(`{"evidence_refs":["path:.env"]}`)); err == nil || !strings.Contains(err.Error(), "excludes") || strings.Contains(err.Error(), "TOKEN=") {
+		t.Fatalf("credential source not protected without exposing bytes: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(mainRoot, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("credential capture wrote an archive: %v", err)
+	}
+}

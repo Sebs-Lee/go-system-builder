@@ -348,7 +348,7 @@ func buildHypothesisResultWithTemplate(binding HypothesisResultBinding, inputs H
 func RebuildHypothesisResult(packet HypothesisResultPacket) (HypothesisResultPacket, error) {
 	// Only known embedded templates can restore an issuance. Frozen author
 	// questions are never accepted as a new template or refreshed in place.
-	for _, name := range []string{"stage-form-s8-template.json", "stage-form-s8-template-before-guidance.json"} {
+	for _, name := range []string{"stage-form-s8-template.json", "stage-form-s8-template-before-answer-shape.json", "stage-form-s8-template-before-guidance.json"} {
 		data, err := schema.ReadAsset(name)
 		if err != nil {
 			return HypothesisResultPacket{}, err
@@ -385,7 +385,7 @@ func HypothesisResultPacketDigest(packet HypothesisResultPacket) (string, error)
 // checked by the original investigation consumer, not this neutral package.
 func ValidateHypothesisResultAnswer(packet HypothesisResultPacket, data []byte) (json.RawMessage, []FieldError) {
 	issue := func(pointer, expected, observed string) (json.RawMessage, []FieldError) {
-		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留原发行题干，只填写 answer 中的调查判断和现场观察。"}}
+		return nil, []FieldError{{Pointer: pointer, Expected: expected, Observed: observed, Repair: "保留原发行题干，只填写 answer 中的调查判断和现场观察。答卷顶层仅为 title、instruction、read、questions、answer；不要提交含 packet_id、binding、inputs、draft 的 view packet。"}}
 	}
 	if len(data) > 20<<20 {
 		return issue("/", "JSON <= 20 MiB", "oversized")

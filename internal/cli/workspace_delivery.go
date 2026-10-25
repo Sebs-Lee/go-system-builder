@@ -231,6 +231,12 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	config := integration.IntegrateConfig{Root: *root, GitRoot: *root, RuntimeID: e.RuntimeID, RequiredChecks: mainCommands, CheckRunner: integration.CommandCheckRunner}
+	if typedResult {
+		config.WorkerLogEvidence, err = repair.WorkspaceCandidateLogProjection(ctx, *root, snap.State, e, candidate)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	var inspected integration.Inspection
 	if found && (cp.State == integration.StateReady || cp.State == integration.StateMerged || cp.State == integration.StateVerified || cp.State == integration.StateAcknowledged || cp.State == integration.StateCleanupPending || cp.State == integration.StateComplete) {
 		inspected = integration.InspectionFromCheckpoint(cp)
@@ -267,6 +273,9 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 			}
 			return nil
 		}}
+		if typedResult {
+			inspectCfg.WorkerLogEvidence = config.WorkerLogEvidence
+		}
 		if typedResult && e.Purpose == workspace.NativeDeliveryPurpose && candidate.SourceHead == candidate.BaseCommit && len(candidate.Proposal.ChangedArtifacts) == 0 {
 			inspectCfg.ReceivedSourceHead = candidate.SourceHead
 		}
@@ -372,7 +381,7 @@ func runWorkspaceDelivery(args []string, stdout, stderr io.Writer) int {
 	if stringValue(pointer["status"]) == "impact_reconciliation" {
 		impactPath, err := prepareRepairImpactQuestionnaire(*root, snap.State)
 		if err != nil {
-			return fail(fmt.Errorf("Main integration recorded; ChangeImpact preparation: %w", err))
+			return fail(fmt.Errorf("Main integration recorded; ChangeImpact preparation: %w. Restore the named source/filesystem failure, then use %s; preserve accepted Final Results and completed integration", err, repairImpactPreparationRecovery(*root)))
 		}
 		next = "Main must complete and save ChangeImpact at " + impactPath + "."
 		fmt.Fprintln(stderr, next)
@@ -407,7 +416,7 @@ func currentRepairResultPacketForDelivery(root string, state map[string]any, exe
 	if candidate.Provenance == nil {
 		return workpacket.RepairResultPacket{}, false, nil
 	}
-	packet, found, err := runtime.FindRepairResultPacket(state, candidate.Provenance.PacketID)
+	packet, found, err := runtime.FindRepairResultPacketContext(runtime.WithPacketBodyRoot(context.Background(), root), state, candidate.Provenance.PacketID)
 	if err != nil || !found {
 		return workpacket.RepairResultPacket{}, false, fmt.Errorf("current candidate packet is unavailable: %v", err)
 	}

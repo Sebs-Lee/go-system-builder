@@ -1,16 +1,19 @@
 package repair
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/diagnosticstorage"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -232,7 +235,7 @@ func captureRepositoryBaseline(root string, protected ...ArtifactRef) ([]Artifac
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
-		if (scope.Excludes(path) && !boundary.hasTracked(relSlash)) || ignoreBaselinePath(relSlash) || boundary.excludes(relSlash) || (entry.IsDir() && boundary.discoverEnvironment(relSlash)) {
+		if (scope.Excludes(path) && !boundary.hasTracked(relSlash)) || ignoreBaselinePath(relSlash, rootAbs) || boundary.excludes(relSlash) || (entry.IsDir() && boundary.discoverEnvironment(relSlash)) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -246,7 +249,7 @@ func captureRepositoryBaseline(root string, protected ...ArtifactRef) ([]Artifac
 			return nil
 		}
 		if parts[0] == ".claude" {
-			if isControlPlanePath(relSlash, entry.IsDir()) {
+			if isControlPlanePath(relSlash, entry.IsDir(), rootAbs) {
 				if entry.IsDir() {
 					return filepath.SkipDir
 				}
@@ -312,16 +315,39 @@ func captureRepositoryBaseline(root string, protected ...ArtifactRef) ([]Artifac
 // bookkeeping (#11) and dependency/build caches (#13: vite pre-bundle
 // metadata, dist output, coverage) regenerate during ordinary verification
 // runs and are never authority-relevant.
-func ignoreBaselinePath(rel string) bool {
-	if isControlPlanePath(rel, false) {
+func ignoreBaselinePath(rel string, roots ...string) bool {
+	if isControlPlanePath(rel, false, roots...) {
 		return true
 	}
 
 	return false
 }
 
-func isControlPlanePath(rel string, isDir bool) bool {
-	_ = isDir
+var auditIndexScratchPattern = regexp.MustCompile(`^\.claude/hook-audit-index-[0-9]+\.scratch$`)
+
+func isControlPlanePath(rel string, isDir bool, roots ...string) bool {
+	if !isDir && len(roots) > 0 && diagnosticstorage.Recognizes(context.Background(), roots[0], rel) {
+		return true
+	}
+	// This exact scratch belongs to rebuildable audit cache publication. It is
+	// not an accepted audit event or any professional receipt/authority.
+	if !isDir && auditIndexScratchPattern.MatchString(rel) {
+		if len(roots) == 0 {
+			return true
+		}
+		info, err := os.Lstat(filepath.Join(roots[0], filepath.FromSlash(rel)))
+		return err == nil && info.Mode().IsRegular()
+	}
+	// Do not prune the body directory: a neighboring product file must remain
+	// visible. Only actual complete packets with a matching content identity are
+	// storage projections. Missing/corrupt candidates conservatively remain in
+	// the product inventory and cannot silently acquire a directory exemption.
+	if !isDir && len(roots) > 0 && strings.HasPrefix(rel, ".claude/packet-bodies/") {
+		recognized, err := runtimepkg.ClassifyPacketBodyStoragePathsContext(context.Background(), roots[0], []string{rel})
+		if err == nil && len(recognized) == 1 {
+			return true
+		}
+	}
 	// .claude/multi.json is the local session launcher's environment/profile
 	// file (model and connection settings, including local credentials). The
 	// harness never reads it; the launcher rewrites it on every session start
@@ -336,7 +362,7 @@ func isControlPlanePath(rel string, isDir bool) bool {
 	// Hook decision journals append on every hook evaluation; they are
 	// control-plane bookkeeping and must never enter a session baseline
 	// (a captured copy goes stale on the builders' own next hook call).
-	if rel == ".claude/hook-decisions.jsonl" {
+	if rel == ".claude/hook-decisions.jsonl" || rel == ".claude/hook-decisions.jsonl.index" {
 		return true
 	}
 	if strings.HasPrefix(rel, ".claude/") && (strings.HasSuffix(rel, ".lock") || strings.HasSuffix(rel, ".lock.process")) {
@@ -544,7 +570,7 @@ func ComputeSessionChangeset(root string, session RepairSession) ([]ArtifactRef,
 		// contain the other exempt classes (capture already excluded them), so
 		// this filter is a no-op except for paths reclassified after session
 		// open.
-		if ignoreBaselinePath(path) {
+		if ignoreBaselinePath(path, root) {
 			continue
 		}
 		base[path] = artifact

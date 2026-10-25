@@ -181,7 +181,7 @@ func controlProofEvent(runtimeID, eventID string, sequence int, transition strin
 	}
 }
 
-func controlProofJournal(t *testing.T, events ...map[string]any) []byte {
+func controlProofJournal(t testing.TB, events ...map[string]any) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)

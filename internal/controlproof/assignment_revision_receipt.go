@@ -1,6 +1,7 @@
 package controlproof
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -46,6 +47,14 @@ func assignmentRevisionPartition(ref assignmentrecord.RecordReference, intentKey
 // original committed Runtime event. A Record file or state row alone never
 // recreates issuance authority.
 func ValidateAssignmentRevisionReceipts(state map[string]any, journalBytes []byte) error {
+	return ValidateAssignmentRevisionReceiptsContext(context.Background(), state, journalBytes)
+}
+
+func ValidateAssignmentRevisionReceiptsContext(ctx context.Context, state map[string]any, journalBytes []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	records, err := assignmentrecord.RecordsFromState(state)
 	if err != nil {
 		return err
@@ -71,7 +80,7 @@ func ValidateAssignmentRevisionReceipts(state map[string]any, journalBytes []byt
 		}
 		return nil
 	}
-	journal, err := InspectJournalData(journalBytes)
+	journal, err := InspectJournalSegmentDataFromContext(ctx, journalBytes, 1)
 	if err != nil {
 		return fmt.Errorf("inspect Assignment revision journal: %w", err)
 	}

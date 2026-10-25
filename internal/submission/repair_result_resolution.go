@@ -21,10 +21,10 @@ func (s *Service) RepairResultResolutionForPath(path string) (workpacket.RepairR
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
-	return repairResultResolutionForPath(s.Root, snapshot.State, path)
+	return repairResultResolutionForPath(s.Root, snapshot.State, path, s.Context())
 }
 
-func repairResultResolutionForPath(root string, state map[string]any, inputPath string) (workpacket.RepairResultPacket, bool, error) {
+func repairResultResolutionForPath(root string, state map[string]any, inputPath string, contexts ...context.Context) (workpacket.RepairResultPacket, bool, error) {
 	if !filepath.IsAbs(inputPath) {
 		inputPath = filepath.Join(root, filepath.FromSlash(inputPath))
 	}
@@ -32,7 +32,7 @@ func repairResultResolutionForPath(root string, state map[string]any, inputPath 
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
-	packets, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPacketsForPathContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, inputPath)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
@@ -74,7 +74,7 @@ func (s *Service) SaveRepairResultResolutionFrom(ctx context.Context, path strin
 	if err != nil {
 		return Receipt{}, err
 	}
-	packet, found, err := repairResultResolutionForPath(s.Root, snapshot.State, path)
+	packet, found, err := repairResultResolutionForPath(s.Root, snapshot.State, path, s.Context())
 	if err != nil || !found {
 		if err == nil {
 			err = errors.New("S9 Main resolution path has no exact original issuance")
@@ -150,7 +150,7 @@ func (s *Service) RepairResultResolutionReceipt(path string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	packet, found, err := repairResultResolutionForPath(s.Root, snapshot.State, path)
+	packet, found, err := repairResultResolutionForPath(s.Root, snapshot.State, path, s.Context())
 	if err != nil || !found {
 		if err == nil {
 			err = errors.New("S9 Main resolution path has no original packet")

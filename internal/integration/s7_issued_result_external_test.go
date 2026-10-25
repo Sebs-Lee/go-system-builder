@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,22 +129,24 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 		t.Fatal("mechanism fixture produced no S7 reviewer Assignments")
 	}
 
-	// Exercise the real workgroup Writer for every required plan_checkpoint
-	// Assignment. Ordinary S7 reviewers need no generic PLAN or AgentBegin.
-	owners := dispatchS7ReviewerAssignments(t, fixture, plan)
+	// The original wave gate permits behavior dispatch only after required
+	// static Claims have actual dispositions from the original Result consumer.
+	owners := dispatchS7ReviewerAssignments(t, fixture, plan, "static")
 	issued, err := review.IssueResultPackets(fixture.root, fixture.statePath, fixture.journalPath, -1, "")
 	if err != nil {
-		t.Fatalf("original S7 packet issuer: %v", err)
+		t.Fatalf("original static S7 packet issuer: %v", err)
 	}
-	if len(issued) != len(plan.Assignments) {
-		t.Fatalf("issued %d packets for %d Plan Assignments", len(issued), len(plan.Assignments))
+	staticCount := len(owners)
+	if staticCount == 0 || len(issued) != staticCount {
+		t.Fatalf("issued %d packets for %d static Plan Assignments", len(issued), staticCount)
 	}
 
 	var firstPacket workpacket.ReviewResultPacket
 	var firstOwner string
 	var firstAcceptedAnswer workpacket.ReviewResultDraft
 	var firstExpectedRevision int
-	for i, packet := range issued {
+	for i := 0; i < len(issued); i++ {
+		packet := issued[i]
 		owner := owners[packet.Binding.AssignmentID]
 		if owner == "" || packet.Binding.OwnerAgentID != owner {
 			t.Fatalf("issued packet %s owner %q has no matching original workgroup dispatch", packet.ID, packet.Binding.OwnerAgentID)
@@ -164,8 +165,9 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 			firstAcceptedAnswer = answer
 		}
 		writeJSONFixture(t, filepath.Join(fixture.root, filepath.FromSlash(packet.AnswerPath)), answer)
+		concurrentRevision := 0
 		if i == 0 {
-			assertS7ConcurrentReceptionKeepsOriginalAnswer(t, fixture, packet, owner)
+			concurrentRevision = assertS7ConcurrentReceptionKeepsOriginalAnswer(t, fixture, packet, owner).Revision
 		}
 		var accepted loopruntime.Snapshot
 		if coldHooks {
@@ -181,7 +183,11 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 				t.Fatalf("original S7 consumer rejected issued answer: %v", err)
 			}
 		}
-		if accepted.Revision <= before.Revision {
+		if concurrentRevision != 0 {
+			if accepted.Revision != concurrentRevision {
+				t.Fatal("normal delivery replay duplicated the concurrently accepted Result")
+			}
+		} else if accepted.Revision <= before.Revision {
 			t.Fatalf("original SubmitIssuedResult did not commit a Runtime event for %s", packet.Binding.AssignmentID)
 		}
 		receipt, found, err := review.IssuedResultReceipt(fixture.root, accepted.State, packet.ID, owner)
@@ -202,6 +208,23 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 		if !hook.ReviewResultConsumed(fixture.root, accepted.State, loaded.PolicyContext.Agent) {
 			t.Fatalf("original ReviewResultConsumed rejected accepted Result for %s", packet.Binding.AssignmentID)
 		}
+		if i+1 == staticCount {
+			if !review.StaticClaimsSettled(accepted.State, plan) {
+				t.Fatal("original static receptions did not settle the behavior prerequisite")
+			}
+			behaviorOwners := dispatchS7ReviewerAssignments(t, fixture, plan, "behavior")
+			for assignment, owner := range behaviorOwners {
+				owners[assignment] = owner
+			}
+			behaviorPackets, err := review.IssueResultPackets(fixture.root, fixture.statePath, fixture.journalPath, -1, "")
+			if err != nil || len(behaviorPackets) != len(behaviorOwners) {
+				t.Fatalf("original behavior issuance after static acceptance: packets=%d owners=%d err=%v", len(behaviorPackets), len(behaviorOwners), err)
+			}
+			issued = append(issued, behaviorPackets...)
+		}
+	}
+	if len(issued) != len(plan.Assignments) {
+		t.Fatalf("issued %d packets across both waves for %d Plan Assignments", len(issued), len(plan.Assignments))
 	}
 
 	final := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
@@ -323,9 +346,10 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	}
 }
 
-// Inject an unrelated real Writer commit after source authorization, not a fake
-// ErrStaleRevision. The normal native Stop below then receives the same bytes.
-func assertS7ConcurrentReceptionKeepsOriginalAnswer(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) {
+// Inject a real peer commit and an editor's later answer after the service
+// captured this attempt. The bounded original CAS continuation must accept the
+// captured answer, preserve the peer, and leave a new explicit save distinct.
+func assertS7ConcurrentReceptionKeepsOriginalAnswer(t *testing.T, fixture *canonicalMainFixture, packet workpacket.ReviewResultPacket, owner string) loopruntime.Snapshot {
 	t.Helper()
 	service, err := submission.NewReadOnly(fixture.root)
 	if err != nil {
@@ -336,9 +360,34 @@ func assertS7ConcurrentReceptionKeepsOriginalAnswer(t *testing.T, fixture *canon
 	if err != nil {
 		t.Fatal(err)
 	}
+	var changed workpacket.ReviewResultDraft
+	if err := json.Unmarshal(original, &changed); err != nil {
+		t.Fatal(err)
+	}
+	var professional map[string]any
+	if err := json.Unmarshal(changed.Answer, &professional); err != nil {
+		t.Fatal(err)
+	}
+	firstClaim := professional["claim_results"].([]any)[0].(map[string]any)
+	originalObservation := firstClaim["observed"]
+	firstClaim["observed"] = "editor saved a different professional observation after the original input was frozen"
+	changed.Answer, err = json.Marshal(professional)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedBytes, err := json.Marshal(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	before := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
-	receipt, err := service.SaveReviewResultFrom(context.Background(), owner, answerPath, fixture.root, func(root string, state map[string]any) error {
-		writer := loopruntime.NewWriter(service.StatePath, service.JournalPath, root, service.Validator)
+	beforeJournal, err := os.ReadFile(fixture.journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationCalls := 0
+	receipt, err := service.SaveReviewResultFrom(t.Context(), owner, answerPath, fixture.root, func(root string, state map[string]any) error {
+		authorizationCalls++
+		writer := loopruntime.NewWriter(service.StatePath, service.JournalPath, root, service.Validator).WithContext(t.Context())
 		_, err := writer.UpdateCurrent(loopruntime.Mutation{
 			EventID: "evt-s7-unrelated-before-reception", TransitionID: "S7-RECEPTION-COORDINATION-PROBE", Event: "test_unrelated_commit", Actor: "orchestrator",
 			IdempotencyKey: "s7-unrelated-before-reception", RuntimeID: canonicalRuntimeID, BaselineGeneration: 1,
@@ -347,27 +396,93 @@ func assertS7ConcurrentReceptionKeepsOriginalAnswer(t *testing.T, fixture *canon
 				return nil
 			},
 		})
-		return err
-	})
-	if !errors.Is(err, loopruntime.ErrStaleRevision) || receipt.Accepted || len(receipt.FieldErrors) != 0 {
-		t.Fatalf("real competing commit lost its necessary CAS/system ownership: receipt=%+v err=%v", receipt, err)
-	}
-	for _, want := range []string{packet.ID, owner, packet.AnswerPath, "Main", "original receipt", "resume the original native agent", "without rewriting"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("S7 reception recovery omitted %q: %v", want, err)
+		if err != nil {
+			return err
 		}
+		return os.WriteFile(answerPath, changedBytes, 0o600)
+	})
+	if err != nil || !receipt.Accepted || len(receipt.FieldErrors) != 0 || authorizationCalls != 1 {
+		t.Fatalf("bounded original reception: receipt=%+v authorizations=%d err=%v", receipt, authorizationCalls, err)
 	}
 	after := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
-	if after.Revision != before.Revision+1 {
-		t.Fatalf("failed reception committed beyond the injected unrelated event: %d -> %d", before.Revision, after.Revision)
+	if after.Revision != before.Revision+2 || after.State["milestone"].(map[string]any)["objective"] != "Main coordinates another unchanged responsibility" {
+		t.Fatalf("original answer/peer facts not each committed once: %d -> %d", before.Revision, after.Revision)
 	}
-	if _, found, err := review.IssuedResultReceipt(fixture.root, after.State, packet.ID, owner); err != nil || found {
-		t.Fatalf("failed CAS fabricated a receipt: found=%t err=%v", found, err)
+	originalReceipt, found, err := review.IssuedResultReceipt(fixture.root, after.State, packet.ID, owner)
+	if err != nil || !found || originalReceipt.SubmissionKey != packet.ResultID {
+		t.Fatalf("original accepted receipt missing: found=%t err=%v", found, err)
 	}
-	unchanged, err := os.ReadFile(answerPath)
-	if err != nil || !bytes.Equal(original, unchanged) {
-		t.Fatalf("CAS reception changed professional bytes: %v", err)
+	envelopeBytes, err := os.ReadFile(filepath.Join(fixture.root, filepath.FromSlash(originalReceipt.ResultRef)))
+	if err != nil {
+		t.Fatal(err)
 	}
+	var envelope map[string]any
+	if err := json.Unmarshal(envelopeBytes, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	submitted := envelope["submitted_answer"].(map[string]any)
+	if submitted["claim_results"].([]any)[0].(map[string]any)["observed"] != originalObservation {
+		t.Fatal("bounded reception consumed the editor's new bytes instead of its fixed original answer")
+	}
+	onDisk, err := os.ReadFile(answerPath)
+	if err != nil || !bytes.Equal(onDisk, changedBytes) {
+		t.Fatalf("receiver overwrote the editor's subsequent answer: %v", err)
+	}
+	afterJournal, err := os.ReadFile(fixture.journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(afterJournal, beforeJournal) {
+		t.Fatal("concurrent reception rewrote original journal history")
+	}
+	events := bytes.Split(bytes.TrimSpace(afterJournal[len(beforeJournal):]), []byte("\n"))
+	if len(events) != 2 {
+		t.Fatalf("bounded original reception appended %d events, want one peer and one Result", len(events))
+	}
+	peerEvents, resultEvents := 0, 0
+	for _, data := range events {
+		var event map[string]any
+		if err := json.Unmarshal(data, &event); err != nil {
+			t.Fatal(err)
+		}
+		switch event["transition_id"] {
+		case "S7-RECEPTION-COORDINATION-PROBE":
+			peerEvents++
+		case "REVIEW-RESULT":
+			resultEvents++
+		}
+	}
+	if peerEvents != 1 || resultEvents != 1 {
+		t.Fatalf("peer/result event counts=%d/%d", peerEvents, resultEvents)
+	}
+	stateAfter := mustReadFixtureBytes(t, fixture.statePath)
+	conflict, err := service.SaveReviewResultFrom(t.Context(), owner, answerPath, fixture.root, nil)
+	if err == nil || conflict.Accepted || len(conflict.FieldErrors) != 0 || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("new explicit answer was hidden by the original receipt: receipt=%+v err=%v", conflict, err)
+	}
+	if !bytes.Equal(stateAfter, mustReadFixtureBytes(t, fixture.statePath)) || !bytes.Equal(afterJournal, mustReadFixtureBytes(t, fixture.journalPath)) {
+		t.Fatal("conflicting new input changed original Runtime facts")
+	}
+	if err := os.WriteFile(answerPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := service.SaveReviewResultFrom(t.Context(), owner, answerPath, fixture.root, nil)
+	if err != nil || !replay.Accepted || replay.SubmissionKey != receipt.SubmissionKey {
+		t.Fatalf("same original answer did not replay: receipt=%+v err=%v", replay, err)
+	}
+	if !bytes.Equal(stateAfter, mustReadFixtureBytes(t, fixture.statePath)) || !bytes.Equal(afterJournal, mustReadFixtureBytes(t, fixture.journalPath)) {
+		t.Fatal("same-answer replay duplicated accepted facts")
+	}
+	return after
+}
+
+func mustReadFixtureBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func assertS7PacketReceiptSchemaPairing(t *testing.T, root string, state map[string]any, assignmentID string) {
@@ -534,23 +649,9 @@ func registerCanonicalPlanForPacketTest(t *testing.T, fixture *canonicalMainFixt
 	if draft == nil || draft.ProductBaseline == nil {
 		t.Fatalf("source-backed ReviewPlan draft missing product baseline: plan=%+v notes=%v", draft, notes)
 	}
-	// This mechanism fixture has no browser inventory. Make its synthetic
-	// non-browser verification responsibility explicit rather than treating the
-	// source draft's unresolved coverage decision as a registered Plan.
-	draft.E2ECoverageState = "cold_start"
-	workspace := "e2e-workspace/s7-packet-fixture"
-	draft.VerificationArtifactWorkspace = &workspace
-	for i := range draft.Assignments {
-		if draft.Assignments[i].Lens == "e2e" {
-			draft.Assignments[i].BehaviorSurface = "non_browser"
-		}
-	}
-	for i := range draft.Claims {
-		if draft.Claims[i].Lens == "e2e" {
-			draft.Claims[i].Target = canonicalSourceFile
-			draft.Claims[i].Method = "Inspect the committed mechanism-fixture product marker and record its actual file state; no browser surface is supplied."
-		}
-	}
+	// This fixture declares the actual command-visible product marker scenario;
+	// it supplies no browser inventory and does not claim real model review.
+	authorCanonicalMechanismBehavior(draft, "e2e-workspace/s7-packet-fixture")
 	for i := range draft.Claims {
 		claim := &draft.Claims[i]
 		if !strings.Contains(claim.Oracle, "TODO(planner)") {
@@ -573,10 +674,17 @@ func registerCanonicalPlanForPacketTest(t *testing.T, fixture *canonicalMainFixt
 	return registered
 }
 
-func dispatchS7ReviewerAssignments(t *testing.T, fixture *canonicalMainFixture, plan *review.Plan) map[string]string {
+func dispatchS7ReviewerAssignments(t *testing.T, fixture *canonicalMainFixture, plan *review.Plan, waves ...string) map[string]string {
 	t.Helper()
+	wave := "static"
+	if len(waves) != 0 {
+		wave = waves[0]
+	}
 	owners := make(map[string]string, len(plan.Assignments))
 	for _, planned := range plan.Assignments {
+		if planned.ExecutionWave != wave {
+			continue
+		}
 		manifest, _, err := review.DraftManifest(fixture.root, readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath).State, planned.AssignmentID)
 		if err != nil {
 			t.Fatalf("original reviewer manifest draft for %s: %v", planned.AssignmentID, err)
@@ -848,5 +956,25 @@ func TestParseS7HookReceiptDecodesBothJSONLayers(t *testing.T) {
 				t.Fatalf("parsed S7 receipt accepted=%t error=%q, want accepted=%t error=%q", accepted, gotError, tc.accepted, tc.errText)
 			}
 		})
+	}
+}
+
+func authorCanonicalMechanismBehavior(plan *review.Plan, workspace string) {
+	plan.E2ECoverageState = "cold_start"
+	plan.VerificationArtifactWorkspace = &workspace
+	for i := range plan.Assignments {
+		if plan.Assignments[i].Lens == "e2e" {
+			plan.Assignments[i].BehaviorSurface = "non_browser"
+		}
+	}
+	for i := range plan.Claims {
+		claim := &plan.Claims[i]
+		if claim.Lens != "e2e" {
+			continue
+		}
+		claim.Target = canonicalSourceFile + " through the non-browser marker-check command"
+		claim.Assertion = "The accepted Main product exposes the exact main-check-marker line to a read-only command without changing the file"
+		claim.Oracle = "grep -qx 'main-check-marker' " + canonicalSourceFile + " exits 0 for the accepted product marker; a missing or altered marker exits nonzero, and the product bytes remain unchanged"
+		claim.Method = "Run the declared grep command against the frozen Main product checkout; record its actual exit status and compare the file bytes before and after. No browser execution or model review is inferred by this mechanism fixture."
 	}
 }

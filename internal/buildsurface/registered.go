@@ -1,6 +1,7 @@
 package buildsurface
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -12,7 +13,21 @@ import (
 // ReadRegistered verifies the original pinned ReviewPlan's machine baseline.
 // It does not infer CleanRound or any professional Claim disposition.
 func ReadRegistered(root string, state map[string]any) (Snapshot, error) {
+	return ReadRegisteredContext(context.Background(), root, state)
+}
+
+func ReadRegisteredContext(ctx context.Context, root string, state map[string]any) (result Snapshot, readErr error) {
+	ctx = WithReadCache(ctx)
+	defer func() {
+		if ctx.Err() != nil {
+			result, readErr = Snapshot{}, ctx.Err()
+		}
+	}()
+
 	var zero Snapshot
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	if !HasCanonical(state) {
 		return zero, fmt.Errorf("canonical completion cannot prove original Main facts without the current Assignment registry")
 	}
@@ -46,7 +61,7 @@ func ReadRegistered(root string, state map[string]any) (Snapshot, error) {
 	if plan.Baseline == nil || plan.ID != ptr.PlanID || plan.Round != number(review["round"]) || ptr.ReviewRound != plan.Round || plan.Generation != number(baseline["generation"]) {
 		return zero, fmt.Errorf("pinned ReviewPlan lacks the exact current round product baseline")
 	}
-	if err := Verify(root, state, *plan.Baseline); err != nil {
+	if err := VerifyContext(ctx, root, state, *plan.Baseline); err != nil {
 		return zero, err
 	}
 	expected := map[string][2]string{}

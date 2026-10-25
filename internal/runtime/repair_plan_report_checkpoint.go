@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/entroforge/go-system-builder/internal/controlproof"
@@ -76,23 +77,24 @@ func (receipt *RepairPlanReportReceipt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func VerifiedRepairPlanReportReceipt(root string, state map[string]any, packetID, owner string) (RepairPlanReportReceipt, bool, error) {
-	p, found, err := FindRepairPlanReportPacket(state, packetID)
+func VerifiedRepairPlanReportReceipt(root string, state map[string]any, packetID, owner string, contexts ...context.Context) (RepairPlanReportReceipt, bool, error) {
+	ctx := controlproof.WithJournalReadCache(repairPacketContext(root, contexts...))
+	p, found, err := FindRepairPlanReportPacketContext(ctx, state, packetID)
 	if err != nil || !found {
 		return RepairPlanReportReceipt{}, false, err
 	}
 	if owner == "" || owner != p.Binding.OwnerAgentID {
 		return RepairPlanReportReceipt{}, false, fmt.Errorf("S9 receipt owner differs")
 	}
-	data, err := controlproof.ReadJournalForState(root, state)
+	data, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return RepairPlanReportReceipt{}, false, err
 	}
-	j, err := controlproof.InspectJournalData(data)
+	j, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return RepairPlanReportReceipt{}, false, err
 	}
-	if err := verifyRepairPlanReportPacketIssue(root, state, p, j); err != nil {
+	if err := verifyRepairPlanReportPacketIssue(root, state, p, j, ctx); err != nil {
 		return RepairPlanReportReceipt{}, false, err
 	}
 	review, _ := state["review"].(map[string]any)
@@ -326,18 +328,19 @@ func verifyRepairPlanReportReceipt(root string, state map[string]any, p workpack
 }
 func stringValuesRepair(v any) []string { values, _ := checkpointStringSlice(v); return values }
 
-func validateRepairPlanReportCheckpointIndices(root string, state map[string]any, data []byte) (map[string]any, error) {
-	packets, err := RepairPlanReportPackets(state)
+func validateRepairPlanReportCheckpointIndices(root string, state map[string]any, data []byte, contexts ...context.Context) (map[string]any, error) {
+	ctx := repairPacketContext(root, contexts...)
+	packets, err := RepairPlanReportPacketsContext(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	j, err := controlproof.InspectJournalData(data)
+	j, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return nil, err
 	}
 	byID := map[string]workpacket.RepairPlanReportPacket{}
 	for _, p := range packets {
-		if err := verifyRepairPlanReportPacketIssue(root, state, p, j); err != nil {
+		if err := verifyRegisteredRepairPlanReportPacketIssue(root, state, p, j, ctx); err != nil {
 			return nil, err
 		}
 		byID[p.ID] = p

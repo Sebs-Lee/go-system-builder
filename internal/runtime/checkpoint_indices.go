@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -11,6 +12,14 @@ import (
 // ValidateCheckpointIndices checks durable relationships, including historical
 // attempts. It never derives reception from authoring files or re-enables PASS.
 func ValidateCheckpointIndices(root string, state map[string]any, journalBytes []byte) error {
+	return ValidateCheckpointIndicesContext(context.Background(), root, state, journalBytes)
+}
+
+func ValidateCheckpointIndicesContext(ctx context.Context, root string, state map[string]any, journalBytes []byte) error {
+	ctx = WithReviewResultReadCache(WithPacketBodyRoot(ctx, root))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := ValidateS6MainStartReceipts(state, journalBytes); err != nil {
 		return err
 	}
@@ -32,12 +41,12 @@ func ValidateCheckpointIndices(root string, state map[string]any, journalBytes [
 		return err
 	}
 	state = filtered
-	s9ResultFiltered, err := validateRepairResultCheckpointIndices(root, state, journalBytes)
+	s9ResultFiltered, err := validateRepairResultCheckpointIndices(root, state, journalBytes, ctx)
 	if err != nil {
 		return err
 	}
 	state = s9ResultFiltered
-	s9Filtered, err := validateRepairPlanReportCheckpointIndices(root, state, journalBytes)
+	s9Filtered, err := validateRepairPlanReportCheckpointIndices(root, state, journalBytes, ctx)
 	if err != nil {
 		return err
 	}
@@ -47,7 +56,7 @@ func ValidateCheckpointIndices(root string, state map[string]any, journalBytes [
 		return err
 	}
 	state = s8Filtered
-	s7Filtered, err := validateReviewResultCheckpointIndices(root, state, journalBytes)
+	s7Filtered, err := validateReviewResultCheckpointIndicesContext(ctx, root, state, journalBytes)
 	if err != nil {
 		return err
 	}

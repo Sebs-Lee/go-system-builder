@@ -378,7 +378,7 @@ func printS7PacketQuestionnaires(root string, stdout io.Writer, state map[string
 	}
 	facts, _ := state["review"].(map[string]any)
 	assignments, _ := facts["assignments"].(map[string]any)
-	packets, packetErr := runtime.CurrentReviewResultPackets(state, "")
+	packets, packetErr := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state, "")
 	packetByAssignment := map[string]int{}
 	for i, packet := range packets {
 		packetByAssignment[packet.Binding.AssignmentID] = i

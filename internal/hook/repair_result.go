@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
@@ -37,7 +38,7 @@ func RepairResultAssignmentBinding(root string, state map[string]any, owner stri
 	if !bound {
 		return "", false
 	}
-	packets, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPacketsForOwnerContext(loopruntime.WithPacketBodyRoot(context.Background(), root), state, owner)
 	if err != nil {
 		// A malformed packet registry must not turn an issued typed task back
 		// into a generic completion path.
@@ -70,7 +71,7 @@ func RepairResultWorkComplete(root string, state map[string]any, agent *policy.A
 	}
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
-	packets, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPacketsForOwnerContext(loopruntime.WithPacketBodyRoot(context.Background(), root), state, agent.ID)
 	if err != nil {
 		return false
 	}

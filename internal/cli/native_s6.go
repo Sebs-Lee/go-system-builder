@@ -14,7 +14,6 @@ import (
 	"github.com/entroforge/go-system-builder/internal/agentcontext"
 	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
-	"github.com/entroforge/go-system-builder/internal/audit"
 	"github.com/entroforge/go-system-builder/internal/fileview"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -260,49 +259,7 @@ func nativeS6ExactReference(text, ref string) bool {
 }
 
 func nativeS6TaskText(in policy.Input) string {
-	text := in.LastAssistantMessage
-	if in.AgentTranscriptPath == "" {
-		return text
-	}
-	f, err := os.Open(in.AgentTranscriptPath)
-	if err != nil {
-		return text
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, 4<<20))
-	if err != nil {
-		return text
-	}
-	for _, line := range bytes.Split(data, []byte("\n")) {
-		var row struct {
-			Type    string `json:"type"`
-			Message struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(line, &row) != nil || row.Type != "user" || row.Message.Role != "user" {
-			continue
-		}
-		var plain string
-		if json.Unmarshal(row.Message.Content, &plain) == nil {
-			return text + "\n" + plain
-		}
-		var parts []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(row.Message.Content, &parts) == nil {
-			for _, p := range parts {
-				if p.Type == "text" {
-					text += "\n" + p.Text
-				}
-			}
-			if strings.TrimSpace(text) != strings.TrimSpace(in.LastAssistantMessage) {
-				return text
-			}
-		}
-	}
+	text, _ := nativeTaskTextDiagnostic(in, nil, false)
 	return text
 }
 
@@ -347,7 +304,7 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); err != nil {
 		return false, 0
 	}
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
+	snap, err := nativeRoutingSnapshot(root, in)
 	if err != nil {
 		return false, 0
 	}
@@ -364,6 +321,9 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	if in.Event != "SubagentStart" && in.Event != "SubagentStop" {
 		// Ordinary worker tools need no transcript read or lifecycle instructions.
 		return nativeS6Worker(snap.State, in) || len(records) > 0, 0
+	}
+	if len(records) == 0 && !nativeS6Worker(snap.State, in) {
+		return false, 0 // No exact S6 reference can select a responsibility.
 	}
 	refs := make([]string, 0, len(records))
 	for _, r := range records {
@@ -417,7 +377,7 @@ func nativeS6Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 			auditStarted := time.Now()
 			defer func() {
 				observed.ElapsedMS = time.Since(auditStarted).Milliseconds()
-				if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
+				if err := appendHookAudit(contextForHook(in), root, engine.Envelope(in, observed, time.Now())); err != nil {
 					fmt.Fprintln(diagnostic, "Native lifecycle audit unavailable: "+err.Error())
 				}
 			}()

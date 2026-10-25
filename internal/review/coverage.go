@@ -1,6 +1,8 @@
 package review
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -28,6 +30,10 @@ func BuildCoverageInventory(state map[string]any) []CoverageItem {
 // one exists; historical runtimes use the indexed completion envelope. The
 // resulting changed-surface set is the denominator that S7 must cover.
 func BuildCoverageInventoryForRoot(root string, state map[string]any) []CoverageItem {
+	return BuildCoverageInventoryForRootContext(context.Background(), root, state)
+}
+
+func BuildCoverageInventoryForRootContext(ctx context.Context, root string, state map[string]any) []CoverageItem {
 	seen := map[string]bool{}
 	var items []CoverageItem
 	add := func(item CoverageItem) {
@@ -37,7 +43,7 @@ func BuildCoverageInventoryForRoot(root string, state map[string]any) []Coverage
 		seen[item.SourceRef] = true
 		items = append(items, item)
 	}
-	projection := buildS7BaselineProjection(root, state)
+	projection := buildS7BaselineProjection(root, state, ctx)
 	for _, ref := range projection.ChangedPaths {
 		add(CoverageItem{
 			ID:        "surface:" + ref,
@@ -60,8 +66,8 @@ func BuildCoverageInventoryForRoot(root string, state map[string]any) []Coverage
 // unverifiable projection" (diagnostics present) must use
 // ChangedPathsForRootDetailed — a nil return here is intentionally ambiguous
 // for backwards compatibility, and the S10 gate now fails closed on it.
-func ChangedPathsForRoot(root string, state map[string]any) []string {
-	paths, _ := ChangedPathsForRootDetailed(root, state)
+func ChangedPathsForRoot(root string, state map[string]any, contexts ...context.Context) []string {
+	paths, _ := ChangedPathsForRootDetailed(root, state, contexts...)
 	return paths
 }
 
@@ -71,8 +77,8 @@ func ChangedPathsForRoot(root string, state map[string]any) []string {
 // path set is not a denominator, and the caller must fail closed (the S10
 // gate reports external_baseline_unverifiable) rather than reconcile against
 // a partial or self-declared surface.
-func ChangedPathsForRootDetailed(root string, state map[string]any) ([]string, []string) {
-	projection := buildS7BaselineProjection(root, state)
+func ChangedPathsForRootDetailed(root string, state map[string]any, contexts ...context.Context) ([]string, []string) {
+	projection := buildS7BaselineProjection(root, state, contexts...)
 	if len(projection.Diagnostics) > 0 {
 		// An unverifiable projection is not a denominator: a caller that
 		// receives diagnostics alongside empty paths must fail closed rather
@@ -113,8 +119,15 @@ func legacyBuildCoverageInventory(state map[string]any) []CoverageItem {
 	return sortedCoverageItems(items)
 }
 
-func validateCoverageInventory(root string, state map[string]any, plan *Plan) error {
-	if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+func validateCoverageInventory(root string, state map[string]any, plan *Plan, contexts ...context.Context) error {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := verifyProductBaselineDeclarationContext(ctx, root, state, plan); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
 		return s7GateError(
 			"S7_PRODUCT_BASELINE",
 			"ReviewPlan does not carry the current canonical S6 product baseline",
@@ -123,10 +136,10 @@ func validateCoverageInventory(root string, state map[string]any, plan *Plan) er
 			"loop-harness s7 draft --out plan.json",
 		)
 	}
-	if err := validateS7BaselineProjection(root, state); err != nil {
+	if err := validateS7BaselineProjection(root, state, ctx); err != nil {
 		return err
 	}
-	required := BuildCoverageInventoryForRoot(root, state)
+	required := BuildCoverageInventoryForRootContext(ctx, root, state)
 	if len(required) == 0 {
 		return nil
 	}

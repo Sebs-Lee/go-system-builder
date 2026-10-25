@@ -1,6 +1,7 @@
 package buildsurface
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -12,12 +13,31 @@ import (
 // Removing the current Assignment index must not turn that Plan into legacy.
 // This only selects the strict reader; it grants no baseline authority.
 func SelectCanonical(root string, state map[string]any) (bool, error) {
+	return SelectCanonicalContext(context.Background(), root, state)
+}
+
+func SelectCanonicalContext(ctx context.Context, root string, state map[string]any) (selected bool, readErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			selected, readErr = false, ctx.Err()
+		}
+	}()
+
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if HasCanonical(state) {
 		return true, nil
 	}
 	baseline, _ := state["baseline"].(map[string]any)
 	evidence, _ := state["evidence"].([]any)
 	for _, raw := range evidence {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		row, _ := raw.(map[string]any)
 		if row["kind"] != "completion_report" || row["status"] != "valid" || number(row["baseline_generation"]) != number(baseline["generation"]) {
 			continue

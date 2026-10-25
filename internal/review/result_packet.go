@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/agentauth"
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/catalog"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -34,6 +35,62 @@ type IssuedSubmitRequest struct {
 	SourceRoot                         string
 	AuthorizeSource                    func(root string, state map[string]any) error
 	OccurredAt                         time.Time
+	// Input carries this attempt's exact bytes and validation; it grants no authority.
+	Input *IssuedResultInput `json:"-"`
+}
+
+// IssuedResultInput is an immutable, attempt-local answer read. Private fields
+// keep callers from substituting validation or changing the captured source.
+// Current issuance, responsibility and execution authority remain consumer checks.
+type IssuedResultInput struct {
+	sourceRoot, path, owner, packetDigest string
+	data, professional                    []byte
+	issues                                []workpacket.FieldError
+}
+
+// ReadIssuedResultInput reads and validates one exact authoring file. A new Save
+// must call this again; receipt recovery does not need the authoring file.
+func ReadIssuedResultInput(ctx context.Context, sourceRoot string, packet workpacket.ReviewResultPacket, owner string) (*IssuedResultInput, []workpacket.FieldError, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+	canonicalRoot, err := workspace.Canonical(sourceRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	digest, err := workpacket.ReviewResultPacketDigest(packet)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := workpacket.ReadFile(canonicalRoot, packet.AnswerPath, resultReceiptReadLimit)
+	if err != nil {
+		return nil, nil, err
+	}
+	professional, issues := workpacket.ValidateReviewResultAnswer(packet, data)
+	input := &IssuedResultInput{sourceRoot: canonicalRoot, path: packet.AnswerPath, owner: owner, packetDigest: digest, data: data, professional: append([]byte(nil), professional...), issues: append([]workpacket.FieldError(nil), issues...)}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+	}
+	return input, append([]workpacket.FieldError(nil), issues...), nil
+}
+
+func (input *IssuedResultInput) validated(sourceRoot, path, owner string, packet workpacket.ReviewResultPacket) ([]byte, error) {
+	digest, err := workpacket.ReviewResultPacketDigest(packet)
+	if err != nil {
+		return nil, err
+	}
+	if input.sourceRoot != sourceRoot || input.path != path || input.owner != owner || input.packetDigest != digest || input.data == nil {
+		return nil, errors.New("S7 frozen answer differs from exact source/path/packet/owner")
+	}
+	if len(input.issues) != 0 {
+		issue := input.issues[0]
+		return nil, fmt.Errorf("S7 answer %s: %s (%s)", issue.Pointer, issue.Expected, issue.Observed)
+	}
+	return input.professional, nil
 }
 
 // IssueResultPackets appends only questions to the original Runtime registry.
@@ -43,6 +100,7 @@ func IssueResultPackets(root, statePath, journalPath string, expectedRevision in
 }
 
 func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath string, expectedRevision int, ownerFilter string) ([]workpacket.ReviewResultPacket, error) {
+	ctx = loopruntime.WithPacketBodyRoot(loopruntime.WithReviewResultReadCache(buildsurface.WithReadCache(ctx)), root)
 	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
@@ -54,7 +112,7 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 	if !typedResultReceiptsEnabled(snapshot.State) {
 		return nil, errors.New("S7 issuance requires explicit Runtime v1.2/v1.3 packet mode")
 	}
-	plan, ptr, err := loadResultPacketPlan(root, snapshot.State, false)
+	plan, ptr, err := loadResultPacketPlan(root, snapshot.State, false, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +133,7 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 		// A wording upgrade must not reissue an already frozen responsibility.
 		// Reuse only the exact current binding/inputs; the original issue proof
 		// and immutable packet are verified below before restoring any files.
-		issued, err := loopruntime.CurrentReviewResultPackets(snapshot.State, owner)
+		issued, err := loopruntime.CurrentReviewResultPacketsContext(ctx, snapshot.State, owner)
 		if err != nil {
 			return nil, err
 		}
@@ -95,16 +153,16 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 				return nil, err
 			}
 		}
-		if old, found, err := loopruntime.FindReviewResultPacket(snapshot.State, packet.ID); err != nil {
+		if old, found, err := loopruntime.FindReviewResultPacketContext(ctx, snapshot.State, packet.ID); err != nil {
 			return nil, err
 		} else if found {
 			if !reflect.DeepEqual(old, packet) {
 				return nil, errors.New("S7 frozen packet identity conflict")
 			}
-			if err := verifyFrozenSubjects(root, plan, snapshot.State); err != nil {
+			if err := verifyFrozenSubjects(root, plan, snapshot.State, ctx); err != nil {
 				return nil, err
 			}
-			if err := verifyCurrentResultPacket(root, snapshot.State, packet, true); err != nil {
+			if err := verifyCurrentResultPacketContext(ctx, root, snapshot.State, packet, true); err != nil {
 				return nil, err
 			}
 		} else {
@@ -123,10 +181,10 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 				Actor: "orchestrator", IdempotencyKey: "packet:" + packet.ID, RuntimeID: packet.Binding.RuntimeID,
 				BaselineGeneration: packet.Binding.BaselineGeneration, From: cursor, To: cursor, RetainLastTransition: true, OccurredAt: time.Now().UTC(),
 				Apply: func(state map[string]any) error {
-					if err := verifyCurrentResultPacket(root, state, packet, false); err != nil {
+					if err := verifyCurrentResultPacketContext(ctx, root, state, packet, false); err != nil {
 						return err
 					}
-					if old, found, err := loopruntime.FindReviewResultPacket(state, packet.ID); err != nil {
+					if old, found, err := loopruntime.FindReviewResultPacketContext(ctx, state, packet.ID); err != nil {
 						return err
 					} else if found {
 						if !reflect.DeepEqual(old, packet) {
@@ -134,29 +192,18 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 						}
 						return errExactResultReplay
 					}
-					all, err := loopruntime.ReviewResultPackets(state)
+					taken, err := loopruntime.ReviewResultPacketSlotTakenContext(ctx, state, packet.Binding)
 					if err != nil {
 						return err
 					}
-					for _, old := range all {
-						b := old.Binding
-						if b.RuntimeID == packet.Binding.RuntimeID && b.BaselineGeneration == packet.Binding.BaselineGeneration && b.ReviewPlanID == packet.Binding.ReviewPlanID && b.ReviewPlanRevision == packet.Binding.ReviewPlanRevision && b.ReviewRound == packet.Binding.ReviewRound && b.AssignmentID == packet.Binding.AssignmentID {
-							return errors.New("S7 Assignment already has a different frozen issuance")
-						}
+					if taken {
+						return errors.New("S7 Assignment already has a different frozen issuance")
 					}
 					entities, _ := state["entities"].(map[string]any)
 					rows, _ := entities["work_packets"].([]any)
 					entities["work_packets"] = append(rows, value)
-					// Preserve the original 16 MiB checkpoint/recovery budget.
-					// Refuse cumulative packet growth before accepting the CAS,
-					// leaving room for the Writer's cursor and event metadata.
-					candidate, err := json.MarshalIndent(state, "", "  ")
-					if err != nil {
-						return err
-					}
-					if len(candidate) > (16<<20)-(8<<10) {
-						return errors.New("S7 cumulative issuance exceeds the original Runtime checkpoint budget; preserve the full Claim denominator when revising source representation")
-					}
+					// The original Writer enforces the checkpoint/recovery limit after
+					// publishing immutable bodies and selecting their physical index.
 					return nil
 				},
 			})
@@ -165,11 +212,11 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 				if readErr != nil {
 					return nil, err
 				}
-				old, found, findErr := loopruntime.FindReviewResultPacket(latest.State, packet.ID)
+				old, found, findErr := loopruntime.FindReviewResultPacketContext(ctx, latest.State, packet.ID)
 				if findErr != nil || !found || !reflect.DeepEqual(old, packet) {
 					return nil, err
 				}
-				if proofErr := verifyCurrentResultPacket(root, latest.State, packet, true); proofErr != nil {
+				if proofErr := verifyCurrentResultPacketContext(ctx, root, latest.State, packet, true); proofErr != nil {
 					return nil, proofErr
 				}
 				snapshot = latest
@@ -210,7 +257,10 @@ func resultPacketAssignmentRow(state map[string]any, id string) map[string]any {
 	return row
 }
 
-func loadResultPacketPlan(root string, state map[string]any, verifyBaseline bool) (*Plan, *PlanPointer, error) {
+func loadResultPacketPlan(root string, state map[string]any, verifyBaseline bool, contexts ...context.Context) (*Plan, *PlanPointer, error) {
+	if err := baselineContext(contexts).Err(); err != nil {
+		return nil, nil, err
+	}
 	if !typedResultReceiptsEnabled(state) {
 		return nil, nil, errors.New("S7 packet mode is disabled")
 	}
@@ -242,7 +292,7 @@ func loadResultPacketPlan(root string, state map[string]any, verifyBaseline bool
 	// The pre-load retains pinned plan and eligibility checks. An existing
 	// packet's restore branch keeps its original baseline check separately.
 	if verifyBaseline {
-		if err := verifyFrozenSubjects(root, plan, state); err != nil {
+		if err := verifyFrozenSubjects(root, plan, state, contexts...); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -428,7 +478,11 @@ func validateResultPacketOwner(state map[string]any, a *PlanAssignment, owner st
 }
 
 func verifyCurrentResultPacket(root string, state map[string]any, p workpacket.ReviewResultPacket, issued bool) error {
-	plan, ptr, err := loadResultPacketPlan(root, state, true)
+	return verifyCurrentResultPacketContext(context.Background(), root, state, p, issued)
+}
+
+func verifyCurrentResultPacketContext(ctx context.Context, root string, state map[string]any, p workpacket.ReviewResultPacket, issued bool) error {
+	plan, ptr, err := loadResultPacketPlan(root, state, true, ctx)
 	if err != nil {
 		return err
 	}
@@ -456,7 +510,7 @@ func verifyCurrentResultPacket(root string, state map[string]any, p workpacket.R
 		return errors.New("S7 issuance differs from its original frozen template")
 	}
 	if issued {
-		return verifyResultPacketIssue(root, state, p)
+		return loopruntime.VerifyReviewResultPacketIssueContext(ctx, root, state, p)
 	}
 	return nil
 }
@@ -468,12 +522,13 @@ func verifyResultPacketIssue(root string, state map[string]any, p workpacket.Rev
 // SubmitIssuedResult projects professional JSON into the existing Result and
 // calls the same original consumer. It introduces no second accepting Writer.
 func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmitRequest) (loopruntime.Snapshot, error) {
+	request.Context = loopruntime.WithPacketBodyRoot(loopruntime.WithReviewResultReadCache(buildsurface.WithReadCache(request.Context)), root)
 	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	p, found, err := loopruntime.FindReviewResultPacket(snapshot.State, request.PacketID)
+	p, found, err := loopruntime.FindReviewResultPacketContext(request.Context, snapshot.State, request.PacketID)
 	if err != nil {
 		return snapshot, err
 	}
@@ -512,13 +567,19 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 			return snapshot, err
 		}
 	}
-	data, err := workpacket.ReadFile(sourceRoot, path, resultReceiptReadLimit)
-	if err != nil {
+	input := request.Input
+	if input == nil {
+		input, _, err = ReadIssuedResultInput(request.Context, sourceRoot, p, request.OwnerAgentID)
+		if err != nil {
+			return snapshot, err
+		}
+	}
+	if err := request.Context.Err(); err != nil {
 		return snapshot, err
 	}
-	professional, issues := workpacket.ValidateReviewResultAnswer(p, data)
-	if len(issues) > 0 {
-		return snapshot, fmt.Errorf("S7 answer %s: %s (%s)", issues[0].Pointer, issues[0].Expected, issues[0].Observed)
+	professional, err := input.validated(sourceRoot, path, request.OwnerAgentID, p)
+	if err != nil {
+		return snapshot, err
 	}
 	var result Result
 	if err := json.Unmarshal(professional, &result); err != nil {
@@ -548,7 +609,7 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 		} else if ptr := PlanPointerFromState(snapshot.State); row["lens"] == "e2e" && ptr != nil && ptr.VerificationArtifactWorkspace != "" {
 			// This binds saved artifact bytes, never a professional execution verdict.
 			// SubmitResult rechecks the actual workspace and all original evidence.
-			digest, err := WorkspaceDigest(sourceRoot, ptr.VerificationArtifactWorkspace)
+			digest, err := WorkspaceDigestContext(request.Context, sourceRoot, ptr.VerificationArtifactWorkspace)
 			if err != nil {
 				return snapshot, err
 			}
@@ -731,7 +792,7 @@ func validateIssuedResultRequest(root string, state map[string]any, request Subm
 		if receipt, ok := row["result_receipt"].(map[string]any); ok && receipt["packet_id"] != nil && receipt["packet_id"] != "" {
 			return errors.New("S7 Assignment has an issued answer receipt; use its exact original packet replay")
 		}
-		packets, err := loopruntime.CurrentReviewResultPackets(state, result.ProducerAgentID)
+		packets, err := loopruntime.CurrentReviewResultPacketsContext(loopruntime.WithPacketBodyRoot(loopruntime.WithReviewResultReadCache(request.Context), root), state, result.ProducerAgentID)
 		if err != nil {
 			return err
 		}
@@ -749,7 +810,7 @@ func validateIssuedResultRequest(root string, state map[string]any, request Subm
 	if request.issuedSourceRoot == "" {
 		return errors.New("S7 packet save has no registered execution root")
 	}
-	if err := verifyResultPacketIssue(root, state, p); err != nil {
+	if err := loopruntime.VerifyReviewResultPacketIssueContext(loopruntime.WithReviewResultReadCache(request.Context), root, state, p); err != nil {
 		return err
 	}
 	if result.ResultID != p.ResultID || result.AssignmentID != p.Binding.AssignmentID || result.AssignmentRevision != p.Binding.ReviewPlanRevision || result.ReviewPlanID != p.Binding.ReviewPlanID || result.ReviewRound != p.Binding.ReviewRound || result.BaselineGeneration != p.Binding.BaselineGeneration || result.SubjectDigest != p.Binding.SubjectDigest || (p.Binding.VerificationArtifactDigest != nil && !equalOptionalString(result.VerificationArtifactDigest, p.Binding.VerificationArtifactDigest)) {
@@ -877,7 +938,12 @@ func registeredResultPacketSourceRoot(root string, state map[string]any, p workp
 // IssuedResultReceipt reconstructs acceptance from original immutable facts;
 // an authoring file is neither required nor interpreted as reception.
 func IssuedResultReceipt(root string, state map[string]any, packetID, owner string) (ResultReceipt, bool, error) {
-	p, found, err := loopruntime.FindReviewResultPacket(state, packetID)
+	return IssuedResultReceiptContext(context.Background(), root, state, packetID, owner)
+}
+
+func IssuedResultReceiptContext(ctx context.Context, root string, state map[string]any, packetID, owner string) (ResultReceipt, bool, error) {
+	ctx = loopruntime.WithPacketBodyRoot(loopruntime.WithReviewResultReadCache(ctx), root)
+	p, found, err := loopruntime.FindReviewResultPacketContext(ctx, state, packetID)
 	if err != nil {
 		return ResultReceipt{}, false, err
 	}
@@ -913,7 +979,7 @@ func IssuedResultReceipt(root string, state map[string]any, packetID, owner stri
 	if err := json.Unmarshal(envelope.SubmittedAnswer, &result); err != nil {
 		return receipt, false, err
 	}
-	if err := verifyResultReceiptClosure(root, state, row, receipt, &result); err != nil {
+	if err := verifyResultReceiptClosure(root, state, row, receipt, &result, ctx); err != nil {
 		return receipt, false, err
 	}
 	return receipt, true, nil

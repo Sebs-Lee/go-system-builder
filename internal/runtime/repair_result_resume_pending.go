@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"context"
 	"github.com/entroforge/go-system-builder/internal/controlproof"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 // RepairResultResumePending reports a recorded resolution awaiting its current
@@ -10,7 +12,9 @@ func RepairResultResumePending(root string, state map[string]any, owner, assignm
 	if !PacketEnabled(state) || owner == "" || assignment == "" {
 		return false, nil
 	}
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsMatchingContext(repairPacketContext(root), state, func(b workpacket.RepairResultBinding) bool {
+		return b.Sources.OwnerAgentID == owner && b.Sources.RepairAssignmentID == assignment
+	})
 	if err != nil {
 		return false, err
 	}
@@ -39,12 +43,13 @@ func RepairResultResumePending(root string, state map[string]any, owner, assignm
 	return false, nil
 }
 
-func repairResultResumeJournal(root string, state map[string]any) (controlproof.JournalInspection, error) {
-	data, err := controlproof.ReadJournalForState(root, state)
+func repairResultResumeJournal(root string, state map[string]any, contexts ...context.Context) (controlproof.JournalInspection, error) {
+	ctx := controlproof.WithJournalReadCache(repairPacketContext(root, contexts...))
+	data, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return controlproof.JournalInspection{}, err
 	}
-	journal, err := controlproof.InspectJournalData(data)
+	journal, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return controlproof.JournalInspection{}, err
 	}

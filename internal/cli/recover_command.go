@@ -136,6 +136,7 @@ type recoveryPlanDocument struct {
 	ImportFindings         []recovery.ImportFinding         `json:"import_findings,omitempty"`
 	ReplayTrace            []controller.RecoveryReplayTrace `json:"replay_trace,omitempty"`
 	CheckpointPath         string                           `json:"checkpoint_path,omitempty"`
+	CandidatePacketBodies  map[string]string                `json:"candidate_packet_bodies,omitempty"`
 	ReplayStopReason       controller.ReplayStopReason      `json:"replay_stop_reason,omitempty"`
 }
 
@@ -286,6 +287,12 @@ func runRuntimeRecoverApply(args []string, stdout, stderr io.Writer) int {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(fmt.Errorf("read candidate journal: %w", err))))
 		return 1
+	}
+	if document.CheckpointPath != "" && len(candidateState) > 0 {
+		if err := restoreRecoveryCandidatePacketBodies(locked, root, document, candidateState); err != nil {
+			fmt.Fprintln(stderr, formatRecoveryFailure("runtime recover apply", invalidRecoveryPlan(err)))
+			return 1
+		}
 	}
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")

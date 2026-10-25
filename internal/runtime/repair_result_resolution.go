@@ -51,7 +51,7 @@ type repairResultResolutionReceiptWire RepairResultResolutionReceipt
 // VerifiedRepairResultResolutionReceipt reads an accepted indexed Main decision.
 // Its acceptance coordinates come from the original Agent Writer journal.
 func VerifiedRepairResultResolutionReceipt(root string, state map[string]any, packetID, owner string) (RepairResultResolutionReceipt, bool, error) {
-	packet, found, err := FindRepairResultPacket(state, packetID)
+	packet, found, err := FindRepairResultPacketContext(repairPacketContext(root), state, packetID)
 	if err != nil || !found {
 		return RepairResultResolutionReceipt{}, false, err
 	}
@@ -69,7 +69,7 @@ func VerifiedRepairResultResolutionReceipt(root string, state map[string]any, pa
 }
 
 func verifiedRepairResultResolutionReceiptWithJournal(root string, state map[string]any, p workpacket.RepairResultPacket, owner string, journal controlproof.JournalInspection) (RepairResultResolutionReceipt, bool, error) {
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsForBindingContext(repairPacketContext(root), state, p.Binding)
 	if err != nil {
 		return RepairResultResolutionReceipt{}, false, err
 	}

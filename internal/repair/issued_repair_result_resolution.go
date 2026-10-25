@@ -60,7 +60,7 @@ func RepairResultResolutionAuthoringPath(packet workpacket.RepairResultPacket) (
 func RepairResultResolutionDraft(root string, state map[string]any, packetID, owner string) (string, []byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	packet, found, err := runtimepkg.FindRepairResultPacket(state, packetID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(context.Background(), root), state, packetID)
 	if err != nil || !found {
 		return "", nil, fmt.Errorf("S9 resolution packet %q is unavailable: %v", packetID, err)
 	}
@@ -127,7 +127,7 @@ func PrepareIssuedRepairResultResolution(
 	if !sameAbsolutePath(root, workspaceMainRoot(root, snapshot.State)) {
 		return nil, nil, errors.New("S9 resolution receiver root must be the original registered Main checkout")
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(snapshot.State, req.PacketID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), snapshot.State, req.PacketID)
 	if err != nil || !found {
 		return nil, nil, fmt.Errorf("S9 issued RepairResult packet %q is unavailable: %v", req.PacketID, err)
 	}

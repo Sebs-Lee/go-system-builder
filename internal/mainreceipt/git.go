@@ -115,7 +115,10 @@ func verifyMerge(ctx context.Context, root string, cp checkpoint, finalHead stri
 		}
 	}
 	actualBase, err := gitOutput(ctx, root, "merge-base", cp.TargetHead, cp.SourceHead)
-	if err != nil || strings.TrimSpace(string(actualBase)) != cp.MergeBase {
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(actualBase)) != cp.MergeBase {
 		return fmt.Errorf("MainFacts merge base differs from the actual target/source merge base")
 	}
 	parents, err := gitOutput(ctx, root, "rev-list", "--parents", "-n", "1", cp.MergeCommit)
@@ -252,7 +255,10 @@ func validateStatus(status, oldObject, newObject string) error {
 
 func verifyCommit(ctx context.Context, root, oid string) error {
 	out, err := gitOutput(ctx, root, "rev-parse", "--verify", oid+"^{commit}")
-	if err != nil || strings.TrimSpace(string(out)) != oid {
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(out)) != oid {
 		return fmt.Errorf("object is not the exact pinned commit")
 	}
 	return nil
@@ -261,7 +267,7 @@ func verifyCommit(ctx context.Context, root, oid string) error {
 func requireAncestor(ctx context.Context, root, ancestor, descendant string) error {
 	_, err := gitOutput(ctx, root, "merge-base", "--is-ancestor", ancestor, descendant)
 	if err != nil {
-		return fmt.Errorf("%s is not an ancestor of %s", ancestor, descendant)
+		return fmt.Errorf("%s is not an ancestor of %s: %w", ancestor, descendant, err)
 	}
 	return nil
 }
@@ -285,6 +291,12 @@ func gitOutput(ctx context.Context, root string, args ...string) ([]byte, error)
 }
 
 func gitOutputLimited(ctx context.Context, root string, limit int64, args ...string) ([]byte, error) {
+	return cachedGitOutput(ctx, root, limit, args...)
+}
+func runGitOutputLimited(ctx context.Context, root string, limit int64, args ...string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -302,6 +314,9 @@ func gitOutputLimited(ctx context.Context, root string, limit int64, args ...str
 		return nil, fmt.Errorf("Git output exceeds %d bytes", limit)
 	}
 	waitErr := cmd.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if readErr != nil {
 		return nil, readErr
 	}

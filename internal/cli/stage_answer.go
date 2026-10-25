@@ -747,7 +747,7 @@ func isRegisteredReviewResultPacket(s *submission.Service, id string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	_, found, err := runtime.FindReviewResultPacket(snapshot.State, id)
+	_, found, err := runtime.FindReviewResultPacketContext(runtime.WithPacketBodyRoot(s.Context(), s.Root), snapshot.State, id)
 	return found, err
 }
 
@@ -771,7 +771,7 @@ func isRegisteredRepairPlanReportPacket(s *submission.Service, id string) (bool,
 	if err != nil {
 		return false, err
 	}
-	_, found, err := runtime.FindRepairPlanReportPacket(snapshot.State, id)
+	_, found, err := runtime.FindRepairPlanReportPacketContext(runtime.WithPacketBodyRoot(s.Context(), s.Root), snapshot.State, id)
 	return found, err
 }
 
@@ -783,7 +783,7 @@ func isRegisteredRepairResultPacket(s *submission.Service, id string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	_, found, err := runtime.FindRepairResultPacket(snapshot.State, id)
+	_, found, err := runtime.FindRepairResultPacketContext(runtime.WithPacketBodyRoot(s.Context(), s.Root), snapshot.State, id)
 	return found, err
 }
 
@@ -1012,7 +1012,7 @@ func stageAnswerLifecycleContext(root string, request policy.Input) string {
 
 func stageS5PreparationGuidance(root string, state map[string]any) string {
 	life := mapFieldCLI(state, "lifecycle")
-	return fmt.Sprintf("S5 entry %d: DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY 原独立责任尚未准备完成。Main 恢复原准备：%s；manifest %s。保留已发行问卷及答案，不重交 S4。方法入口 %s；准备后携带准确 view/answer/source root 派入两个独立原生上下文，登记不证明平台已启动。", stageAnswerEntry(life["phase_revision"]), submission.PlanningRecoveryCommand(root, "issue"), s5ManifestQuestionnairePath(root, state), filepath.Join(root, ".claude/skills/team-planning/SKILL.md")) + submission.PlanningDiagnostic(root, state, "preparation")
+	return fmt.Sprintf("S5 entry %d: DV-SPEC-CONSISTENCY and DV-TASK-EXECUTABILITY 原独立责任尚未准备完成。两项责任及 manifest/issue 由系统原入口自动准备；Main 不手工组装或登记。Main 恢复原准备：%s；manifest %s。保留 accepted S4 及已发行问卷和答案，不重交 S4；普通读取与 Stop 不补登记。方法入口 %s；准备后携带准确 view/answer/source root 派入两个独立原生上下文，登记不证明平台已启动。", stageAnswerEntry(life["phase_revision"]), submission.PlanningRecoveryCommand(root, "issue"), s5ManifestQuestionnairePath(root, state), filepath.Join(root, ".claude/skills/team-planning/SKILL.md")) + submission.PlanningDiagnostic(root, state, "preparation")
 }
 
 // stageDesignQuestionnaireContext projects current work, not issuance proof.
@@ -1553,18 +1553,18 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 			last, _ := snapshot.State["last_transition"].(map[string]any)
 			eventID := stringValue(last["event_id"])
 			feedback := "Runtime records status=stale; original feedback: " + journalPath + " event=" + eventID
-			return fmt.Sprintf("S7 Main: original ReviewPlan %s is stale. Main questionnaire: %s. Original system feedback: %s. Main resolves the original baseline/Plan recovery through existing revive/revise; queued dispatch and old answers await a valid plan.", planPath, questionnaire, feedback)
+			return fmt.Sprintf("S7 Main: original ReviewPlan %s is stale. Main questionnaire: %s. Original system feedback: %s. Main resolves the original baseline/Plan recovery through existing revive/revise; queued dispatch and old answers await a valid plan.", planPath, questionnaire, feedback) + " " + s7PinnedSourceRecovery(root)
 		}
 		if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil {
 			switch ptr.Status {
 			case "observation_sealed":
-				return "S7 ObservationBatch is sealed. Main continues the original TR-008 handoff on the next PreToolUse, then fills the supplied S8 intake; no further Reviewer dispatch belongs to this round."
+				return "S7 ObservationBatch is sealed. The original handoff continues TR-008 and prepares the S8 intake; Main fills that supplied intake once ready; no further Reviewer dispatch belongs to this round."
 			case "paused", "clean":
 				return "S7 ReviewPlan is " + ptr.Status + "; Main follows its original pause or stage-exit route. Do not dispatch the old queue."
 			}
 		}
 		for attempt := 0; attempt < 2; attempt++ {
-			packets, err := runtime.CurrentReviewResultPackets(snapshot.State, "")
+			packets, err := runtime.ProjectCurrentReviewResultPacketIndex(snapshot.State, "")
 			if err != nil {
 				return "S7 Main ReviewResult lookup deferred: " + err.Error()
 			}
@@ -1585,9 +1585,9 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 					continue
 				}
 				if diagnostic := submission.PlanningDiagnostic(root, snapshot.State, nativeS7DiagnosticKind(packet.ID)); diagnostic != "" {
-					fmt.Fprintln(&b, nativeS7ReturnDiagnostic(root, snapshot.State, packet))
+					fmt.Fprintln(&b, nativeS7IndexReturnDiagnostic(root, snapshot.State, packet))
 				}
-				view, answer, err := reviewResultLifecyclePaths(ctx, root, snapshot.State, packet, request.CWD, request.SessionID)
+				view, answer, err := reviewResultIndexLifecyclePaths(root, snapshot.State, packet)
 				if err != nil {
 					fmt.Fprintf(&b, "S7 %s/%s: questionnaire preparation gap: %s\n", packet.Binding.OwnerAgentID, assignmentID, err)
 					continue
@@ -1619,7 +1619,7 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 						continue
 					}
 					fullHandoff := attempt > 0 || request.Event == "SessionStart" || request.Event == "PreCompact" || request.Event == "SubagentStart"
-					b.WriteString(s7ReviewerTaskGuidance(mainRoot, source, view, answer, packet, fullHandoff))
+					b.WriteString(s7ReviewerIndexTaskGuidance(mainRoot, source, view, answer, packet, fullHandoff))
 				}
 			}
 			if completed > 0 {
@@ -1637,6 +1637,9 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 			}
 			if needIssueOwner == "" || attempt == 1 || request.Event != "PreToolUse" {
 				return strings.TrimSpace(b.String())
+			}
+			if ctx != nil && ctx.Err() != nil {
+				return strings.TrimSpace(b.String()) + "\nS7 Main questionnaire preparation deferred for " + needIssueOwner + ": " + ctx.Err().Error()
 			}
 			if service == nil {
 				// Deferred initialization still uses the original issuer and its
@@ -1667,7 +1670,7 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 		return ""
 	}
 	assignmentID := loaded.PolicyContext.Agent.AssignmentID
-	packets, err := runtime.CurrentReviewResultPackets(snapshot.State, owner)
+	packets, err := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(ctx, root), snapshot.State, owner)
 	if err != nil {
 		return "S7 ReviewResult lookup deferred to Main: " + err.Error()
 	}
@@ -1702,7 +1705,7 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 	// receipt APIs retain full issuance and artifact verification.
 	ordinaryReminder := request.Event == "PreToolUse" || request.Event == "SessionStart" || request.Event == "SubagentStart" || request.Event == "PreCompact" || request.Event == "Stop" || request.Event == "SubagentStop" || request.Event == "TeammateIdle"
 	if !ordinaryReminder {
-		if err := runtime.VerifyReviewResultPacketIssue(root, snapshot.State, *packet); err != nil {
+		if err := runtime.VerifyReviewResultPacketIssueContext(ctx, root, snapshot.State, *packet); err != nil {
 			return "S7 packet evidence is not current; Main must inspect the ReviewPlan issuance: " + err.Error()
 		}
 	}
@@ -1717,7 +1720,7 @@ func stageReviewResultLifecycleContext(ctx context.Context, root string, request
 			}
 			return fmt.Sprintf("S7 Reviewer assignment=%s: answer %s has no current completed responsibility fact; Main must recover the original Result record.", assignmentID, answer)
 		}
-		receipt, accepted, err := review.IssuedResultReceipt(root, snapshot.State, packet.ID, owner)
+		receipt, accepted, err := review.IssuedResultReceiptContext(ctx, root, snapshot.State, packet.ID, owner)
 		if err != nil {
 			return "S7 accepted receipt needs Main review: " + err.Error()
 		}
@@ -1745,6 +1748,15 @@ func s7CaptureShellQuote(value string) string {
 }
 
 func reviewResultLifecyclePaths(ctx context.Context, root string, state map[string]any, packet workpacket.ReviewResultPacket, cwd, sessionID string) (string, string, error) {
+	source, err := questionnaireSourceRoot(root, state, packet.Binding.AssignmentID, packet.Binding.OwnerAgentID, packet.Binding.RuntimeID, packet.Binding.BaselineGeneration)
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(source, filepath.FromSlash(packet.ViewPath)), filepath.Join(source, filepath.FromSlash(packet.AnswerPath)), nil
+}
+
+// Pure display coordinates do not imply a hydrated/verified packet.
+func reviewResultIndexLifecyclePaths(root string, state map[string]any, packet runtime.ReviewResultPacketIndex) (string, string, error) {
 	source, err := questionnaireSourceRoot(root, state, packet.Binding.AssignmentID, packet.Binding.OwnerAgentID, packet.Binding.RuntimeID, packet.Binding.BaselineGeneration)
 	if err != nil {
 		return "", "", err

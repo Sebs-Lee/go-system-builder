@@ -22,7 +22,7 @@ func applyCleanRoundGate(input Input, result *Evaluation, contexts ...context.Co
 	if review.HasPacketBoundE2EReceipts(input.Snapshot.State) {
 		reviewState, _ := input.Snapshot.State["review"].(map[string]any)
 		assignments, _ := reviewState["assignments"].(map[string]any)
-		if err := review.VerifySealedArtifactDigests(input.Root, input.Snapshot.State, review.PlanPointerFromState(input.Snapshot.State), assignments); err != nil {
+		if err := review.VerifySealedArtifactDigests(input.Root, input.Snapshot.State, review.PlanPointerFromState(input.Snapshot.State), assignments, contexts...); err != nil {
 			result.Missing = append(result.Missing, "cleanround:typed_e2e_execution_artifact_invalid:"+err.Error())
 			result.Status = StatusNotReady
 			return

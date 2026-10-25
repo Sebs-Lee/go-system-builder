@@ -121,6 +121,8 @@ Main 先读 REQ 的目标与成功标准，再结合适用契约和 TASK 完成�
 
 例如，唯一键变更却没有检查历史冲突、关键数据库行为只测了替身、回滚说明没有覆盖真实数据后果，都是需要认真判断的具体问题。审计者应按实际影响明确阻断或可接管风险，不能用测试数量抵消它们，也不能把所有问题机械归类为同一种严重度。
 
+主题已有结构化落点 `audit_areas[]`：`id` 对应主题，`conclusion` 为 `pass`／`not_applicable`／`unknown`／`fail`，有实际归属和输出时保留 `owner`／`evidence_refs`。主题与现有 ID 的对应为：状态转换 `state_machine`；事务与会话 `transaction_uow`；并发与幂等 `concurrency_idempotency`；数据、身份与迁移 `data_migration`；调用点与运行拓扑 `call_sites_topology`；可观测性与错误 `observability_errors`；验证证据 `verification_evidence`；文档与发布范围 `docs_release_scope`。实际风险／债务／阻断分别保留在 `risks`／`technical_debt`／`blocking_findings`，必要观察和 N/A 解释可复用关联库存行的 `oracle`／`na_reason`；不增加主题报告或必填八行。
+
 八类主题不是八个必做任务，不要求每类都有独立 Agent、证据、N/A 行或新产物。若使用 `audit_areas` 报告实际主题结论，保留这些专业答案；该字段不是系统自动生成的资格证书。已填写主题中的未知或失败同样需要处理，不能因为主题列表是可选的就忽略已经报告的问题。
 
 ## 6. 风险、未知和阻断怎样影响决定
@@ -150,7 +152,7 @@ S10 的 Manifest 是现有机器可读专业报告，不是子代理分派清单
 | `metrics` | 从已报告数据派生的进度显示 | 系统计算，不由作者维护 |
 | `outcome` | 当前验收或审计的明确专业结论 | Main 汇入实际工作后填写，草稿留空 |
 
-`coverage_inventory` 行的 `expected` 保留系统提供的实际承诺，`source_refs` 指向材料；`disposition` 是作者的判断。`oracle` 可写实际观察、判断依据和未完成原因，不是另一个必须满足格式的证明。`evidence_refs` 有真实可用输出时引用，也允许为空，不能为了非空而创造日志。
+`coverage_inventory` 行的 `expected` 是系统预填的原始承诺基线（所提供 REQ／CONTRACTS／BE／TASK 材料正文），不是让 Main 另写“应该怎样”；保留系统提供的实际承诺，`source_refs` 指向材料；`disposition` 是作者的判断。`oracle` 可写实际观察、判断依据和未完成原因，不是另一个必须满足格式的证明。`evidence_refs` 有真实可用输出时引用，也允许为空，不能为了非空而创造日志。
 
 正常保存从当前准确路径绑定顶层机器字段并重算指标；作者不必补回省略的机器段，也不靠手填旧 Runtime／轮次改变本次责任。系统已有的行标识和来源关联保持原投影；可选风险或反证对象不要求作者编内部编号、抄父行编号或另注册其实际文件来源。专业内容仍须说明具体问题与实际影响，省略机器编号不能省略判断。
 
@@ -288,6 +290,8 @@ S11 可以退回验收或发布审计。应携带人的真实理由与准确材�
 TR-017 表示工程审计完成并进入 `awaiting_human_release`。Main 应能向人解释：本次需求与实际交付是什么，验收结论如何得出，哪些系统与操作风险已检查，哪些风险仍然存在，谁接管，发布和恢复需要哪些真实条件。
 
 系统复用已接收 S10 报告和准确路径提供人类材料，不要求另填一张机器元数据表，也不复制全部过程证据。可读报告用于理解结论，原始观察用于必要追溯，两者都不能替人作决定。
+
+S11 原决定应用只由 Main 忠实填写真人选择的 `disposition` 和可选 `reason`。`decision`／`decision_id`／`approved_by`／`runtime_id`／`scope`／`target_cursor` 都是系统元数据，保留系统提供的值或空白；空元数据不表示真人漏答，适用值由原 Writer 在接收时提供。
 
 S11 未收到真实选择时保持等待。S10 的 `approved` 是工程审计结论；它既不代表人的批准，也不执行 merge、publish、deploy 或正式 release。若真人随后拒绝缺陷、验收或审计，按相应原路处理，而不是把曾经到达 S11 当作永久通过。
 

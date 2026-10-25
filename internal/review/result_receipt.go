@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -336,7 +337,7 @@ func setAssignmentResultReceipt(state map[string]any, assignmentID string, recei
 // current assignment row, pinned Plan bytes, Runtime evidence index, immutable
 // artifacts, and the original committed journal event. It never reads a live
 // capture buffer or changes Runtime state.
-func replayAcceptedResult(root string, state map[string]any, incoming *Result, answerSHA string) (bool, error) {
+func replayAcceptedResult(root string, state map[string]any, incoming *Result, answerSHA string, contexts ...context.Context) (bool, error) {
 	if !typedResultReceiptsEnabled(state) {
 		return false, nil
 	}
@@ -371,23 +372,30 @@ func replayAcceptedResult(root string, state map[string]any, incoming *Result, a
 	if receipt.AnswerSHA256 != answerSHA {
 		return false, fmt.Errorf("ReviewResult submission key %s conflicts with the originally accepted professional answer", incoming.ResultID)
 	}
-	if err := verifyResultReceiptClosure(root, state, row, receipt, incoming); err != nil {
+	if err := verifyResultReceiptClosure(root, state, row, receipt, incoming, contexts...); err != nil {
 		return false, fmt.Errorf("ReviewResult receipt %s is not replayable: %w", incoming.ResultID, err)
 	}
 	return true, nil
 }
 
-func verifyResultReceiptClosure(root string, state, assignmentRow map[string]any, receipt ResultReceipt, incoming *Result) error {
+func verifyResultReceiptClosure(root string, state, assignmentRow map[string]any, receipt ResultReceipt, incoming *Result, contexts ...context.Context) error {
+	ctx := loopruntime.WithPacketBodyRoot(reviewRequestContext(contexts), root)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if receipt.PacketID != "" || receipt.PacketSHA256 != "" {
-		p, found, err := loopruntime.FindReviewResultPacket(state, receipt.PacketID)
-		if err != nil || !found {
+		p, found, err := loopruntime.FindReviewResultPacketContext(ctx, state, receipt.PacketID)
+		if err != nil {
+			return fmt.Errorf("S7 receipt original packet: %w", err)
+		}
+		if !found {
 			return errors.New("S7 receipt lacks original packet")
 		}
 		digest, err := workpacket.ReviewResultPacketDigest(p)
 		if err != nil || digest != receipt.PacketSHA256 {
 			return errors.New("S7 receipt packet digest differs")
 		}
-		if err := verifyResultPacketIssue(root, state, p); err != nil {
+		if err := loopruntime.VerifyReviewResultPacketIssueContext(ctx, root, state, p); err != nil {
 			return err
 		}
 		b := p.Binding

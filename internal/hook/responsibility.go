@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"github.com/entroforge/go-system-builder/internal/hookctx"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
@@ -183,7 +184,7 @@ func CurrentResponsibility(root string, snapshot loopruntime.Snapshot, agent *po
 	proofs := ResponsibilityProofs{}
 	if agent.ReviewAssignment {
 		if loopruntime.PacketEnabled(snapshot.State) {
-			proofs.ReviewResultConsumed = currentPacketReviewDelivery(snapshot.State, agent)
+			proofs.ReviewResultConsumed = currentPacketReviewDelivery(snapshot.State, agent, root)
 		} else {
 			proofs.ReviewResultConsumed = ReviewResultConsumed(root, snapshot.State, agent)
 		}
@@ -213,8 +214,12 @@ func CurrentResponsibility(root string, snapshot loopruntime.Snapshot, agent *po
 
 // currentPacketReviewDelivery reads the original consumer's committed delivery
 // projection. Artifact integrity remains with the consumer and receipt API.
-func currentPacketReviewDelivery(state map[string]any, agent *policy.AgentContext) bool {
-	packets, err := loopruntime.CurrentReviewResultPackets(state, agent.ID)
+func currentPacketReviewDelivery(state map[string]any, agent *policy.AgentContext, roots ...string) bool {
+	root := ""
+	if len(roots) > 0 {
+		root = roots[0]
+	}
+	packets, err := loopruntime.CurrentReviewResultPacketsContext(loopruntime.WithPacketBodyRoot(context.Background(), root), state, agent.ID)
 	if err != nil {
 		return false
 	}
@@ -246,7 +251,7 @@ func currentRepairResultBlocker(root string, state map[string]any, agent *policy
 	if agent == nil || agent.ID == "" || agent.RepairAssignmentID == "" || state == nil {
 		return false
 	}
-	packets, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPacketsForOwnerContext(loopruntime.WithPacketBodyRoot(context.Background(), root), state, agent.ID)
 	if err != nil {
 		return false
 	}

@@ -6,6 +6,7 @@ package review
 // command-output ref is used to certify a passing Claim.
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -57,6 +58,7 @@ type CaptureProvenance struct {
 	subjectRoot   string
 	authorityRoot string
 	runtimeState  map[string]any
+	context       context.Context
 	subjects      []FrozenSubject
 }
 
@@ -64,16 +66,22 @@ type CaptureProvenance struct {
 // wrapped command starts. It deliberately degrades to a diagnostic record
 // when no plan is registered, so `capture exec` remains useful outside S7.
 func BeginCaptureProvenance(root string, state map[string]any, assignmentID, executionRoot string, started time.Time) *CaptureProvenance {
+	return BeginCaptureProvenanceContext(context.Background(), root, state, assignmentID, executionRoot, started)
+}
+
+func BeginCaptureProvenanceContext(ctx context.Context, root string, state map[string]any, assignmentID, executionRoot string, started time.Time) *CaptureProvenance {
+	ctx = buildsurface.WithReadCache(ctx)
 	p := &CaptureProvenance{
 		AssignmentID:  strings.TrimSpace(assignmentID),
 		ExecutionRoot: canonicalCapturePath(executionRoot),
 		StartedAt:     started.UTC().Format(time.RFC3339Nano),
 	}
-	p.subjectRoot = captureSubjectRoot(root, executionRoot)
+	p.context = ctx
+	p.subjectRoot = captureSubjectRootContext(ctx, root, executionRoot)
 	p.authorityRoot = canonicalCapturePath(root)
 	p.runtimeState = state
 	p.ExecutionRepositoryRoot = p.subjectRoot
-	p.StartCommit = captureGitCommit(p.subjectRoot)
+	p.StartCommit = captureGitCommitContext(ctx, p.subjectRoot)
 
 	plan, ptr, err := LoadPlan(root, state)
 	if err != nil || plan == nil || ptr == nil {
@@ -99,7 +107,7 @@ func BeginCaptureProvenance(root string, state map[string]any, assignmentID, exe
 		baselineCopy.Contributions = append([]buildsurface.Contribution(nil), plan.ProductBaseline.Contributions...)
 		baselineCopy.Paths = append([]buildsurface.Path(nil), plan.ProductBaseline.Paths...)
 		p.ProductBaseline = &baselineCopy
-		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+		if err := verifyProductBaselineDeclarationContext(ctx, root, state, plan); err != nil {
 			p.markDiagnosticOnly("canonical product baseline is unavailable: " + err.Error())
 		}
 		if p.StartCommit == "" || p.StartCommit != plan.ProductBaseline.FinalCommit {
@@ -109,7 +117,7 @@ func BeginCaptureProvenance(root string, state map[string]any, assignmentID, exe
 		p.markDiagnosticOnly("canonical S6 generation has no pinned product baseline in the ReviewPlan")
 	}
 	p.StartFrozenSubjects = captureSubjectDigests(p.subjectRoot, p.subjects)
-	if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot); driftErr == nil {
+	if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot, ctx); driftErr == nil {
 		p.StartUndeclaredProductDrift = drift
 	} else if p.ProductBaseline != nil || errors.Is(driftErr, errResultPacketDriftProof) {
 		p.markDiagnosticOnly("capture start drift cannot be checked: " + driftErr.Error())
@@ -121,17 +129,25 @@ func BeginCaptureProvenance(root string, state map[string]any, assignmentID, exe
 // best-effort at capture time; submit performs the fail-closed comparison for
 // a passing Claim and explains missing or changed subjects to the Reviewer.
 func (p *CaptureProvenance) Finish(ended time.Time) {
+	ctx := context.Background()
+	if p != nil && p.context != nil {
+		ctx = p.context
+	}
+	p.FinishContext(ctx, ended)
+}
+
+func (p *CaptureProvenance) FinishContext(ctx context.Context, ended time.Time) {
 	if p == nil {
 		return
 	}
 	p.EndedAt = ended.UTC().Format(time.RFC3339Nano)
-	p.EndCommit = captureGitCommit(p.subjectRoot)
+	p.EndCommit = captureGitCommitContext(ctx, p.subjectRoot)
 	if p.ProductBaseline != nil {
 		if p.EndCommit == "" || p.EndCommit != p.ProductBaseline.FinalCommit {
 			p.markDiagnosticOnly(fmt.Sprintf("capture checkout ends at commit %q; canonical ReviewPlan requires %q", p.EndCommit, p.ProductBaseline.FinalCommit))
 		}
 		plan := &Plan{ProductBaseline: p.ProductBaseline, FrozenSubjects: append([]FrozenSubject(nil), p.subjects...)}
-		if err := verifyProductBaselineDeclaration(p.authorityRoot, p.runtimeState, plan); err != nil {
+		if err := verifyProductBaselineDeclarationContext(ctx, p.authorityRoot, p.runtimeState, plan); err != nil {
 			p.markDiagnosticOnly("canonical product baseline changed during capture: " + err.Error())
 		}
 	}
@@ -140,7 +156,7 @@ func (p *CaptureProvenance) Finish(ended time.Time) {
 	}
 	if len(p.subjects) > 0 {
 		plan := &Plan{ProductBaseline: p.ProductBaseline, FrozenSubjects: append([]FrozenSubject(nil), p.subjects...)}
-		if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot); driftErr == nil {
+		if drift, driftErr := detectUndeclaredProductDriftWithState(p.subjectRoot, plan, p.runtimeState, p.authorityRoot, ctx); driftErr == nil {
 			p.EndUndeclaredProductDrift = drift
 		} else if p.ProductBaseline != nil || errors.Is(driftErr, errResultPacketDriftProof) {
 			p.markDiagnosticOnly("capture end drift cannot be checked: " + driftErr.Error())
@@ -149,6 +165,7 @@ func (p *CaptureProvenance) Finish(ended time.Time) {
 	p.subjectRoot = ""
 	p.authorityRoot = ""
 	p.runtimeState = nil
+	p.context = nil
 	p.subjects = nil
 }
 
@@ -186,11 +203,14 @@ func canonicalCapturePath(path string) string {
 }
 
 func captureSubjectRoot(authorityRoot, executionRoot string) string {
+	return captureSubjectRootContext(context.Background(), authorityRoot, executionRoot)
+}
+func captureSubjectRootContext(ctx context.Context, authorityRoot, executionRoot string) string {
 	executionRoot = canonicalCapturePath(executionRoot)
 	if executionRoot == "" {
 		executionRoot = canonicalCapturePath(authorityRoot)
 	}
-	if gitRoot := captureGitRoot(executionRoot); gitRoot != "" {
+	if gitRoot := captureGitRootContext(ctx, executionRoot); gitRoot != "" {
 		return gitRoot
 	}
 	authorityRoot = canonicalCapturePath(authorityRoot)
@@ -206,10 +226,13 @@ func pathWithinCaptureRoot(path, root string) bool {
 }
 
 func captureGitRoot(path string) string {
+	return captureGitRootContext(context.Background(), path)
+}
+func captureGitRootContext(ctx context.Context, path string) string {
 	if path == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -218,10 +241,13 @@ func captureGitRoot(path string) string {
 }
 
 func captureGitCommit(path string) string {
+	return captureGitCommitContext(context.Background(), path)
+}
+func captureGitCommitContext(ctx context.Context, path string) string {
 	if path == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", path, "rev-parse", "HEAD")
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -342,7 +368,11 @@ func captureProvenanceForKey(steps []CaptureStep, key string) []*CaptureProvenan
 	return out
 }
 
-func validateOneCaptureProvenance(root string, state map[string]any, plan *Plan, assignmentID string, assignmentRevision int, provenance *CaptureProvenance) error {
+func validateOneCaptureProvenance(root string, state map[string]any, plan *Plan, assignmentID string, assignmentRevision int, provenance *CaptureProvenance, contexts ...context.Context) error {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if provenance == nil {
 		return fmt.Errorf("capture evidence has no execution provenance")
 	}
@@ -366,7 +396,7 @@ func validateOneCaptureProvenance(root string, state map[string]any, plan *Plan,
 		if provenance.ProductBaseline == nil || !reflect.DeepEqual(*provenance.ProductBaseline, *plan.ProductBaseline) {
 			return fmt.Errorf("capture provenance does not carry the pinned ReviewPlan product baseline")
 		}
-		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+		if err := verifyProductBaselineDeclarationContext(ctx, root, state, plan); err != nil {
 			return fmt.Errorf("pinned product baseline cannot be reverified at ReviewResult submit: %w", err)
 		}
 		if provenance.StartCommit == "" || provenance.StartCommit != plan.ProductBaseline.FinalCommit || provenance.EndCommit == "" || provenance.EndCommit != plan.ProductBaseline.FinalCommit {
@@ -440,9 +470,16 @@ func validateOneCaptureProvenance(root string, state map[string]any, plan *Plan,
 // validateCapturePassProvenance checks only command-output evidence attached
 // to PASS claims/checks. Failure findings may intentionally use dirty or
 // partial diagnostics; unrelated capture steps do not block a claim.
-func validateCapturePassProvenance(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result, steps []CaptureStep) error {
+func validateCapturePassProvenance(root string, state map[string]any, plan *Plan, assignment *PlanAssignment, result *Result, steps []CaptureStep, contexts ...context.Context) error {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	checkRefs := func(claimID string, refs []string) error {
 		for _, ref := range refs {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if !isAutomaticCaptureRef(ref) {
 				// Legacy hand-authored path: refs remain valid evidence. They
 				// have no command execution window to bind and therefore do not
@@ -473,7 +510,7 @@ func validateCapturePassProvenance(root string, state map[string]any, plan *Plan
 				}
 			}
 			for _, provenance := range provenances {
-				if err := validateOneCaptureProvenance(root, state, plan, assignment.AssignmentID, result.AssignmentRevision, provenance); err != nil {
+				if err := validateOneCaptureProvenance(root, state, plan, assignment.AssignmentID, result.AssignmentRevision, provenance, ctx); err != nil {
 					return fmt.Errorf("capture provenance for PASS evidence %q: %w", ref, err)
 				}
 			}
@@ -494,7 +531,7 @@ func validateCapturePassProvenance(root string, state map[string]any, plan *Plan
 			}
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 func validateCapturePassEvidence(result *Result) error {

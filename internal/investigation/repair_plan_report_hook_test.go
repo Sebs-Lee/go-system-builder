@@ -48,24 +48,28 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 		byAssignment[packet.Binding.RepairAssignmentID] = packet
 	}
 
-	// A Hook actor/cwd/session mismatch cannot veto the exact registered
-	// questionnaire path. The original packet owner and Main source are resolved
-	// from Runtime, then the original S9 consumer records the answer once.
+	// File-save Hook events do not receive Worker answers. Exercise the explicit
+	// original consumer with its bound owner, including rejection of a wrong owner.
 	first := byAssignment[plan.Assignments[0].AssignmentID]
 	if first.ID == "" {
 		t.Fatalf("no S9 packet for first assignment %s", plan.Assignments[0].AssignmentID)
 	}
 	firstAnswer := writeS9RepairPlanReportAnswer(t, fixture.root, first, "inspect the approved boundary and establish the failing pre-fix check")
-	firstReceipt := runS9PostToolUse(t, fixture, "wrong-builder", filepath.Join(fixture.root, "not-main"), firstAnswer)
+	beforeWrongOwner, journalWrongOwner := mustRead(t, fixture.statePath), mustRead(t, fixture.journalPath)
+	if _, _, err := submitS9RecoveryTestPacket(fixture, -1, first, firstAnswer, "wrong-builder"); err == nil {
+		t.Fatal("wrong owner consumed the original S9 packet")
+	}
+	assertS9RuntimeBytesUnchanged(t, fixture, beforeWrongOwner, journalWrongOwner, "wrong original S9 owner")
+	firstReceipt := submitS9OriginalReceipt(t, fixture, first, firstAnswer)
 	if !firstReceipt.Accepted || firstReceipt.PacketID != first.ID {
-		t.Fatalf("exact S9 answer path was rejected by Hook actor/cwd mismatch: %+v", firstReceipt)
+		t.Fatalf("original S9 consumer rejected the bound owner: %+v", firstReceipt)
 	}
 
 	// The original PTR-BUG-10 consumer may record the first sibling, but the
 	// original PTR-BUG-11 write barrier rejects execution until the other
 	// dispatched Assignment has its own exact receipt.
 	if !firstReceipt.Accepted || firstReceipt.PacketID != first.ID || firstReceipt.WorkComplete {
-		t.Fatalf("original S9 PostToolUse did not accept a pre-execution receipt: %+v", firstReceipt)
+		t.Fatalf("original S9 original consumer did not accept a pre-execution receipt: %+v", firstReceipt)
 	}
 	if durable, accepted, err := runtime.VerifiedRepairPlanReportReceipt(fixture.root, currentS9State(t, fixture), first.ID, first.Binding.OwnerAgentID); err != nil || !accepted || durable.WorkComplete || durable.ReportID != first.ReportID {
 		t.Fatalf("S9 receipt is not original, durable, and pre-execution: accepted=%v receipt=%+v err=%v", accepted, durable, err)
@@ -82,9 +86,9 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 		t.Fatalf("no S9 packet for second assignment %s", plan.Assignments[1].AssignmentID)
 	}
 	secondAnswer := writeS9RepairPlanReportAnswer(t, fixture.root, second, "independently inspect the sibling boundary and establish its failing pre-fix check")
-	secondReceipt := runS9PostToolUse(t, fixture, second.Binding.OwnerAgentID, fixture.root, secondAnswer)
+	secondReceipt := submitS9OriginalReceipt(t, fixture, second, secondAnswer)
 	if !secondReceipt.Accepted || secondReceipt.PacketID != second.ID || secondReceipt.WorkComplete {
-		t.Fatalf("original S9 PostToolUse did not accept the sibling pre-execution receipt: %+v", secondReceipt)
+		t.Fatalf("original S9 original consumer did not accept the sibling pre-execution receipt: %+v", secondReceipt)
 	}
 
 	// A late sibling PlanReport preserves the existing fixing phase.
@@ -100,13 +104,13 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 		t.Fatalf("original execution begin status = %v, want repairing", repairPointer["status"])
 	}
 
-	// An exact duplicate Hook event remains a receipt-only replay even after
+	// An exact duplicate original-consumer submission remains a receipt-only replay even after
 	// the repair phase advances. It must not append another Runtime revision.
 	stateBeforeReplay := mustRead(t, fixture.statePath)
 	journalBeforeReplay := mustRead(t, fixture.journalPath)
-	replay := runS9PostToolUse(t, fixture, first.Binding.OwnerAgentID, fixture.root, firstAnswer)
+	replay := submitS9OriginalReceipt(t, fixture, first, firstAnswer)
 	if !replay.Accepted || replay.PacketID != first.ID || replay.WorkComplete {
-		t.Fatalf("same-byte S9 PostToolUse replay after execution begin: %+v", replay)
+		t.Fatalf("same-byte S9 original consumer replay after execution begin: %+v", replay)
 	}
 	assertS9RuntimeBytesUnchanged(t, fixture, stateBeforeReplay, journalBeforeReplay, "exact accepted S9 replay")
 
@@ -126,7 +130,7 @@ func TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier(t *testing.
 	changedAnswer := writeS9RepairPlanReportAnswer(t, fixture.root, first, "changed answer after original acceptance")
 	stateBeforeConflict := mustRead(t, fixture.statePath)
 	journalBeforeConflict := mustRead(t, fixture.journalPath)
-	conflict := runS9PostToolUse(t, fixture, first.Binding.OwnerAgentID, fixture.root, changedAnswer)
+	conflict := submitS9OriginalReceipt(t, fixture, first, changedAnswer)
 	if conflict.Accepted {
 		t.Fatalf("changed S9 answer replaced an accepted report: %+v", conflict)
 	}
@@ -619,7 +623,7 @@ func assertS9ProductWriteObserved(t *testing.T, fixture *intakeFixture, owner s9
 	if envelope.HookSpecificOutput.PermissionDecision == "deny" {
 		t.Fatalf("S9 listener denied an observed tool: %s", out.String())
 	}
-	packets, err := runtime.RepairPlanReportPackets(currentS9State(t, fixture))
+	packets, err := runtime.RepairPlanReportPacketsContext(runtime.WithPacketBodyRoot(t.Context(), fixture.root), currentS9State(t, fixture))
 	if err != nil {
 		t.Fatalf("read registered S9 questionnaire path: %v", err)
 	}
@@ -630,7 +634,7 @@ func assertS9ProductWriteObserved(t *testing.T, fixture *intakeFixture, owner s9
 		}
 	}
 	context := envelope.HookSpecificOutput.AdditionalContext
-	if answerPath == "" || !strings.Contains(context, "questionnaire "+answerPath) || !strings.Contains(context, "The PlanReport is recorded. Main normally prepares the actual work location:") || strings.Contains(context, "runtime stage-answer issue") {
+	if answerPath == "" || !strings.Contains(context, "questionnaire "+answerPath) || !strings.Contains(context, "The PlanReport is recorded. Continue the same native Builder") || strings.Contains(context, "runtime stage-answer issue") {
 		t.Fatalf("S9 reminder omitted the exact questionnaire path or original next duty: %s", context)
 	}
 }
@@ -685,4 +689,19 @@ func s9AgentRow(state map[string]any, agentID string) map[string]any {
 		}
 	}
 	return nil
+}
+
+// Use the same original receiver as terminal/native reception; synthetic fixtures
+// supply their source-root authority explicitly without restoring save reception.
+func submitS9OriginalReceipt(t *testing.T, fixture *intakeFixture, packet workpacket.RepairPlanReportPacket, answer string) s9PostToolReceipt {
+	t.Helper()
+	_, _, err := submitS9RecoveryTestPacket(fixture, -1, packet, answer, packet.Binding.OwnerAgentID)
+	if err != nil {
+		return s9PostToolReceipt{PacketID: packet.ID, Error: err.Error()}
+	}
+	receipt, accepted, err := repair.IssuedRepairPlanReportReceipt(fixture.root, currentS9State(t, fixture), packet.ID, packet.Binding.OwnerAgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s9PostToolReceipt{PacketID: packet.ID, Accepted: accepted, WorkComplete: receipt.WorkComplete}
 }

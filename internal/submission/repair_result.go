@@ -57,7 +57,7 @@ func (s *Service) RepairResultSourceForPath(path string) (workpacket.RepairResul
 	if err != nil {
 		return workpacket.RepairResultPacket{}, "", false, err
 	}
-	return currentRepairResultSourceForPath(s.Root, snapshot.State, path)
+	return currentRepairResultSourceForPath(s.Root, snapshot.State, path, s.Context())
 }
 
 // SaveRepairResultFrom accepts the exact issued answer through the original
@@ -76,7 +76,7 @@ func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceR
 	if err := ctx.Err(); err != nil {
 		return rejected(snapshot, "", err), err
 	}
-	packet, actualRoot, found, err := currentRepairResultSourceForPath(s.Root, snapshot.State, path)
+	packet, actualRoot, found, err := currentRepairResultSourceForPath(s.Root, snapshot.State, path, s.Context())
 	if err != nil {
 		return rejected(snapshot, "", err), err
 	}
@@ -140,7 +140,7 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	packet, found, err := repairResultByReference(s.Root, snapshot.State, ref)
+	packet, found, err := repairResultByReference(s.Root, snapshot.State, ref, s.Context())
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -187,19 +187,19 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 	return acceptedRepairResultCandidateReceipt(s.Root, snapshot, packet, owner, nil)
 }
 
-func currentRepairResultSourceForPath(root string, state map[string]any, inputPath string) (workpacket.RepairResultPacket, string, bool, error) {
-	packets, err := loopruntime.RepairResultPackets(state)
+func currentRepairResultSourceForPath(root string, state map[string]any, inputPath string, contexts ...context.Context) (workpacket.RepairResultPacket, string, bool, error) {
+	packets, err := loopruntime.RepairResultPacketsForPathContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, inputPath)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, "", false, err
 	}
 	return repairResultPathInRoots(root, state, inputPath, packets)
 }
 
-func repairResultByReference(root string, state map[string]any, ref string) (workpacket.RepairResultPacket, bool, error) {
-	if packet, found, err := loopruntime.FindRepairResultPacket(state, ref); err != nil || found {
+func repairResultByReference(root string, state map[string]any, ref string, contexts ...context.Context) (workpacket.RepairResultPacket, bool, error) {
+	if packet, found, err := loopruntime.FindRepairResultPacketContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, ref); err != nil || found {
 		return packet, found, err
 	}
-	packets, err := loopruntime.RepairResultPackets(state)
+	packets, err := loopruntime.RepairResultPacketsForPathContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, ref)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}

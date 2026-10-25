@@ -1,11 +1,11 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strings"
 
 	"github.com/entroforge/go-system-builder/internal/checkexec"
@@ -18,42 +18,10 @@ const repairResultPacketTemplateID = "s9-repair-result-v1"
 // RepairResultPackets reads the existing packet registry. It does not
 // grant permission to answer, deliver a candidate or register a final Result.
 func RepairResultPackets(state map[string]any) ([]workpacket.RepairResultPacket, error) {
-	entities, _ := state["entities"].(map[string]any)
-	rawRows, exists := entities["work_packets"]
-	if !exists || rawRows == nil {
-		return []workpacket.RepairResultPacket{}, nil
-	}
-	rows, ok := rawRows.([]any)
-	if !ok {
-		return nil, fmt.Errorf("Runtime work_packets is not an array")
-	}
-	seen := map[string]bool{}
-	packets := make([]workpacket.RepairResultPacket, 0)
-	for i, raw := range rows {
-		row, ok := raw.(map[string]any)
-		id := stringValue(row["packet_id"])
-		if !ok || id == "" || seen[id] {
-			return nil, fmt.Errorf("invalid or duplicate Runtime work_packets[%d] identity", i)
-		}
-		seen[id] = true
-		if row["template_id"] != repairResultPacketTemplateID {
-			continue
-		}
-		data, err := json.Marshal(row)
-		if err != nil {
-			return nil, err
-		}
-		var p workpacket.RepairResultPacket
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		if p.ID != id {
-			return nil, fmt.Errorf("S9 packet %s identity differs from its registry entry", id)
-		}
-		packets = append(packets, p)
-	}
-	sort.Slice(packets, func(i, j int) bool { return packets[i].ID < packets[j].ID })
-	return packets, nil
+	return RepairResultPacketsContext(context.Background(), state)
+}
+func RepairResultPacketsContext(ctx context.Context, state map[string]any) ([]workpacket.RepairResultPacket, error) {
+	return repairResultPacketsMatchingContext(ctx, state, nil)
 }
 
 func repairResultPacketByID(packets []workpacket.RepairResultPacket, id string) (workpacket.RepairResultPacket, bool) {
@@ -66,61 +34,52 @@ func repairResultPacketByID(packets []workpacket.RepairResultPacket, id string) 
 }
 
 func FindRepairResultPacket(state map[string]any, id string) (workpacket.RepairResultPacket, bool, error) {
+	return FindRepairResultPacketContext(context.Background(), state, id)
+}
+func FindRepairResultPacketContext(ctx context.Context, state map[string]any, id string) (workpacket.RepairResultPacket, bool, error) {
 	if id == "" {
 		return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 packet ID is required")
 	}
-	entities, _ := state["entities"].(map[string]any)
-	rawRows := entities["work_packets"]
-	if rawRows == nil {
-		return workpacket.RepairResultPacket{}, false, nil
-	}
-	rows, ok := rawRows.([]any)
-	if !ok {
-		return workpacket.RepairResultPacket{}, false, fmt.Errorf("Runtime work_packets is not an array")
-	}
-	var selected map[string]any
-	for _, raw := range rows {
-		row, _ := raw.(map[string]any)
-		if row["packet_id"] != id {
-			continue
-		}
-		if selected != nil {
-			return workpacket.RepairResultPacket{}, false, fmt.Errorf("duplicate Runtime packet identity %s", id)
-		}
-		selected = row
-	}
-	if selected == nil || selected["template_id"] != repairResultPacketTemplateID {
-		return workpacket.RepairResultPacket{}, false, nil
-	}
-	data, err := json.Marshal(selected)
+	rows, err := repairPacketRowsContext(ctx, state, repairResultPacketTemplateID)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
-	var packet workpacket.RepairResultPacket
-	if err := json.Unmarshal(data, &packet); err != nil {
-		return workpacket.RepairResultPacket{}, false, err
+	for _, row := range rows {
+		if row["packet_id"] == id {
+			packet, err := readRepairResultRowContext(ctx, row)
+			return packet, err == nil, err
+		}
 	}
-	if packet.ID != id {
-		return workpacket.RepairResultPacket{}, false, fmt.Errorf("S9 packet %s identity differs from its registry entry", id)
-	}
-	return packet, true, nil
+	return workpacket.RepairResultPacket{}, false, nil
 }
 
 // CurrentRepairResultPackets selects current responsibilities, not write grants.
 func CurrentRepairResultPackets(root string, state map[string]any, owner string) ([]workpacket.RepairResultPacket, error) {
-	all, err := RepairResultPackets(state)
+	return CurrentRepairResultPacketsContext(context.Background(), root, state, owner)
+}
+func CurrentRepairResultPacketsContext(ctx context.Context, root string, state map[string]any, owner string) ([]workpacket.RepairResultPacket, error) {
+	ctx = controlproof.WithJournalReadCache(WithPacketBodyRoot(ctx, root))
+	review, _ := state["review"].(map[string]any)
+	pointer, _ := review["repair"].(map[string]any)
+	baseline, _ := state["baseline"].(map[string]any)
+	gen, _ := integerField(baseline, "generation")
+	owners, _ := pointer["assignment_owners"].(map[string]any)
+	all, err := repairResultPacketsMatchingContext(ctx, state, func(binding workpacket.RepairResultBinding) bool {
+		b := binding.Sources
+		return (owner == "" || b.OwnerAgentID == owner) && b.RuntimeID == state["runtime_id"] && b.BaselineGeneration == gen && pointer["session_id"] == b.SessionID && pointer["plan_ref"] == b.PlanRef && owners[b.RepairAssignmentID] == b.OwnerAgentID
+	})
 	if err != nil {
 		return nil, err
 	}
-	return currentRepairResultPackets(root, state, owner, all)
+	return currentRepairResultPackets(root, state, owner, all, ctx)
 }
 
-func currentRepairResultPackets(root string, state map[string]any, owner string, all []workpacket.RepairResultPacket) ([]workpacket.RepairResultPacket, error) {
+func currentRepairResultPackets(root string, state map[string]any, owner string, all []workpacket.RepairResultPacket, contexts ...context.Context) ([]workpacket.RepairResultPacket, error) {
 	candidates := currentRepairResultCandidates(state, owner, all)
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	journal, err := repairResultResumeJournal(root, state)
+	journal, err := repairResultResumeJournal(root, state, contexts...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,15 +153,19 @@ func currentRepairResultPacketsWithVerifier(verifier *repairResultResumeVerifier
 }
 
 func VerifyRepairResultPacketIssue(root string, state map[string]any, p workpacket.RepairResultPacket) error {
-	data, err := controlproof.ReadJournalForState(root, state)
+	return VerifyRepairResultPacketIssueContext(context.Background(), root, state, p)
+}
+func VerifyRepairResultPacketIssueContext(ctx context.Context, root string, state map[string]any, p workpacket.RepairResultPacket) error {
+	ctx = controlproof.WithJournalReadCache(WithPacketBodyRoot(ctx, root))
+	data, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return err
 	}
-	j, err := controlproof.InspectJournalData(data)
+	j, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return err
 	}
-	return verifyRepairResultPacketIssue(root, state, p, j)
+	return verifyRepairResultPacketIssue(root, state, p, j, ctx)
 }
 
 // VerifyRepairResultPacketIssueAndCurrent verifies the original issuance and
@@ -210,11 +173,15 @@ func VerifyRepairResultPacketIssue(root string, state map[string]any, p workpack
 // and Resume verifier. It does not cache authority across calls; callers that
 // later mutate Runtime must perform their own fresh verification in the CAS.
 func VerifyRepairResultPacketIssueAndCurrent(root string, state map[string]any, p workpacket.RepairResultPacket) error {
-	journal, err := repairResultResumeJournal(root, state)
+	return VerifyRepairResultPacketIssueAndCurrentContext(context.Background(), root, state, p)
+}
+func VerifyRepairResultPacketIssueAndCurrentContext(ctx context.Context, root string, state map[string]any, p workpacket.RepairResultPacket) error {
+	ctx = controlproof.WithJournalReadCache(WithPacketBodyRoot(ctx, root))
+	journal, err := repairResultResumeJournal(root, state, ctx)
 	if err != nil {
 		return err
 	}
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsForBindingContext(ctx, state, p.Binding)
 	if err != nil {
 		return err
 	}
@@ -228,8 +195,8 @@ func VerifyRepairResultPacketIssueAndCurrent(root string, state map[string]any, 
 	return verifyRepairResultPacketCurrentWithVerifier(root, state, p, verifier)
 }
 
-func verifyRepairResultPacketIssue(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection) error {
-	packets, err := RepairResultPackets(state)
+func verifyRepairResultPacketIssue(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, contexts ...context.Context) error {
+	packets, err := repairResultPacketsForBindingContext(repairPacketContext(root, contexts...), state, p.Binding)
 	if err != nil {
 		return err
 	}
@@ -398,11 +365,15 @@ func verifyRepairResultSources(root string, state map[string]any, p workpacket.R
 // VerifyRepairResultPacketCurrent checks fresh original source and definition.
 // It is not a host/session, PLAN, reported-completion or runner permission.
 func VerifyRepairResultPacketCurrent(root string, state map[string]any, p workpacket.RepairResultPacket) error {
-	journal, err := repairResultResumeJournal(root, state)
+	return VerifyRepairResultPacketCurrentContext(context.Background(), root, state, p)
+}
+func VerifyRepairResultPacketCurrentContext(ctx context.Context, root string, state map[string]any, p workpacket.RepairResultPacket) error {
+	ctx = controlproof.WithJournalReadCache(WithPacketBodyRoot(ctx, root))
+	journal, err := repairResultResumeJournal(root, state, ctx)
 	if err != nil {
 		return err
 	}
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsForBindingContext(ctx, state, p.Binding)
 	if err != nil {
 		return err
 	}

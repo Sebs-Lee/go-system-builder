@@ -33,6 +33,9 @@ func bindS8LocalEvidence(root, sourceRoot string, packet workpacket.HypothesisRe
 			if err != nil {
 				return err
 			}
+			if err := evidence.ValidateLocalCaptureSource(rel); err != nil {
+				return err
+			}
 			data, err := workpacket.ReadFile(sourceRoot, rel, hypothesisResultPacketReadLimit)
 			if err != nil {
 				return fmt.Errorf("S8 local evidence %s: %w", rel, err)

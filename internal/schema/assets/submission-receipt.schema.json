@@ -16,6 +16,7 @@
     "field_errors"
   ],
   "properties": {
+    "attempt_status": {"enum": ["rejected"], "description": "Current save attempt only; accepted and responsibility_status retain the durable earlier reception."},
     "packet_id": {
       "type": "string"
     },

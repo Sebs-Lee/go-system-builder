@@ -136,10 +136,17 @@ type checkpoint struct {
 // immutable Main check and Git contribution. It intentionally does not read
 // Runtime state or journal and does not resolve the current accepted Result
 // pointer; callers retain those authority checks.
-func Verify(ctx context.Context, in Input) (VerifiedContribution, error) {
-	var out VerifiedContribution
+func Verify(ctx context.Context, in Input) (out VerifiedContribution, err error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			out, err = VerifiedContribution{}, ctx.Err()
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return out, err
 	}
 	if err := assignmentrecord.ValidateRecord(in.Record); err != nil {
 		return out, fmt.Errorf("validate Assignment Record: %w", err)
@@ -199,6 +206,9 @@ func Verify(ctx context.Context, in Input) (VerifiedContribution, error) {
 	}
 	checksDirRel := path.Join(path.Dir(checkpointRel), "checks")
 	reader := func(ref string) ([]byte, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		rel, err := checkpointArtifactRel(root, checksDirRel, facts.MainRoot, cp.PreviousMainRoots, in.AuthorizedMainRoots, ref)
 		if err != nil {
 			return nil, err

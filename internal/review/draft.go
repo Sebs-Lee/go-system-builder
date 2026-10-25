@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -33,10 +34,15 @@ func DraftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 	return draftPlanForRoot(root, state, round)
 }
 
-func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []string) {
+func DraftPlanForRootContext(ctx context.Context, root string, state map[string]any, round int) (*Plan, []string) {
+	return draftPlanForRoot(root, state, round, ctx)
+}
+
+func draftPlanForRoot(root string, state map[string]any, round int, contexts ...context.Context) (*Plan, []string) {
+	ctx := baselineContext(contexts)
 	generation := baselineGeneration(state)
 	var notes []string
-	productBaseline, baselineErr := readCanonicalProductBaseline(root, state)
+	productBaseline, baselineErr := readCanonicalProductBaselineContext(ctx, root, state)
 	if baselineErr != nil {
 		return nil, []string{"canonical S6 product baseline cannot be verified: " + baselineErr.Error()}
 	}
@@ -90,7 +96,7 @@ func draftPlanForRoot(root string, state map[string]any, round int) (*Plan, []st
 			notes = append(notes, "Main product change has no registered S6 contribution; it remains in full review coverage: "+file)
 		}
 	} else {
-		projection = buildS7BaselineProjection(root, state)
+		projection = buildS7BaselineProjection(root, state, ctx)
 		for _, diagnostic := range projection.Diagnostics {
 			notes = append(notes, "S7 baseline projection: "+diagnostic+"; registration will reject an unverifiable completion artifact")
 		}

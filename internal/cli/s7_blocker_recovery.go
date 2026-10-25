@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -95,7 +96,7 @@ func s7BlockedAssignmentGuidance(root string, state map[string]any, id string) s
 		return lead + "; Main restores original recovery source: " + err.Error() + ".\n"
 	}
 	resume := "Resume the same Reviewer and original ReviewResult answer; save its actual restored observations and return the same reference for native SubagentStop reception."
-	packets, packetErr := runtime.CurrentReviewResultPackets(state, source.owner)
+	packets, packetErr := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state, source.owner)
 	if packetErr != nil {
 		resume += " Original answer lookup: " + packetErr.Error() + "."
 	}

@@ -18,13 +18,18 @@ func TestNativeInterruptedReceptionPreservesAnswerAndNamesOriginalRetry(t *testi
 		if code := nativeS9HandoffFailure("original-worker", "/original/result.json", err, &diagnostic); code != 0 {
 			t.Fatal("interrupted return was blocked")
 		}
-		for _, want := range []string{"not a professional content rejection", "If already accepted", "resume the same native Agent", "unchanged saved answer", "/original/result.json"} {
+		for _, want := range []string{"not a professional content rejection", "If already accepted", "original consumer owns", "does not establish completion", "/original/result.json"} {
 			if !strings.Contains(diagnostic.String(), want) {
 				t.Fatalf("missing %q: %s", want, &diagnostic)
 			}
 		}
 		if strings.Contains(diagnostic.String(), "Consumer rejection:") {
 			t.Fatal("timeout labeled content rejection")
+		}
+		for _, forbidden := range []string{"resume the same native Agent", "save the unchanged file again", "change the artifact id", "resume the original professional responsibility", "restore missing or stale sources"} {
+			if strings.Contains(diagnostic.String(), forbidden) {
+				t.Fatalf("timeout assigned transaction recovery to author: %s", &diagnostic)
+			}
 		}
 	}
 	if nativeReceptionInterrupted(errors.New("author omitted required assertion")) {

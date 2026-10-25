@@ -178,11 +178,12 @@ func TestNativeS6BriefPreservesExactLegacyAuthoringAndRejectsDrift(t *testing.T)
 	if !bytes.Contains(current, []byte(`"plan_assertion_index":0`)) || bytes.Contains(current, []byte(`"judgment":null,"plan_assertion_indexes":[]`)) {
 		t.Fatal("normal preparation did not deliver compact authoring")
 	}
-	previousCurrent := strings.TrimPrefix(string(current), nativeS6SourceAlignment(r, "original-base", plan, result))
+	previousSourceAligned := strings.TrimSuffix(string(current), nativeS6CurrentAuthoringGuidance)
+	previousCurrent := strings.TrimPrefix(previousSourceAligned, nativeS6SourceAlignment(r, "original-base", plan, result))
 	previousInputs := strings.Replace(previousCurrent, nativeS6BriefInputs(root, r, false), nativeS6BriefInputs(root, r, true), 1)
 	legacy := strings.Replace(previousInputs, nativeS6ProfessionalInstructions("original-base", path, plan, result), nativeS6LegacyProfessionalInstructions("original-base", path, plan, result), 1)
 	compact := strings.Replace(previousInputs, nativeS6ProfessionalInstructions("original-base", path, plan, result), fmt.Sprintf(nativeS6CompactProfessionalFormat, "original-base", path, plan, result), 1)
-	for _, text := range []string{string(current), previousCurrent + nativeS6LegacySourceAlignment(r, "original-base", plan, result), previousCurrent, compact, strings.Replace(compact, nativeS6MethodGuidance(root, r), "", 1), legacy, strings.Replace(legacy, nativeS6MethodGuidance(root, r), "", 1)} {
+	for _, text := range []string{string(current), previousSourceAligned, previousCurrent + nativeS6LegacySourceAlignment(r, "original-base", plan, result), previousCurrent, compact, strings.Replace(compact, nativeS6MethodGuidance(root, r), "", 1), legacy, strings.Replace(legacy, nativeS6MethodGuidance(root, r), "", 1)} {
 		if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -198,5 +199,35 @@ func TestNativeS6BriefPreservesExactLegacyAuthoringAndRejectsDrift(t *testing.T)
 	}
 	if err := prepareNativeS6Brief(root, state, r, "original-base", io.Discard); err == nil || !strings.Contains(err.Error(), "original native task brief differs") {
 		t.Fatalf("legacy compatibility accepted changed sources: %v", err)
+	}
+}
+
+func TestNativeS6BriefSeparatesWorkerClosingChecksFromMainChecks(t *testing.T) {
+	for _, workerCommand := range []string{"", "go test ./worker/..."} {
+		t.Run(workerCommand, func(t *testing.T) {
+			root := t.TempDir()
+			r := assignmentrecord.Record{AssignmentID: "assignment-checks", Revision: 1, Contract: assignmentrecord.NativeDeliveryContract, Task: assignmentrecord.ContextSource{ID: "TASK-001", Ref: "docs/dev/tasks/TASK-001.md"}, EffectiveWritePaths: []string{"src/"}, RequiredChecks: []string{"make main-only-check"}, ClosingContract: &assignmentrecord.ClosingContract{}}
+			if workerCommand != "" {
+				r.ClosingContract.WorkerChecks = []assignmentrecord.WorkerCheck{{Index: 0, Command: workerCommand}}
+			}
+			if err := prepareNativeS6Brief(root, map[string]any{}, r, "base", io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			brief, _, _ := assignmentrecord.NativePaths(r)
+			data, err := os.ReadFile(filepath.Join(root, brief))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(data)
+			if strings.Contains(text, "make main-only-check") {
+				t.Fatal("assigned Main check to Worker")
+			}
+			if workerCommand != "" && !strings.Contains(text, "- "+workerCommand) {
+				t.Fatal("lost explicit Worker check")
+			}
+			if workerCommand == "" && !strings.Contains(text, "No Worker runner checks were assigned") {
+				t.Fatal("empty Closing Contract borrowed Main checks")
+			}
+		})
 	}
 }

@@ -82,7 +82,7 @@ func s9ObservableQuestionnaires(root string, state map[string]any, request polic
 		if main {
 			filter = ""
 		}
-		packets, _ := s9CurrentQuestionnaires(root, state, filter, result)
+		packets, _ := s9CurrentQuestionnaires(root, state, filter, result, contextForHook(request))
 		for _, packet := range packets {
 			source := root
 			if packet.result != nil {
@@ -90,13 +90,7 @@ func s9ObservableQuestionnaires(root string, state map[string]any, request polic
 			}
 			if !main && source != "" {
 				p := packet
-				var draft any
-				for _, row := range objectSliceAny(mapFieldCLI(state, "entities")["work_packets"]) {
-					if row["packet_id"] == packet.id {
-						draft = row["draft"]
-					}
-				}
-				out = append(out, observedQuestionnaire{path: resolveRootPath(source, packet.answer), draft: draft, s9Kind: "packet", s9Packet: &p, professionalWorker: true})
+				out = append(out, observedQuestionnaire{path: resolveRootPath(source, packet.answer), draft: packet.draft, s9Kind: "packet", s9Packet: &p, professionalWorker: true})
 			}
 			if main && packet.result != nil && s9ObservedBlockerCurrent(state, packet) {
 				p := workpacket.RepairResultPacket{AnswerPath: packet.answer, Binding: *packet.result}
@@ -111,6 +105,9 @@ func s9ObservableQuestionnaires(root string, state map[string]any, request polic
 
 func s9ObservedExecution(state map[string]any, packet s9ListenerQuestionnaire) map[string]any {
 	executions := mapFieldCLI(mapFieldCLI(state, "workspace"), "executions")
+	if packet.executionAssignment != "" {
+		return mapFieldCLI(executions, packet.executionAssignment)
+	}
 	for _, id := range []string{packet.binding.RepairAssignmentID, packet.binding.ManifestAssignmentID} {
 		if execution := mapFieldCLI(executions, id); len(execution) != 0 {
 			return execution

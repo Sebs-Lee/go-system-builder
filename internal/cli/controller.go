@@ -737,7 +737,7 @@ func s7ObservationBatchLine(reviewMap map[string]any) string {
 func s7RecoveryNextAction(root string, state map[string]any, planStatus string, round int, running, queued, blocked, unconsumed, gaps []string) string {
 	switch planStatus {
 	case "stale":
-		return "Main must resolve the original baseline drift feedback and recover the original ReviewPlan through its existing revive/revise path; queued dispatch and old answers await a valid plan"
+		return "Main must resolve the original baseline drift feedback and recover the original ReviewPlan through its existing revive/revise path; queued dispatch and old answers await a valid plan" + ". " + s7PinnedSourceRecovery(root)
 	case "observation_sealed":
 		return "the sealed ObservationBatch hands off to S8 automatically: the next PreToolUse auto-commits TR-008 — do not invoke the transition CLI"
 	case "clean":
@@ -2116,7 +2116,7 @@ func packetBackedRepairResultStage(state map[string]any) bool {
 }
 
 func typedRepairResultPacketForAssignment(root string, state map[string]any, assignmentID, owner string) (workpacket.RepairResultPacket, bool, error) {
-	packets, err := runtime.RepairResultPackets(state)
+	packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state)
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}

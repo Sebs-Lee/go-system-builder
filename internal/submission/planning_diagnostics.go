@@ -1,6 +1,7 @@
 package submission
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -61,6 +62,13 @@ func RecordPlanningDiagnostic(root string, state map[string]any, kind, message s
 // PlanningDiagnostic returns only a bounded last-attempt diagnostic. Missing or
 // damaged display storage is ignored; receipts and gates remain authoritative.
 func PlanningDiagnostic(root string, state map[string]any, kind string) string {
+	return PlanningDiagnosticContext(context.Background(), root, state, kind)
+}
+
+func PlanningDiagnosticContext(ctx context.Context, root string, state map[string]any, kind string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	data, err := workpacket.ReadFile(root, planningDiagnosticPath(state, kind), 64<<10)
 	if err != nil {
 		return ""
@@ -68,7 +76,7 @@ func PlanningDiagnostic(root string, state map[string]any, kind string) string {
 	var diagnostic struct {
 		Message string `json:"message"`
 	}
-	if json.Unmarshal(data, &diagnostic) != nil || diagnostic.Message == "" {
+	if ctx.Err() != nil || json.Unmarshal(data, &diagnostic) != nil || diagnostic.Message == "" {
 		return ""
 	}
 	return " Last " + kind + " attempt: " + diagnostic.Message

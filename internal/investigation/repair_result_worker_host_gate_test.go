@@ -121,7 +121,7 @@ func TestS9WorkerIsolationPreflightRequiresExplicitChecksNotProfessionalRedCheck
 	if _, err := os.Stat(filepath.Join(execution.Path, "internal/api/payload.go")); !os.IsNotExist(err) {
 		t.Fatalf("prepare performed product work: %v", err)
 	}
-	if packets, err := runtime.RepairResultPackets(currentS9Snapshot(t, fixture).State); err != nil || len(packets) == 0 {
+	if packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(t.Context(), fixture.root), currentS9Snapshot(t, fixture).State); err != nil || len(packets) == 0 {
 		t.Fatalf("prepare should supply only the next professional Result questionnaire: %d %v", len(packets), err)
 	}
 }

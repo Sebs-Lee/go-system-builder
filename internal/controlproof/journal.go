@@ -68,7 +68,10 @@ func InspectJournalSegmentDataFrom(data []byte, firstSequence int) (JournalInspe
 	return InspectJournalSegmentDataFromContext(context.Background(), data, firstSequence)
 }
 
-func InspectJournalSegmentDataFromContext(ctx context.Context, data []byte, firstSequence int) (JournalInspection, error) {
+func inspectJournalSegmentDataFromContext(ctx context.Context, data []byte, firstSequence int) (JournalInspection, error) {
+	if err := ctx.Err(); err != nil {
+		return JournalInspection{}, err
+	}
 	inspection := JournalInspection{
 		Events:     make([]map[string]any, 0),
 		EventIndex: make(map[string]int),

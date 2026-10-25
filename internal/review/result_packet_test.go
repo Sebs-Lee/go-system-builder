@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -398,7 +399,7 @@ func TestIssuedResultPacketConcurrentIssuanceUsesOneOriginalEvent(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	packets, err := loopruntime.ReviewResultPackets(latest.State)
+	packets, err := loopruntime.ReviewResultPacketsContext(loopruntime.WithPacketBodyRoot(context.Background(), root), latest.State)
 	if err != nil {
 		t.Fatal(err)
 	}

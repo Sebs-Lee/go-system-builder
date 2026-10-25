@@ -115,7 +115,7 @@ func TestBuildReviewResultPacketIsStableAndSchemasCompile(t *testing.T) {
 }
 
 func TestHistoricalReviewResultTemplateOnlyRestoresKnownFrozenQuestions(t *testing.T) {
-	for _, name := range []string{"stage-form-s7-template-before-safety-stop.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json"} {
+	for _, name := range []string{"stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-safety-stop.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := schema.ReadAsset(name)
 			if err != nil {

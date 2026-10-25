@@ -1,6 +1,7 @@
 package repair
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -24,7 +25,15 @@ const seedMarker = "PLANNER-REFINE (S9 seed): answer this professional question 
 // its full machine-derived surface; the compatibility branch below preserves
 // the historical seed shape for runtimes without a canonical Assignment
 // registry.
-func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact ChangeImpact, contractRef ContractRef, taskIDs []string, impactPath string, state map[string]any, canonicalBaseline *buildsurface.Snapshot) (ArtifactRef, error) {
+func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact ChangeImpact, contractRef ContractRef, taskIDs []string, impactPath string, state map[string]any, canonicalBaseline *buildsurface.Snapshot, contexts ...context.Context) (ArtifactRef, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	ctx = buildsurface.WithReadCache(ctx)
+	if err := ctx.Err(); err != nil {
+		return ArtifactRef{}, err
+	}
 	// Read the approved RepairContract so the handoff keeps verifying the
 	// artifact's hash and schema. The seed itself no longer embeds contract
 	// fields; it only points the Planner at the contract as a source ref.
@@ -32,7 +41,10 @@ func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact C
 		return ArtifactRef{}, err
 	}
 	if canonicalBaseline != nil {
-		plan, notes := reviewpkg.DraftPlanForRoot(root, state, round)
+		plan, notes := reviewpkg.DraftPlanForRootContext(ctx, root, state, round)
+		if err := ctx.Err(); err != nil {
+			return ArtifactRef{}, err
+		}
 		if plan == nil {
 			return ArtifactRef{}, fmt.Errorf("draft canonical S7 baseline: %s", strings.Join(notes, "; "))
 		}
@@ -42,10 +54,13 @@ func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact C
 		// DraftPlanForRoot independently reconstructs this projection. Recheck
 		// the original sources immediately before publishing the immutable seed;
 		// TR-012 repeats this check inside its original Writer mutation.
-		if err := buildsurface.Verify(root, state, *canonicalBaseline); err != nil {
+		if err := buildsurface.VerifyContext(ctx, root, state, *canonicalBaseline); err != nil {
 			return ArtifactRef{}, fmt.Errorf("verify canonical S7 baseline before seed publication: %w", err)
 		}
 		seedPath := artifactRoot + "/s7-seeds/" + plan.ReviewPlanID + ".json"
+		if err := ctx.Err(); err != nil {
+			return ArtifactRef{}, err
+		}
 		return writeImmutable(root, seedPath, "review-plan.schema.json", plan)
 	}
 	planID := fmt.Sprintf("review-plan-s9-round-%d", round)
@@ -112,6 +127,9 @@ func createS7ReviewPlanSeed(root string, round, baselineGeneration int, impact C
 		"dispatch_capacity_policy": "coverage_complete", "created_by": "s9-handoff", "created_at": nowOr(time.Time{}),
 	}
 	seedPath := artifactRoot + "/s7-seeds/" + planID + ".json"
+	if err := ctx.Err(); err != nil {
+		return ArtifactRef{}, err
+	}
 	return writeImmutable(root, seedPath, "review-plan.schema.json", seed)
 }
 

@@ -47,15 +47,16 @@ type DurationStats struct {
 
 // Snapshot is the durable on-disk metrics document.
 type Snapshot struct {
-	GateEvaluations                map[string]int64         `json:"loop_gate_evaluations_total"`
-	TransitionCommits              map[string]int64         `json:"loop_transition_commits_total"`
-	CASConflicts                   int64                    `json:"loop_cas_conflicts_total"`
-	MilestoneRefreshFailures       int64                    `json:"loop_milestone_refresh_failures_total"`
-	MilestoneRefreshFailureReasons map[string]int64         `json:"loop_milestone_refresh_failure_reasons,omitempty"`
-	RecoveryPackets                int64                    `json:"loop_recovery_packets_total"`
-	IntegrationDuration            map[string]DurationStats `json:"loop_integration_duration_ms"`
-	SubmissionSaves                map[string]int64         `json:"loop_submission_save_total,omitempty"`
-	SubmissionSaveDuration         map[string]DurationStats `json:"loop_submission_save_duration_ms,omitempty"`
+	GateEvaluations                map[string]int64              `json:"loop_gate_evaluations_total"`
+	TransitionCommits              map[string]int64              `json:"loop_transition_commits_total"`
+	CASConflicts                   int64                         `json:"loop_cas_conflicts_total"`
+	MilestoneRefreshFailures       int64                         `json:"loop_milestone_refresh_failures_total"`
+	MilestoneRefreshFailureReasons map[string]int64              `json:"loop_milestone_refresh_failure_reasons,omitempty"`
+	RecoveryPackets                int64                         `json:"loop_recovery_packets_total"`
+	IntegrationDuration            map[string]DurationStats      `json:"loop_integration_duration_ms"`
+	SubmissionSaves                map[string]int64              `json:"loop_submission_save_total,omitempty"`
+	SubmissionSaveDuration         map[string]DurationStats      `json:"loop_submission_save_duration_ms,omitempty"`
+	HookTransportFailures          map[string]HookTransportStats `json:"loop_hook_transport_failures,omitempty"`
 	// S7 verification-round series (L3-S7 §14.2 machine-collectible subset;
 	// see s7.go).
 	S7Assignments        map[string]int64         `json:"loop_s7_assignments,omitempty"`
@@ -98,6 +99,7 @@ func emptySnapshot() Snapshot {
 		IntegrationDuration:            map[string]DurationStats{},
 		SubmissionSaves:                map[string]int64{},
 		SubmissionSaveDuration:         map[string]DurationStats{},
+		HookTransportFailures:          map[string]HookTransportStats{},
 		S7Assignments:                  map[string]int64{},
 		S7Claims:                       map[string]int64{},
 		S7PlanRevision:                 map[string]int64{},
@@ -154,6 +156,9 @@ func (s *Store) readBase() (Snapshot, error) {
 	}
 	if snap.SubmissionSaveDuration == nil {
 		snap.SubmissionSaveDuration = map[string]DurationStats{}
+	}
+	if snap.HookTransportFailures == nil {
+		snap.HookTransportFailures = map[string]HookTransportStats{}
 	}
 	if snap.S7Assignments == nil {
 		snap.S7Assignments = map[string]int64{}
@@ -230,28 +235,34 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 }
 
 // maxTrackedFamilies documents the RC-17 family budget: the durable snapshot
-// tracks eighteen loop_* families — seven core control-plane families plus
-// nine S7 round/outcome families and two S5 save families. Every one is wired
+// tracks nineteen loop_* families — seven core control-plane families plus
+// nine S7 round/outcome families, two S5 save families and one outer Hook
+// transport failure family. Every one is wired
 // at both ends:
 //   - core seven: recorded by controller/cycle.go, cli/controller.go,
 //     cli/run.go and integration/integrate.go; rendered by FormatDoctor /
 //     FormatHealth;
-//   - S9 nine: recorded from review submit/supplement (RecordS7RoundShape,
+//   - S7 nine: recorded from review submit/supplement (RecordS7RoundShape,
 //     RecordS7ResultSubmit, RecordS7SubmitPhase, ...); all rendered by
 //     FormatS7 (cli/s7_status.go).
 //   - S5 two: one bounded observation per recognized Save invocation from
 //     submission/service.go; counters and durations rendered by FormatDoctor
 //     and FormatHealth. These include replay and are not first-submit metrics.
+//   - outer Hook transport one: ObserveHookTransportFailure from
+//     cli/hook_budget.go records actual outer process failures through the
+//     existing observation spool; FormatDoctor / FormatHealth render it and
+//     HealthDegraded consumes it. Labels are bounded event/outcome pairs;
+//     actual process budget ranges are statistics, never series dimensions.
 //
 // The audit's "15→≤10, remove S7PlanRevision as zero-consumer" does not
 // survive contact with the wiring: S7PlanRevision has live producers
 // (RecordS7RoundShape via review/supplement.go and review/submit.go) and a
 // live renderer (FormatS7), so it is kept and documented instead of cut. The
-// cap is therefore a review guard, not a quota — adding a nineteenth family
+// cap is therefore a review guard, not a quota — adding a twentieth family
 // requires either retiring a dead one in the same change or extending this
 // comment with the new producer/consumer pair. Enforced by
 // TestTrackedFamilyBudget.
-const maxTrackedFamilies = 18
+const maxTrackedFamilies = 19
 
 // pruneDeadFamilies trims unparseable labels out of the round-keyed S7 maps
 // before the snapshot is persisted. Round-keyed families may only carry
@@ -333,6 +344,7 @@ func FormatDoctor(root string) (string, error) {
 	fmt.Fprintf(&b, "  %s %d\n", metricRecoveryPackets, snap.RecoveryPackets)
 	writeDurationStats(&b, metricIntegrationDuration, snap.IntegrationDuration)
 	writeSubmissionSaves(&b, snap)
+	writeHookTransportFailures(&b, snap)
 	hookTiming, err := readHookTiming(root)
 	if err != nil {
 		return "", err
@@ -368,6 +380,7 @@ func FormatHealth(root string) (string, error) {
 	writeLabeledCounter(&b, metricGateEvaluations, "status", snap.GateEvaluations)
 	writeHookTimingStats(&b, timing)
 	writeSubmissionSaves(&b, snap)
+	writeHookTransportFailures(&b, snap)
 	if degraded {
 		b.WriteString("  next: inspect runtime state/journal with `loop-harness runtime reconcile`\n")
 	}
@@ -389,7 +402,7 @@ func HealthDegraded(root string) (bool, error) {
 }
 
 func healthDegraded(snap Snapshot, timing map[string]hookTimingStats) bool {
-	if snap.CASConflicts > 0 || snap.MilestoneRefreshFailures > 0 {
+	if snap.CASConflicts > 0 || snap.MilestoneRefreshFailures > 0 || len(snap.HookTransportFailures) > 0 {
 		return true
 	}
 	if snap.GateEvaluations["unknown"] > 0 {
@@ -514,7 +527,7 @@ func writeHookTimingStats(b *strings.Builder, timing map[string]hookTimingStats)
 		if p95 >= thresholdMS || max >= thresholdMS {
 			fmt.Fprintf(b, "  WARNING: Hook event %q is at or above 40%% of the %dms platform timeout", event, timeoutMS)
 			if event == "PreToolUse" {
-				fmt.Fprint(b, "; a platform timeout can bypass PreToolUse enforcement")
+				fmt.Fprint(b, "; progress observation may be incomplete while ordinary tools continue")
 			}
 			fmt.Fprintln(b)
 		}

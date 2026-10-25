@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/processtree"
 )
@@ -100,6 +102,21 @@ func RunWithHookBudget(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 func runBudgetedHook(ctx context.Context, executable string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	started := time.Now()
+	root := hookRootForBudget(args)
+	recordFailure := func(lifetime context.Context, event, outcome string) {
+		if errors.Is(lifetime.Err(), context.DeadlineExceeded) {
+			outcome = "deadline"
+		} else if errors.Is(lifetime.Err(), context.Canceled) {
+			outcome = "canceled"
+		}
+		deadline, _ := lifetime.Deadline()
+		budget := max(int64(0), deadline.Sub(started).Milliseconds())
+		// Bounded-size publication through the existing spool, without audit
+		// history reads or audit/summary lock waits.
+		if err := metrics.ObserveHookTransportFailure(root, event, outcome, time.Since(started).Milliseconds(), budget); err != nil {
+			fmt.Fprintf(stderr, "Hook transport diagnostic could not be persisted: %v\n", err)
+		}
+	}
 	inputContext, inputCancel := context.WithTimeout(ctx, hookProcessBudget)
 	defer inputCancel()
 	type inputResult struct {
@@ -115,24 +132,27 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	select {
 	case in := <-inputs:
 		if in.err != nil || len(in.data) > 4*1024*1024 {
+			recordFailure(inputContext, "unknown", "input")
 			fmt.Fprintln(stderr, "Hook input unavailable or exceeds 4 MiB; graph progress was not updated")
 			return 1
 		}
 		data = in.data
 	case <-inputContext.Done():
+		recordFailure(inputContext, "unknown", "input")
 		fmt.Fprintln(stderr, "Hook input deadline exceeded; graph progress was not updated")
 		return 1
 	}
 	var input policy.Input
 	decodeErr := json.Unmarshal(data, &input)
-	ctx, cancel := context.WithDeadline(ctx, started.Add(hookBudget(hookRootForBudget(args), input)))
+	ctx, cancel := context.WithDeadline(ctx, started.Add(hookBudget(root, input)))
 	defer cancel()
-	fail := func(err error) int {
+	fail := func(err error, outcome string) int {
+		recordFailure(ctx, input.Event, outcome)
 		reason := "Harness Hook did not complete"
 		if ctx.Err() != nil {
 			reason += " within its internal budget"
 		}
-		fmt.Fprintf(stderr, "%s: %v. Main must inspect the original receipt, current responsibility and remaining handoff before retrying. A missing response does not prove no commit; preserve professional answers and do not repeat accepted work.\n", reason, err)
+		fmt.Fprintf(stderr, "%s: %v. Hook transport is unfinished for %s; timeout/cancellation is not a professional content verdict. The original receipt and current responsibility remain authoritative. A missing response does not prove no commit; preserve professional answers and do not repeat accepted work. Framework recovery must use the original attempt, without changing answer fields, deleting evidence or inventing another artifact ID.\n", reason, err, input.Event)
 		if input.Event == "PreToolUse" {
 			return 0
 		}
@@ -142,7 +162,7 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 		return 0
 	}
 	if decodeErr != nil {
-		return fail(decodeErr)
+		return fail(decodeErr, "input")
 	}
 	var out, errout bytes.Buffer
 	cmd := exec.CommandContext(ctx, executable, append([]string{"__hook-worker"}, args...)...)
@@ -151,7 +171,11 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	cmd.Stderr = &errout
 	err := processtree.Run(cmd)
 	if ctx.Err() != nil {
-		return fail(ctx.Err())
+		// Keep the original receiver's specific responsibility and committed
+		// facts even when the transport expires. Partial stdout still cannot
+		// establish acceptance or a completed platform decision.
+		_, _ = stderr.Write(errout.Bytes())
+		return fail(ctx.Err(), "worker")
 	}
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -159,10 +183,10 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 			// evaluations to feedback, while retaining Stop/Idle continuation.
 			if exit.ExitCode() != 2 {
 				_, _ = stderr.Write(errout.Bytes())
-				return fail(err)
+				return fail(err, "worker")
 			}
 			if _, writeErr := stdout.Write(out.Bytes()); writeErr != nil {
-				return fail(writeErr)
+				return fail(writeErr, "delivery")
 			}
 			_, _ = stderr.Write(errout.Bytes())
 			if input.Event == "PreToolUse" {
@@ -170,10 +194,10 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 			}
 			return 2
 		}
-		return fail(err)
+		return fail(err, "worker")
 	}
 	if _, writeErr := stdout.Write(out.Bytes()); writeErr != nil {
-		return fail(writeErr)
+		return fail(writeErr, "delivery")
 	}
 	_, _ = stderr.Write(errout.Bytes())
 	return 0

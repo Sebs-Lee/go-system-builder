@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/packetbody"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
@@ -119,21 +120,43 @@ func TestS7MainPreparationSelectsOneMissingOwnerAndPreservesReadyQuestionnaire(t
 			},
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	output := stageReviewResultLifecycleContext(ctx, root, policy.Input{Event: "PreToolUse", CWD: root}, &submission.Service{}, runtime.Snapshot{State: state}, "Main")
-	for _, want := range []string{"assignment-missing-a", "assignment-missing-b", filepath.Join(root, filepath.FromSlash(packet.AnswerPath))} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("missing current responsibility %q: %s", want, output)
-		}
-	}
-	if strings.Count(output, "questionnaire preparation deferred for reviewer-missing-") != 1 || strings.Contains(output, "deferred for reviewer-ready") {
-		t.Fatalf("preparation was not limited to one missing owner: %s", output)
-	}
-	for _, rel := range []string{packet.ViewPath, packet.AnswerPath} {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil || string(data) != "preserved existing questionnaire" {
-			t.Fatalf("ready questionnaire changed: %q %v", data, err)
-		}
+	for _, format := range []string{"inline", "index-with-missing-body"} {
+		t.Run(format, func(t *testing.T) {
+			if format == "index-with-missing-body" {
+				index, err := packetbody.Publish(context.Background(), root, packetRow)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref, _, err := packetbody.ReferenceFromIndex(index)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(filepath.Join(root, ref.Path)); err != nil {
+					t.Fatal(err)
+				}
+				state["entities"].(map[string]any)["work_packets"] = []any{index}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			output := stageReviewResultLifecycleContext(ctx, root, policy.Input{Event: "PreToolUse", CWD: root}, &submission.Service{}, runtime.Snapshot{State: state}, "Main")
+			for _, want := range []string{"assignment-missing-a", "assignment-missing-b", filepath.Join(root, filepath.FromSlash(packet.AnswerPath))} {
+				if !strings.Contains(output, want) {
+					t.Fatalf("missing current responsibility %q: %s", want, output)
+				}
+			}
+			if strings.Count(output, "questionnaire preparation deferred for reviewer-missing-") != 1 || strings.Contains(output, "deferred for reviewer-ready") {
+				t.Fatalf("preparation was not limited to one missing owner: %s", output)
+			}
+			for _, rel := range []string{packet.ViewPath, packet.AnswerPath} {
+				data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+				if err != nil || string(data) != "preserved existing questionnaire" {
+					t.Fatalf("ready questionnaire changed: %q %v", data, err)
+				}
+			}
+
+			if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); !os.IsNotExist(err) {
+				t.Fatalf("canceled read-only projection started a Runtime writer: %v", err)
+			}
+		})
 	}
 }

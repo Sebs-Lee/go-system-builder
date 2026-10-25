@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,7 +37,7 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 	if _, err := os.Stat(filepath.Join(root, ".claude/loop-state.json")); err != nil {
 		return false, 0
 	}
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	snap, err := nativeRoutingSnapshot(root, in)
 	if err != nil {
 		return false, 0
 	}
@@ -76,7 +77,7 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 				}
 			}
 		}
-		if stringValue(repairPointerCLI(snap.State)["impact_ref"]) != "" {
+		if contextForHook(in).Err() == nil && stringValue(repairPointerCLI(snap.State)["impact_ref"]) != "" {
 			if selections, err := repairTargetedSelections(root, snap.State); err == nil {
 				for _, selection := range selections {
 					ref, err := repairTargetedQuestionnairePath(root, snap.State, selection.performingAssignmentID)
@@ -113,9 +114,9 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 	message := "Native return has multiple exact responsibility references; Main must resolve the handoff. No answer was received by this observation."
 	if len(selected) == 1 {
 		subject := selected[0]
-		summary, err := nativeReturnSummary(root, snap, subject)
+		summary, err := nativeReturnSummaryContext(contextForHook(in), root, snap, subject)
 		if err != nil {
-			summary = "Original receipt unavailable; Main preserves this return and inspects the original source/Stop failure before deciding recovery: " + err.Error()
+			summary = "Reception summary could not be refreshed; this observation establishes no new reception fact. Main preserves this exact return and uses the original receipt/Stop diagnostic when the request is available: " + err.Error()
 		}
 		message = "Native return for " + subject.ref + ". " + summary + " This is a read-only reception summary, not product acceptance. Do not re-dispatch received work merely because Main or the next stage still has work."
 	}
@@ -126,6 +127,14 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 }
 
 func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeReturnSubject) (string, error) {
+	return nativeReturnSummaryContext(context.Background(), root, snap, subject)
+}
+
+func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.Snapshot, subject nativeReturnSubject) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	ctx = runtime.WithPacketBodyRoot(runtime.WithReviewResultReadCache(ctx), root)
 	if subject.record != nil {
 		r := *subject.record
 		agent := contextAgent(snap.State, r.OwnerAgentID)
@@ -155,11 +164,11 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			}
 		}
 		if len(records) == 0 {
-			return nativeS9ReturnDiagnostic(root, snap, subject.ref) + " No original Targeted reception recorded. Main reads this exact answer and the actual return, restores sources/prerequisites or continues the original verifier for professional omissions; an unfinished Stop does not establish completion.", nil
+			return nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.ref) + " No original Targeted reception recorded. Main reads this exact answer and the actual return, restores sources/prerequisites or continues the original verifier for professional omissions; an unfinished Stop does not establish completion.", nil
 		}
-		return nativeS9ReturnDiagnostic(root, snap, subject.ref) + " Original Targeted records: " + strings.Join(records, "; ") + ". Main follows the original repair status " + stringValue(repairPointerCLI(snap.State)["status"]) + " and Handoff to the next complete S7 round; a Targeted result does not replace S7. " + repairHandoffProjectionContext(root, snap.State), nil
+		return nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.ref) + " Original Targeted records: " + strings.Join(records, "; ") + ". Main follows the original repair status " + stringValue(repairPointerCLI(snap.State)["status"]) + " and Handoff to the next complete S7 round; a Targeted result does not replace S7. " + repairHandoffProjectionContext(root, snap.State), nil
 	}
-	s, err := submission.NewReadOnly(root)
+	s, err := submission.NewContext(ctx, root, true)
 	if err != nil {
 		return "", err
 	}
@@ -176,16 +185,16 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			prefix, receipt.NextAction = nativeS5ReturnDiagnostic(root, snap.State, p)
 		}
 	case "s7-review-result-v1":
-		p, _, e := runtime.FindReviewResultPacket(snap.State, subject.id)
+		p, _, e := runtime.FindReviewResultPacketContext(ctx, snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
 		receipt, err = s.ReviewResultReceipt(p.Binding.OwnerAgentID, p.ID)
 		if err == nil && receipt.Accepted {
-			receipt.NextAction += nativeS7AcceptedOutletContext(root, snap, p)
+			receipt.NextAction += nativeS7AcceptedOutletForRequest(ctx, root, snap, p)
 		}
 		if err == nil && !receipt.Accepted {
-			current, currentErr := runtime.CurrentReviewResultPackets(snap.State, p.Binding.OwnerAgentID)
+			current, currentErr := runtime.CurrentReviewResultPacketsContext(ctx, snap.State, p.Binding.OwnerAgentID)
 			isCurrent := false
 			for _, candidate := range current {
 				isCurrent = isCurrent || candidate.ID == p.ID
@@ -193,7 +202,10 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			if currentErr != nil || !isCurrent {
 				return "This exact S7 questionnaire is historical or replaced; preserve its history and follow the current responsibility without resuming this old revision.", nil
 			}
-			prefix = nativeS7ReturnDiagnostic(root, snap.State, p)
+			if e := ctx.Err(); e != nil {
+				return "", e
+			}
+			prefix = nativeS7IndexReturnDiagnosticContext(ctx, root, snap.State, runtime.ReviewResultPacketIndex{ID: p.ID, Binding: p.Binding, ViewPath: p.ViewPath, AnswerPath: p.AnswerPath})
 		}
 
 	case "s8-hypothesis-result-v1":
@@ -208,19 +220,19 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 			}
 		}
 	case "s9-repair-result-v1":
-		p, _, e := runtime.FindRepairResultPacket(snap.State, subject.id)
+		p, _, e := runtime.FindRepairResultPacketContext(ctx, snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
 		receipt, err = s.RepairResultReceipt(p.Binding.Sources.OwnerAgentID, p.ID)
-		prefix = nativeS9ReturnDiagnostic(root, snap, subject.id) + " "
+		prefix = nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.id) + " "
 	case "s9-plan-report-v1":
-		prefix = nativeS9ReturnDiagnostic(root, snap, subject.id) + " "
-		p, _, e := runtime.FindRepairPlanReportPacket(snap.State, subject.id)
+		prefix = nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.id) + " "
+		p, _, e := runtime.FindRepairPlanReportPacketContext(ctx, snap.State, subject.id)
 		if e != nil {
 			return "", e
 		}
-		packets, e := runtime.CurrentRepairResultPackets(root, snap.State, p.Binding.OwnerAgentID)
+		packets, e := runtime.CurrentRepairResultPacketsContext(ctx, root, snap.State, p.Binding.OwnerAgentID)
 		if e != nil {
 			return prefix + "Original Result source is unavailable; Main restores this exact source without re-submitting accepted work: " + e.Error(), nil
 		}
@@ -259,6 +271,9 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 		if subject.kind == "s7-review-result-v1" {
 			receipt.NextAction += " S7 实际未完成返回仍属于原责任；Main 阅读实际返回和 Stop 的具名作者、原答案路径及具体字段/来源诊断，恢复来源或环境前提，或续跑原 Reviewer 修正专业缺项。已记录 site_lost 时先用原 blocker_resolved 入口解除真实阻塞，再由同一 Reviewer 恢复。不能把已结束但未接收的责任当作仍在后台运行，也不凭 prose 推定验收、重派或编造 verdict/Finding。"
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	data, err := json.Marshal(receipt)
 	return prefix + string(data), err

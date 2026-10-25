@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -51,7 +52,7 @@ func nativeS7RemainingOutletContext(root string, state map[string]any) string {
 	if planErr != nil {
 		appendBounded(fmt.Sprintf("Main/system restores the original ReviewPlan source before dispatch: %v.\n", planErr))
 	}
-	packets, packetErr := runtime.CurrentReviewResultPackets(state, "")
+	packets, packetErr := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state, "")
 	byID := map[string]workpacket.ReviewResultPacket{}
 	for _, p := range packets {
 		byID[p.Binding.AssignmentID] = p

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/packetbody"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/submission"
@@ -19,10 +20,12 @@ import (
 // S9 reminders read the current question and indexed work facts. They do not
 // reconstruct receipt, baseline, execution-end or recovery proofs.
 type s9ListenerQuestionnaire struct {
-	id, view, answer string
-	originalRoot     string
-	binding          workpacket.RepairPlanReportBinding
-	result           *workpacket.RepairResultBinding
+	id, view, answer    string
+	originalRoot        string
+	executionAssignment string
+	binding             workpacket.RepairPlanReportBinding
+	result              *workpacket.RepairResultBinding
+	draft               any
 }
 
 type s9ListenerFact struct {
@@ -66,12 +69,12 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 	if main {
 		filter = ""
 	}
-	packets, err := s9CurrentQuestionnaires(root, snapshot.State, filter, result)
+	packets, err := s9CurrentQuestionnaires(root, snapshot.State, filter, result, ctx)
 	if err != nil {
 		return "S9 questionnaire projection is unavailable; " + s9ListenerKnownPaths(root, snapshot.State, filter, result) + ". Main owns the recorded packet preparation gap: " + err.Error()
 	}
 	var lines []string
-	nativePackets := nativeS9PlanPackets(root, snapshot.State)
+	nativePackets := s9ListenerNativePlans(root, snapshot.State)
 	for _, packet := range packets {
 		native, isNative := s9ListenerNativePacket(snapshot.State, nativePackets, packet)
 		fact, factErr := s9ListenerAcceptance(root, snapshot.State, packet)
@@ -175,15 +178,19 @@ func s9ListenerNativePacket(state map[string]any, packets []workpacket.RepairPla
 
 // Current questions follow each Assignment's recorded Plan, independently of
 // another Builder having started implementation. This projection is read-only.
-func s9CurrentQuestionnaires(root string, state map[string]any, owner string, result bool) ([]s9ListenerQuestionnaire, error) {
-	if !result {
-		return s9ListenerQuestionnaires(state, owner, false)
+func s9CurrentQuestionnaires(root string, state map[string]any, owner string, result bool, contexts ...context.Context) ([]s9ListenerQuestionnaire, error) {
+	ctx := context.Background()
+	if len(contexts) != 0 && contexts[0] != nil {
+		ctx = contexts[0]
 	}
-	plans, err := s9ListenerQuestionnaires(state, owner, false)
+	if !result {
+		return s9ListenerQuestionnairesContext(ctx, root, state, owner, false)
+	}
+	plans, err := s9ListenerQuestionnairesContext(ctx, root, state, owner, false)
 	if err != nil {
 		return nil, err
 	}
-	results, err := s9ListenerQuestionnaires(state, owner, true)
+	results, err := s9ListenerQuestionnairesContext(ctx, root, state, owner, true)
 	if err != nil {
 		return nil, err
 	}
@@ -221,6 +228,11 @@ func s9CurrentQuestionnaires(root string, state map[string]any, owner string, re
 }
 
 func s9ListenerQuestionnaires(state map[string]any, owner string, result bool) ([]s9ListenerQuestionnaire, error) {
+	return s9ListenerQuestionnairesContext(context.Background(), "", state, owner, result)
+}
+func s9ListenerQuestionnairesContext(ctx context.Context, root string, state map[string]any, owner string, result bool) ([]s9ListenerQuestionnaire, error) {
+	// This is a pure projection of already-read facts. Cancellation forbids
+	// new I/O; it does not erase known responsibilities, paths or progress.
 	pointer := repairPointerCLI(state)
 	baseline, review := mapFieldCLI(state, "baseline"), mapFieldCLI(state, "review")
 	owners := mapFieldCLI(pointer, "assignment_owners")
@@ -240,6 +252,10 @@ func s9ListenerQuestionnaires(state map[string]any, owner string, result bool) (
 	seen := map[string]bool{}
 	for _, raw := range array {
 		row, _ := raw.(map[string]any)
+		_, external, formatErr := packetbody.ReferenceFromIndex(row)
+		if formatErr != nil {
+			return nil, formatErr
+		}
 		if row["template_id"] != template {
 			continue
 		}
@@ -253,7 +269,7 @@ func s9ListenerQuestionnaires(state map[string]any, owner string, result bool) (
 			owners[stringValue(binding["repair_assignment_id"])] != binding["owner_agent_id"] {
 			continue
 		}
-		packet := s9ListenerQuestionnaire{id: stringValue(row["packet_id"]), view: stringValue(row["view_path"]), answer: stringValue(row["answer_path"])}
+		packet := s9ListenerQuestionnaire{id: stringValue(row["packet_id"]), view: stringValue(row["view_path"]), answer: stringValue(row["answer_path"]), draft: row["draft"]}
 		encoded, err := json.Marshal(binding)
 		if err == nil {
 			err = json.Unmarshal(encoded, &packet.binding)
@@ -265,7 +281,12 @@ func s9ListenerQuestionnaires(state map[string]any, owner string, result bool) (
 				err = json.Unmarshal(encoded, &resultBinding)
 			}
 			packet.result = &resultBinding
-			packet.originalRoot = stringValue(mapFieldCLI(mapFieldCLI(row, "inputs"), "execution")["worktree_path"])
+			original := mapFieldCLI(mapFieldCLI(row, "inputs"), "execution")
+			if external {
+				original = mapFieldCLI(row, "execution_locator")
+			}
+			packet.originalRoot = stringValue(original["worktree_path"])
+			packet.executionAssignment = stringValue(original["assignment_id"])
 		}
 		if err != nil {
 			return out, err
@@ -279,8 +300,14 @@ func s9ListenerQuestionnaires(state map[string]any, owner string, result bool) (
 			}
 			execution := s9ObservedExecution(state, packet)
 			if len(execution) > 0 {
+				if stringValue(execution["rework_ref"]) != packet.result.ReworkRef {
+					continue
+				}
 				original := mapFieldCLI(mapFieldCLI(row, "inputs"), "execution")
-				if stringValue(execution["rework_ref"]) != packet.result.ReworkRef || tolerantInt(execution["execution_generation"]) != tolerantInt(original["execution_generation"]) || stringValue(execution["worktree_path"]) != packet.originalRoot {
+				if external {
+					original = mapFieldCLI(row, "execution_locator")
+				}
+				if tolerantInt(execution["execution_generation"]) != tolerantInt(original["execution_generation"]) || stringValue(execution["worktree_path"]) != packet.originalRoot {
 					continue
 				}
 			}
@@ -310,7 +337,13 @@ func s9ListenerResultSource(root string, state map[string]any, packet s9Listener
 	if !filepath.IsAbs(path) || samePath(path, root) {
 		return known, selected, fmt.Errorf("exact registered Worker root is unavailable; no Main-root fallback")
 	}
-	return path, selected, nil
+	if known == "" {
+		return "", selected, fmt.Errorf("original registered Worker source locator is unavailable; no Main-root fallback")
+	}
+	if !samePath(path, known) {
+		return known, selected, fmt.Errorf("current Worker root differs from the recorded original source; no source replacement was inferred")
+	}
+	return known, selected, nil
 }
 
 func s9ListenerPacketPaths(root string, packet s9ListenerQuestionnaire) string {
@@ -325,7 +358,7 @@ func s9ListenerKnownPaths(root string, state map[string]any, owner string, resul
 		return "this platform event cannot locate a registered Runtime responsibility; use the exact native brief or Targeted answer already supplied by Main, save your own professional output and return its exact references for SubagentStop reception"
 	}
 	var paths []string
-	nativePackets := nativeS9PlanPackets(root, state)
+	nativePackets := s9ListenerNativePlans(root, state)
 	template := "s9-plan-report-v1"
 	if result {
 		template = "s9-repair-result-v1"
@@ -356,7 +389,11 @@ func s9ListenerKnownPaths(root string, state map[string]any, owner string, resul
 		if result {
 			// Frozen input is a recorded diagnostic location, not a new
 			// authoring grant when the live execution is absent or changed.
-			source = stringValue(mapFieldCLI(mapFieldCLI(row, "inputs"), "execution")["worktree_path"])
+			original := mapFieldCLI(mapFieldCLI(row, "inputs"), "execution")
+			if _, external, _ := packetbody.ReferenceFromIndex(row); external {
+				original = mapFieldCLI(row, "execution_locator")
+			}
+			source = stringValue(original["worktree_path"])
 			if !filepath.IsAbs(source) || samePath(source, root) {
 				source = ""
 			}
@@ -532,4 +569,64 @@ func s9ListenerOwnerPresent(state map[string]any, owner string) bool {
 		}
 	}
 	return false
+}
+
+func s9ListenerQuestionnaireDraft(ctx context.Context, root string, state map[string]any, packet s9ListenerQuestionnaire) (any, error) {
+	if packet.draft != nil {
+		return packet.draft, nil
+	}
+	ctx = runtime.WithPacketBodyRoot(ctx, root)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var draft any
+	if packet.result != nil {
+		original, found, err := runtime.FindRepairResultPacketContext(ctx, state, packet.id)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, fmt.Errorf("original S9 Result packet is unavailable")
+		}
+		draft = original.Draft
+	} else {
+		original, found, err := runtime.FindRepairPlanReportPacketContext(ctx, state, packet.id)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, fmt.Errorf("original S9 Plan packet is unavailable")
+		}
+		draft = original.Draft
+	}
+	data, err := json.Marshal(draft)
+	if err != nil {
+		return nil, err
+	}
+	var object any
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
+// Native route reminders need only already-indexed identity and the existing
+// brief path. They never reconstruct a packet body or execution proof.
+func s9ListenerNativePlans(root string, state map[string]any) []workpacket.RepairPlanReportPacket {
+	questions, err := s9ListenerQuestionnaires(state, "", false)
+	if err != nil {
+		return nil
+	}
+	var packets []workpacket.RepairPlanReportPacket
+	for _, question := range questions {
+		packet := workpacket.RepairPlanReportPacket{ID: question.id, Binding: question.binding, ViewPath: question.view, AnswerPath: question.answer}
+		brief, _, _ := nativeS9Paths(packet)
+		if s8QuestionnaireFileExists(resolveRootPath(root, brief)) {
+			packets = append(packets, packet)
+		}
+	}
+	return packets
 }

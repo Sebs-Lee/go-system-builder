@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
@@ -37,7 +38,32 @@ type SubmitRequest struct {
 	issuedPacket     *workpacket.ReviewResultPacket
 	packetOwner      string
 	issuedSourceRoot string
+	preparation      *resultPreparation
 }
+
+// Only immutable answer work and this attempt's progress survive a bounded
+// continuation. Runtime qualification and mutable evidence are always rechecked.
+type resultPreparation struct {
+	schemaValidated bool
+	answerSHA       string
+	capturedData    []byte
+	captureSteps    []CaptureStep
+	stagingStarted  bool
+}
+
+// The original failed attempt may spend 500ms on safe cleanup. Its single
+// deadline continuation gets 900ms and leaves owned staging for original
+// recovery on failure; it never starts another cleanup budget. The combined
+// context deadlines also share the fixed original work deadline plus 1.4s;
+// a late synchronous return never receives a fresh tail allowance.
+const resultRecoveryBudget = 900 * time.Millisecond
+const resultCleanupBudget = 500 * time.Millisecond
+
+// Concurrent peers use only the original request's remaining work budget.
+// A local cap also bounds explicit callers that supply no deadline.
+const resultConcurrencyBudget = 5 * time.Second
+
+type resultRecoveryContextKey struct{}
 
 // SubmitResult is the single entry point for a Canonical ReviewResult
 // (L3-S7 §9.1). It wraps submitResult with the first-pass success metric
@@ -47,8 +73,55 @@ func SubmitResult(
 	root, statePath, journalPath string,
 	request SubmitRequest,
 ) (loopruntime.Snapshot, error) {
+	request.Context = loopruntime.WithPacketBodyRoot(loopruntime.WithReviewResultReadCache(buildsurface.WithReadCache(request.Context)), root)
 	defer metrics.Span(request.Context, "reception/s7")()
+	if request.AssignmentID == "" || request.ResultPath == "" {
+		_ = metrics.RecordS7ResultSubmit(root, "rejected")
+		return loopruntime.Snapshot{}, fmt.Errorf("--assignment-id and --result are required")
+	}
+	// Freeze the answer once for both the original transaction and its bounded
+	// deadline recovery. Recovery must never reread an author-editable file.
+	if request.resultData == nil {
+		data, err := readReviewResultInput(request.ResultPath)
+		if err != nil {
+			outcome := "rejected"
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				outcome = "interrupted"
+			}
+			_ = metrics.RecordS7ResultSubmit(root, outcome)
+			return loopruntime.Snapshot{}, fmt.Errorf("read ReviewResult: %w", err)
+		}
+		request.resultData = data
+	}
+	if request.OccurredAt.IsZero() {
+		request.OccurredAt = time.Now().UTC()
+	}
+	request.preparation = &resultPreparation{}
 	snapshot, err := submitResult(root, statePath, journalPath, request)
+	if errors.Is(err, context.DeadlineExceeded) && request.Context != nil && errors.Is(request.Context.Err(), context.DeadlineExceeded) {
+		finishTail := metrics.Span(request.Context, "reception/s7/recovery_tail")
+		tailContext, cancel := reviewDeadlineTail(request.Context, resultRecoveryBudget, resultCleanupBudget+resultRecoveryBudget)
+		recovery := request
+		recovery.Context = context.WithValue(tailContext, resultRecoveryContextKey{}, true)
+		snapshot, err = continueInterruptedResult(root, statePath, journalPath, recovery)
+		cancel()
+		finishTail()
+	} else if errors.Is(err, loopruntime.ErrStaleRevision) && request.issuedPacket != nil && (request.Context == nil || request.Context.Err() == nil) {
+		// Only system-issued packets can continue a concurrent peer's revision.
+		// This shares the one continuation slot with deadline recovery: a stale
+		// continuation that expires never starts a second deadline attempt.
+		finishTail := metrics.Span(request.Context, "reception/s7/concurrency_tail")
+		parent := request.Context
+		if parent == nil {
+			parent = context.Background()
+		}
+		tailContext, cancel := context.WithTimeout(parent, resultConcurrencyBudget)
+		recovery := request
+		recovery.Context = context.WithValue(tailContext, resultRecoveryContextKey{}, true)
+		snapshot, err = continueIssuedResultAfterPeer(root, statePath, journalPath, recovery)
+		cancel()
+		finishTail()
+	}
 	var siteLostBlocked *SiteLostBlockedError
 	switch {
 	case errors.Is(err, errExactResultReplay):
@@ -58,12 +131,82 @@ func SubmitResult(
 	case err == nil:
 		_ = metrics.RecordS7ResultSubmit(root, "accepted")
 	case errors.Is(err, loopruntime.ErrStaleRevision):
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		_ = metrics.RecordS7ResultSubmit(root, "interrupted")
 	case errors.As(err, &siteLostBlocked):
 		_ = metrics.RecordS7ResultSubmit(root, "blocked")
 	default:
 		_ = metrics.RecordS7ResultSubmit(root, "rejected")
 	}
 	return snapshot, err
+}
+
+// continueInterruptedResult first recovers the original Writer pairing and
+// acknowledges an accepted receipt. Only owned pre-pending staging permits
+// further consumption; an expired attempt that never staged starts no new work.
+func continueInterruptedResult(root, statePath, journalPath string, request SubmitRequest) (loopruntime.Snapshot, error) {
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
+	current, err := writer.Snapshot()
+	if err != nil {
+		return current, err
+	}
+	var incoming Result
+	if err := json.Unmarshal(request.resultData, &incoming); err != nil {
+		return current, err
+	}
+	if typedResultReceiptsEnabled(current.State) {
+		row := resultPacketAssignmentRow(current.State, incoming.AssignmentID)
+		replay := workstate.ReviewAssignmentActivity(row) == "consumed" || workstate.ReviewAssignmentActivity(row) == "result_submitted"
+		if replay {
+			if err := validateIssuedResultRequest(root, current.State, request, &incoming, true); err != nil {
+				return current, err
+			}
+			digest, err := professionalAnswerDigest(request.resultData, request.issuedPacket != nil)
+			if err != nil {
+				return current, err
+			}
+			if accepted, err := replayAcceptedResult(root, current.State, &incoming, digest, request.Context); err != nil {
+				return current, err
+			} else if accepted {
+				return current, errExactResultReplay
+			}
+		}
+	}
+	if request.preparation == nil || !request.preparation.stagingStarted {
+		return current, context.DeadlineExceeded
+	}
+	if request.ExpectedRevision >= 0 && current.Revision != request.ExpectedRevision {
+		if request.issuedPacket == nil {
+			return current, loopruntime.ErrStaleRevision
+		}
+		return continueIssuedResultAfterPeer(root, statePath, journalPath, request)
+	}
+	return submitResult(root, statePath, journalPath, request)
+}
+
+// continueIssuedResultAfterPeer refreshes only the internal CAS coordinate.
+// The original issuance, exact answer, live responsibility and execution source
+// must still prove the same receipt opportunity before that coordinate is used.
+func continueIssuedResultAfterPeer(root, statePath, journalPath string, request SubmitRequest) (loopruntime.Snapshot, error) {
+	writer := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
+	current, err := writer.Snapshot()
+	if err != nil {
+		return current, err
+	}
+	var incoming Result
+	if err := json.Unmarshal(request.resultData, &incoming); err != nil {
+		return current, fmt.Errorf("decode frozen issued ReviewResult: %w", err)
+	}
+	if stringField(current.State["runtime_id"]) != request.issuedPacket.Binding.RuntimeID {
+		return current, errors.New("S7 issued answer Runtime changed during concurrent reception")
+	}
+	row := resultPacketAssignmentRow(current.State, incoming.AssignmentID)
+	isReplay := workstate.ReviewAssignmentActivity(row) == "consumed" || workstate.ReviewAssignmentActivity(row) == "result_submitted"
+	if err := validateIssuedResultRequest(root, current.State, request, &incoming, isReplay); err != nil {
+		return current, err
+	}
+	request.ExpectedRevision = current.Revision
+	return submitResult(root, statePath, journalPath, request)
 }
 
 // submitResult consumes one Canonical ReviewResult in one CAS transaction:
@@ -103,8 +246,13 @@ func submitResult(
 	if hint, ok := verdictHint(data); ok {
 		return loopruntime.Snapshot{}, hint
 	}
-	if err := schema.NewValidator(root).ValidateBytes("review-result.schema.json", data); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult schema: %w", err)
+	if request.preparation == nil || !request.preparation.schemaValidated {
+		if err := schema.NewValidator(root).ValidateBytes("review-result.schema.json", data); err != nil {
+			return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult schema: %w", err)
+		}
+		if request.preparation != nil {
+			request.preparation.schemaValidated = true
+		}
 	}
 	var result Result
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -131,9 +279,17 @@ func submitResult(
 		if err := workpacket.ValidateUniqueJSON(data); err != nil {
 			return loopruntime.Snapshot{}, fmt.Errorf("ReviewResult JSON: %w", err)
 		}
-		answerSHA, err = professionalAnswerDigest(data, request.issuedPacket != nil)
-		if err != nil {
-			return loopruntime.Snapshot{}, err
+		if request.preparation != nil {
+			answerSHA = request.preparation.answerSHA
+		}
+		if answerSHA == "" {
+			answerSHA, err = professionalAnswerDigest(data, request.issuedPacket != nil)
+			if err != nil {
+				return loopruntime.Snapshot{}, err
+			}
+			if request.preparation != nil {
+				request.preparation.answerSHA = answerSHA
+			}
 		}
 		store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 		earlySnapshot, err = store.Snapshot()
@@ -146,7 +302,7 @@ func submitResult(
 		if err := validateIssuedResultRequest(root, earlyState, request, &result, isReplay); err != nil {
 			return earlySnapshot, err
 		}
-		if replayed, replayErr := replayAcceptedResult(root, earlyState, &result, answerSHA); replayErr != nil {
+		if replayed, replayErr := replayAcceptedResult(root, earlyState, &result, answerSHA, request.Context); replayErr != nil {
 			return earlySnapshot, replayErr
 		} else if replayed {
 			return earlySnapshot, errExactResultReplay
@@ -157,7 +313,12 @@ func submitResult(
 	// multi-Finding result must correlate each buffered step so S8 never gets an
 	// assignment-wide timeline attached to the wrong Finding.
 	var captureSteps []CaptureStep
-	if request.CaptureDir != "" {
+	if request.preparation != nil && request.preparation.capturedData != nil {
+		if err := json.Unmarshal(request.preparation.capturedData, &result); err != nil {
+			return loopruntime.Snapshot{}, err
+		}
+		captureSteps = request.preparation.captureSteps
+	} else if request.CaptureDir != "" {
 		steps, captureErr := LoadCaptureStepsStrict(request.CaptureDir)
 		if captureErr != nil {
 			return loopruntime.Snapshot{}, s7GateError(
@@ -178,6 +339,13 @@ func submitResult(
 			)
 		}
 		captureSteps = steps
+		if request.preparation != nil {
+			merged, err := json.Marshal(result)
+			if err != nil {
+				return loopruntime.Snapshot{}, err
+			}
+			request.preparation.capturedData, request.preparation.captureSteps = merged, steps
+		}
 	}
 
 	var current map[string]any
@@ -254,7 +422,10 @@ func submitResult(
 	if err := validateClaimResultSet(assignment, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateCapturePassProvenance(root, current, plan, assignment, &result, captureSteps); err != nil {
+	if err := validateCapturePassProvenance(root, current, plan, assignment, &result, captureSteps, request.Context); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return loopruntime.Snapshot{}, err
+		}
 		return loopruntime.Snapshot{}, s7GateError(
 			"S7_CAPTURE_PROVENANCE",
 			"PASS evidence is not bound to the ReviewPlan execution window",
@@ -294,7 +465,7 @@ func submitResult(
 	if err := validateProducerIndependence(current, &result); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens); err != nil {
+	if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens, request.Context); err != nil {
 		// A digest mismatch is a recoverable authoring state, not round
 		// drift: the workspace itself is intact and the seal-time
 		// verification (verifySealedArtifactDigests) independently guards
@@ -323,17 +494,28 @@ func submitResult(
 		}
 	}
 
-	// Persist artifacts before the CAS (same pattern as the S6 Builder
-	// Result): bytes on disk are what the evidence index fingerprints.
+	// Prepare and publish owned artifacts inside the original Writer lock.
+	// The durable staging intent permits exact recovery before Runtime pending.
 	artifactRels := []string{}
 	artifactSHAs := map[string]string{}
 	casAttempted := false
-	cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
+	var cleanupSnapshot loopruntime.Snapshot
 	cleanupArtifacts := func() []string {
+		// Bounded deadline/concurrency continuations skip repeated cleanup. The durable
+		// intent is sufficient for the next original consumer; another 500ms
+		// here would exceed the deliberately shared 1.4s recovery allowance.
+		if request.Context != nil && request.Context.Value(resultRecoveryContextKey{}) == true {
+			return append([]string(nil), artifactRels...)
+		}
+		defer metrics.Span(request.Context, "reception/s7/cleanup")()
+		cleanupContext, cancel := reviewDeadlineTail(request.Context, resultCleanupBudget, resultCleanupBudget+resultRecoveryBudget)
+		defer cancel()
+		cleanupStore := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(cleanupContext)
 		latest, snapshotErr := cleanupStore.Snapshot()
 		if snapshotErr != nil {
 			return append([]string(nil), artifactRels...)
 		}
+		cleanupSnapshot = latest
 		var retained []string
 		for _, rel := range artifactRels {
 			removed, cleanupErr := removeStagedArtifactIfUnreferenced(cleanupStore, latest.State, latest.Revision, rel, artifactSHAs[rel])
@@ -354,87 +536,17 @@ func submitResult(
 	resultRel := filepath.ToSlash(filepath.Join(
 		".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
 		"reviews", result.ProducerAgentID, result.ResultID+".json"))
-	resultEnvelope := map[string]any{
-		"schema_version":               "1.0.0",
-		"evidence_id":                  result.ResultID,
-		"kind":                         "review_result",
-		"runtime_id":                   runtimeID,
-		"baseline_generation":          generation,
-		"review_round":                 round,
-		"producer_agent_id":            result.ProducerAgentID,
-		"producer_responsibility":      responsibility,
-		"subject_refs":                 []any{},
-		"conclusion":                   result.Verdict,
-		"review_plan_id":               plan.ReviewPlanID,
-		"assignment_id":                result.AssignmentID,
-		"assignment_revision":          result.AssignmentRevision,
-		"subject_digest":               result.SubjectDigest,
-		"verification_artifact_digest": result.VerificationArtifactDigest,
-		"claim_results":                result.ClaimResults,
-		"blocked_claims":               blockedClaimsOrEmpty(&result),
-		"checks":                       result.Checks,
-		"deviations":                   result.Deviations,
-		"verdict":                      result.Verdict,
-		"created_at":                   occurredAt.UTC().Format(time.RFC3339Nano),
-	}
+	var resultSHA, batchRel, batchSHA, batchID, cleanRel, cleanSHA string
+	var findingArtifacts []findingArtifact
 	if receiptMode {
-		resultEnvelope["submitted_answer"] = json.RawMessage(append([]byte(nil), data...))
-		resultEnvelope["answer_sha256"] = answerSHA
-		resultEnvelope["effective_answer"] = json.RawMessage(append([]byte(nil), effectiveAnswer...))
-		resultEnvelope["effective_answer_sha256"] = effectiveAnswerSHA
-		if request.issuedPacket != nil {
-			packetSHA, err := workpacket.ReviewResultPacketDigest(*request.issuedPacket)
-			if err != nil {
-				return loopruntime.Snapshot{}, err
-			}
-			resultEnvelope["packet_id"] = request.issuedPacket.ID
-			resultEnvelope["packet_sha256"] = packetSHA
-			resultEnvelope["execution_root"] = request.issuedSourceRoot
-		}
-	}
-	resultBytes, err := marshalArtifact(resultEnvelope)
-	if err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("encode review result envelope: %w", err)
-	}
-	if err := writeArtifact(root, resultRel, resultBytes); err != nil {
-		return loopruntime.Snapshot{}, err
-	}
-	artifactRels = append(artifactRels, resultRel)
-	resultSHA := sha256Of(resultBytes)
-	artifactSHAs[resultRel] = resultSHA
-	if receiptMode {
-		receiptValue, receiptErr := newResultReceipt(root, current, plan, ptr, assignment, &result, answerSHA, effectiveAnswerSHA, resultRel, resultSHA, request.issuedPacket, request.issuedSourceRoot)
-		if receiptErr != nil {
-			return loopruntime.Snapshot{}, receiptErr
-		}
-		receipt = &receiptValue
-	}
-
-	findingArtifacts := make([]findingArtifact, 0, len(result.Findings))
-	for _, finding := range result.Findings {
-		rel := filepath.ToSlash(filepath.Join(
-			".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
-			"findings", finding.FindingID+".json"))
-		bytes, err := marshalArtifact(finding)
+		value, err := newResultReceipt(root, current, plan, ptr, assignment, &result, answerSHA, effectiveAnswerSHA, resultRel, "", request.issuedPacket, request.issuedSourceRoot)
 		if err != nil {
-			return loopruntime.Snapshot{}, fmt.Errorf("encode finding %s: %w", finding.FindingID, err)
-		}
-		if err := writeArtifact(root, rel, bytes); err != nil {
 			return loopruntime.Snapshot{}, err
 		}
-		artifactRels = append(artifactRels, rel)
-		findingSHA := sha256Of(bytes)
-		artifactSHAs[rel] = findingSHA
-		findingArtifacts = append(findingArtifacts, findingArtifact{finding: finding, rel: rel, sha: findingSHA})
+		receipt = &value
 	}
-
-	// The round consumer runs in the same transaction: project the final
-	// dispositions with this result applied, then decide seal / clean.
 	projected := projectDispositions(current, assignment, &result)
 	complete := roundCompleteWith(projected)
-	var batchRel, batchSHA string
-	var batchID string
-	var cleanRel, cleanSHA string
 	sealNow := complete && len(RoundFindings(current))+len(result.Findings) > 0
 	if !sealNow {
 		for _, f := range result.Findings {
@@ -453,48 +565,141 @@ func submitResult(
 		if request.issuedPacket != nil && request.issuedSourceRoot != "" {
 			sealRoot = request.issuedSourceRoot
 		}
-		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result), current, assignment.AssignmentID, sealRoot); err != nil {
+		if err := verifySealedArtifactDigests(root, ptr, projectedAssignments(current, assignment, &result), current, assignment.AssignmentID, sealRoot, request.Context); err != nil {
 			return staleReviewPlanAfterDrift(request.Context, root, statePath, journalPath, current, err)
 		}
 	}
-	if sealNow {
-		batchID = fmt.Sprintf("observation-batch-r%d", round)
-		batch, err := buildObservationBatch(state_view{state: current, root: root}, plan, ptr, projected, &result, complete, occurredAt)
+	prepareArtifacts := func(state map[string]any) error {
+		if request.Context != nil {
+			if err := request.Context.Err(); err != nil {
+				return err
+			}
+		}
+		if intField(state["revision"]) != commitRevision {
+			return loopruntime.ErrStaleRevision
+		}
+		staging, err := openResultStaging(root, resultRel, current, data, effectiveAnswer, request.issuedPacket, request.issuedSourceRoot, occurredAt)
 		if err != nil {
-			return loopruntime.Snapshot{}, err
+			return err
 		}
-		batchRel = filepath.ToSlash(filepath.Join(
-			".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
-			"review", batchID+".json"))
-		batchBytes, err := marshalArtifact(batch)
+		if request.preparation != nil {
+			request.preparation.stagingStarted = true
+		}
+		occurredAt = staging.OccurredAt
+		resultEnvelope := map[string]any{
+			"schema_version":               "1.0.0",
+			"evidence_id":                  result.ResultID,
+			"kind":                         "review_result",
+			"runtime_id":                   runtimeID,
+			"baseline_generation":          generation,
+			"review_round":                 round,
+			"producer_agent_id":            result.ProducerAgentID,
+			"producer_responsibility":      responsibility,
+			"subject_refs":                 []any{},
+			"conclusion":                   result.Verdict,
+			"review_plan_id":               plan.ReviewPlanID,
+			"assignment_id":                result.AssignmentID,
+			"assignment_revision":          result.AssignmentRevision,
+			"subject_digest":               result.SubjectDigest,
+			"verification_artifact_digest": result.VerificationArtifactDigest,
+			"claim_results":                result.ClaimResults,
+			"blocked_claims":               blockedClaimsOrEmpty(&result),
+			"checks":                       result.Checks,
+			"deviations":                   result.Deviations,
+			"verdict":                      result.Verdict,
+			"created_at":                   occurredAt.UTC().Format(time.RFC3339Nano),
+		}
+		if receiptMode {
+			resultEnvelope["submitted_answer"] = json.RawMessage(append([]byte(nil), data...))
+			resultEnvelope["answer_sha256"] = answerSHA
+			resultEnvelope["effective_answer"] = json.RawMessage(append([]byte(nil), effectiveAnswer...))
+			resultEnvelope["effective_answer_sha256"] = effectiveAnswerSHA
+			if request.issuedPacket != nil {
+				packetSHA, err := workpacket.ReviewResultPacketDigest(*request.issuedPacket)
+				if err != nil {
+					return err
+				}
+				resultEnvelope["packet_id"] = request.issuedPacket.ID
+				resultEnvelope["packet_sha256"] = packetSHA
+				resultEnvelope["execution_root"] = request.issuedSourceRoot
+			}
+		}
+		resultBytes, err := marshalArtifact(resultEnvelope)
 		if err != nil {
-			return loopruntime.Snapshot{}, fmt.Errorf("encode ObservationBatch: %w", err)
+			return fmt.Errorf("encode review result envelope: %w", err)
 		}
-		if err := schema.NewValidator(root).ValidateBytes("observation-batch.schema.json", batchBytes); err != nil {
-			return loopruntime.Snapshot{}, fmt.Errorf("ObservationBatch schema: %w", err)
+		if err := staging.write(resultRel, resultBytes); err != nil {
+			return err
 		}
-		if err := writeArtifact(root, batchRel, batchBytes); err != nil {
-			return loopruntime.Snapshot{}, err
+		artifactRels = append(artifactRels, resultRel)
+		resultSHA = sha256Of(resultBytes)
+		artifactSHAs[resultRel] = resultSHA
+		if receipt != nil {
+			receipt.ResultSHA256 = resultSHA
 		}
-		artifactRels = append(artifactRels, batchRel)
-		batchSHA = sha256Of(batchBytes)
-		artifactSHAs[batchRel] = batchSHA
-	}
-	if cleanNow {
-		cleanRel = filepath.ToSlash(filepath.Join(
-			".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
-			"review", fmt.Sprintf("clean-round-r%d.json", round)))
-		snapshot := buildCleanRoundSnapshot(current, plan, resultEnvelope, resultSHA, resultRel, occurredAt)
-		cleanBytes, err := marshalArtifact(snapshot)
-		if err != nil {
-			return loopruntime.Snapshot{}, fmt.Errorf("encode CleanRound: %w", err)
+
+		findingArtifacts = make([]findingArtifact, 0, len(result.Findings))
+		for _, finding := range result.Findings {
+			rel := filepath.ToSlash(filepath.Join(
+				".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
+				"findings", finding.FindingID+".json"))
+			bytes, err := marshalArtifact(finding)
+			if err != nil {
+				return fmt.Errorf("encode finding %s: %w", finding.FindingID, err)
+			}
+			if err := staging.write(rel, bytes); err != nil {
+				return err
+			}
+			artifactRels = append(artifactRels, rel)
+			findingSHA := sha256Of(bytes)
+			artifactSHAs[rel] = findingSHA
+			findingArtifacts = append(findingArtifacts, findingArtifact{finding: finding, rel: rel, sha: findingSHA})
 		}
-		if err := writeArtifact(root, cleanRel, cleanBytes); err != nil {
-			return loopruntime.Snapshot{}, err
+
+		// The round consumer runs in the same transaction: project the final
+		// dispositions with this result applied, then decide seal / clean.
+
+		if sealNow {
+			batchID = fmt.Sprintf("observation-batch-r%d", round)
+			batch, err := buildObservationBatch(state_view{state: current, root: root}, plan, ptr, projected, &result, complete, occurredAt)
+			if err != nil {
+				return err
+			}
+			batchRel = filepath.ToSlash(filepath.Join(
+				".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
+				"review", batchID+".json"))
+			batchBytes, err := marshalArtifact(batch)
+			if err != nil {
+				return fmt.Errorf("encode ObservationBatch: %w", err)
+			}
+			if err := schema.NewValidator(root).ValidateBytes("observation-batch.schema.json", batchBytes); err != nil {
+				return fmt.Errorf("ObservationBatch schema: %w", err)
+			}
+			if err := staging.write(batchRel, batchBytes); err != nil {
+				return err
+			}
+			artifactRels = append(artifactRels, batchRel)
+			batchSHA = sha256Of(batchBytes)
+			artifactSHAs[batchRel] = batchSHA
 		}
-		artifactRels = append(artifactRels, cleanRel)
-		cleanSHA = sha256Of(cleanBytes)
-		artifactSHAs[cleanRel] = cleanSHA
+		if cleanNow {
+			cleanRel = filepath.ToSlash(filepath.Join(
+				".claude", "evidence", runtimeID, fmt.Sprintf("g%d", generation),
+				"review", fmt.Sprintf("clean-round-r%d.json", round)))
+			snapshot := buildCleanRoundSnapshot(current, plan, resultEnvelope, resultSHA, resultRel, occurredAt)
+			cleanBytes, err := marshalArtifact(snapshot)
+			if err != nil {
+				return fmt.Errorf("encode CleanRound: %w", err)
+			}
+			if err := staging.write(cleanRel, cleanBytes); err != nil {
+				return err
+			}
+			artifactRels = append(artifactRels, cleanRel)
+			cleanSHA = sha256Of(cleanBytes)
+			artifactSHAs[cleanRel] = cleanSHA
+		}
+
+		return nil
 	}
 
 	cursor := map[string]any{"state": lifecycle["state"], "phase": lifecycle["phase"]}
@@ -508,6 +713,10 @@ func submitResult(
 
 	store := loopruntime.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(request.Context)
 	casAttempted = true
+	phaseDurations := make(map[string]int64, 4)
+	// Metrics persistence is outside the Runtime lock and cannot delay or
+	// fail its candidate validation, pending publication or commit.
+	defer func() { _ = metrics.RecordS7SubmitPhases(root, phaseDurations) }()
 	snapshot, err := updateRuntime(store, request.ExpectedRevision, loopruntime.Mutation{
 		EventID:            eventID,
 		TransitionID:       "REVIEW-RESULT",
@@ -542,15 +751,28 @@ func submitResult(
 				if request.issuedSourceRoot != "" {
 					artifactRoot = request.issuedSourceRoot
 				}
-				if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens); err != nil {
+				if err := verifyResultArtifactDigestAt(artifactRoot, plan, ptr, &result, assignment.Lens, request.Context); err != nil {
 					return err
 				}
+			}
+			// The answer and capture input are fixed for this attempt, but their
+			// referenced disk evidence remains mutable while the Writer waits.
+			// Recheck it against the original digests before any publication.
+			if err := validateResultEvidenceReferences(root, state, &result, artifactRoot); err != nil {
+				return err
+			}
+			if err := validateBlockedClaims(root, state, plan, assignment, &result, artifactRoot); err != nil {
+				return err
+			}
+			if err := prepareArtifacts(state); err != nil {
+				return err
 			}
 			// RC-10 observability: per-phase durations of the submit CAS
 			// transaction (loop_s7_submit_phase_ms{phase}). Best-effort — the
 			// `_ =` discard mirrors recordRoundMetrics and never fails the
 			// verb. phaseTotal timers cover the whole closure; seal/clean are
 			// recorded by recordRoundMetrics consumers below, not here.
+			// Completed phase samples are persisted together after Writer unlock.
 			applyStart := time.Now()
 			if err := applyResultConsumption(state, plan, assignment, &result, resultRel, resultSHA, responsibility, generation, round, occurredAt); err != nil {
 				return err
@@ -560,12 +782,12 @@ func submitResult(
 					return err
 				}
 			}
-			_ = metrics.RecordS7SubmitPhase(root, "result_consumption", time.Since(applyStart).Milliseconds())
+			phaseDurations["result_consumption"] = time.Since(applyStart).Milliseconds()
 			findingsStart := time.Now()
 			if err := applyFindings(state, &result, findingArtifacts, round, occurredAt); err != nil {
 				return err
 			}
-			_ = metrics.RecordS7SubmitPhase(root, "findings", time.Since(findingsStart).Milliseconds())
+			phaseDurations["findings"] = time.Since(findingsStart).Milliseconds()
 			// A stop verdict and both terminal round transitions close the
 			// admission gate before this CAS returns. Promoting a queued
 			// Assignment here would dispatch new work after P0/pause/seal.
@@ -578,7 +800,7 @@ func submitResult(
 			if err := advanceReviewerAgent(state, &result, resultRepoPath, occurredAt); err != nil {
 				return err
 			}
-			_ = metrics.RecordS7SubmitPhase(root, "advance", time.Since(advanceStart).Milliseconds())
+			phaseDurations["advance"] = time.Since(advanceStart).Milliseconds()
 			reviewMap := state["review"].(map[string]any)
 			lifecycleMap := state["lifecycle"].(map[string]any)
 			switch result.Verdict {
@@ -590,7 +812,7 @@ func submitResult(
 				if err := capturePauseCheckpoint(state, "S7 review verdict: "+result.Verdict, occurredAt); err != nil {
 					return err
 				}
-				_ = metrics.RecordS7SubmitPhase(root, "pause", time.Since(pauseStart).Milliseconds())
+				phaseDurations["pause"] = time.Since(pauseStart).Milliseconds()
 				setPlanStatus(reviewMap, lifecycleMap, "paused")
 				return nil
 			}
@@ -606,7 +828,7 @@ func submitResult(
 				if err := applyObservationBatch(state, batchID, batchRel, batchSHA, result.Findings, round, occurredAt); err != nil {
 					return err
 				}
-				_ = metrics.RecordS7SubmitPhase(root, "seal", time.Since(sealStart).Milliseconds())
+				phaseDurations["seal"] = time.Since(sealStart).Milliseconds()
 				setPlanStatus(reviewMap, lifecycleMap, "observation_sealed")
 				return nil
 			}
@@ -615,7 +837,7 @@ func submitResult(
 				if err := applyCleanRound(state, cleanRel, cleanSHA, round, occurredAt); err != nil {
 					return err
 				}
-				_ = metrics.RecordS7SubmitPhase(root, "clean", time.Since(cleanStart).Milliseconds())
+				phaseDurations["clean"] = time.Since(cleanStart).Milliseconds()
 				setPlanStatus(reviewMap, lifecycleMap, "clean")
 				reviewMap["clean_round"] = round
 				return nil
@@ -625,8 +847,18 @@ func submitResult(
 	})
 	if err != nil {
 		retained := cleanupArtifacts()
+		// A deadline can arrive after durable publication but before the Writer's
+		// read-back snapshot. The existing bounded cleanup snapshot also proves
+		// that original acceptance; never turn lost delivery into a second submit.
+		if receiptMode && cleanupSnapshot.State != nil {
+			receiptContext, receiptCancel := ResultCompletionContext(request.Context)
+			defer receiptCancel()
+			if accepted, replayErr := replayAcceptedResult(root, cleanupSnapshot.State, &result, answerSHA, receiptContext); accepted && replayErr == nil {
+				return cleanupSnapshot, errExactResultReplay
+			}
+		}
 		if len(retained) > 0 {
-			return snapshot, fmt.Errorf("%w; staged ReviewResult artifacts were retained because lock-protected cleanup could not prove they were unreferenced: %s", err, strings.Join(retained, ", "))
+			return snapshot, fmt.Errorf("%w; staged ReviewResult artifacts were retained for lock-protected recovery: %s", err, strings.Join(retained, ", "))
 		}
 		return snapshot, err
 	}
@@ -1639,6 +1871,11 @@ func staleReviewPlanAfterDrift(
 	current map[string]any,
 	driftErr error,
 ) (loopruntime.Snapshot, error) {
+	// A budget/cancellation failure says nothing about source freshness and
+	// must never authorize a new stale-plan business mutation.
+	if errors.Is(driftErr, context.Canceled) || errors.Is(driftErr, context.DeadlineExceeded) {
+		return loopruntime.Snapshot{}, driftErr
+	}
 	plan := PlanPointerFromState(current)
 	if plan == nil {
 		return loopruntime.Snapshot{}, driftErr
@@ -2158,7 +2395,7 @@ func writeArtifact(root, rel string, data []byte) error {
 	file, err := os.OpenFile(abs, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("evidence artifact %s already exists but was never indexed by the runtime (a previous failed attempt staged it); delete the stale file or change the artifact id (result_id / finding_id / review_plan_id), then retry", rel)
+			return fmt.Errorf("evidence artifact %s already exists but was never indexed by the runtime; the original receiver must resolve staged ownership and pending references before publication; preserve the file and original delivery, without author deletion or artifact-ID changes", rel)
 		}
 		return fmt.Errorf("write %s without overwrite: %w", rel, err)
 	}

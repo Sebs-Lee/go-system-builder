@@ -69,3 +69,45 @@ func TestNativeReviewResumeReadsBoundedTranscriptTail(t *testing.T) {
 		t.Fatalf("bounded tail lost current responsibility: %s", text)
 	}
 }
+
+func TestNativeReviewLatestTaskKeepsHistoricalAliasAndExactReferenceBoundary(t *testing.T) {
+	ref := "/worker/historical/questionnaire.md"
+	path := filepath.Join(t.TempDir(), "alias.jsonl")
+	var rows strings.Builder
+	appendRow := func(content any) {
+		data, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
+		rows.Write(data)
+		rows.WriteByte('\n')
+	}
+	appendRow("Original task " + ref)
+	appendRow([]map[string]string{{"type": "text", "text": "Resumed actual task `" + ref + "`"}})
+	appendRow("A different path " + ref + ".backup")
+	appendRow([]map[string]string{{"type": "tool_result", "text": ref}})
+	if err := os.WriteFile(path, []byte(rows.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	text := nativeReviewTaskText(policy.Input{AgentTranscriptPath: path}, []string{ref})
+	if !strings.Contains(text, "Resumed actual task") || strings.Contains(text, "backup") || strings.Contains(text, "Original task") {
+		t.Fatalf("historical alias/exact boundary changed: %s", text)
+	}
+}
+
+func BenchmarkNativeReviewLatestTaskInLargeTranscript(b *testing.B) {
+	ref := "/main/current/questionnaire.md"
+	old, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": strings.Repeat("old task material ", 128)}})
+	latest, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "Actual resumed task " + ref}})
+	data := append([]byte(strings.Repeat(string(old)+"\n", 1800)), append(latest, '\n')...)
+	path := filepath.Join(b.TempDir(), "large.jsonl")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		b.Fatal(err)
+	}
+	in := policy.Input{AgentTranscriptPath: path}
+	b.ReportAllocs()
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if text := nativeReviewTaskText(in, []string{ref}); !strings.Contains(text, "Actual resumed task") {
+			b.Fatal(text)
+		}
+	}
+}

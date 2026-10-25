@@ -243,7 +243,7 @@ func prepareAcceptedS9RepairResultCandidateWithOptions(t *testing.T, withResume,
 			t.Fatalf("decode current ready S9 RepairResult packet: packets=%d err=%v stdout=%s", len(resultPackets), err, issueResultOut.String())
 		}
 	} else {
-		packets, err := runtime.RepairResultPackets(currentS9State(t, fixture))
+		packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(t.Context(), fixture.root), currentS9State(t, fixture))
 		if err != nil {
 			t.Fatal(err)
 		}

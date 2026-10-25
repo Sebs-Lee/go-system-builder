@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/entroforge/go-system-builder/internal/audit"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
@@ -32,7 +31,7 @@ func nativeS9PlanPackets(root string, state map[string]any) []workpacket.RepairP
 	if stringValue(mapFieldCLI(state, "lifecycle")["state"]) != "bug_resolution" || !s9ProfessionalPhase(stringValue(mapFieldCLI(state, "lifecycle")["phase"])) {
 		return nil
 	}
-	packets, err := runtime.RepairPlanReportPackets(state)
+	packets, err := runtime.CurrentRepairPlanReportPackets(root, state, "")
 	if err != nil {
 		return nil
 	}
@@ -119,7 +118,9 @@ to your registered Worker root (or absolute within it); prefer path:logs/check.t
 without authoring a hash.
 Use path:check.log or ./check.log for a local bare filename; bare tokens without
 path: or a slash remain opaque legacy IDs.
-Reception captures these actual bytes for Main. URI references remain unchanged;
+Reception captures these actual bytes for Main. Referenced local check outputs such as
+logs/check.txt need no extra evidence commit; product deliverables keep their original
+commit requirement. URI references remain unchanged;
 missing local source files must be restored for reception.
 Saving a private Plan/Result or returning its path does not establish reception.
 Only the original consumer receipt confirms acceptance; Main can query
@@ -149,7 +150,7 @@ func nativeS9Available(root string, state map[string]any) bool {
 }
 
 func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool, int) {
-	snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot()
+	snap, err := nativeRoutingSnapshot(root, in)
 	if err != nil || !runtime.PacketEnabled(snap.State) || !nativeS9Available(root, snap.State) {
 		return false, 0
 	}
@@ -174,7 +175,7 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		auditStarted := time.Now()
 		defer func() {
 			observed.ElapsedMS = time.Since(auditStarted).Milliseconds()
-			if err := audit.NewOutbox(filepath.Join(root, ".claude/hook-decisions.jsonl")).Append(engine.Envelope(in, observed, time.Now())); err != nil {
+			if err := appendHookAudit(contextForHook(in), root, engine.Envelope(in, observed, time.Now())); err != nil {
 				fmt.Fprintln(diagnostic, err)
 			}
 		}()
@@ -251,8 +252,8 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 		// Reception may already have recorded a PlanReport or Targeted before
 		// the next outlet failed. Display that partial success with the latest
 		// state; this best-effort diagnostic never changes a consumer decision.
-		if latest, readErr := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot(); readErr == nil {
-			recordNativeS9Diagnostic(root, latest, key, owner, paths, err)
+		if latest, readErr := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot(); readErr == nil {
+			recordNativeS9DiagnosticContext(contextForHook(in), root, latest, key, owner, paths, err)
 		}
 	}
 	if err != nil {

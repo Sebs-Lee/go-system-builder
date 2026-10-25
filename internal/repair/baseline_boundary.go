@@ -171,7 +171,7 @@ func excludedBaselinePaths(root string, paths []string) map[string]bool {
 	// cannot reclassify its files, including legacy logs without provenance.
 	excluded := map[string]bool{}
 	for _, p := range paths {
-		if b.hasTracked(p) && !isControlPlanePath(p, false) {
+		if b.hasTracked(p) && !isControlPlanePath(p, false, root) {
 			delete(excluded, p)
 			continue
 		}
@@ -184,7 +184,7 @@ func excludedBaselinePaths(root string, paths []string) map[string]bool {
 				break
 			}
 		}
-		if ignoreBaselinePath(p) || foreign {
+		if ignoreBaselinePath(p, root) || foreign {
 			excluded[p] = true
 		}
 	}

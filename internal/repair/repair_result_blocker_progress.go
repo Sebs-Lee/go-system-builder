@@ -11,7 +11,7 @@ import (
 // RepairResultBlockerExecutionMayEnd projects current blocked work. Missing
 // implementation remains pending with Main; this is not a source proof gate.
 func RepairResultBlockerExecutionMayEnd(root string, state map[string]any, packetID, owner string) (bool, error) {
-	packet, found, err := runtimepkg.FindRepairResultPacket(state, packetID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(context.Background(), root), state, packetID)
 	if err != nil || !found {
 		return false, err
 	}

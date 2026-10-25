@@ -22,7 +22,20 @@ import (
 // Read reconstructs the entire machine projection from original registered
 // sources. It does not accept a caller-provided Git baseline or check verdict.
 func Read(root string, state map[string]any) (Snapshot, error) {
-	var out Snapshot
+	return ReadContext(context.Background(), root, state)
+}
+
+// ReadContext retains live authority, checkout and disk checks while reusing only pinned sources.
+func ReadContext(ctx context.Context, root string, state map[string]any) (out Snapshot, err error) {
+	ctx = WithReadCache(ctx)
+	defer func() {
+		if ctx.Err() != nil {
+			out, err = Snapshot{}, ctx.Err()
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	if root == "" || !HasCanonical(state) {
 		return out, fmt.Errorf("canonical S6 product baseline requires the original Runtime root and Assignment registry")
 	}
@@ -37,18 +50,18 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 	if err := fileview.ValidateAuthority(root, state); err != nil {
 		return out, err
 	}
-	journal, err := loopruntime.ReadJournalForState(root, state)
+	journal, err := loopruntime.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return out, err
 	}
-	start, err := loopruntime.RequireCurrentS6MainStart(state, journal)
+	start, err := loopruntime.RequireCurrentS6MainStartContext(ctx, state, journal)
 	if err != nil {
 		return out, err
 	}
-	if err := loopruntime.ValidateAssignmentRevisionReceipts(state, journal); err != nil {
+	if err := loopruntime.ValidateAssignmentRevisionReceiptsContext(ctx, state, journal); err != nil {
 		return out, err
 	}
-	view, err := sourceView(root, state)
+	view, err := sourceViewContext(ctx, root, state)
 	if err != nil {
 		return out, err
 	}
@@ -65,14 +78,14 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 	if startRootErr != nil || filepath.Clean(startRoot) != filepath.Clean(rootAbs) || start.DevelopmentBranch != branch || view.Commit == "" {
 		return out, fmt.Errorf("original product start differs from current authority root/branch")
 	}
-	if err := verifyCheckout(root, view.Commit); err != nil {
+	if err := verifyCheckoutContext(ctx, root, view.Commit); err != nil {
 		return out, err
 	}
-	paths, err := changedPaths(root, start.StartCommit, view.Commit)
+	paths, err := changedPathsContext(ctx, root, start.StartCommit, view.Commit)
 	if err != nil {
 		return out, err
 	}
-	tasks, err := currentTasks(state, view)
+	tasks, err := currentTasks(ctx, state, view)
 	if err != nil {
 		return out, err
 	}
@@ -106,6 +119,9 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return Snapshot{}, err
+		}
 		group := byAssignment[id]
 		sort.Slice(group, func(i, j int) bool { return group[i].Revision < group[j].Revision })
 		current, found, err := assignmentrecord.FindRecord(records, out.RuntimeID, out.BaselineGeneration, id)
@@ -121,10 +137,13 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 			ref := ""
 			var accepted assignmentresult.AcceptedResult
 			read := func(ref string) ([]byte, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				return workpacket.ReadFile(root, ref, assignmentresult.EvidenceReadLimit)
 			}
 			if record.Reference() == current.Reference() {
-				ref, err = currentResultRef(root, state, record, view)
+				ref, err = currentResultRef(ctx, root, state, record, view)
 				if err == nil {
 					accepted, err = assignmentresult.LoadContribution(state, record, ref, read)
 				}
@@ -151,7 +170,7 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 					accepted, err = assignmentresult.LoadSupersededAccepted(state, record, successor, event, ref, read)
 				}
 				if err == nil {
-					err = verifySourceSnapshots(root, record)
+					err = verifySourceSnapshots(ctx, root, record)
 				}
 			}
 			if err != nil {
@@ -165,7 +184,7 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 			if err != nil {
 				return Snapshot{}, err
 			}
-			proof, err := mainreceipt.Verify(context.Background(), mainreceipt.Input{AuthorityRoot: root, Record: record, Accepted: accepted, ResultRef: ref, ResultSHA256: hashBytes(body), ExecutionGeneration: generation, AuthorizedMainRoots: []string{rootAbs}, ExpectedTargetBranch: branch, FinalTargetHead: view.Commit})
+			proof, err := mainreceipt.Verify(ctx, mainreceipt.Input{AuthorityRoot: root, Record: record, Accepted: accepted, ResultRef: ref, ResultSHA256: hashBytes(body), ExecutionGeneration: generation, AuthorizedMainRoots: []string{rootAbs}, ExpectedTargetBranch: branch, FinalTargetHead: view.Commit})
 			if record.Reference() != current.Reference() && errors.Is(err, mainreceipt.ErrNotVerified) {
 				// Keep the original failed attempt unchanged. The full start-to-final
 				// Git path set still covers its surviving product changes for S7;
@@ -199,12 +218,18 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 	if err := view.Verify(); err != nil {
 		return Snapshot{}, err
 	}
-	if err := verifyCheckout(root, view.Commit); err != nil {
+	if err := verifyCheckoutContext(ctx, root, view.Commit); err != nil {
 		return Snapshot{}, err
 	}
-	latestJournal, err := loopruntime.ReadJournalForState(root, state)
-	if err != nil || !bytes.Equal(journal, latestJournal) {
-		return Snapshot{}, fmt.Errorf("Runtime source changed during product baseline read: %v", err)
+	latestJournal, err := loopruntime.ReadJournalForStateContext(ctx, root, state)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("recheck Runtime journal during product baseline read: %w", err)
+	}
+	if !bytes.Equal(journal, latestJournal) {
+		return Snapshot{}, fmt.Errorf("Runtime source changed during product baseline read")
+	}
+	if err := ctx.Err(); err != nil {
+		return Snapshot{}, err
 	}
 	out.Digest, err = Digest(out)
 	return out, err
@@ -213,10 +238,20 @@ func Read(root string, state map[string]any) (Snapshot, error) {
 // Verify requires an exact fresh reconstruction, including the original
 // start receipt, all task/revision contributions and pinned final Main HEAD.
 func Verify(root string, state map[string]any, expected Snapshot) error {
+	return VerifyContext(context.Background(), root, state, expected)
+}
+
+func VerifyContext(ctx context.Context, root string, state map[string]any, expected Snapshot) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if expected.Digest == "" {
 		return fmt.Errorf("product baseline digest is missing")
 	}
-	actual, err := Read(root, state)
+	actual, err := ReadContext(ctx, root, state)
 	if err != nil {
 		return err
 	}

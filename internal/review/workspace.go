@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/diagnosticstorage"
 	"github.com/entroforge/go-system-builder/internal/pathscope"
 	"github.com/entroforge/go-system-builder/internal/projectlayout"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -32,6 +33,22 @@ import (
 // of every file under dir. An empty or missing workspace digests to the
 // empty-string hash (the registered cold-start baseline).
 func WorkspaceDigest(root, workspaceRel string) (string, error) {
+	return WorkspaceDigestContext(context.Background(), root, workspaceRel)
+}
+
+// WorkspaceDigestContext always reads the current workspace; it caches no disk verdict.
+func WorkspaceDigestContext(ctx context.Context, root, workspaceRel string) (digest string, readErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	defer func() {
+		if ctx.Err() != nil {
+			digest, readErr = "", ctx.Err()
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if workspaceRel == "" {
 		return "", nil
 	}
@@ -49,6 +66,9 @@ func WorkspaceDigest(root, workspaceRel string) (string, error) {
 	_ = entries
 	var lines []string
 	err = filepath.Walk(abs, func(path string, info os.FileInfo, err error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err != nil {
 			return err
 		}
@@ -63,6 +83,9 @@ func WorkspaceDigest(root, workspaceRel string) (string, error) {
 			return err
 		}
 		data, err := os.ReadFile(path)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if err != nil {
 			return err
 		}
@@ -162,14 +185,17 @@ func VerifyFrozenSubjects(root string, plan *Plan, state map[string]any) error {
 // clean. Allowed write surfaces (.claude/, docs/reports/, e2e-workspace/) are
 // excluded from the drift scan.
 func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, contexts ...context.Context) error {
+	if err := reviewRequestContext(contexts).Err(); err != nil {
+		return err
+	}
 	if plan == nil {
 		return fmt.Errorf("frozen subject verification requires a plan")
 	}
 	if buildsurface.HasCanonical(state) {
-		if err := verifyProductBaselineDeclaration(root, state, plan); err != nil {
+		if err := verifyProductBaselineDeclarationContext(reviewRequestContext(contexts), root, state, plan); err != nil {
 			return err
 		}
-		if err := verifyCanonicalFrozenSubjectFiles(root, plan); err != nil {
+		if err := verifyCanonicalFrozenSubjectFiles(root, plan, contexts...); err != nil {
 			return err
 		}
 		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
@@ -217,7 +243,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, context
 	}
 	if root != "" {
 		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
-		if errors.Is(err, errResultPacketDriftProof) {
+		if errors.Is(err, errResultPacketDriftProof) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 		if err == nil && len(drift) > 0 {
@@ -303,12 +329,27 @@ func detectUndeclaredProductDrift(root string, plan *Plan) ([]string, error) {
 
 var errResultPacketDriftProof = errors.New("S7 issued control artifact source cannot be verified")
 
-func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string, contexts ...context.Context) ([]string, error) {
-	parent := context.Background()
+func reviewRequestContext(contexts []context.Context) context.Context {
 	if len(contexts) > 0 && contexts[0] != nil {
-		parent = contexts[0]
+		return contexts[0]
 	}
+	return context.Background()
+}
+
+func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[string]any, authorityRoot string, contexts ...context.Context) ([]string, error) {
+	parent := loopruntime.WithReviewResultReadCache(reviewRequestContext(contexts))
 	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	// Read the actual worktree first. Only paths that survive the ordinary
+	// classification below need an original S7 packet issuance proof.
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
+	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
+	cancel()
+	if err != nil {
+		if parent.Err() != nil {
+			return nil, parent.Err()
+		}
 		return nil, err
 	}
 	controlPaths := map[string]bool{}
@@ -357,29 +398,14 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 			return nil, err
 		}
 		row, _ := raw.(map[string]any)
+		if typedResultReceiptsEnabled(state) && row["template_id"] == "s7-review-result-v1" {
+			// Typed S7 rows need their original issuance proof below, even
+			// when their exact answer lives on the submissions surface.
+			continue
+		}
 		for _, key := range []string{"view_path", "answer_path"} {
 			path, _ := row[key].(string)
 			if strings.HasPrefix(path, ".claude/submissions/") && workpacket.CheckPath(root, path) == nil {
-				controlPaths[path] = true
-			}
-		}
-	}
-	if typedResultReceiptsEnabled(state) {
-		packets, err := loopruntime.ReviewResultPackets(state)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
-		}
-		for _, p := range packets {
-			if err := parent.Err(); err != nil {
-				return nil, err
-			}
-			if err := loopruntime.VerifyReviewResultPacketIssue(authorityRoot, state, p); err != nil {
-				return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
-			}
-			for _, path := range []string{p.ViewPath, p.AnswerPath} {
-				if err := workpacket.CheckPath(root, path); err != nil {
-					return nil, fmt.Errorf("%w: %v", errResultPacketDriftProof, err)
-				}
 				controlPaths[path] = true
 			}
 		}
@@ -393,15 +419,6 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	frozen := make(map[string]bool, len(plan.FrozenSubjects))
 	for _, subject := range plan.FrozenSubjects {
 		frozen[normalizeGitStatusPath(subject.Path)] = true
-	}
-	// The local Git limit starts at the command, not before the independent
-	// control-artifact proofs. Preparation still consumes the parent request's
-	// budget; the subprocess gets at most its remainder and the same 3s cap.
-	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").CombinedOutput()
-	if err != nil {
-		return nil, err
 	}
 	var drift []string
 	for _, entry := range strings.Split(string(output), "\x00") {
@@ -423,10 +440,46 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		if controlPaths[rel] {
 			continue
 		}
-		if scope.Excludes(rel) || isAllowedDriftSurface(rel) {
+		if scope.Excludes(rel) || isAllowedDriftSurface(rel) || diagnosticstorage.Recognizes(parent, root, rel) {
 			continue
 		}
 		drift = append(drift, rel)
+	}
+	storagePaths, err := loopruntime.ClassifyPacketBodyStoragePathsContext(parent, root, drift)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
+	}
+	for _, path := range storagePaths {
+		controlPaths[path] = true
+	}
+	remaining := drift[:0]
+	for _, path := range drift {
+		if !controlPaths[path] {
+			remaining = append(remaining, path)
+		}
+	}
+	drift = remaining
+	if typedResultReceiptsEnabled(state) {
+		paths, err := loopruntime.VerifyReviewResultPacketControlPathsContext(parent, authorityRoot, state, drift)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
+		}
+		for _, path := range paths {
+			if err := workpacket.CheckPath(root, path); err != nil {
+				return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
+			}
+			controlPaths[path] = true
+		}
+		remaining := drift[:0]
+		for _, path := range drift {
+			if !controlPaths[path] {
+				remaining = append(remaining, path)
+			}
+		}
+		drift = remaining
+	}
+	if err := parent.Err(); err != nil {
+		return nil, err
 	}
 	sort.Strings(drift)
 	return drift, nil
@@ -521,7 +574,11 @@ func verifyResultArtifactDigest(root string, plan *Plan, ptr *PlanPointer, resul
 // verifyResultArtifactDigestAt is the packet-backed variant: authority and
 // the pinned plan remain in Main, while the mutable cold-start workspace may
 // live in the Assignment's registered execution checkout.
-func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPointer, result *Result, lens string) error {
+func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPointer, result *Result, lens string, contexts ...context.Context) error {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if lens != "e2e" {
 		return nil
 	}
@@ -531,7 +588,7 @@ func verifyResultArtifactDigestAt(workspaceRoot string, plan *Plan, ptr *PlanPoi
 		}
 		return nil
 	}
-	digest, err := WorkspaceDigest(workspaceRoot, ptr.VerificationArtifactWorkspace)
+	digest, err := WorkspaceDigestContext(ctx, workspaceRoot, ptr.VerificationArtifactWorkspace)
 	if err != nil {
 		return err
 	}
@@ -597,15 +654,19 @@ func verifyRegressionAssetFingerprints(root string, plan *Plan) error {
 // against disk. If all of them still match, the consumed evidence is
 // byte-valid (the aggregate moved only through later artifact revisions)
 // and the assignment passes; any missing or changed anchor fails closed.
-func verifySealedArtifactDigests(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string) error {
-	return verifySealedArtifactDigestsWithMode(root, ptr, assignments, state, candidateAssignmentID, candidateExecutionRoot, true)
+func verifySealedArtifactDigests(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string, contexts ...context.Context) error {
+	return verifySealedArtifactDigestsWithMode(root, ptr, assignments, state, candidateAssignmentID, candidateExecutionRoot, true, contexts...)
 }
 
 // VerifySealedArtifactDigests rechecks accepted packet-backed E2E Result
 // receipts against their currently registered execution checkouts. It is
 // shared by the quality gate and TR-009's direct transition guard. Legacy
 // Result rows keep their original close-time validation path.
-func VerifySealedArtifactDigests(root string, state map[string]any, ptr *PlanPointer, assignments map[string]any) error {
+func VerifySealedArtifactDigests(root string, state map[string]any, ptr *PlanPointer, assignments map[string]any, contexts ...context.Context) error {
+	ctx := loopruntime.WithReviewResultReadCache(buildsurface.WithReadCache(baselineContext(contexts)))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if state == nil || ptr == nil {
 		return errors.New("typed S7 sealed artifact verification requires the accepted Runtime and current Plan")
 	}
@@ -622,7 +683,7 @@ func VerifySealedArtifactDigests(root string, state map[string]any, ptr *PlanPoi
 	if currentAssignments == nil {
 		return errors.New("typed S7 sealed artifact verification has no current Assignment registry")
 	}
-	return verifySealedArtifactDigestsWithMode(root, ptr, currentAssignments, state, "", "", false)
+	return verifySealedArtifactDigestsWithMode(root, ptr, currentAssignments, state, "", "", false, ctx)
 }
 
 func HasPacketBoundE2EReceipts(state map[string]any) bool {
@@ -641,11 +702,18 @@ func HasPacketBoundE2EReceipts(state map[string]any) bool {
 	return false
 }
 
-func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string, includeLegacy bool) error {
+func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignments map[string]any, state map[string]any, candidateAssignmentID, candidateExecutionRoot string, includeLegacy bool, contexts ...context.Context) error {
+	ctx := loopruntime.WithReviewResultReadCache(buildsurface.WithReadCache(baselineContext(contexts)))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if ptr.VerificationArtifactWorkspace == "" {
 		return nil
 	}
 	for id, raw := range assignments {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		row, _ := raw.(map[string]any)
 		if row == nil || row["lens"] != "e2e" || workstate.ReviewAssignmentActivity(row) != "consumed" {
 			continue
@@ -666,7 +734,7 @@ func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignme
 				if state == nil {
 					return fmt.Errorf("assignment %s packet receipt has no Runtime source for verification", id)
 				}
-				accepted, found, err := IssuedResultReceipt(root, state, packetID, stringField(row["agent_id"]))
+				accepted, found, err := IssuedResultReceiptContext(ctx, root, state, packetID, stringField(row["agent_id"]))
 				if err != nil {
 					return fmt.Errorf("assignment %s original packet receipt: %w", id, err)
 				}
@@ -681,7 +749,7 @@ func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignme
 		if packetBound && !includeLegacy && state == nil {
 			return fmt.Errorf("assignment %s packet receipt has no Runtime source for verification", id)
 		}
-		current, err := WorkspaceDigest(artifactRoot, ptr.VerificationArtifactWorkspace)
+		current, err := WorkspaceDigestContext(ctx, artifactRoot, ptr.VerificationArtifactWorkspace)
 		if err != nil {
 			return fmt.Errorf("assignment %s execution workspace digest: %w", id, err)
 		}
@@ -704,7 +772,7 @@ func verifySealedArtifactDigestsWithMode(root string, ptr *PlanPointer, assignme
 			return fmt.Errorf("assignment %s consumed a result against workspace digest %s, but the workspace now digests to %s; the round is stale (L3-S7 §10.3): %w", id, bound, current, err)
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // verifyResultWorkspaceAnchors re-verifies the dependencies declared in the

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 )
 
@@ -26,7 +27,7 @@ func TestHookBudgetTimeoutKeepsListenerNonBlocking(t *testing.T) {
 			defer cancel()
 			var out, errout bytes.Buffer
 			start := time.Now()
-			code := runBudgetedHook(ctx, script, nil, strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"`+tool+`"}`), &out, &errout)
+			code := runBudgetedHook(ctx, script, []string{"--root", t.TempDir()}, strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"`+tool+`"}`), &out, &errout)
 			want := 0
 			if code != want || out.Len() != 0 || !strings.Contains(errout.String(), "internal budget") {
 				t.Fatalf("code=%d stdout=%s stderr=%s", code, &out, &errout)
@@ -49,7 +50,7 @@ func TestHookFailurePreservesOriginalDiagnosticAndDiscardsPartialSuccess(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	var out, diagnostic bytes.Buffer
-	code := runBudgetedHook(ctx, script, nil, strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Read"}`), &out, &diagnostic)
+	code := runBudgetedHook(ctx, script, []string{"--root", t.TempDir()}, strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Read"}`), &out, &diagnostic)
 	if code != 0 || out.Len() != 0 || !strings.Contains(diagnostic.String(), "original Record source is missing") || !strings.Contains(diagnostic.String(), "original receipt") || !strings.Contains(diagnostic.String(), "does not prove no commit") {
 		t.Fatalf("incomplete Hook hid its cause or delivered partial success: code=%d stdout=%s stderr=%s", code, &out, &diagnostic)
 	}
@@ -79,6 +80,42 @@ func TestHookContextCarriesCancellationWithoutAuthorBudgetFields(t *testing.T) {
 	case <-derived.Done():
 	default:
 		t.Fatal("existing nested Hook calls lost parent cancellation")
+	}
+}
+
+func TestHookTimeoutPreservesReceiverDiagnosticWithoutPublishingPartialSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX fake Hook process")
+	}
+	for _, event := range []string{"PostToolUse", "SubagentStop"} {
+		t.Run(event, func(t *testing.T) {
+			dir := t.TempDir()
+			script := filepath.Join(dir, "hook")
+			body := "#!/bin/sh\nprintf '{\"accepted\":true}'\nprintf 'Original packet=packet-original answer=/original/answer.json; original receiver committed; successor preparation incomplete\\n' >&2\nsleep 30\n"
+			if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			var out, diagnostic bytes.Buffer
+			code := runBudgetedHook(ctx, script, []string{"--root", dir}, strings.NewReader(`{"hook_event_name":"`+event+`","tool_name":"Write"}`), &out, &diagnostic)
+			if code != 0 || out.Len() != 0 {
+				t.Fatalf("transport published partial success or changed listener control: code=%d stdout=%s stderr=%s", code, &out, &diagnostic)
+			}
+			for _, want := range []string{"packet-original", "/original/answer.json", "original receiver committed", "successor preparation incomplete", "internal budget", "not a professional content verdict", "Framework recovery"} {
+				if !strings.Contains(diagnostic.String(), want) {
+					t.Fatalf("missing %q: %s", want, &diagnostic)
+				}
+			}
+			if degraded, err := metrics.HealthDegraded(dir); err != nil || !degraded {
+				t.Fatalf("outer timeout missing from health below platform threshold: degraded=%v err=%v", degraded, err)
+			}
+			for _, forbidden := range []string{"Main must inspect", "save the unchanged file again", "change the artifact id"} {
+				if strings.Contains(diagnostic.String(), forbidden) {
+					t.Fatalf("transport assigned infrastructure work to the author: %s", &diagnostic)
+				}
+			}
+		})
 	}
 }
 

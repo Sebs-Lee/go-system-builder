@@ -60,7 +60,7 @@ func RepairResultResumeBinding(root string, state map[string]any, base workpacke
 	if !containsStringRuntime(refs, message.Resolution.PacketID) || !containsStringRuntime(refs, message.Resolution.BlockerRef) {
 		return nil, fmt.Errorf("S9 recorded resolution refers to another predecessor or blocker")
 	}
-	prior, found, err := FindRepairResultPacket(state, message.Resolution.PacketID)
+	prior, found, err := FindRepairResultPacketContext(repairPacketContext(root), state, message.Resolution.PacketID)
 	if err != nil || !found {
 		return nil, fmt.Errorf("S9 resolution predecessor questionnaire is unavailable: %v", err)
 	}
@@ -100,7 +100,7 @@ func VerifyRepairResultResume(root string, state map[string]any, packet workpack
 	if err != nil {
 		return err
 	}
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsForBindingContext(repairPacketContext(root), state, packet.Binding)
 	if err != nil {
 		return err
 	}

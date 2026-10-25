@@ -122,9 +122,16 @@ reuse the observed snapshot; they do not re-run the full quality cycle or
 receive a private answer. Actual saves and original followups retain their
 professional/source checks. Hook calls share an internal work deadline inside
 the existing process timeout; authors do not supply budget fields or wait for
-another tool just to obtain authority. If a Hook does not finish, Main checks
-the original receipt and remaining handoff before retrying: a missing response
-does not prove no commit. Preserve accepted work and use its original recovery.
+another tool just to obtain authority. Event routing, immutable-source reads
+and packet indexes may be reused internally; the original Writer still checks
+current responsibility and sources. An internal timeout is not a professional
+content verdict and requests no new answer fields, repeated save, report,
+evidence deletion or artifact-ID change. The original receiver owns bounded
+staging/pending recovery. A missing response does not prove no commit; preserve
+the original delivery and accepted receipts. Source/environment gaps stay with
+their named owner; only concrete professional omissions require author repair.
+Normal reception supplies the original receipt and applicable next responsibility
+in the same handoff; cache maintenance and metrics never require an Agent action.
 
 ## Stage list
 

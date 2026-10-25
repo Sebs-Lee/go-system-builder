@@ -270,8 +270,9 @@ nested observations) use the registered Builder root, never Main's root.
 Prefer `path:logs/check.txt` (no authored hash needed); slash-containing relative
 file references and absolute files within that Builder root are also accepted.
 The original Result receiver captures these actual bytes into Main and keeps the
-original authored references and source root in its immutable provenance. A
-missing local file is a source handoff gap: restore the original file and retry
+original authored references and source root in its immutable provenance. These
+referenced local check outputs need no extra evidence commit; product deliverables
+keep their original commit requirement. A missing local file is a source handoff gap: restore the original file and retry
 reception, without inventing observations. URI references retain their meaning;
 bare tokens are opaque, unarchived identifiers. For a filename without a directory,
 use `path:check.log` or `./check.log`. Migration, rollback and detection-gap artifact

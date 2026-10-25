@@ -10,7 +10,13 @@ import (
 // VerifyCurrentProductBaseline rechecks the current pinned product authority
 // when a persisted CleanRound is consumed. Legacy plans keep their original
 // gate rules; canonical plans cannot rely on an old state-only clean label.
-func VerifyCurrentProductBaseline(root string, state map[string]any, contexts ...context.Context) error {
+func VerifyCurrentProductBaseline(root string, state map[string]any, contexts ...context.Context) (err error) {
+	ctx := baselineContext(contexts)
+	defer func() {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
 	if len(contexts) > 0 && contexts[0] != nil {
 		if err := contexts[0].Err(); err != nil {
 			return err
@@ -38,7 +44,7 @@ func VerifyCurrentProductBaseline(root string, state map[string]any, contexts ..
 		if plan.ProductBaseline == nil {
 			return nil
 		}
-		return verifyProductBaselineDeclaration(root, state, plan)
+		return verifyProductBaselineDeclarationContext(baselineContext(contexts), root, state, plan)
 	}
 	plan, ptr, err := LoadPlan(root, state)
 	if err != nil {

@@ -417,7 +417,7 @@ func runRuntimeWorkspace(args []string, stdout, stderr io.Writer) int {
 		if lifecycle["state"] != "bug_resolution" || !runtime.PacketEnabled(snap.State) {
 			return nil
 		}
-		packets, err := s9ListenerQuestionnaires(snap.State, *agent, true)
+		packets, err := s9ListenerQuestionnairesContext(context.Background(), *root, snap.State, *agent, true)
 		if err != nil {
 			return err
 		}

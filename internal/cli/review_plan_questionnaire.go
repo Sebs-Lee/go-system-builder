@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +62,7 @@ func prepareReviewPlanQuestionnaireEntry(root string, request policy.Input, snap
 		return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire is unavailable: Main must restore the original current round and generation. No path was guessed.")
 	}
 	if info, err := os.Stat(path); os.IsNotExist(err) && prepare {
-		plan, notes := reviewPlanDraftForEntry(root, snapshot.State, round)
+		plan, notes := reviewPlanDraftForEntryContext(contextForHook(request), root, snapshot.State, round)
 		if plan == nil {
 			return reviewPlanPreparationFailure("S7 Main ReviewPlan questionnaire preparation failed at " + path + ": " + strings.Join(notes, "; ") + ". " + recovery)
 		}
@@ -85,7 +86,7 @@ func prepareReviewPlanQuestionnaireEntry(root string, request policy.Input, snap
 	}
 	guide := reviewPlanGuidePath(path)
 	if info, err := os.Stat(guide); os.IsNotExist(err) && prepare {
-		plan, notes := reviewPlanDraftForEntry(root, snapshot.State, round)
+		plan, notes := reviewPlanDraftForEntryContext(contextForHook(request), root, snapshot.State, round)
 		if plan == nil {
 			return reviewPlanPreparationFailure("S7 Main guidance preparation failed at " + guide + ": " + strings.Join(notes, "; ") + ". " + recovery)
 		}
@@ -103,6 +104,13 @@ func prepareReviewPlanQuestionnaireEntry(root string, request policy.Input, snap
 }
 
 func reviewPlanDraftForEntry(root string, state map[string]any, round int) (*review.Plan, []string) {
+	return reviewPlanDraftForEntryContext(context.Background(), root, state, round)
+}
+
+func reviewPlanDraftForEntryContext(ctx context.Context, root string, state map[string]any, round int) (*review.Plan, []string) {
+	if err := ctx.Err(); err != nil {
+		return nil, []string{err.Error()}
+	}
 	if repairCurrentS7Entry(state) {
 		if !repairSeedAwaitingPlan(state) {
 			return nil, []string{"restore the original S9 seed/ReviewPlan projection for the current TR-012 round; do not substitute a generic S7 draft"}
@@ -116,7 +124,7 @@ func reviewPlanDraftForEntry(root string, state map[string]any, round int) (*rev
 			"Preserve its plan id, round, generation and pinned baseline. Resolve PLANNER-REFINE with actual professional coverage, assertions, methods and E2E applicability before saving the original questionnaire; the seed is not an accepted professional plan.",
 		}
 	}
-	return review.DraftPlanForRoot(root, state, round)
+	return review.DraftPlanForRootContext(ctx, root, state, round)
 }
 
 func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
@@ -154,7 +162,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		if err != nil {
 			var author *review.PlanAnswerError
 			if nativeReceptionInterrupted(err) {
-				next = "ReviewPlan reception was interrupted, not rejected for professional content. Keep this exact questionnaire at " + path + "; inspect the original registered Plan/pending receipt, then save the unchanged file again if registration is unreceived. An accepted Plan uses its original replay/continuation; do not rewrite valid content or prepare another plan."
+				next = "ReviewPlan reception was interrupted, not rejected for professional content. The original consumer retains this exact delivery at " + path + " and owns bounded pending/staging recovery. This return has not confirmed completion. An accepted Plan keeps its original receipt and continuation; no answer edit, repeated save, new plan or manual artifact cleanup is requested by timeout alone."
 			} else if errors.As(err, &author) {
 				next = "Correct the specific original validation feedback in this same questionnaire and save; no new command or report is required."
 			} else {

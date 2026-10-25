@@ -323,7 +323,7 @@ func runRepairDispatchQuestionnaire(root string, request policy.Input, stdout, s
 // the same callback. Passive observations never call this named issuer path.
 func repairDispatchPlanReportBrief(root string, request policy.Input, state map[string]any, assignmentID, owner string) (string, error) {
 	find := func(state map[string]any) (s9ListenerQuestionnaire, bool, error) {
-		packets, err := s9ListenerQuestionnaires(state, owner, false)
+		packets, err := s9ListenerQuestionnairesContext(contextForHook(request), root, state, owner, false)
 		if err != nil {
 			return s9ListenerQuestionnaire{}, false, err
 		}
@@ -379,7 +379,7 @@ func repairDispatchPlanReportBrief(root string, request policy.Input, state map[
 		if err != nil {
 			return "", err
 		}
-		original, found, err := runtime.FindRepairPlanReportPacket(latest.State, packet.id)
+		original, found, err := runtime.FindRepairPlanReportPacketContext(runtime.WithPacketBodyRoot(contextForHook(request), root), latest.State, packet.id)
 		if err != nil || !found {
 			return "", fmt.Errorf("original S9 Plan question is missing: %v", err)
 		}

@@ -100,7 +100,7 @@ func TestCanonicalSurfaceUsesRealTR003ThroughS7Registration(t *testing.T) {
 	}
 
 	// The production Draft remains a scaffold until the owner fills the
-	// existing author-facing oracle fields. The fixture fills those fields
+	// existing author-facing target, method and oracle fields. The fixture fills those fields
 	// from its declared TASK and real Main diff, then uses original Register.
 	draft, notes := review.DraftPlanForRoot(fixture.root, started.State, 1)
 	if draft == nil || draft.ProductBaseline == nil {
@@ -109,6 +109,7 @@ func TestCanonicalSurfaceUsesRealTR003ThroughS7Registration(t *testing.T) {
 	if !reflect.DeepEqual(*draft.ProductBaseline, surface) {
 		t.Fatalf("S7 Draft product snapshot differs from verified buildsurface.Read\nDraft: %+v\nRead: %+v", *draft.ProductBaseline, surface)
 	}
+	authorCanonicalMechanismBehavior(draft, "e2e-workspace/s7-surface-fixture")
 	for i := range draft.Claims {
 		claim := &draft.Claims[i]
 		if !strings.Contains(claim.Oracle, "TODO(planner)") {

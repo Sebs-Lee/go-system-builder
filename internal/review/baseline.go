@@ -1,7 +1,9 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,13 +20,19 @@ import (
 type s7BaselineProjection struct {
 	ChangedPaths []string
 	Diagnostics  []string
+	err          error
 }
 
-func buildS7BaselineProjection(root string, state map[string]any) s7BaselineProjection {
+func buildS7BaselineProjection(root string, state map[string]any, contexts ...context.Context) s7BaselineProjection {
+	ctx := baselineContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return s7BaselineProjection{Diagnostics: []string{err.Error()}, err: err}
+	}
 	if buildsurface.HasCanonical(state) {
 		projection := s7BaselineProjection{}
-		snapshot, err := buildsurface.Read(root, state)
+		snapshot, err := buildsurface.ReadContext(ctx, root, state)
 		if err != nil {
+			projection.err = err
 			projection.Diagnostics = []string{fmt.Sprintf("canonical S6 product baseline: %v", err)}
 			return projection
 		}
@@ -46,6 +54,11 @@ func buildS7BaselineProjection(root string, state map[string]any) s7BaselineProj
 		projection.ChangedPaths = append(projection.ChangedPaths, path)
 	}
 	for _, raw := range evidenceEntries(state) {
+		if err := ctx.Err(); err != nil {
+			projection.err = err
+			projection.Diagnostics = append(projection.Diagnostics, err.Error())
+			return projection
+		}
 		entry, _ := raw.(map[string]any)
 		if entry == nil || entry["kind"] != "completion_report" || intField(entry["baseline_generation"]) != generation {
 			continue
@@ -58,6 +71,10 @@ func buildS7BaselineProjection(root string, state map[string]any) s7BaselineProj
 		for _, path := range paths {
 			add(path)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		projection.err = err
+		projection.Diagnostics = append(projection.Diagnostics, err.Error())
 	}
 	sort.Strings(projection.ChangedPaths)
 	sort.Strings(projection.Diagnostics)
@@ -165,11 +182,17 @@ func changedSurfaceSubjects(root string, paths []string) ([]FrozenSubject, []str
 	return subjects, diagnostics
 }
 
-func validateS7BaselineProjection(root string, state map[string]any) error {
+func validateS7BaselineProjection(root string, state map[string]any, contexts ...context.Context) error {
+	if err := baselineContext(contexts).Err(); err != nil {
+		return err
+	}
 	if root == "" {
 		return nil
 	}
-	projection := buildS7BaselineProjection(root, state)
+	projection := buildS7BaselineProjection(root, state, contexts...)
+	if errors.Is(projection.err, context.Canceled) || errors.Is(projection.err, context.DeadlineExceeded) {
+		return projection.err
+	}
 	if len(projection.Diagnostics) == 0 {
 		return nil
 	}

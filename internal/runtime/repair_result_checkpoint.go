@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -30,7 +31,7 @@ func repairResultJournal(root string, state map[string]any, p workpacket.RepairR
 // VerifiedRepairResultCandidateReceipt proves the original candidate reception.
 // The S9 consumer must separately establish present source/own-check completion.
 func VerifiedRepairResultCandidateReceipt(root string, state map[string]any, packetID, owner string) (RepairResultCandidateReceipt, bool, error) {
-	p, ok, err := FindRepairResultPacket(state, packetID)
+	p, ok, err := FindRepairResultPacketContext(repairPacketContext(root), state, packetID)
 	if err != nil || !ok {
 		return RepairResultCandidateReceipt{}, false, err
 	}
@@ -392,7 +393,7 @@ func repairResultIndexedRefs(state map[string]any) ([]map[string]any, error) {
 }
 
 func VerifiedRepairResultReceipt(root string, state map[string]any, packetID, owner string) (RepairResultReceipt, bool, error) {
-	p, ok, err := FindRepairResultPacket(state, packetID)
+	p, ok, err := FindRepairResultPacketContext(repairPacketContext(root), state, packetID)
 	if err != nil || !ok {
 		return RepairResultReceipt{}, false, err
 	}
@@ -645,12 +646,13 @@ func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r
 	return nil
 }
 
-func validateRepairResultCheckpointIndices(root string, state map[string]any, journalBytes []byte) (map[string]any, error) {
-	packets, err := RepairResultPackets(state)
+func validateRepairResultCheckpointIndices(root string, state map[string]any, journalBytes []byte, contexts ...context.Context) (map[string]any, error) {
+	ctx := repairPacketContext(root, contexts...)
+	packets, err := RepairResultPacketsContext(ctx, state)
 	if err != nil {
 		return nil, err
 	}
-	j, err := controlproof.InspectJournalData(journalBytes)
+	j, err := controlproof.InspectJournalSegmentDataFromContext(ctx, journalBytes, 1)
 	if err != nil {
 		return nil, err
 	}

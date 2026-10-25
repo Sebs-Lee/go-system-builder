@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/diagnosticstorage"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
@@ -29,7 +31,7 @@ func worktreeClean(ctx context.Context, root string) (bool, error) {
 	return worktreeCleanWithProjection(ctx, root, workerAssets)
 }
 
-func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets map[string]string) (bool, error) {
+func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets map[string]string, logEvidence ...map[string]string) (bool, error) {
 	out, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
@@ -48,7 +50,17 @@ func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets 
 		if status != " M" && status != "??" {
 			return false, nil
 		}
-		if runtimeProjection(path) {
+		if status == "??" && len(logEvidence) > 0 && logEvidence[0][path] != "" && fileMatchesDigest(root, path, logEvidence[0][path]) {
+			continue
+		}
+		if runtimeProjection(path, root) {
+			continue
+		}
+		bodyProjection, err := runtimeBodyProjection(ctx, root, path)
+		if err != nil {
+			return false, err
+		}
+		if bodyProjection {
 			continue
 		}
 		if (status == " M" || status == "??") && workerAssets[path] != "" && fileMatchesDigest(root, path, workerAssets[path]) {
@@ -96,7 +108,7 @@ func isOriginalMainWorkspace(ctx context.Context, root string) bool {
 	return err == nil && main == registry.MainRoot && registry.Validate(ctx, main) == nil
 }
 
-func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string) (bool, error) {
+func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string, logEvidence ...map[string]string) (bool, error) {
 	pinned, err := registeredWorkerBootstrapPin(ctx, mainRoot, workerRoot)
 	if err != nil {
 		return false, err
@@ -125,7 +137,7 @@ func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string) (bool
 	for path, digest := range native {
 		projection[path] = digest
 	}
-	return worktreeCleanWithProjection(ctx, workerRoot, projection)
+	return worktreeCleanWithProjection(ctx, workerRoot, projection, logEvidence...)
 }
 
 func registeredWorkerBootstrapPin(ctx context.Context, mainRoot, workerRoot string) (bool, error) {
@@ -370,9 +382,24 @@ func parseWorktreeListPaths(output string) (map[string]bool, error) {
 	}
 	return paths, nil
 }
-func runtimeProjection(path string) bool {
+
+var auditIndexScratchPattern = regexp.MustCompile(`^\.claude/hook-audit-index-[0-9]+\.scratch$`)
+
+func runtimeProjection(path string, roots ...string) bool {
+	if len(roots) > 0 && diagnosticstorage.Recognizes(context.Background(), roots[0], path) {
+		return true
+	}
+	// An interrupted index publication can leave a disposable cache scratch.
+	// Its precise storage name grants no issuance or professional business fact.
+	if auditIndexScratchPattern.MatchString(path) {
+		if len(roots) == 0 {
+			return true
+		}
+		info, err := os.Lstat(filepath.Join(roots[0], filepath.FromSlash(path)))
+		return err == nil && info.Mode().IsRegular()
+	}
 	switch path {
-	case ".claude/integration.lock", ".claude/loop-state.json", ".claude/loop-events.jsonl", ".claude/loop-metrics.json", ".claude/hook-decisions.jsonl", ".claude/runtime-checkpoints/index.json":
+	case ".claude/integration.lock", ".claude/loop-state.json", ".claude/loop-events.jsonl", ".claude/loop-metrics.json", ".claude/hook-decisions.jsonl", ".claude/hook-decisions.jsonl.index", ".claude/runtime-checkpoints/index.json":
 		return true
 	}
 	parts := strings.Split(path, "/")
@@ -634,4 +661,16 @@ func RunCheck(ctx context.Context, root, command string, run func(ctx context.Co
 		return CheckResult{Command: command, Status: "fail", Output: err.Error()}, nil
 	}
 	return CheckResult{Command: command, Status: "pass"}, nil
+}
+
+// Body filenames alone do not grant a clean projection. Validate the actual
+// content-addressed complete packet (including a checkpoint's independent copy).
+// Publication before the Runtime reference is committed may leave a real orphan;
+// recognizing storage here does not assert professional issuance or reception.
+func runtimeBodyProjection(ctx context.Context, root, path string) (bool, error) {
+	recognized, err := loopruntime.ClassifyPacketBodyStoragePathsContext(ctx, root, []string{path})
+	if err != nil {
+		return false, fmt.Errorf("Runtime packet storage projection: %w", err)
+	}
+	return len(recognized) == 1, nil
 }

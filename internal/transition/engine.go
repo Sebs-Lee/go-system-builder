@@ -87,6 +87,7 @@ type resolvedTransition struct {
 }
 
 func Apply(root, statePath, journalPath string, request Request) (loopruntime.Snapshot, error) {
+	request.Context = buildsurface.WithReadCache(request.Context)
 	occurredAt := request.OccurredAt
 	if occurredAt.IsZero() {
 		occurredAt = time.Now().UTC()
@@ -526,6 +527,10 @@ func resolveCatalog(catalog *Catalog, id, currentState string, currentPhase any)
 }
 
 func validateRequest(root string, state map[string]any, spec TransitionSpec, request Request, deferTR006BatchProof ...bool) error {
+	request.Context = buildsurface.WithReadCache(request.Context)
+	if err := request.Context.Err(); err != nil {
+		return err
+	}
 	if normalHumanReleaseRequest(request) {
 		return validateNormalHumanRelease(request)
 	}
@@ -536,12 +541,12 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 		// The original Writer must prove the canonical batch regardless of
 		// which compatible report kind the caller binds to the evidence slot.
 		// A legacy aggregate cannot substitute for missing current Main facts.
-		canonical, err := buildsurface.SelectCanonical(root, state)
+		canonical, err := buildsurface.SelectCanonicalContext(request.Context, root, state)
 		if err != nil {
 			return fmt.Errorf("transition TR-006 current batch source: %w", err)
 		}
 		if canonical {
-			if _, err := buildsurface.Read(root, state); err != nil {
+			if _, err := buildsurface.ReadContext(request.Context, root, state); err != nil {
 				return fmt.Errorf("transition TR-006 current canonical Main batch: %w", err)
 			}
 		} else {
@@ -562,7 +567,7 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 	if spec.ID == "TR-009" && review.HasPacketBoundE2EReceipts(state) {
 		reviewState, _ := state["review"].(map[string]any)
 		assignments, _ := reviewState["assignments"].(map[string]any)
-		if err := review.VerifySealedArtifactDigests(root, state, review.PlanPointerFromState(state), assignments); err != nil {
+		if err := review.VerifySealedArtifactDigests(root, state, review.PlanPointerFromState(state), assignments, request.Context); err != nil {
 			return fmt.Errorf("transition TR-009 typed E2E execution artifact: %w", err)
 		}
 	}
@@ -574,7 +579,7 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 	}
 	if spec.ID == "TR-003" || spec.ID == "TR-004" {
 		for _, ref := range request.GateEvidenceRefs {
-			if err := validateCurrentEvidenceWithFiles(root, state, "document_review_record", ref, request.Files); err != nil {
+			if err := validateCurrentEvidenceWithFiles(root, state, "document_review_record", ref, request.Files, request.Context); err != nil {
 				return fmt.Errorf("transition %s gate proof: %w", spec.ID, err)
 			}
 		}
@@ -624,7 +629,7 @@ func validateRequest(root string, state map[string]any, spec TransitionSpec, req
 				return fmt.Errorf("transition %s evidence %s: %w", spec.ID, kind, err)
 			}
 		} else if !(spec.ID == "TR-001" || (spec.ID == "TR-020" && kind == "req_lock_record")) {
-			if err := validateCurrentEvidenceWithFiles(root, state, kind, ref, request.Files); err != nil {
+			if err := validateCurrentEvidenceWithFiles(root, state, kind, ref, request.Files, request.Context); err != nil {
 				return fmt.Errorf("transition %s evidence %s: %w", spec.ID, kind, err)
 			}
 		}
@@ -666,10 +671,21 @@ func generatedEvidenceReferenceMatches(ref, canonical string) bool {
 	return ref == canonical
 }
 
-func validateCurrentEvidence(root string, state map[string]any, requiredKind, ref string) error {
-	return validateCurrentEvidenceWithFiles(root, state, requiredKind, ref, nil)
+func validateCurrentEvidence(root string, state map[string]any, requiredKind, ref string, contexts ...context.Context) error {
+	return validateCurrentEvidenceWithFiles(root, state, requiredKind, ref, nil, contexts...)
 }
-func validateCurrentEvidenceWithFiles(root string, state map[string]any, requiredKind, ref string, files fileview.Reader) error {
+func validateCurrentEvidenceWithFiles(root string, state map[string]any, requiredKind, ref string, files fileview.Reader, contexts ...context.Context) error {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	ctx = buildsurface.WithReadCache(ctx)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if view, ok := files.(*fileview.View); ok {
+		files = view.WithContext(ctx)
+	}
 	items, _ := state["evidence"].([]any)
 	var evidenceItem map[string]any
 	for _, raw := range items {
@@ -711,6 +727,9 @@ func validateCurrentEvidenceWithFiles(root string, state map[string]any, require
 		files = fileview.Disk{Root: root}
 	}
 	data, err := files.ReadFile(clean)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if err != nil {
 		return fmt.Errorf("read reference %q: %w", ref, err)
 	}
@@ -719,7 +738,7 @@ func validateCurrentEvidenceWithFiles(root string, state map[string]any, require
 		return fmt.Errorf("reference %q fingerprint mismatch", ref)
 	}
 	if requiredKind == "builder_report_record" && actualKind == "completion_report" {
-		snapshot, err := buildsurface.Read(root, state)
+		snapshot, err := buildsurface.ReadContext(ctx, root, state)
 		if err != nil {
 			return fmt.Errorf("canonical builder report source: %w", err)
 		}

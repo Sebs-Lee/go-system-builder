@@ -96,7 +96,7 @@ func IssueRepairResultPackets(ctx context.Context, root, statePath, journalPath 
 	issued := make([]workpacket.RepairResultPacket, 0, len(candidates))
 	callerRevisionChecked := false
 	for _, packet := range candidates {
-		if prior, found, err := runtimepkg.FindRepairResultPacket(current.State, packet.ID); err != nil {
+		if prior, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), current.State, packet.ID); err != nil {
 			return nil, err
 		} else if found {
 			if !sameRepairResultPacket(prior, packet) {
@@ -122,7 +122,7 @@ func IssueRepairResultPackets(ctx context.Context, root, statePath, journalPath 
 		if err != nil {
 			return nil, err
 		}
-		stored, found, err := runtimepkg.FindRepairResultPacket(latest.State, packet.ID)
+		stored, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), latest.State, packet.ID)
 		if err != nil || !found || !sameRepairResultPacket(stored, packet) {
 			return nil, fmt.Errorf("S9 packet %s was not retained exactly by the original Runtime writer: %v", packet.ID, err)
 		}
@@ -154,7 +154,7 @@ func issueOneRepairResultPacket(ctx context.Context, root string, writer *runtim
 			if _, _, err := currentRepairExecution(ctx, root, state, packet, true); err != nil {
 				return err
 			}
-			if prior, found, err := runtimepkg.FindRepairResultPacket(state, packet.ID); err != nil {
+			if prior, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), state, packet.ID); err != nil {
 				return err
 			} else if found {
 				if sameRepairResultPacket(prior, packet) {
@@ -178,7 +178,7 @@ func issueOneRepairResultPacket(ctx context.Context, root string, writer *runtim
 	}
 	latest, readErr := writer.Snapshot()
 	if readErr == nil {
-		stored, found, findErr := runtimepkg.FindRepairResultPacket(latest.State, packet.ID)
+		stored, found, findErr := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), latest.State, packet.ID)
 		if findErr == nil && found && sameRepairResultPacket(stored, packet) {
 			return nil
 		}
@@ -204,11 +204,11 @@ func buildRepairResultPackets(ctx context.Context, root string, state map[string
 	if err := json.Unmarshal(planBytes, &plan); err != nil {
 		return nil, err
 	}
-	planPackets, err := runtimepkg.RepairPlanReportPackets(state)
+	planPackets, err := runtimepkg.CurrentRepairPlanReportPacketsContext(ctx, root, state, ownerFilter)
 	if err != nil {
 		return nil, err
 	}
-	retained, err := runtimepkg.RepairResultPackets(state)
+	retained, err := runtimepkg.RepairResultPacketsForSourcesContext(ctx, root, state, ownerFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +428,7 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	if mainRoot := workspaceMainRoot(root, mainSnapshot.State); !sameAbsolutePath(mainRoot, root) {
 		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, errors.New("S9 candidate receiver root must be the original registered Main checkout")
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(mainSnapshot.State, req.PacketID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), mainSnapshot.State, req.PacketID)
 	if err != nil || !found {
 		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, fmt.Errorf("S9 issued RepairResult packet %q is unavailable: %v", req.PacketID, err)
 	}
@@ -718,7 +718,7 @@ func workspaceMainRoot(fallback string, state map[string]any) string {
 
 // guardIssuedRepairResultCandidate checks the already selected attempt. The
 // generic legacy route still directs current typed responsibilities to their answer.
-func guardIssuedRepairResultCandidate(_ string, state map[string]any, execution workspace.Execution, capability *issuedRepairResultCapability) error {
+func guardIssuedRepairResultCandidate(root string, state map[string]any, execution workspace.Execution, capability *issuedRepairResultCapability) error {
 	if capability != nil {
 		p := capability.provenance
 		if p.PacketID != capability.packet.ID || p.ExecutionAssignmentID != execution.AssignmentID ||
@@ -729,7 +729,7 @@ func guardIssuedRepairResultCandidate(_ string, state map[string]any, execution 
 		}
 		return nil
 	}
-	packets, err := runtimepkg.RepairResultPackets(state)
+	packets, err := runtimepkg.RepairResultPacketsForSourcesContext(context.Background(), root, state, "")
 	if err != nil {
 		return err
 	}
@@ -770,8 +770,8 @@ func guardIssuedRepairResultCandidate(_ string, state map[string]any, execution 
 // untyped Result API from bypassing an issued S9 packet. Once any packet exists
 // for the current Session/Plan/Assignment tuple, later attempts remain in the
 // typed path even when a fresh packet selector would no longer return them.
-func rejectLegacyRepairResultForIssuedTarget(state, pointer map[string]any, plan RepairPlan, planRef ArtifactRef, assignmentID string) error {
-	packets, err := runtimepkg.RepairResultPackets(state)
+func rejectLegacyRepairResultForIssuedTarget(root string, state, pointer map[string]any, plan RepairPlan, planRef ArtifactRef, assignmentID string) error {
+	packets, err := runtimepkg.RepairResultPacketsForSourcesContext(context.Background(), root, state, "")
 	if err != nil {
 		return err
 	}
@@ -853,7 +853,7 @@ func RepairResultWorkCompleteWithContext(ctx context.Context, root string, state
 			return false, err
 		}
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(state, packetID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), state, packetID)
 	if err != nil || !found {
 		return false, err
 	}
@@ -956,7 +956,7 @@ func SubmitIssuedRepairResult(ctx context.Context, root, statePath, journalPath 
 	if !sameAbsolutePath(workspaceMainRoot(root, current.State), root) {
 		return current, RepairResult{}, ArtifactRef{}, errors.New("S9 final Result root differs from the current Main checkout")
 	}
-	packet, found, err := runtimepkg.FindRepairResultPacket(current.State, req.PacketID)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), current.State, req.PacketID)
 	if err != nil || !found {
 		return current, RepairResult{}, ArtifactRef{}, fmt.Errorf("S9 Result questionnaire %q is unavailable: %v", req.PacketID, err)
 	}

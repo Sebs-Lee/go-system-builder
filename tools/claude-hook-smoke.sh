@@ -114,7 +114,7 @@ for event in events:
         raise SystemExit(f"platform smoke: {event} has no recognized same-event Harness command registration")
     for hook in commands:
         timeout = hook.get("timeout", 10)
-        limit = 10
+        limit = 30 if event == "PostToolUse" else 10
         if timeout > limit or timeout <= 0:
             raise SystemExit(f"platform smoke: {event} timeout {timeout}s outside 1..{limit}s")
 

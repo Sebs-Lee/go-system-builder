@@ -15,7 +15,7 @@ import (
 // VerifiedRepairResultBlockerReceipt reads the blocker already registered by
 // the Agent Writer, including its original journal acceptance coordinates.
 func VerifiedRepairResultBlockerReceipt(root string, state map[string]any, packetID, owner string) (RepairResultBlockerReceipt, bool, error) {
-	packet, found, err := FindRepairResultPacket(state, packetID)
+	packet, found, err := FindRepairResultPacketContext(repairPacketContext(root), state, packetID)
 	if err != nil || !found {
 		return RepairResultBlockerReceipt{}, false, err
 	}
@@ -35,7 +35,7 @@ func VerifiedRepairResultBlockerReceipt(root string, state map[string]any, packe
 }
 
 func verifiedRepairResultBlockerReceiptWithJournal(root string, state map[string]any, p workpacket.RepairResultPacket, owner string, journal controlproof.JournalInspection) (RepairResultBlockerReceipt, bool, error) {
-	packets, err := RepairResultPackets(state)
+	packets, err := repairResultPacketsForBindingContext(repairPacketContext(root), state, p.Binding)
 	if err != nil {
 		return RepairResultBlockerReceipt{}, false, err
 	}

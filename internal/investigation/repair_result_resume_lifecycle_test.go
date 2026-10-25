@@ -99,7 +99,7 @@ func TestS9ResumedSuccessorCompletesThroughOriginalCandidateWithResumeProvenance
 	if err := runtime.VerifyRepairResultPacketCurrent(accepted.fixture.root, accepted.acceptedSnapshot.State, accepted.packet); err != nil {
 		t.Fatalf("completed resumed packet is not the current accepted attempt: %v", err)
 	}
-	predecessor, found, err := runtime.FindRepairResultPacket(accepted.acceptedSnapshot.State, accepted.packet.Binding.Resume.PredecessorPacketID)
+	predecessor, found, err := runtime.FindRepairResultPacketContext(runtime.WithPacketBodyRoot(t.Context(), accepted.fixture.root), accepted.acceptedSnapshot.State, accepted.packet.Binding.Resume.PredecessorPacketID)
 	if err != nil || !found {
 		t.Fatalf("accepted Resume predecessor is unavailable for history check: found=%t err=%v", found, err)
 	}

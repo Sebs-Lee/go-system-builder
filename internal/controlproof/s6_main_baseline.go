@@ -2,6 +2,7 @@ package controlproof
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,16 +19,27 @@ import (
 // deliberately does not acquire a Runtime lock; mutation callers invoke it
 // only while their existing Writer owns that lock.
 func ReadJournalForState(root string, state map[string]any) ([]byte, error) {
+	return ReadJournalForStateContext(context.Background(), root, state)
+}
+
+func ReadJournalForStateContext(ctx context.Context, root string, state map[string]any) ([]byte, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("journal read requires the Runtime authority root")
 	}
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
-	return ReadJournalForStateAt(journalPath, state)
+	return ReadJournalForStateAtContext(ctx, journalPath, state)
 }
 
 // ReadJournalForStateAt uses the same complete-journal proof at an explicit
 // Store coordinate. Lifecycle writers already hold their original state lock.
 func ReadJournalForStateAt(journalPath string, state map[string]any) ([]byte, error) {
+	return ReadJournalForStateAtContext(context.Background(), journalPath, state)
+}
+
+func ReadJournalForStateAtContext(ctx context.Context, journalPath string, state map[string]any) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	segments, err := JournalSegmentPaths(journalPath)
 	if err != nil {
 		return nil, err
@@ -35,6 +47,9 @@ func ReadJournalForStateAt(journalPath string, state map[string]any) ([]byte, er
 	segments = append(segments, journalPath)
 	var combined bytes.Buffer
 	for _, segment := range segments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		data, err := os.ReadFile(segment)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -50,7 +65,7 @@ func ReadJournalForStateAt(journalPath string, state map[string]any) ([]byte, er
 			combined.WriteByte('\n')
 		}
 	}
-	inspection, err := InspectJournalData(combined.Bytes())
+	inspection, err := InspectJournalSegmentDataFromContext(ctx, combined.Bytes(), 1)
 	if err != nil {
 		return nil, fmt.Errorf("inspect complete Runtime journal: %w", err)
 	}
@@ -84,6 +99,14 @@ func HasCommittedTransitionForGeneration(state map[string]any, journalBytes []by
 // Absence is allowed for old runtimes; canonical consumers should also call
 // RequireCurrentS6MainStart.
 func ValidateS6MainStartReceipts(state map[string]any, journalBytes []byte) error {
+	return ValidateS6MainStartReceiptsContext(context.Background(), state, journalBytes)
+}
+
+func ValidateS6MainStartReceiptsContext(ctx context.Context, state map[string]any, journalBytes []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	starts, err := productbaseline.ReadS6MainStarts(state)
 	if err != nil {
 		return fmt.Errorf("S6 Main start records: %w", err)
@@ -91,7 +114,7 @@ func ValidateS6MainStartReceipts(state map[string]any, journalBytes []byte) erro
 	if len(starts) == 0 {
 		return nil
 	}
-	inspection, err := InspectJournalData(journalBytes)
+	inspection, err := InspectJournalSegmentDataFromContext(ctx, journalBytes, 1)
 	if err != nil {
 		return fmt.Errorf("S6 Main start journal: %w", err)
 	}
@@ -147,10 +170,17 @@ func ValidateS6MainStartReceipts(state map[string]any, journalBytes []byte) erro
 // RequireCurrentS6MainStart is the strict read boundary for canonical S7
 // consumers. It never synthesizes a missing start from the current branch.
 func RequireCurrentS6MainStart(state map[string]any, journalBytes []byte) (productbaseline.S6MainStart, error) {
+	return RequireCurrentS6MainStartContext(context.Background(), state, journalBytes)
+}
+
+func RequireCurrentS6MainStartContext(ctx context.Context, state map[string]any, journalBytes []byte) (productbaseline.S6MainStart, error) {
+	if err := ctx.Err(); err != nil {
+		return productbaseline.S6MainStart{}, err
+	}
 	if !workstate.SupportsAssignments(state["schema_version"]) {
 		return productbaseline.S6MainStart{}, errors.New("common S6 Main baseline requires Runtime schema 1.2.0/1.3.0")
 	}
-	if err := ValidateS6MainStartReceipts(state, journalBytes); err != nil {
+	if err := ValidateS6MainStartReceiptsContext(ctx, state, journalBytes); err != nil {
 		return productbaseline.S6MainStart{}, err
 	}
 	baseline, _ := state["baseline"].(map[string]any)

@@ -51,7 +51,7 @@ func validateIssuedPlanReportCapability(root string, state map[string]any, req S
 	if capability == nil {
 		return errors.New("missing private S9 issued PlanReport capability")
 	}
-	packet, found, err := runtimepkg.FindRepairPlanReportPacket(state, capability.packet.ID)
+	packet, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(req.Context, root), state, capability.packet.ID)
 	if err != nil || !found {
 		return fmt.Errorf("S9 current Plan packet is unavailable: %v", err)
 	}
@@ -90,6 +90,7 @@ func IssueRepairPlanReportPacketsContext(ctx context.Context, root, statePath, j
 	if err != nil {
 		return nil, err
 	}
+	ctx = writer.Context()
 	candidates, err := buildRepairPlanReportPackets(root, current.State, ownerFilter)
 	if err != nil {
 		return nil, err
@@ -102,7 +103,7 @@ func IssueRepairPlanReportPacketsContext(ctx context.Context, root, statePath, j
 	}
 	issued := make([]workpacket.RepairPlanReportPacket, 0, len(candidates))
 	for _, packet := range candidates {
-		if prior, found, err := runtimepkg.FindRepairPlanReportPacket(current.State, packet.ID); err != nil {
+		if prior, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), current.State, packet.ID); err != nil {
 			return nil, err
 		} else if found {
 			if !sameRepairPlanReportPacket(prior, packet) {
@@ -125,7 +126,7 @@ func IssueRepairPlanReportPacketsContext(ctx context.Context, root, statePath, j
 		if err != nil {
 			return nil, err
 		}
-		stored, found, err := runtimepkg.FindRepairPlanReportPacket(latest.State, packet.ID)
+		stored, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), latest.State, packet.ID)
 		if err != nil || !found || !sameRepairPlanReportPacket(stored, packet) {
 			return nil, fmt.Errorf("S9 packet %s was not retained exactly by the original Runtime writer: %v", packet.ID, err)
 		}
@@ -166,7 +167,7 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 				stringMapField(pointer["assignment_owners"])[b.RepairAssignmentID] != b.OwnerAgentID {
 				return errors.New("S9 current repair responsibility changed before packet publication")
 			}
-			if existing, found, err := runtimepkg.FindRepairPlanReportPacket(state, packet.ID); err != nil {
+			if existing, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(writer.Context(), root), state, packet.ID); err != nil {
 				return err
 			} else if found {
 				if sameRepairPlanReportPacket(existing, packet) {
@@ -174,7 +175,7 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 				}
 				return fmt.Errorf("S9 packet ID %s conflicts with an existing Runtime packet", packet.ID)
 			}
-			all, err := runtimepkg.RepairPlanReportPackets(state)
+			all, err := runtimepkg.RepairPlanReportPacketsForSourcesContext(writer.Context(), root, state, "")
 			if err != nil {
 				return err
 			}
@@ -207,7 +208,7 @@ func issueOneRepairPlanReportPacket(root string, writer *runtimepkg.Store, expec
 	}
 	latest, readErr := writer.Snapshot()
 	if readErr == nil {
-		stored, found, findErr := runtimepkg.FindRepairPlanReportPacket(latest.State, packet.ID)
+		stored, found, findErr := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(writer.Context(), root), latest.State, packet.ID)
 		if findErr == nil && found && sameRepairPlanReportPacket(stored, packet) {
 			return nil
 		}
@@ -491,9 +492,13 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	if err != nil {
 		return runtimepkg.Snapshot{}, PlanReport{}, err
 	}
-	packet, found, err := runtimepkg.FindRepairPlanReportPacket(snapshot.State, req.PacketID)
-	if err != nil || !found {
-		return snapshot, PlanReport{}, fmt.Errorf("S9 issued PlanReport packet %q is unavailable: %v", req.PacketID, err)
+	req.Context = writer.Context()
+	packet, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(req.Context, root), snapshot.State, req.PacketID)
+	if err != nil {
+		return snapshot, PlanReport{}, fmt.Errorf("S9 issued PlanReport packet %q is unavailable: %w", req.PacketID, err)
+	}
+	if !found {
+		return snapshot, PlanReport{}, fmt.Errorf("S9 issued PlanReport packet %q is unavailable", req.PacketID)
 	}
 	if req.OwnerAgentID == "" || req.OwnerAgentID != packet.Binding.OwnerAgentID {
 		return snapshot, PlanReport{}, errors.New("S9 PlanReport owner binding differs from registered Builder")
@@ -540,7 +545,7 @@ func SubmitIssuedRepairPlanReport(root, statePath, journalPath string, req Submi
 	if err := checkRevision(req.ExpectedRevision, snapshot.Revision, "runtime S9 issued PlanReport answer"); err != nil {
 		return snapshot, PlanReport{}, err
 	}
-	issueAt, err := repairPlanReportIssueTime(root, snapshot.State, packet)
+	issueAt, err := repairPlanReportIssueTime(root, snapshot.State, packet, req.Context)
 	if err != nil {
 		return snapshot, PlanReport{}, err
 	}
@@ -618,12 +623,17 @@ func newRepairPlanReportReceipt(root string, snapshot runtimepkg.Snapshot, packe
 	}, nil
 }
 
-func repairPlanReportIssueTime(root string, state map[string]any, packet workpacket.RepairPlanReportPacket) (time.Time, error) {
-	data, err := controlproof.ReadJournalForState(root, state)
+func repairPlanReportIssueTime(root string, state map[string]any, packet workpacket.RepairPlanReportPacket, contexts ...context.Context) (time.Time, error) {
+	ctx := context.Background()
+	if len(contexts) != 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	ctx = controlproof.WithJournalReadCache(ctx)
+	data, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return time.Time{}, err
 	}
-	journal, err := controlproof.InspectJournalData(data)
+	journal, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -921,7 +931,7 @@ func recoverAcceptedRepairPlanReport(root, statePath, journalPath string, packet
 	if len(problems) != 0 || workpacket.Digest(answer) != answerSHA {
 		return false, recoveredRepairPlanReport{}, runtimepkg.ErrSubmissionConflict
 	}
-	receipt, ok, err := runtimepkg.VerifiedRepairPlanReportReceipt(root, snapshot.State, packet.ID, req.OwnerAgentID)
+	receipt, ok, err := runtimepkg.VerifiedRepairPlanReportReceipt(root, snapshot.State, packet.ID, req.OwnerAgentID, req.Context)
 	if err != nil || !ok {
 		return false, recoveredRepairPlanReport{}, err
 	}
@@ -946,6 +956,7 @@ func readIssuedRepairPlanReportRuntime(root, statePath, journalPath string, cont
 	if len(contexts) > 0 && contexts[0] != nil {
 		ctx = contexts[0]
 	}
+	ctx = controlproof.WithJournalReadCache(ctx)
 	writer := runtimepkg.NewWriter(statePath, journalPath, root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	snapshot, err := writer.Snapshot()
 	if err != nil {
@@ -958,7 +969,7 @@ func readIssuedRepairPlanReportRuntime(root, statePath, journalPath string, cont
 // original Report artifact and Runtime journal. It never interprets the draft
 // as permission or reads an unaccepted authoring file.
 func IssuedRepairPlanReportReceipt(root string, state map[string]any, packetID, owner string) (runtimepkg.RepairPlanReportReceipt, bool, error) {
-	packet, found, err := runtimepkg.FindRepairPlanReportPacket(state, packetID)
+	packet, found, err := runtimepkg.FindRepairPlanReportPacketContext(runtimepkg.WithPacketBodyRoot(context.Background(), root), state, packetID)
 	if err != nil || !found {
 		return runtimepkg.RepairPlanReportReceipt{}, false, err
 	}

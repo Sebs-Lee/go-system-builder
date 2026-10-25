@@ -9,6 +9,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/review"
+	"github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
@@ -69,6 +70,10 @@ func s7PendingReviewGuidance(root string, state map[string]any) string {
 // optional capture prefixes use the same source as the issued answer, so a
 // new native Worker need not enter the legacy activation listener to find them.
 func s7ReviewerTaskGuidance(root, source, view, answer string, packet workpacket.ReviewResultPacket, full bool) string {
+	return s7ReviewerIndexTaskGuidance(root, source, view, answer, runtime.ReviewResultPacketIndex{ID: packet.ID, Binding: packet.Binding, ViewPath: packet.ViewPath, AnswerPath: packet.AnswerPath}, full)
+}
+
+func s7ReviewerIndexTaskGuidance(root, source, view, answer string, packet runtime.ReviewResultPacketIndex, full bool) string {
 	id := packet.Binding.AssignmentID
 	if !full {
 		return fmt.Sprintf("S7 Reviewer %s assignment=%s: Main carries exact view %s and answer %s into native Agent; read its selected method references and independently inspect its frozen subjects/Claims, save the professional answer and return that exact reference for SubagentStop reception. Main restores real source/environment blockers.\n", packet.Binding.OwnerAgentID, id, view, answer)

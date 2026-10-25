@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,7 +20,11 @@ var ErrCleanupPending = errors.New("integration verified; worktree cleanup pendi
 // Git registration; never prune other worktrees or force-delete remaining files.
 // The checkpoint is the existing authorization: this helper is called only
 // after verified Main checks, ACK, and cleanup_pending have been persisted.
-func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoint) error {
+func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoint, logEvidence ...map[string]string) error {
+	var logs map[string]string
+	if len(logEvidence) > 0 {
+		logs = logEvidence[0]
+	}
 	if checkpoint.State != StateCleanupPending || checkpoint.VerifiedAt == "" || checkpoint.MergeCommit == "" || checkpoint.SourceHead == "" || checkpoint.TargetBranch == "" || filepath.Clean(checkpoint.WorktreePath) != filepath.Clean(path) {
 		return fmt.Errorf("Worker cleanup requires its verified cleanup_pending checkpoint")
 	}
@@ -55,19 +60,22 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 		for rel, digest := range native {
 			projection[rel] = digest
 		}
-		clean, err = worktreeCleanWithProjection(ctx, path, projection)
+		clean, err = worktreeCleanWithProjection(ctx, path, projection, logs)
 		if err != nil {
 			return err
 		}
 		if !clean {
 			return fmt.Errorf("Builder checkout %q is dirty; inspect with git -C %q status --short: %w", path, path, ErrDirtyWorktree)
 		}
-		if len(projection) > 0 {
+		if len(projection) > 0 || len(logs) > 0 {
 			// Recheck the source coordinate immediately before restoring only the
 			// receipt-listed installation overlay.
 			head, err = revParse(ctx, path, "HEAD")
 			if err != nil || head != checkpoint.SourceHead {
 				return fmt.Errorf("Worker HEAD changed before bootstrap cleanup; preserve it")
+			}
+			if err := removeCapturedLogOutputs(ctx, path, logs); err != nil {
+				return err
 			}
 			if err := restorePinnedBootstrap(ctx, path, projection); err != nil {
 				return err
@@ -102,6 +110,36 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 		}
 		if filepath.Clean(registered) == filepath.Clean(path) {
 			_, err := defaultRunner.Run(ctx, root, "worktree", "remove", path)
+			return err
+		}
+	}
+	return nil
+}
+
+// Called only after the original verified cleanup_pending checkpoint and a
+// complete clean-tree check. Never remove tracked, changed or neighboring files.
+func removeCapturedLogOutputs(ctx context.Context, root string, logs map[string]string) error {
+	for rel, digest := range logs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		status, err := defaultRunner.Run(ctx, root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", rel)
+		if err != nil {
+			return err
+		}
+		if status == "" {
+			continue
+		}
+		if status != "?? "+rel+"\x00" || !fileMatchesDigest(root, rel, digest) {
+			return fmt.Errorf("preserve captured log changed before cleanup: %s", rel)
+		}
+		parent, name, err := workpacket.OpenParent(root, rel, false)
+		if err != nil {
+			return err
+		}
+		err = parent.Remove(name)
+		_ = parent.Close()
+		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

@@ -57,7 +57,7 @@ func (s *Service) RepairPlanReportSourceForPath(path string) (workpacket.RepairP
 	if err != nil {
 		return workpacket.RepairPlanReportPacket{}, "", false, err
 	}
-	return currentRepairPlanReportSourceForPath(s.Root, snapshot.State, path)
+	return currentRepairPlanReportSourceForPath(s.Root, snapshot.State, path, s.Context())
 }
 
 // SaveRepairPlanReportFrom accepts a typed author answer through the original
@@ -72,7 +72,7 @@ func (s *Service) SaveRepairPlanReportFrom(ctx context.Context, owner, path, sou
 	if err := ctx.Err(); err != nil {
 		return rejected(snapshot, "", err), err
 	}
-	packet, actualRoot, found, err := currentRepairPlanReportSourceForPath(s.Root, snapshot.State, path)
+	packet, actualRoot, found, err := currentRepairPlanReportSourceForPath(s.Root, snapshot.State, path, s.Context())
 	if err != nil {
 		return rejected(snapshot, "", err), err
 	}
@@ -123,7 +123,7 @@ func (s *Service) RepairPlanReportReceipt(owner, ref string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	packet, found, err := repairPlanReportByReference(s.Root, snapshot.State, ref)
+	packet, found, err := repairPlanReportByReference(s.Root, snapshot.State, ref, s.Context())
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -140,19 +140,19 @@ func (s *Service) RepairPlanReportReceipt(owner, ref string) (Receipt, error) {
 	return acceptedRepairPlanReportReceipt(snapshot, packet, accepted)
 }
 
-func currentRepairPlanReportSourceForPath(root string, state map[string]any, inputPath string) (workpacket.RepairPlanReportPacket, string, bool, error) {
-	packets, err := loopruntime.CurrentRepairPlanReportPackets(root, state, "")
+func currentRepairPlanReportSourceForPath(root string, state map[string]any, inputPath string, contexts ...context.Context) (workpacket.RepairPlanReportPacket, string, bool, error) {
+	packets, err := loopruntime.CurrentRepairPlanReportPacketsContext(submissionRepairPacketContext(contexts...), root, state, "")
 	if err != nil {
 		return workpacket.RepairPlanReportPacket{}, "", false, err
 	}
 	return repairPlanReportPathInPackets(root, inputPath, packets)
 }
 
-func repairPlanReportByReference(root string, state map[string]any, ref string) (workpacket.RepairPlanReportPacket, bool, error) {
-	if packet, found, err := loopruntime.FindRepairPlanReportPacket(state, ref); err != nil || found {
+func repairPlanReportByReference(root string, state map[string]any, ref string, contexts ...context.Context) (workpacket.RepairPlanReportPacket, bool, error) {
+	if packet, found, err := loopruntime.FindRepairPlanReportPacketContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, ref); err != nil || found {
 		return packet, found, err
 	}
-	packets, err := loopruntime.RepairPlanReportPackets(state)
+	packets, err := loopruntime.RepairPlanReportPacketsForPathContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, ref)
 	if err != nil {
 		return workpacket.RepairPlanReportPacket{}, false, err
 	}
@@ -256,3 +256,10 @@ func acceptedRepairPlanReportReceipt(snapshot loopruntime.Snapshot, packet workp
 }
 
 func jsonMarshalIndent(v any) ([]byte, error) { return json.MarshalIndent(v, "", "  ") }
+
+func submissionRepairPacketContext(contexts ...context.Context) context.Context {
+	if len(contexts) != 0 && contexts[0] != nil {
+		return contexts[0]
+	}
+	return context.Background()
+}

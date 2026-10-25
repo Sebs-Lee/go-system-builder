@@ -166,7 +166,7 @@ current target only, and contracts live elsewhere.
 
 | # | Field | Format | Example | Purpose |
 |---|---|---|---|---|
-| 1 | 设计代数 | `v{n}` | `v2` | Design generation; bumps when the S2 package is re-converged. Machine-checked. |
+| 1 | 设计代数 | `v{n}` | `v2` | Design generation; bumps when the S2 package is re-converged. Reviewed with the prototype; no fixed-substring machine check. |
 | 2 | 更新 | `YYYY-MM-DD` | `2026-07-09` | Last edit date. |
 | 3 | 路由 | `<strong>...</strong>` | `/layout/fund — overview`, `/layout/fund/:id — 父详情` | Page route plus slot label. Optional on dialogs / wizards / component mockups (omit if no route). |
 | 4 | index 链接 | `<a href="index.html">↩ 模块入口</a>` | link back | Present when an `index.html` hub exists for the module. |

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,7 @@ type checkpointIndex struct {
 }
 
 type CheckpointPair struct {
+	PacketBodies             map[string][]byte
 	Manifest                 RuntimeCheckpoint
 	State                    map[string]any
 	StateBytes, JournalBytes []byte
@@ -117,6 +119,9 @@ func (s *Store) publishCheckpointLocked() error {
 	stateHash, journalHash := sha256Hex(stateBytes), sha256Hex(journalBytes)
 	id := sha256Hex([]byte(stateHash + ":" + journalHash))
 	dir := ".claude/runtime-checkpoints/" + id
+	if err := s.publishCheckpointPacketBodies(state, dir); err != nil {
+		return err
+	}
 	manifest := RuntimeCheckpoint{SchemaVersion: "1.0.0", RuntimeID: stringValue(state["runtime_id"]), Generation: generation, Revision: revision, StatePath: dir + "/state.json", JournalPath: dir + "/events.jsonl", StateSHA256: stateHash, JournalSHA256: journalHash}
 	manifestPath := dir + "/manifest.json"
 	manifestBytes, err := jsonDocumentBytes(manifest)
@@ -300,7 +305,12 @@ func ReadRuntimeCheckpoint(root, path string, validator CandidateValidator) (Che
 	if err := writer.validateCandidate(state); err != nil {
 		return CheckpointPair{}, err
 	}
-	if err := ValidateCheckpointIndices(root, state, journalBytes); err != nil {
+	bodies, err := readCheckpointPacketBodies(root, dir, state)
+	if err != nil {
+		return CheckpointPair{}, err
+	}
+	bodyContext := withCheckpointPacketBodies(WithPacketBodyRoot(context.Background(), root), bodies)
+	if err := ValidateCheckpointIndicesContext(bodyContext, root, state, journalBytes); err != nil {
 		return CheckpointPair{}, err
 	}
 	if err := validateRecoveryPair(state, journalBytes); err != nil {
@@ -318,7 +328,7 @@ func ReadRuntimeCheckpoint(root, path string, validator CandidateValidator) (Che
 	if !hasIssuedIndices(state) || state["runtime_id"] != manifest.RuntimeID || revision != manifest.Revision || generation != manifest.Generation {
 		return CheckpointPair{}, errors.New("checkpoint identity mismatch")
 	}
-	pair := CheckpointPair{Manifest: manifest, State: state, StateBytes: stateBytes, JournalBytes: journalBytes}
+	pair := CheckpointPair{PacketBodies: bodies, Manifest: manifest, State: state, StateBytes: stateBytes, JournalBytes: journalBytes}
 	if err := ValidateCheckpointRestore(root, pair); err != nil {
 		return CheckpointPair{}, err
 	}

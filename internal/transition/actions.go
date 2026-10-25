@@ -545,8 +545,8 @@ func (batch *acceptedS3ContractBatch) validateSources(root string, files filevie
 		paths = append(paths, path)
 	}
 	sort.Strings(paths)
-	for _, path := range paths {
-		data, err := files.ReadFile(path)
+	if err := fileview.ReadFiles(files, paths, func(i int, data []byte, err error) error {
+		path := paths[i]
 		if err != nil {
 			return fmt.Errorf("read accepted S3 source %s: %w", path, err)
 		}
@@ -557,6 +557,9 @@ func (batch *acceptedS3ContractBatch) validateSources(root string, files filevie
 		if SHA256(data) != batch.subjects[path].SHA256 || SHA256(checkout) != batch.subjects[path].SHA256 {
 			return fmt.Errorf("accepted S3 source changed before registration: %s; preserve the accepted evidence and restore its source bytes for the original followup, or use controlled planning rework for a professional change", path)
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	if view, ok := files.(interface{ Verify() error }); ok {
 		return view.Verify()

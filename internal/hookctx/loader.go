@@ -2,6 +2,7 @@ package hookctx
 
 import (
 	"bytes"
+	contextpkg "context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -703,7 +704,7 @@ func FromSnapshot(root, agentID string, snapshot runtime.Snapshot) (*LoadedConte
 	if context.PacketMode && agentID != "" && context.Agent != nil &&
 		context.Agent.ReviewAssignment && context.AssignmentID != "" &&
 		s7ReviewResultFreshWriteStage(snapshot.State) {
-		if packets, err := runtime.CurrentReviewResultPackets(snapshot.State, agentID); err == nil {
+		if packets, err := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(contextpkg.Background(), root), snapshot.State, agentID); err == nil {
 			for _, packet := range packets {
 				binding := packet.Binding
 				if binding.OwnerAgentID != agentID || binding.AssignmentID != context.AssignmentID ||
@@ -713,7 +714,7 @@ func FromSnapshot(root, agentID string, snapshot runtime.Snapshot) (*LoadedConte
 				if !s7ReviewResultAssignmentWritable(snapshot.State, packet) {
 					continue
 				}
-				stored, found, findErr := runtime.FindReviewResultPacket(snapshot.State, packet.ID)
+				stored, found, findErr := runtime.FindReviewResultPacketContext(runtime.WithPacketBodyRoot(contextpkg.Background(), root), snapshot.State, packet.ID)
 				if findErr != nil || !found || !reflect.DeepEqual(stored, packet) {
 					continue
 				}
@@ -797,7 +798,7 @@ func FromSnapshot(root, agentID string, snapshot runtime.Snapshot) (*LoadedConte
 					binding.ReviewRound != context.CurrentReviewRound || packet.AnswerPath == "" {
 					continue
 				}
-				stored, found, findErr := runtime.FindRepairPlanReportPacket(snapshot.State, packet.ID)
+				stored, found, findErr := runtime.FindRepairPlanReportPacketContext(runtime.WithPacketBodyRoot(contextpkg.Background(), root), snapshot.State, packet.ID)
 				if findErr != nil || !found || !reflect.DeepEqual(stored, packet) ||
 					runtime.VerifyRepairPlanReportPacketIssue(root, snapshot.State, packet) != nil ||
 					runtime.VerifyRepairPlanReportCurrent(root, snapshot.State, packet) != nil ||
@@ -961,8 +962,8 @@ func s9RepairResultFreshWriteStage(state map[string]any) bool {
 	return repairPointer["status"] == "repairing"
 }
 
-func s9RepairResultPacketAttemptPresent(state map[string]any, assignmentID, runtimeID string, generation, round int) (bool, error) {
-	packets, err := runtime.RepairResultPackets(state)
+func s9RepairResultPacketAttemptPresent(root string, state map[string]any, assignmentID, runtimeID string, generation, round int) (bool, error) {
+	packets, err := runtime.RepairResultPacketsForSourcesContext(contextpkg.Background(), root, state, "")
 	if err != nil {
 		return false, err
 	}
@@ -1266,7 +1267,7 @@ func loadCurrentRepairAgentScope(root string, state, pointer map[string]any, pla
 	var selected *workpacket.RepairPlanReportPacket
 	var selectedScope []string
 	for _, packet := range packets {
-		stored, found, findErr := runtime.FindRepairPlanReportPacket(state, packet.ID)
+		stored, found, findErr := runtime.FindRepairPlanReportPacketContext(runtime.WithPacketBodyRoot(contextpkg.Background(), root), state, packet.ID)
 		if findErr != nil || !found || !reflect.DeepEqual(stored, packet) ||
 			runtime.VerifyRepairPlanReportPacketIssue(root, state, packet) != nil {
 			continue

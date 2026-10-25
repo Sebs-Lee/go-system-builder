@@ -24,6 +24,7 @@ const reviewResultAnswerLimit int64 = 20 << 20
 // packet, remains the authority for that source root.
 func (s *Service) IssueReviewResults(ctx context.Context, ownerFilter string) ([]workpacket.ReviewResultPacket, error) {
 	s = s.WithContext(ctx)
+	ctx = loopruntime.WithPacketBodyRoot(s.Context(), s.Root)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -43,11 +44,11 @@ func (s *Service) IssueReviewResults(ctx context.Context, ownerFilter string) ([
 		if err != nil {
 			return nil, err
 		}
-		registered, found, err := loopruntime.FindReviewResultPacket(latest.State, packet.ID)
+		registered, found, err := loopruntime.FindReviewResultPacketContext(ctx, latest.State, packet.ID)
 		if err != nil || !found || !sameReviewResultPacket(registered, packet) {
 			return nil, fmt.Errorf("S7 issued packet %s is no longer the exact Runtime packet: %v", packet.ID, err)
 		}
-		current, err := loopruntime.CurrentReviewResultPackets(latest.State, packet.Binding.OwnerAgentID)
+		current, err := loopruntime.CurrentReviewResultPacketsContext(ctx, latest.State, packet.Binding.OwnerAgentID)
 		if err != nil || !hasReviewResultPacket(current, packet) {
 			return nil, fmt.Errorf("S7 issued packet %s no longer matches the current Plan/Assignment tuple: %v", packet.ID, err)
 		}
@@ -88,7 +89,8 @@ func (s *Service) ReviewResultForPath(path string) (workpacket.ReviewResultPacke
 	if err != nil {
 		return workpacket.ReviewResultPacket{}, false, err
 	}
-	return currentReviewResultForPath(s.Root, snapshot.State, path)
+	packet, _, found, err := currentReviewResultSourceForPathContext(s.Context(), s.Root, snapshot.State, path)
+	return packet, found, err
 }
 
 // ReviewResultSourceForPath also returns the exact current Main or ready
@@ -100,7 +102,7 @@ func (s *Service) ReviewResultSourceForPath(path string) (workpacket.ReviewResul
 	if err != nil {
 		return workpacket.ReviewResultPacket{}, "", false, err
 	}
-	return currentReviewResultSourceForPath(s.Root, snapshot.State, path)
+	return currentReviewResultSourceForPathContext(s.Context(), s.Root, snapshot.State, path)
 }
 
 // SaveReviewResult accepts the Main-root file through the same original S7
@@ -108,6 +110,7 @@ func (s *Service) ReviewResultSourceForPath(path string) (workpacket.ReviewResul
 // original consumer checks the persisted owner, packet and approval mode.
 func (s *Service) SaveReviewResult(ctx context.Context, owner, path string) (Receipt, error) {
 	s = s.WithContext(ctx)
+	ctx = loopruntime.WithPacketBodyRoot(s.Context(), s.Root)
 	return s.SaveReviewResultFrom(ctx, owner, path, s.Root, nil)
 }
 
@@ -117,6 +120,7 @@ func (s *Service) SaveReviewResult(ctx context.Context, owner, path string) (Rec
 // ordinary saves do not require Hook actor/session authorization.
 func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
 	s = s.WithContext(ctx)
+	ctx = loopruntime.WithPacketBodyRoot(s.Context(), s.Root)
 	snapshot, err := s.snapshot()
 	if err != nil {
 		return Receipt{}, err
@@ -124,7 +128,7 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 	if err := ctx.Err(); err != nil {
 		return rejected(snapshot, "", err), err
 	}
-	packet, actualRoot, found, err := currentReviewResultSourceForPath(s.Root, snapshot.State, path)
+	packet, actualRoot, found, err := currentReviewResultSourceForPathContext(ctx, s.Root, snapshot.State, path)
 	if err != nil {
 		return rejected(snapshot, "", err), err
 	}
@@ -143,11 +147,10 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 			return rejected(snapshot, packet.ID, err), err
 		}
 	}
-	answerBytes, err := workpacket.ReadFile(actualRoot, packet.AnswerPath, reviewResultAnswerLimit)
+	input, issues, err := review.ReadIssuedResultInput(ctx, actualRoot, packet, owner)
 	if err != nil {
 		return rejected(snapshot, packet.ID, err), err
 	}
-	_, issues := workpacket.ValidateReviewResultAnswer(packet, answerBytes)
 	if len(issues) != 0 {
 		err := fmt.Errorf("S7 answer %s: %s (%s)", issues[0].Pointer, issues[0].Expected, issues[0].Observed)
 		r := rejected(snapshot, packet.ID, err)
@@ -165,15 +168,21 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 		OwnerAgentID:     owner,
 		SourceRoot:       actualRoot,
 		AuthorizeSource:  authorize,
+		Input:            input,
 		OccurredAt:       time.Now().UTC(),
 	})
 	if submitErr != nil {
 		if errors.Is(submitErr, loopruntime.ErrStaleRevision) {
-			submitErr = fmt.Errorf("S7 packet %s, owner %s, answer %s: Main must inspect the original receipt and current responsibility; if still current and unreceived, resume the original native agent to return this existing answer, without rewriting professional work or waiting for CleanRound: %w", packet.ID, owner, packet.AnswerPath, submitErr)
+			submitErr = fmt.Errorf("S7 packet %s, owner %s, answer %s: the original receiver could not settle concurrent Runtime changes within this attempt; retain the original delivery and any accepted receipt. This is a framework reception gap, not a request for answer correction, another native dispatch or repeated submission: %w", packet.ID, owner, packet.AnswerPath, submitErr)
+			r := rejected(snapshot, packet.ID, submitErr)
+			r.NextAction = "原接收器的有限并发续跑仍未确认接收；保留原交付与已有回执，按具名责任处理系统接收缺口。此反馈不要求作者更改专业内容、重存或再次派发。"
+			return r, submitErr
 		}
 		return rejected(snapshot, packet.ID, submitErr), submitErr
 	}
-	return issuedReviewResultReceipt(s.Root, next, packet, owner)
+	completionCtx, cancel := review.ResultCompletionContext(ctx)
+	defer cancel()
+	return issuedReviewResultReceipt(s.Root, next, packet, owner, completionCtx)
 }
 
 // ReviewResultReceipt rebuilds a receipt from the original accepted S7
@@ -184,14 +193,14 @@ func (s *Service) ReviewResultReceipt(owner, ref string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	packet, found, err := reviewResultByReference(s.Root, snapshot.State, ref)
+	packet, found, err := reviewResultByReferenceContext(s.Context(), s.Root, snapshot.State, ref)
 	if err != nil {
 		return Receipt{}, err
 	}
 	if !found || owner == "" || packet.Binding.OwnerAgentID != owner {
 		return rejected(snapshot, "", errors.New("S7 packet reference has no matching registered Reviewer")), nil
 	}
-	resultReceipt, accepted, err := review.IssuedResultReceipt(s.Root, snapshot.State, packet.ID, owner)
+	resultReceipt, accepted, err := review.IssuedResultReceiptContext(s.Context(), s.Root, snapshot.State, packet.ID, owner)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -207,7 +216,11 @@ func currentReviewResultForPath(root string, state map[string]any, path string) 
 }
 
 func currentReviewResultSourceForPath(root string, state map[string]any, path string) (workpacket.ReviewResultPacket, string, bool, error) {
-	packets, err := loopruntime.CurrentReviewResultPackets(state, "")
+	return currentReviewResultSourceForPathContext(context.Background(), root, state, path)
+}
+
+func currentReviewResultSourceForPathContext(ctx context.Context, root string, state map[string]any, path string) (workpacket.ReviewResultPacket, string, bool, error) {
+	packets, err := loopruntime.CurrentReviewResultPacketsContext(loopruntime.WithPacketBodyRoot(ctx, root), state, "")
 	if err != nil {
 		return workpacket.ReviewResultPacket{}, "", false, err
 	}
@@ -215,12 +228,38 @@ func currentReviewResultSourceForPath(root string, state map[string]any, path st
 }
 
 func reviewResultByReference(root string, state map[string]any, ref string) (workpacket.ReviewResultPacket, bool, error) {
-	if packet, found, err := loopruntime.FindReviewResultPacket(state, ref); err != nil || found {
+	return reviewResultByReferenceContext(context.Background(), root, state, ref)
+}
+
+func reviewResultByReferenceContext(ctx context.Context, root string, state map[string]any, ref string) (workpacket.ReviewResultPacket, bool, error) {
+	ctx = loopruntime.WithPacketBodyRoot(ctx, root)
+	if packet, found, err := loopruntime.FindReviewResultPacketContext(ctx, state, ref); err != nil || found {
 		return packet, found, err
 	}
-	packets, err := loopruntime.ReviewResultPackets(state)
-	if err != nil {
-		return workpacket.ReviewResultPacket{}, false, err
+	// The initial lookup checked the complete lightweight namespace. Read
+	// bodies only for exact answer-path candidates; source authority and
+	// ambiguity are still checked by the original path resolver below.
+	clean := filepath.ToSlash(filepath.Clean(ref))
+	entities, _ := state["entities"].(map[string]any)
+	rows, _ := entities["work_packets"].([]any)
+	var packets []workpacket.ReviewResultPacket
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row["template_id"] != "s7-review-result-v1" {
+			continue
+		}
+		answer, _ := row["answer_path"].(string)
+		if answer == "" || clean != answer && !strings.HasSuffix(clean, "/"+answer) {
+			continue
+		}
+		id, _ := row["packet_id"].(string)
+		p, found, err := loopruntime.FindReviewResultPacketContext(ctx, state, id)
+		if err != nil {
+			return workpacket.ReviewResultPacket{}, false, err
+		}
+		if found {
+			packets = append(packets, p)
+		}
 	}
 	packet, _, found, err := reviewResultPathInRoots(root, state, ref, packets, false)
 	return packet, found, err
@@ -356,8 +395,12 @@ func hasReviewResultPacket(packets []workpacket.ReviewResultPacket, expected wor
 	return false
 }
 
-func issuedReviewResultReceipt(root string, snapshot loopruntime.Snapshot, packet workpacket.ReviewResultPacket, owner string) (Receipt, error) {
-	resultReceipt, accepted, err := review.IssuedResultReceipt(root, snapshot.State, packet.ID, owner)
+func issuedReviewResultReceipt(root string, snapshot loopruntime.Snapshot, packet workpacket.ReviewResultPacket, owner string, contexts ...context.Context) (Receipt, error) {
+	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
+	resultReceipt, accepted, err := review.IssuedResultReceiptContext(ctx, root, snapshot.State, packet.ID, owner)
 	if err != nil {
 		return Receipt{}, err
 	}

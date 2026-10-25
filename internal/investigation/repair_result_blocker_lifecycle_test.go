@@ -349,7 +349,7 @@ func prepareS9RepairResultPacketWithPlanActivity(t *testing.T, beginBuilder bool
 		t.Fatalf("original S9 Worker execution is not ready with a registered session: found=%t execution=%+v", found, execution)
 	}
 	issued := currentS9Snapshot(t, fixture)
-	packets, err := runtime.RepairResultPackets(issued.State)
+	packets, err := runtime.RepairResultPacketsContext(runtime.WithPacketBodyRoot(t.Context(), fixture.root), issued.State)
 	if err != nil {
 		t.Fatal(err)
 	}

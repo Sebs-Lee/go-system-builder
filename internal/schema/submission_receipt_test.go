@@ -267,3 +267,20 @@ func TestSubmissionReceiptKeyPatternsAreAnchored(t *testing.T) {
 		}
 	}
 }
+
+func TestSubmissionReceiptRejectedAttemptPreservesAcceptedHistory(t *testing.T) {
+	receipt := receiptWire(strings.Repeat("a", 64), true, "accepted", true, "S4")
+	receipt.AttemptStatus = "rejected"
+	body, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.NewEmbeddedValidator().ValidateBytes("submission-receipt.schema.json", body); err != nil {
+		t.Fatalf("rejected attempt erased accepted history in schema: %v", err)
+	}
+	receipt.AttemptStatus = "invented"
+	body, _ = json.Marshal(receipt)
+	if err := schema.NewEmbeddedValidator().ValidateBytes("submission-receipt.schema.json", body); err == nil {
+		t.Fatal("unknown attempt status accepted")
+	}
+}

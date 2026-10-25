@@ -1616,6 +1616,18 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err := validateJournalEvent(journalEvent); err != nil {
 		return Snapshot{}, fmt.Errorf("post-mutation journal invalid: %w", err)
 	}
+	// Publish immutable original bodies before any durable reference/pending.
+	// Candidate semantics above saw the original full newly issued packet;
+	// the lightweight representation is independently schema checked below.
+	bodiesChanged, err := s.externalizeNewPacketBodies(previousState, state)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if bodiesChanged {
+		if err := s.validatePacketBodyIndexRepresentation(state); err != nil {
+			return Snapshot{}, fmt.Errorf("packet body index candidate invalid: %w", err)
+		}
+	}
 	if err := s.validateCheckpointPublicationBudget(state, journalEvent, existingJournal); err != nil {
 		return Snapshot{}, err
 	}
@@ -2052,6 +2064,9 @@ func (s *Store) decodeState(data []byte) (map[string]any, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nil, fmt.Errorf("decode runtime: %w", err)
 	}
+	if err := validatePacketBodyFormats(state); err != nil {
+		return nil, fmt.Errorf("Runtime packet storage compatibility: %w", err)
+	}
 	if s.mutationCapable {
 		if err := s.validateWriteAuthority(state); err != nil {
 			return nil, err
@@ -2138,6 +2153,9 @@ func (s *Store) recoverPendingFingerprintLocked() error {
 	}
 	if pending.SchemaVersion != "1.0.0" {
 		return fmt.Errorf("unsupported pending fingerprint refresh schema %q", pending.SchemaVersion)
+	}
+	if err := verifyReferencedPacketBodies(s.Context(), s.root, pending.State); err != nil {
+		return fmt.Errorf("pending original packet body: %w", err)
 	}
 	if err := s.validateCandidate(pending.State); err != nil {
 		return fmt.Errorf("pending fingerprint refresh state is invalid: %w", err)
@@ -2236,6 +2254,9 @@ func (s *Store) recoverPendingCommitLocked() error {
 	}
 	if pending.SchemaVersion != "1.0.0" {
 		return fmt.Errorf("unsupported pending runtime commit schema %q", pending.SchemaVersion)
+	}
+	if err := verifyReferencedPacketBodies(s.Context(), s.root, pending.State); err != nil {
+		return fmt.Errorf("pending original packet body: %w", err)
 	}
 	if err := s.validateCandidate(pending.State); err != nil {
 		return fmt.Errorf("pending runtime commit state is invalid: %w", err)
@@ -3471,7 +3492,7 @@ func acquireLegacyLockContext(ctx context.Context, path string, timeout time.Dur
 		if !errors.Is(err, os.ErrExist) {
 			return nil, fmt.Errorf("acquire runtime lock: %w", err)
 		}
-		recovered, recoverErr := removeExpiredLock(path, staleLockAge)
+		recovered, recoverErr := removeAbandonedLegacyLock(path, staleLockAge)
 		if recoverErr != nil {
 			return nil, recoverErr
 		}
@@ -3489,6 +3510,54 @@ func acquireLegacyLockContext(ctx context.Context, path string, timeout time.Dur
 		case <-timer.C:
 		}
 	}
+}
+
+// The process lock fences current Writers. For the compatibility sentinel,
+// known live owners win over age; a proven dead owner needs no grace period.
+// Unknown legacy formats retain their original expiry rule.
+func removeAbandonedLegacyLock(path string, maxAge time.Duration) (bool, error) {
+	before, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect runtime lock: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return false, fmt.Errorf("runtime lock is not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, 256))
+	_ = f.Close()
+	if readErr != nil {
+		return false, readErr
+	}
+	parts := strings.Split(string(data), ":")
+	if len(parts) != 2 {
+		return removeExpiredLock(path, maxAge)
+	}
+	pid, pidErr := strconv.Atoi(parts[0])
+	stamp, stampErr := strconv.ParseInt(parts[1], 10, 64)
+	if pidErr != nil || stampErr != nil || pid <= 0 || stamp <= 0 {
+		return removeExpiredLock(path, maxAge)
+	}
+	if !legacyOwnerExited(pid) {
+		return false, nil
+	}
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil || !os.SameFile(before, current) || before.ModTime() != current.ModTime() || before.Size() != current.Size() {
+		return false, err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return true, nil
 }
 
 func removeExpiredLock(path string, maxAge time.Duration) (bool, error) {

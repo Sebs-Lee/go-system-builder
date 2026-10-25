@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -68,7 +69,7 @@ func TestS7OriginalAnswerBindsActualCommandCaptureWithoutAuthorMetadata(t *testi
 	if err != nil || !bytes.Equal(got, author) {
 		t.Fatal("system rewrote the author's original questionnaire")
 	}
-	packetsAfter, err := runtime.CurrentReviewResultPackets(accepted.State, packet.Binding.OwnerAgentID)
+	packetsAfter, err := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), accepted.State, packet.Binding.OwnerAgentID)
 	if err != nil || len(packetsAfter) != 1 {
 		t.Fatalf("original responsibility association changed: %d %v", len(packetsAfter), err)
 	}
