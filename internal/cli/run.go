@@ -1175,6 +1175,10 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		if name == "" {
 			name = "<stage-specific verb>"
 		}
+		if len(args) > 0 && args[0] == "review-plan" {
+			printReviewPlanRecoveryHelp(stdout)
+			return 0
+		}
 		if name == "review-continue" || name == "audit-prepare" {
 			description := "Resume an accepted machine CleanRound through the original Gate/TR-009, then prepare current S10 acceptance materials. Accepted Reviewer results are preserved."
 			if name == "audit-prepare" {
@@ -1864,6 +1868,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		// `revise` is the one controlled revision per round (§5.3).
 		revise := len(args) > 1 && args[1] == "revise"
 		revive := len(args) > 1 && args[1] == "revive"
+		frozenDiff := len(args) > 1 && args[1] == "frozen-diff"
 		flags := flag.NewFlagSet("runtime review-plan", flag.ContinueOnError)
 		flags.SetOutput(stderr)
 		bindUsage(flags, "runtime review-plan")
@@ -1875,11 +1880,24 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 		sourceRef := flags.String("source-ref", "", "revise: triggering Result/Finding evidence id")
 		affectedSurface := flags.String("affected-surface", "", "revise: path surface the revision may touch")
 		parseArgs := args[1:]
-		if revise || revive {
+		if revise || revive || frozenDiff {
 			parseArgs = args[2:]
 		}
 		if err := parseWorkspaceFlags(flags, parseArgs); err != nil {
 			return 2
+		}
+		if frozenDiff {
+			diff, err := review.DiffFrozenSourcesForRoot(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath))
+			if err != nil {
+				fmt.Fprintln(stderr, formatFailure("runtime review-plan frozen-diff", err))
+				return 1
+			}
+			fmt.Fprintln(stderr, review.FrozenDiffReport(diff))
+			return encodeJSON(stdout, map[string]any{
+				"restore":  diff.Restore,
+				"missing":  diff.Missing,
+				"preserve": diff.Preserve,
+			})
 		}
 		if revive {
 			next, err := review.RevivePlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), *expectedRevision)
@@ -1896,6 +1914,10 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			})
 		}
 		if revise {
+			if *planPath == "" || *sourceRef == "" || *affectedSurface == "" {
+				fmt.Fprintln(stderr, "runtime review-plan revise requires --file <ReviewPlan.json> --source-ref <consumed-Result-or-Finding-id> --affected-surface <repo-relative-surface>; --file is a JSON file path")
+				return 2
+			}
 			resolvedRevision := *expectedRevision
 			next, err := review.RevisePlan(*root, resolveRootPath(*root, *statePath), resolveRootPath(*root, *journalPath), review.ReviseRequest{
 				ExpectedRevision: resolvedRevision,

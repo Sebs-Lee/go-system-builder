@@ -17,8 +17,8 @@ import (
 // results or the revision number, because nothing in the pinned review
 // actually changed. If either check still fails, the plan stays stale and
 // the drift error is returned (fail-closed). A stale round caused by real
-// product drift cannot be revived — that path is revise (L3-S7 §5.3), which
-// re-pins the baseline and invalidates the touched claims' evidence.
+// product drift cannot be revived. A controlled revise changes Claims while
+// retaining the pinned product baseline; a new product commit needs a new round.
 func RevivePlan(
 	root, statePath, journalPath string,
 	expectedRevision int,
@@ -40,7 +40,7 @@ func RevivePlan(
 		return loopruntime.Snapshot{}, fmt.Errorf("review-plan revive: load plan: %w", err)
 	}
 	if err := verifyFrozenSubjects(root, plan, current.State); err != nil {
-		return loopruntime.Snapshot{}, fmt.Errorf("review-plan revive: baseline still drifted; the round stays stale (use revise for real drift): %w", err)
+		return loopruntime.Snapshot{}, fmt.Errorf("review-plan revive: baseline still drifted; the round stays stale (run `runtime review-plan frozen-diff --root <project-root>` for the restore/preserve list; restore exact pinned sources before revive; never delete files absent from the pinned baseline; revise cannot replace the pinned product baseline): %w", err)
 	}
 	lifecycle, _ := current.State["lifecycle"].(map[string]any)
 	cursor := map[string]any{}

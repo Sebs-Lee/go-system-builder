@@ -60,11 +60,13 @@ func printActionCatalog(w io.Writer) {
 	fmt.Fprintln(w, "  3. Main follows `runtime investigation status`, routes the Case using the supported results and evidence, then uses the original RepairContract approval route. A human approval or bounded-repair grant must be real; a technical review is not a human decision.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "S9 complete repair and return")
-	fmt.Fprintln(w, "  1. Contract approval prepares the original RepairSession, RepairPlan and Main division questions. Main saves the actual Builder division or uses original `runtime repair dispatch`, then carries each prepared brief into native Agent/worktree isolation. Each Builder saves its private professional PlanReport before implementation and continues; Stop calls the original PlanReport consumer.")
+	fmt.Fprintln(w, "  1. Contract approval prepares the original RepairSession, RepairPlan and Main division questions. Main saves the actual Builder division or uses original `runtime repair dispatch`, then carries each prepared brief into native Agent/worktree isolation. Each Builder saves its private professional PlanReport before implementation and continues; SubagentStop receives the private Plan/Result through the original consumers.")
 	fmt.Fprintln(w, "  2. Builders perform repair and self-checks, save the private Result, then return the exact brief and absolute Result path. SubagentStop calls the original Result and candidate consumers. Main follows the supplied `runtime workspace integrate` command with necessary --check-command values; do not wait for Final before integration or redispatch an accepted candidate.")
 	fmt.Fprintln(w, "  3. Main saves the Hook-provided ChangeImpact answer for its original consumer. Main actually dispatches an independent verifier with the exact TargetedReverification answer path; the verifier saves and returns it for SubagentStop reception.")
 	fmt.Fprintln(w, "  4. Once all necessary work is complete, its original outlet runs the existing handoff consumer and prepares the fresh S7 seed. Follow any concrete remaining duty; do not wait for another Hook or write a Handoff report. Main plans and dispatches the fresh complete S7 round.")
 	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  S9 recovery only: missing ChangeImpact uses `runtime repair impact prepare --root <project-root>`; accepted Targeted with unfinished Handoff/S7 preparation uses `runtime repair handoff complete --root <project-root>`. Preserve accepted work; neither is an extra normal author submission.")
+	fmt.Fprintln(w, "  S7 recovery: `runtime review-plan revive --help` and `runtime review-plan revise --help` explain unchanged-baseline revival versus a controlled Claim revision. Accepted CleanRound continuation uses `runtime review-continue`; missing current S10 materials use `runtime audit-prepare`.")
 	fmt.Fprintln(w, "S10/S11")
 	fmt.Fprintln(w, "  S10: use `s10 status` for read-only progress. Fill the Hook-provided acceptance/audit manifest and save it once; the original consumer validates it, derives machine metadata, and records the evidence.")
 	fmt.Fprintln(w, "  S11: present the actual materials and wait for the human's explicit choice. Main faithfully fills disposition and optional reason in the exact pending application and saves normally. An empty choice remains a waiting draft; no release command or second approval is required.")
@@ -86,4 +88,17 @@ func compactHelpName(args []string) string {
 		parts = append(parts, arg)
 	}
 	return strings.Join(parts, " ")
+}
+
+// These are recovery operations, not alternate normal authoring steps.
+func printReviewPlanRecoveryHelp(w io.Writer) {
+	printCommandHelp(w, "loop-harness runtime review-plan [revive|revise] --root <project-root>", "Normal registration saves the supplied Main questionnaire. revive rechecks the unchanged pinned baseline and restores a stale plan only when its sources match; it does not restore files or move the baseline. revise makes a controlled professional plan revision from an actual consumed Result/Finding; it cannot replace the pinned S6 product baseline.")
+	fmt.Fprintln(w, "Example: loop-harness runtime review-plan revive --root /path/to/project")
+	fmt.Fprintln(w, "Example: loop-harness runtime review-plan revise --root /path/to/project --file /path/to/ReviewPlan-v2.json --source-ref finding-actual-id --affected-surface internal/example")
+	fmt.Fprintln(w, "--file is a path to a complete revised ReviewPlan JSON file, not inline JSON or Markdown. --source-ref names the actual consumed Result/Finding that motivates the revision. --affected-surface bounds the changed Claims; unchanged Claims retain their observations. Replace example paths/ID with original current materials.")
+	fmt.Fprintln(w, "Before source restoration, preserve current edits and added/untracked files separately. Inspect the exact pinned commit and affected paths; never use blanket reset/clean/restore or delete files absent from that commit. A new product baseline requires the original new-round/rework path.")
+}
+
+func s7PinnedSourceRecovery(root string) string {
+	return "Run `loop-harness runtime review-plan frozen-diff --root " + s7CaptureShellQuote(root) + "` first for the read-only restore/preserve list; pinned SHAs come from the plan, never hand-supply a hash. Restore only listed drifted/missing pinned sources; preserve current edits and added/untracked files and never delete files absent from the pinned commit or run blanket reset/clean. After actual sources match, use `loop-harness runtime review-plan revive --root " + s7CaptureShellQuote(root) + "`. Controlled Claim changes use `loop-harness runtime review-plan revise --help` with a JSON file path and consumed Result/Finding; it cannot move the pinned S6 baseline. Real product changes require the original rework/new-round path."
 }
