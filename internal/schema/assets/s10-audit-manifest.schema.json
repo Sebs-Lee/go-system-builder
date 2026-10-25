@@ -82,6 +82,7 @@
           "$ref": "#/$defs/strings"
         },
         "expected": {
+          "description": "System-prefilled original source commitment; preserve the supplied baseline. Author judgments belong in disposition and oracle.",
           "type": "string"
         },
         "oracle": {

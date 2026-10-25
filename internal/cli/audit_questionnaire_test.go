@@ -346,3 +346,26 @@ func questionnaireSHA(data []byte) string {
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("%x", sum[:])
 }
+
+
+func TestAuditQuestionnaireNamesPrefilledBaselineAndTopicSlots(t *testing.T) {
+	root, state := auditQuestionnaireRuntime(t)
+	for _, tc := range []struct {
+		lifecycle string
+		want      []string
+	}{
+		{"acceptance", []string{"system-prefilled", "preserve that baseline"}},
+		{"release_audit", []string{"audit_areas[].id", "not_applicable", "risks/technical_debt/blocking_findings"}},
+	} {
+		state["lifecycle"] = map[string]any{"state": tc.lifecycle, "phase": nil, "phase_revision": 0}
+		if _, _, err := prepareAuditQuestionnaire(root, state, tc.lifecycle); err != nil {
+			t.Fatal(err)
+		}
+		context := stageAuditQuestionnaireContext(root, policy.Input{Event: "PreToolUse"}, runtime.Snapshot{State: state})
+		for _, want := range tc.want {
+			if !strings.Contains(context, want) {
+				t.Fatalf("%s context omits %q: %s", tc.lifecycle, want, context)
+			}
+		}
+	}
+}

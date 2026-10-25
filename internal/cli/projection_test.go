@@ -34,7 +34,7 @@ func TestStatusProjectionAtHumanReleaseUsesEmptyOpenItemsArray(t *testing.T) {
 		}
 	}
 	guidance, _ := gateway["guidance"].(string)
-	for _, want := range []string{"exact application path", "human explicitly chooses", "disposition and optional reason", "saves that application", "Empty disposition", "without requiring a Finding", "does not publish or deploy"} {
+	for _, want := range []string{"exact application path", "human explicitly chooses", "disposition and optional reason", "saves that application", "Empty disposition", "without requiring a Finding", "does not publish or deploy", "including blanks"} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("S11 status lacks normal human handoff guidance %q: %s", want, guidance)
 		}
@@ -112,7 +112,7 @@ func TestS6NextAssignsAuthoringToRegisteredBuildersAndIntegrationToMain(t *testi
 	if stage != "S6" || skill != "agent-dispatch" {
 		t.Fatalf("S6 projection = stage %q skill %q", stage, skill)
 	}
-	for _, want := range []string{"Main coordinates", "each assigned Builder", "its TASK", "its own exact PLAN/Result questionnaires", "Main then performs the original integration"} {
+	for _, want := range []string{"Main follows actual TASK progress", "s6 prepare", "its exact brief", "native Agent/worktree", "integrate a received delivery", "registration alone does not prove a Builder is running"} {
 		if !strings.Contains(action, want) {
 			t.Fatalf("S6 projection omits responsibility guidance %q: %s", want, action)
 		}
