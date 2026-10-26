@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -144,7 +146,6 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	var firstPacket workpacket.ReviewResultPacket
 	var firstOwner string
 	var firstAcceptedAnswer workpacket.ReviewResultDraft
-	var firstExpectedRevision int
 	for i := 0; i < len(issued); i++ {
 		packet := issued[i]
 		owner := owners[packet.Binding.AssignmentID]
@@ -156,7 +157,6 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 		}
 		before := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
 		if i == 0 {
-			firstExpectedRevision = before.Revision
 			assertS7IssuedNegativeCases(t, fixture, packet, owner, before.Revision)
 		}
 
@@ -269,9 +269,16 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A new explicit save still validates the current professional bytes,
+	// including after the public flow has moved to S10. A late Stop itself
+	// does not reopen an already closed Reviewer responsibility.
+	if _, err := review.SubmitIssuedResult(fixture.root, fixture.statePath, fixture.journalPath, review.IssuedSubmitRequest{Context: t.Context(), ExpectedRevision: -1, PacketID: firstPacket.ID, AnswerPath: firstPacket.AnswerPath, OwnerAgentID: firstOwner, SourceRoot: fixture.root}); err == nil || !strings.Contains(err.Error(), "conflicts with the originally accepted professional answer") {
+		t.Fatalf("new explicit save of a same-key changed answer did not conflict: %v", err)
+	}
 	code, conflictStdout, conflictStderr := invokeS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks)
-	if code != 0 || !strings.Contains(conflictStderr, "conflicts with the originally accepted professional answer") {
-		t.Fatalf("same-key changed S7 answer did not return the original conflict receipt: stdout=%s stderr=%s", conflictStdout, conflictStderr)
+	priorLifecycle, _ := final.State["lifecycle"].(map[string]any)
+	if code != 0 || priorLifecycle["state"] == "verification" && !strings.Contains(conflictStderr, "conflicts with the originally accepted professional answer") {
+		t.Fatalf("original Stop lost active-reception/closed-responsibility boundary: stdout=%s stderr=%s", conflictStdout, conflictStderr)
 	}
 	stateAfterConflict, _ := os.ReadFile(fixture.statePath)
 	journalAfterConflict, _ := os.ReadFile(fixture.journalPath)
@@ -280,34 +287,37 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	}
 	writeJSONFixture(t, answerPath, firstAcceptedAnswer)
 
-	// A late duplicate SubagentStop payload after the final consumer uses the
-	// durable receipt; it does not create another event.
-	stateBefore, err := os.ReadFile(fixture.statePath)
+	// The direct-consumer variant leaves TR-009 to its first public Stop.
+	// The cold variant has already run that Stop while receiving the last
+	// answer. Both must reach acceptance before exact public replay is tested.
+	originalReceipt, found, err := review.IssuedResultReceipt(fixture.root, final.State, firstPacket.ID, firstOwner)
+	if err != nil || !found {
+		t.Fatalf("original accepted receipt unavailable before outlet: %v", err)
+	}
+	promoted := runS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks)
+	lifecycle, _ := promoted.State["lifecycle"].(map[string]any)
+	if lifecycle["state"] != "acceptance" {
+		t.Fatalf("first public Stop did not complete original TR-009: %#v", lifecycle)
+	}
+	promotedReceipt, found, err := review.IssuedResultReceipt(fixture.root, promoted.State, firstPacket.ID, firstOwner)
+	if err != nil || !found || !reflect.DeepEqual(originalReceipt, promotedReceipt) {
+		t.Fatalf("outlet rewrote original reception: %+v -> %+v (%v)", originalReceipt, promotedReceipt, err)
+	}
+	events, err := os.ReadFile(fixture.journalPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	journalBefore, err := os.ReadFile(fixture.journalPath)
-	if err != nil {
-		t.Fatal(err)
+	cleanEvidenceID := ""
+	for _, raw := range final.State["evidence"].([]any) {
+		row, _ := raw.(map[string]any)
+		if row["kind"] == "clean_round" && row["status"] == "valid" {
+			cleanEvidenceID, _ = row["id"].(string)
+		}
 	}
-	_ = firstExpectedRevision // the public hook intentionally carries no caller-controlled Runtime revision.
-	if got := runS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks); got.Revision != final.Revision {
-		t.Fatalf("exact post-CleanRound hook replay changed Runtime revision: %d -> %d", final.Revision, got.Revision)
+	if cleanEvidenceID == "" {
+		t.Fatal("original CleanRound has no valid evidence ID")
 	}
-	stateAfter, _ := os.ReadFile(fixture.statePath)
-	journalAfter, _ := os.ReadFile(fixture.journalPath)
-	if string(stateBefore) != string(stateAfter) || string(journalBefore) != string(journalAfter) {
-		t.Fatal("exact S7 packet replay wrote a second Runtime state or journal event")
-	}
-
-	// Run the declared CleanRound gate from the authoritative transition
-	// catalog, then let the original TR-009 Writer recompute its guard and
-	// promote the machine CleanRound. No test-side PASS evidence is added.
 	catalogue, err := transition.LoadCatalog(fixture.root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	files, err := fileview.New(fixture.root, "refs/heads/main", catalogue.Definition.FileSources)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,35 +325,68 @@ func runS7IssuedResultPacketChain(t *testing.T, coldHooks bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gate, err := qualitygate.NewEvaluator(registry).Evaluate(context.Background(), qualitygate.Input{
-		Root: fixture.root, Snapshot: final, Files: files, GateID: "GATE-VERIFY-CLEAN-ROUND-PASSED", TransitionID: "TR-009",
-	})
-	if err != nil || gate.Status != qualitygate.StatusSatisfied {
-		t.Fatalf("original TR-009 CleanRound Gate: status=%q missing=%v conflicts=%v err=%v", gate.Status, gate.Missing, gate.Conflicts, err)
+	gateSpec, exists := registry.Lookup("GATE-VERIFY-CLEAN-ROUND-PASSED")
+	if !exists {
+		t.Fatal("original CleanRound gate definition is missing")
 	}
-	cleanEvidenceID := ""
-	for _, raw := range final.State["evidence"].([]any) {
-		row, _ := raw.(map[string]any)
-		if row != nil && row["kind"] == "clean_round" && row["status"] == "valid" {
-			cleanEvidenceID, _ = row["id"].(string)
+	producers := map[string]bool{}
+	for _, requirement := range gateSpec.EvidenceRequirements {
+		for _, role := range requirement.Responsibilities {
+			producers[role] = true
 		}
 	}
-	if cleanEvidenceID == "" {
-		t.Fatal("original clean-round consumer did not register its evidence for TR-009")
+	exits := 0
+	for _, line := range bytes.Split(events, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event["transition_id"] == "TR-009" {
+			exits++
+			fingerprint, _ := event["gate_fingerprint"].(string)
+			if event["event"] != "transition_committed" || event["outcome"] != "committed" || event["gate_id"] != "GATE-VERIFY-CLEAN-ROUND-PASSED" || fingerprint == "" || fingerprint == "sha256:manual" || !producers[fmt.Sprint(event["producer_responsibility"])] {
+				t.Fatalf("public exit lost original Gate/Writer evidence: %+v", event)
+			}
+			hasCleanEvidence := false
+			for _, id := range event["evidence_ids"].([]any) {
+				hasCleanEvidence = hasCleanEvidence || id == cleanEvidenceID
+			}
+			if !hasCleanEvidence {
+				t.Fatalf("TR-009 did not consume its original CleanRound evidence %s: %+v", cleanEvidenceID, event)
+			}
+			guards, _ := event["guard_results"].([]any)
+			if len(guards) == 0 {
+				t.Fatal("public exit recorded no original guard results")
+			}
+			for _, raw := range guards {
+				guard, _ := raw.(map[string]any)
+				if guard["result"] != "pass" {
+					t.Fatalf("TR-009 committed without passing original guard: %+v", guard)
+				}
+			}
+		}
 	}
-	promoted, err := transition.Apply(fixture.root, fixture.statePath, fixture.journalPath, transition.Request{
-		Files: files, TransitionID: "TR-009", ExpectedRevision: final.Revision,
-		ExpectedRuntimeID: canonicalRuntimeID, Actor: "orchestrator",
-		Evidence: map[string]string{"clean_round_record": cleanEvidenceID},
-		GateID:   gate.GateID, GateFingerprint: gate.Fingerprint, ProducerResponsibility: "verification_orchestrator",
-	})
+	if exits != 1 {
+		t.Fatalf("original public handoff committed %d TR-009 events", exits)
+	}
+	stateBefore, err := os.ReadFile(fixture.statePath)
 	if err != nil {
-		t.Fatalf("original TR-009 Writer: %v", err)
+		t.Fatal(err)
 	}
-	lifecycle, _ := promoted.State["lifecycle"].(map[string]any)
-	if lifecycle["state"] != "acceptance" {
-		t.Fatalf("original TR-009 did not promote CleanRound to acceptance: %#v", lifecycle)
+	journalBefore := append([]byte(nil), events...)
+	replayed := runS7StopHookMode(t, fixture, firstPacket, firstOwner, coldHooks)
+	if replayed.Revision != promoted.Revision {
+		t.Fatalf("completed public handoff replay changed revision: %d -> %d", promoted.Revision, replayed.Revision)
 	}
+	stateAfter, _ := os.ReadFile(fixture.statePath)
+	journalAfter, _ := os.ReadFile(fixture.journalPath)
+	if !bytes.Equal(stateBefore, stateAfter) || !bytes.Equal(journalBefore, journalAfter) {
+		t.Fatal("completed public handoff replay wrote Runtime or journal")
+	}
+
 }
 
 // Inject a real peer commit and an editor's later answer after the service
@@ -852,13 +895,61 @@ func runS7StopHookMode(t *testing.T, fixture *canonicalMainFixture, packet workp
 	if code != 0 {
 		t.Fatalf("original S7 SubagentStop hook exit=%d stdout=%s stderr=%s", code, stdoutText, stderrText)
 	}
-	if !strings.Contains(stderrText, "original consumer") {
-		t.Fatalf("S7 SubagentStop did not report original reception: stdout=%s stderr=%s", stdoutText, stderrText)
+	snapshot, snapshotErr := loopruntime.NewStore(fixture.statePath, fixture.journalPath).WithContext(t.Context()).Snapshot()
+	if snapshotErr != nil {
+		detail := map[string]any{"cold_process": cold, "packet_id": packet.ID, "owner": owner, "snapshot_error": snapshotErr.Error(), "exit_code": code, "stdout": stdoutText, "stderr": stderrText}
+		for name, path := range map[string]string{"pending": fixture.statePath + ".commit-pending.json", "events": fixture.journalPath, "state": fixture.statePath} {
+			file, err := os.Open(path)
+			if err != nil {
+				detail[name+"_error"] = err.Error()
+				continue
+			}
+			info, statErr := file.Stat()
+			data, readErr := io.ReadAll(io.LimitReader(file, 4<<20))
+			tail := data
+			if statErr == nil {
+				detail[name+"_size"] = info.Size()
+				detail[name+"_artifact_prefix_truncated"] = info.Size() > int64(len(data))
+				size := min(info.Size(), int64(8192))
+				tail = make([]byte, int(size))
+				if _, err := file.ReadAt(tail, info.Size()-size); err != nil && err != io.EOF {
+					detail[name+"_tail_error"] = err.Error()
+				}
+			} else {
+				detail[name+"_stat_error"] = statErr.Error()
+			}
+			_ = file.Close()
+			if readErr != nil {
+				detail[name+"_error"] = readErr.Error()
+			}
+			if directory := os.Getenv("GSB_S7_FAILURE_DIR"); directory != "" {
+				if err := os.MkdirAll(directory, 0700); err != nil {
+					t.Logf("failure evidence directory: %v", err)
+				} else {
+					_ = os.WriteFile(filepath.Join(directory, name+".json"), data, 0600)
+				}
+			}
+			if len(tail) > 8192 {
+				tail = tail[len(tail)-8192:]
+			}
+			detail[name+"_tail"] = string(tail)
+		}
+		encoded, _ := json.MarshalIndent(detail, "", "  ")
+		if directory := os.Getenv("GSB_S7_FAILURE_DIR"); directory != "" {
+			_ = os.WriteFile(filepath.Join(directory, "hook-failure.json"), encoded, 0600)
+		}
+		t.Fatalf("original public S7 handoff left an unreadable durable pair; do not hide it by automatic test recovery: %s", encoded)
 	}
-	snapshot := readRuntimeSnapshot(t, fixture.statePath, fixture.journalPath)
 	if _, found, err := review.IssuedResultReceipt(fixture.root, snapshot.State, packet.ID, owner); err != nil || !found {
-		t.Fatalf("original hook did not persist an exact S7 receipt for %s: found=%t err=%v stdout=%s", packet.ID, found, err, stdoutText)
+		t.Fatalf("original hook did not persist an exact S7 receipt for %s: found=%t err=%v stdout=%s stderr=%s", packet.ID, found, err, stdoutText, stderrText)
 	}
+	lifecycle, _ := snapshot.State["lifecycle"].(map[string]any)
+	if lifecycle["state"] == "verification" && !strings.Contains(stderrText, "original consumer") {
+		t.Fatalf("active S7 Stop did not report original reception: stdout=%s stderr=%s", stdoutText, stderrText)
+	}
+	// After TR-009, a late Reviewer Stop only projects the new global stage.
+	// The exact durable receipt above, not a repeated reception phrase, proves
+	// the old work was accepted. Callers separately verify replay has no writes.
 	return snapshot
 }
 

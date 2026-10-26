@@ -46,7 +46,7 @@ func TestS9RepairLeadStopAndIdleDoNotGuessPathWithoutAuthority(t *testing.T) {
 	mapFieldCLI(state, "review")["repair"] = map[string]any{"status": "impact_reconciliation"}
 	snapshot := runtime.Snapshot{State: state}
 	for _, event := range []string{"Stop", "Idle"} {
-		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, snapshot)
+		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event, AgentID: "Main"}, snapshot)
 		if !strings.Contains(context, "current approved Case, RepairSession, and RepairPlan source are required") {
 			t.Fatalf("%s guessed a ChangeImpact path without current source authority: %s", event, context)
 		}
@@ -59,12 +59,20 @@ func TestS9RepairLeadStopAndIdleDoNotGuessPathWithoutAuthority(t *testing.T) {
 	// reports its read-only behavior without creating a handoff or new form.
 	ready := repairLeadBaseState(t, root, "bug_resolution", "ready_for_full_review", 0)
 	mapFieldCLI(ready, "review")["repair"] = map[string]any{"status": "ready_for_full_review", "required_reverification_ids": []any{}}
+	repairLeadWriteState(t, root, ready)
+	beforeReady, _ := json.Marshal(ready)
+	beforeRuntime := repairDispatchRuntimeBytes(t, root)
 	for _, event := range []string{"Stop", "Idle"} {
-		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, runtime.Snapshot{State: ready})
-		if !strings.Contains(context, "no remaining professional Main answer") || !strings.Contains(context, "this reminder only reads current facts") || !strings.Contains(context, "original Handoff and fresh S7 seed") {
+		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event, AgentID: "Main"}, runtime.Snapshot{State: ready})
+		if !strings.Contains(context, repairExitRecovery(root)) || !strings.Contains(context, "Preserve accepted Targeted observations") || !strings.Contains(context, "only completes the original Handoff and S7 preparation") {
 			t.Fatalf("%s did not report read-only automatic handoff: %s", event, context)
 		}
 	}
+	afterReady, _ := json.Marshal(ready)
+	if !bytes.Equal(beforeReady, afterReady) {
+		t.Fatal("ready reminder changed its input facts")
+	}
+	repairDispatchAssertUnchanged(t, root, beforeRuntime)
 	if got := repairLeadQuestionnairePaths(root, ready); len(got) != 0 {
 		t.Fatalf("ready handoff has no professional answer path, got %#v", got)
 	}
@@ -169,7 +177,18 @@ func TestS9RepairLeadTargetedPathUsesRegisteredIndependentAssignment(t *testing.
 }
 
 func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) {
-	root := repairLeadFreshRoot(t)
+	s9RepairLeadImpactTargetedAndHandoff(t, false)
+}
+func TestNativeS9OriginalTargetedConsumePreservesPartialHandoff(t *testing.T) {
+	s9RepairLeadImpactTargetedAndHandoff(t, true)
+}
+func s9RepairLeadImpactTargetedAndHandoff(t *testing.T, mainRecovery bool) {
+	root := ""
+	if mainRecovery {
+		root = repairExitInstalledRoot(t)
+	} else {
+		root = repairLeadFreshRoot(t)
+	}
 	// Install dispatch inputs before the Session captures their authority.
 	writeRepairLeadFile(t, root, "docs/control/agent-protocol.md", "# Agent protocol\n")
 	writeRepairLeadFile(t, root, "agents/test-builder.md", "# Test Builder\n")
@@ -300,7 +319,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	// Final is already committed, but questionnaire preparation has not run.
 	// Passive listeners report the original recovery without manufacturing a draft.
 	for _, event := range []string{"Stop", "Idle", "PreToolUse"} {
-		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, resultSnapshot)
+		context := stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event, AgentID: "Main"}, resultSnapshot)
 		if !strings.Contains(context, impactPath) || !strings.Contains(context, "runtime repair impact prepare") {
 			t.Fatalf("%s omitted exact missing questionnaire/recovery: %s", event, context)
 		}
@@ -329,8 +348,12 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 	}
 	prepareOut.Reset()
 	prepareErr.Reset()
-	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &prepareOut, &prepareErr); code != 0 || !strings.Contains(prepareOut.String(), impactPath) {
+	if code := runRuntimeRepair([]string{"impact", "prepare", "--root", root}, &prepareOut, &prepareErr); code != 0 {
 		t.Fatalf("original preparation recovery failed: code=%d out=%s err=%s", code, &prepareOut, &prepareErr)
+	}
+	var preparedImpact map[string]any
+	if err := json.Unmarshal(prepareOut.Bytes(), &preparedImpact); err != nil || preparedImpact["questionnaire_path"] != impactPath {
+		t.Fatalf("preparation returned wrong literal questionnaire path: %v %s", err, &prepareOut)
 	}
 	// Re-entry must preserve ongoing professional work exactly.
 	originalDraft, err := os.ReadFile(impactPath)
@@ -598,12 +621,42 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			t.Fatal(err)
 		}
 		nativeReturn.AgentID = "opaque-targeted-id-after-native-resume"
-		if handled, code := nativeS9Hook(root, nativeReturn, &bytes.Buffer{}, &feedback); !handled || code != 0 || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
+		if mainRecovery {
+			var result, diagnostic bytes.Buffer
+			code := Run([]string{"runtime", "stage-answer", "consume", "--root", root, "--path", targetPath}, nil, &result, &diagnostic)
+			if code != 1 || !strings.Contains(result.String(), "committed through the original Runtime Writer") || !strings.Contains(diagnostic.String(), "runtime repair handoff complete") {
+				t.Fatalf("original Main consume lost accepted Targeted/failed successor: code=%d result=%s error=%s", code, &result, &diagnostic)
+			}
+			feedback.Write(result.Bytes())
+			feedback.Write(diagnostic.Bytes())
+		} else if handled, code := nativeS9Hook(root, nativeReturn, &bytes.Buffer{}, &feedback); !handled || code != 0 || !strings.Contains(feedback.String(), "committed through the original Runtime Writer") {
 			t.Fatalf("resolved blocker did not resume/create/commit the pass result: handled=%v feedback=%s", handled, feedback.String())
 		}
 		partial, err := runtime.NewStore(statePath, journalPath).Snapshot()
 		if err != nil || stringValue(repairPointerCLI(partial.State)["status"]) != "ready_for_full_review" || !strings.Contains(feedback.String(), "runtime repair handoff complete") {
 			t.Fatalf("partial reception lost recovery: %v %s", err, &feedback)
+		}
+		if mainRecovery {
+			original, readErr := os.ReadFile(targetPath)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			before := repairDispatchRuntimeBytes(t, root)
+			if err := os.Remove(targetPath); err != nil {
+				t.Fatal(err)
+			}
+			var result, diagnostic bytes.Buffer
+			if code := Run([]string{"runtime", "stage-answer", "consume", "--root", root, "--path", targetPath}, nil, &result, &diagnostic); code != 0 || !strings.Contains(result.String(), "Targeted is already received") || !strings.Contains(result.String(), "runtime repair handoff complete") {
+				t.Fatalf("accepted Targeted Main replay requires author input: %d %s %s", code, &result, &diagnostic)
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+			if err := os.WriteFile(targetPath, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if mainRecovery {
+			assertRepairExitReadyPublicRecovery(t, root)
+			assertRepairExitAcceptedProjectionCases(t, root, targetPath, partial, []string{"partial"})
 		}
 		refsBefore := repairArtifactRefs(repairPointerCLI(partial.State), "targeted_reverification_artifacts", "", "")
 		mainPartial, _ := nativeReturnSummary(root, partial, nativeReturnSubject{kind: "Targeted", id: selections[0].performingAssignmentID, ref: targetPath, targeted: &selections[0]})
@@ -667,7 +720,11 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		if integerValue(nestedStateValue(recovered.State, "review", "round")) != integerValue(nestedStateValue(partial.State, "review", "round"))+1 || len(repairArtifactRefs(repairPointerCLI(recovered.State), "targeted_reverification_artifacts", "", "")) != len(refsBefore) {
 			t.Fatal("recovery repeated Targeted or review rounds")
 		}
-		handoffContext = feedback.String()
+		var completed map[string]any
+		if err := json.Unmarshal(feedback.Bytes(), &completed); err != nil {
+			t.Fatalf("completion JSON: %v %s", err, &feedback)
+		}
+		handoffContext = stringValue(completed["next_action"])
 		var persistedPass repair.TargetedReverificationRequest
 		readRepairLeadJSON(t, targetPath, &persistedPass)
 		if persistedPass.PerformedAt.Before(blockedPerformedAt) || persistedPass.PerformedAt.Equal(blockedPerformedAt) || persistedPass.PerformedAt.After(time.Now().Add(time.Hour)) {
@@ -740,7 +797,7 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 		t.Fatalf("all independent verifiers did not reach handoff status: status=%q err=%v", stringValue(repairPointerCLI(readySnapshot.State)["status"]), err)
 	}
 	for _, event := range []string{"Stop", "Idle", "PreToolUse"} {
-		stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event}, readySnapshot)
+		stageRepairLeadQuestionnaireContext(root, policy.Input{Event: event, AgentID: "Main"}, readySnapshot)
 	}
 	handoffSnapshot, err := runtime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
@@ -786,13 +843,25 @@ func TestS9RepairLeadImpactTargetedAndHandoffUseOriginalConsumers(t *testing.T) 
 			t.Fatalf("completion did not deliver S7 preparation %s: %v %s", path, err, handoffContext)
 		}
 	}
+	if mainRecovery {
+		assertRepairExitClosedPublicRecovery(t, root, handoffSnapshot)
+		assertRepairExitAcceptedProjectionCases(t, root, targetPaths[0], handoffSnapshot, []string{"registered", "departed"})
+	}
 	t.Run("seed projections read only and explicit completion restores preparation", func(t *testing.T) {
 		assertS9SeedProjectionReadOnlyAndCompletionRepair(t, root, handoffSnapshot)
 	})
 	var mainReturn bytes.Buffer
 	mainEvent := policy.Input{Event: "PostToolUse", ToolName: "Agent", CWD: root, ToolInput: map[string]any{"prompt": "Return the independent Targeted answer " + targetPaths[0]}}
-	if handled, code := nativeMainReturnHook(root, mainEvent, &mainReturn); !handled || code != 0 || !strings.Contains(mainReturn.String(), seedPath) || !strings.Contains(mainReturn.String(), reviewPlanQuestionnairePath(root, handoffSnapshot.State)) {
+	if handled, code := nativeMainReturnHook(root, mainEvent, &mainReturn); !handled || code != 0 {
 		t.Fatalf("Main Agent return did not deliver the completed S7 entry: %t %d %s", handled, code, &mainReturn)
+	}
+	var returned map[string]any
+	if err := json.Unmarshal(mainReturn.Bytes(), &returned); err != nil {
+		t.Fatal(err)
+	}
+	mainContext := stringValue(mapFieldCLI(returned, "hookSpecificOutput")["additionalContext"])
+	if !strings.Contains(mainContext, seedPath) || !strings.Contains(mainContext, reviewPlanQuestionnairePath(root, handoffSnapshot.State)) {
+		t.Fatalf("Main Agent return lost literal S7 paths: %s", mainContext)
 	}
 	planAnswer := reviewPlanQuestionnairePath(root, handoffSnapshot.State)
 	var seedSave bytes.Buffer
@@ -1086,7 +1155,7 @@ func TestS9RepairReadbackIDsIncludeCurrentCaseAndContract(t *testing.T) {
 // Case/Contract writers used by the product. The ObservationBatch and Finding
 // are minimal schema-valid fixture facts; the InvestigationCase is never
 // hand-pinned into Runtime.
-func repairLeadApprovedCase(t *testing.T, root, caseID string, units []map[string]any) map[string]any {
+func repairLeadApprovedCase(t *testing.T, root, caseID string, units []map[string]any, assertionCopies ...int) map[string]any {
 	t.Helper()
 	state := repairLeadBaseState(t, root, "bug_resolution", "investigation", 0)
 	token := dispatchSlug(caseID)
@@ -1234,6 +1303,15 @@ func repairLeadApprovedCase(t *testing.T, root, caseID string, units []map[strin
 		"root_invariant_assertions":  []string{"one authority remains"},
 		"detection_gap_assertions":   []string{"the boundary test detects drift"},
 		"stop_escalation_conditions": []string{"the approved scope expands"},
+	}
+	if len(assertionCopies) > 0 && assertionCopies[0] > 1 {
+		for _, field := range []string{"symptom_assertions", "root_invariant_assertions", "detection_gap_assertions"} {
+			values := draft[field].([]string)
+			for copy := 1; copy < assertionCopies[0]; copy++ {
+				values = append(values, fmt.Sprintf("%s variation %d", values[0], copy))
+			}
+			draft[field] = values
+		}
 	}
 	draftBytes, err := json.MarshalIndent(draft, "", "  ")
 	if err != nil {

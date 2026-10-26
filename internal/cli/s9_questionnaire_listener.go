@@ -30,6 +30,9 @@ type s9ListenerQuestionnaire struct {
 
 type s9ListenerFact struct {
 	kind, sourceRoot, ref string
+	// unknown records a budget boundary, never absence or source corruption.
+	unknown       bool
+	registeredRef string
 }
 
 func s9PacketQuestionnaireLifecycleContext(root string, request policy.Input, snapshot runtime.Snapshot) (string, bool) {
@@ -71,13 +74,17 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 	}
 	packets, err := s9CurrentQuestionnaires(root, snapshot.State, filter, result, ctx)
 	if err != nil {
-		return "S9 questionnaire projection is unavailable; " + s9ListenerKnownPaths(root, snapshot.State, filter, result) + ". Main owns the recorded packet preparation gap: " + err.Error()
+		known := ""
+		if main {
+			known = s9KnownMainHandoffsContext(ctx, root, snapshot)
+		}
+		return "S9 questionnaire projection is unavailable; " + s9ListenerKnownPaths(root, snapshot.State, filter, result) + ". Main owns the recorded packet preparation gap: " + err.Error() + ". " + known
 	}
 	var lines []string
 	nativePackets := s9ListenerNativePlans(root, snapshot.State)
 	for _, packet := range packets {
 		native, isNative := s9ListenerNativePacket(snapshot.State, nativePackets, packet)
-		fact, factErr := s9ListenerAcceptance(root, snapshot.State, packet)
+		fact, factErr := s9ListenerAcceptanceContext(ctx, root, snapshot.State, packet)
 		source, execution, sourceErr := s9ListenerResultSource(root, snapshot.State, packet)
 		if packet.result == nil {
 			source, sourceErr = root, nil // Original pre-execution PlanReport source.
@@ -90,12 +97,24 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		if isNative {
 			brief, _, resultPath := nativeS9Paths(native)
 			prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; read-only professional question %s; private worktree-relative PlanReport %s and Result %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), resolveRootPath(root, native.ViewPath), native.AnswerPath, resultPath)
+			if packet.result != nil {
+				prefix += "Original Result receiver reference (system-owned): " + resolveRootPath(source, packet.answer) + ". "
+			}
+		}
+		if fact.unknown {
+			note := "Original reception detail was not refreshed within this request; acceptance and professional completion are unknown. Preserve the original responsibility, exact question paths and any independently accepted work; no repeated Plan or Result submission is inferred."
+			if fact.registeredRef != "" {
+				note += " Registered candidate reference: " + resolveRootPath(root, fact.registeredRef) + "; this index alone does not establish acceptance or completion."
+			}
+			lines = append(lines, prefix+note)
+			continue
 		}
 		if factErr != nil {
 			lines = append(lines, prefix+"Original acceptance source is unavailable; preserve this questionnaire and the recorded artifact: "+factErr.Error())
 			continue
 		}
 		if fact.kind != "" {
+			candidateState := s9CandidateComplete
 			next := "The PlanReport is recorded. Continue the same native Builder's repair, self-checks and private Result using its exact prepared brief; SubagentStop receives the professional artifacts. Main owns integration and necessary checks. Do not repeat the accepted Plan or add a workspace startup step."
 			_, originalExecution := repairExecutionForChoice(snapshot.State, repairDispatchChoice{AssignmentID: packet.binding.RepairAssignmentID, AgentID: packet.binding.OwnerAgentID})
 			if len(originalExecution) > 0 && originalExecution["purpose"] != "native_delivery" {
@@ -107,9 +126,26 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 				if assignment == "" {
 					assignment = packet.binding.ManifestAssignmentID
 				}
-				next = fmt.Sprintf("The Worker candidate is recorded. Main next runs runtime workspace integrate --root %q --assignment %q --agent %q. Select necessary checks from the repair objective and actual changes using --check-command with an actual command; repeat that parameter for multiple checks. The original integration runs and records them. Without selected or existing checks, Main checks remain pending and no final PASS is recorded. Do not repeat this answer.", root, assignment, packet.binding.OwnerAgentID)
+				next = s9CandidateAction(root, assignment, packet.binding.OwnerAgentID)
+				if packet.result != nil {
+					if err := ctx.Err(); err != nil {
+						candidateState = s9CandidateUnknown
+						next = "Candidate reception is recorded; current professional completion is unknown: " + err.Error()
+					} else if document, err := s9ObservedDocument(root, fact.ref); err != nil {
+						candidateState = s9CandidateUnknown
+						next = "Candidate reception is recorded; Main restores its original source: " + err.Error()
+					} else {
+						state, reason := s9ObservedCandidateProgress(document)
+						candidateState = state
+						if state == s9CandidateUnknown {
+							next = "Candidate reception is recorded; current professional completion is unknown: " + reason
+						} else if state == s9CandidateUnfinished {
+							next = "Candidate reception is recorded; actual professional work remains unfinished: " + reason + ". Main follows these original omissions without repeating accepted content."
+						}
+					}
+				}
 			case "result":
-				next = "The original Main Result is recorded as accepted; Main owns the remaining original close-out and S9 flow. Do not repeat this answer."
+				next = s9FinalAction()
 			case "contract_conflict":
 				next = "The original Contract-conflict answer is recorded; Main owns the original S8 RepairContract revision and human approval. Do not fill a same-Contract retry resolution."
 				if ref := stringValue(repairPointerCLI(snapshot.State)["contract_ref"]); ref != "" {
@@ -123,15 +159,31 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 					next = "The original blocker is recorded; Main's recovery questionnaire path is unavailable: " + pathErr.Error()
 				}
 			}
+			if !main && (fact.kind == "candidate" || fact.kind == "result") {
+				next = "Your original professional answer is recorded. Main owns integration, necessary checks and remaining checkpoint ACK/cleanup; no further questionnaire submission is due from this completed Worker."
+				if fact.kind == "candidate" && candidateState == s9CandidateUnknown {
+					next = "Your candidate reception is recorded; current professional completion is unknown. Main restores the original status without repeating accepted work."
+				}
+				if fact.kind == "candidate" && candidateState == s9CandidateUnfinished {
+					next = "Your original candidate is recorded; Main arranges any recorded unfinished professional work without repeating accepted content."
+				}
+			}
 			lines = append(lines, prefix+next)
 			continue
 		}
 		if isNative {
+			if main && packet.result != nil {
+				handoff := s9HandoffForBinding(ctx, root, snapshot, packet.binding)
+				lines = append(lines, prefix+handoff.summary(root)+" "+s9UnreceivedActionContext(ctx, root, handoff))
+				continue
+			}
 			note := "Use the brief's private outputs for professional fields. Save PlanReport before implementation, continue actual repair/self-checks, then save Result and return the exact brief and absolute Result path for SubagentStop reception. Ordinary saves do not receive or activate this responsibility."
 			if main {
 				note += " Main supplies this exact brief to the actual native Builder; the Main-root question is read-only input."
 			}
-			if !s8QuestionnaireFileExists(resolveRootPath(root, native.ViewPath)) {
+			if ctx.Err() != nil {
+				note += " Current filesystem preparation was not refreshed; preserve the original question and any independently accepted work."
+			} else if !s8QuestionnaireFileExists(resolveRootPath(root, native.ViewPath)) {
 				note += " Main/system must restore the missing original professional question before work continues."
 			}
 			lines = append(lines, prefix+note)
@@ -139,6 +191,10 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		}
 		if sourceErr != nil {
 			lines = append(lines, prefix+"Registered Worker source is not ready; Main owns this exact execution preparation gap: "+sourceErr.Error())
+			continue
+		}
+		if ctx.Err() != nil {
+			lines = append(lines, prefix+"The original questionnaire is registered at these exact paths. Filesystem preparation was not refreshed within this request; Main/system preserves the original preparation responsibility without issuing or repeating an answer.")
 			continue
 		}
 		missing := ""
@@ -196,7 +252,16 @@ func s9CurrentQuestionnaires(root string, state map[string]any, owner string, re
 	}
 	var current []s9ListenerQuestionnaire
 	for _, plan := range plans {
-		fact, err := s9ListenerAcceptance(root, state, plan)
+		fact, err := s9ListenerAcceptanceContext(ctx, root, state, plan)
+		if fact.unknown {
+			current = append(current, plan)
+			for _, result := range results {
+				if result.binding == plan.binding {
+					current = append(current, result)
+				}
+			}
+			continue
+		}
 		if err != nil || fact.kind == "" {
 			current = append(current, plan)
 			continue
@@ -417,12 +482,25 @@ func s9ReadListenerDocument(root, path, _ string) (map[string]any, error) {
 }
 
 func s9ListenerAcceptance(root string, state map[string]any, packet s9ListenerQuestionnaire) (s9ListenerFact, error) {
+	return s9ListenerAcceptanceContext(context.Background(), root, state, packet)
+}
+
+func s9ListenerAcceptanceContext(ctx context.Context, root string, state map[string]any, packet s9ListenerQuestionnaire) (s9ListenerFact, error) {
+	known := s9ListenerFact{}
+	if packet.result != nil {
+		_, execution, _ := s9ListenerResultSource(root, state, packet)
+		known.registeredRef = stringValue(execution["delivery_ref"])
+	}
+	budgetUnknown := func(err error) (s9ListenerFact, error) { value := known; value.unknown = true; return value, err }
 	pointer := repairPointerCLI(state)
 	list, pathKey, shaKey := "plan_report_refs", "plan_report_ref", "plan_report_sha256"
 	if packet.result != nil {
 		list, pathKey, shaKey = "result_refs", "result_ref", "result_sha256"
 	}
 	for _, ref := range repairArtifactRefs(pointer, list, pathKey, shaKey) {
+		if err := ctx.Err(); err != nil {
+			return budgetUnknown(err)
+		}
 		document, err := s9ReadListenerDocument(root, ref.Path, ref.SHA256)
 		if err != nil {
 			return s9ListenerFact{}, err
@@ -441,6 +519,9 @@ func s9ListenerAcceptance(root string, state map[string]any, packet s9ListenerQu
 	}
 	_, execution, _ := s9ListenerResultSource(root, state, packet)
 	if ref := stringValue(execution["delivery_ref"]); ref != "" {
+		if err := ctx.Err(); err != nil {
+			return budgetUnknown(err)
+		}
 		document, err := s9ObservedDocument(root, ref)
 		if err != nil {
 			return s9ListenerFact{}, err
@@ -455,6 +536,9 @@ func s9ListenerAcceptance(root string, state map[string]any, packet s9ListenerQu
 			continue
 		}
 		ref := stringValue(row["path"])
+		if err := ctx.Err(); err != nil {
+			return budgetUnknown(err)
+		}
 		document, err := s9ReadListenerDocument(root, ref, stringValue(row["sha256"]))
 		if err != nil {
 			return s9ListenerFact{}, err

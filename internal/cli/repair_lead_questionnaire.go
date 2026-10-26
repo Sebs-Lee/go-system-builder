@@ -1154,10 +1154,25 @@ func saveRepairTargetedQuestionnaire(root string, snapshot runtime.Snapshot, pat
 }
 
 func readRepairTargetedAnswer(path string) (repair.TargetedReverificationRequest, error) {
+	return readRepairTargetedAnswerContext(context.Background(), path, nil)
+}
+
+func readRepairTargetedAnswerContext(ctx context.Context, path string, capture *nativeS9AttemptCapture) (repair.TargetedReverificationRequest, error) {
 	var answer repair.TargetedReverificationRequest
+	if err := ctx.Err(); err != nil {
+		return answer, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if capture != nil {
+			capture.ObserveInputError(path, err)
+		}
 		return answer, nativeArtifactReadError("read S9 TargetedReverification answer "+path, err)
+	}
+	if capture != nil {
+		capture.SetInput(path)
+		capture.ObserveInput(path, data)
+		capture.SetStage("targeted_request_read")
 	}
 	if err := json.Unmarshal(data, &answer); err != nil {
 		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s is not a valid original request DTO: %w", path, err)}
@@ -1173,7 +1188,7 @@ func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path strin
 	return handled, code
 }
 
-func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer) (bool, int, error) {
+func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer, captures ...*nativeS9AttemptCapture) (bool, int, error) {
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	var err error
@@ -1184,6 +1199,10 @@ func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot 
 		if registered, ok := registeredBlockedTargetedForSelection(root, pointer, selection); ok {
 			if err := repairLeadTargetedReplay(root, path, registered); err != nil {
 				return true, repairLeadFeedback(stdout, path, "Targeted same-attempt replay conflict: "+err.Error()), nil
+			}
+			if capture := nativeS9Capture(captures); capture != nil {
+				capture.ConsumerSucceeded()
+				capture.SetStage("targeted_received")
 			}
 			return true, repairLeadFeedback(stdout, path, "S9 environmental blocker is already recorded by "+registered.Path+". Resolve it, then update the same TargetedReverification questionnaire with the actual assertion observations, results, evidence and any unfinished-work reason; Runtime was not changed."), nil
 		}
@@ -1245,6 +1264,10 @@ func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot 
 	committed, err := repair.CommitTargetedReverification(root, statePath, journalPath, repair.CommitTargetedRequest{RuntimeRequest: repair.RuntimeRequest{Context: ctx, ExpectedRevision: currentSnapshot.Revision, Actor: selection.verifierOwner}, Reverification: ref})
 	if err != nil {
 		return true, repairLeadFeedback(stdout, path, fmt.Sprintf("S9 independent TargetedReverification %s at %s was created but original Runtime consumer did not commit it: %v. Preserve its immutable source and follow the specific consumer feedback.", value.ReverificationID, ref.Path, err)), nil
+	}
+	if capture := nativeS9Capture(captures); capture != nil {
+		capture.ConsumerSucceeded()
+		capture.SetStage("targeted_received")
 	}
 	var exitFailure error
 	message := fmt.Sprintf("S9 independent TargetedReverification %s at %s was committed through the original Runtime Writer.", value.ReverificationID, ref.Path)

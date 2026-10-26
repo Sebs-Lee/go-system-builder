@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"sort"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 )
@@ -31,56 +30,10 @@ func readCanonicalProductBaselineContext(ctx context.Context, root string, state
 	return &snapshot, nil
 }
 
-// frozenSubjectsForProductBaseline projects the exact task sources and final
-// product diff into the ReviewPlan's established frozen_subjects DTO. Git
-// deletion preimage authority stays in ProductBaseline; Kind=deleted is only
-// the review-facing declaration and never proves deletion by itself.
+// frozenSubjectsForProductBaseline uses the shared machine projection consumed
+// by registration and the original registered-baseline reader.
 func frozenSubjectsForProductBaseline(snapshot *buildsurface.Snapshot) ([]FrozenSubject, error) {
-	if snapshot == nil {
-		return nil, fmt.Errorf("canonical product baseline is missing")
-	}
-	byPath := make(map[string]FrozenSubject, len(snapshot.Tasks)+len(snapshot.Paths))
-	for _, task := range snapshot.Tasks {
-		if task.Path == "" || task.SHA256 == "" {
-			return nil, fmt.Errorf("canonical product baseline has an incomplete TASK source")
-		}
-		if previous, exists := byPath[task.Path]; exists && previous.SHA256 != task.SHA256 {
-			return nil, fmt.Errorf("canonical product baseline has conflicting frozen bytes for %s", task.Path)
-		}
-		byPath[task.Path] = FrozenSubject{Path: task.Path, SHA256: task.SHA256, Kind: "task"}
-	}
-	for _, path := range snapshot.Paths {
-		if path.Path == "" || path.SHA256 == "" {
-			return nil, fmt.Errorf("canonical product baseline has an incomplete changed path")
-		}
-		if path.Status == "deleted" {
-			// Unattributed deleted surface stays in review coverage through the
-			// baseline snapshot and drift notes; it is not a frozen subject, so
-			// its reappearance never blocks ReviewPlan registration. A TASK
-			// source colliding with a deleted surface is still rejected below.
-			continue
-		}
-		kind := "changed_surface"
-		if path.Status != "added" && path.Status != "modified" {
-			return nil, fmt.Errorf("canonical product baseline path %s has unknown status %q", path.Path, path.Status)
-		}
-		if previous, exists := byPath[path.Path]; exists {
-			if previous.SHA256 != path.SHA256 {
-				return nil, fmt.Errorf("TASK source and changed surface disagree on frozen bytes for %s", path.Path)
-			}
-			// Deleted surface never reaches here (skipped above); a TASK path
-			// stays a TASK source in frozen_subjects. Its product status and
-			// Git blob binding are separately covered by the snapshot.
-			continue
-		}
-		byPath[path.Path] = FrozenSubject{Path: path.Path, SHA256: path.SHA256, Kind: kind}
-	}
-	out := make([]FrozenSubject, 0, len(byPath))
-	for _, subject := range byPath {
-		out = append(out, subject)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
+	return buildsurface.FrozenSubjects(snapshot)
 }
 
 func verifyProductBaselineDeclaration(root string, state map[string]any, plan *Plan) error {
@@ -131,9 +84,6 @@ func verifyCanonicalFrozenSubjectFiles(root string, plan *Plan, contexts ...cont
 			return fmt.Errorf("frozen subject %s is outside repository: %w", subject.Path, err)
 		}
 		if subject.Kind == "deleted" {
-			// Deleted surface no longer enters frozen subjects from the
-			// canonical baseline; a surviving deleted subject is a legacy
-			// TASK-attributed deletion and must remain absent.
 			if _, statErr := os.Lstat(path); statErr == nil {
 				return fmt.Errorf("frozen deleted subject %s reappeared on disk; restore its absence before registration", subject.Path)
 			} else if !os.IsNotExist(statErr) {

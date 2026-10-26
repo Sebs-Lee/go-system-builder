@@ -46,7 +46,25 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 	if packets, err := s9CurrentQuestionnaires(root, state, owner, result, contextForHook(request)); err == nil && packetPhase {
 		nativePackets := s9ListenerNativePlans(root, state)
 		for _, packet := range packets {
-			fact, factErr := s9ListenerAcceptance(root, state, packet)
+			fact, factErr := s9ListenerAcceptanceContext(contextForHook(request), root, state, packet)
+			if fact.unknown {
+				// These are already indexed navigation references, not an
+				// assertion that this request read or accepted their content.
+				if fact.registeredRef != "" {
+					appendPath(resolveRootPath(root, fact.registeredRef))
+				}
+				if native, ok := s9ListenerNativePacket(state, nativePackets, packet); ok {
+					brief, _, _ := nativeS9Paths(native)
+					appendPath(resolveRootPath(root, brief))
+				} else {
+					source, _, _ := s9ListenerResultSource(root, state, packet)
+					if source != "" {
+						appendPath(resolveRootPath(source, packet.view))
+						appendPath(resolveRootPath(source, packet.answer))
+					}
+				}
+				continue
+			}
 			if main || fact.kind != "" {
 				// Main reads accepted professional artifacts, not the Worker's
 				// private authoring cache. An accepted Worker also has no further
@@ -63,6 +81,12 @@ func s9QuestionnaireReadOrder(root string, state map[string]any, request policy.
 					if native, ok := s9ListenerNativePacket(state, nativePackets, packet); ok {
 						brief, _, _ := nativeS9Paths(native)
 						appendPath(resolveRootPath(root, brief))
+					} else if contextForHook(request).Err() != nil {
+						source, _, _ := s9ListenerResultSource(root, state, packet)
+						if source != "" {
+							appendPath(resolveRootPath(source, packet.view))
+							appendPath(resolveRootPath(source, packet.answer))
+						}
 					}
 				}
 				continue

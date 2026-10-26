@@ -11,6 +11,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
@@ -18,9 +19,19 @@ import (
 // scheduler, workspace decoder/authority checks, Git, or physical check proofs.
 func repairExecutionForChoice(state map[string]any, row repairDispatchChoice) (string, map[string]any) {
 	owner := repairDispatchOwner(state, row)
-	id := s9ListenerManifestAssignment(state, owner)
+	id := row.AssignmentID
+	pointer := repairPointerCLI(state)
+	for _, packet := range objectSliceAny(mapFieldCLI(state, "entities")["work_packets"]) {
+		if packet["template_id"] != "s9-plan-report-v1" {
+			continue
+		}
+		binding := mapFieldCLI(packet, "binding")
+		if binding["repair_assignment_id"] == row.AssignmentID && binding["owner_agent_id"] == owner && binding["runtime_id"] == state["runtime_id"] && binding["session_id"] == pointer["session_id"] && binding["plan_ref"] == pointer["plan_ref"] {
+			id = stringValue(binding["manifest_assignment_id"])
+		}
+	}
 	executions := mapFieldCLI(mapFieldCLI(state, "workspace"), "executions")
-	if execution := mapFieldCLI(executions, id); len(execution) > 0 {
+	if execution := mapFieldCLI(executions, id); len(execution) > 0 && (owner == "" || execution["agent_id"] == owner) {
 		return id, execution
 	}
 	if execution := mapFieldCLI(executions, row.AssignmentID); len(execution) > 0 {
@@ -90,9 +101,12 @@ func stageRepairExecutionPrepareContext(root string, request policy.Input, snaps
 	if len(paths) != 1 {
 		return "S9 execution preparation cannot resolve the original Builder division answer from the current Case/Session/Plan binding."
 	}
+	if err := contextForHook(request).Err(); err != nil {
+		return "S9 current execution observation is unavailable: " + err.Error() + ". " + s9KnownMainHandoffsContext(contextForHook(request), root, snapshot)
+	}
 	plan, err := repairDispatchObservedPlan(root, snapshot.State)
 	if err != nil {
-		return fmt.Sprintf("S9 execution preparation at %s cannot read the original Plan: %v", paths[0], err)
+		return fmt.Sprintf("S9 execution preparation at %s cannot read the original Plan: %v. %s", paths[0], err, s9KnownMainHandoffsContext(contextForHook(request), root, snapshot))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "S9 execution preparation uses the same Builder division answer: %s. ", paths[0])
@@ -136,7 +150,7 @@ func stageRepairExecutionPrepareContext(root string, request policy.Input, snaps
 			fmt.Fprintf(&b, "Assignment %s awaits Builder selection at %s. ", assignment.AssignmentID, paths[0])
 			continue
 		}
-		b.WriteString(prepareRepairExecutionFromChoice(root, snapshot.State, row, owner))
+		b.WriteString(prepareRepairExecutionFromChoiceContext(contextForHook(request), root, snapshot.State, row, owner))
 	}
 	b.WriteString("Main owns Claude Code native spawn/resume and later integration; workspace commands apply only to an existing frozen legacy responsibility; this reminder only reads current facts. ")
 	return b.String()
@@ -144,19 +158,40 @@ func stageRepairExecutionPrepareContext(root string, request policy.Input, snaps
 
 // Keep the existing save adapter as pure feedback; Main runs normal startup.
 func prepareRepairExecutionFromChoice(root string, state map[string]any, row repairDispatchChoice, owner string) string {
+	return prepareRepairExecutionFromChoiceContext(context.Background(), root, state, row, owner)
+}
+func prepareRepairExecutionFromChoiceContext(ctx context.Context, root string, state map[string]any, row repairDispatchChoice, owner string) string {
 	_, current := repairExecutionForChoice(state, row)
-	for _, packet := range nativeS9PlanPackets(root, state) {
+	indexed, _ := s9ListenerQuestionnaires(state, owner, false)
+	for _, question := range indexed {
+		packet := workpacket.RepairPlanReportPacket{ID: question.id, Binding: question.binding, ViewPath: question.view, AnswerPath: question.answer}
 		if packet.Binding.OwnerAgentID != owner || packet.Binding.RepairAssignmentID != row.AssignmentID {
 			continue
+		}
+		if len(current) > 0 && current["purpose"] != workspace.NativeDeliveryPurpose {
+			continue
+		}
+		handoff := s9HandoffForBinding(ctx, root, runtime.Snapshot{State: state}, packet.Binding)
+		brief, pin, _ := nativeS9Paths(packet)
+		briefMissing := false
+		if ctx.Err() == nil {
+			briefMissing = !s8QuestionnaireFileExists(resolveRootPath(root, brief))
+			handoff.Native = handoff.Native || !briefMissing || s8QuestionnaireFileExists(resolveRootPath(root, pin))
+		}
+		if !handoff.Native {
+			continue
+		}
+		displayGap := ""
+		if briefMissing {
+			displayGap = "The original native brief display is missing at " + filepath.Join(root, brief) + "; preserve its original source packet and accepted work. "
 		}
 		if stringValue(current["status"]) == "complete" {
 			return fmt.Sprintf("S9 Assignment %s is already integrated and cleaned through the original Main consumer; continue remaining professional responsibilities. ", row.AssignmentID)
 		}
-		if stringValue(current["delivery_ref"]) != "" {
-			return repairExecutionProjectionContext(root, state, row) + fmt.Sprintf("Native delivery received. Main selects actual necessary checks and runs original runtime workspace integrate --root %q --assignment %q --agent %q, supplying each actual check with --check-command. Do not launch another Worker. ", root, stringValue(current["assignment_id"]), owner)
+		if len(current) > 0 || handoff.PlanAccepted || handoff.Diagnostic != "" {
+			return displayGap + handoff.summary(root) + " " + s9ObservedHandoffAction(ctx, root, runtime.Snapshot{State: state}, handoff, current) + " "
 		}
-		brief, _, _ := nativeS9Paths(packet)
-		return fmt.Sprintf("Main uses Claude Code native Agent execution/resume with this exact S9 brief: %s. Builder continues its own plan, repair, self-checks and Result in its native worktree. No workspace prepare/launch is required. ", filepath.Join(root, brief))
+		return displayGap + fmt.Sprintf("Main uses Claude Code native Agent for initial execution with this exact S9 brief; continue an existing actor through the supported same-actor continuation interface: %s. Builder continues its own plan, repair, self-checks and Result in its native worktree. No workspace prepare/launch is required. ", filepath.Join(root, brief))
 	}
 	if stringValue(current["status"]) == "complete" || stringValue(current["delivery_ref"]) != "" {
 		return repairExecutionProjectionContext(root, state, row)
@@ -174,7 +209,7 @@ func prepareRepairExecutionFromChoice(root string, state map[string]any, row rep
 		return projection + "Retain this execution and follow its original recovery responsibility. "
 	}
 	if status == "ready" {
-		packets, err := s9ListenerQuestionnairesContext(context.Background(), root, state, owner, true)
+		packets, err := s9ListenerQuestionnairesContext(ctx, root, state, owner, true)
 		if err == nil {
 			for _, packet := range packets {
 				if packet.binding.RepairAssignmentID != row.AssignmentID {

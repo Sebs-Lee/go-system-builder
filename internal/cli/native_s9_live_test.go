@@ -20,7 +20,8 @@ func s9LiveShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, owner string) {
+func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, want nativeLiveHandoffExpectation) {
+	owner := want.Owner
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(artifacts, "hook-*.json"))
 	if err != nil {
@@ -46,7 +47,7 @@ func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, own
 			t.Fatal(err)
 		}
 		id, _ := row.Payload["agent_id"].(string)
-		if id == "" {
+		if id == "" || id == "Main" {
 			continue
 		}
 		if id == owner {
@@ -82,6 +83,7 @@ func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, own
 		}
 	}
 	spawn, resume := 0, 0
+	sendID := ""
 	for _, line := range bytes.Split(stream, []byte("\n")) {
 		var row struct {
 			Type    string `json:"type"`
@@ -89,6 +91,7 @@ func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, own
 			Message struct {
 				Content []struct {
 					Type  string         `json:"type"`
+					ID    string         `json:"id"`
 					Name  string         `json:"name"`
 					Input map[string]any `json:"input"`
 				} `json:"content"`
@@ -101,10 +104,12 @@ func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, own
 			t.Fatal("real Claude returned an error result frame")
 		}
 		for _, part := range row.Message.Content {
-			if part.Type != "tool_use" || part.Name != "Agent" && part.Name != "Task" {
+			if part.Type != "tool_use" || part.Name != "Agent" && part.Name != "Task" && part.Name != "SendMessage" {
 				continue
 			}
-			if id, _ := part.Input["resume"].(string); id != "" {
+			if part.Name == "SendMessage" {
+				sendID = part.ID
+				id, _ := part.Input["to"].(string)
 				resume++
 				if id != first {
 					t.Fatalf("resume did not use actual original Agent ID: %s != %s", id, first)
@@ -119,6 +124,19 @@ func verifyS9LiveNativeEvents(t *testing.T, artifacts string, stream []byte, own
 	}
 	if spawn != 1 || resume != 1 {
 		t.Fatalf("expected one actual native spawn and resume: %d %d", spawn, resume)
+	}
+	if err := CheckNativeLiveContinuationEvidence(artifacts, stream, true); err != nil {
+		t.Fatal(err)
+	}
+	want.Actor, want.ToolID, want.Continuation = first, sendID, true
+	for _, line := range bytes.Split(stream, []byte("\n")) {
+		var frame map[string]any
+		if json.Unmarshal(line, &frame) == nil && frame["type"] == "system" && frame["subtype"] == "task_started" && frame["task_id"] == first && frame["tool_use_id"] == sendID {
+			want.Run, _ = frame["run_id"].(string)
+		}
+	}
+	if err := CheckNativeLiveHandoffEvidence(artifacts, stream, want); err != nil {
+		t.Fatalf("Main engineering handoff after actual completion: %v", err)
 	}
 	t.Logf("LIVE S9 actual actors=%v; %d ordinary Worker hooks silent/read-only", starts, ordinary)
 }
@@ -213,8 +231,8 @@ func TestClaudeCodeNativeS9Live(t *testing.T) {
 	brief, _, _ := nativeS9Paths(p)
 	prompt := fmt.Sprintf(`This is a real native S9 Builder slice test in disposable repository %s. Approved S8 Case/Contract and current RepairPlan are synthetic test preconditions; no professional Builder answer or result was filled by the harness.
 Your first tool call must use Claude Code native Agent, subagent_type=backend-builder, isolation=worktree. Delegate only the first repair Assignment with EXACT brief %s in the child's prompt. Tell it to read that brief and the professional question, then personally fix Add(a,b int) in internal/api/one.go to return a+b, preserving committed tests. It must personally save PlanReport with actual precheck result before editing, implement, run go test ./internal/api, commit only its product change, and save the professional Result in its actual native worktree. Return exact brief and absolute Result. The original question contains synthetic unit/assertion labels: use those exact labels and attach actual observations/evidence. Do not fabricate PASS or readback/activation. Do not launch another Claude process or use Team/workspace prepare/launch.
-After the first actual child return, use the native Agent resume parameter with its ACTUAL returned agent ID. Ask it to verify its existing committed product and Result without editing either and return the exact brief/Result again. Do not create a replacement. Then Main uses Bash to run exactly: %s runtime workspace integrate --root %s --assignment %s --agent %s --check-command 'go test ./internal/api'
-Stop after Main integration. Leave the second repair Assignment pending; do not fill it, route a Case, run Targeted, or start fresh S7. Do not edit Runtime or manufacture receipts. If a real blocker occurs, report it honestly.`, root, filepath.Join(root, brief), s9LiveShellQuote(binary), s9LiveShellQuote(root), s9LiveShellQuote(p.Binding.ManifestAssignmentID), s9LiveShellQuote(p.Binding.OwnerAgentID))
+After the first actual child return, use SendMessage with to=its ACTUAL returned agent ID and message carrying the exact original brief/Result references. Ask it to verify its existing committed product and Result without editing either and return the exact brief/Result again. Do not create a replacement. Wait for the actual completed task notification and original SubagentStop; immediate SendMessage success only confirms sending. Then Main's first tool must be Read of %s to inspect the original receipt/current delivery. Read the actual Main PreToolUse additionalContext returned for that call. On the next model turn, follow its exact original consumer command through Bash, adding --check-command 'go test ./internal/api' for the actual necessary Main check. Preserve the exact owner/assignment. Do not choose an integration command before receiving this context, use a second actor, or claim notification alone proves acceptance.
+Stop after Main integration. Leave the second repair Assignment pending; do not fill it, route a Case, run Targeted, or start fresh S7. Do not edit Runtime or manufacture receipts. If a real blocker occurs, report it honestly.`, root, filepath.Join(root, brief), filepath.Join(root, ".claude/loop-state.json"))
 	_ = os.WriteFile(filepath.Join(artifacts, "prompt.txt"), []byte(prompt), 0600)
 	t.Cleanup(func() {
 		for _, rel := range []string{"loop-state.json", "loop-events.jsonl", "hook-decisions.jsonl"} {
@@ -246,7 +264,12 @@ Stop after Main integration. Leave the second repair Assignment pending; do not 
 	if err != nil {
 		t.Fatal(err)
 	}
-	verifyS9LiveNativeEvents(t, artifacts, stream, p.Binding.OwnerAgentID)
+	consumerCommand := fmt.Sprintf("%s runtime workspace integrate --root %s --assignment %s --agent %s", s7CaptureShellQuote(binary), s7CaptureShellQuote(root), s7CaptureShellQuote(p.Binding.ManifestAssignmentID), s7CaptureShellQuote(p.Binding.OwnerAgentID))
+	verifyS9LiveNativeEvents(t, artifacts, stream, nativeLiveHandoffExpectation{
+		Owner: p.Binding.OwnerAgentID, Assignment: p.Binding.ManifestAssignmentID,
+		InputRef: filepath.Join(root, brief), Accepted: "The PlanReport receipt is accepted.",
+		Command: consumerCommand, ActionCommand: consumerCommand + " --check-command 'go test ./internal/api'",
+	})
 	snapshot := repairDispatchSnapshot(t, root)
 	registry, err := workspace.Decode(snapshot.State)
 	if err != nil || registry == nil {

@@ -47,7 +47,7 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "Main authority root")
 	owner := flags.String("agent", "", "registered owner (optional compatibility hint)")
-	path := flags.String("path", "", "exact issued answer path (consume/receipt)")
+	path := flags.String("path", "", "exact original input path: issued typed answer, native S9 Result, or Targeted answer (consume/receipt)")
 	previous := flags.String("previous", "", "previous receipt submission_key (Main revise)")
 	reason := flags.String("reason", "", "concrete named revision reason")
 	target := flags.String("target", "", "professional rework target: design|contracts|tasks")
@@ -67,21 +67,19 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	newService := submission.New
-	if action == "receipt" {
-		newService = submission.NewReadOnly
-	}
-	s, err := newService(*root)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
 	budget := 6 * time.Second
 	if action == "consume" || action == "recover" || action == "issue" {
 		budget = 12 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(fileview.WithReadCache(context.Background()), budget)
 	defer cancel()
+	// Initialization may recover the original pending state/journal pair; it
+	// shares this same named operation budget with the receiver itself.
+	s, err := submission.NewContext(ctx, *root, action == "receipt")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	var result any
 	switch action {
 	case "issue":
@@ -269,6 +267,21 @@ func runStageAnswer(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if action == "recover" && err == nil {
+		// Keep the existing receipt-array JSON contract. Human/model CLI
+		// feedback carries the exact original S9 successor immediately after
+		// the explicit Writer recovery, within this same operation context.
+		if snap, readErr := runtime.NewStore(s.StatePath, s.JournalPath).WithContext(ctx).Snapshot(); readErr == nil {
+			life := mapFieldCLI(snap.State, "lifecycle")
+			if life["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(life["phase"])) {
+				if next := s9KnownMainHandoffsContext(ctx, s.Root, snap); next != "" {
+					fmt.Fprintln(stderr, next)
+				}
+			}
+		} else {
+			fmt.Fprintln(stderr, "Original Writer recovery completed; current successor feedback could not be read:", readErr)
+		}
+	}
 	if result != nil {
 		if e := json.NewEncoder(stdout).Encode(result); e != nil {
 			fmt.Fprintln(stderr, e)
@@ -292,6 +305,9 @@ func consumeRegisteredStageAnswer(ctx context.Context, service *submission.Servi
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
+	}
+	if result, handled, err := consumeNativeS9Original(ctx, service, path); handled {
+		return result, err
 	}
 	switch {
 	case isS9RepairResultResolutionPath(path):

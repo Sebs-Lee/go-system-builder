@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -67,6 +68,13 @@ func completeExecutionState(root string, state map[string]any, id string) (bool,
 }
 
 func persistExecutionCompletion(root string, snap runtime.Snapshot, id string) (runtime.Snapshot, error) {
+	return persistExecutionCompletionContext(context.Background(), root, snap, id)
+}
+
+func persistExecutionCompletionContext(ctx context.Context, root string, snap runtime.Snapshot, id string) (runtime.Snapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return runtime.Snapshot{}, err
+	}
 	b, err := workspace.Decode(snap.State)
 	if err != nil {
 		return runtime.Snapshot{}, err
@@ -77,7 +85,13 @@ func persistExecutionCompletion(root string, snap runtime.Snapshot, id string) (
 			return snap, err
 		}
 	}
-	writer := runtime.NewWriter(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), root, semantic.RuntimeCandidateValidator{})
+	writer := runtime.NewWriter(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl"), root, semantic.RuntimeCandidateValidator{}).WithContext(ctx)
 	key := fmt.Sprintf("workspace-complete:%s:%d", id, snap.Revision)
-	return writer.Update(snap.Revision, runtime.Mutation{EventID: key, TransitionID: "WORKSPACE", Event: "workspace_updated", Actor: "main", RuntimeID: workspace.RuntimeID(snap.State), IdempotencyKey: key, RetainLastTransition: true, OccurredAt: time.Now().UTC(), Message: "project completed integration checkpoint", Apply: func(state map[string]any) error { _, err := completeExecutionState(root, state, id); return err }})
+	return writer.Update(snap.Revision, runtime.Mutation{EventID: key, TransitionID: "WORKSPACE", Event: "workspace_updated", Actor: "main", RuntimeID: workspace.RuntimeID(snap.State), IdempotencyKey: key, RetainLastTransition: true, OccurredAt: time.Now().UTC(), Message: "project completed integration checkpoint", Apply: func(state map[string]any) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, err := completeExecutionState(root, state, id)
+		return err
+	}})
 }

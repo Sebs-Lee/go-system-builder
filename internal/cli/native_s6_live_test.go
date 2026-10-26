@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
+	"github.com/entroforge/go-system-builder/internal/cli"
 	"github.com/entroforge/go-system-builder/internal/integration"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
@@ -133,7 +134,7 @@ If background=true, immediately after launching write a short progress note to %
 After the real child returns, use Bash at Main to run exactly: %s runtime task-integrate --root %s --assignment-id %s --agent-id %s
 This is Main integration, separate from the child's Hook. Do not manufacture runtime fields or repair machine files. If blocked, report the actual error. After integration, end this S6-only diagnostic turn with a concise factual result. Do not start S7 or unrelated work.`, root, name, background, filepath.Join(root, brief), filepath.Join(artifacts, "background-parent-progress.txt"), binary, root, r.AssignmentID, r.OwnerAgentID)
 	if name == "resume" {
-		prompt += "\nAdditional RESUME scenario: after the first native child return, BEFORE Main integration, use the native Agent tool's resume parameter with the ACTUAL returned agent ID. Ask that same child to verify its existing committed product and existing professional Result without editing either, then return the exact brief and absolute Result again. Do not spawn a replacement. Integrate only after this native resumed return."
+		prompt += "\nAdditional RESUME scenario: after the first native child return, BEFORE Main integration, use SendMessage with to=the ACTUAL returned agent ID and message containing the exact original brief and Result references. Ask that same child to verify its existing committed product and existing professional Result without editing either, then return the exact brief and absolute Result again. Do not spawn a replacement. Wait for the actual completion notification and original SubagentStop before integrating; immediate SendMessage success only confirms sending. Integrate only after this native resumed return."
 	}
 	_ = os.WriteFile(filepath.Join(artifacts, "prompt.txt"), []byte(prompt), 0600)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
@@ -196,6 +197,9 @@ This is Main integration, separate from the child's Hook. Do not manufacture run
 	_ = os.WriteFile(filepath.Join(artifacts, "accepted-result.json"), resultBytes, 0600)
 	platformID := verifyClaudeNativeLifecycle(t, artifacts, r.OwnerAgentID, background)
 	verifyClaudeNativeCalls(t, stream, name, platformID, background)
+	if err := cli.CheckNativeLiveContinuationEvidence(artifacts, stream, name == "resume"); err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("LIVE native %s completed in %s; real evidence: %s", name, time.Since(started), artifacts)
 }
 
@@ -232,10 +236,11 @@ func verifyClaudeNativeCalls(t *testing.T, stream []byte, scenario, platformID s
 			continue
 		}
 		for _, tool := range row.Message.Content {
-			if tool.Type != "tool_use" || (tool.Name != "Agent" && tool.Name != "Task") {
+			if tool.Type != "tool_use" || (tool.Name != "Agent" && tool.Name != "Task" && tool.Name != "SendMessage") {
 				continue
 			}
-			if resume, _ := tool.Input["resume"].(string); resume != "" {
+			if tool.Name == "SendMessage" {
+				resume, _ := tool.Input["to"].(string)
 				resumes++
 				if resume != platformID {
 					t.Fatalf("native resume changed platform identity: %s != %s", resume, platformID)
@@ -337,9 +342,8 @@ func verifyClaudeNativeLifecycle(t *testing.T, artifacts, logicalOwner string, b
 		}
 	}
 	t.Logf("LIVE verified native identities %v; %d ordinary Worker events returned without execution control", starts, ordinary)
-	// Native resume may emit a fresh event actor ID while resuming the
-	// original conversation. Verify the resume argument against the first
-	// actual invocation; never rewrite later actors to make IDs look stable.
+	// The continuation checker separately verifies every actual same-actor
+	// Start/Stop and the real completion notification; no actor aliases.
 	firstID, firstStart := "", int64(0)
 	for id, start := range starts {
 		if firstID == "" || start < firstStart {

@@ -17,8 +17,19 @@ New REQs and TASKs declare waves-v1; missing plans are not a legacy exemption.
 
 Keep real artifact dependencies in TASK Dependencies, not in a second graph.
 Share read-only schemas freely: independent consumers may develop in parallel.
-List concrete repository-relative prospective write paths (comma separated; no globs) and any mutable external
-resources in TASK Resources (`resource:<stable-name>`). Narrow overly broad scopes.
+List concrete repository-relative prospective write paths, preferably as a
+comma-separated list of individual code spans: `internal/a.go`, `tests/a_test.go`.
+Existing plain comma-separated paths remain supported. A complete code list can
+end with one paired Chinese or English parenthetical explanation, for example
+`simulation/products/`（仿真产品输出区）. This explanation is excluded from scope.
+Mixed bare/code paths, per-item notes, unconsumed tail text, unclosed delimiters,
+placeholders, globs and paths escaping the repository are rejected with the
+original TASK and Scope line before freezing. Keep other prose after the table.
+Only the prospective write paths row supplies the reviewed write boundary;
+read, output and forbidden rows cannot enlarge it. S4 checking/reception, S5
+analysis and Assignment preparation consume the same parsed paths.
+Declare mutable external resources in TASK Resources (`resource:<stable-name>`).
+Narrow overly broad scopes.
 Same-wave write/resource overlap must be resolved before dispatch; use independent
 ownership or a justified Resource order table (Before TASK, After TASK, Resource,
 Reason). Invalid non-header resource rows are errors, not absent constraints.
@@ -51,6 +62,12 @@ Never update frozen plan checkboxes or TASK lifecycle fields;
 execution progress is runtime-owned. Clean temporary worktrees promptly; cleanup
 remains advisory. Plan/member/dependency/scope changes return to planning/review;
 capacity changes and runtime progress do not change the plan.
+Never rewrite locked TASKs, issued Assignments or accepted facts to repair a
+parser-derived scope. With unchanged original TASK bytes, an applicable existing
+Assignment execution revision can produce an accurate successor subject to its
+original new-owner, contribution-disposition and approval constraints; modes
+without approval rebinding support remain unsupported. A real TASK or
+professional scope change still requires original planning and review.
 Before acceptance, correct the original TASK/index and save its original answer.
 For accepted planning while S4 is still current, use
 `runtime stage-answer rework --target tasks --reason "<concrete TASK/index correction>" --root . --agent Main`

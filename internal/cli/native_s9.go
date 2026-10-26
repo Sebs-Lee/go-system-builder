@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,6 +55,14 @@ func prepareNativeS9Brief(ctx context.Context, root string, p workpacket.RepairP
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	var assignment repair.RepairAssignment
+	if err := json.Unmarshal(p.Inputs.RepairAssignment, &assignment); err != nil {
+		return "", fmt.Errorf("read original native S9 RepairAssignment: %w", err)
+	}
+	assertionIDs, err := json.Marshal(assignment.AssertionIDs)
+	if err != nil {
+		return "", err
+	}
 	brief, pin, result := nativeS9Paths(p)
 	base := ""
 	if data, err := workpacket.ReadFile(root, pin, 4096); err == nil {
@@ -92,7 +101,11 @@ baseline %s. Respect the actual dependency order. Before implementation,
 perform actual prechecks and personally save the professional PlanReport at %s relative
 to your actual native worktree. Write only plan, red_checks and proposed_paths in this
 private JSON; the original Main-root question is read-only input, not a Worker write
-location. This workflow requires isolated Workers to keep edits in their actual
+location. red_checks records actual attempted prechecks with honest pass, fail or
+blocked results; passing checks and unavailable reproductions do not require invented
+RED. The selected prechecks may cover a subset; they do not define or reduce the
+Result assertion set below, including when Main selects a RED experiment subset.
+This workflow requires isolated Workers to keep edits in their actual
 native worktree; Main owns changes to the shared Main checkout.
 Continue your repair and real self-checks without waiting for a save receipt or activation.
 Commit only product deliverables. Keep professional files out of Git.
@@ -103,7 +116,16 @@ Save your professional Result at %s relative to your actual native worktree:
 `+"```"+`
 
 Use verdict completed, blocked, stale or contract_conflict truthfully. before_fix_results
-items have assertion_id, observed_red, evidence_refs. unit_results items have unit_id,
+items have assertion_id, observed_red, evidence_refs. Include one item for every
+assertion_id in this original RepairAssignment, in its original order:
+%s
+These IDs come directly from the issued packet's original RepairAssignment; consult
+assignment %s in the original RepairPlan %s for that responsibility and the original
+Contract in the question for assertion text. Include assertions already satisfied
+before repair, as well as failed, unreproduced or blocked observations. observed_red
+is a historical field name: write the truthful pre-repair observation and evidence,
+without manufacturing a failure or omitting an already satisfied assertion.
+unit_results items have unit_id,
 status, evidence_refs, implementation_summary, restored_invariant_refs. Use the exact
 assigned units/assertions from the question and actual evidence, never invented PASS.
 unit_results.status is pass, fail or blocked; implementation_summary and observed_red
@@ -129,7 +151,7 @@ missing_results. Preserve the same Worker and artifacts if reception is pending.
 Return this exact brief %s and the absolute Result path. SubagentStop receives the
 professional artifacts; Main owns integration and necessary checks. No workspace
 prepare/launch, session reservation, Team, generic readback, begin or activation.
-`, p.Binding.RepairAssignmentID, filepath.Join(root, p.ViewPath), base, p.AnswerPath, result, filepath.Join(root, brief))
+`, p.Binding.RepairAssignmentID, filepath.Join(root, p.ViewPath), base, p.AnswerPath, result, assertionIDs, assignment.AssignmentID, filepath.Join(root, p.Binding.PlanRef), filepath.Join(root, brief))
 	published, err := workpacket.PublishBounded(root, brief, []byte(text), 1<<20)
 	if err != nil {
 		return "", err
@@ -231,14 +253,14 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 	}
 
 	key, owner, paths := "", "", []string{}
+	var capture *nativeS9AttemptCapture
 	if selected != nil {
-		brief, pin, result := nativeS9Paths(*selected)
+		brief, pin, _ := nativeS9Paths(*selected)
 		key, owner = selected.ID, selected.Binding.OwnerAgentID
 		paths = []string{filepath.Join(root, brief), filepath.Join(root, pin)}
-		if source, sourceErr := nativeS9BuilderSource(root, in, text, result); sourceErr == nil {
-			paths = append(paths, filepath.Join(source, selected.AnswerPath), filepath.Join(source, result))
-		}
-		err = receiveNativeS9Builder(root, snap.State, in, *selected, text, diagnostic)
+		capture = newNativeS9AttemptCapture(contextForHook(in), root, snap, key, owner, "Builder")
+		capture.SetResponsibilityRef(filepath.Join(root, brief))
+		err = receiveNativeS9Builder(root, snap.State, in, *selected, text, diagnostic, capture)
 	} else {
 		for _, ref := range targetedRefs {
 			if nativeS6ExactReference(text, ref) {
@@ -246,17 +268,38 @@ func nativeS9Hook(root string, in policy.Input, out, diagnostic io.Writer) (bool
 				break
 			}
 		}
-		err = receiveNativeS9Targeted(contextForHook(in), root, snap, text, diagnostic)
+		if key != "" {
+			capture = newNativeS9AttemptCapture(contextForHook(in), root, snap, key, owner, "Targeted")
+			capture.SetResponsibilityRef(key)
+		}
+		err = receiveNativeS9Targeted(contextForHook(in), root, snap, text, diagnostic, capture)
 	}
-	if key != "" {
-		// Reception may already have recorded a PlanReport or Targeted before
-		// the next outlet failed. Display that partial success with the latest
-		// state; this best-effort diagnostic never changes a consumer decision.
-		if latest, readErr := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).Snapshot(); readErr == nil {
-			recordNativeS9DiagnosticContext(contextForHook(in), root, latest, key, owner, paths, err)
+	if capture != nil {
+		if publishErr := capture.Publish(contextForHook(in), err); publishErr != nil {
+			fmt.Fprintln(diagnostic, "S9 reception diagnostic could not be delivered:", publishErr)
 		}
 	}
 	if err != nil {
+		// The original read already captured these coordinates. Preserve them
+		// in the Stop channel too, without resolving the source a second time.
+		if capture != nil {
+			known := map[string]bool{}
+			for _, path := range paths {
+				known[path] = true
+			}
+			var captured []string
+			for path := range capture.value.Files {
+				captured = append(captured, path)
+			}
+			captured = append(captured, capture.value.Attempt.InputRef, capture.value.Attempt.TypedInputRef)
+			sort.Strings(captured)
+			for _, path := range captured {
+				if path != "" && !known[path] {
+					paths = append(paths, path)
+					known[path] = true
+				}
+			}
+		}
 		return true, nativeS9HandoffFailure(owner, strings.Join(paths, "; "), err, diagnostic)
 	}
 	return true, 0
@@ -306,24 +349,47 @@ func nativeS9BuilderSource(root string, in policy.Input, text, result string) (s
 			matched, source = candidate, candidate
 		}
 	}
-	source, err = workspace.Canonical(source)
+	source, err = workspace.CanonicalProspective(source)
 	if err != nil {
 		return "", err
 	}
 	return source, nil
 }
 
-func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, p workpacket.RepairPlanReportPacket, text string, diagnostic io.Writer) error {
+func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, p workpacket.RepairPlanReportPacket, text string, diagnostic io.Writer, captures ...*nativeS9AttemptCapture) error {
+	_, _, result := nativeS9Paths(p)
+	// A cleaned accepted source no longer appears in git worktree list. Its
+	// exact returned reference may still select the original frozen receipt.
 	if registry, err := workspace.Decode(state); err == nil && registry != nil {
-		if source, exists := registry.Executions[p.Binding.ManifestAssignmentID]; exists && source.Purpose == workspace.NativeDeliveryPurpose && source.Status == "complete" {
+		if execution, ok := registry.Executions[p.Binding.ManifestAssignmentID]; ok && execution.Purpose == workspace.NativeDeliveryPurpose && execution.Status == "complete" && nativeS6ExactReference(text, filepath.Join(execution.Path, result)) {
+			return receiveNativeS9BuilderFrom(contextForHook(in), root, state, p, execution.Path, false, diagnostic, nativeS9Capture(captures))
+		}
+	}
+	source, err := nativeS9BuilderSource(root, in, text, result)
+	if err != nil {
+		return err
+	}
+	return receiveNativeS9BuilderFrom(contextForHook(in), root, state, p, source, false, diagnostic, nativeS9Capture(captures))
+}
+
+// Stop and explicit Main recovery share the original adapter and consumers.
+func receiveNativeS9BuilderFrom(ctx context.Context, root string, state map[string]any, p workpacket.RepairPlanReportPacket, source string, recovery bool, diagnostic io.Writer, capture *nativeS9AttemptCapture) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if registry, err := workspace.Decode(state); err == nil && registry != nil {
+		if execution, exists := registry.Executions[p.Binding.ManifestAssignmentID]; exists && execution.Purpose == workspace.NativeDeliveryPurpose && execution.Status == "complete" {
+			if execution.Path != source || execution.AgentID != p.Binding.OwnerAgentID || execution.RuntimeID != p.Binding.RuntimeID || execution.BaselineGeneration != p.Binding.BaselineGeneration {
+				return fmt.Errorf("completed native S9 source differs from the original responsibility")
+			}
 			fmt.Fprintln(diagnostic, "Native S9 responsibility already integrated and cleaned; preserve the original receipt.")
 			return nil
 		}
 	}
 	_, pin, result := nativeS9Paths(p)
-	source, err := nativeS9BuilderSource(root, in, text, result)
-	if err != nil {
-		return err
+	if capture != nil {
+		capture.SetInput(filepath.Join(source, result))
+		capture.SetStage("source_selected")
 	}
 	if source == root {
 		return fmt.Errorf("return the actual native worktree Result, not Main")
@@ -331,9 +397,28 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 	if err := workspace.ValidateCheckout(root, source); err != nil {
 		return err
 	}
+	service := (&submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}).WithContext(ctx)
+	if recovery {
+		if handled, err := recoverNativeS9TypedResult(ctx, service, state, p, source, true, diagnostic, capture); handled || err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	professional, err := workpacket.ReadFile(source, result, 20<<20)
 	if err != nil {
+		if capture != nil {
+			capture.ObserveInputError(filepath.Join(source, result), err)
+		}
 		return nativeArtifactReadError("read professional Result", err)
+	}
+	if capture != nil {
+		capture.ObserveInput(filepath.Join(source, result), professional)
+		capture.SetStage("flat_result_read")
+	}
+	if capture != nil {
+		capture.EnterConsumer("flat_result_consumer")
 	}
 	var verdict workpacket.RepairResultProfessionalAnswer
 	if err := workpacket.ValidateUniqueJSON(professional); err != nil {
@@ -342,21 +427,45 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 	if err := json.Unmarshal(professional, &verdict); err != nil {
 		return nativeS9ArtifactAuthorError("Result", filepath.Join(source, result), err)
 	}
-	service := &submission.Service{Root: root, StatePath: filepath.Join(root, ".claude/loop-state.json"), JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"), Validator: semantic.RuntimeCandidateValidator{}}
-	if err := importNativeS9PlanReport(contextForHook(in), root, source, p, service, diagnostic); err != nil {
+	if capture != nil {
+		capture.ConsumerSucceeded()
+	}
+	planReceipt, err := service.RepairPlanReportReceipt(p.Binding.OwnerAgentID, p.ID)
+	if err != nil {
 		return err
 	}
-	if receipt, err := service.SaveRepairPlanReportFrom(contextForHook(in), p.Binding.OwnerAgentID, filepath.Join(root, p.AnswerPath), root, nil); err != nil {
-		return err
-	} else if !receipt.Accepted {
-		return fmt.Errorf("original PlanReport was not accepted: %s", receipt.Error)
+	if !planReceipt.Accepted || !recovery {
+		if err := importNativeS9PlanReport(ctx, root, source, p, service, diagnostic, capture); err != nil {
+			return err
+		}
+		if capture != nil {
+			capture.EnterConsumer("plan_report_consumer")
+		}
+		if receipt, err := service.SaveRepairPlanReportFrom(ctx, p.Binding.OwnerAgentID, filepath.Join(root, p.AnswerPath), root, nil); err != nil {
+			return err
+		} else if !receipt.Accepted {
+			return fmt.Errorf("original PlanReport was not accepted: %s", receipt.Error)
+		}
+	}
+	if capture != nil {
+		capture.ConsumerSucceeded()
+		capture.SetStage("plan_received")
 	}
 	var saved struct {
 		Base string `json:"base_commit"`
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := workpacket.ReadFile(root, pin, 4096)
 	if err != nil {
+		if capture != nil {
+			capture.ObserveInputError(filepath.Join(root, pin), err)
+		}
 		return fmt.Errorf("read original native source pin %s: %w", filepath.Join(root, pin), err)
+	}
+	if capture != nil {
+		capture.ObserveInput(filepath.Join(root, pin), data)
 	}
 	if err := json.Unmarshal(data, &saved); err != nil || saved.Base == "" {
 		return fmt.Errorf("original native source pin missing")
@@ -370,22 +479,22 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 	} else if registry != nil && registry.Executions[p.Binding.ManifestAssignmentID].Purpose == workspace.NativeDeliveryPurpose {
 		base = registry.Executions[p.Binding.ManifestAssignmentID].BaseCommit
 	} else {
-		mainHead, err := workspace.Git(contextForHook(in), root, "rev-parse", "HEAD")
+		mainHead, err := workspace.Git(ctx, root, "rev-parse", "HEAD")
 		if err != nil {
 			return err
 		}
-		base, err = workspace.Git(contextForHook(in), source, "merge-base", "HEAD", mainHead)
+		base, err = workspace.Git(ctx, source, "merge-base", "HEAD", mainHead)
 		if err != nil {
 			return err
 		}
 	}
-	if _, err := workspace.Git(contextForHook(in), source, "merge-base", "--is-ancestor", saved.Base, base); err != nil {
+	if _, err := workspace.Git(ctx, source, "merge-base", "--is-ancestor", saved.Base, base); err != nil {
 		return fmt.Errorf("native Git source does not contain the prepared baseline")
 	}
-	if err := recordNativeS9Source(contextForHook(in), root, source, base, p); err != nil {
+	if err := recordNativeS9Source(ctx, root, source, base, p); err != nil {
 		return err
 	}
-	packets, err := service.IssueRepairResults(contextForHook(in), p.Binding.OwnerAgentID)
+	packets, err := service.IssueRepairResults(ctx, p.Binding.OwnerAgentID)
 	if err != nil {
 		return err
 	}
@@ -405,15 +514,38 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 		// Preserve explicit null/missing values for the original professional
 		// validator; decoding into Go strings must not turn unknown into "".
 		draft.Answer = append(json.RawMessage(nil), professional...)
-		if err := persistRepairLeadQuestionnaire(filepath.Join(source, packet.AnswerPath), draft); err != nil {
+		if capture != nil {
+			capture.SetTypedInput(filepath.Join(source, packet.AnswerPath))
+			capture.SetStage("typed_result_prepared")
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		receipt, err := service.SaveRepairResultFrom(contextForHook(in), p.Binding.OwnerAgentID, filepath.Join(source, packet.AnswerPath), source, nil)
+		typedBytes, err := json.MarshalIndent(draft, "", "  ")
+		if err != nil {
+			return err
+		}
+		typedBytes = append(typedBytes, '\n')
+		if err := os.WriteFile(filepath.Join(source, packet.AnswerPath), typedBytes, 0o644); err != nil {
+			return err
+		}
+		if capture != nil {
+			capture.ObserveInput(filepath.Join(source, packet.AnswerPath), typedBytes)
+			capture.SetStage("typed_result_saved")
+		}
+		if capture != nil {
+			capture.EnterConsumer("typed_result_consumer")
+		}
+		receipt, err := service.SaveRepairResultFrom(ctx, p.Binding.OwnerAgentID, filepath.Join(source, packet.AnswerPath), source, nil)
 		if err != nil {
 			return nativeS9FlatArtifactError("Result", filepath.Join(source, result), err)
 		}
 		if !receipt.Accepted {
 			return fmt.Errorf("original RepairResult was not accepted: %s", receipt.Error)
+		}
+		if capture != nil {
+			capture.ConsumerSucceeded()
+			capture.SetStage("result_received")
 		}
 		fmt.Fprintln(diagnostic, "Native S9 professional Result received; Main owns original integration and checks. "+receipt.NextAction)
 		return nil
@@ -423,8 +555,16 @@ func receiveNativeS9Builder(root string, state map[string]any, in policy.Input, 
 
 // Import only this returned worktree's original professional payload. The
 // shared questionnaire is a receiver input, never a Worker write location.
-func importNativeS9PlanReport(ctx context.Context, root, source string, p workpacket.RepairPlanReportPacket, service *submission.Service, diagnostic io.Writer) error {
+func importNativeS9PlanReport(ctx context.Context, root, source string, p workpacket.RepairPlanReportPacket, service *submission.Service, diagnostic io.Writer, captures ...*nativeS9AttemptCapture) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	raw, err := workpacket.ReadFile(source, p.AnswerPath, 20<<20)
+	if err != nil {
+		if capture := nativeS9Capture(captures); capture != nil {
+			capture.ObserveInputError(filepath.Join(source, p.AnswerPath), err)
+		}
+	}
 	if os.IsNotExist(err) {
 		receipt, receiptErr := service.RepairPlanReportReceipt(p.Binding.OwnerAgentID, p.ID)
 		if receiptErr == nil && receipt.Accepted {
@@ -434,6 +574,10 @@ func importNativeS9PlanReport(ctx context.Context, root, source string, p workpa
 	}
 	if err != nil {
 		return fmt.Errorf("read actual native PlanReport at %s: %w", filepath.Join(source, p.AnswerPath), err)
+	}
+	if capture := nativeS9Capture(captures); capture != nil {
+		capture.ObserveInput(filepath.Join(source, p.AnswerPath), raw)
+		capture.EnterConsumer("plan_report_consumer")
 	}
 	if err := workpacket.ValidateUniqueJSON(raw); err != nil {
 		return &nativeAuthorError{fmt.Errorf("actual native PlanReport at %s: %w", filepath.Join(source, p.AnswerPath), err)}
@@ -466,6 +610,9 @@ func importNativeS9PlanReport(ctx context.Context, root, source string, p workpa
 		return err
 	}
 	draft.Answer = answer
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := persistRepairLeadQuestionnaire(filepath.Join(root, p.AnswerPath), draft); err != nil {
 		return err
 	}
@@ -536,7 +683,7 @@ func recordNativeS9Source(parent context.Context, root, source, base string, p w
 	return err
 }
 
-func receiveNativeS9Targeted(ctx context.Context, root string, snap runtime.Snapshot, text string, diagnostic io.Writer) error {
+func receiveNativeS9Targeted(ctx context.Context, root string, snap runtime.Snapshot, text string, diagnostic io.Writer, captures ...*nativeS9AttemptCapture) error {
 	status := stringValue(repairPointerCLI(snap.State)["status"])
 	if status != "targeted_reverification" && status != "blocked" {
 		return nil
@@ -565,12 +712,15 @@ func receiveNativeS9Targeted(ctx context.Context, root string, snap runtime.Snap
 	}
 	// Keep the original independent-verification rules; native IDs are observed
 	// in the audit envelope, never substituted for the engineering verifier owner.
-	answer, err := readRepairTargetedAnswer(path)
+	answer, err := readRepairTargetedAnswerContext(ctx, path, nativeS9Capture(captures))
 	if err != nil {
 		return err
 	}
 	var feedback bytes.Buffer
-	_, code, exitFailure := saveRepairTargetedAnswerContext(ctx, root, snap, path, *chosen, answer, &feedback)
+	if capture := nativeS9Capture(captures); capture != nil {
+		capture.EnterConsumer("targeted_consumer")
+	}
+	_, code, exitFailure := saveRepairTargetedAnswerContext(ctx, root, snap, path, *chosen, answer, &feedback, nativeS9Capture(captures))
 	var message struct {
 		Output struct {
 			Context string `json:"additionalContext"`
@@ -580,6 +730,9 @@ func receiveNativeS9Targeted(ctx context.Context, root string, snap runtime.Snap
 	fmt.Fprintln(diagnostic, message.Output.Context)
 	if code != 0 {
 		return fmt.Errorf("original Targeted consumer: %s", feedback.String())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	latest, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(ctx).Snapshot()
 	if err != nil {
@@ -593,6 +746,9 @@ func receiveNativeS9Targeted(ctx context.Context, root string, snap runtime.Snap
 		}
 		if value.ImpactID == chosen.impact.ImpactID && value.OriginalAssignmentID == chosen.originalAssignmentID && value.PerformingAssignmentID == chosen.performingAssignmentID {
 			if err := repairLeadTargetedReplay(root, path, ref); err == nil {
+				if capture := nativeS9Capture(captures); capture != nil {
+					capture.SetStage("targeted_received")
+				}
 				return exitFailure
 			}
 		}

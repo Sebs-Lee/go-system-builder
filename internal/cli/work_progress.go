@@ -230,6 +230,9 @@ func observeWorkProgress(root string, request policy.Input, stderr io.Writer) (*
 
 func projectWorkProgress(root string, request policy.Input, snap runtime.Snapshot) (hook.ProgressFacts, *workspace.Execution, error) {
 	f := hook.ProgressFacts{Session: request.SessionID, Sources: map[string]string{}}
+	if reader, ok := contextForHook(request).Value(hookReaderKey{}).(*hookReader); ok && reader.Kind != "Main" && reader.Kind != "Worker" {
+		return f, nil, nil
+	}
 	life, _ := snap.State["lifecycle"].(map[string]any)
 	if life["state"] == "inactive" || life["state"] == "paused" || snap.State["bound_req"] == nil {
 		return f, nil, nil

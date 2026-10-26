@@ -159,3 +159,18 @@ func TestConcurrentNoticeWritersPreserveProgressContext(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyActionDoesNotRenderNextAcrossContextAndNotice(t *testing.T) {
+	for _, action := range []string{"", " \t\n", "read original receipt"} {
+		g := policy.Guidance{Stage: "S10", LifecycleState: "acceptance", Action: action, Objective: "preserve accepted work", ProtocolRef: "protocol", ManualRef: "manual", Blocked: true, Blocker: "original source unavailable", HumanRequired: true}
+		for _, text := range []string{compactGuidance(g), formatGuidance(g), qualityNotice(policy.Decision{Guidance: &g}, controller.QualityGateResult{Status: controller.StatusUnknown})} {
+			if strings.Contains(text, "Next:") != (strings.TrimSpace(action) != "") {
+				t.Fatalf("action=%q: %s", action, text)
+			}
+		}
+		text := compactGuidance(g)
+		if !strings.Contains(text, g.Blocker) || !strings.Contains(text, "Human Gateway") || !strings.Contains(text, "Read protocol") {
+			t.Fatal(text)
+		}
+	}
+}

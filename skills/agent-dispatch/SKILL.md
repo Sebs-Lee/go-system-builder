@@ -122,9 +122,24 @@ Start supplies bounded context and observes actual facts; it does not guess a ta
 Return real blockers and unfinished work honestly on the first Stop; rejected or
 missing artifacts remain unaccepted and Main receives the exact diagnostic and
 recovery responsibility. Do not require another Stop or invented fields to exit.
-Ended execution, accepted delivery, Main integration and stage completion are separate. Real human approval stays in its original domain; Start never grants it. Resume can emit a new platform actor ID; do not invent an alias or new work item for that change.
+Ended execution, accepted delivery, Main integration and stage completion are separate. Real human approval stays in its original domain; Start never grants it. To continue an ended native actor, use Claude Code's supported
+`SendMessage(to=<actual original agent ID>, message=<exact original task direction>)`.
+Carry the current exact brief/answer references and preserve its existing worktree.
+Do not use a fresh Agent invocation or rely on an Agent resume parameter to
+continue that actor; report a compatibility gap if the platform cannot continue
+it. No actor alias or replacement work item repairs that gap.
 
-After a native return or completion notification, Main checks the original consumer's current receipt or accepted delivery. A returned actor without a receipt is not proof that professional work is still running. Receiver preparation, source and concurrent-commit failures belong to Main: inspect the original failure and current responsibility first. If that same responsibility remains current and unreceived, resume the original native agent to return its already saved artifacts unchanged. Do not repeat the professional review, create another answer, or poll stage completion in place of reception recovery. Changed responsibility or input follows its original revision path.
+SendMessage success confirms sending, not a Worker return or accepted result.
+The continued actor runs in the background. Wait for its actual completion
+notification and original SubagentStop, then read the original consumer's receipt
+or current delivery. A stopped notification is not a completed professional
+return. There need not be another Agent PostToolUse for this continuation.
+See [platform compatibility](../../docs/claude-platform-compatibility.md) and the
+[official resume contract](https://code.claude.com/docs/en/sub-agents#resume-subagents).
+On clients with incomplete continuation support, preserve original work and
+report the exact platform limitation without silently creating another actor.
+
+After a native return or completion notification, Main checks the original consumer's current receipt or accepted delivery. An explicit asynchronous launch means execution has started; it does not establish reception or a reception failure. A returned actor without a receipt is not proof that professional work is still running. Receiver preparation, source and concurrent-commit failures belong to Main: preserve the exact responsibility, accepted work and concrete diagnostic. For S9 only, when current feedback supplies the exact original native private input, saved typed answer or Targeted answer and a recovery command, Main runs `runtime stage-answer consume --root <Main-root> --path <exact-original-input>`. This reuses the original adapter and consumer; it does not author a Worker answer or require another Worker Start/Stop. Missing exact input or binding remains a named Main/system preparation gap; do not guess a neighboring path. An accepted PlanReport is preserved while its original Result continues; an accepted candidate goes to Main integration/checks. An accepted Targeted answer with unfinished Handoff uses the supplied `runtime repair handoff complete` continuation. Resume the original actor only for concrete unfinished professional work, carrying the actual original references. Changed responsibility or input follows its original revision path. These S9 recovery capabilities do not establish a universal native consume route for S5/S6/S7/S8; follow each original stage's named recovery.
 
 For S6/S9, an accepted delivery or candidate with pending Main integration/checks is already a Worker handoff; Main continues its own original action instead of resuming the Worker to wait for a Final. After checking that current original receipt, tell the user what this owner completed, what the named consumer still owes, the evidence scope and the concrete next action. Reuse work_complete/consumer_pending/waiting_on; do not request another report or call pending Main work a completed stage.
 

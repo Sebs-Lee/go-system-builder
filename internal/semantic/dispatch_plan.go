@@ -187,6 +187,7 @@ func LoadDispatchPlan(root string, files fileview.Reader, req string) (*Dispatch
 	required := false
 	byID := map[string]*taskDocument{}
 	for _, t := range tasks {
+		p.Problems = append(p.Problems, t.scopeProblems...)
 		b, e := files.ReadFile(filepath.Join(root, t.rel))
 		if e != nil {
 			return nil, e
@@ -270,12 +271,6 @@ func LoadDispatchPlan(root string, files fileview.Reader, req string) (*Dispatch
 			}
 		}
 		dt := DispatchTask{ID: id, Path: t.rel, Wave: wave, Dependencies: t.deps, Writes: t.writePaths}
-		for _, write := range dt.Writes {
-			clean := filepath.ToSlash(filepath.Clean(write))
-			if filepath.IsAbs(write) || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsAny(write, "*?{[") {
-				p.Problems = append(p.Problems, "waves-v1 requires concrete repository-relative write paths: "+id+" "+write)
-			}
-		}
 
 		if len(dt.Writes) == 0 {
 			p.Problems = append(p.Problems, "TASK needs concrete prospective write paths: "+id)

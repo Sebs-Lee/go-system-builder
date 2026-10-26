@@ -7,6 +7,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -243,8 +244,9 @@ func ValidateAgents(root string) error {
 		} else {
 			required = append(required, "questionnaire", "independent")
 		}
+		contractText := strings.ToLower(agentContractVisibleText(body))
 		for _, phrase := range required {
-			if !strings.Contains(strings.ToLower(body), strings.ToLower(phrase)) {
+			if !strings.Contains(contractText, strings.ToLower(phrase)) {
 				return fmt.Errorf("agent %s: missing contract phrase %q", role, phrase)
 			}
 		}
@@ -298,4 +300,66 @@ func ReadAgentAsset(root, role string) ([]byte, string, error) {
 		return nil, rel, fmt.Errorf("read Agent role %s: %w", role, err)
 	}
 	return data, rel, nil
+}
+
+var agentLinkDefinition = regexp.MustCompile(`(?m)^[ \t]{0,3}\[[^\]\n]+\]:[^\n]*(?:\n|$)`)
+
+// Check the instructions an author reads, not link targets. Preserve link
+// labels, including labels whose destinations contain balanced parentheses.
+func agentContractVisibleText(body string) string {
+	body = agentLinkDefinition.ReplaceAllString(body, "\n")
+	var visible strings.Builder
+	for i := 0; i < len(body); {
+		if body[i] == '<' {
+			if end := strings.IndexByte(body[i:], '>'); end >= 0 {
+				target := body[i+1 : i+end]
+				if strings.Contains(target, "://") || strings.HasPrefix(target, "mailto:") {
+					i += end + 1
+					continue
+				}
+			}
+		}
+		if body[i] == '[' {
+			end, depth := i+1, 1
+			for ; end < len(body) && depth > 0; end++ {
+				if body[end] == '\\' {
+					end++
+					continue
+				}
+				if body[end] == '[' {
+					depth++
+				}
+				if body[end] == ']' {
+					depth--
+				}
+			}
+			if depth == 0 && end < len(body) && (body[end] == '(' || body[end] == '[') {
+				open, close := body[end], byte(')')
+				if open == '[' {
+					close = ']'
+				}
+				targetEnd, targetDepth := end+1, 1
+				for ; targetEnd < len(body) && targetDepth > 0; targetEnd++ {
+					if body[targetEnd] == '\\' {
+						targetEnd++
+						continue
+					}
+					if body[targetEnd] == open {
+						targetDepth++
+					}
+					if body[targetEnd] == close {
+						targetDepth--
+					}
+				}
+				if targetDepth == 0 {
+					visible.WriteString(agentContractVisibleText(body[i+1 : end-1]))
+					i = targetEnd
+					continue
+				}
+			}
+		}
+		visible.WriteByte(body[i])
+		i++
+	}
+	return visible.String()
 }

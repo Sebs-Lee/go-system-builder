@@ -1,10 +1,12 @@
 # 仿真缺陷清单（2026-10-24 完整流转仿真）
 
-本文件记录 2026-10-24 三题材完整流转仿真（S0～S7～S9～S7～S10～S11）暴露的、**尚未修复**的框架缺陷。
+本文件记录 2026-10-24 三题材完整流转仿真（S0～S7～S9～S7～S10～S11）暴露的框架缺陷及其当前处置：包含已实施修复、仍存在的问题与具体待验证范围。
 
 开头的仿真现象和计时保留其原执行环境含义；当前缺陷状态与修复边界以各条及定级表为准。尤其普通 PreToolUse 已按进度监听合同实现，不能从旧门禁措辞或历史 exit 0 统计推出需要恢复工具 deny。
 
-它不是设计文档，也不是调查流水账：每条只记录「现象 → 证据 → 落点 → 建议修法」，供后续修复与 blueprint 同步更新使用。修复完成后应把对应条目连同修复提交一起删除或标记为已修，不在本文件累积历史。
+缺陷整改按[工作流边界与收敛设计](l4-mechanisms/L4-workflow-convergence.md)固定受支持路径、机制取舍和验收终点。已确认缺陷、缺少验收证据及新能力分别处理；开放条目不自动授权增加协调层或扩大整改范围，也不能因范围划分而关闭原承诺内的失败。各条状态依据实际实现和注明范围的证据更新，不由设计约束本身推定完成。
+
+它不是设计文档，也不是调查流水账：每条区分原现场、证据和当前处置，供维护使用；需要演化设计时回原层级修订。修复完成后按真实范围删除或标记为已修，保留尚需解释的原失败与证据，不另累积调查流水账。
 
 仿真环境位于仓库外 `/home/sebs/gsb-simulation/`，三题材共用同一份发布包：
 
@@ -113,7 +115,7 @@
 
 ---
 
-## 二、未修复缺陷
+## 二、缺陷原现场与当前处置
 
 严重度口径：**P0** 阻塞流程或产生错误产物；**P1** 造成返工、误判或可避免的往返；**P2** 措辞歧义、易误用；**P3** 文档缺一句可省的试错。
 
@@ -144,12 +146,7 @@
 - `internal/investigation/case_workflow.go:119-122`（Go 侧注释）
 - `blueprint/l3-stages/L3-S8-finding-investigation.md:155-159`
 
-**建议修法.** 二选一，不要靠措辞糊过去：
-
-- 拆字段：把「确无竞争」与「竞争已由判别式处理」分成两个字段，校验分别识别；
-- 或改语义：字段改为记录「竞争假设的处置方式」（含判别式 ID 与结论），校验只要求「存在判别式结果或已声明无竞争」，字段名同步改。
-
-无论哪种，都要让校验能区分「确无竞争」与「有竞争但已被判别式处理」，而不是靠字符串非空。**并且要让「竞争机制写在 `counterfactual_or_discriminator` 里」这条协议出路真正满足收口校验**——现在它不满足，agent 只能两头都写。
+**当前处置（原歧义已修）.** 原消费者区分确无竞争与竞争已由判别式处理：后者使用 `competing_hypothesis_assessment` 记录当前有效判别式及结论，前者沿原无竞争声明；按真实结果认定收口。保留专业推导和来源，不再要求拆出第二份无竞争声明或新增审批。原字段非空即可收口的现场保留为历史问题。
 
 **关联反馈.** `source-ledger` F-021；`ui-ledger` S8 Case 记录（未单独记入反馈文件，由本次分析从产物中读出）。
 
@@ -165,7 +162,7 @@
 
 > Reference array shape: {"evidence_refs":["path:<actual-source-path>#sha256=<actual-sha256>"]}; **reuse the fixed reference supplied by the accepted Case result** or an applicable registered ID displayed with the sources.
 
-**建议修法.** 指令改为：`path:` 引用必须指向**本阶段消费者已捕获**的证据；跨阶段继承请使用登记 ID。保留「不要自己计算 path/digest」这半句。
+**当前处置（原歧义已修）.** 原消费者封存的 S7 Finding 引用可原样复用；本次新增路径由原 S8 消费者捕获，跨阶段新证据使用适用的登记 ID。固定引用的路径与摘要由原消费者提供，不要求作者重抄或计算。
 
 **关联反馈.** `source-ledger` F-020。
 
@@ -189,7 +186,7 @@
 
 Worker 不会读 blueprint，所以这句对 Worker 无效。
 
-**建议修法.** 三处 brief 统一补一句：`planned_paths` = 该 Assignment 的**写域**（实际准备改动的位置），不含读集，且必须落在登记范围内。
+**当前处置（原歧义已修）.** 三处 brief 已统一说明：`planned_paths` = 该 Assignment 的**写域**（实际准备改动的位置），不含读集，且必须落在登记范围内。
 
 **关联反馈.** `source-ledger` F-013。
 
@@ -211,7 +208,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **落点.** `internal/schema/assets/stage-form-s7-template.json:6`（`instruction` 只说「只修改 answer」）；同类 `stage-form-s8-template.json:6` 同样只有「只修改 answer 并保存本卷的准确路径」。
 
-**建议修法.** S7/S8 及其它 stage-form 的 `instruction` 统一增加一句顶层形状约束（明确列出五个顶层 key，并点名 `packet_id` 等 packet 字段不允许出现在答卷里）。这属于「把 Main 已经自发补上的约束下沉到框架」。
+**当前处置（原歧义已修）.** S7/S8 原 instruction 已明确五字段答卷外层及 packet 字段边界；不同形状的 S9 等阶段沿各自原专业答卷，不复制五字段外壳。
 
 **关联反馈.** `source-ledger` F-019。
 
@@ -233,7 +230,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **落点.** S7 baseline 恢复路径中执行 pinned source 还原的实现。
 
-**建议修法.** 恢复前先比较 pinned commit 与当前工作树的文件集合：pinned 中不存在但工作树存在的文件应**保留并报告**，而不是删除；或者恢复动作改为「只还原 pinned 中存在且已漂移的路径」。
+**当前处置（原歧义已修）.** 原 `frozen-diff` 提供只读集合比较及保全/准确恢复指引；pinned 中没有而当前存在的文件保留并报告。保留原来源与漂移检查，不增加自动 reset、清理或通用恢复器。
 
 **关联反馈.** `ui-ledger` / `callback-api` 记录被框架动作删除（数据由 `/home/sebs/gsb-simulation/feedback-snapshots/` 保住）；`source-ledger` F-015 / F-018。
 
@@ -245,7 +242,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **证据.** `source-ledger` F-014。CLI 首行与 checkpoint 的 `failure_reason` 指两个不同对象；提示里给出的 `git -C <Main> status --short` 才是判据。
 
-**建议修法.** 首行主语写明，例如 `Main integration checkout is dirty`，并把两条路径都点出来。
+**当前处置（原歧义已修）.** 原消费者的 dirty 提示已分别点明 Main integration checkout 或 Builder checkout 及实际路径，不新增状态。
 
 **关联反馈.** `source-ledger` F-014。
 
@@ -256,13 +253,13 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 **现象.**
 
 - `runtime review-plan revive` 报 `baseline still drifted; the round stays stale (use revise for real drift)`——`revive` **不重钉基线**，只在 checkout 与 pinned 完全一致时恢复计划状态；
-- `runtime review-plan revise --file …` 报 `prepare ReviewPlan assets: invalid character '#' looking for beginning of value`——`--file` 要的是 **JSON 内联内容**而不是路径，用法不明，也没有示例。
+- `runtime review-plan revise --file …` 报 `prepare ReviewPlan assets: invalid character '#' looking for beginning of value`——当时被误判为 `--file` 要 JSON 内联内容，实际入口接收 **JSON 文件路径**；该报错是原错误现场，不能据此推导内联用法。
 
 手册里没有这两条分工，恢复者只能靠踩一次错误信息才明白。
 
 **证据.** `source-ledger` F-018。实测有效路径是 `git checkout HEAD -- <冻结路径>` 把字节还原成 pinned，再 `revive`。
 
-**建议修法.** 在 S7 恢复相关文档（`docs/control/agent-protocol.md#s7` 或 blueprint 对应节）补一段：两者的适用条件差异、`revise` 需要的三个参数含义，以及「`--file` 传 JSON 内容」这一用法；`revise --help` 给出可复制的示例。
+**当前处置（原歧义已修）.** `revise --file <JSON文件路径>` 接收文件路径，help、错误与原协议已有对应说明；`revive` 只恢复字节一致的原计划状态，`revise` 做 Claim 受控变更且不重钉基线，真实产品变更沿 `rework/new-round`。不因恢复统一形式新增确认问卷。
 
 **关联反馈.** `source-ledger` F-018。
 
@@ -274,7 +271,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **证据.** `source-ledger` F-009（`loop-events.jsonl` sequence 16 `transition_committed TR-003`，`gate_id=GATE-DOCUMENT-PASS`，两个 guard 均通过）。
 
-**建议修法.** 提示文本分开措辞，并明确「do not ask the reviewer to submit again」的适用场景。
+**当前处置（原歧义已修）.** 原提示已分别表达答案接收与后继待续，已收部分不重交，也不将系统后继故障转回作者。
 
 **关联反馈.** `source-ledger` F-009。
 
@@ -286,7 +283,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **证据.** `source-ledger` F-022（系统实际派生出 `repair-assignment-verification-repair-unit-1` 与新的 `TASK-96390047`）。
 
-**建议修法.** 表单增加一句：验证者表沿用 Builder 的 `assignment_id`，不要手写验证者 ID；系统保存时会派生。
+**当前处置（原歧义已修）.** 原表单已说明：验证者表沿用 Builder 的 `assignment_id`，不要手写验证者 ID；系统保存时会派生。
 
 **关联反馈.** `source-ledger` F-022。
 
@@ -300,7 +297,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **次生问题.** `required_reverification_ids` 正常路径由系统生成，问卷未准备时却要 Main 从**合同**取同一组断言 ID，表单没有说明两种来源等价，容易被读成「禁止作者填」。
 
-**建议修法.** 给「问卷未准备」一个明确恢复入口（命令或说明），并在表单里写明 `required_reverification_ids` 的两个合法来源及其等价性。
+**当前处置（原歧义已修）.** 原 `runtime repair impact prepare --root <Main-root>` 准备缺失材料；原表单解释 `required_reverification_ids` 双来源等价，不要求作者另填恢复确认或抄录机器字段。
 
 **关联反馈.** `source-ledger` F-024。
 
@@ -314,7 +311,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **实现状态.** 一次答案输入已贯通服务与原消费者，pending／回执／本次暂存按进度续接，基线 context 和取消错误链已接通。Result 尾段锚定原工作截止后 1.4 秒，Plan 为 400 毫秒，延迟返回不重新发放预算。冻结验收曾发现 OS 锁释放后，遗留兼容标记的 30 秒过期窗口超过新进程约 5 秒锁预算，阻断立即恢复。本轮原锁入口已改为：证明原 PID 退出后立即回收标记，已知活进程不因标记年龄被驱逐；未知旧格式仍沿原兼容规则。[真实进程回归](../internal/review/result_process_recovery_test.go)继续检验新进程原入口恢复、同答幂等与篡改／缺失 intent 拒绝，不能用执行 defer 的 panic 测试代替。仍无跨进程自动执行者，强制终止后的无人触发恢复不在已实现能力内。
 
-**验收.** 覆盖两层读取之间改文件、有限恢复固定原输入、各提交窗口中断、响应丢失和后继失败；同时保留真实专业拒错及同身份不同内容冲突。与 SIM-17 共用正常路径优化，故障语义仍须独立验证。
+**实际证据与待证.** 最新 f4 首次 Stop 仍在现规模下耗尽 work 预算，Plan 已收、完整六行 Result 未收，原 typed/flat 字节及 source 保留；Main 沿原具名 consume 接成 candidate、集成/检查及 Final。具体计时、技术辅助和最终域链边界见 SIM-17。原 5/6 拒错后缺源失败仍保留。其余原提交窗口、响应丢失和已收后继仅按适用承诺补证，保留真实专业拒错与同身份异文冲突；不能用当前一次恢复宣称全部中断已验收。
 
 **关联反馈.** `source-ledger` F-026。
 
@@ -330,7 +327,7 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **证据.** `source-ledger` F-028。
 
-**建议修法.** ① 在字段 description 里标注 `expected` 为机器预填基线；② 明确 S11 只填 `disposition`（可选 `reason`），其余字段由系统写入；③ 给审计主题一个结构化落点，或在 Manifest 注释里说明主题与字段的映射。
+**当前处置（原歧义已修）.** 原 schema description 与问卷已解释系统预填基线、S11 作者字段及审计主题映射。没有当前实际失效与消费者依据，不新增 schema 或专业栏目。
 
 **关联反馈.** `source-ledger` F-028。
 
@@ -342,19 +339,19 @@ Worker 不会读 blueprint，所以这句对 Worker 无效。
 
 **证据.** `source-ledger` F-023。
 
-**建议修法.** 在 brief 或阶段上下文里写明：返回路径**不等于**完成，接收状态以原消费者的回执为准；给出查询接收状态的命令。
+**当前处置（原歧义已修）.** 原 brief 已说明：返回路径**不等于**完成，接收状态以原消费者的回执为准；提供原接收状态命令作可选诊断，正常交付不要求先轮询。
 
 **关联反馈.** `source-ledger` F-023。
 
 ---
 
-### BUG-SIM-14 · P1 · 未归属路径的「存在与否」会直接否证 S7 ReviewPlan 注册（✅ 已修复，提交 `15c4efd`）
+### BUG-SIM-14 · P1 · 未归属路径的「存在与否」会直接否证 S7 ReviewPlan 注册（原排除修法已替代；当前 T3 定向组合通过）
 
 **现象.** 框架**有**「归属」概念：`buildsurface.Snapshot` 区分「归属某个 TASK 的路径」与 `unattributed_paths`，并且**有意**把未归属路径留在完整审查覆盖内。代码写得很直白：
 
 > `internal/review/draft.go:89-91` — `notes = append(notes, "Main product change has no registered S6 contribution; it remains in full review coverage: "+file)`
 
-所以「未归属路径进入审查覆盖」是**设计意图**，不是缺陷。真正的缺陷在下一层：**这些路径一旦在基线钉住之后出现或消失，就会让 ReviewPlan 注册失败**，而且框架没有提供任何「这条路径不在本轮范围内」的声明方式。
+所以「未归属路径进入审查覆盖」是**设计意图**，不是缺陷。真正的缺陷在下一层：**这些路径一旦在基线钉住之后出现或消失，就会让 ReviewPlan 注册失败**，原记录因此提出排除面；后续跨门核对已否定该修法，当前处置见下。
 
 **证据（`ui-ledger`，S7 第一轮；agent 独立定位并做了对照实验）.**
 
@@ -390,12 +387,9 @@ agent 给出的机制判定与实测：
 - `internal/review/draft.go:86-91`（全部 `Paths` 进入 `ChangedPaths`；未归属路径仅产生一条 note）
 - `internal/review/draft.go:284`（`return plan, notes`）与 `internal/repair/s7_seed.go:35-38`（notes 只在 `plan == nil` 时被拼进错误串，**成功路径上被丢弃**）
 
-**建议修法.**
+**当前处置.** 原 `15c4efd` 排除 deleted 的修法与完整覆盖门互斥，已由 T3 统一 `buildsurface.FrozenSubjects` 的删除前态、生成、登记和后续覆盖分母替代。真实 Git 删除经 Plan、独立结果、CleanRound、S10 与 fresh 轮同分母的定向组合已有通过证据，含缺 Claim、假前态和复现文件拒绝；这不等于真实平台删除题材已验收。产品删除仍在完整覆盖与来源检查内，不能按未归属、日志名或路径前缀放宽。
 
-1. 给 changed surface 一个**可声明的排除面**（例如按路径前缀声明本轮审查范围），让「不属于本轮交付」的路径可以被排除，而不是无条件进入完整覆盖；
-2. 至少把 `notes` 里的未归属提示**送到 Planner 手上**（现在成功路径上被丢弃），让 Planner 知道本轮审查对象里混入了未归属路径；
-3. **漂移扫描的判据需要重新定义**：现在判的是「磁盘上是否存在」，而基线状态来自 Git diff，两者不同源。应当只比对**属于本轮审查范围**的路径，其余路径的增删不应判为 baseline changed——否则任何被 gitignore 的辅助文件都会永久阻塞注册（`.gitignore` 移出 Git 树，但移不出磁盘）；
-4. 「基线钉住后文件出现/消失导致注册失败」的错误信息已经点名了文件（这点做得好），但应进一步区分「该路径未归属任何 TASK」与「该路径属于 TASK 却被改动」，前者应给出可执行的处置建议。
+原现场中反馈落产品树的夹具错误仍归 FIX-01/05；系统诊断按准确来源与实际消费者识别，不新增 Main 勾选排除问卷。notes 传播没有本轮新的实际失效证据，不把旧建议升级为额外实施前提。当前组合范围见[全局后续记录 §9](../.local/framework-maintenance/global-retest-20261026T025354Z/NEXT-ITERATION.md)。
 
 **关联反馈.** `ui-ledger` 记录 8（含对照实验）；`source-ledger` F-015 / F-018；`callback-api` S7 第一轮注册失败记录。
 
@@ -410,7 +404,7 @@ agent 给出的机制判定与实测：
 
 **证据.** `callback-api` S4 两条机制疑问。
 
-**建议修法.** §2 加一句「路径相对本 TASK 文件所在目录解析」；§8 加一句「无依赖时保留空表，不要写占位文字」。
+**当前处置（原歧义已修）.** 原模板已说明路径相对 TASK 文件目录、无依赖保留空表；不新增格式手续。
 
 **关联反馈.** `callback-api` S4 × 2。
 
@@ -455,13 +449,23 @@ agent 给出的机制判定与实测：
 
 **范围与现状.** 一次输入、按实际路径批量证明、基线／固定 Git 的请求预算与复用、按进度恢复、审计索引及外层失败观测已在工作区接入生产调用链；锁内仍核实际磁盘证据，取消／局部超时不写成内容非法或 Plan stale。当前原生 S7 Stop 不无条件发行下一 Reviewer 问卷，最后结果仍可续 S10；不能继续用“每次接收必做两件重活”概括当前机制。主修是减少实际工作及按进度续接，不是增加预算、无条件拆成两个平台事件、等待下一普通工具或交给 Main 手工 submit。
 
-**验收缺口.** 需用当前版本复测完整链路、历史增长、并发和各中断窗口。组件缓存命中、旧仿真数字、单份答卷变小或换新 Agent 后偶次成功，均不能替代验收。
+**当前验收范围.** T1～T6/C1 已实施并有注明范围的代码组合证据；最新带技术辅助的 S9→S11 域链正证与现规模 Stop 预算失败分别见下。余下适用并发/中断与事先固定的代表性增长仍待证，不默认重跑全部阶段和理论窗口。组件命中、文件缩小、旧数字或换 Agent 成功均不能替代整链成本与可靠性证据。
 
 **冻结验收复现的机制缺口.** 除 SIM-11 的死亡进程兼容锁外，[Main 返回取消检查](../internal/cli/hook_acceptance_cancellation_linux_test.go)证明 S9 摘要在请求取消后仍打开原工作包正文，相关 lookup／diagnostic 仍另起 Background；[诊断与基线检查](../internal/integration/hook_diagnostic_acceptance_test.go)证明原机制发布的 `.claude/diagnostics/planning/` 准确诊断文件会进入未声明产品漂移，进而阻断原 Gate。两者都不能靠让作者补字段、删诊断或重开验证轮解决。[S9 证据路径检查](../internal/cli/hook_acceptance_s9_evidence_test.go)还证明，按指引推荐的 `path:logs/check.txt` 保存检查证据后，原候选消费者以未跟踪日志导致 Worker 不干净而拒收；不能用额外证据提交／清理掩盖交接缺口。
 
-**验收后的定向收敛.** 按 [Hook §10.7](l4-mechanisms/L4-hook-platform-wiring.md#107-已复现交接断点的收敛设计)补齐上述边界：Main 返回的正文、只读回执与 S9 诊断继承父 context；显示诊断按准确文件和有限内容分类，共用于 S7 产品漂移、S9 基线和集成检查；S9 原消费者只投影本次已捕获且字节匹配的未跟踪日志输出，贯通候选、Main 集成及已验证后的清理，Main 不可变证据保留。未知邻居、源码、已跟踪或已在原 Session 基线中的文件、变更字节仍保留原拒绝条件；未增加作者字段、日志提交／忽略手续或工具门禁。[S9 交接回归](../internal/cli/s9_preferred_evidence_integration_test.go)覆盖推荐路径到 Main Final／清理及证据保留，补足仅候选通过的缺口。原 smoke 工具按 PostToolUse 30 秒、其他事件 10 秒校验，不改产品时限。四项原失败用例与相邻负例为本轮验收范围；真实 Claude S9、完整强杀窗口、整链增长及其他未归因红灯仍未闭合，SIM-17／11 保持开放。
+**验收后的定向收敛.** 按 [Hook §10.7](l4-mechanisms/L4-hook-platform-wiring.md#107-已复现交接断点的收敛设计)补齐上述边界：Main 返回的正文、只读回执与 S9 诊断继承父 context；显示诊断按准确文件和有限内容分类，共用于 S7 产品漂移、S9 基线和集成检查；S9 原消费者只投影本次已捕获且字节匹配的未跟踪日志输出，贯通候选、Main 集成及已验证后的清理，Main 不可变证据保留。未知邻居、源码、已跟踪或已在原 Session 基线中的文件、变更字节仍保留原拒绝条件；未增加作者字段、日志提交／忽略手续或工具门禁。[S9 交接回归](../internal/cli/s9_preferred_evidence_integration_test.go)覆盖推荐路径到 Main Final／清理及证据保留，补足仅候选通过的缺口。原 smoke 工具按 PostToolUse 30 秒、其他事件 10 秒校验，不改产品时限。该轮四项原失败与相邻负例的证据按原版本保留；后补真实平台结果见下，适用中断、增长及现规模预算失败仍使 SIM-17／11 保持开放。
 
-**当前复验结论.** 四项原失败断言与相邻边界共 13 项已通过，原 smoke、安装检查及适用 race 复验通过；常规回归仍有红灯。真实 S9 最终形成 Main 集成检查、Final 和 complete，但经历首次 Stop 超时、未引用临时脚本拒收、额外本地忽略规则及替代原 actor 继续，原平台用例仍失败。模型工具请求携带的 `Agent.resume` 在实际 Hook 输入中消失且启动新 actor，须核对客户端继续接口，不能把模型自行替代当预定流程通过。另一个具名缺口是 [Main 集成入口](../internal/cli/workspace_delivery.go)：execution 尚无 DeliveryRef 时直接以空路径读取，只报 `invalid packet artifact path`，未交付“候选未形成”的前置事实和原恢复责任。展示 `Next: .` 与 Hook 文档 §12.2 的旧 smoke 描述也仍有残留。以上不由扩大日志豁免或增加作者手续解决；完整增长、中断与无额外指引的安装包流程仍待验。
+**前轮真实平台复验边界.** 原四项失败及相邻边界、smoke 和安装定向验证有实际通过记录；真实 S9 虽最终形成 Main 集成检查、Final 和 complete，仍经历首次 Stop 超时、未引用临时脚本拒收、额外本地忽略及替代 actor 继续，不能算连续平台通过。模型请求的 `Agent.resume` 在实际 Hook 输入中消失并启动新 actor，该轮随后按实际同 actor 继续合同修正指引及检查器；最新会话的 actual-ID 技术辅助及成功域链另见下文，不能改写此前失败。该次观察到的空 DeliveryRef 底层报错、`Next: .` 与旧 smoke 描述已由下述接线修订处理，不再列为当前未修改项。该前轮不能证明完整增长、全部适用中断或无额外指引直通。
+
+**接线补齐.** 按 [Hook §10.8](l4-mechanisms/L4-hook-platform-wiring.md#108-从原接收事实到全部接手入口的接线)，以原责任绑定贯通 Main 返回、普通 dispatch／lead 提示与具名 integrate：区分未形成 candidate、来源不完整、部分已收及 Final 后 ACK／清理；typed 责任的缺源或旧代次不得回落 legacy。Result 的原诊断关联唯一同 Sources 的 PlanReport；同 owner 的邻居不能替代或污染本责任。取消只令尚未读取的细节未知，保留已知索引与引用，不把未刷新当来源损坏或重新收卷要求。Final 后只读原固定证明和清理所需冻结证据，不重建已完成专业闭包。平台继续、晚 Worker 的材料与反馈 schema 同步按接收者编排，原回归逐项区分合同、夹具与生产缺陷。选定扩大回归及原14项红灯已逐项通过；这只覆盖其实际断言，未证明全部接手边闭合，真实平台与完整增长／中断矩阵仍分别待验。
+
+**接线残留及本轮实现.** 独立审查确认的四项残留已按 [Hook §10.9](l4-mechanisms/L4-hook-platform-wiring.md#109-接收失败的具名续接失败交付与单次提示)接入：原 flat／typed／Targeted 具名 Main 续接、原预算内捕获失败的跨请求交付、启动／完成／未知的公共返回适配、单一 dispatch 组装。Skill 同步移除系统故障统一要求 Worker 重返；pending 的 Main 公开反馈接回原 Writer recover，领域回执命令也提供字面参数引用。具体源码与分批验证见[本轮记录](../.local/framework-maintenance/hook-handoff-implementation-20261026/RESULT.md)；当时尚不能据此关闭真实渠道接手或增长/中断；最新具体渠道证据见下。通用 recover 仍不承担 native 适配，R2 正常链未命中的故障投影另修。
+
+**最新真实平台证据（f4，已结束）.** [S9→S11 正式报告](../.local/framework-maintenance/global-retest-20261026T025354Z/S9-S11-ACCEPTANCE.md)及[机器证据](../.local/framework-maintenance/global-retest-20261026T025354Z/S9-S11-ACCEPTANCE-EVIDENCE.json)证明：C1 六项完整集合实际进入 Main/Builder，Result 包含修前已满足者；原独立 Targeted、自动 Handoff、fresh S7 完整轮、S10/S11 到 `release_authorized/rev70`。这是带技术辅助的域链成功：Main 经 actual actor ID 恢复原 Builder，未补领域答案。机械 `verify exit1` 唯一失败是 run-2 执行者过早 SIGINT 前约 2.75 秒启动的额外 actor 有 Start 无 Stop、无领域产物，不能称自然全绿。原 [SINGLE 失败报告](../.local/framework-maintenance/global-retest-20261026T025354Z/SINGLE-PLATFORM-ACCEPTANCE.md)中的 5/6 拒错及 source 消失保持原结论。
+
+**现规模预算失败仍开放.** f4 原 S9 首次 Stop 外部 wall `6.203650s`、内部 call `5431ms`，在约 6 秒 work deadline 内 Plan 已收（rev47→50），随后 typed Result 消费者的 `git rev-parse HEAD` 报 deadline；完整六行 typed/flat 输入与原 source 均在。Main 实际执行系统给出的原具名 consume 取得 candidate，再真实 integrate、`make check` 及 Final，说明该原恢复边有效，不能抹去首次正常接收失败。原 15 次 lock_hold 共 3295ms、lock_wait 208ms；mutation 3 次 2751ms、persist 3 次 1532ms、validate 6 次 1277ms 是嵌套指标，不能相加，也不能由锁次数或最后报错的 Git 命令武断认定冗余/瓶颈。计时边界与原观察见正式报告及[收敛规划 §9](../.local/framework-maintenance/convergence-bugs-review-20261026T082158Z/NEXT-ITERATION.md)。先按原调用边归因，再选择删除/合并/同请求复用；当前没有已选的新成本机制。
+
+**R2 与待证边界.** 该次正常 Targeted/Handoff 没有命中 R2 恢复命令故障；Builder typed consume 是另一条技术恢复边，不能替代原收尾命令与当前状态矩阵验证。原 Targeted→Handoff 动作完整性和全部有效投影仍待本轮实现。真实平台删除题材、其余适用中断与代表性增长分别待证，不新增后台执行者、第二存储/恢复权威、通用恢复器、工具许可或额外握手。
 
 **执行清单.** 使用 [Hook 接收、指引与恢复验收清单](l4-mechanisms/L4-hook-acceptance-checklist.md)分别收集 SIM-17／11／18／20 与正交的 SIM-19 证据；特别检查实际模型渠道、接手责任、恢复动作及是否依赖额外作者步骤。未验条目保持待验，不因清单或实现存在就关闭缺陷。
 
@@ -489,9 +493,9 @@ agent 给出的机制判定与实测：
 
 **证据与归因边界.** 原仿真记录的 `ui-ledger` 状态为 742,336 B，Reviewer 后续接收反复接近或超过时限。体积增长是成本放大因素，但该记录不能单独证明全部超时由状态体积导致；SIM-17 的串行工作量、来源扫描和运行环境须分别测量。不能由一份较小答卷失败推导答卷体积永远不影响成本。
 
-工作包膨胀不仅来自 S7 题目；S9 PlanReport 与 RepairResult 还重复携带共同冻结来源。只移出 S7 draft，不能视为整个 Runtime 存储问题已经解决。
+原工作包膨胀也涉及 S9 PlanReport 与 RepairResult 的共同冻结来源。当前 S7 与两类 S9 正文已外置；共同来源去重没有本轮净收益证据，不作为继续开发或关闭整个存储问题的前提。
 
-**落点.** [S7 签发](../internal/review/result_packet.go)保存完整 packet；[Runtime Writer](../internal/runtime/store.go)和 [checkpoint](../internal/runtime/checkpoint.go)处理完整状态；[S7 registry 缓存](../internal/runtime/review_result_read_cache.go)已减少同请求重复重建，但命中仍需计算完整 registry 的内容身份，且未改变持久化表示。
+**原排查落点与当前边界.** [S7 签发](../internal/review/result_packet.go)、[Runtime Writer](../internal/runtime/store.go)与 [checkpoint](../internal/runtime/checkpoint.go)承载原签发/持久化；[S7 registry 缓存](../internal/runtime/review_result_read_cache.go)减少同请求重建。当前轻索引与完整正文分工见下，不再将原内嵌表示写成尚未实施的同一修复。
 
 **修复设计.** 采用[运行控制面 §2.4～§2.6](l4-mechanisms/L4-runtime-control-plane.md#24-保留事实与保存全文是不同决策)的主状态索引与独立完整正文分工，按当前责任读取。保留专业产物、原签发／接收事实和历史问卷，不要求 Agent 改变输入、答案、保存、结束或恢复操作。优先移出完整 packet 并减少重复处理；共同来源去重按收益另行评估，不先引入全局对象库或后台队列。
 
@@ -499,7 +503,7 @@ agent 给出的机制判定与实测：
 
 已有 16 MiB checkpoint 状态硬上限保留；不新增未经测量校准的固定 500 KB 降级阈值。验收按 [Hook §10.5](l4-mechanisms/L4-hook-platform-wiring.md#105-存储减负的行为等价与性能验收)同时检查作者行为等价、历史恢复、最终结果交接与增长场景下的实际成本，不能以缓存命中或文件缩小代替。
 
-**实现状态.** 工作区已实现 S7 ReviewResult、S9 PlanReport／RepairResult 的轻索引、完整不可变正文、按责任读取、原 Writer 新写及显式旧状态维护，并接入旧 pending 和独立 checkpoint／恢复计划正文副本。其他阶段仍内嵌，无 GC 或正文内部共同来源去重。主状态精简不等于删除完整恢复内容；按行为、状态体积与真实读取成本分别验收。
+**实现状态.** 工作区已实现 S7 ReviewResult、S9 PlanReport／RepairResult 的轻索引、完整不可变正文、按责任读取、原 Writer 新写及显式旧状态维护，并接入旧 pending 和独立 checkpoint／恢复计划正文副本。其他阶段仍内嵌，无 GC 或正文内部共同来源去重。主状态精简不等于删除完整恢复内容。已有实现不证明代表增长下成本或所有兼容窗口通过；适用证据继续按行为等价、独立恢复及真实读取成本分开保留待证。f4 域链和预算失败不能单独归因或认证该存储改造。
 
 **关联反馈.** `ui-ledger` 记录 22。
 
@@ -512,7 +516,7 @@ agent 给出的机制判定与实测：
 
 **设计.** 按 [Hook §10.2.3](l4-mechanisms/L4-hook-platform-wiring.md#1023-转录与审计也属于接收成本)分块倒序读取，命中原准确任务即停，fallback 共用累计读取及时间预算。保留真实 user 任务、原引用边界、历史别名、多责任冲突和工具结果排除规则。任务定位不替代原 packet／owner／来源证明。
 
-不直接改成任意最后 200 行或 256 KB，不用最终助手消息无条件替代真实任务，也不要求作者缩短会话或换 Agent。无匹配、越界和 I/O 失败分别可诊断，不能静默选错责任。新路径须证明任务选择与恢复行为等价，并测实际读取字节、解析行数与整链耗时。
+不直接改成任意最后 200 行或 256 KB，不用最终助手消息无条件替代真实任务，也不要求作者缩短会话或换 Agent。无匹配、越界和 I/O 失败分别可诊断，不能静默选错责任。分块早停和累计预算已有实现；任务选择/恢复等价及代表性增长效果仍按适用证据和同任务实际读取字节、解析行数及整链耗时判断，不因 f4 最终域链成功就宣布成本验收完成。
 
 **关联反馈.** `callback-api` 与 `ui-ledger` 的转录排障记录；完整接收故障仍归 SIM-17。
 
@@ -529,24 +533,24 @@ agent 给出的机制判定与实测：
 
 ---
 
-## 四、本清单之外仍处未修状态的存量项
+## 四、本清单之外存量项的当前处置
 
-以下问题在本次仿真之前已确认，**本轮未修**（仿真范围之外），一并列出以免遗漏：
+以下保留原问题身份，区分已实施与测试待证；不再作为七项未实现能力派发：
 
-1. `docs/rules/ui-prototype.md:83` 与 `skills/ui-prototyping/SKILL.md:192` 仍称页眉四 token 被机器校验，但 `hasProtoMetaHeader` 已删除且无替代实现。
-2. `blueprint/l4-mechanisms/L4-hook-platform-wiring.md:33` 仍写旧的 PostToolUse 工具清单，而 `settings.json` 已改为 `*`。
-3. `review-plan.schema.json:273` 的 claims 项含 `behavior_surface`，但 `reviewmeta.Claim` 无该字段。
-4. `submission.Receipt.attempt_status` 未列入 `submission-receipt.schema.json`（该 schema 未被生产代码引用）。
-5. `internal/cli/action_catalog.go` 未随新命令更新。
-6. `internal/evidence/local_path.go` 与 S9 捕获没有敏感文件黑名单。
-7. 四个存量失败测试：`internal/cli` 的 `TestS6NextAssignsAuthoringToRegisteredBuildersAndIntegrationToMain`、`TestS6TaskDoneWhenReadsNumberedClosingContractFromTaskTemplate`；`internal/integration` 的 `TestS7RegisteredAdditionalMethodReachesNativeViewAndFrozenRecovery`；`internal/investigation` 的 `TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier`。
+1. 页眉四 token：`docs/rules/ui-prototype.md` 与 `skills/ui-prototyping/SKILL.md` 已改为专业审查，不新增机器检查。
+2. PostToolUse：Hook 文档已与 `settings.json` 的 `*` matcher 对齐，不再同步旧工具名单；实际安装/平台结果仅按原证据范围认定。
+3. `behavior_surface`：已从无消费者的 claims 移除，仅保留实际 Assignment 字段。
+4. `submission-receipt.schema.json`：已包含 `attempt_status`；该 schema 未被生产引用，不由此扩大机制。
+5. `internal/cli/action_catalog.go`：已同步现行命令；R2 只处理实际动作生产与有效投影。
+6. 敏感来源：已在新证据复制入口限制；不扩大成禁止读取产品或普通工具的权限门。
+7. 原四个失败测试仍按当前源码的逐名结果认定：`internal/cli` 的 `TestS6NextAssignsAuthoringToRegisteredBuildersAndIntegrationToMain`、`TestS6TaskDoneWhenReadsNumberedClosingContractFromTaskTemplate`；`internal/integration` 的 `TestS7RegisteredAdditionalMethodReachesNativeViewAndFrozenRecovery`；`internal/investigation` 的 `TestS9RepairPlanReportOriginalHookCoverageReplayAndWriteBarrier`。夹具更新不能代替通过证据；本次文档整理未逐名确认，不宣布四项通过，不以“待证”派发四套新功能或默认全仓重跑。
 
 ---
 
 ## 五、核验结论与修复方案（2026-10-24 增补）
 
-> 基调：减负、不让 Agent 猜测机制、用问卷替代传参、不让 Agent 手抄 hash/sha。
-> 核验基线：`HEAD 823743c` + 工作区 58 文件未提交改动（约 +596/-103）。下表「已在工作区修复」指代码 + schema + 单测三件套已在工作区出现、待提交与全量回归；「真 Gap」指仍会阻塞、产错误产物或逼 Agent 走被框架刻意排除的路，必须动代码，不能只改措辞。
+> 基调：减负、准确交接专业工作与系统恢复，不让作者抄机器身份或摘要。
+> 原增补基线为 `HEAD 823743c` + 工作区 58 文件改动；以下状态已按当前实现和后续证据归位，提交号只保留历史定位，不替代当前版本验收。已实施、实际失败、缺证和未支持能力分别认定；缺证不自动要求开发。
 
 ### 1. 定级总表
 
@@ -562,25 +566,25 @@ agent 给出的机制判定与实测：
 | SIM-08 `pending system_followup` 混义 | ✅ 已修复并提交（`bd95960`） | S5 板拆两句 + S2/S4/S5 回执加定语；整理见 `blueprint/SIM-08-followup-note.md` |
 | SIM-09 S9 两表同 `assignment_id` | ✅ 已修复并提交（`ff92af9`） | 验证者指引点名共用 Builder anchor + 禁手写验证者 ID；问卷测试锁两句 |
 | SIM-10 ChangeImpact「未准备」无入口 | ✅ 已修复并提交（`7f76365`） | 新增 `impact prepare` + 三处指路 + ID 双来源等价口径；顺手正 70 行措辞 |
-| SIM-11 接收中断与内容拒错 | 死亡兼容锁已定向修复；完整中断矩阵待验 | 原入口按已退出 PID 立即回收，活进程负例及真实强杀回归保留；无人触发自动执行尚未实现 |
-| SIM-12 S10/S11 口径 | ✅ 已修复并提交（`6795e11`） | schema description + 双问卷口径 + 两个文案断言测试；S11 申请无 schema 校验记为后续 gap |
-| SIM-13 私有文件≠已接收无反馈 | ✅ 已修复并提交（`4d3138d`） | S9 brief 已有；S6 brief 补同款 `s6 status` 查询句；断线续跑机制本来全 |
-| SIM-14 未归属路径否证注册 | ✅ 已修复并提交（`15c4efd`） | deleted surface 不进 frozen_subjects，注册只看归属；漂移文案改挂牌口径；测试跟新语义 |
+| SIM-11 接收中断与内容拒错 | 分类、一次输入及原恢复已实现；现规模 Stop 预算失败仍开放 | 已退出 PID 回收及活进程负例保留；最新原 Plan 已收、Result deadline 后具名恢复有效，余下适用窗口待证；无人触发自动执行属未支持能力 |
+| SIM-12 S10/S11 口径 | ✅ 已修复并提交（`6795e11`） | schema description + 双问卷口径 + 两个文案断言测试；不因缺额外 schema 自动新增实施前提 |
+| SIM-13 私有文件≠已接收无反馈 | ✅ 已修复并提交（`4d3138d`） | S9 brief 已有；S6 brief 补同款 `s6 status` 查询句；查询仅作可选诊断，具体中断保证仍按实际证据 |
+| SIM-14 未归属路径否证注册 | 原修法已替代；T3 定向组合通过 | 原 FrozenSubjects 统一删除前态、来源及覆盖分母；删除仍须完整审查，真实平台删除题材待证 |
 | SIM-15 TASK 模板两句话 | ✅ 已修复并提交（`82b0fc3`） | §2 相对本 TASK 目录 + §8 空表禁占位；语义测试通过 |
 | SIM-16 措辞归集 9 项 | ✅ 已修复并提交（`09be9e8`） | S7 问卷补 E2E N/A/合并/seed 口径 + 中断恢复；S0 锁定触发=落盘；余项此前已修 |
-| SIM-17 接收链工作量与交接 | 四项及相邻复验通过；整体仍有红灯 | 推荐日志到 Main Final 已验；真实平台继续兼容、缺候选的集成诊断、全量回归及整链增长／中断矩阵未闭合 |
+| SIM-17 接收链工作量与交接 | 主线及 T1～T6/C1 已实施；现规模预算失败仍开放 | 带技术辅助的 S9→S11 域链到 release_authorized/rev70，机械 verify1；原恢复有效，R2/余下适用中断与增长分别待修/待证 |
 | SIM-18 PreToolUse 超时归因 | 旧全局 deny 修法废弃；监听与观测仍需减负 | 现行入口不决定工具许可；超时不得误报接收／推进，领域条件仍由原消费者检查 |
 | SIM-19 Runtime 状态随轮次膨胀 | S7／两类 S9 外置和恢复已落盘，验证中 | 新写轻索引，旧状态显式维护，保留完整原题及独立恢复副本；其他阶段仍内嵌，无 GC 或内部共同来源去重 |
 | SIM-20 转录历史放大器 | 分块早停与共享 fallback 预算已落盘，验证中 | 保留准确任务与原尾／头覆盖范围，命中早停且重叠区间不重读；不增加作者动作 |
 | 存量 1–4 | 已在工作区修复 | `docs/rules/ui-prototype.md` + `skills/ui-prototyping/SKILL.md` 去四 token 校验说辞；`L4-hook-platform-wiring.md:33` 改 `*`；`review-plan.schema.json` 删 `behavior_surface`；`submission-receipt.schema.json` 补 `attempt_status=rejected` |
 | 存量 5–6 | 已在工作区修复 | `action_catalog.go` 已补新命令；`internal/evidence/local_path.go:+30 ValidateLocalCaptureSource` 黑名单已加 |
-| 存量 7（4 个失败测试） | 已在工作区修复，待跑全量 | `s6_prepare_test/integrate/investigation/repair_plan_report` 均有对应更新 |
+| 存量 7（4 个失败测试） | 测试证据待逐名确认 | 对应夹具已更新不证明四项通过；复用当前源码日志，缺项只补适用检查 |
 | FIX-01～05 | 夹具侧，非框架缺陷 | 反馈文件进产品树、`candidate-inputs.json` 缺 stage、45min 切片、磁盘打满；修仿真夹具，不进框架修复分支 |
 
 ### 2. 修复总原则（四条红线）
 
-1. 不新增手填字段：所有恢复/重交入口只接受问卷文件路径或登记 ID，digest/sha 由系统回填，CLI 拒收手写 `sha256=`。
-2. 问卷替代传参：`revive/revise/ChangeImpact/S9 division/超时重放` 全部走已发行问卷 `answer`，`--file` 只收问卷 JSON 路径，不收内联 JSON。
+1. 系统已知的身份、来源绑定和摘要由原生产者带出；作者只填必要专业字段，不抄 ID/hash 或补无消费者的恢复字段。保留原来源真实性与准确消费者校验。
+2. 专业答案沿原答卷交付；系统恢复复用原具名操作。`revive`、`runtime repair impact prepare`、`runtime repair handoff complete` 不为形式统一新增确认问卷或手填字段；`revise --file` 接收 JSON 文件路径。
 3. 失败可见：传输中断、来源漂移、专业拒错和已接收后继未完成分别反馈，保留准确原引用和具名缺口。退出码遵循事件合同，exit 0 不证明接收；不以统一非零、工具 deny 或要求作者代交作为恢复方案。
 4. 知识绑到人：brief/`instruction`/表单写清「谁、填什么、不填什么」，文档语义下沉到 Worker 眼前，不指望 Worker 读 blueprint。
 
@@ -602,30 +606,29 @@ D. PreToolUse 监听与传输观测（SIM-18）：
 B. 安全恢复冻结源（SIM-05 代码护栏）：
 
 - 恢复前做集合比较：`pinned 存在 & 字节漂移 → 还原；pinned 无 & 现存 → 保留 + 报告 + 列入未归属候选；pinned 存在 & 现缺 → 按缺失处理并报告`。禁止无报告删除。
-- `revive` 前置检查输出三列表（还原/保留/缺失）+ 一条问卷命令；`action_catalog.go` 文案保留，但以代码护栏为准。
+- 原 `runtime review-plan frozen-diff` 只读提供还原/保留/缺失比较，恢复沿准确原入口与来源；不新增问卷命令、自动 reset/清理或通用恢复器。
 
-C. 未归属路径排除面（SIM-14）：
+C. 删除与完整覆盖同分母（SIM-14）：
 
-1. `buildsurface` 加可声明排除面：按路径前缀声明本轮审查范围（如 `simulation/、*.log、coverage/` 默认候选），Main 在问卷勾选，不手写正则；
-2. `internal/review/draft.go` 成功路径 `notes` 不再丢弃，随 seed 送 Planner，并在问卷 `read` 列表置顶未归属提示；
-3. 注册失败文案区分「未归属漂移（给排除/纳入二选一命令）」vs「TASK 归属路径被改（给 rework/new-round 命令）」。
+- 复用原 `FrozenSubjects` 的删除前态、来源与覆盖消费者；T3 已替代旧排除修法，当前组合证据见原条目。
+- 未归属产品变更继续完整审查；系统诊断按准确来源与消费者识别，夹具反馈留在产品输入之外。不新增路径前缀排除表、Main 勾选或排除/纳入确认动作。
 
-### 4. P1：补恢复入口（SIM-10 + SIM-08 + SIM-07 尾巴）
+### 4. 已实施的原恢复入口（SIM-10 + SIM-08 + SIM-07）
 
-- ChangeImpact 未准备：新增 `loop-harness runtime repair prepare-change-impact --root`（问卷驱动：系统预填 `required_reverification_ids` 来自合同断言，Main 只勾选/确认），表单写明双来源等价；无问卷时 Hook 报错直接给出该命令。
-- `pending system_followup`：拆两句：`answer accepted, do not resubmit` + `stage exit pending: <TR/GATE + 恢复命令>`。
-- `revise --help`：补可复制示例（问卷路径版），`agent-protocol.md#s7` 补 `revive`（状态恢复，需字节一致）vs `revise`（Claim 受控变更，不动基线）vs `rework/new-round`（真产品变更）三段表。
+- ChangeImpact 未准备：原 `runtime repair impact prepare --root <Main-root>` 准备原材料；专业字段沿原 ChangeImpact 答卷，不新增勾选/确认或手抄 ID。
+- `pending system_followup`：原回执区分答案已收和出口待续，已收部分不重交。
+- `revise --help` 与原协议已说明 JSON 文件路径及 `revive/revise/rework` 分工，保持原消费者。
+- R2 的 Targeted→Handoff 动作完整性、绝对 Main-root 与当前投影仍由本轮实现包处理；正常成功不证明故障恢复分支完成。
 
-### 5. P2/P3：措辞下沉（SIM-12 尾巴 + SIM-16 + SIM-09 确认）
+### 5. 已实施的专业指引（SIM-12 + SIM-16 + SIM-09）
 
-- S10 Manifest 注释补八主题→字段映射；S11 表单隐藏系统字段或标「系统写入，留空」。
-- S9→S7 seed：`assertion/method=PLANNER-REFINE` 改名「待 Planner 细化（非缺失）」，`cold_start` 改名「无历史基线冷启动（≠必须浏览器 E2E）」。
-- S7 合并规则、何时 Claim 合一 Assignment、S8 discriminator 出路（与 SIM-01 联动：判别式处理即满足收口）进 brief 正文，不只放协议。
-- S9 两表渲染回归：确认验证者表沿用 `assignment_id` + 系统派生提示可见。
+- S10 原题面/schema 说明系统基线和主题映射，S11 明确作者专业字段；没有实际失效证据，不把额外 schema 完整化当实施前提。
+- S9→S7 seed、E2E N/A 与 Claim 合并已有指引；seed 不等于专业 Plan 完成或 PASS，合法选择仍由 Planner 判断。
+- S8 判别式处置沿原消费者；S9 两表共用 Builder anchor，验证者身份系统派生，不新增作者登记。
 
 ### 6. 验证与收尾
 
-1. `go test ./internal/...` 全量 + `TestS9* / TestS7* / hook_budget` 定向回归；
-2. 用当前版本重放 `callback-api`／`ui-ledger` 原接收及中断窗口，在既定事件预算内检查输入、暂存、pending、接收与后继；增长场景分别记录历史 packet、日志和转录的成本，不把 28 秒 S4 特例移用到 S7。恢复删除场景确认现存文件保留并准确报告；
-3. `blueprint/L3-S7/S8/S9、L4-hook-platform-wiring、L4-state-transition` 同步更新；
-4. 按本文件第 5 行约定，修复提交逐条删除对应条目，不累积历史；FIX-01～05 修仿真夹具（反馈文件移出产品树、`candidate-inputs.json` 补 stage）。落地顺序建议：P0（A→B→C）→ P1 → P2/P3；SIM-17 按原接收链的输入、来源、事务与反馈边界分层闭合；SIM-19 的格式改造独立验证兼容，不要求先外移 Hook 或新增作者步骤。
+1. 按变更的实际依赖选原入口、最小反例和适用后继，复用当前源码的有效记录；局部修复不默认升级成全 `internal`、全部 L3/L4 更新或所有理论中断组合。本次 R1 只有文档一致性、引用与残留冲突扫描，不运行 Go 或模型。
+2. SIM-11/17 现规模正常 Stop 预算失败仍开放，先按[收敛规划 §9](../.local/framework-maintenance/convergence-bugs-review-20261026T082158Z/NEXT-ITERATION.md)追原调用边与成本；保留已收事实、来源/owner/代次资格、幂等和准确拒错。不能先扩事件预算、合并全部事务或建设全局缓存/通用恢复器。
+3. 其余适用中断与事先固定的代表性增长分别补证，保持同一合法任务、断言分母、预算和作者动作，记录实际读取与整链成本。清单是方法库，未命中的真实平台和增长范围继续待验，不把所有理论分支补齐作为完成条件。
+4. 修复只同步原权威及受影响投影；已有明确设计义务直接回归实现，需要设计演化时先修原正文并删除旧要求。按本文件开头约定就地更新真实状态，不另立永久账本。FIX-01～05 沿原准备器、准确 stage/hash 输入、获准 driver3600/240 turns、运行前资源与串行安排处理，不新增产品排除面、质量门或无限续跑承诺。

@@ -10,12 +10,42 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 const repairHandoffPendingInstruction = "The final required Targeted SubagentStop attempts the original Handoff automatically. If it remains incomplete, preserve the accepted observations and use the exact runtime repair handoff complete recovery supplied with the failure; a real budget decision remains necessary when the limit is reached. No extra Handoff answer or repeated Targeted report is needed; ordinary reminders do not retry the transition"
 
 func repairExitRecovery(root string) string {
-	return fmt.Sprintf("runtime repair handoff complete --root %q", root)
+	return fmt.Sprintf("%s runtime repair handoff complete --root %s", s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness")), s7CaptureShellQuote(root))
+}
+
+// Use the original locked REQ destination, never the current checkout as a
+// substitute authority. This finite read does not validate the Git closure.
+func repairExitMainRoot(root string, state map[string]any) (string, error) {
+	binding, err := checkpointREQWorkspace(state)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(binding.ProjectRoot) {
+		return "", fmt.Errorf("original REQ Main-root is not absolute: %s", binding.ProjectRoot)
+	}
+	main, err := workspace.Canonical(binding.ProjectRoot)
+	if err != nil {
+		return "", fmt.Errorf("original REQ Main-root unavailable: %w", err)
+	}
+	requested, err := workspace.Canonical(root)
+	if err != nil {
+		return "", err
+	}
+	if requested != main {
+		return "", fmt.Errorf("S9 completion root %s differs from original REQ Main-root %s", requested, main)
+	}
+	if _, marked, err := workspace.PointerRoot(main); err != nil {
+		return "", err
+	} else if marked {
+		return "", fmt.Errorf("original REQ Main-root is a Worker checkout")
+	}
+	return main, nil
 }
 
 // A received Targeted conclusion can outlive a failed successor. Keep that
@@ -55,8 +85,30 @@ func repairSeedAwaitingPlan(state map[string]any) bool {
 func repairHandoffProjectionContext(root string, state map[string]any) string {
 	p := repairPointerCLI(state)
 	if stringValue(p["handoff_ref"]) == "" && stringValue(p["status"]) != "ready_for_full_review" {
-		return "" // An accepted non-pass or partial Targeted is not a Handoff duty.
+		if lifecycleState(state) == "bug_resolution" {
+			switch stringValue(p["status"]) {
+			case "targeted_reverification":
+				return "Main follows the remaining original independent Targeted verification responsibilities; accepted observations remain recorded."
+			case "blocked":
+				if stringValue(p["failure_route"]) == "blocked" {
+					return "Main resolves the recorded environmental blocker, then resumes the original independent Targeted verification responsibility; accepted observations remain recorded."
+				}
+				return stringValue(p["next_action"])
+			}
+		}
+		return ""
 	}
+	if stringValue(p["handoff_ref"]) != "" && !repairCurrentS7Entry(state) {
+		return "The original repair Handoff is recorded; follow the current lifecycle responsibility without resuming this completed repair or its former S7 entry."
+	}
+	if stringValue(p["handoff_ref"]) == "" && lifecycleState(state) != "bug_resolution" {
+		return "This original repair is no longer the current lifecycle responsibility; follow the current stage without resuming its former completion action."
+	}
+	main, err := repairExitMainRoot(root, state)
+	if err != nil {
+		return "S9 original completion context cannot resolve its original Main-root: " + err.Error() + ". Preserve accepted facts; no recovery command was inferred."
+	}
+	root = main
 	message := ""
 	if stringValue(p["handoff_ref"]) == "" {
 		message = "S9 original completion recovery: `" + repairExitRecovery(root) + "`. Preserve accepted Targeted observations; this outlet only completes the original Handoff and S7 preparation."
@@ -69,7 +121,7 @@ func repairHandoffProjectionContext(root string, state map[string]any) string {
 	if s7BudgetGateRequired(state, root) {
 		path, _, err := s7BudgetDecisionApplicationForState(root, state)
 		if err == nil {
-			message += " Original human budget application: " + path + "."
+			message += " Actual review budget is exhausted; the original human decision is required before completion. Original human budget application: " + path + "."
 		}
 	}
 	if seed := stringValue(p["review_plan_seed_ref"]); repairCurrentS7Entry(state) {
@@ -77,9 +129,12 @@ func repairHandoffProjectionContext(root string, state map[string]any) string {
 		if plan := review.PlanPointerFromState(state); plan != nil && plan.ReviewRound == integerValue(nestedStateValue(state, "review", "round")) && !repairSeedAwaitingPlan(state) {
 			return message + " The current S7 ReviewPlan is already registered; follow its current independent review responsibilities without submitting it again."
 		}
+		if plan := review.PlanPointerFromState(state); plan == nil || plan.ReviewRound != integerValue(nestedStateValue(state, "review", "round")) {
+			return message + " The original S9 seed/ReviewPlan projection is missing for this TR-012 entry; resume `" + repairExitRecovery(root) + "` to restore preparation without resubmitting accepted Targeted work."
+		}
 		if path := reviewPlanQuestionnairePath(root, state); path != "" {
 			message += " S7 Main ReviewPlan questionnaire: " + path + "; planning guide: " + reviewPlanGuidePath(path) + ". Complete and save the original questionnaire for registration."
-			for _, source := range []string{path, reviewPlanGuidePath(path)} {
+			for _, source := range []string{resolveRootPath(root, seed), path, reviewPlanGuidePath(path)} {
 				if info, err := os.Stat(source); err != nil || !info.Mode().IsRegular() {
 					message += " Preparation is incomplete at " + source + "; resume `" + repairExitRecovery(root) + "`."
 				}
@@ -92,6 +147,14 @@ func repairHandoffProjectionContext(root string, state map[string]any) string {
 // Only actual completion and explicit recovery call this function; ordinary
 // Pre/status projections cannot advance a round or manufacture a decision.
 func completeRepairExit(root string) (string, error) {
+	original, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).Snapshot()
+	if err != nil {
+		return err.Error(), err
+	}
+	root, err = repairExitMainRoot(root, original.State)
+	if err != nil {
+		return err.Error(), err
+	}
 	ref, snapshot, err := completeRepairHandoff(root)
 	if err != nil {
 		message := "Original Handoff remains incomplete: " + err.Error() + ". "

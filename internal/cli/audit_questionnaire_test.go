@@ -347,7 +347,6 @@ func questionnaireSHA(data []byte) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-
 func TestAuditQuestionnaireNamesPrefilledBaselineAndTopicSlots(t *testing.T) {
 	root, state := auditQuestionnaireRuntime(t)
 	for _, tc := range []struct {

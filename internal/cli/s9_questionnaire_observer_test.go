@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/packetbody"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -70,42 +72,197 @@ func TestS9ObserverDispatchSavesOriginalChoicesWithoutPassivePreparation(t *test
 	repairDispatchAssertUnchanged(t, root, before)
 }
 
+// Exercise the professional projection with canonical packets and receipts
+// produced by the original consumers. The old Result-only listener fixture
+// intentionally lacked the PlanReport/source closure and cannot model a save.
 func TestS9ObserverAcceptedProfessionalAnswerSkipsGenericFollowupProof(t *testing.T) {
 	for _, kind := range []string{"plan", "candidate", "result"} {
 		t.Run(kind, func(t *testing.T) {
-			f := newS9ListenerFixture(t, kind != "plan")
-			answer := map[string]any{"plan": "real fixture professional text"}
-			path := resolveRootPath(f.worker, f.packet.answer)
-			writeRepairLeadJSON(t, path, map[string]any{"title": "machine", "answer": answer})
-			receipt := map[string]any{"packet_id": f.packet.id, "owner_agent_id": f.packet.binding.OwnerAgentID, "execution_root": f.worker, "submitted_answer": answer, "completion_report_ref": ".claude/completion.json"}
-			pointer := repairPointerCLI(f.state)
-			switch kind {
-			case "plan":
-				pointer["plan_report_refs"] = []any{f.artifact(t, ".claude/plan-accepted.json", map[string]any{"receipt": receipt})}
-			case "result":
-				pointer["result_refs"] = []any{f.artifact(t, ".claude/result-accepted.json", map[string]any{"receipt": map[string]any{"provenance": receipt}})}
-			case "candidate":
-				ref := f.artifact(t, ".claude/candidate-accepted.json", map[string]any{"provenance": receipt})
-				_, execution, _ := s9ListenerResultSource(f.root, f.state, f.packet)
-				execution["delivery_ref"], execution["delivery_sha256"] = ref["path"], ref["sha256"]
+			root, worker, plan, input, _ := nativeS9WorkerFixture(t)
+			input.Event = "SubagentStop"
+			var out, diagnostic bytes.Buffer
+			if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 {
+				t.Fatalf("original native reception: %t %d %s", handled, code, diagnostic.String())
 			}
-			q := observedQuestionnaire{path: path, s9Kind: "packet", s9Packet: &f.packet}
-			data, _ := os.ReadFile(path)
-			f.write(t)
-			before := repairDispatchRuntimeBytes(t, f.root)
-			if !s9ObservedQuestionnaireUnchanged(f.root, f.state, q, data) {
-				t.Fatal("same accepted professional answer required generic lifecycle proof")
+			state := repairDispatchSnapshot(t, root).State
+			questions, err := s9ListenerQuestionnairesContext(context.Background(), root, state, plan.Binding.OwnerAgentID, kind != "plan")
+			if err != nil || len(questions) != 1 {
+				t.Fatalf("exact accepted question: %d %v", len(questions), err)
 			}
-			if handled, out := s9Observe(t, f.root, "Bash", f.packet.binding.OwnerAgentID); handled || out != "" {
-				t.Fatalf("accepted answer reran original save/receipt: %s", out)
+			packet := questions[0]
+			draft, err := s9ListenerQuestionnaireDraft(context.Background(), root, state, packet)
+			if err != nil {
+				t.Fatalf("canonical draft/source closure unavailable: %v", err)
 			}
-			repairDispatchAssertUnchanged(t, f.root, before)
-			answer["plan"] = "changed professional judgment"
-			writeRepairLeadJSON(t, path, map[string]any{"answer": answer})
-			if handled, out := s9Observe(t, f.root, "mcp__example__save", f.packet.binding.OwnerAgentID); !handled || !strings.Contains(out, "S9 SUBMISSION RECEIPT") {
-				t.Fatalf("changed answer did not reach original consumer feedback: %s", out)
+			path, source := filepath.Join(root, packet.answer), root
+			if kind != "plan" {
+				path, source = filepath.Join(worker, packet.answer), worker
 			}
-			repairDispatchAssertUnchanged(t, f.root, before)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := observedQuestionnaire{path: path, draft: draft, s9Kind: "packet", s9Packet: &packet}
+			before := repairDispatchRuntimeBytes(t, root)
+			if !s9ObservedQuestionnaireUnchanged(root, state, q, data) {
+				t.Fatal("original accepted professional answer lost immutable projection")
+			}
+			// Machine wrapper text is not a new professional answer. This
+			// must remain a projection comparison, not full-envelope equality.
+			var metadataOnly map[string]any
+			if err := json.Unmarshal(data, &metadataOnly); err != nil {
+				t.Fatal(err)
+			}
+			metadataOnly["title"] = "changed machine presentation; same professional answer"
+			metadataBytes, err := json.Marshal(metadataOnly)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !s9ObservedQuestionnaireUnchanged(root, state, q, metadataBytes) {
+				t.Fatal("machine title change caused professional resubmission")
+			}
+			if handled, feedback := s9Observe(t, root, "Bash", plan.Binding.OwnerAgentID); handled || feedback != "" {
+				t.Fatalf("unchanged answer reran reception: %s", feedback)
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+
+			// A changed projection is distinct, but a native ordinary save is
+			// not a delivery. Only the explicit original consumer tests conflict.
+			var changed map[string]any
+			if err := json.Unmarshal(data, &changed); err != nil {
+				t.Fatal(err)
+			}
+			answer := mapFieldCLI(changed, "answer")
+			if kind == "plan" {
+				answer["plan"] = "changed professional judgment"
+			} else {
+				units := objectSliceAny(answer["unit_results"])
+				if len(units) == 0 {
+					t.Fatal("real accepted Result has no unit observations")
+				}
+				units[0]["implementation_summary"] = "changed professional judgment"
+			}
+			changedBytes, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s9ObservedQuestionnaireUnchanged(root, state, q, changedBytes) {
+				t.Fatal("changed judgment was mistaken for accepted content")
+			}
+			if err := os.WriteFile(path, changedBytes, 0600); err != nil {
+				t.Fatal(err)
+			}
+			input.Event, input.ToolName = "PostToolUse", "Bash"
+			out.Reset()
+			diagnostic.Reset()
+			if _, code := nativeS9Hook(root, input, &out, &diagnostic); code != 0 || out.Len() != 0 {
+				t.Fatalf("native ordinary save became reception: %d %s %s", code, out.String(), diagnostic.String())
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+			service, err := submission.New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var receipt submission.Receipt
+			if kind == "plan" {
+				receipt, err = service.SaveRepairPlanReportFrom(context.Background(), plan.Binding.OwnerAgentID, path, source, nil)
+			} else {
+				receipt, err = service.SaveRepairResultFrom(context.Background(), plan.Binding.OwnerAgentID, path, source, nil)
+			}
+			if !errors.Is(err, runtime.ErrSubmissionConflict) || receipt.Accepted || receipt.Error == "" {
+				t.Fatalf("changed answer lost original conflict: %+v %v", receipt, err)
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			if kind == "candidate" {
+				// Losing a body does not erase the accepted professional fact.
+				// A changed answer now has an unknown comparison, not rejection.
+				var bodyRef packetbody.Reference
+				for _, row := range objectSliceAny(mapFieldCLI(state, "entities")["work_packets"]) {
+					if row["packet_id"] == packet.id {
+						var external bool
+						bodyRef, external, err = packetbody.ReferenceFromIndex(row)
+						if err != nil || !external {
+							t.Fatalf("real canonical packet body: %t %v", external, err)
+						}
+					}
+				}
+				if bodyRef.Path == "" {
+					t.Fatal("accepted packet has no original body reference")
+				}
+				bodyPath := filepath.Join(root, bodyRef.Path)
+				originalBody, err := os.ReadFile(bodyPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(bodyPath); err != nil {
+					t.Fatal(err)
+				}
+				q.draft = nil
+				if !s9ObservedQuestionnaireUnchanged(root, state, q, data) {
+					t.Fatal("missing body erased accepted professional fact")
+				}
+				if _, err := s9ListenerQuestionnaireDraft(context.Background(), root, state, packet); err == nil {
+					t.Fatal("missing original body was silently rebuilt")
+				}
+				if err := os.WriteFile(path, changedBytes, 0600); err != nil {
+					t.Fatal(err)
+				}
+				handled, feedback := s9Observe(t, root, "mcp__example__save", plan.Binding.OwnerAgentID)
+				if !handled || !strings.Contains(feedback, "S9 observation is incomplete") || !strings.Contains(feedback, "No answer rejection or missing questionnaire was inferred") || strings.Contains(feedback, "S9 SUBMISSION RECEIPT") {
+					t.Fatalf("unknown original source misreported acceptance/rejection: %s", feedback)
+				}
+				repairDispatchAssertUnchanged(t, root, before)
+				if err := os.WriteFile(bodyPath, originalBody, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if kind == "result" {
+				var integrate, integrateErr bytes.Buffer
+				if code := runWorkspaceDelivery([]string{"integrate", "--root", root, "--assignment", plan.Binding.ManifestAssignmentID, "--agent", plan.Binding.OwnerAgentID, "--check-command", "test -f internal/api/one.go"}, &integrate, &integrateErr); code != 0 {
+					t.Fatalf("original Final integration: %d %s %s", code, integrate.String(), integrateErr.String())
+				}
+				state = repairDispatchSnapshot(t, root).State
+				if len(repairArtifactRefs(repairPointerCLI(state), "result_refs", "result_ref", "result_sha256")) == 0 {
+					t.Fatal("original Final receipt missing")
+				}
+				before = repairDispatchRuntimeBytes(t, root)
+				if !s9ObservedQuestionnaireUnchanged(root, state, q, data) {
+					t.Fatal("Final lost its immutable professional projection after cleanup")
+				}
+				// Isolate Final's authority in this request-only projection;
+				// a surviving candidate must not satisfy the Final assertion.
+				finalBytes, err := json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var finalOnly map[string]any
+				if err := json.Unmarshal(finalBytes, &finalOnly); err != nil {
+					t.Fatal(err)
+				}
+				finalExecution := s9ObservedExecution(finalOnly, packet)
+				finalExecution["delivery_ref"], finalExecution["delivery_sha256"] = "", ""
+				if !s9ObservedQuestionnaireUnchanged(root, finalOnly, q, data) || !s9ObservedQuestionnaireUnchanged(root, finalOnly, q, metadataBytes) {
+					t.Fatal("Final projection depended on candidate authority or machine title")
+				}
+				if handled, feedback := s9Observe(t, root, "Bash", plan.Binding.OwnerAgentID); handled || feedback != "" {
+					t.Fatalf("Final history was resubmitted: %s", feedback)
+				}
+				input.Event = "SubagentStop"
+				out.Reset()
+				diagnostic.Reset()
+				if _, code := nativeS9Hook(root, input, &out, &diagnostic); code != 0 {
+					t.Fatalf("late native return after Final: %s", diagnostic.String())
+				}
+				repairDispatchAssertUnchanged(t, root, before)
+			}
 		})
 	}
 }
@@ -337,7 +494,7 @@ func TestS9SaveAdapterFindsChangedCurrentPlanWithoutRewritingCaller(t *testing.T
 	second := packets[1]
 	reminder, handled := s9PacketQuestionnaireLifecycleContext(root, policy.Input{Event: "PreToolUse", AgentID: second.Binding.OwnerAgentID, CWD: root}, after)
 	brief, _, resultPath := nativeS9Paths(second)
-	if !handled || !strings.Contains(reminder, "exact native brief "+resolveRootPath(root, brief)) || !strings.Contains(reminder, "private worktree-relative PlanReport "+second.AnswerPath) || !strings.Contains(reminder, resultPath) || !strings.Contains(reminder, "ordinary saves do not receive") {
+	if !handled || !strings.Contains(reminder, "exact native brief "+resolveRootPath(root, brief)) || !strings.Contains(reminder, "private worktree-relative PlanReport "+second.AnswerPath) || !strings.Contains(reminder, resultPath) || !strings.Contains(reminder, "Ordinary saves do not receive or activate this responsibility") {
 		t.Fatalf("sibling implementation hid the original native Builder Plan/Result route: %s", reminder)
 	}
 	var secondScope []string

@@ -16,9 +16,9 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
-func nativeS9WorkerFixture(t *testing.T) (string, string, workpacket.RepairPlanReportPacket, policy.Input, workpacket.RepairResultProfessionalAnswer) {
+func nativeS9WorkerFixture(t *testing.T, assertionCopies ...int) (string, string, workpacket.RepairPlanReportPacket, policy.Input, workpacket.RepairResultProfessionalAnswer) {
 	t.Helper()
-	root, plan, _, _, division := repairExecutionPlanningFixture(t)
+	root, plan, _, _, division := repairExecutionPlanningFixture(t, assertionCopies...)
 	writeRepairLeadFile(t, root, "go.mod", "module native.s9.fixture\n\ngo 1.26\n")
 	repairLeadCommitFixture(t, root)
 	feedback := repairDispatchSave(t, root, division, []repairDispatchChoice{{AssignmentID: plan.Assignments[0].AssignmentID, RoleFamily: "backend-builder"}})
@@ -503,14 +503,14 @@ func TestNativeS9FirstIncompleteStopReturnsExactGapToMainWithoutAcceptance(t *te
 			if strings.Contains(summary, "后台") {
 				t.Fatalf("unfinished responsibility treated as running: %s", summary)
 			}
-			// Fixing a private artifact makes the old display inapplicable, even
-			// before a subsequent Stop has attempted reception. Unrelated writes
-			// keep this original gap visible; changed sources/owners do not.
+			// A repaired private artifact does not erase the captured historical
+			// attempt before a new Stop receives it. Display is not revalidation;
+			// changed responsibility/source bindings still suppress old context.
 			if err := os.WriteFile(local, original, 0600); err != nil {
 				t.Fatal(err)
 			}
-			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); got != "" {
-				t.Fatalf("old missing-file diagnostic survived changed artifact: %s", got)
+			if got := nativeS9ReturnDiagnostic(root, snap, p.ID); !strings.Contains(got, local) || !strings.Contains(got, "observed then, not revalidated") {
+				t.Fatalf("private correction erased or revalidated historical context: %s", got)
 			}
 			if err := os.Remove(local); err != nil {
 				t.Fatal(err)

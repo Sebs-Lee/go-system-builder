@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/agentcontext"
@@ -162,9 +163,54 @@ func TestAcceptedS4FormalTaskFeedsS5WorkspacePrepare(t *testing.T) {
 	if _, err := runtime.CurrentFormalInputDocuments(root, stale, fileview.Disk{Root: root}); err == nil {
 		t.Fatal("previous-generation S4 closure remained eligible in S5")
 	}
-	writeContractSource(t, root, "docs/rules/dispatch-plan.md", "drifted accepted S4 source\n")
-	if _, err := runtime.CurrentFormalInputDocuments(root, stageSnapshot(t, root).State, fileview.Disk{Root: root}); err == nil {
-		t.Fatal("drifted accepted S4 source remained eligible in S5")
+	// New S5 responsibilities freeze current method bytes. Previously issued
+	// packets and their workspaces retain the bytes actually supplied to them.
+	const methodPath = "docs/rules/dispatch-plan.md"
+	const updatedMethod = "updated current S5 dispatch planning method\n"
+	frozenPacket := packets[0]
+	frozenBytes, err := json.Marshal(frozenPacket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frozenInputs := map[string]string{}
+	for path, digest := range execution.Inputs {
+		frozenInputs[path] = digest
+	}
+	writeContractSource(t, root, methodPath, updatedMethod)
+	currentMethod := false
+	for _, document := range mustFormalInputDocuments(t, root, stageSnapshot(t, root).State) {
+		if document.Reference.Path == methodPath {
+			currentMethod = true
+			if document.Reference.SHA256 != workpacket.Digest([]byte(updatedMethod)) {
+				t.Fatalf("new S5 input lost current method: %+v", document.Reference)
+			}
+		}
+	}
+	if !currentMethod {
+		t.Fatal("new S5 closure dropped planning method")
+	}
+	currentPacket, found, err := runtime.FindWorkPacket(stageSnapshot(t, root).State, frozenPacket.ID)
+	if err != nil || !found {
+		t.Fatalf("read frozen S5 packet: %t %v", found, err)
+	}
+	currentBytes, err := json.Marshal(currentPacket)
+	if err != nil || string(currentBytes) != string(frozenBytes) {
+		t.Fatalf("method change rewrote issued S5 packet: %v", err)
+	}
+	currentRegistry, err := workspace.Decode(stageSnapshot(t, root).State)
+	if err != nil || !reflect.DeepEqual(currentRegistry.Executions[packets[0].Binding.AssignmentID].Inputs, frozenInputs) {
+		t.Fatalf("method change rewrote frozen workspace inputs: %v", err)
+	}
+	for _, path := range []string{taskRef.Path, "docs/dev/tasks/index-REQ-039.md"} {
+		original, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeContractSource(t, root, path, "drifted accepted S4 product\n")
+		if _, err := runtime.CurrentFormalInputDocuments(root, stageSnapshot(t, root).State, fileview.Disk{Root: root}); err == nil {
+			t.Fatalf("drifted accepted S4 output remained eligible in S5: %s", path)
+		}
+		writeContractSource(t, root, path, string(original))
 	}
 }
 

@@ -82,7 +82,7 @@ func TestMainOrdinaryReadAndNonCheckpointStatusProgressWire(t *testing.T) {
 	json.Unmarshal(settings, &parsed)
 	matches := parsed["hooks"].(map[string]any)["PostToolUse"].([]any)[0].(map[string]any)["matcher"].(string)
 	for _, tool := range []string{"Read", "Glob", "Grep"} {
-		if !strings.Contains(matches, tool) {
+		if !installedHookMatcherMatches(t, matches, tool) {
 			t.Fatal("Main matcher lacks ordinary observation", tool)
 		}
 	}

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,10 +16,30 @@ import (
 // Original responsibility/source coordinates and exact file observations keep a rejection from being
 // projected as the current gap after the answer, source or responsibility changes.
 type nativeS9Diagnostic struct {
-	Scope   string            `json:"scope"`
-	Runtime string            `json:"runtime"`
+	Scope           string                   `json:"scope"`
+	Runtime         string                   `json:"runtime"`
+	Message         string                   `json:"message"`
+	Files           map[string]string        `json:"files"`
+	Attempt         *nativeS9Attempt         `json:"attempt,omitempty"`
+	ConsumerFailure *nativeS9ConsumerFailure `json:"consumer_failure,omitempty"`
+}
+
+// One preserved consumer rejection, separate from a later prerequisite attempt.
+type nativeS9ConsumerFailure struct {
 	Message string            `json:"message"`
 	Files   map[string]string `json:"files"`
+	Attempt *nativeS9Attempt  `json:"attempt"`
+}
+
+func (d nativeS9Diagnostic) historicalMessage() string {
+	if d.Message == "" && d.ConsumerFailure == nil {
+		return ""
+	}
+	message := "Original reception attempt (observed then, not revalidated): " + d.Message
+	if d.ConsumerFailure != nil {
+		message += " Preserved original consumer failure (observed then, not revalidated): " + d.ConsumerFailure.Message
+	}
+	return message
 }
 
 func nativeS9DiagnosticPath(key string) string {
@@ -46,46 +65,22 @@ func recordNativeS9DiagnosticContext(ctx context.Context, root string, snap runt
 	if ctx.Err() != nil {
 		return
 	}
-	parent, name, err := workpacket.OpenParent(root, nativeS9DiagnosticPath(key), failure != nil)
-	if err != nil {
-		return
+	kind := "Builder"
+	if filepath.IsAbs(key) {
+		kind = "Targeted"
 	}
-	defer parent.Close()
+	capture := newNativeS9AttemptCapture(ctx, root, snap, key, owner, kind)
 	if failure == nil {
-		_ = parent.Remove(name)
+		_ = capture.Publish(ctx, nil)
 		return
-	}
-	scope := nativeS9DiagnosticScopeContext(ctx, root, snap.State, key)
-	if scope == "" {
-		return
-	}
-	value := nativeS9Diagnostic{Scope: scope, Runtime: stringValue(snap.State["runtime_id"]), Files: map[string]string{}}
-	value.Message = fmt.Sprintf("Last S9 Stop attempted reception for %s; exact brief/answer references: %v. Consumer diagnostic: %s. This is the last attempt, not a new validation or completion. The original consumer owns interrupted transaction recovery; source/prerequisite gaps remain with Main. Only a specific professional omission requires an author correction; preserve any accepted partial result.", owner, paths, nativeFailureDetail(failure))
-	var completion *repairExitFailure
-	if errors.As(failure, &completion) {
-		value.Message = fmt.Sprintf("Original Targeted observations for %s are accepted; Main owns the unfinished completion outlet. Exact answer references: %v. %s Preserve the accepted independent observations and resume only the original Main completion; do not resume the verifier or repeat its observations. This describes the last completion attempt, not a new validation.", owner, paths, nativeFailureDetail(failure))
-		if repairCurrentS7Entry(snap.State) {
-			if path := reviewPlanQuestionnairePath(root, snap.State); path != "" {
-				paths = append(paths, path, reviewPlanGuidePath(path))
-			}
-		}
 	}
 	for _, path := range paths {
 		if ctx.Err() != nil {
 			return
 		}
-		value.Files[path] = nativeS9FileObservation(path)
+		capture.value.Files[path] = nativeS9FileObservation(path)
 	}
-	data, err := json.Marshal(value)
-	if ctx.Err() != nil || err != nil || len(data) > 64<<10 {
-		return
-	}
-	f, err := parent.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	_, _ = f.Write(data)
-	_ = f.Close()
+	_ = capture.Publish(ctx, failure)
 }
 
 func nativeS9ReturnDiagnostic(root string, snap runtime.Snapshot, key string) string {
@@ -93,29 +88,39 @@ func nativeS9ReturnDiagnostic(root string, snap runtime.Snapshot, key string) st
 }
 
 func nativeS9ReturnDiagnosticContext(ctx context.Context, root string, snap runtime.Snapshot, key string) string {
-	if ctx.Err() != nil {
+	value, ok := nativeS9ReturnDiagnosticRecordContext(ctx, root, snap, key)
+	if !ok {
 		return ""
+	}
+	return value.historicalMessage()
+}
+
+func nativeS9ReturnDiagnosticRecordContext(ctx context.Context, root string, snap runtime.Snapshot, key string) (nativeS9Diagnostic, bool) {
+	if ctx.Err() != nil {
+		return nativeS9Diagnostic{}, false
+	}
+	// Builder Stop records under its original PlanReport, including failures
+	// after the Result packet was issued. A Result ID is not a new attempt.
+	key, keyErr := nativeS9PlanDiagnosticKey(snap.State, key)
+	if keyErr != nil || key == "" || ctx.Err() != nil {
+		return nativeS9Diagnostic{}, false
 	}
 	data, err := workpacket.ReadFile(root, nativeS9DiagnosticPath(key), 64<<10)
 	if err != nil {
-		return ""
+		return nativeS9Diagnostic{}, false
 	}
 	var value nativeS9Diagnostic
-	if json.Unmarshal(data, &value) != nil || value.Scope == "" || value.Scope != nativeS9DiagnosticScopeContext(ctx, root, snap.State, key) || value.Runtime != stringValue(snap.State["runtime_id"]) {
-		return ""
+	if json.Unmarshal(data, &value) != nil || value.Scope == "" || value.Runtime != stringValue(snap.State["runtime_id"]) {
+		return nativeS9Diagnostic{}, false
 	}
-	for path, observed := range value.Files {
-		if ctx.Err() != nil {
-			return ""
-		}
-		if nativeS9FileObservation(path) != observed {
-			return ""
-		}
+	scope := nativeS9DiagnosticScopeContext(ctx, root, snap.State, key)
+	if value.Scope != scope && (value.Attempt != nil || value.Scope != nativeS9LegacyDiagnosticScopeContext(ctx, root, snap.State, key)) {
+		return nativeS9Diagnostic{}, false
 	}
 	if ctx.Err() != nil {
-		return ""
+		return nativeS9Diagnostic{}, false
 	}
-	return value.Message
+	return value, true
 }
 
 // Compare recorded identities, not the global write counter: receiving another
@@ -125,7 +130,7 @@ func nativeS9DiagnosticScope(root string, state map[string]any, key string) stri
 	return nativeS9DiagnosticScopeContext(context.Background(), root, state, key)
 }
 
-func nativeS9DiagnosticScopeContext(ctx context.Context, root string, state map[string]any, key string) string {
+func nativeS9LegacyDiagnosticScopeContext(ctx context.Context, root string, state map[string]any, key string) string {
 	if ctx.Err() != nil {
 		return ""
 	}
@@ -169,4 +174,54 @@ func nativeS9DiagnosticScopeContext(ctx context.Context, root string, state map[
 		return ""
 	}
 	return workpacket.Digest(encoded)
+}
+
+// Resolve only existing index bindings. Do not load a packet body or infer an
+// owner from the platform actor, and do not select an arbitrary same-owner Plan.
+func nativeS9PlanDiagnosticKey(state map[string]any, key string) (string, error) {
+	rows := objectSliceAny(mapFieldCLI(state, "entities")["work_packets"])
+	var sources *workpacket.RepairPlanReportBinding
+	for _, row := range rows {
+		if row["template_id"] != "s9-repair-result-v1" || row["packet_id"] != key {
+			continue
+		}
+		var binding workpacket.RepairResultBinding
+		data, err := json.Marshal(row["binding"])
+		if err != nil {
+			return "", err
+		}
+		if err := json.Unmarshal(data, &binding); err != nil {
+			return "", err
+		}
+		copy := binding.Sources
+		sources = &copy
+	}
+	if sources == nil {
+		return key, nil
+	}
+	selected := ""
+	for _, row := range rows {
+		if row["template_id"] != "s9-plan-report-v1" {
+			continue
+		}
+		var binding workpacket.RepairPlanReportBinding
+		data, err := json.Marshal(row["binding"])
+		if err != nil {
+			return "", err
+		}
+		if err := json.Unmarshal(data, &binding); err != nil {
+			return "", err
+		}
+		if binding != *sources {
+			continue
+		}
+		if selected != "" {
+			return "", fmt.Errorf("Result has multiple original PlanReport diagnostic sources")
+		}
+		selected = stringValue(row["packet_id"])
+	}
+	if selected == "" {
+		return "", fmt.Errorf("Result original PlanReport diagnostic source is unavailable")
+	}
+	return selected, nil
 }

@@ -267,8 +267,35 @@ func WorkspaceCandidateLogProjection(ctx context.Context, root string, state map
 	if err != nil {
 		return nil, err
 	}
+	return workspaceCandidateLogProjection(ctx, root, e, candidate, authority.Session)
+}
+
+// Typed delivery already carries the original frozen Session. Later ACK and
+// cleanup retain that baseline protection without reopening mutable planning
+// sources or repeating reception. Captured bytes keep the same checks.
+func WorkspaceCandidateLogProjectionForPacket(ctx context.Context, root string, packet workpacket.RepairResultPacket, e workspace.Execution, candidate WorkspaceCandidate) (map[string]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if candidate.Provenance == nil || candidate.Provenance.PacketID != packet.ID {
+		return nil, fmt.Errorf("captured log projection requires the original typed candidate packet")
+	}
+	var session RepairSession
+	if err := json.Unmarshal(packet.Inputs.Sources.Session, &session); err != nil {
+		return nil, err
+	}
+	if session.SessionID != packet.Binding.Sources.SessionID || session.RuntimeID != e.RuntimeID || session.BaselineGeneration != e.BaselineGeneration {
+		return nil, fmt.Errorf("captured log projection original frozen Session differs")
+	}
+	return workspaceCandidateLogProjection(ctx, root, e, candidate, session)
+}
+func workspaceCandidateLogProjection(ctx context.Context, root string, e workspace.Execution, candidate WorkspaceCandidate, session RepairSession) (map[string]string, error) {
+	out := map[string]string{}
+	if e.Purpose != workspace.NativeDeliveryPurpose || candidate.Provenance == nil {
+		return out, nil
+	}
 	protected := map[string]bool{}
-	for _, artifact := range authority.Session.BaselineArtifacts {
+	for _, artifact := range session.BaselineArtifacts {
 		protected[artifact.Path] = true
 	}
 	for _, local := range candidate.Provenance.LocalEvidence {
@@ -343,7 +370,19 @@ func ReadWorkspaceCandidate(root string, ref ArtifactRef) (WorkspaceCandidate, e
 }
 
 func RegisteredWorkspaceResult(root string, state map[string]any, c WorkspaceCandidate) (ArtifactRef, bool, error) {
+	return RegisteredWorkspaceResultContext(context.Background(), root, state, c)
+}
+func RegisteredWorkspaceResultContext(ctx context.Context, root string, state map[string]any, c WorkspaceCandidate) (ArtifactRef, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ArtifactRef{}, false, err
+	}
 	for _, ref := range existingArtifactRefs(repairPointer(state)["result_refs"]) {
+		if c.Provenance != nil && ref.Path != artifactRoot+"/results/"+c.Proposal.ResultID+".json" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return ArtifactRef{}, false, err
+		}
 		data, err := workpacket.ReadFile(root, ref.Path, 20<<20)
 		var result RepairResult
 		if err == nil {

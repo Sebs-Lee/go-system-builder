@@ -1715,9 +1715,11 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 				resolvedRoot = abs
 			}
 		}
+		taskContext, cancelTask := context.WithTimeout(context.Background(), 8*time.Minute)
+		defer cancelTask()
 		resolvedState := resolveRootPath(resolvedRoot, *statePath)
 		resolvedJournal := resolveRootPath(resolvedRoot, *journalPath)
-		snapshot, err := runtime.NewStore(resolvedState, resolvedJournal).Snapshot()
+		snapshot, err := runtime.NewStore(resolvedState, resolvedJournal).WithContext(taskContext).Snapshot()
 		if err != nil {
 			fmt.Fprintln(stderr, formatFailure("runtime task-integrate", err))
 			return 1
@@ -1728,16 +1730,12 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		if packetBackedRepairResultStage(snapshot.State) {
-			packet, found, packetErr := typedRepairResultPacketForAssignment(resolvedRoot, snapshot.State, *assignmentID, *agentID)
+			packet, found, packetErr := typedRepairResultPacketForAssignmentContext(taskContext, resolvedRoot, snapshot.State, *assignmentID, *agentID)
 			if packetErr != nil {
 				fmt.Fprintln(stderr, formatFailure("runtime task-integrate", packetErr))
 				return 1
 			}
 			if found {
-				if err := runtime.VerifyRepairResultPacketIssue(resolvedRoot, snapshot.State, packet); err != nil {
-					fmt.Fprintf(stderr, "runtime task-integrate: preserve typed S9 candidate; original packet proof failed: %v\n", err)
-					return 1
-				}
 				execution, executionFound, resolveErr := typedRepairResultExecution(binding, snapshot.State, packet)
 				if resolveErr != nil || !executionFound {
 					fmt.Fprintf(stderr, "runtime task-integrate: typed S9 packet requires its exact registered Worker execution; use the original workspace recovery route: %v\n", resolveErr)
@@ -1747,15 +1745,11 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 					fmt.Fprintln(stderr, "runtime task-integrate: typed S9 owner mismatch")
 					return 1
 				}
-				if execution.DeliveryRef == "" {
-					fmt.Fprintln(stderr, "runtime task-integrate: typed S9 answer has no accepted original candidate; keep the Worker active and save its issued answer through PostToolUse")
-					return 1
-				}
 				forward := []string{"integrate", "--root", resolvedRoot, "--assignment", execution.AssignmentID, "--agent", execution.AgentID}
 				if *retry {
 					forward = append(forward, "--retry-preserved")
 				}
-				return runWorkspaceDelivery(forward, stdout, stderr)
+				return runWorkspaceDeliveryContext(taskContext, forward, stdout, stderr)
 			}
 		}
 		if binding != nil {
@@ -1770,7 +1764,7 @@ func runRuntime(args []string, stdout, stderr io.Writer) int {
 					if *retry {
 						forward = append(forward, "--retry-preserved")
 					}
-					return runWorkspaceDelivery(forward, stdout, stderr)
+					return runWorkspaceDeliveryContext(taskContext, forward, stdout, stderr)
 				}
 			}
 		}
@@ -3086,7 +3080,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 1
 	}
 	if renderHook {
-		ctx, cancel := context.WithDeadline(context.Background(), evaluationStarted.Add(hookBudget(root, request)-2*time.Second))
+		ctx, cancel := hookRequestContexts(contextForHook(request), hookOuterDeadline(evaluationStarted.Add(hookBudget(root, request))))
 		defer cancel()
 		request.Context = ctx
 		request.Context, _ = metrics.WithCallTimings(request.Context)
@@ -3103,6 +3097,7 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		return 0
 	}
 	root = nativeS6ControlRoot(controlRoot, request)
+	request = withHookReader(root, request)
 	if handled, code := nativeHookRoutes(root, request, stdout, stderr); handled {
 		return code
 	}
@@ -3120,34 +3115,26 @@ func evaluate(root, expectedEvent string, input io.Reader, stdout, stderr io.Wri
 		// Professional facts are already owned by their original Writers.
 		// Do not receive private drafts, run a control cycle or emit context
 		// as a substitute for persistence. SessionStart reads current facts.
-		// This boundary precedes the optional Main session-owner lookup.
+		// The request reader was resolved before native/pending routes.
 		// Clear both Main aliases so the next observation can redeliver full
 		// guidance even when compaction is not followed by SessionStart.
-		for _, owner := range []string{request.EffectiveAgentID(), "", "Main"} {
+		owners := []string{request.EffectiveAgentID()}
+		if mainQuestionnaireViewer(request) {
+			owners = []string{request.EffectiveAgentID(), "", "Main"}
+		} else if reader, ok := contextForHook(request).Value(hookReaderKey{}).(*hookReader); ok {
+			if reader.Kind != "Worker" {
+				return 0
+			}
+			owners = []string{reader.Owner}
+		}
+		for _, owner := range owners {
 			_, reset := hook.PreparePlanningContext(root, request.SessionID, owner, request.Event, "", nil)
 			reset()
 		}
 		return 0
 	}
-	// A separately launched top-level Claude session has no native agent_id.
-	// Resolve only its durable session/root pair; never impersonate nested agents.
-	if request.AgentID == "" && request.TeammateName == "" && request.SessionID != "" && request.CWD != "" {
-		ownerCtx, cancel := context.WithTimeout(contextForHook(request), 2*time.Second)
-		owner, err := workspace.SessionOwner(ownerCtx, root, request.CWD, request.SessionID)
-		cancel()
-		if err == nil {
-			request.AgentID = owner
-		}
-		// Session metadata helps route responsibility reminders. A missing
-		// mapping does not suppress listening to a registered saved answer.
-	}
-	// Official TeammateIdle payloads carry teammate_name instead of agent_id
-	// (Claude Code 2.1.218). Normalize once so hookctx resolution, the
-	// Controller and the audit envelope all identify the same teammate
-	// instead of guessing (L4 §15.2 P0-1); the original payload fields stay
-	// on the Input untouched.
-	if request.AgentID == "" {
-		request.AgentID = request.TeammateName
+	if handled, code := hookReaderObservation(root, request, stdout, stderr); handled {
+		return code
 	}
 	request = observePlanningToolChange(root, request, stderr)
 	// PostToolUse(SendMessage) is a pure observer (L3-S7 §8, L4 §7.4): it

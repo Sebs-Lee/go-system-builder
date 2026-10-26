@@ -578,6 +578,21 @@ rejection and exact gaps for Main without requiring another Stop or inventing co
 Native delivery coordinates support only original reception/integration; Claude Code
 owns execution. Registered frozen sources retain their original shape and recovery.
 
+**Explicit S9 reception recovery:** a real launch/async notification establishes
+execution timing, not reception failure or domain acceptance. Normal Stop adds no
+manual submission. If current feedback gives the exact original native flat input,
+saved typed answer or Targeted answer, Main follows its supplied
+`runtime stage-answer consume --root <Main-root> --path <exact-original-input>`
+through the original adapter and consumer. Preserve original owner, assignment,
+worktree and accepted partial work; no second Worker Start/Stop or rewritten answer
+is needed for a system reception failure. Missing exact input is a named preparation
+gap, never permission to guess another owner's path. Accepted PlanReport is skipped;
+accepted candidate continues Main integration/checks. Accepted Targeted with pending
+Handoff uses `runtime repair handoff complete`, preserving its observations and round.
+Only concrete unfinished professional work requires the original Worker to continue.
+This recovery entry does not grant the same native capability to S5/S6/S7/S8; their
+original named recovery boundaries remain.
+
 - **purpose**: execute an approved RepairContract, target-re-verify root-cause elimination, invalidate affected historical PASS evidence, and return for a fresh complete S7 round. A canonical BUG is only a compatibility projection and never the repair authority.
 - **inputs**: approved RepairContract and its CausalModel/InvestigationCase references, source Finding evidence needed for verification, original spec chain, implementation, and the current baseline.
 - **inputs_from**: [S8 (approved RepairContract), S5 (locked spec chain), S6 (current implementation)]

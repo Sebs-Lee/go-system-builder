@@ -982,8 +982,10 @@ func runRuntimeRepairStatus(args []string, stdout, stderr io.Writer) int {
 		}
 		response["board"] = board
 		response["next"] = board["next_action"]
-		if runtime.PacketEnabled(snapshot.State) && stringValue(pointer["status"]) == "ready_for_full_review" {
-			response["next"] = repairHandoffProjectionContext(*root, snapshot.State)
+		if runtime.PacketEnabled(snapshot.State) && (stringValue(pointer["status"]) == "ready_for_full_review" || stringValue(pointer["handoff_ref"]) != "") {
+			if projection := repairHandoffProjectionContext(*root, snapshot.State); projection != "" {
+				response["next"], board["next_action"] = projection, projection
+			}
 		}
 		if runtime.PacketEnabled(snapshot.State) && s9RepairResultStage(snapshot.State) {
 			rows, next := repairResultPacketStatus(*root, snapshot.State)
@@ -1362,7 +1364,7 @@ func repairAssignmentBoard(root string, pointer map[string]any, packetMode bool)
 	case "ready_for_full_review":
 		next = "create and commit the complete RepairHandoff; S7 then registers a fresh full ReviewPlan"
 		if packetMode {
-			next = repairHandoffProjectionContext(root, map[string]any{"review": map[string]any{"repair": pointer}})
+			next = repairHandoffPendingInstruction
 		}
 	}
 	return map[string]any{

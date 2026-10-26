@@ -70,7 +70,7 @@ func bindingQuestionnaireAnswers(data []byte) []string {
 }
 
 func runSavedEntryQuestionnaire(root string, request policy.Input, stdout, stderr io.Writer) (bool, int) {
-	if request.Event != "PostToolUse" || request.Error != "" {
+	if !mainQuestionnaireViewer(request) || request.Event != "PostToolUse" || request.Error != "" {
 		return false, 0
 	}
 	if failed, _ := request.ToolResponse["is_error"].(bool); failed {
@@ -261,8 +261,7 @@ func stageEntryQuestionnaireContext(root string, request policy.Input, snapshot 
 
 // Choose the responsibility's questions; this makes no tool permission decision.
 func mainQuestionnaireViewer(request policy.Input) bool {
-	owner := request.EffectiveAgentID()
-	return (owner == "" || owner == "Main") && !(request.Event == "SubagentStart" && owner == "")
+	return hookReaderIsMain(request)
 }
 
 func prepareQuestionnaireText(path, text string) error {
@@ -315,7 +314,7 @@ func currentQuestionnaireLifecycleContextFromSnapshot(root string, request polic
 			return stageS5ObservedContext(root, snapshot.State)
 		}
 		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "planning" {
-			if owner := request.EffectiveAgentID(); owner != "" && owner != "Main" {
+			if !mainQuestionnaireViewer(request) {
 				return ""
 			}
 			switch lifecycle["phase"] {
@@ -336,17 +335,23 @@ func currentQuestionnaireLifecycleContextFromSnapshot(root string, request polic
 		}
 		if context := stageRepairLeadQuestionnaireContext(root, request, snapshot); context != "" {
 			if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
-				return strings.TrimSpace(strings.Join([]string{stageRepairVerifierDispatchContext(root, request, snapshot), context}, "\n"))
+				handoff := ""
+				if mainQuestionnaireViewer(request) {
+					handoff = s9KnownMainHandoffsContext(contextForHook(request), root, snapshot)
+				}
+				return strings.TrimSpace(strings.Join([]string{stageRepairVerifierDispatchContext(root, request, snapshot), context, handoff}, "\n"))
 			}
 			return context
 		}
 		if runtime.PacketEnabled(snapshot.State) && lifecycle["state"] == "bug_resolution" && s9ProfessionalPhase(stringValue(lifecycle["phase"])) {
+			// The listener owns current Main dispatch. Only produce the fallback
+			// when it declines, so observation reads and projects each responsibility once.
+			if context, handled := s9PacketQuestionnaireLifecycleContext(root, request, snapshot); handled {
+				return strings.TrimSpace(strings.Join([]string{stageRepairVerifierDispatchContext(root, request, snapshot), context}, "\n"))
+			}
 			dispatch := ""
 			if request.EffectiveAgentID() != "" || request.AgentType == "" && request.AgentTranscriptPath == "" {
 				dispatch = stageRepairDispatchContext(root, request, snapshot)
-			}
-			if context, handled := s9PacketQuestionnaireLifecycleContext(root, request, snapshot); handled {
-				return strings.TrimSpace(strings.Join([]string{dispatch, stageRepairVerifierDispatchContext(root, request, snapshot), context}, "\n"))
 			}
 			return strings.TrimSpace(strings.Join([]string{dispatch, stageRepairVerifierDispatchContext(root, request, snapshot)}, "\n"))
 		}

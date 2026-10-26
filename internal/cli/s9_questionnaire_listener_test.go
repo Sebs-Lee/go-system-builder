@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/entroforge/go-system-builder/internal/packetbody"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
@@ -124,10 +126,10 @@ func (f s9ListenerFixture) artifact(t *testing.T, path string, document map[stri
 }
 
 func TestS9ListenerExistingPacketsReadOnlyWithoutIssueRecoveryOrReceiptProof(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	for _, result := range []bool{false, true} {
 		f := newS9ListenerFixture(t, result)
+		ctx, cancel := context.WithCancel(s9ListenerLiveReadOnlyWitness(t, f.root))
+		cancel()
 		before, _ := os.ReadFile(filepath.Join(f.root, ".claude/loop-state.json"))
 		for _, event := range []string{"SessionStart", "SubagentStart", "PreCompact", "PreToolUse", "Stop", "SubagentStop", "TeammateIdle"} {
 			for _, owner := range []string{"Main", "builder-listener"} {
@@ -156,8 +158,6 @@ func TestS9ListenerExistingPacketsReadOnlyWithoutIssueRecoveryOrReceiptProof(t *
 }
 
 func TestS9ListenerMissingCurrentQuestionOnlyReportsPreparationGap(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	for _, result := range []bool{false, true} {
 		f := newS9ListenerFixture(t, result)
 		answer := filepath.Join(f.worker, filepath.FromSlash(f.packet.answer))
@@ -165,6 +165,7 @@ func TestS9ListenerMissingCurrentQuestionOnlyReportsPreparationGap(t *testing.T)
 		if err := os.Remove(filepath.Join(f.worker, filepath.FromSlash(f.packet.view))); err != nil {
 			t.Fatal(err)
 		}
+		ctx := s9ListenerLiveReadOnlyWitness(t, f.root)
 		request := policy.Input{Event: "Stop", AgentID: "Main", CWD: f.root}
 		got := s9QuestionnaireContext(ctx, f.root, request, &submission.Service{}, runtime.Snapshot{State: f.state}, "Main", result)
 		if strings.Contains(got, "canceled") || !strings.Contains(got, answer) || !strings.Contains(got, "not prepared") {
@@ -173,7 +174,10 @@ func TestS9ListenerMissingCurrentQuestionOnlyReportsPreparationGap(t *testing.T)
 		request.Event = "PreToolUse"
 		got = s9QuestionnaireContext(ctx, f.root, request, &submission.Service{}, runtime.Snapshot{State: f.state}, "Main", result)
 		if strings.Contains(got, "context canceled") || !strings.Contains(got, answer) || !strings.Contains(got, "Main/system") {
-			t.Fatalf("missing view did not call original named issuer with exact path: %s", got)
+			t.Fatalf("missing view lost Main/system preparation responsibility and exact path: %s", got)
+		}
+		if _, err := os.Stat(filepath.Join(f.worker, filepath.FromSlash(f.packet.view))); !os.IsNotExist(err) {
+			t.Fatalf("ordinary reminder restored missing view: %v", err)
 		}
 		after, _ := os.ReadFile(answer)
 		if string(after) != string(before) {
@@ -236,8 +240,7 @@ func TestS9ListenerMissingResultSelectsOnlyItsRegisteredOwner(t *testing.T) {
 			if selected := s9ListenerPreparationOwner(f.root, f.state, packets, true); selected != owner {
 				t.Fatalf("selected supplied/accepted sibling instead of actual missing owner: %s", selected)
 			}
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel()
+			ctx := s9ListenerLiveReadOnlyWitness(t, f.root)
 			before := repairDispatchRuntimeBytes(t, f.root)
 			secondAnswer := filepath.Join(secondRoot, filepath.FromSlash(stringValue(second["answer_path"])))
 			got := s9QuestionnaireContext(ctx, f.root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: f.root}, &submission.Service{}, runtime.Snapshot{State: f.state}, "Main", true)
@@ -325,10 +328,9 @@ func TestS9ListenerRecordedProgressDoesNotRebuildHashOrExecutionProof(t *testing
 	if err != nil || len(packets) != 1 || s9ListenerPreparationOwner(f.root, f.state, packets, true) != "" {
 		t.Fatalf("reminder reconstructed execution/artifact proof or reissued a recorded candidate: packets=%v err=%v", packets, err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx := s9ListenerLiveReadOnlyWitness(t, f.root)
 	got := s9QuestionnaireContext(ctx, f.root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: f.root}, &submission.Service{}, runtime.Snapshot{State: f.state}, "Main", true)
-	if !strings.Contains(got, filepath.Join(f.worker, filepath.FromSlash(f.packet.answer))) || !strings.Contains(got, "candidate is recorded") || strings.Contains(got, "canceled") || strings.Contains(got, "work_complete=true") {
+	if !strings.Contains(got, filepath.Join(f.worker, filepath.FromSlash(f.packet.answer))) || !strings.Contains(got, "Candidate reception is recorded") || !strings.Contains(got, "current professional completion is unknown") || strings.Contains(got, "canceled") || strings.Contains(got, "work_complete=true") {
 		t.Fatalf("recorded professional progress required a second proof or lost its exact path: %s", got)
 	}
 	repairDispatchAssertUnchanged(t, f.root, before)
@@ -424,7 +426,7 @@ func TestS9ListenerPreparedBuilderAndIndependentVerifierDoNotReissuePlan(t *test
 		t.Fatalf("independent verifier created a missing Builder question: %v %v", packets, err)
 	}
 	before, _ := os.ReadFile(filepath.Join(f.root, ".claude/loop-state.json"))
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(s9ListenerLiveReadOnlyWitness(t, f.root))
 	cancel()
 	got := s9QuestionnaireContext(ctx, f.root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: f.root}, &submission.Service{}, runtime.Snapshot{State: f.state}, "Main", false)
 	if strings.Contains(got, "canceled") || !strings.Contains(got, filepath.Join(f.root, f.packet.answer)) {
@@ -437,4 +439,32 @@ func TestS9ListenerPreparedBuilderAndIndependentVerifierDoNotReissuePlan(t *test
 	if selected := s9ListenerPreparationOwner(f.root, f.state, nil, false); selected != f.packet.binding.OwnerAgentID {
 		t.Fatal("real missing Plan Assignment no longer prepares its Builder question")
 	}
+}
+
+// Live context permits the file/provenance observations this test requests.
+// The unusable Service passed by callers and absent journal prevent original
+// Issue/recovery or full receipt proofs from succeeding. No packet body may be
+// loaded, and the existing Runtime pair must stay byte-for-byte unchanged.
+func s9ListenerLiveReadOnlyWitness(t *testing.T, root string) context.Context {
+	t.Helper()
+	journal := filepath.Join(root, ".claude/loop-events.jsonl")
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("listener fixture unexpectedly has a full-proof journal: %v", err)
+	}
+	before := repairDispatchRuntimeBytes(t, root)
+	reads := 0
+	ctx := packetbody.WithResolver(t.Context(), func(context.Context, packetbody.Reference) ([]byte, error) {
+		reads++
+		return nil, errors.New("ordinary listener must not load a packet body or rebuild acceptance proof")
+	})
+	t.Cleanup(func() {
+		if reads != 0 {
+			t.Errorf("ordinary listener loaded %d packet bodies", reads)
+		}
+		repairDispatchAssertUnchanged(t, root, before)
+		if _, err := os.Stat(journal); !os.IsNotExist(err) {
+			t.Errorf("ordinary listener created proof/recovery journal: %v", err)
+		}
+	})
+	return ctx
 }

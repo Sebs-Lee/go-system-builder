@@ -130,3 +130,25 @@ func canonicalS9SeedDraft(baseline buildsurface.Snapshot) reviewpkg.Plan {
 	})
 	return plan
 }
+
+func TestCanonicalS9SeedPreservesDeletedPreimageAndCoverage(t *testing.T) {
+	baseline := canonicalS9SeedBaseline(t)
+	baseline.Paths[0].Status = "deleted"
+	baseline.Paths[0].PreimageCommit = strings.Repeat("6", 40)
+	baseline.Paths[0].DeletedByCommit = strings.Repeat("7", 40)
+	var err error
+	baseline.Digest, err = buildsurface.Digest(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := canonicalS9SeedDraft(baseline)
+	if err := prepareCanonicalS7ReviewPlanSeed(&plan, baseline, 3, ChangeImpact{ChangedArtifacts: []ArtifactRef{{Path: "src/changed.go", SHA256: baseline.Paths[0].SHA256}}}, ContractRef{Path: "contract.json", SHA256: strings.Repeat("c", 64)}, "impact.json"); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.FrozenSubjects) != 2 || plan.FrozenSubjects[1].Kind != "deleted" || plan.FrozenSubjects[1].SHA256 != baseline.Paths[0].SHA256 {
+		t.Fatalf("fresh seed lost deletion preimage: %+v", plan.FrozenSubjects)
+	}
+	if len(plan.CoverageInventory) != 1 || plan.CoverageInventory[0].SourceRef != "src/changed.go" {
+		t.Fatalf("fresh seed lost deletion coverage: %+v", plan.CoverageInventory)
+	}
+}

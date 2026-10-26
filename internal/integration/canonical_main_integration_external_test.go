@@ -385,6 +385,11 @@ func newCanonicalMainFixtureWithClosing(t *testing.T, changedPath string, closin
 
 func newCanonicalMainFixtureWithSetup(t *testing.T, changedPath string, closing, workerCheck bool, beforeRegister func(t *testing.T, root, statePath, journalPath string)) *canonicalMainFixture {
 	t.Helper()
+	return newCanonicalMainFixtureWithWorkerSetup(t, changedPath, closing, workerCheck, beforeRegister, nil)
+}
+
+func newCanonicalMainFixtureWithWorkerSetup(t *testing.T, changedPath string, closing, workerCheck bool, beforeRegister func(t *testing.T, root, statePath, journalPath string), workerSetup func(t *testing.T, worker string)) *canonicalMainFixture {
+	t.Helper()
 	root := t.TempDir()
 	counterDir := t.TempDir()
 	counterPath := filepath.Join(counterDir, "main-check-count")
@@ -501,6 +506,9 @@ printf x >> "$counter"
 		writeFixtureFile(t, worker, canonicalSourceFile, []byte("main-check-marker\n"))
 	} else {
 		writeFixtureFile(t, worker, changedPath, []byte("outside the original Assignment scope\n"))
+	}
+	if workerSetup != nil {
+		workerSetup(t, worker)
 	}
 	gitFixture(t, worker, "add", ".")
 	gitFixture(t, worker, "commit", "-m", "S6 worker source commit")

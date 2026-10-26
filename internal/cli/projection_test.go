@@ -34,7 +34,7 @@ func TestStatusProjectionAtHumanReleaseUsesEmptyOpenItemsArray(t *testing.T) {
 		}
 	}
 	guidance, _ := gateway["guidance"].(string)
-	for _, want := range []string{"exact application path", "human explicitly chooses", "disposition and optional reason", "saves that application", "Empty disposition", "without requiring a Finding", "does not publish or deploy", "including blanks"} {
+	for _, want := range []string{"exact application path", "human explicitly chooses", "disposition and optional reason", "saves that application", "Empty disposition", "without requiring a Finding", "does not publish or deploy", "Empty disposition keeps waiting"} {
 		if !strings.Contains(guidance, want) {
 			t.Fatalf("S11 status lacks normal human handoff guidance %q: %s", want, guidance)
 		}

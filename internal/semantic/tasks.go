@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // S4's mechanical close (L3-S4 v4.0.1). Division of labor: the CONTRACTS
@@ -55,16 +56,17 @@ type TaskCheckResult struct {
 }
 
 type taskDocument struct {
-	id         string
-	rel        string
-	status     string
-	contract   string
-	hasClose   bool
-	clauses    []string // expanded "{contract} §{n}"
-	deps       []string
-	problems   []string // parse-level problems surfaced by TasksCheck
-	writePaths []string
-	content    string
+	id            string
+	rel           string
+	status        string
+	contract      string
+	hasClose      bool
+	clauses       []string // expanded "{contract} §{n}"
+	deps          []string
+	problems      []string // parse-level problems surfaced by TasksCheck
+	writePaths    []string
+	scopeProblems []string
+	content       string
 }
 
 // TasksCheck is S4's exit-side reconciliation. It runs as the tasks_checked
@@ -361,16 +363,8 @@ func loadTaskDocumentsWithFiles(root string, files fileview.Reader) ([]*taskDocu
 			}
 		}
 		task.problems = append(task.problems, sharedmodel.Reading(root, task.rel, content, files)...)
-		for _, row := range sectionTable(content, "Scope") {
-			if len(row) >= 2 && strings.Contains(strings.ToLower(row[0]), "write") {
-				for _, cell := range strings.Split(row[1], ",") {
-					p := strings.TrimSpace(strings.Trim(cell, "` "))
-					if p != "" && p != "{path}" && !strings.HasPrefix(p, ":--") {
-						task.writePaths = append(task.writePaths, p)
-					}
-				}
-			}
-		}
+		task.writePaths, task.scopeProblems = taskScopePaths(task.rel, content)
+
 		for _, row := range sectionTable(content, "Dependencies") {
 			cell := strings.TrimSpace(row[0])
 			isMarker := cell == "" || cell == "Dependency" || cell == "TASK-{id}" || cell == "N/A" || cell == "—" || cell == "-" || strings.HasPrefix(cell, ":--")
@@ -479,4 +473,106 @@ func normalizeClauseCell(cell string) string {
 		return strings.Join(parts, " ")
 	}
 	return parts[0] + " §" + strings.TrimPrefix(parts[1], "§")
+}
+
+// taskScopePaths is the sole interpretation of TASK prospective write paths.
+// Other Scope rows describe reads, outputs and prohibitions, not write grants.
+func taskScopePaths(ref, content string) (paths, problems []string) {
+	inScope := false
+	for n, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			if inScope {
+				break
+			}
+			inScope = strings.Contains(trimmed, "Scope")
+			continue
+		}
+		if !inScope || !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		cells := strings.Split(strings.TrimSuffix(strings.TrimPrefix(trimmed, "|"), "|"), "|")
+		if len(cells) == 0 || !strings.EqualFold(strings.TrimSpace(cells[0]), "prospective write paths") {
+			continue
+		}
+		var parsed []string
+		var err error
+		if len(cells) != 2 {
+			err = fmt.Errorf("expected one path-list cell")
+		} else {
+			parsed, err = parseTaskScopeList(strings.TrimSpace(cells[1]))
+		}
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s:%d: Scope prospective write paths %q: %v; use `internal/a.go`, `tests/a_test.go` or `simulation/products/`（仿真产品输出区）; plain comma-separated paths are also supported", ref, n+1, trimmed, err))
+		} else {
+			paths = append(paths, parsed...)
+		}
+	}
+	// An invalid declaration must never expose a usable partial write grant.
+	if len(problems) != 0 {
+		return nil, problems
+	}
+	return paths, problems
+}
+
+func parseTaskScopeList(cell string) ([]string, error) {
+	original := cell
+	code := strings.HasPrefix(cell, "`")
+	var paths []string
+	for {
+		cell = strings.TrimSpace(cell)
+		if cell == "" {
+			return nil, fmt.Errorf("empty path in %q", original)
+		}
+		var path string
+		if code {
+			if !strings.HasPrefix(cell, "`") {
+				return nil, fmt.Errorf("mixed bare/code paths or unexpected text %q", cell)
+			}
+			end := strings.Index(cell[1:], "`")
+			if end < 0 {
+				return nil, fmt.Errorf("unclosed code span %q", cell)
+			}
+			path, cell = cell[1:end+1], strings.TrimSpace(cell[end+2:])
+		} else {
+			path, cell, _ = strings.Cut(cell, ",")
+			path = strings.TrimSpace(path)
+			if strings.IndexFunc(path, unicode.IsSpace) >= 0 {
+				return nil, fmt.Errorf("bare path contains whitespace %q", path)
+			}
+			// Keep a trailing separator visible to the next iteration.
+			if strings.HasSuffix(original, ",") && cell == "" {
+				return nil, fmt.Errorf("empty trailing path in %q", original)
+			}
+		}
+		clean := filepath.ToSlash(filepath.Clean(path))
+		if path == "" || strings.IndexFunc(path, unicode.IsControl) >= 0 || path != strings.TrimSpace(path) || filepath.IsAbs(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsAny(path, "`*?{}[]<>\\:|,()（）\r\n\t") {
+			return nil, fmt.Errorf("invalid concrete repository-relative write paths: %q", path)
+		}
+		paths = append(paths, path)
+		if cell == "" {
+			return paths, nil
+		}
+		if !code {
+			continue
+		}
+		if strings.HasPrefix(cell, ",") {
+			cell = cell[1:]
+			continue
+		}
+		close := ""
+		if strings.HasPrefix(cell, "（") {
+			close = "）"
+		}
+		if strings.HasPrefix(cell, "(") {
+			close = ")"
+		}
+		if close != "" && strings.HasSuffix(cell, close) {
+			note := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(cell, "（"), "("), close)
+			if strings.TrimSpace(note) != "" && !strings.ContainsAny(note, "`()（）") {
+				return paths, nil
+			}
+		}
+		return nil, fmt.Errorf("unexpected or unpaired trailing text %q", cell)
+	}
 }

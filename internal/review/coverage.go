@@ -152,7 +152,7 @@ func validateCoverageInventory(root string, state map[string]any, plan *Plan, co
 			"S7_PLAN_SURFACE_COVERAGE",
 			"ReviewPlan does not declare the complete S6 changed-surface inventory",
 			missing,
-			[]string{"copy the missing changed surfaces into coverage_inventory and add each source_ref to at least one Claim"},
+			[]string{"restore the machine-generated coverage_inventory through original S7 preparation, then add each source_ref to at least one focused Claim"},
 			"runtime review-plan --file plan.json",
 		)
 	}
@@ -207,7 +207,7 @@ func validateCoverageInventory(root string, state map[string]any, plan *Plan, co
 			"S7_PLAN_SURFACE_COVERAGE",
 			"ReviewPlan changed-surface coverage is incomplete",
 			missing,
-			[]string{"add each changed surface to frozen_subjects with its current SHA-256, then add the same source_ref to a focused QA or E2E Claim; keep target/oracle specific to that surface"},
+			[]string{"add each missing Claim source_ref to a focused QA or E2E Claim with a specific target and oracle; restore inconsistent machine projections through original S7 preparation, never hand-edit frozen_subjects or deletion preimage SHA-256"},
 			"runtime review-plan --file plan.json",
 		)
 	}

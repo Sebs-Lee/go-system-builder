@@ -94,7 +94,7 @@ func TestBuildGuidanceS9UsesOriginalQuestionnairesAndLifecycle(t *testing.T) {
 		{name: "repair result records completion", phase: "fixing", status: "repairing", want: "RepairResult questionnaire"},
 		{name: "impact uses supplied form", phase: "targeted_reverification", status: "impact_reconciliation", want: "ChangeImpact questionnaire"},
 		{name: "independent targeted result", phase: "targeted_reverification", status: "targeted_reverification", want: "TargetedReverification answer for SubagentStop"},
-		{name: "handoff has no author form", phase: "ready_for_full_review", status: "ready_for_full_review", want: "no author-filled Handoff form"},
+		{name: "handoff has no author form", phase: "ready_for_full_review", status: "ready_for_full_review", want: "No extra Handoff answer or repeated Targeted report is needed"},
 		{name: "fresh S7 follows original seed", phase: "ready_for_full_review", status: "closed", want: "fresh S7 round"},
 	}
 	for _, tc := range cases {
@@ -116,6 +116,13 @@ func TestBuildGuidanceS9UsesOriginalQuestionnairesAndLifecycle(t *testing.T) {
 			combined := guidance.Action + "\n" + strings.Join(guidance.Automation, "\n")
 			if !strings.Contains(combined, tc.want) {
 				t.Fatalf("S9 guidance lacks %q: %s", tc.want, combined)
+			}
+			if tc.status == "ready_for_full_review" {
+				for _, duty := range []string{"Targeted SubagentStop", "original Handoff automatically", "runtime repair handoff complete", "preserve the accepted observations", "ordinary reminders do not retry"} {
+					if !strings.Contains(combined, duty) {
+						t.Fatalf("Handoff guidance lost %q: %s", duty, combined)
+					}
+				}
 			}
 			for _, stale := range []string{
 				"runtime repair session open", "runtime repair dispatch", "runtime repair execution begin",

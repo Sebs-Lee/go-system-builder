@@ -166,6 +166,10 @@ func runBudgetedHook(ctx context.Context, executable string, args []string, stdi
 	}
 	var out, errout bytes.Buffer
 	cmd := exec.CommandContext(ctx, executable, append([]string{"__hook-worker"}, args...)...)
+	deadline, _ := ctx.Deadline()
+	// Carry the parent's absolute limit through process startup; the child must
+	// not start a fresh eight-second clock after input and scheduling delays.
+	cmd.Env = append(os.Environ(), hookDeadlineEnvironment+"="+deadline.UTC().Format(time.RFC3339Nano))
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = &out
 	cmd.Stderr = &errout

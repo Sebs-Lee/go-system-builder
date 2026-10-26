@@ -68,6 +68,9 @@ func graphControlForHook(root string, request policy.Input) (controller.ControlR
 			return controller.ControlResult{}, false
 		}
 	case "planning":
+		if !mainQuestionnaireViewer(request) {
+			return controller.ControlResult{}, false
+		}
 		if lifecycle["phase"] != "design" && lifecycle["phase"] != "contracts" && lifecycle["phase"] != "tasks" {
 			return controller.ControlResult{}, false
 		}
@@ -145,7 +148,7 @@ func s8QuestionnaireReadOrder(root string, state map[string]any, request policy.
 		}
 	}
 	owner := request.EffectiveAgentID()
-	main := (owner == "" || owner == "Main") && request.Event != "SubagentStart"
+	main := mainQuestionnaireViewer(request)
 	entities := mapFieldCLI(state, "entities")
 	var packetInputs []string
 	if main {
@@ -206,6 +209,9 @@ func s8QuestionnaireReadOrder(root string, state map[string]any, request policy.
 }
 
 func buildGuidance(root string, state map[string]any, event string, input policy.Input) policy.Guidance {
+	if input.Event == "" {
+		input.Event = event
+	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
 	lifecycleState, _ := lifecycle["state"].(string)
 	lifecyclePhase, _ := lifecycle["phase"].(string)
@@ -428,9 +434,31 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// an invitation to take the shortest route to S11. Keep the finite
 	// denominator, counterevidence, and the S9→fresh-S7 prerequisite visible
 	// on every normal recovery packet.
-	if (lifecycleState == "acceptance" || lifecycleState == "release_audit") && !s7BudgetGateRequired(state, root) {
-		applyS10Guidance(&guidance)
-		guidance.Action = stageAuditQuestionnaireContext(root, input, runtime.Snapshot{State: state})
+	if lifecycleState == "acceptance" || lifecycleState == "release_audit" {
+		if mainQuestionnaireViewer(input) {
+			if !s7BudgetGateRequired(state, root) {
+				applyS10Guidance(&guidance)
+				guidance.Action = stageAuditQuestionnaireContext(root, input, runtime.Snapshot{State: state})
+			}
+		} else {
+			// The global cursor may advance while an original Reviewer returns.
+			// Its original consumer/receipt still describes that responsibility;
+			// S10's Main questionnaire creates no new Worker obligation.
+			guidance.Objective = "This event assigns no S10 audit work to this Worker; Main owns acceptance and release audit. The original responsibility status remains with its original consumer and receipt"
+			guidance.Action = ""
+			guidance.PrimarySkill = ""
+			guidance.Read = []string{}
+			guidance.ReadOrder = nil
+			guidance.Questions = nil
+			guidance.Integration = nil
+			guidance.Automation = nil
+			guidance.Recovery = []string{}
+			guidance.DoneWhen = []string{}
+			guidance.Missing = []string{}
+			// Generic protocol/manual navigation does not preload Main's
+			// Manifest templates, release method or professional questionnaire.
+			guidance.ProtocolRef = "docs/control/agent-protocol.md"
+		}
 	}
 
 	if lifecycleState == "building" {
@@ -464,7 +492,7 @@ func applyS10Guidance(guidance *policy.Guidance) {
 		"Save the professional report in that file; do not copy hashes, register another envelope or run a manual transition.",
 		"Drafts and unchanged replays only report visible unfinished items; a completed report's normal save outlet performs this step's original transition.",
 	}
-	guidance.Missing = nil // Actual empty/unknown/fail/blocker rows are reported with the current questionnaire.
+	guidance.Missing = []string{} // Actual empty/unknown/fail/blocker rows are reported with the current questionnaire.
 	guidance.Recovery = []string{"Main resolves the specific missing material or unfinished question shown with the exact current questionnaire; S11 remains a real human decision."}
 	guidance.DoneWhen = []string{"The author explicitly completes this professional step with no explicitly unfinished or blocked item; the original S7 round completion/invalidation facts still apply."}
 }
@@ -852,16 +880,19 @@ func formatGuidanceInstruction(g policy.Guidance) string {
 	b.WriteString("Objective: ")
 	b.WriteString(g.Objective)
 	b.WriteString(". ")
-	b.WriteString("Next: ")
-	b.WriteString(g.Action)
+	if strings.TrimSpace(g.Action) != "" {
+		b.WriteString("Next: ")
+		b.WriteString(g.Action)
+		b.WriteString(". ")
+	}
 	if g.Stage == "S8" && g.LifecyclePhase == "investigation" {
-		b.WriteString(". Follow the professional questionnaire and source read order below. Only if blocked, consult ")
+		b.WriteString("Follow the professional questionnaire and source read order below. Only if blocked, consult ")
 		b.WriteString(g.ProtocolRef)
 		b.WriteString(" or ")
 		b.WriteString(g.ManualRef)
 		b.WriteString(" as optional recovery references.")
 	} else {
-		b.WriteString(". Read ")
+		b.WriteString("Read ")
 		b.WriteString(g.ProtocolRef)
 		b.WriteString(" for the next protocol step and ")
 		b.WriteString(g.ManualRef)

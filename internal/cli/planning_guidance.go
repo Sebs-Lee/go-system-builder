@@ -20,7 +20,7 @@ type mainPlanningNext struct {
 }
 
 func isMainPlanningViewer(input policy.Input) bool {
-	return input.EffectiveAgentID() == "" && input.Runtime.Agent == nil
+	return hookReaderIsMain(input)
 }
 
 func mainPlanningNextForState(state map[string]any, stage string) *mainPlanningNext {

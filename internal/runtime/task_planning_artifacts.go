@@ -331,109 +331,128 @@ func acceptedS3ForTaskPlanning(root string, state map[string]any, binding workpa
 	entities, _ := state["entities"].(map[string]any)
 	packets, _ := entities["work_packets"].([]any)
 	evidenceRows, _ := state["evidence"].([]any)
-	packetIDs := []string{}
+	// Choose the original responsibility before inspecting evidence or source
+	// validity. Store/checkpoint validation owns historical structure and the
+	// PTR-PLAN-02 journal route; this resolver consumes that original index.
+	// S3 issuance requires its current contracts entry, and only its accepted
+	// followup can enter tasks. Thus the last S3 before this S4 must have
+	// completed that route; a missing/unadvanced association is a gap, not
+	// permission to reuse an older receipt. Tasks-only rework adds no S3.
+	packetID := ""
+	latestEntry := -1
 	seenPacketIDs := map[string]bool{}
+	entryCounts := map[int]int{}
 	for _, raw := range packets {
 		row, _ := raw.(map[string]any)
 		if row["template_id"] != "s3-contract-v1" {
 			continue
 		}
-		packetID := stringValue(row["packet_id"])
-		if packetID == "" || seenPacketIDs[packetID] {
+		id := stringValue(row["packet_id"])
+		if id == "" || seenPacketIDs[id] {
 			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 packet identity is empty or duplicated")
 		}
-		seenPacketIDs[packetID] = true
-		packetIDs = append(packetIDs, packetID)
-	}
-	sort.Strings(packetIDs)
-	type candidate struct {
-		packet  workpacket.ContractPacket
-		answer  workpacket.ContractAnswer
-		sources []workpacket.Subject
-		entry   int
-	}
-	candidates := []candidate{}
-	for _, packetID := range packetIDs {
-		p, found, err := FindContractPacket(state, packetID)
-		if err != nil || !found {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 cannot decode original S3 source packet")
-		}
-		if p.Binding.RuntimeID != binding.RuntimeID || p.Binding.Generation != binding.Generation || p.Binding.Requirement != binding.Requirement || p.Binding.Owner != "Main" || p.Binding.Stage != "S3" {
-			continue
-		}
-		expectedPacket, buildErr := workpacket.BuildContracts(p.Binding, p.Inputs)
-		if buildErr != nil || !reflect.DeepEqual(expectedPacket, p) {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 frozen packet differs from its registered template and inputs")
-		}
-		designs, err := currentTaskPlanningDesigns(state, binding)
+		seenPacketIDs[id] = true
+		data, err := json.Marshal(row["binding"])
 		if err != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, err
+			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 cannot decode original S3 source binding")
 		}
-		if !sameReferenceSlice(designs, taskPlanningS2Designs(p.Inputs.Designs)) {
+		var origin workpacket.PlanningBinding
+		if json.Unmarshal(data, &origin) != nil {
+			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 cannot decode original S3 source binding")
+		}
+		if origin.RuntimeID != binding.RuntimeID || origin.Generation != binding.Generation || origin.Requirement != binding.Requirement || origin.Stage != "S3" || origin.StageEntry >= binding.StageEntry {
 			continue
 		}
-		record, found, err := FindSubmission(state, p.ID)
-		if err != nil || !found || record.ControlStatus != "advanced" || record.OriginState != "planning" || record.OriginPhase != "contracts" || record.OriginEntry != p.Binding.StageEntry || record.Owner != "Main" || record.PacketID != p.ID || record.Key != workpacket.Digest([]byte("submission:"+p.ID)) || record.FollowupID != workpacket.Digest([]byte(record.Key+":after-domain")) || record.TransitionEventID == "" {
-			continue
+		entryCounts[origin.StageEntry]++
+		if origin.StageEntry > latestEntry {
+			packetID, latestEntry = id, origin.StageEntry
 		}
-		if countContractSubmissions(state, p.ID) != 1 {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 reception identity is duplicated")
+	}
+	// A surviving newer reception must not disappear merely because its packet
+	// index is missing or no longer identifies this chain. Such a gap cannot
+	// authorize falling back to an older, still-valid receipt.
+	submissions, _ := entities["submissions"].([]any)
+	for _, raw := range submissions {
+		row, _ := raw.(map[string]any)
+		entry, err := integerField(row, "origin_entry")
+		if row["origin_state"] == "planning" && row["origin_phase"] == "contracts" && err == nil && entry > latestEntry && entry < binding.StageEntry {
+			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 reception at entry %d lacks its matching source packet", entry)
 		}
-		var evidence map[string]any
-		for _, raw := range evidenceRows {
-			row, _ := raw.(map[string]any)
-			if stringValue(row["id"]) == record.EvidenceID {
-				if evidence != nil {
-					return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence identity is duplicated")
-				}
-				evidence = row
+	}
+	if packetID == "" {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 has no original S3 responsibility before this tasks entry; return through original planning recovery")
+	}
+	if entryCounts[latestEntry] != 1 {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 current original S3 responsibility is duplicated at entry %d", latestEntry)
+	}
+	p, found, err := FindContractPacket(state, packetID)
+	if err != nil || !found {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 cannot decode current original S3 source packet %s", packetID)
+	}
+	record, found, err := FindSubmission(state, p.ID)
+	if err != nil || !found || p.Binding.Owner != "Main" || record.ControlStatus != "advanced" || record.OriginState != "planning" || record.OriginPhase != "contracts" || record.OriginEntry != p.Binding.StageEntry || record.Owner != "Main" || record.PacketID != p.ID || record.Key != workpacket.Digest([]byte("submission:"+p.ID)) || record.FollowupID != workpacket.Digest([]byte(record.Key+":after-domain")) || record.TransitionEventID == "" || record.RevisionPacketID != "" || record.SupersededBy != "" {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 current original S3 reception/transition association is incomplete at entry %d", latestEntry)
+	}
+	if countContractSubmissions(state, p.ID) != 1 {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 reception identity is duplicated")
+	}
+	expectedPacket, buildErr := workpacket.BuildContracts(p.Binding, p.Inputs)
+	if buildErr != nil || !reflect.DeepEqual(expectedPacket, p) {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 frozen packet differs from its registered template and inputs")
+	}
+	designs, err := currentTaskPlanningDesigns(state, binding)
+	if err != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, err
+	}
+	if !sameReferenceSlice(designs, taskPlanningS2Designs(p.Inputs.Designs)) {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 current original S3 design sources differ from current locked registrations")
+	}
+	var evidence map[string]any
+	for _, raw := range evidenceRows {
+		row, _ := raw.(map[string]any)
+		if stringValue(row["id"]) == record.EvidenceID {
+			if evidence != nil {
+				return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence identity is duplicated")
 			}
+			evidence = row
 		}
-		generation, genErr := integerField(evidence, "baseline_generation")
-		producers, _ := evidence["produced_by"].([]any)
-		invalidatedBy, hasInvalidatedBy := evidence["invalidated_by"]
-		invalidationRule, hasInvalidationRule := evidence["invalidation_rule"]
-		invalidationReason, hasInvalidationReason := evidence["invalidation_reason"]
-		reviewRound, hasReviewRound := evidence["review_round"]
-		if evidence == nil || evidence["status"] != "valid" || evidence["kind"] != "planning_contract" || evidence["responsibility_id"] != "Orchestrator" || genErr != nil || generation != binding.Generation || len(producers) != 1 || producers[0] != "Main" || !hasInvalidatedBy || invalidatedBy != nil || !hasInvalidationRule || invalidationRule != nil || !hasInvalidationReason || invalidationReason != nil || !hasReviewRound || reviewRound != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 accepted evidence is incomplete")
-		}
-		evidenceData, err := workpacket.ReadFile(root, stringValue(evidence["path"]), workpacket.ContractEvidenceReadLimit(p))
-		if err != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("read S4 original S3 evidence artifact: %w", err)
-		}
-		if workpacket.Digest(evidenceData) != stringValue(evidence["sha256"]) {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence artifact is unavailable or changed")
-		}
-		var envelope map[string]json.RawMessage
-		if err := json.Unmarshal(evidenceData, &envelope); err != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, err
-		}
-		var answer workpacket.ContractAnswer
-		if err := json.Unmarshal(envelope["contract_answer"], &answer); err != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 answer is malformed")
-		}
-		if err := ValidateContractEnvelope(p, record.EvidenceID, answer, evidenceData); err != nil {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence cannot be reconstructed: %w", err)
-		}
-		digest, err := workpacket.ContractAnswerDigest(answer)
-		if err != nil || digest != record.ContentHash {
-			return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 answer digest differs")
-		}
-		sources, matches := s3SourceSubjectsForTaskPlanning(p, answer, evidenceData, contracts)
-		if !matches {
-			continue
-		}
-		candidates = append(candidates, candidate{packet: p, answer: answer, sources: sources, entry: p.Binding.StageEntry})
 	}
-	if len(candidates) == 0 {
-		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 cannot reconstruct current contracts and source closure from an accepted S3 registration; return through original planning recovery")
+	generation, genErr := integerField(evidence, "baseline_generation")
+	producers, _ := evidence["produced_by"].([]any)
+	invalidatedBy, hasInvalidatedBy := evidence["invalidated_by"]
+	invalidationRule, hasInvalidationRule := evidence["invalidation_rule"]
+	invalidationReason, hasInvalidationReason := evidence["invalidation_reason"]
+	reviewRound, hasReviewRound := evidence["review_round"]
+	if evidence == nil || evidence["status"] != "valid" || evidence["kind"] != "planning_contract" || evidence["responsibility_id"] != "Orchestrator" || genErr != nil || generation != binding.Generation || len(producers) != 1 || producers[0] != "Main" || !hasInvalidatedBy || invalidatedBy != nil || !hasInvalidationRule || invalidationRule != nil || !hasInvalidationReason || invalidationReason != nil || !hasReviewRound || reviewRound != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 accepted evidence is incomplete")
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].entry > candidates[j].entry })
-	if len(candidates) > 1 && candidates[0].entry == candidates[1].entry {
-		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 current accepted S3 source closure is ambiguous")
+	evidenceData, err := workpacket.ReadFile(root, stringValue(evidence["path"]), workpacket.ContractEvidenceReadLimit(p))
+	if err != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("read S4 original S3 evidence artifact: %w", err)
 	}
-	return candidates[0].packet, candidates[0].answer, candidates[0].sources, nil
+	if workpacket.Digest(evidenceData) != stringValue(evidence["sha256"]) {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence artifact is unavailable or changed")
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(evidenceData, &envelope); err != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, err
+	}
+	var answer workpacket.ContractAnswer
+	if err := json.Unmarshal(envelope["contract_answer"], &answer); err != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 answer is malformed")
+	}
+	if err := ValidateContractEnvelope(p, record.EvidenceID, answer, evidenceData); err != nil {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 evidence cannot be reconstructed: %w", err)
+	}
+	digest, err := workpacket.ContractAnswerDigest(answer)
+	if err != nil || digest != record.ContentHash {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 original S3 answer digest differs")
+	}
+	sources, matches := s3SourceSubjectsForTaskPlanning(p, answer, evidenceData, contracts)
+	if !matches {
+		return workpacket.ContractPacket{}, workpacket.ContractAnswer{}, nil, fmt.Errorf("S4 current original S3 contract/source closure differs from current locked registrations")
+	}
+	return p, answer, sources, nil
 }
 
 func s3SourceSubjectsForTaskPlanning(p workpacket.ContractPacket, answer workpacket.ContractAnswer, evidenceData []byte, contracts []workpacket.Reference) ([]workpacket.Subject, bool) {

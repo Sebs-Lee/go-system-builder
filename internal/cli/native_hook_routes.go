@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"path/filepath"
 	"sync"
@@ -9,6 +11,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/workspace"
 )
 
 type nativeRoutingKey struct{}
@@ -27,6 +30,9 @@ func nativeHookRoutes(root string, in policy.Input, out, diagnostic io.Writer) (
 	// The derived input never escapes the routing chain. All false branches
 	// precede business writes; a receiving branch always returns handled=true.
 	in.Context = context.WithValue(contextForHook(in), nativeRoutingKey{}, &nativeRoutingRead{root: root})
+	if nativePendingRuntimeMainContext(root, in, out) {
+		return true, 0
+	}
 	if handled, code := nativeMainReturnHook(root, in, out); handled {
 		return true, code
 	}
@@ -56,4 +62,41 @@ func nativeRoutingSnapshot(root string, in policy.Input) (runtime.Snapshot, erro
 		return cached.snap, cached.err
 	}
 	return read()
+}
+
+// Pending is a typed Runtime boundary, not a stage/owner/completion fact.
+// This Main read names the existing Writer command and never invokes it.
+func nativePendingRuntimeMainContext(root string, in policy.Input, out io.Writer) bool {
+	if !mainQuestionnaireViewer(in) {
+		return false
+	}
+	switch in.Event {
+	case "PreToolUse", "SessionStart":
+	case "PostToolUse":
+		if in.ToolName != "Agent" && in.ToolName != "Task" {
+			return false
+		}
+	default:
+		return false
+	}
+	if workspace.RequireMain(root) != nil {
+		return false
+	}
+	if in.CWD != "" {
+		current, err := workspace.Canonical(in.CWD)
+		if err != nil {
+			return false
+		}
+		main, err := workspace.Canonical(root)
+		if err != nil || current != main {
+			return false
+		}
+	}
+	if _, err := nativeRoutingSnapshot(root, in); !errors.Is(err, runtime.ErrPendingRuntimeOperation) {
+		return false
+	}
+	command := s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime stage-answer recover --root " + s7CaptureShellQuote(root)
+	message := "Runtime reports a pending durable write. Main resumes the original paired Writer operation with: " + command + ". This read leaves the pending pair unchanged. The command returns the original consumer feedback and current next action; pending alone does not establish a professional stage, owner, or completion."
+	_ = json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": message}})
+	return true
 }

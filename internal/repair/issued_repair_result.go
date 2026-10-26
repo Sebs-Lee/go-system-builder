@@ -848,6 +848,9 @@ func RepairResultWorkComplete(root string, state map[string]any, packetID, owner
 // RepairResultWorkCompleteWithContext projects progress from the supplied Runtime
 // snapshot without replaying candidate submission or checking the live checkout.
 func RepairResultWorkCompleteWithContext(ctx context.Context, root string, state map[string]any, packetID, owner string) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -871,9 +874,16 @@ func RepairResultWorkCompleteWithContext(ctx context.Context, root string, state
 	if err := json.Unmarshal(raw, &registry); err != nil {
 		return false, err
 	}
-	for _, execution := range registry.Executions {
-		if execution.AgentID != owner || owner == "" || execution.DeliveryRef == "" {
+	executions, err := RepairResultCandidateExecutions(packet, registry, owner, false)
+	if err != nil {
+		return false, err
+	}
+	for _, execution := range executions {
+		if execution.DeliveryRef == "" {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
 		}
 		data, err := workpacket.ReadFile(root, execution.DeliveryRef, 20<<20)
 		if err != nil {
@@ -907,6 +917,60 @@ func RepairResultWorkCompleteWithContext(ctx context.Context, root string, state
 		return repairResultAttemptStillCurrent(state, *candidate.Provenance, execution.DeliveryRef, execution.DeliverySHA256), nil
 	}
 	return false, nil
+}
+
+// RepairResultCandidateExecutions locates only the execution frozen in this
+// issued packet. Historical receipt reads may retain that slot in History;
+// current work-complete projection never treats History as current work.
+func RepairResultCandidateExecutions(packet workpacket.RepairResultPacket, registry workspace.ExecutionRegistry, owner string, includeHistory bool) ([]workspace.Execution, error) {
+	var frozen workspace.Execution
+	if err := json.Unmarshal(packet.Inputs.Execution, &frozen); err != nil {
+		return nil, err
+	}
+	b := packet.Binding.Sources
+	if owner == "" || b.OwnerAgentID != owner || frozen.AgentID != owner || frozen.RuntimeID != b.RuntimeID || frozen.BaselineGeneration != b.BaselineGeneration ||
+		(frozen.AssignmentID != b.ManifestAssignmentID && frozen.AssignmentID != b.RepairAssignmentID) || frozen.Path == "" {
+		return nil, fmt.Errorf("S9 original packet execution locator differs from its responsibility")
+	}
+	var executions []workspace.Execution
+	for _, e := range registry.Executions {
+		executions = append(executions, e)
+	}
+	if includeHistory {
+		executions = append(executions, registry.History...)
+	}
+	var selected []workspace.Execution
+	for _, e := range executions {
+		if e.AssignmentID != frozen.AssignmentID || e.AgentID != owner || e.RuntimeID != frozen.RuntimeID || e.BaselineGeneration != frozen.BaselineGeneration ||
+			e.Generation != frozen.Generation || !sameAbsolutePath(e.Path, frozen.Path) || e.ReworkRef != packet.Binding.ReworkRef {
+			continue
+		}
+		// Historical acceptance survives subsequent definition drift in the
+		// same retained slot. Current completion still needs its frozen work.
+		if includeHistory {
+			selected = append(selected, e)
+			continue
+		}
+		// Mutable delivery/status fields are excluded by the original frozen
+		// projection. A different work definition is not this packet's source.
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return nil, err
+		}
+		var row map[string]any
+		if err := json.Unmarshal(raw, &row); err != nil {
+			return nil, err
+		}
+		projected, err := runtimepkg.ProjectRepairResultExecution(row)
+		if err != nil {
+			return nil, err
+		}
+		if workpacket.Digest(projected) != packet.Binding.ExecutionSHA256 {
+			continue
+		}
+		selected = append(selected, e)
+	}
+	return selected, nil
 }
 
 func repairResultAttemptStillCurrent(state map[string]any, provenance runtimepkg.RepairResultCandidateProvenance, candidateRef, candidateSHA string) bool {

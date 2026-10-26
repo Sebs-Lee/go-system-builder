@@ -16,16 +16,17 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
-func repairResultJournal(root string, state map[string]any, p workpacket.RepairResultPacket) (controlproof.JournalInspection, error) {
-	data, err := controlproof.ReadJournalForState(root, state)
+func repairResultJournal(root string, state map[string]any, p workpacket.RepairResultPacket, contexts ...context.Context) (controlproof.JournalInspection, error) {
+	ctx := controlproof.WithJournalReadCache(repairPacketContext(root, contexts...))
+	data, err := controlproof.ReadJournalForStateContext(ctx, root, state)
 	if err != nil {
 		return controlproof.JournalInspection{}, err
 	}
-	j, err := controlproof.InspectJournalData(data)
+	j, err := controlproof.InspectJournalSegmentDataFromContext(ctx, data, 1)
 	if err != nil {
 		return j, err
 	}
-	return j, verifyRepairResultPacketIssue(root, state, p, j)
+	return j, verifyRepairResultPacketIssue(root, state, p, j, ctx)
 }
 
 // VerifiedRepairResultCandidateReceipt proves the original candidate reception.
@@ -45,7 +46,12 @@ func VerifiedRepairResultCandidateReceipt(root string, state map[string]any, pac
 	return findRepairResultCandidateReceipt(root, state, p, j)
 }
 
-func findRepairResultCandidateReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection) (RepairResultCandidateReceipt, bool, error) {
+func findRepairResultCandidateReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, contexts ...context.Context) (RepairResultCandidateReceipt, bool, error) {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return RepairResultCandidateReceipt{}, false, err
+	}
+
 	eventID := "evt-s9-issued-repair-candidate-" + p.ID
 	index, exists := j.EventIndex[eventID]
 	if !exists {
@@ -69,6 +75,9 @@ func findRepairResultCandidateReceipt(root string, state map[string]any, p workp
 	if len(sha) != 64 || path != ".claude/review/repair/candidates/"+sha+".json" {
 		return RepairResultCandidateReceipt{}, false, fmt.Errorf("S9 candidate event has no exact full-hash artifact")
 	}
+	if err := ctx.Err(); err != nil {
+		return RepairResultCandidateReceipt{}, false, err
+	}
 	doc, err := readRepairPacketSource(root, path, sha, "repair-workspace-candidate.schema.json")
 	if err != nil {
 		return RepairResultCandidateReceipt{}, false, err
@@ -85,7 +94,7 @@ func findRepairResultCandidateReceipt(root string, state map[string]any, p workp
 	if err := json.Unmarshal(data, &provenance); err != nil {
 		return RepairResultCandidateReceipt{}, false, err
 	}
-	if err := verifyRepairResultCandidateDocument(root, p, doc, provenance); err != nil {
+	if err := verifyRepairResultCandidateDocument(root, p, doc, provenance, ctx); err != nil {
 		return RepairResultCandidateReceipt{}, false, err
 	}
 	before, be := integerField(event, "before_revision")
@@ -139,7 +148,12 @@ func ValidateRepairResultProvenanceBinding(p workpacket.RepairResultPacket, r Re
 	return nil
 }
 
-func verifyRepairResultProvenance(root string, p workpacket.RepairResultPacket, r RepairResultCandidateProvenance) (map[string]any, error) {
+func verifyRepairResultProvenance(root string, p workpacket.RepairResultPacket, r RepairResultCandidateProvenance, contexts ...context.Context) (map[string]any, error) {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	encoded, err := json.Marshal(r)
 	if err != nil {
 		return nil, err
@@ -164,14 +178,19 @@ func verifyRepairResultProvenance(root string, p workpacket.RepairResultPacket, 
 	if json.Unmarshal(answer, &professional) != nil || professional["verdict"] != "completed" {
 		return nil, fmt.Errorf("S9 candidate is not a completed professional result")
 	}
-	if err := verifyRepairResultOwnCheckFacts(root, p, r); err != nil {
+	if err := verifyRepairResultOwnCheckFacts(root, p, r, ctx); err != nil {
 		return nil, err
 	}
 	return professional, nil
 }
 
-func verifyRepairResultCandidateDocument(root string, p workpacket.RepairResultPacket, doc map[string]any, r RepairResultCandidateProvenance) error {
-	professional, err := verifyRepairResultProvenance(root, p, r)
+func verifyRepairResultCandidateDocument(root string, p workpacket.RepairResultPacket, doc map[string]any, r RepairResultCandidateProvenance, contexts ...context.Context) error {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	professional, err := verifyRepairResultProvenance(root, p, r, ctx)
 	if err != nil {
 		return err
 	}
@@ -238,7 +257,12 @@ func verifyRepairResultProfessionalProjection(p workpacket.RepairResultPacket, a
 	return nil
 }
 
-func verifyRepairResultOwnCheckFacts(root string, p workpacket.RepairResultPacket, r RepairResultCandidateProvenance) error {
+func verifyRepairResultOwnCheckFacts(root string, p workpacket.RepairResultPacket, r RepairResultCandidateProvenance, contexts ...context.Context) error {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	var definition struct {
 		Location string              `json:"check_location"`
 		Checks   []string            `json:"required_checks"`
@@ -256,6 +280,9 @@ func verifyRepairResultOwnCheckFacts(root string, p workpacket.RepairResultPacke
 	verify := func(ref checkexec.ToolReceipt, profile checkexec.Profile) error {
 		if ref.Binding != binding || ref.Checkout != r.ExecutionRoot || ref.Command != profile.Command || ref.ProfileDigest != profile.Digest() {
 			return fmt.Errorf("S9 own check tuple/profile differs")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		verified, err := checkexec.VerifyToolReceipt(filepath.Join(root, ".claude/evidence/workspace-checks"), ref)
 		if err != nil {
@@ -393,14 +420,18 @@ func repairResultIndexedRefs(state map[string]any) ([]map[string]any, error) {
 }
 
 func VerifiedRepairResultReceipt(root string, state map[string]any, packetID, owner string) (RepairResultReceipt, bool, error) {
-	p, ok, err := FindRepairResultPacketContext(repairPacketContext(root), state, packetID)
+	return VerifiedRepairResultReceiptContext(context.Background(), root, state, packetID, owner)
+}
+func VerifiedRepairResultReceiptContext(ctx context.Context, root string, state map[string]any, packetID, owner string) (RepairResultReceipt, bool, error) {
+	ctx = controlproof.WithJournalReadCache(repairPacketContext(root, ctx))
+	p, ok, err := FindRepairResultPacketContext(ctx, state, packetID)
 	if err != nil || !ok {
 		return RepairResultReceipt{}, false, err
 	}
 	if owner == "" || owner != p.Binding.Sources.OwnerAgentID {
 		return RepairResultReceipt{}, false, fmt.Errorf("S9 Result receipt owner differs")
 	}
-	j, err := repairResultJournal(root, state, p)
+	j, err := repairResultJournal(root, state, p, ctx)
 	if err != nil {
 		return RepairResultReceipt{}, false, err
 	}
@@ -409,16 +440,24 @@ func VerifiedRepairResultReceipt(root string, state map[string]any, packetID, ow
 	if pointer["session_id"] != p.Binding.Sources.SessionID {
 		return RepairResultReceipt{}, false, fmt.Errorf("S9 historical Result has no retained original Session authority")
 	}
-	return findRepairResultReceipt(root, state, p, j)
+	return findRepairResultReceipt(root, state, p, j, ctx)
 }
 
-func findRepairResultReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection) (RepairResultReceipt, bool, error) {
+func findRepairResultReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, contexts ...context.Context) (RepairResultReceipt, bool, error) {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return RepairResultReceipt{}, false, err
+	}
+
 	refs, err := repairResultIndexedRefs(state)
 	if err != nil {
 		return RepairResultReceipt{}, false, err
 	}
 	var found *RepairResultReceipt
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return RepairResultReceipt{}, false, err
+		}
 		path := stringValue(ref["path"])
 		doc, err := readRepairPacketSource(root, path, stringValue(ref["sha256"]), "repair-result.schema.json")
 		if err != nil {
@@ -447,7 +486,7 @@ func findRepairResultReceipt(root string, state map[string]any, p workpacket.Rep
 		if err := json.Unmarshal(data, &receipt); err != nil {
 			return RepairResultReceipt{}, false, err
 		}
-		if err := verifyRepairResultReceipt(root, state, p, j, doc, path, receipt); err != nil {
+		if err := verifyRepairResultReceipt(root, state, p, j, doc, path, receipt, ctx); err != nil {
 			return RepairResultReceipt{}, false, err
 		}
 		found = &receipt
@@ -461,7 +500,12 @@ func findRepairResultReceipt(root string, state map[string]any, p workpacket.Rep
 	return *found, true, nil
 }
 
-func verifyRepairResultReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, document map[string]any, path string, r RepairResultReceipt) error {
+func verifyRepairResultReceipt(root string, state map[string]any, p workpacket.RepairResultPacket, j controlproof.JournalInspection, document map[string]any, path string, r RepairResultReceipt, contexts ...context.Context) error {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	data, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -472,11 +516,11 @@ func verifyRepairResultReceipt(root string, state map[string]any, p workpacket.R
 	if r.Contract != "s9-repair-result-receipt-v1" || !r.WorkComplete || r.ResultID != p.ResultID || r.ResultRef != path || path != ".claude/review/repair/results/"+p.ResultID+".json" || r.AcceptedEventID != "evt-s9-issued-repair-result-"+p.ID || r.AcceptedIdempotencyKey != "runtime:s9:issued-repair-result:"+p.ID {
 		return fmt.Errorf("S9 final Result receipt identity differs")
 	}
-	answer, err := verifyRepairResultProvenance(root, p, r.Provenance)
+	answer, err := verifyRepairResultProvenance(root, p, r.Provenance, ctx)
 	if err != nil {
 		return err
 	}
-	candidate, ok, err := findRepairResultCandidateReceipt(root, state, p, j)
+	candidate, ok, err := findRepairResultCandidateReceipt(root, state, p, j, ctx)
 	if err != nil || !ok || candidate.CandidateRef != r.CandidateRef || candidate.CandidateSHA256 != r.CandidateSHA256 || !hypothesisJSONEqual(candidate.Provenance, r.Provenance) {
 		return fmt.Errorf("S9 final Result has no exact original candidate proof: %v", err)
 	}
@@ -499,7 +543,7 @@ func verifyRepairResultReceipt(root string, state map[string]any, p workpacket.R
 	if ri <= ci {
 		return fmt.Errorf("S9 final Result did not follow candidate acceptance")
 	}
-	if err := verifyRepairResultMainProof(root, p, r, document); err != nil {
+	if err := verifyRepairResultMainProof(root, p, r, document, ctx); err != nil {
 		return err
 	}
 	if _, err := time.Parse(time.RFC3339Nano, stringValue(document["submitted_at"])); err != nil {
@@ -526,7 +570,12 @@ func VerifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, p
 	return verifyRepairResultMainProof(root, p, RepairResultReceipt{Provenance: provenance, MainProof: proof}, document)
 }
 
-func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r RepairResultReceipt, document map[string]any) error {
+func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r RepairResultReceipt, document map[string]any, contexts ...context.Context) error {
+	ctx := repairPacketContext(root, contexts...)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	absoluteRoot, err := filepath.Abs(root)
 	if err != nil {
 		return err
@@ -555,6 +604,9 @@ func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r
 	facts, err := canonicalRuntimeJSON(proof.VerifiedFacts)
 	if err != nil || workpacket.Digest(facts) != proof.VerifiedFactsSHA256 {
 		return fmt.Errorf("S9 Main proof digest differs")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	cpData, err := workpacket.ReadFile(root, proof.CheckpointRef, 20<<20)
 	if err != nil {
@@ -603,6 +655,9 @@ func verifyRepairResultMainProof(root string, p workpacket.RepairResultPacket, r
 		relative, err := filepath.Rel(evidenceRoot, path)
 		if err != nil || !filepath.IsLocal(relative) {
 			return fmt.Errorf("S9 Main check record escaped assignment evidence")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		data, err := workpacket.ReadFile(evidenceRoot, filepath.ToSlash(relative), 4<<20)
 		if err != nil {
@@ -681,11 +736,11 @@ func validateRepairResultCheckpointIndices(root string, state map[string]any, jo
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
 	for _, p := range packets {
-		if _, _, err := findRepairResultCandidateReceipt(root, state, p, j); err != nil {
+		if _, _, err := findRepairResultCandidateReceipt(root, state, p, j, ctx); err != nil {
 			return nil, err
 		}
 		if pointer["session_id"] == p.Binding.Sources.SessionID {
-			if _, _, err := findRepairResultReceipt(root, state, p, j); err != nil {
+			if _, _, err := findRepairResultReceipt(root, state, p, j, ctx); err != nil {
 				return nil, err
 			}
 		}

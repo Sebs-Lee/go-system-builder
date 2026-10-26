@@ -51,6 +51,11 @@ func prepareReviewPlanQuestionnaireEntry(root string, request policy.Input, snap
 	// Main projections remain read-only, including Pre, status and recovery.
 	seedEntry := repairCurrentS7Entry(snapshot.State)
 	if seedEntry {
+		main, err := repairExitMainRoot(root, snapshot.State)
+		if err != nil {
+			return reviewPlanPreparationFailure("S7 original repair preparation cannot resolve Main-root: " + err.Error())
+		}
+		root = main
 		prepare = repairCompletion
 	}
 	path := reviewPlanQuestionnairePath(root, snapshot.State)
@@ -184,6 +189,7 @@ func reviewPlanGuidePath(path string) string { return strings.TrimSuffix(path, "
 func reviewPlanGuide(notes []string) string {
 	var b strings.Builder
 	b.WriteString("# S7 planning sources and decisions\n\nThis is derived guidance, not an accepted Plan or an execution permit. Complete the original JSON and save once. A candidate is not a reusable-asset declaration or a passing result.\n\n")
+	b.WriteString("Product baseline, frozen_subjects, coverage_inventory and derived digests are machine projections: preserve them and have Main restore original preparation/consumer inputs if they disagree. Deleted paths remain frozen with kind=deleted and the proven deletion preimage SHA-256; they remain in the Claim coverage denominator and have no current-file SHA to supply. Main supplies professional Claims with exact source_refs, actual assignments and boundaries, applicability decisions, and environment/asset arrangements. Missing Claim coverage calls for a focused assertion and oracle, not edits to the frozen objects.\n\n")
 	for _, note := range notes {
 		b.WriteString("- " + note + "\n")
 	}

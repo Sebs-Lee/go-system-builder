@@ -20,7 +20,8 @@ import (
 )
 
 // This is a read-only projection into Main's existing tool-return context.
-// Stop remains the only native answer receiver; no actor mapping or ACK is added.
+// Stop is the normal native receiver; named Main recovery reuses that consumer.
+// This projection adds no actor mapping or ACK.
 type nativeReturnSubject struct {
 	kind, id, ref string
 	record        *assignmentrecord.Record
@@ -28,7 +29,7 @@ type nativeReturnSubject struct {
 }
 
 func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, int) {
-	if in.Event != "PostToolUse" || (in.ToolName != "Agent" && in.ToolName != "Task") || in.AgentID != "" && in.AgentID != "Main" || in.TeammateName != "" {
+	if in.Event != "PostToolUse" || (in.ToolName != "Agent" && in.ToolName != "Task") || !mainQuestionnaireViewer(in) {
 		return false, 0
 	}
 	if cwd, err := workspace.Canonical(in.CWD); err != nil || cwd != root {
@@ -114,11 +115,18 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 	message := "Native return has multiple exact responsibility references; Main must resolve the handoff. No answer was received by this observation."
 	if len(selected) == 1 {
 		subject := selected[0]
-		summary, err := nativeReturnSummaryContext(contextForHook(in), root, snap, subject)
+		execution := nativeExecutionFromResponse(in.ToolResponse)
+		ctx := context.WithValue(contextForHook(in), nativeExecutionReturnKey{}, execution)
+		summary, err := nativeReturnSummaryContext(ctx, root, snap, subject)
 		if err != nil {
 			summary = "Reception summary could not be refreshed; this observation establishes no new reception fact. Main preserves this exact return and uses the original receipt/Stop diagnostic when the request is available: " + err.Error()
 		}
-		message = "Native return for " + subject.ref + ". " + summary + " This is a read-only reception summary, not product acceptance. Do not re-dispatch received work merely because Main or the next stage still has work."
+		observation := "Native return for "
+		if execution != nativeExecutionCompleted {
+			observation = "Native execution observation for "
+			summary = nativeExecutionPendingAction(execution) + " Original reception facts: " + summary
+		}
+		message = observation + subject.ref + ". " + summary + " This is a read-only reception summary, not product acceptance. Do not re-dispatch received work merely because Main or the next stage still has work."
 	}
 	if err := json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": message}}); err != nil {
 		return true, 1
@@ -131,6 +139,9 @@ func nativeReturnSummary(root string, snap runtime.Snapshot, subject nativeRetur
 }
 
 func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.Snapshot, subject nativeReturnSubject) (string, error) {
+	if strings.HasPrefix(subject.kind, "s9-") {
+		return nativeS9MainReturnSummary(ctx, root, snap, subject, nil)
+	}
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -147,6 +158,9 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 		}
 		ref := stringValue(agent["completion_reported_ref"])
 		if ref == "" {
+			if !nativeExecutionHasReturn(ctx) {
+				return "No original TASK delivery reference is recorded. Preserved prior attempt context: " + submission.PlanningDiagnosticContext(ctx, root, snap.State, nativeS6DiagnosticKind(r)) + ". " + nativeExecutionPendingAction(nativeExecutionInContext(ctx)), nil
+			}
 			return nativeS6ReturnDiagnostic(root, snap.State, r), nil
 		}
 
@@ -164,9 +178,28 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 			}
 		}
 		if len(records) == 0 {
-			return nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.ref) + " No original Targeted reception recorded. Main reads this exact answer and the actual return, restores sources/prerequisites or continues the original verifier for professional omissions; an unfinished Stop does not establish completion.", nil
+			diagnostic, _ := nativeS9ReturnDiagnosticRecordContext(ctx, root, snap, subject.ref)
+			if !nativeExecutionHasReturn(ctx) {
+				return "No original Targeted reception is recorded. Preserved historical attempt context: " + diagnostic.historicalMessage() + ". " + nativeExecutionPendingAction(nativeExecutionInContext(ctx)), nil
+			}
+			if available, reason := s9OriginalInputAvailable(ctx, subject.ref); !available {
+				return diagnostic.historicalMessage() + " No original Targeted reception is recorded. Main owns the missing original input/source at " + subject.ref + ": " + reason + ". Preserve the original independent responsibility and accepted facts; no supported saved input is established for replay.", nil
+			}
+			consumerAttempt := diagnostic.Attempt
+			if diagnostic.ConsumerFailure != nil {
+				consumerAttempt = diagnostic.ConsumerFailure.Attempt
+			}
+			if consumerAttempt != nil && consumerAttempt.FailureKind == "author" {
+				return diagnostic.historicalMessage() + " Main continues the original independent verifier only to correct the specific professional omission in " + subject.ref + ".", nil
+			}
+			return diagnostic.historicalMessage() + " No original Targeted reception recorded. Main restores the concrete original prerequisite, then continues the original independent consumer: " + s9OriginalConsumeCommand(root, subject.ref) + ". No repeated verifier Stop or observation is required for system recovery.", nil
 		}
-		return nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.ref) + " Original Targeted records: " + strings.Join(records, "; ") + ". Main follows the original repair status " + stringValue(repairPointerCLI(snap.State)["status"]) + " and Handoff to the next complete S7 round; a Targeted result does not replace S7. " + repairHandoffProjectionContext(root, snap.State), nil
+		diagnostic, found := nativeS9ReturnDiagnosticRecordContext(ctx, root, snap, subject.ref)
+		completion := ""
+		if found && diagnostic.Attempt != nil && diagnostic.Attempt.Stage == "targeted_received" {
+			completion = diagnostic.historicalMessage()
+		}
+		return completion + " Original Targeted records: " + strings.Join(records, "; ") + ". " + repairHandoffProjectionContext(root, snap.State), nil
 	}
 	s, err := submission.NewContext(ctx, root, true)
 	if err != nil {
@@ -182,7 +215,11 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 		}
 		receipt, err = s.ReceiptPacket(p.Binding.Owner, p.ID)
 		if err == nil && !receipt.Accepted {
-			prefix, receipt.NextAction = nativeS5ReturnDiagnostic(root, snap.State, p)
+			if nativeExecutionHasReturn(ctx) {
+				prefix, receipt.NextAction = nativeS5ReturnDiagnostic(root, snap.State, p)
+			} else {
+				prefix = submission.PlanningDiagnosticContext(ctx, root, snap.State, nativeS5DiagnosticKind(p.ID))
+			}
 		}
 	case "s7-review-result-v1":
 		p, _, e := runtime.FindReviewResultPacketContext(ctx, snap.State, subject.id)
@@ -205,7 +242,11 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 			if e := ctx.Err(); e != nil {
 				return "", e
 			}
-			prefix = nativeS7IndexReturnDiagnosticContext(ctx, root, snap.State, runtime.ReviewResultPacketIndex{ID: p.ID, Binding: p.Binding, ViewPath: p.ViewPath, AnswerPath: p.AnswerPath})
+			if nativeExecutionHasReturn(ctx) {
+				prefix = nativeS7IndexReturnDiagnosticContext(ctx, root, snap.State, runtime.ReviewResultPacketIndex{ID: p.ID, Binding: p.Binding, ViewPath: p.ViewPath, AnswerPath: p.AnswerPath})
+			} else {
+				prefix = submission.PlanningDiagnosticContext(ctx, root, snap.State, nativeS7DiagnosticKind(p.ID))
+			}
 		}
 
 	case "s8-hypothesis-result-v1":
@@ -219,53 +260,12 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 				prefix = diagnostic + ". This describes the last attempted reception, not a new validation or an accepted result. "
 			}
 		}
-	case "s9-repair-result-v1":
-		p, _, e := runtime.FindRepairResultPacketContext(ctx, snap.State, subject.id)
-		if e != nil {
-			return "", e
-		}
-		receipt, err = s.RepairResultReceipt(p.Binding.Sources.OwnerAgentID, p.ID)
-		prefix = nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.id) + " "
-	case "s9-plan-report-v1":
-		prefix = nativeS9ReturnDiagnosticContext(ctx, root, snap, subject.id) + " "
-		p, _, e := runtime.FindRepairPlanReportPacketContext(ctx, snap.State, subject.id)
-		if e != nil {
-			return "", e
-		}
-		packets, e := runtime.CurrentRepairResultPacketsContext(ctx, root, snap.State, p.Binding.OwnerAgentID)
-		if e != nil {
-			return prefix + "Original Result source is unavailable; Main restores this exact source without re-submitting accepted work: " + e.Error(), nil
-		}
-		var ids []string
-		for _, result := range packets {
-			if result.Binding.Sources == p.Binding {
-				ids = append(ids, result.ID)
-			}
-		}
-		if len(ids) > 1 {
-			return "", fmt.Errorf("multiple current Result packets for this exact repair; Main must resolve the original attempt")
-		}
-		if len(ids) == 1 {
-			receipt, err = s.RepairResultReceipt(p.Binding.OwnerAgentID, ids[0])
-		} else {
-			receipt, err = s.RepairPlanReportReceipt(p.Binding.OwnerAgentID, p.ID)
-			if receipt.Accepted {
-				prefix += "Only the PlanReport receipt is accepted, not the Builder Result. Main inspects the original Stop/source failure; do not re-submit the accepted PlanReport. "
-			} else {
-				prefix += "Neither PlanReport nor Builder Result is accepted. Main follows the exact Stop gap and original responsibility. "
-			}
-		}
 	}
 	if err != nil {
-		if strings.HasPrefix(subject.kind, "s9-") {
-			return prefix + "Original receipt is unavailable; Main preserves the actual return and restores the original source: " + err.Error(), nil
-		}
 		return "", err
 	}
 	if !receipt.Accepted && subject.kind == "s8-hypothesis-result-v1" {
 		receipt.NextAction = "后台派发即时返回不代表执行结束；先核对实际原生执行。 " + receipt.NextAction
-	} else if !receipt.Accepted && strings.HasPrefix(subject.kind, "s9-") {
-		receipt.NextAction = "S9 result is not accepted. Main reads the exact brief, private answer and last Stop diagnostic, restores sources/prerequisites or resumes the original Builder to complete professional omissions. An unfinished return does not establish completion; preserve accepted PlanReport facts and use original Main integration/checks for accepted Results."
 	} else if !receipt.Accepted && subject.kind != "s5-document-review-v1" {
 		receipt.NextAction = "尚无原接收事实；后台派发即时返回不代表执行结束。Main 继续可开展的工作，核对实际原生执行与 Stop 诊断，不凭此次返回猜测重派或要求重填。"
 		if subject.kind == "s7-review-result-v1" {
@@ -274,6 +274,107 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 	}
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if !receipt.Accepted && !nativeExecutionHasReturn(ctx) {
+		if subject.kind == "s5-document-review-v1" {
+			prefix += " S5责任边界：独立性或来源阻塞属于Main；专业答案缺项仍属于原专业责任。本次执行观察不分配新的恢复、重派或续跑动作。 "
+		}
+		receipt.NextAction = nativeExecutionPendingAction(nativeExecutionInContext(ctx))
+	}
+	data, err := json.Marshal(receipt)
+	return prefix + string(data), err
+}
+
+// Project both original receipts, so a Result-source failure cannot erase an
+// already accepted Plan. This is still a query, never an answer receiver.
+func nativeS9MainReturnSummary(ctx context.Context, root string, snap runtime.Snapshot, subject nativeReturnSubject, service *submission.Service) (string, error) {
+	var binding workpacket.RepairPlanReportBinding
+	var resultID string
+	matched := false
+	for _, row := range objectSliceAny(mapFieldCLI(snap.State, "entities")["work_packets"]) {
+		if row["packet_id"] != subject.id || row["template_id"] != subject.kind {
+			continue
+		}
+		if matched {
+			return "", fmt.Errorf("multiple exact S9 responsibility indexes")
+		}
+		matched = true
+		data, err := json.Marshal(row["binding"])
+		if err != nil {
+			return "", err
+		}
+		if subject.kind == "s9-repair-result-v1" {
+			var result workpacket.RepairResultBinding
+			if err := json.Unmarshal(data, &result); err != nil {
+				return "", err
+			}
+			binding = result.Sources
+			resultID = subject.id
+		} else if err := json.Unmarshal(data, &binding); err != nil {
+			return "", err
+		}
+	}
+	if !matched {
+		return "Original S9 responsibility index is unavailable; Main preserves exact return " + subject.ref + " and restores the original source.", nil
+	}
+	handoff := s9HandoffForBinding(ctx, root, snap, binding, resultID)
+	prefix := handoff.summary(root) + " "
+	if err := ctx.Err(); err != nil {
+		return prefix + "Current receipt is unknown: " + err.Error(), nil
+	}
+	if service == nil {
+		var err error
+		service, err = submission.NewContext(ctx, root, true)
+		if err != nil {
+			return prefix + "Original receipt is unavailable; Main preserves known responsibility and restores its original source: " + err.Error(), nil
+		}
+	}
+	var plan submission.Receipt
+	var planErr error
+	if handoff.Plan.id != "" {
+		plan, planErr = service.RepairPlanReportReceipt(binding.OwnerAgentID, handoff.Plan.id)
+	} else {
+		planErr = fmt.Errorf("original PlanReport index is unavailable")
+	}
+	if planErr != nil {
+		prefix += "Original PlanReport receipt is unavailable; preserve all independently recorded Result facts: " + planErr.Error() + ". "
+	}
+	if resultID == "" && handoff.Result != nil {
+		resultID = handoff.Result.id
+	}
+	if resultID == "" {
+		if plan.Accepted {
+			prefix += "Only the PlanReport receipt is accepted, not the Builder Result. "
+		} else if planErr == nil {
+			prefix += "Neither PlanReport nor Builder Result is accepted. "
+		}
+		return prefix + s9UnreceivedActionContext(ctx, root, handoff), nil
+	}
+	if err := ctx.Err(); err != nil {
+		return prefix + "Current Result receipt is unknown: " + err.Error(), nil
+	}
+	receipt, err := service.RepairResultReceipt(binding.OwnerAgentID, resultID)
+	if err != nil {
+		return prefix + "Original Result receipt is unavailable; Main preserves accepted PlanReport and restores the exact original source: " + err.Error(), nil
+	}
+	if !receipt.Accepted {
+		if plan.Accepted {
+			prefix += "Only the PlanReport receipt is accepted, not the Builder Result. "
+		} else if planErr == nil {
+			prefix += "Neither PlanReport nor Builder Result is accepted. "
+		}
+		receipt.NextAction = s9UnreceivedActionContext(ctx, root, handoff)
+	} else if receipt.ResponsibilityStatus == "candidate_accepted" && receipt.WorkComplete {
+		assignment := binding.ManifestAssignmentID
+		if handoff.Result != nil && handoff.Result.executionAssignment != "" {
+			assignment = handoff.Result.executionAssignment
+		}
+		receipt.NextAction = s9CandidateAction(root, assignment, binding.OwnerAgentID)
+	} else if receipt.ResponsibilityStatus == "main_result_accepted" {
+		receipt.NextAction = s9FinalAction()
+	}
+	if err := ctx.Err(); err != nil {
+		return prefix + "Current receipt projection interrupted: " + err.Error(), nil
 	}
 	data, err := json.Marshal(receipt)
 	return prefix + string(data), err

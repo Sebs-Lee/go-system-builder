@@ -43,15 +43,11 @@ func ReadRegisteredContext(ctx context.Context, root string, state map[string]an
 		return zero, fmt.Errorf("original pinned ReviewPlan shape: %w", err)
 	}
 	var plan struct {
-		ID         string    `json:"review_plan_id"`
-		Round      int       `json:"review_round"`
-		Generation int       `json:"baseline_generation"`
-		Baseline   *Snapshot `json:"product_baseline"`
-		Frozen     []struct {
-			Path   string `json:"path"`
-			SHA256 string `json:"sha256"`
-			Kind   string `json:"kind"`
-		} `json:"frozen_subjects"`
+		ID         string                     `json:"review_plan_id"`
+		Round      int                        `json:"review_round"`
+		Generation int                        `json:"baseline_generation"`
+		Baseline   *Snapshot                  `json:"product_baseline"`
+		Frozen     []reviewmeta.FrozenSubject `json:"frozen_subjects"`
 	}
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return zero, err
@@ -64,22 +60,13 @@ func ReadRegisteredContext(ctx context.Context, root string, state map[string]an
 	if err := VerifyContext(ctx, root, state, *plan.Baseline); err != nil {
 		return zero, err
 	}
-	expected := map[string][2]string{}
-	for _, task := range plan.Baseline.Tasks {
-		expected[task.Path] = [2]string{task.SHA256, "task"}
+	subjects, err := FrozenSubjects(plan.Baseline)
+	if err != nil {
+		return zero, err
 	}
-	for _, path := range plan.Baseline.Paths {
-		kind := "changed_surface"
-		if path.Status == "deleted" {
-			kind = "deleted"
-		}
-		if old, found := expected[path.Path]; found {
-			if old[0] != path.SHA256 || kind == "deleted" {
-				return zero, fmt.Errorf("product TASK/path sources disagree")
-			}
-			continue
-		}
-		expected[path.Path] = [2]string{path.SHA256, kind}
+	expected := make(map[string][2]string, len(subjects))
+	for _, subject := range subjects {
+		expected[subject.Path] = [2]string{subject.SHA256, subject.Kind}
 	}
 	if len(plan.Frozen) != len(expected) {
 		return zero, fmt.Errorf("pinned ReviewPlan does not freeze the complete product path set")

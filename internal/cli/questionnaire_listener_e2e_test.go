@@ -13,6 +13,11 @@ import (
 
 func TestQuestionnaireListenerReportsMissingViewReadOnlyAndPreservesAnswer(t *testing.T) {
 	root, packet := newDesignFixture(t, "none")
+	beforeSnapshot := stageSnapshot(t, root)
+	beforeJournal, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	answerPath := filepath.Join(root, packet.AnswerPath)
 	stageJSON(t, root, packet.AnswerPath, designDraft(packet))
 	before, err := os.ReadFile(answerPath)
@@ -37,7 +42,7 @@ func TestQuestionnaireListenerReportsMissingViewReadOnlyAndPreservesAnswer(t *te
 		if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(envelope.Output.Context, answerPath) || !strings.Contains(envelope.Output.Context, filepath.Join(root, packet.ViewPath)) || !strings.Contains(envelope.Output.Context, "Current missing work/material") || strings.Contains(envelope.Output.Context, "runtime stage-answer issue") || envelope.Output.Permission == "deny" {
+		if !strings.Contains(envelope.Output.Context, answerPath) || !strings.Contains(envelope.Output.Context, filepath.Join(root, packet.ViewPath)) || !strings.Contains(envelope.Output.Context, "Current missing work/material") || !strings.Contains(envelope.Output.Context, "runtime stage-answer issue --root "+questionnaireRecoveryShellQuote(root)+" --agent Main") || envelope.Output.Permission == "deny" {
 			t.Fatalf("missing exact questionnaire path or unexpected operation gate: %s", &out)
 		}
 	}
@@ -48,6 +53,17 @@ func TestQuestionnaireListenerReportsMissingViewReadOnlyAndPreservesAnswer(t *te
 	if _, err := os.Stat(filepath.Join(root, packet.ViewPath)); !os.IsNotExist(err) {
 		t.Fatalf("ordinary Pre must report missing entry material without reissuing: %v", err)
 	}
+	if stageSnapshot(t, root).Revision != beforeSnapshot.Revision {
+		t.Fatal("missing-view Pre changed Runtime")
+	}
+	afterJournal, err := os.ReadFile(filepath.Join(root, ".claude/loop-events.jsonl"))
+	if err != nil || !bytes.Equal(beforeJournal, afterJournal) {
+		t.Fatalf("missing-view Pre changed journal: %v", err)
+	}
+}
+
+func questionnaireRecoveryShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // Observe a successful platform save and return the existing lifecycle API's

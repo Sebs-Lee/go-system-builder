@@ -16,7 +16,7 @@ import (
 
 // Synthetic approved-Case/PlanReport inputs exercise original mechanisms;
 // these fixtures are not claims of human or model professional acceptance.
-func repairExecutionPlanningFixture(t *testing.T) (string, repair.RepairPlan, repair.ArtifactRef, repair.ArtifactRef, string) {
+func repairExecutionPlanningFixture(t *testing.T, assertionCopies ...int) (string, repair.RepairPlan, repair.ArtifactRef, repair.ArtifactRef, string) {
 	t.Helper()
 	root := repairLeadFreshRoot(t)
 	writeRepairLeadFile(t, root, "docs/control/agent-protocol.md", "# Installed protocol\n")
@@ -33,7 +33,7 @@ func repairExecutionPlanningFixture(t *testing.T) (string, repair.RepairPlan, re
 	repairLeadApprovedCase(t, root, "investigation-case-execution-choice", []map[string]any{
 		{"id": "unit-one", "description": "restore first authority", "scope": []string{"internal/api/one.go"}, "assertion_ids": []string{"all"}},
 		{"id": "unit-two", "description": "restore dependent authority", "scope": []string{"internal/api/two.go"}, "assertion_ids": []string{"all"}, "depends_on": []string{"unit-one"}},
-	})
+	}, assertionCopies...)
 	snapshot := repairDispatchSnapshot(t, root)
 	mapFieldCLI(snapshot.State, "configuration")["optimization"] = map[string]any{"packet": true}
 	putInitMap(t, filepath.Join(root, ".claude/loop-state.json"), snapshot.State)

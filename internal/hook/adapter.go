@@ -176,9 +176,12 @@ func formatGuidance(guidance policy.Guidance) string {
 	b.WriteString("Objective: ")
 	b.WriteString(guidance.Objective)
 	b.WriteString(". ")
-	b.WriteString("Next: ")
-	b.WriteString(guidance.Action)
-	b.WriteString(". Read ")
+	if strings.TrimSpace(guidance.Action) != "" {
+		b.WriteString("Next: ")
+		b.WriteString(guidance.Action)
+		b.WriteString(". ")
+	}
+	b.WriteString("Read ")
 	b.WriteString(guidance.ProtocolRef)
 	b.WriteString("; if blocked, read ")
 	b.WriteString(guidance.ManualRef)

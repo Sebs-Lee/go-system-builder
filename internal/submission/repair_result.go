@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/repair"
@@ -130,7 +131,7 @@ func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceR
 	if candidate.Provenance != nil {
 		accepted.Provenance = *candidate.Provenance
 	}
-	return acceptedRepairResultCandidateReceipt(s.Root, next, packet, owner, accepted)
+	return acceptedRepairResultCandidateReceipt(s.Root, next, packet, owner, accepted, s.Context())
 }
 
 // RepairResultReceipt is a read-only view of the original blocker, candidate or final receipt.
@@ -150,7 +151,7 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 	if result, found, err := repairResultBlockerReceipt(s.Root, snapshot, packet, owner); err != nil || found {
 		return result, err
 	}
-	final, finalFound, finalErr := recordedRepairResultReceipt(s.Root, snapshot.State, packet.ID, owner)
+	final, finalFound, finalErr := recordedRepairResultReceiptContext(s.Context(), s.Root, snapshot.State, packet.ID, owner)
 	if finalErr != nil {
 		return Receipt{}, finalErr
 	}
@@ -164,7 +165,7 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 		// current owner completion from the original domain consumer so an
 		// accepted Result cannot revive responsibility after the execution was
 		// replaced or explicitly reworked.
-		workComplete, completionErr := repair.RepairResultWorkComplete(s.Root, snapshot.State, packet.ID, owner)
+		workComplete, completionErr := repair.RepairResultWorkCompleteWithContext(s.Context(), s.Root, snapshot.State, packet.ID, owner)
 		result.WorkComplete = completionErr == nil && workComplete
 		result.SubmissionKey = final.AcceptedIdempotencyKey
 		result.ConsumerOwner = "main"
@@ -184,7 +185,7 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 		}
 		return result, nil
 	}
-	return acceptedRepairResultCandidateReceipt(s.Root, snapshot, packet, owner, nil)
+	return acceptedRepairResultCandidateReceipt(s.Root, snapshot, packet, owner, nil, s.Context())
 }
 
 func currentRepairResultSourceForPath(root string, state map[string]any, inputPath string, contexts ...context.Context) (workpacket.RepairResultPacket, string, bool, error) {
@@ -404,7 +405,8 @@ func publishRepairResultAt(root, mainRoot string, packet workpacket.RepairResult
 	return err
 }
 
-func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snapshot, packet workpacket.RepairResultPacket, owner string, recorded *loopruntime.RepairResultCandidateReceipt) (Receipt, error) {
+func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snapshot, packet workpacket.RepairResultPacket, owner string, recorded *loopruntime.RepairResultCandidateReceipt, contexts ...context.Context) (Receipt, error) {
+	ctx := submissionRepairPacketContext(contexts...)
 	result := emptyReceipt(snapshot, packet.ID)
 	var accepted loopruntime.RepairResultCandidateReceipt
 	ok := recorded != nil
@@ -412,7 +414,7 @@ func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snap
 	if recorded != nil {
 		accepted = *recorded
 	} else {
-		accepted, ok, err = recordedRepairResultCandidateReceipt(root, snapshot.State, packet.ID, owner)
+		accepted, ok, err = recordedRepairResultCandidateReceiptContext(ctx, root, snapshot.State, packet.ID, owner)
 		if err != nil {
 			return result, err
 		}
@@ -430,7 +432,7 @@ func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snap
 	result.ResponsibilityStatus = "candidate_accepted"
 	result.DomainRefs = []string{accepted.CandidateRef}
 	result.WaitingOn = []Waiting{}
-	result.WorkComplete, err = repair.RepairResultWorkComplete(root, snapshot.State, packet.ID, owner)
+	result.WorkComplete, err = repair.RepairResultWorkCompleteWithContext(ctx, root, snapshot.State, packet.ID, owner)
 	if err != nil {
 		result.WorkComplete = false
 		result.WaitingOn = append(result.WaitingOn, Waiting{Reason: "S9 accepted candidate current attempt could not be read", Owner: owner, Ref: packet.ID})
@@ -440,7 +442,7 @@ func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snap
 	if result.WorkComplete {
 		result.ConsumerOwner = "main"
 		result.ConsumerPending = true
-		result.NextAction = fmt.Sprintf("本人 S9 candidate 已记录；Main 下一步执行 runtime workspace integrate --root %q --assignment %q --agent %q。Main 按修复目标和实际改动选择必要检查，以 --check-command 参数传入实际命令，多项检查可重复该参数；沿原集成执行并记录真实结果。未选择且无已有检查配置时 Main 检查仍待办，不会登记最终 PASS。无需重复答卷。", root, accepted.Provenance.ExecutionAssignmentID, owner)
+		result.NextAction = fmt.Sprintf("本人 S9 candidate 已记录；Main 下一步执行 %s。Main 按修复目标和实际改动选择必要检查，以 --check-command 参数传入实际命令，多项检查可重复该参数；沿原集成执行并记录真实结果。未选择且无已有检查配置时 Main 检查仍待办，不会登记最终 PASS。无需重复答卷。", repairResultIntegrateCommand(root, accepted.Provenance.ExecutionAssignmentID, owner))
 	} else {
 		p := accepted.Provenance
 		answerPath := filepath.Join(p.ExecutionRoot, filepath.FromSlash(packet.AnswerPath))
@@ -496,6 +498,12 @@ func acceptedRepairResultCandidateReceipt(root string, snapshot loopruntime.Snap
 // Receipt queries project already accepted indexed objects. They do not replay
 // journal, issuance, source hashes or packet reconstruction.
 func recordedRepairResultReceipt(root string, state map[string]any, packetID, owner string) (loopruntime.RepairResultReceipt, bool, error) {
+	return recordedRepairResultReceiptContext(context.Background(), root, state, packetID, owner)
+}
+func recordedRepairResultReceiptContext(ctx context.Context, root string, state map[string]any, packetID, owner string) (loopruntime.RepairResultReceipt, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return loopruntime.RepairResultReceipt{}, false, err
+	}
 	review, _ := state["review"].(map[string]any)
 	pointer, _ := review["repair"].(map[string]any)
 	encoded, err := json.Marshal(pointer["result_refs"])
@@ -512,6 +520,9 @@ func recordedRepairResultReceipt(root string, state map[string]any, packetID, ow
 		}
 	}
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return loopruntime.RepairResultReceipt{}, false, err
+		}
 		data, err := workpacket.ReadFile(root, ref.Path, repairResultAnswerLimit)
 		if err != nil {
 			return loopruntime.RepairResultReceipt{}, false, err
@@ -528,6 +539,16 @@ func recordedRepairResultReceipt(root string, state map[string]any, packetID, ow
 }
 
 func recordedRepairResultCandidateReceipt(root string, state map[string]any, packetID, owner string) (loopruntime.RepairResultCandidateReceipt, bool, error) {
+	return recordedRepairResultCandidateReceiptContext(context.Background(), root, state, packetID, owner)
+}
+func recordedRepairResultCandidateReceiptContext(ctx context.Context, root string, state map[string]any, packetID, owner string) (loopruntime.RepairResultCandidateReceipt, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return loopruntime.RepairResultCandidateReceipt{}, false, err
+	}
+	packet, found, err := loopruntime.FindRepairResultPacketContext(loopruntime.WithPacketBodyRoot(ctx, root), state, packetID)
+	if err != nil || !found {
+		return loopruntime.RepairResultCandidateReceipt{}, false, fmt.Errorf("original S9 candidate packet is unavailable: %v", err)
+	}
 	encoded, err := json.Marshal(state["workspace"])
 	if err != nil {
 		return loopruntime.RepairResultCandidateReceipt{}, false, err
@@ -536,14 +557,16 @@ func recordedRepairResultCandidateReceipt(root string, state map[string]any, pac
 	if err := json.Unmarshal(encoded, &registry); err != nil {
 		return loopruntime.RepairResultCandidateReceipt{}, false, err
 	}
-	executions := make([]workspace.Execution, 0, len(registry.Executions)+len(registry.History))
-	for _, execution := range registry.Executions {
-		executions = append(executions, execution)
+	executions, err := repair.RepairResultCandidateExecutions(packet, registry, owner, true)
+	if err != nil {
+		return loopruntime.RepairResultCandidateReceipt{}, false, err
 	}
-	executions = append(executions, registry.History...)
 	for _, execution := range executions {
-		if execution.AgentID != owner || execution.DeliveryRef == "" {
+		if execution.DeliveryRef == "" {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return loopruntime.RepairResultCandidateReceipt{}, false, err
 		}
 		data, err := workpacket.ReadFile(root, execution.DeliveryRef, repairResultAnswerLimit)
 		if err != nil {
@@ -580,4 +603,12 @@ func hasRepairResultPacket(values []workpacket.RepairResultPacket, expected work
 		}
 	}
 	return false
+}
+
+// These original receipt coordinates are shell arguments, including paths and
+// engineering labels with quotes, substitutions or newlines. Go %q is not a
+// shell literal and must not reinterpret them when Main copies this command.
+func repairResultIntegrateCommand(root, assignment, owner string) string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'" }
+	return quote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime workspace integrate --root " + quote(root) + " --assignment " + quote(assignment) + " --agent " + quote(owner)
 }

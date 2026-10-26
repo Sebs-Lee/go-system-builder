@@ -252,6 +252,8 @@ Each precheck is `{name,command,result,evidence_refs}` with the actual attempted
 command and honest `fail/pass/blocked` result. Cite real logs or existing
 references; a blocked attempt or passing precheck does not require invented red
 evidence. These commands record past work, not Main's later check selection.
+The actual prechecks may cover a subset of the assigned assertions; their results,
+or Main's selection of RED experiments, do not reduce the Result assertion set.
 
 Return the exact brief and absolute Result path. SubagentStop imports the private
 PlanReport into the original questionnaire and invokes the existing consumers.
@@ -262,6 +264,8 @@ worktree creation and execution. Do not write Main, wait for peer plans, manuall
 issue/consume, copy machine bindings or add a generic activation report. Missing
 paths/environment go to Main as concrete blockers. Existing frozen executions
 use their original [recovery contract](../agent-dispatch/frozen-execution.md).
+
+Main-owned reception recovery preserves these authored facts. Normal SubagentStop needs no extra submission. If the current diagnostic names an exact original private flat input, saved typed answer or Targeted answer, Main may run the supplied `runtime stage-answer consume --root <Main-root> --path <exact-original-input>` through the same adapter and consumer. Use the named original bytes and responsibility; do not reconstruct an answer, infer a path from role, or wake the Builder solely to return saved work. Accepted PlanReport remains accepted. An accepted candidate requires Main integration/checks, and accepted Targeted with unfinished Handoff follows `runtime repair handoff complete`. A Worker continues only actual unfinished professional work; source/preparation/transaction failures stay with Main/system.
 
 ## Issued S9 RepairResult after implementation
 
@@ -287,6 +291,12 @@ in the native brief. Do not add an `answer` wrapper or write Main. Fill the
 professional verdict, actual assertion observations, unit results, evidence,
 scope deviations, risks and applicable migration/rollback fields. Known machine
 and Git/check facts come from the system; green checks do not replace judgment.
+In `before_fix_results`, record one truthful pre-repair observation for every
+assertion in the original RepairAssignment supplied by the brief, in its original
+order, including assertions already satisfied, unreproduced or blocked. The
+`observed_red` field retains its historical name; describe the actual observation
+and evidence without manufacturing a failure. A RED-only experiment subset in a
+parent task does not replace this original Result responsibility.
 No-change testing requires no new commit. Existing Contract or Git references may
 support actual migration/rollback needs; nonempty “No migration” text does not
 force two references or another report.

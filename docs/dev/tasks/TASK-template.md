@@ -74,6 +74,18 @@ module regression sweep.
 This scope records the planned dispatch and integration-check boundaries for
 the TASK. Cover the product outputs promised in §6, including necessary tests,
 wiring and saved professional evidence, with concrete repository-relative paths.
+Use comma-separated concrete paths, preferably one inline code span per path:
+`internal/a.go`, `tests/a_test.go`. Plain `internal/a.go, tests/a_test.go`
+(without code delimiters in the actual cell) is also supported. A complete code
+list may end with one paired Chinese or English parenthetical note, for example
+`simulation/products/`（仿真产品输出区）; the note is not part of the scope.
+Keep other explanations after this table. Do not mix bare and code paths, insert
+notes between paths, leave trailing text or unclosed delimiters, use placeholders,
+globs, repository-root scope or escaping paths. Only prospective write paths
+supply the reviewed write boundary; other rows do not enlarge it. `tasks check`
+and the original S4 reception report malformed cells at their TASK and Scope line
+before freezing; S5 and Assignment preparation consume those same parsed paths.
+
 Applicable operations explain the work and check responsibility; they are not
 a command whitelist. Runtime Plan/Result locations are supplied with the later
 actual responsibility and are not future paths to invent here.

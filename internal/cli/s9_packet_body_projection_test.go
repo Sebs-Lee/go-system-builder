@@ -137,7 +137,7 @@ func TestS9ExternalListenerUsesFrozenLocatorWithoutBodyOrLiveProof(t *testing.T)
 		t.Fatalf("indexed progress required body/proof: packets=%+v reads=%d err=%v", packets, reads, err)
 	}
 	message := s9QuestionnaireContext(canceled, f.root, policy.Input{Event: "PreToolUse", AgentID: "Main"}, nil, runtime.Snapshot{State: f.state}, "Main", true)
-	if !strings.Contains(message, resolveRootPath(f.worker, f.packet.answer)) || strings.Contains(message, "context canceled") {
+	if !strings.Contains(message, resolveRootPath(f.worker, f.packet.answer)) || !strings.Contains(message, "Filesystem preparation was not refreshed within this request") || strings.Contains(message, "Original acceptance source is unavailable") || strings.Contains(message, "not prepared") {
 		t.Fatalf("cancellation erased known responsibility: %s", message)
 	}
 	execution := s9ObservedExecution(f.state, packets[0])

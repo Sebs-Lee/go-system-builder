@@ -120,13 +120,10 @@ func TestDesignAnswerMainSaveOriginalTransitionAndReplay(t *testing.T) {
 		if !strings.Contains(out.String(), "docs/design") || !strings.Contains(out.String(), "transition are recorded") {
 			t.Fatalf("missing next-stage material did not preserve accepted transition: %s", out.String())
 		}
+		planningBoundaryEvent(t, root, "PreToolUse", "Bash", "", false)
 		writeContractSource(t, root, "docs/design/README.md", "# Design sources\n")
 		fixtures.CommitCurrentFixture(t, root)
-		change, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": "git commit -m 'complete actual design sources'"}, "cwd": root})
-		var changed, changeErr bytes.Buffer
-		if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(change), &changed, &changeErr); code != 0 {
-			t.Fatalf("actual Git change preparation: %s %s", changed.String(), changeErr.String())
-		}
+		changed, changeErr := planningBoundaryEvent(t, root, "PostToolUse", "Bash", "", false)
 		s = stageSnapshot(t, root)
 		for _, raw := range s.State["entities"].(map[string]any)["work_packets"].([]any) {
 			row := raw.(map[string]any)
@@ -139,13 +136,13 @@ func TestDesignAnswerMainSaveOriginalTransitionAndReplay(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(root, path)); err != nil {
 					t.Fatal(err)
 				}
-				if !strings.Contains(changed.String()+changeErr.String(), path) {
-					t.Fatalf("actual Git preparation did not deliver current path: %s %s", changed.String(), changeErr.String())
+				if !strings.Contains(changed+changeErr, path) {
+					t.Fatalf("actual Git preparation did not deliver current path: %s %s", changed, changeErr)
 				}
 			}
 		}
 		if !prepared {
-			t.Fatalf("actual material/Git change did not finish S3 preparation: %s %s", changed.String(), changeErr.String())
+			t.Fatalf("actual material/Git change did not finish S3 preparation: %s %s", changed, changeErr)
 		}
 	}
 
