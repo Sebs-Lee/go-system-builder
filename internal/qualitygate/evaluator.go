@@ -119,14 +119,36 @@ func evidenceKindsEqual(requirementKind, actualKind string) bool {
 	return evidence.DefaultCatalog().Accepts(requirementKind, actualKind)
 }
 
-// s5DocumentReviewRequirement reports whether the requirement is satisfied by
-// S5 document-review evidence. S5 evidence carries no review_round by design
-// (work_packet.go rejects it, the envelope has no such field); its freshness
-// is the S5 entry tip (currentS5Evidence), not the S7 review round. Comparing
-// its review_round against review.round would deadlock every generation that
-// has ever run S7 before returning to S5.
-func s5DocumentReviewRequirement(requirement EvidenceRequirement) bool {
-	return evidenceKindsEqual(requirement.Kind, "document_review")
+// s5DocumentReviewWithoutRound reports whether a S5 document-review
+// candidate carries no review round on either the state row or the envelope.
+// S5 evidence carries no review_round by design (work_packet.go rejects it,
+// the envelope has no such field); its freshness is the S5 entry tip
+// (currentS5Evidence), not the S7 review round. Comparing its absent round
+// against review.round would deadlock every generation that has ever run S7
+// before returning to S5. Evidence that does carry a round keeps the exact
+// round comparison, so stale rounds are still rejected.
+func s5DocumentReviewWithoutRound(requirement EvidenceRequirement, index map[string]any, envelopeRound int, envelopeHasRound bool) bool {
+	if !evidenceKindsEqual(requirement.Kind, "document_review") {
+		return false
+	}
+	_, rowHas := index["review_round"]
+	if rowHas {
+		return false
+	}
+	return !envelopeHasRound && envelopeRound == 0
+}
+
+// envelopeCarriesRound reports whether raw envelope JSON declares review_round.
+// The typed envelope always has the field (zero when absent), so presence
+// must be read from the raw document; unknown fields are rejected at
+// registration, so presence implies a schema that allows the field.
+func envelopeCarriesRound(data []byte) bool {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	_, ok := raw["review_round"]
+	return ok
 }
 
 func currentS5Evidence(state map[string]any, evidenceID, kind string) bool {
@@ -905,7 +927,7 @@ func envelopeMatchesAnyRequirement(envelope evidenceEnvelope, index map[string]a
 			!containsString(requirement.Conclusions, envelope.Conclusion) {
 			continue
 		}
-		if requirement.CurrentReviewRound && !s5DocumentReviewRequirement(requirement) &&
+		if requirement.CurrentReviewRound && !s5DocumentReviewWithoutRound(requirement, index, envelope.ReviewRound, envelope.ReviewRound != 0) &&
 			(envelope.ReviewRound != currentRound || intValue(index["review_round"]) != currentRound) {
 			continue
 		}
@@ -946,7 +968,7 @@ func qualifiedEvidence(
 			index["invalidated_by"] != nil {
 			continue
 		}
-		if requirement.CurrentReviewRound && !s5DocumentReviewRequirement(requirement) && intValue(index["review_round"]) != currentRound {
+		if requirement.CurrentReviewRound && !s5DocumentReviewWithoutRound(requirement, index, 0, false) && intValue(index["review_round"]) != currentRound {
 			continue
 		}
 		path := stringValue(index["path"])
@@ -983,7 +1005,7 @@ func qualifiedEvidence(
 			aliasConflict = len(conflicts)
 			conflicts = append(conflicts, "evidence:"+stringValue(index["id"])+":schema")
 		}
-		if requirement.CurrentReviewRound &&
+		if requirement.CurrentReviewRound && !s5DocumentReviewWithoutRound(requirement, index, envelope.ReviewRound, envelopeCarriesRound(data)) &&
 			(envelope.ReviewRound != currentRound || envelope.ReviewRound != intValue(index["review_round"])) {
 			continue
 		}
