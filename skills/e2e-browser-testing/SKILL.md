@@ -91,7 +91,7 @@ gate. Preserve browser coverage and real independence when work is partitioned.
 
 ## Core Principle
 
-Main 提供原 `s7-review-result-v1` 题目与准确私人答案位置。读取真实材料，完成本人的独立浏览器验证，只填写专业 `answer`，保存后返回同一引用，由 `SubagentStop` 调原消费者接收。新原生责任不增加通用 PLAN／激活或保存回执前置。保留机器预填与 `verification_artifact_digest=null`；消费者从实际执行来源固定并校验摘要，作者不计算或抄写。浏览器责任仍须完成本人分配 Claims/CASE/PATH 的真实执行、证据来源和专业结论；完整当前模块覆盖由 Main 在整轮计划与结果中核对。
+Main 提供原 `s7-review-result-v1` 题目与准确私人答案位置。读取真实材料，完成本人的独立浏览器验证，只填写专业 `answer`，保存本人原答卷；PreToolUse 高频监听就绪原答卷，成功 PostToolUse 与 Stop／SubagentStop 兜底调用原消费者，不增加提交手续，不等待收尾消息或返回引用；完成后向 Main 汇报真实结果。新原生责任不增加通用 PLAN／激活或保存回执前置。保留机器预填与 `verification_artifact_digest=null`；消费者从实际执行来源固定并校验摘要，作者不计算或抄写。浏览器责任仍须完成本人分配 Claims/CASE/PATH 的真实执行、证据来源和专业结论；完整当前模块覆盖由 Main 在整轮计划与结果中核对。
 
 E2E tests are the **executable transcription of current module `flows.md` and CASE oracle**.
 The current module package is the source of truth; the spec is its compiled, runnable form.

@@ -52,7 +52,9 @@ Main 需要判断工作能否自包含、输入是否可读、完成条件是否
 
 S6 的 `s6 prepare --task … --role …` 登记原责任、固定输入并交付 brief；S5／S7／S8 从原登记与题目准备交付各人的 view／answer；S9 按批准合同、原分工及工序交付专业 brief 或定向验证题目。这些动作准备工程资料，不创建 Claude 进程。
 
-随后 Main 通过 Claude Code 原生 Agent 实际派发。产品写入责任使用原生 worktree 隔离；只读审查可以读取 Main 中的真实产品和各自独占答案。Main 不能以“已登记”代替“已派发”，Hook 也不代 Main 启动。
+随后 Main 通过 Claude Code 原生 Agent 实际派发。产品写入责任使用原生 worktree 隔离；新 S7 Reviewer／S9 独立 Targeted 的本轮正式主线是共享 Main checkout 的独立原生上下文，读取真实最终产品并填写各自普通唯一直卷。独立上下文不等于必须另建 worktree，Main 不代填结论。准确作者路径和新旧来源协议分别由 S7 issued 模板 SHA 与 Targeted 原责任 source contract 固定，不按文件存在猜测。Main 不能以“已登记”代替“已派发”，Hook 也不代 Main 启动。
+
+实际 native worktree 只有在原消费者已有可验证 source binding 时才可接收；缺少绑定则反馈准确未接收，不把 cwd 或 Main 同名答案当资格。保留现有 frozen 责任的准确来源，不为支持只读角色直接套用 Builder Plan／Result adapter。共享 checkout 的控制原卷只沿原责任准确 proof 投影，不全目录忽略，不新增作者复制、提交、done 或普通工具限制。
 
 ## 4. 一项正常责任怎样完成交接
 
@@ -164,7 +166,7 @@ Stop 适配器调用本责任原消费者。题目、来源、实际检查、状
 
 ### 8.3 反馈与原回执分别读取
 
-Stop 的诊断反馈属于当前子代理，不充当父会话通知。Main 的 `PostToolUse(Agent/Task)` 沿现有工具返回上下文提供只读接收摘要：先按实际派发 prompt 的准确引用查询原责任，prompt 没有准确关联时才考虑返回文字中的引用；多项真正责任仍有歧义时交 Main 处理，不按角色或平台 actor 猜绑。
+Stop 的诊断反馈属于当前子代理，不充当父会话通知。Main 的 `PostToolUse(Agent/Task)` 沿现有工具返回上下文提供接收摘要：除下述限定 S9 原消费者接续外保持只读；先按实际派发 prompt 的准确引用查询原责任，prompt 没有准确关联时才考虑返回文字中的引用；多项真正责任仍有歧义时交 Main 处理，不按角色或平台 actor 猜绑。
 
 摘要读取原接收记录，不读取或接收 Worker 私人答案。S5 即使已经推进到 S6，仍可按原 packet 查询回执；S7／S8 读取各自原回执；S9 区分 PlanReport、Builder Result 与 Targeted，不能将计划已接收说成整个 Builder 已完成。S6 复用原 Runtime 单责任提示，带出已登记 Result 的准确位置；提示本身不重验全部产品证据，也不替代原 task-receipt、Main 检查与集成。
 
@@ -290,9 +292,16 @@ Main 先看平台的实际执行与可恢复性，再看原产物及回执。可
 | S6 工程准备及原生交付 | [s6_prepare.go](../../internal/cli/s6_prepare.go)、[native_s6.go](../../internal/cli/native_s6.go) |
 | S5／S7／S8 精确引用与原消费者 | [native_review_hooks.go](../../internal/cli/native_review_hooks.go) |
 | S9 私人 Plan／Result、返回 Git 来源与独立 Targeted | [native_s9.go](../../internal/cli/native_s9.go) |
+| 历史已锚定 C source-v1 来源兼容 | [native_s9_source.go](../../internal/cli/native_s9_source.go)、[原来源保全与复核](../../internal/repair/native_s9_source.go) |
 | 原领域接收及回执 | [submission](../../internal/submission)、[assignment](../../internal/assignment) |
 | TASK 偏序、依赖释放及候选投影 | [dispatch/board.go](../../internal/dispatch/board.go)、[semantic/dispatch_plan.go](../../internal/semantic/dispatch_plan.go) |
 | Main 与角色的实际使用说明 | [agent-dispatch](../../skills/agent-dispatch/SKILL.md)、[agent-protocol](../../docs/control/agent-protocol.md)、[角色定义](../../agents) |
+
+新 S9 Builder 的 D 合同由原 pin／brief 固定准确普通原稿 `.loop-submissions/native-s9/<原Plan packet>/plan.json` 和同目录 `result.json`；原 packet、AnswerPath／digest、typed 机器输入及旧 frozen 坐标不改，作者仍只填本人原有专业产物。系统核准确原稿路径未被 ignore、非 tracked／base 产品且真实 `??`，并按责任和原字节投影原稿。原 PlanReport 回执、pin 和登记执行共同确定该 packet 的本人私人运行产物区，区内未追踪中间产物不因缺引用而成为产品变化；这不排除整个 `.loop-submissions`、其他 packet 或真实产品 diff。被引用证据仍按原来源捕获与校验。平台默认生命周期不接管；原稿至少保留至来源后继结束与原 verified／ACK／cleanup_pending，不在 Stop 提前删最后一份原稿。原回收授权成立后，本责任私人运行产物可随该工作区回收，不新增作者清理手续。
+
+原 Stop 沿准确责任和实际来源进入原 Plan／Result／Candidate；actor 仅记录真实事件，不建立独立 actor→worktree 所有权证明。仅无失败的 Main Agent／Task completed Post、准确派发 prompt 唯一原 brief、返回 agentId 非空且非 Main，并满足相应来源证明时，可在原预算内续同一原 source／attempt。D 核同次结构化 worktreePath／worktreeBranch、原 execution 和冻结 pin 摘要，缺字段不从 prose 猜源；既有 C 核原 retained Stop actor 与已锚不可变来源。已保存 typed 优先、已收幂等，不从 prose／角色／目录首次造源、不要求作者重存或再 Stop。普通高频 Pre／Post 继续当前信息和原 Writer 恢复，不因完整 JSON 首次接收 Worker；Main 真实保存的原工序仍保留自身接收合同。Main 长集成／检查不进入 Stop。
+
+新 D 不默认创建 source-v1／ref；历史实际 C 锚及旧 frozen 继续原读取与冲突规则，不能移动旧稿或追溯升级。S7 Reviewer、S9 独立 Targeted 沿各自原题、原作者根和消费者，S6／S8／S10 的专业合同不扩展。精确接收、ignored 清理与先 Impact 后独立资源收尾见 [S9 §6.2](../l3-stages/L3-S9-repair.md#62-stop-接收原作者产物不代作专业判断)及 [Worktree §9.2](L4-worktree-governance.md#92-清理只处理确切已接收资源)。D 接线及完整平台验证仍待完成，有限 changed／nochange 隔离证据不替代真实 blocked、Targeted→fresh S7、OS sandbox、并发与安装验收。
 
 这些入口复用原领域机制，没有新增 actor 注册表、通用 Result 或平台启动器。任务读取与错误反馈受前述准确引用、有限读取和责任归属边界约束；Main 工具返回可提供原回执摘要；父会话是否实际看到仍须实际平台验证，不能由 Stop 的 stderr 推定。具名冻结恢复入口继续服务原记录；维护时沿公开调用链判断，不能看到旧 helper 就将其重新提升为正常前置。
 

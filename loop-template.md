@@ -37,8 +37,12 @@ hash. After a new session, compaction or contradictory context, recover as follo
    `loop-orchestration`. Existing accepted facts remain valid unless the
    original consumer reports otherwise. Investigate source drift only when
    actual work or a diagnostic calls for it.
-4. Follow the original completion boundary: Main saves its current answer;
-   native Workers return original references for SubagentStop reception.
+4. Follow the original completion boundary: Main saves its current answer.
+   S7/S9 PreToolUse receives ready original answers through the original consumer,
+   with successful PostToolUse and Stop/SubagentStop fallback; reception does not
+   wait for a final message or returned reference. Report actual results and
+   unfinished work to Main when finished, without extra submit/done or activation.
+   S5/S6/S8 retain their original reference return and SubagentStop reception.
    Distinguish reception, stage transition and next-material preparation.
    A successful receipt with unfinished followup needs the named continuation,
    not a new answer or an unrelated tool call to trigger progress.
@@ -85,4 +89,4 @@ S2 在最终答卷前将正式上游设计提交到绑定开发分支，使 S3 �
 
 正式文件、私人答卷、运行证据和 Runtime 各有来源合同，不能统一要求全部对象先入 Git。固定 Git 来源只接受已提交产物，明确磁盘来源读实际文件，Runtime 读权威快照。集成不等于 release；临时 worktree 不等于交付完成。清理提醒不新增 Stop 或普通工具硬门禁。
 
-S9 先辨当前职责：实施／测试 Builder 按准确 brief 在实际 worktree 保存私人 flat PlanReport／Result；独立 Targeted（包括被这样派发的 test-builder）只答原 Targeted 请求，不交 Builder 计划或改产品。普通保存不接收 native Worker 专业事实，返回原引用后由 SubagentStop 接收；Main 自己保存 ChangeImpact。具体字段与方法只读当前题面和 bug-resolution，不在唤醒时另建报告。Targeted 已接收而 Handoff 未完成时，沿反馈给出的原收尾入口只补缺口；普通 Pre／状态不触发交接。成功 TR-012 后 Main 填写并保存原 S7 ReviewPlan 问卷，seed 不等于 PASS，也不另做手工 review-plan 登记。旧已登记冻结来源保持原恢复。
+S9 先辨当前职责：实施／测试 Builder 按准确 brief 在实际 worktree 保存私人 flat PlanReport／Result；独立 Targeted（包括被这样派发的 test-builder）只答原 Targeted 请求，不交 Builder 计划或改产品。普通保存不接收 native Worker 专业事实，返回原引用后由 SubagentStop 接收；新版本 completed nochange 由系统先在该 Stop 保全原字节、所需证据和准确来源，再进入原消费者。已登记技术保源不等于接收，树清理后仍须复核；未保全或保全失败不能恢复丢失原字节，旧冻结合同不升级。Main 自己保存 ChangeImpact。具体字段与方法只读当前题面和 bug-resolution，不在唤醒时另建报告。Targeted 已接收而 Handoff 未完成时，沿反馈给出的原收尾入口只补缺口；普通 Pre／状态不触发交接。成功 TR-012 后 Main 填写并保存原 S7 ReviewPlan 问卷，seed 不等于 PASS，也不另做手工 review-plan 登记。旧已登记冻结来源保持原恢复。

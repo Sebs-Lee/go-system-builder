@@ -77,7 +77,7 @@ unknown capacity leaves eligible TASKs visible without another prerequisite.
 
 ## Native S5 / S7 / S8
 
-Main's original registration/questionnaire preparation supplies the exact view and private answer. Carry both references into native Agent. S5 reviews its independent document dimension; S7 answers its assigned Claims/lens; S8 investigates its registered Hypothesis. Read actual frozen subjects, perform the professional work, save the original answer and return its exact reference. Read-only subjects may remain in Main; a separate execution/bootstrap/session is not required. Existing registered independent sources keep their exact paths and never fall back to Main when lost.
+Main's original registration/questionnaire preparation supplies the exact view and private answer. Carry both references into native Agent. S5 reviews its independent document dimension; S7 answers its assigned Claims/lens; S8 investigates its registered Hypothesis. Read actual frozen subjects, perform the professional work, save the original answer and return its exact reference. For new S7 work, dispatch an independent native context sharing Main's checkout and its actual frozen product. The system supplies one ordinary `.loop-submissions/s7/.../answer.json` questionnaire; fill only its `answer`, without another flat form, copy or submission action. Main never authors the Reviewer conclusion. A separate execution/bootstrap/session is not required. Existing issued templates and registered independent sources retain their original exact paths; a missing or unbound native worktree source never falls back to Main's same-named answer.
 
 No duplicate generic plan is required. Keep ReviewPlan waves/dependencies, actual independence, source facts, Case/Contract judgments and real approval. Main owns further division, Case routing and stage closure. The same role may have several responsibilities; role, start order and actor name do not identify a questionnaire.
 
@@ -99,25 +99,30 @@ isolation. Preparation does not start the Agent. Builder implementation and assi
 no-change tests use [the S9 authoring method](../bug-resolution/SKILL.md#issued-s9-planreport-adapter):
 private flat PlanReport before work, real implementation/tests and self-checks, then
 private flat Result. Main-root questions are read-only; the exact brief owns output
-paths. Return the exact brief and absolute Result path for SubagentStop reception.
+paths. Report actual results and unfinished work to Main when finished. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference.
 Main integrates accepted Candidates and runs necessary checks before Final/Impact;
 an accepted Worker does not wait for Final or refill its Result.
 
 An explicitly independent Targeted verifier, including test-builder in that role,
-uses only the original Targeted request and answer path. It performs actual required
+uses only the original Targeted request and answer path. New verifier responsibilities use an independent native context sharing the actual final Main checkout and the system-supplied ordinary `.loop-submissions/s9/.../targeted-....json` original. The original registered TASK fixes its source protocol; existing responsibilities retain their issued paths. Main never fills the independent answer. It performs actual required
 observations without product writes, Builder PlanReport/Result or a new commit, then
-returns the exact answer for SubagentStop. Ordinary saving receives neither native
-Builder artifacts nor Targeted. Preserve actual independence and Contract assertions.
+returns the exact answer reference. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Preserve actual independence and Contract assertions.
 The original completion outlet hands off to fresh S7; Main saves the original new
 S7 ReviewPlan questionnaire rather than manually registering a second plan.
 
 Returned Git coordinates may be recorded as `native_delivery` for original Result/Main
 integration. They contain no bootstrap or reserved Claude session and do not create
-or resume an Agent. Only registered frozen sources keep their original recovery.
+or resume an Agent. For newly prepared completed no-change S9 work, the system
+preserves exact authored inputs, required local evidence and the original Git source
+at the natural reception boundary before Plan reception. A registered immutable technical source
+allows the original consumers to revalidate after cleanup; it is not acceptance.
+Missing or failed preservation cannot recover lost bytes. S9 ready original answers use PreToolUse reception with successful PostToolUse and Stop/SubagentStop fallback; frozen sources keep their original contract. Platform 2.1.311
+isolated runs verified files surviving through Stop and subsequent cleanup; full
+harness preservation/reception acceptance remains pending.
 
 ## Start and Stop
 
-Start supplies bounded context and observes actual facts; it does not guess a task or approve work. Ordinary tools and saves do not activate or receive native work. Stop selects the exact engineering reference and invokes the original consumer with actual artifacts. Unknown or multiple references remain Main's handoff; never claim another responsibility by role or queue order.
+Start supplies bounded context and observes actual facts; it does not guess a task or approve work. S7/S9 PreToolUse listens for ready original answers, with successful PostToolUse and Stop/SubagentStop fallback; S5/S6/S8 retain their original ordinary-tool reception contract. Ordinary tools require no activation. Stop selects the exact engineering reference and invokes the original consumer with actual artifacts. Unknown or multiple references remain Main's handoff; never claim another responsibility by role or queue order.
 
 Return real blockers and unfinished work honestly on the first Stop; rejected or
 missing artifacts remain unaccepted and Main receives the exact diagnostic and

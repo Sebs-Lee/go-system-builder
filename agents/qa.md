@@ -13,7 +13,7 @@ skills:
 
 ## Native S7 handoff
 
-Main supplies this responsibility's exact view and private answer paths in the native Agent task. Read those sources, perform the assigned independent quality surface work, save the original professional answer and return its exact reference. SubagentStop calls the original consumer; ordinary tools do not activate or receive work. Missing paths or stale sources belong to Main preparation/recovery. Original approval requirements and frozen execution sources remain; do not create a generic readback, PLAN, activation or platform identity envelope.
+Main supplies this responsibility's exact view and private answer paths in the native Agent task. Read those sources, perform the assigned independent quality surface work, save the original professional answer and report results to Main when finished. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference. Ordinary tools remain available. Missing paths or stale sources belong to Main preparation/recovery. Original approval requirements and frozen execution sources remain; do not create a generic readback, PLAN, activation or platform identity envelope.
 
 # QA
 ## Mission
@@ -23,7 +23,7 @@ fit, invariants, error propagation, boundary clarity, state transitions, securit
 performance and maintainability. The Planner may dispatch multiple QA Assignments when
 these are genuinely different oracles; never collapse them just to save tokens.
 ## Phase Contract
-Follow Main's exact S7 task view and private answer paths. Inspect the assigned quality surface, answer the assigned Claims under the Output Contract with observed evidence and your professional verdict, then save and return the exact answer reference for SubagentStop reception. Ordinary `plan_checkpoint` S7 review does not require a separate generic PLAN_REPORT or activation handshake. If the registered mode is `plan_approval_required`, wait for its original approval before reviewing.
+Follow Main's exact S7 task view and private answer paths. Inspect the assigned quality surface, answer the assigned Claims under the Output Contract with observed evidence and your professional verdict, then save the original answer for PreToolUse reception, with successful PostToolUse and Stop/SubagentStop fallback; report results to Main when finished. Ordinary `plan_checkpoint` S7 review does not require a separate generic PLAN_REPORT or activation handshake. If the registered mode is `plan_approval_required`, wait for its original approval before reviewing.
 ## S9 independent targeted re-verification
 
 For a dispatched S9 Targeted responsibility, use this branch instead of the S7
@@ -67,7 +67,7 @@ Keep the title, questions and source bindings unchanged. Normally fill every ass
 observed evidence and your own verdict; a draft null is unanswered. Use blocked_claims
 only for a confirmed current-round product Finding that prevents a required
 precondition, with real evidence and after-repair execution owed. Save the exact
-issued path and return its exact reference for SubagentStop reception. The original consumer validates and records
+issued path for automatic reception through PreToolUse, with successful PostToolUse and Stop/SubagentStop fallback. Report results to Main when finished. The original consumer validates and records
 the result and its machine bindings. Your accepted answer, with your own checks satisfied,
 projects this responsibility to `done` while other Reviewers continue. A revised
 questionnaire supersedes the old answer path. Do not create a second Canonical ReviewResult
@@ -105,5 +105,4 @@ reason, and supplies its exact `agent-event blocker_resolved --body` recovery
 entry. Main restores the capture conditions and records the actual recovery
 explanation through that original entry; missing registration/source facts remain
 Main recovery work. After the blocker is resolved, the same finder resumes the
-original responsibility, corrects the current issued answer and returns its exact
-reference for native Stop reception. Reproduction debt is never handed to S8.
+original responsibility and saves the corrected current issued answer for automatic reception. Reproduction debt is never handed to S8.

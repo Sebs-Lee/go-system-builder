@@ -255,8 +255,14 @@ evidence. These commands record past work, not Main's later check selection.
 The actual prechecks may cover a subset of the assigned assertions; their results,
 or Main's selection of RED experiments, do not reduce the Result assertion set.
 
-Return the exact brief and absolute Result path. SubagentStop imports the private
-PlanReport into the original questionnaire and invokes the existing consumers.
+Report actual results and unfinished work to Main when finished. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference. The adapter imports the private PlanReport into the original questionnaire and invokes the existing consumers.
+For newly prepared completed no-change S9 work, the system first preserves exact
+authored Plan/flat Result bytes, required local evidence and the real Git source
+at that natural reception boundary. A successfully registered immutable technical source supports the
+original consumers after cleanup; it is not acceptance or PASS. Missing or failed
+preservation cannot recover lost bytes. PreToolUse listens for ready original S9 work, with successful PostToolUse and Stop/SubagentStop fallback.
+Platform 2.1.311 isolated runs verified files surviving through Stop and subsequent
+cleanup; full harness preservation/reception acceptance remains pending.
 The Main question is not the native output path; registered frozen execution keeps
 its original answer shape and binding. Main owns division, dependencies and necessary
 integration; Claude Code owns
@@ -302,7 +308,7 @@ support actual migration/rollback needs; nonempty “No migration” text does n
 force two references or another report.
 
 PlanReport and RepairResult record the two different professional steps before
-and after work. Return the saved Result reference for native Stop reception,
+and after work. Save the ready original Result; PreToolUse listens, with successful PostToolUse and Stop/SubagentStop fallback. Return the same saved Result reference,
 without a second generic completion prerequisite. Actual changes still require real Git delivery, Main
 integration and necessary Main checks; retain the Worker until Main receives it.
 Main uses the supplied `runtime workspace integrate --root <Main-root> --assignment <execution-assignment-id> --agent <owner-agent-id> --check-command '<actual necessary Main check command>'`; root/assignment/owner come from the current execution, while Main selects actual necessary checks (repeat `--check-command` for multiple checks). This typed S9 path records real integration and Final; do not substitute generic `runtime task-integrate`.
@@ -330,12 +336,18 @@ Successful Impact saving prepares the existing Targeted questionnaire for the
 actually assigned independent verifier. If no verifier is selected yet, use Main's
 current independent verifier division path; saving that selection at the
 targeted step prepares that person's answer.
-Main actually spawns/notifies the independent verifier. That person uses only the
+Main actually spawns/notifies the independent verifier. For new responsibilities,
+use an independent native context sharing the actual final Main checkout. Its
+original registered TASK fixes the normal authoring source; the system supplies
+the exact ordinary `.loop-submissions/s9/.../targeted-....json` original. Existing
+responsibilities keep their original source and path. Do not select a protocol by
+file existence, move old answers or substitute Main's conclusions. An actual
+native worktree without its original source binding remains unreceived.
+That person uses only the
 original Targeted request, with no Builder PlanReport/RepairResult, product writes
 or manufactured commit. The questionnaire supplies
 all necessary Contract assertion text and system slots; the verifier performs the
-real observations, saves the original answer and returns that exact reference for
-SubagentStop reception. Ordinary saves do not receive Targeted. Fill
+real observations, saves the original answer and returns that exact reference. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Fill
 `assertion_results` (`assertion_id,result,evidence_refs`), `result` and the
 applicable `failure_class` at the exact path. `continuity_reason` and
 `scope_compliance` are optional legacy metadata; do not add them to obtain

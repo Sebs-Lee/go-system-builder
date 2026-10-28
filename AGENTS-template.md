@@ -30,15 +30,17 @@ Identify the current responsibility from its exact original brief or Targeted
 request. Follow `.claude/skills/agent-dispatch/SKILL.md#native-s9` for native handoff and `docs/control/agent-protocol.md#s9`
 for completion and recovery. Builders own private PlanReport/Result and real
 self-checks; an independent verifier, including test-builder in that role, owns
-only Targeted observations and conclusions. Ordinary Worker saves do not receive
-these artifacts; SubagentStop invokes their original consumers. Main owns actual
+only Targeted observations and conclusions. PreToolUse listens for ready original
+S9 answers; successful PostToolUse and Stop/SubagentStop provide fallback through
+the original consumers. Reception does not wait for a final message or returned
+reference and requires no extra submit, done or activation. Main owns actual
 dispatch, integration/checks, Impact and the fresh S7 handoff. First incomplete
 returns preserve rejection and exact gaps for Main without manufacturing completion.
-Existing registered frozen execution keeps its original sources and recovery.
+For a newly prepared native S9 completed no-change delivery, the system preserves the exact original inputs and required evidence at the natural reception boundary before original Plan reception. A successfully registered technical source can support the original consumers after worktree cleanup; preservation is not acceptance. Missing or failed preservation cannot recover lost bytes. Ready original answers use the same natural-event reception; unfinished drafts remain unreceived. Frozen executions keep their original contract. Platform 2.1.311 isolated runs verified files surviving through Stop and subsequent cleanup; full harness preservation/reception acceptance remains pending.
 
 ## Native S5 / S7 / S8 professional work
 
-Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. S7 PreToolUse listens for ready original answers; successful PostToolUse and Stop/SubagentStop provide fallback through the original consumer, without waiting for a final message or returned reference. S5/S8 retain their original exact-reference return and SubagentStop reception. Ordinary tools need no activation or receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
 
 ## Work status
 
@@ -74,9 +76,11 @@ input references. Apply the quality checks for your professional responsibility.
 S5/S7/S8 read-only Workers save their own professional answer. Native S6/S9
 Builders save their plan before implementation, perform actual self-checks,
 commit real product changes with ordinary Git and save the supplied Result;
-an allowed no-change result does not require a new commit. Return the original
-references so SubagentStop can receive the artifacts. Ordinary saves need no
-receipt, and you do not manually register a duplicate Result. Main owns its
+an allowed no-change result does not require a new commit. S7/S9 PreToolUse
+receives ready original answers, with successful PostToolUse and Stop/SubagentStop
+fallback; report actual results and unfinished work to Main when finished.
+S5/S6/S8 retain their original return-reference and SubagentStop contract.
+Ordinary tools need no receipt, and you do not manually register a duplicate Result. Main owns its
 integration and necessary checks. Report a real blocker with its evidence,
 impact and unfinished work to Main; do not manufacture a conclusion to exit.
 Only an existing frozen execution uses its original named recovery contract.
@@ -324,8 +328,10 @@ Do not infer runtime state from this file, `project.yaml`, project-map, a TASK b
 In packet mode, after S7 Reviewer registration, the Hook automatically prepares
 their current questionnaires and supplies the exact view and answer paths.
 Give each Reviewer its immutable view and exact answer path. The Reviewer performs
-the checks, fills the professional fields, saves and returns the exact reference;
-SubagentStop invokes the original consumer. Ordinary `plan_checkpoint`
+the checks, fills and saves the professional fields, then reports results to Main.
+PreToolUse observes ready original answers; successful PostToolUse and SubagentStop
+provide fallback through the original consumer, without an extra submission.
+Ordinary `plan_checkpoint`
 reviewers do not send a separate generic PLAN_REPORT first. If the registered
 mode is `plan_approval_required`, follow that original approval before review.
 An accepted Result projects that Reviewer's responsibility to `done` when the
@@ -524,10 +530,13 @@ Use the current native brief or independent Targeted request as the exact author
 entry, following `.claude/skills/bug-resolution/SKILL.md`. Main reads its own
 questions and accepted artifacts; it does not fill Worker answers. Builder Plan
 and Result are flat private outputs in the actual native worktree; Main-root
-questions supply read-only inputs. Save before/after actual work and return the
-original references for SubagentStop. Independent Targeted uses its original answer
-only, without a Builder PlanReport or product changes. Ordinary Worker saves do not
-receive work. Main saves its ChangeImpact through its original consumer.
+questions supply read-only inputs. Save before/after actual work and report the
+results to Main when finished. Independent Targeted uses its original answer only,
+without a Builder PlanReport or product changes. PreToolUse observes ready original
+answers; successful PostToolUse and SubagentStop provide fallback through the
+original consumer, without an extra submission. Applicable no-change source
+preservation follows the Native S9 dispatch contract above and does not replace the
+original receipt. Main saves its ChangeImpact through its original consumer.
 
 Keep accepted Candidates, Final, Impact, Targeted and Handoff distinct. Resume only
 the unfinished original responsibility or completion outlet identified by feedback;

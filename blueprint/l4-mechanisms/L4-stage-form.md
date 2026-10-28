@@ -140,6 +140,12 @@ S5 等工作包使用原 `answer`；S6 原生私人计划／结果使用其专�
 
 外围题目保护也有领域差别：部分消费者精确核对固定题干，部分读取现有专业字段。维护时必须核对本责任 Schema 与消费者，不能一律声称“改动任意题外字节都拒收”，也不能因此允许作者替换机器已确定的来源和责任。
 
+S7 Reviewer 与 S9 独立 Targeted 的新普通作者卷沿各自原消费者处理，本轮正式主线是共享 Main checkout 中真正独立的原生上下文。S7 仍只答唯一 issued questionnaire 的 `answer`；Targeted 仍只答原独立请求 DTO。它们都不增加 Builder flat Plan／Result、第二份 Main 作者稿、done、人工提交或工具限制。准确路径、本人 source 与原产品对象分别由 [S7 §7.2](../l3-stages/L3-S7-verification-round.md#72-main-登记责任再由平台执行)和 [S9 §9.1](../l3-stages/L3-S9-repair.md#91-人与对象都要独立准确)固定。
+
+S7 新模板 SHA 对应新普通 `AnswerPath`，保留旧模板字节并按旧 SHA 重建旧路径与 packet digest。Targeted 按原责任明确的 source contract 选择新旧路径，优先复用原权威来源，不能按磁盘存在与否猜版本。任何已发行或已接收数据均不因界面迁移重写。共享根仅凭原 issued／原责任准确 proof 识别单文件控制写面，核对未跟踪与非产品冲突；未知同目录文件、tracked/staged 同名仍可见，不宽排私人目录。
+
+实际 native worktree 缺原已成立 source binding 时明确未接收，不借 Main 同名卷补齐；保留已有 frozen 来源资格。上述界面合同不自动证明普通路径的真实权限、Hook 可达性或完整阶段通过，须分别验证真实原生会话与原消费者。
+
 ## 5. 准备、发行与渐进披露
 
 ### 5.1 先交准确材料，再真实执行

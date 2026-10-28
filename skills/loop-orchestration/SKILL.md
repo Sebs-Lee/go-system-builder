@@ -21,8 +21,7 @@ Identify the current responsibility from its exact original brief or Targeted
 request. Follow [agent-dispatch](../agent-dispatch/SKILL.md#native-s9) for native handoff and [S9 protocol](../../docs/control/agent-protocol.md#s9)
 for completion and recovery. Builders own private PlanReport/Result and real
 self-checks; an independent verifier, including test-builder in that role, owns
-only Targeted observations and conclusions. Ordinary Worker saves do not receive
-these artifacts; SubagentStop invokes their original consumers. Main owns actual
+only Targeted observations and conclusions. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference. Main owns actual
 dispatch, integration/checks, Impact and the fresh S7 handoff. First incomplete
 returns preserve rejection and exact gaps for Main without manufacturing completion.
 Existing registered frozen execution keeps its original sources and recovery.
@@ -42,7 +41,7 @@ call, repeated Reviewer answer or copied clean_round binding is required.
 
 ## Native S5 / S7 / S8 professional work
 
-Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. Return that exact reference; SubagentStop calls the original consumer. Ordinary tools do not activate, deliver or require a receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
+Main carries the exact original view and answer references into Claude Code native Agent. Read its actual frozen subjects, perform only your independent professional responsibility and save the original answer. For S5/S8, return the original reference for SubagentStop reception. For S7, PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. S5/S8 ordinary tools do not activate or receive work. Ordinary tools need no receipt. No Team, opaque platform ID, workspace prepare/launch, generic readback/PLAN or begin is required for new work. Main retains professional division, ReviewPlan waves, Case routing and stage closure; real approval modes and actual independence remain. Frozen registered workspaces keep their original sources and recovery; never fall back to Main for a lost frozen execution. S5 checks the independent document responsibility; S7 answers its Claims/lens; S8 investigates its Hypothesis without product writes.
 
 For S8, follow the current Main intake → hypotheses/actual dispatch → causal
 route → Contract → actual decision questionnaires. Put experiment-specific scope,
@@ -452,9 +451,10 @@ not a professional acceptance or a substitute for the original stage gate.
 | Stop/idle reminder for this owner's incomplete responsibility | Finish or report that responsibility, using its delivered answer/result path. Other owners' missing work does not reopen a completed responsibility. |
 | Stale or unreadable Runtime context | Follow the original Runtime recovery or human gateway when the source authority is genuinely unrecoverable. |
 
-Main's answer save and a native Worker's SubagentStop each use their original
-domain consumer, evidence and binding checks, and Writer/CAS. An ordinary
-Worker save is not reception. Only those original consumers produce acceptance facts;
+Main's answer save and each stage's native reception route use their original
+domain consumer, evidence and binding checks, and Writer/CAS. S7/S9 use
+PreToolUse reception of ready original answers, with successful PostToolUse and
+Stop/SubagentStop fallback; other stages retain their original routes. Only those original consumers produce acceptance facts;
 the Hook reminder itself does not register evidence, approve a professional
 judgment, or advance a stage. Stage transitions continue through the existing
 graph and transition path after their original prerequisites hold.

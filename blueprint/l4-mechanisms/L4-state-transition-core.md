@@ -186,7 +186,7 @@ flowchart LR
 
 错误返回不总意味着完全没有发生作用。标记落盘后中断，原事务可能已经到达目标状态，下一次合法 Writer 会先处理它；调用者应读取原接收与恢复事实，而不是盲目再交一份新工作。
 
-待实施的普通提交编码消重限于本次局部值：目标完成最终正文外置和索引校验后，生成带换行的缩进 stateDocument 与带换行的 compact eventLine；预算、目标摘要、state 原子写和事件追加复用各自准确字节。源摘要仍按原 canonical 合同计算，pending envelope 独立编码且继续检查 coherence；不得复用 inline 或外置前的 state 字节。字节追加入口须完整保留 O_APPEND、短写检查、Flush、Sync 及错误传播。不引入通用 prepared-commit 对象、新 schema 或新的提交事实。本段是待实施目标，不改写上述当前提交顺序与持久化义务。
+普通提交编码消重限于本次局部值：目标完成最终正文外置和索引校验后，生成带换行的缩进 stateDocument 与带换行的 compact eventLine；预算、目标摘要、state 原子写和事件追加复用各自准确字节。源摘要仍按原 canonical 合同计算，pending envelope 独立编码且继续检查 coherence；不得复用 inline 或外置前的 state 字节。字节追加入口须完整保留 O_APPEND、短写检查、Flush、Sync 及错误传播。不引入通用 prepared-commit 对象、新 schema 或新的提交事实。该局部复用不改变上述提交顺序与持久化义务。
 
 ## 8. 持久化标记怎样支持恢复
 
@@ -238,7 +238,7 @@ checkpoint 必须能恢复它引用的准确正文：正文及其原身份进入
 
 正常同次事务可以复用仍成立的候选结构校验和准确序列化结果，复用依据必须绑定实际候选、验证条件及相关不可变来源。落盘配对、字节完整性和当前可变来源仍在各自边界核对。独立恢复、重新进入进程或来源发生变化时，重新执行适用检查；不能仅为减少 checkpoint 耗时删除恢复入口的验证。
 
-待实施的 checkpoint 小项仅把先 s.read 再 ReadFile 合并为一次实际 ReadFile，沿原 decodeState 解码，以同一份实际落盘字节计算摘要并发布副本。完整 journal、准确正文副本、fsync、marker、配对检查及现有 state 验证暂保持，作为最小改动策略；这不将现有验证次数升格为永久架构义务。独立恢复仍消费真实落盘材料，不以提交前内存 state 代替。该小项不依赖自检方案裁定，也不增加 state／event hints、journal 尾行或完整历史 buffer 复用分支；等价性与净收益仍待验收。
+checkpoint 单次读取把先 s.read 再 ReadFile 合并为一次实际 ReadFile，沿原 decodeState 解码，以同一份实际落盘字节计算摘要并发布副本。完整 journal、准确正文副本、fsync、marker、配对检查及现有 state 验证暂保持，作为最小改动策略；这不将现有验证次数升格为永久架构义务。独立恢复仍消费真实落盘材料，不以提交前内存 state 代替。该局部复用不依赖自检方案裁定，也不增加 state／event hints、journal 尾行或完整历史 buffer 复用分支；小规模适用验收不替代代表规模与增长预算证据。
 
 ## 9. 重复事件、幂等与一次消费
 

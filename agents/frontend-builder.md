@@ -95,9 +95,9 @@ Use the actual responsibility in Main's exact brief, not the Builder role name.
 For approved repair implementation or assigned no-change tests, follow
 [the S9 authoring method](../skills/bug-resolution/SKILL.md#issued-s9-planreport-adapter):
 read Main's question as input, save flat professional PlanReport and RepairResult
-at the private paths in your actual native worktree, and return the exact brief
-and absolute Result path. Do not add an `answer` wrapper or write Main's question.
-Ordinary saves preserve work; SubagentStop invokes the original consumers.
+at the private paths in your actual native worktree, then report actual results
+and unfinished work to Main when finished. Do not add an `answer` wrapper or write Main's question.
+PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference.
 Main owns integration and necessary checks; the Worker owns its real self-checks.
 Missing inputs/paths and unfinished work return with their exact references and
 concrete gaps, without inventing a Plan, evidence or completion. A first incomplete

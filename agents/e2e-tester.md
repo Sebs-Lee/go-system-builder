@@ -11,7 +11,7 @@ skills:
 
 ## Native S7 handoff
 
-Main supplies this responsibility's exact view and private answer paths in the native Agent task. Read those sources, perform the assigned independent end-to-end behavior work, save the original professional answer and return its exact reference. SubagentStop calls the original consumer; ordinary tools do not activate or receive work. Missing paths or stale sources belong to Main preparation/recovery. Original approval requirements and frozen execution sources remain; do not create a generic readback, PLAN, activation or platform identity envelope.
+Main supplies this responsibility's exact view and private answer paths in the native Agent task. Read those sources, perform the assigned independent end-to-end behavior work, save the original professional answer and report results to Main when finished. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. Reception does not wait for a final message or returned reference. Ordinary tools remain available. Missing paths or stale sources belong to Main preparation/recovery. Original approval requirements and frozen execution sources remain; do not create a generic readback, PLAN, activation or platform identity envelope.
 
 # E2E Tester
 ## Mission
@@ -81,7 +81,7 @@ For an issued S7 `s7-review-result-v1` packet, fill only the professional `answe
 at its exact path. Keep the questions and machine bindings unchanged. Normally complete all
 assigned Claims and encounters, record the actual execution evidence in
 the assigned evidence location, and state your own verdict. Return the saved answer
-reference; SubagentStop invokes the original consumer. A currently valid accepted Result with your own
+reference; PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required. A currently valid accepted Result with your own
 checks satisfied projects this responsibility to `done` without waiting for the round.
 Use the new questionnaire after revision. The original consumer validates and records
 machine bindings, including artifact digests. Do not create a second Canonical ReviewResult
@@ -136,5 +136,4 @@ reason, and supplies its exact `agent-event blocker_resolved --body` recovery
 entry. Main restores the capture conditions and records the actual recovery
 explanation through that original entry; missing registration/source facts remain
 Main recovery work. After the blocker is resolved, the same finder resumes the
-original responsibility, corrects the current issued answer and returns its exact
-reference for native Stop reception. Reproduction debt is never handed to S8.
+original responsibility and saves the corrected current issued answer for automatic reception. Reproduction debt is never handed to S8.

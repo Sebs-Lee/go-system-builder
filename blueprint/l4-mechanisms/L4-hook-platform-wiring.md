@@ -25,7 +25,7 @@
 | 注册类别 | 当前注册范围 | 在本项目中的用途 |
 | --- | --- | --- |
 | `SessionStart` | 无 matcher 限制 | Main 恢复当前责任与必要入口准备 |
-| `PreToolUse` | `*` | 进度与当前材料提示；不按工具身份或 scope 决定许可 |
+| `PreToolUse` | `*` | 进度与当前材料提示；S7／S9 高频监听就绪原答卷；不按工具身份或 scope 决定许可 |
 | `PostToolUse` | `*` | Main 本人保存、相关材料变化、适用的父返回和诊断观察；包括自定义工具，消费者仍核对成功状态和当前责任 |
 | `SubagentStart`、`SubagentStop` | 无角色 matcher 限制 | 新原生子代理的上下文与专业交付衔接 |
 | `Stop`、`TeammateIdle` | 无 matcher 限制 | 原收尾与兼容责任判断，按实际分支反馈 |
@@ -78,15 +78,23 @@ Main 应在实际原生任务中提供准确 brief、view、answer 和必要材�
 
 旧独立顶层会话可以使用已登记的 session／root 关联恢复 owner；它不为新子代理补造身份，不把一个未识别的嵌套执行伪装成 Main。
 
+读者分类仅决定展示，不充当作者资格。既存 S9 Result 的当前材料与接收事实由原 `s9PacketQuestionnaireLifecycleContext` 生产，不由通用 reader 重拼来源；精确路径选择原责任，当前 registered execution 的 Purpose 区分 native 渠道与旧冻结渠道，实际资格仍由原保存消费者核 owner／代次／来源／批准／Git／CAS。[S9 §12](../l3-stages/L3-S9-repair.md#12-重放阻塞解决与历史执行恢复)保留旧记录恢复；这不为新原生工作增加注册或启动动作。
+
 ### 4.2 真实路由顺序就是边界的一部分
 
 当前主入口按以下关系处理，而不是让所有模块都消费同一事件：
 
 1. 解码 JSON，核对注册事件，解析控制根与实际执行位置。
-2. 优先询问原生 S6、S9、审查／调查接线。已处理就返回，不再进入旧激活、通用监听或 Stop/Idle 规则。
+2. 原生路由对平台 `SubagentStop` 且 `agent_id` 非空、非 Main 的输入，在初始只读 Snapshot 明确返回 `ErrPendingRuntimeOperation` 时，以原 Writer 和原候选校验恢复一次，再丢弃旧路由缓存并重读 Snapshot。恢复前不从 pending 推断阶段或作者；恢复后仅当前 S7／S9 继续同一原事件的原接收分流；native 明确不适用的已激活／冻结独立责任仍进入原后续分支，重建的只读 reader 在当前公开请求内生效。其他阶段本事件结束而不新增专业接收。Main 在实际控制根的 `PreToolUse`、`SessionStart` 和成功 `PostToolUse` 遇到同一类型化 pending 时，也在原预算内调用原 Writer 恢复一次；恢复成功刷新路由与只读 reader，继续同一实际事件，不能以提示提前吞掉该事件。成功的原 Main 保存仍由后续原路径适配接收；SessionStart 不凭文件存在重构一次保存。S7／S9 Pre 可按准确责任与本人原答卷就绪条件调用原消费者，成功 Post／Stop 兜底；只恢复 Writer 不证明接收发生。恢复失败报告具体系统故障并放行工具，保留原输入。没有 pending 或不适用的事件保留原路由：Main 返回，再询问 S6、S9、审查／调查接线；已处理就返回，不再进入旧激活、通用监听或 Stop/Idle 规则。
 3. 未被原生分支处理的成功工具事件，进入适用的保存、材料变化、父返回或旧观察路径；失败与配置观察进入具名审计。
 4. 其余事件读取当前工程投影；需要原控制周期的入口才求值阶段条件与转换。
 5. 在实际适用的收尾、恢复、审计和输出边界完成对应动作。
+
+既存 S9 Result 保存适配在上述 pending／Main 返回之后、S6／S9 普通静默之前处理成功显式 Result Post 的窄分流；不整体前移包含 Main 准备的通用保存。精确当前 source 的 `Purpose == native_delivery` 在 S9 自然事件监听中沿原来源／就绪校验处理；`Purpose == ""` 且原 selector 确认旧独立来源时，调用原 Result 保存消费者；其他渠道或来源错误给具体诊断，不当成 native 静默。Main guard、原消费者资格与当前 CAS 保留。该分流使 mixed native＋frozen 工程中的 opaque 精确 frozen 保存先按所选来源处理，避免被 broad native 普通静默提前吞掉。
+
+上述 pending 恢复是共享基础机制副作用：合法原 Writer 可能完成 S5／S6／S8 等阶段的配对、checkpoint 或原日志维护；它不授权消费这些阶段的新答卷。恢复、刷新和 S7／S9 原消费者共用本次 Hook 原绝对截止点，不新增时间或后台执行者。恢复失败反馈系统故障，已恢复不等于已接收；真实责任、准确引用、来源和原答卷完整性仍由原消费者核对。超时、强制终止或此后没有可用事件时，自动最终接续尚无保证；不要求作者重写、重存或调用无关工具触发。
+
+公共 Snapshot 读取或验证失败时，保留本次实际错误，不把它当成没有责任、没有候选或接收成功。能识别 Main 时，在 Pre、成功 Post 或 SessionStart 的 `additionalContext` 给出原 Runtime 路径与错误，说明当前阶段及接收不可核验，保留原答卷与回执，由 Main 恢复原来源后再检查原回执；普通工具继续。无法核实责任的 Helper／Unknown 普通 Pre／Post 保持静默，不推断 Main 或借角色认领工作。SubagentStart 可以给不带阶段和责任归属的系统故障上下文；SubagentStop 的 `systemMessage` 是用户侧提示，不能宣称已经送达父会话或模型。后续真实 Main 事件独立读取当前来源；没有后续事件，不承诺跨会话必达，也不新增通知队列或恢复状态。临时短观察失败后，同一请求的正常 Snapshot 若成功，以该成功快照重建 reader；取消后不再读取或恢复。
 
 这使已有旧恢复分支可以继续解释原记录，同时不被新责任误用。某个 helper 存在，或者其名字包含 native、Stop，不代表新原生事件实际经过它。调查和变更必须从公开入口追到实际调用点。
 
@@ -109,19 +117,25 @@ Main 应在实际原生任务中提供准确 brief、view、answer 和必要材�
 }
 ```
 
-### 5.2 普通工具不管理新原生执行
+### 5.2 普通工具不管理新原生执行，S7／S9 监听原答卷
 
-已识别并进入新原生分支的 Worker，在普通工具事件中静默继续，不接收答案、不激活、不扫描同事产物。S6／S9 写产品与 S5／S7／S8 只读专业工作共用这条分工；它不意味着角色、任务范围、批准约束和独立责任消失。
+S7／S9 的自然事件接收合同如下：S7／S9 以高频 `PreToolUse` 观察当前准确责任及其本人原答卷；成功 `PostToolUse` 与 `Stop`／`SubagentStop` 复用同一原接收器兜底。真实任务／actor 与原 issued 引用、来源根必须唯一关联，不能按角色、最近文件或 Main 同名卷猜选。只在原专业字段、必要观察和来源满足原消费者条件时自动接收；可解析 JSON、路径存在或平台停止本身都不证明工作完成。系统以已保存的原答案和原消费者条件认定可接收，不推断作者未写出的隐含意图；接收后的修改沿原修订合同处理。不增加 submit、done、marker、状态字段、重存或额外工具调用。未完成稿保留原样，普通工具继续；状态查询仍只读。接收回执与原后继保持幂等，已收不重复接收；系统故障给原责任和准确恢复入口，不代做 Main 长检查、集成或专业判断。旧冻结责任继续使用原格式和来源合同。
+
+监听先用已有当前责任坐标定位本人，再读取并验证选中的原题和来源；索引不授权消费，原消费者仍核实发行、作者、来源和专业条件。无关责任的正文缺损不能被误报为本人未完成；本人准确来源损坏或共享索引不可用须投影具体系统故障，不能以零匹配静默吞错。高频未就绪与已收重放只做当前责任必要观察，不反复完整接收；S9 已固定 typed 输入继续同一原 attempt，已接收 Candidate／Final 复用原回执，实际来源与集成资格仍在原边界核对。恢复入口可能执行已有必要读取或发布，不能未经验证将其当作纯读取或一律缩减校验。
+
+原消费者提交、回执重建／验证、阶段出口和下一材料准备是不同事实。原提交成功后回执读取失败时，保留已成立提交和具体系统原因；未验证的回执不冒充完整成功，也不要求作者重填或误报未收。由实际 Main 入口接续原回执或原出口，已收的 Worker 不为制造下一事件重复履职。无可用执行者或来源时如实标明未完成，不承诺后台自动最终恢复。
+
+S5／S6／S8 保留原普通工具静默与 Start／Stop 合同，不由本次扩展新接收能力。角色、任务范围、批准约束和独立责任继续成立。
 
 Start 也不凭 `agent_type` 猜任务。一个同角色执行者可能承担不同责任，或者只是与当前工程无关的临时任务。只有实际准确引用能将其交付关联到原消费者，不能因为“恰好只有一个候选”就把它认领为当前责任。
 
 ### 5.3 Stop 接收本人产物，不代替 Main 集成
 
-原生 Stop 先确定唯一的当前责任及真实产物位置，再调用原消费者。S5、S7、S8 分别接收审查或调查答案；S6 接收本人 Plan／Result 与真实 Git 贡献；S9 按当前修复或定向复验责任接收。专业字段、当前关联和原批准约束仍由各自消费者检查。
+原生 Stop 先确定唯一的当前责任及真实产物位置，再调用原消费者。S5／S8 沿原 Stop 接收审查或调查答案；S6 接收本人 Plan／Result 与真实 Git 贡献；S7／S9 的 Stop 兜底与 Pre 高频监听复用各自原消费者。专业字段、当前关联和原批准约束仍由各自消费者检查。
 
 无法准确关联、多个真正责任并存、迟到通知指向已经关闭的责任时，应保留原现场交 Main，不借用另一个答案、不重新打开已关闭交付。真实 blocker 可以如实返回，不能逼作者填写完成结论来换取结束。
 
-本人可修正的专业缺项通过具体反馈交本人继续；已接收的交付不因为同事未交、Main 未合并或资源未回收而让本人再次履职。长检查、合并、ACK 和资源回收由 Main 的原集成入口在普通工作中执行，不能塞进十秒 Stop。 Main 收到 `Agent/Task` 工具返回时，可通过现有 PostToolUse 上下文读取准确责任的原接收摘要；这条只读提示不接收私人答案，也不成为另一个执行渠道。转录关联与父会话反馈的边界见[子代理工程衔接](L4-agent-dispatch-governance.md#83-反馈与原回执分别读取)。
+本人可修正的专业缺项通过具体反馈交本人继续；已接收的交付不因为同事未交、Main 未合并或资源未回收而让本人再次履职。长检查、合并、ACK 和资源回收由 Main 的原集成入口在普通工作中执行，不能塞进十秒 Stop。 Main 收到 `Agent/Task` 工具返回时，可通过现有 PostToolUse 上下文读取准确责任的原接收摘要；除 S9 已由真实 Stop 绑定准确来源的限定原消费者接续外，这条提示保持只读。S9 仅在无失败的 completed 平台返回、实际派发 prompt 唯一准确原 issued brief、tool_response.agentId 非空且非 Main，并按 D 的结构化 worktreePath／worktreeBranch 对应原 execution／冻结 pin，或按历史 C 的原 retained Stop actor 证明来源时，在同一请求原预算内复核当前责任后接续一次；不新捕获、不从 prose／启动／角色／最新文件猜选。原 typed 优先、已收幂等，失败保留具体诊断且不增加作者保存或 Stop，其他阶段与旧来源保持原边界。转录关联与父会话反馈的边界见[子代理工程衔接](L4-agent-dispatch-governance.md#83-反馈与原回执分别读取)。
 
 原生接收只在准确私人产物读取、JSON 解析和原专业字段校验边界认定本人可修的问题，并保留具体位置。首次返回是否采用纠正续跑由所属阶段合同决定；采用该方式时可使用 exit 2 反馈，不能从错误类别推出所有阶段都须阻止首次结束。S9 按 [S9 §14.2](../l3-stages/L3-S9-repair.md#142-收尾未完成返回与恢复边界) 首次交回真实未完成工作及具体拒错，由 Main 区分继续原专业责任、恢复来源与系统后继，不以第二次 Stop 或凑齐结论为退出条件。来源、控制面、准备、Writer 及无法可靠归属的错误直接交 Main 恢复，保留原始诊断，不让本人猜测改答案。`stop_hook_active=true` 时不重复阻断；放行不把未接收工作改成完成。具体实现见 [S6](../../internal/cli/native_s6.go)、[S9](../../internal/cli/native_s9.go)与[审查／调查接线](../../internal/cli/native_review_hooks.go)。
 
@@ -384,21 +398,29 @@ Hook 优化由框架承担复杂度。Main 仍填写原专业字段并正常保�
 | 进程死亡后的原入口 | 取得 OS 锁后，对明确证明原 PID 已退出的兼容标记立即回收；未知所有者仍按原兼容规则处理 | 活进程不能因标记变老被驱逐；不要求作者删锁或等待标记过期 |
 | Main 返回摘要 | 原请求 context 传入正文、回执与诊断读取；取消后只保留已有责任与接收未知的准确表达 | 不另起 Background，不把取消说成专业拒收，不从新 I/O 推导完成 |
 | 框架显示诊断 | 按原生产者的准确文件名、有限内容形状和安全路径分类；原暂存文件也只认准确发布格式 | 不豁免 diagnostics 整目录或未知邻居；诊断不授予接收／恢复权 |
-| S9 本地检查证据 | 原候选消费者仅从本次已捕获的实际日志输出中选择准确路径，核对 Worker 字节及 Main 不可变副本；仅从未跟踪集合中移除这些路径 | 已跟踪产品、源码、配置、未引用邻居及字节变化仍阻断；不要求补证据提交、忽略或清理 |
+| S9 私人运行产物与本地证据 | 原 PlanReport 回执、source pin 和登记执行确定本责任 packet 私人区；其中未追踪的中间产物不算产品变化。实际引用的本地证据仍按原来源捕获并核对字节 | 不以引用、内容或扩展名要求逐项证明 scratch；真实 tracked／staged 产品变化、原稿和引用证据变化仍按原合同处理，不排除其他 packet 或整套 `.loop-submissions` |
 | smoke 预算检查 | 按现行事件配置合同分别校验 PostToolUse 与其余事件 | 不调整产品预算，不把直接进程测试当真实平台验收 |
 
 先以原独立失败用例证明修复，再覆盖相邻拒绝条件及 S7 正常交接；真实 S9 和完整矩阵分别记录，未运行不记为通过。
 
-S9 的同一份证据分类必须贯通候选、Main 集成检查和原已验证的工作树清理；不能只在第一个入口放行。清理仅在原 `cleanup_pending`、Main 检查与 ACK 已记录后，删除仍为未跟踪且字节匹配的 Worker 本地副本，Main 的原不可变证据继续保留。任何已跟踪变更、字节变化或未知邻居仍保留工作树，不用强制 Git 删除。
+S9 的同一私人区分类必须贯通 Candidate 与 Main Inspect，不能只在第一个入口放行；原稿和被引用证据继续按各自来源与字节核验。clean 投影本身不授权清理。原 `cleanup_pending`、Main 检查与 ACK 等适用回收授权成立后，本责任私人运行产物可以随原工作区回收，不要求把每个中间文件变成引用证据；Main 的原不可变证据继续保留。真实产品变化、已改原稿、其他责任或未获授权的未知邻项仍沿原条件处理，不以强制 Git 删除掩盖它们。
 
-实现分工：Runtime 原锁入口识别死亡兼容标记；Main 返回将原请求交给只读 Service 和诊断；共享 `diagnosticstorage` 只识别显示存储，供 S7 漂移、S9 基线和集成检查使用；S9 原消费者从不可变 candidate provenance 推导准确日志投影，沿原集成与清理传递，不新增作者字段、清理命令或持久接收状态。
+实现分工：Runtime 原锁入口识别死亡兼容标记；Main 返回将原请求交给只读 Service 和诊断；共享 `diagnosticstorage` 只识别显示存储，供 S7 漂移、S9 基线和集成检查使用；S9 原消费者从原回执、pin 和登记执行确定本人私人区，引用证据沿原 candidate provenance 保存，原集成与授权清理分别消费适用事实，不新增作者字段、清理命令或持久接收状态。
 
+
+D 的新普通原稿、精确 `??` 产品投影、live source 接续及清理安全须按 [S9 §4／§6.2](../l3-stages/L3-S9-repair.md#4-原生工作区与专业材料怎样交付)与 [Worktree §9.2](L4-worktree-governance.md#92-清理只处理确切已接收资源)同步实施；此为目标合同，不将隔离原型说成现行生产。新任务不默认 C source-v1／ref，旧实际锚和 frozen 原坐标继续读取。D Main 返回接续复核准确 live source／同一 attempt，历史 C 复核其实际不可变来源。高频观察涵盖支持的工具，但完整 JSON 不证明作者完成，不能新增 done、人工提交、工具 ACL 或全目录 ignore。原稿、typed attempt、证据与 Git 坐标仍在原边界核对。
+
+最后 Final 后先原 Impact 准备再独立资源清理；本人私人区在原回收授权成立后可随原工作区回收，未获授权的其他责任／未知邻项、原稿或引用证据的实际冲突仍保树并反馈专业后继与 cleanup_pending。原资源恢复不重做检查／Final。枚举→删除非原子、真实安装 ignored 分类、大目录成本和 S7／独立 Targeted／正常 OS sandbox 验收仍待完成，不能由 Hook exit 0 代替。
+
+S7 Reviewer／独立 Targeted 的本轮正式接线限定共享 Main checkout 的本人普通唯一直卷，沿各自原接收器处理。S7 由原模板 SHA 决定新旧 issued 路径并保持历史 packet digest；Targeted 由原责任明确的 source contract 选择路径，优先复用原权威字段，不按存在文件猜协议，不创建第二接收账本。共享根仅凭原 issued／原责任准确 proof 识别控制单文件，核对 `??`、非 HEAD/index 和产品范围冲突，未知 sibling 与 tracked/staged 同名仍拒绝；不宽排 `.loop-submissions`。
+
+S7 Reviewer／独立 Targeted 由 Pre 高频监听就绪本人结果，成功 Post／Stop 兜底；原消费者认定完整性，不能只因 JSON 可解析而接收。Main 只恢复系统缺口，不代填。S7 接收后仍按原完整轮／CleanRound 出口；Targeted 接收后仅续原 Handoff／fresh S7，出口失败不要求重做观察。实际 native worktree 缺已成立的原 source binding 时明确未接收，不回落 Main 同名卷或套 Builder adapter；旧 frozen 责任仍按原合同。共享原卷不进入 Builder worktree 清理，新能力须分别完成源码、安装和真实正常权限验证。
 
 ### 10.8 从原接收事实到全部接手入口的接线
 
 §10.7 的独立断点通过后，仍须检查同一事实经过的全部入口。接线单位是“事实生产者 → 消费者 → 实际反馈渠道 → 后继／恢复”，不能只列需要修改的报错文件。先确定各边的来源、所有者、失效条件和验证方式，再估算实现与测试范围。
 
-原链保持为：原生派发／继续 → Worker 返回 → 原 SubagentStop 消费者 → Plan／候选／最终 Result 接收事实 → Main 返回或进度反馈 → Main 集成与检查 → Final → ACK／清理。实际调用可能在任一边中断；再次进入时从原事实继续，不能把执行登记、消息发送或一次成功退出当作接收完成。
+两条原链分别为：S7 原生派发 → Reviewer 保存本人原卷 → 自然事件调用原 ReviewResult 消费者 → Main 接收本人结果和整轮事实 → 原 Batch／TR-008 进入 S8，或原 CleanRound／TR-009 准备 S10；S9 原生派发 → Builder 保存本人 Plan／Result → 自然事件调用原消费者 → Main 集成与检查 → Final／Impact → 独立 Targeted 原接收 → Handoff／新 S7。适用的 ACK／清理由原集成负责。实际调用可能在任一边中断；再次进入时从原事实继续，不能把执行登记、消息发送或一次成功退出当作接收完成。
 
 #### 原事实的分工与接手
 
@@ -418,7 +440,7 @@ S9 的同一份证据分类必须贯通候选、Main 集成检查和原已验证
 | 接线面 | 生产／消费落点 | 本层交付与约束 |
 | --- | --- | --- |
 | 原生接收 | `native_s9.go`、原 submission／repair 消费者 | 分别保留 Plan、candidate、Final 的实际事实和具体失败；预算、来源与写入归原消费者 |
-| Main 返回与普通进度 | `native_main_return.go`、S9 listener／observer、原回执 API | 同一责任的接受状态、责任人、准确引用与下一动作一致；观察只读，不重做接收闭包，不把即时发送回执当完成 |
+| Main 返回与普通进度 | `native_main_return.go`、S9 listener／observer、原回执 API | 同一责任的接受状态、责任人、准确引用与下一动作一致；S7／S9 Pre 与成功 Post／Stop 在准确责任／来源绑定和原答卷就绪时复用原接收器；其余进度观察只读；不把即时发送回执当完成 |
 | 具名集成／恢复 | `workspace_delivery.go`、原 Inspect／Integrate／Result／checkpoint | 先解释当前前置事实，再读取候选来源；尚无候选、来源损坏和已收后继失败各有明确语义，并继承原请求 context |
 | 平台派发／继续 | 原生 Agent、客户端支持的同 actor 继续工具、原 Start／Stop 与返回通知 | 按实际客户端接口继续原 actor，保留原工作树和责任；核对请求、实际 Hook payload 与执行结果三者，不只统计模型请求里的参数 |
 | 阶段／角色投影与渲染 | `controller.go`、原阶段投影、Hook adapter／progress | Main 专属下一步不发给已完成 Worker；合法空动作不生成 `Next: .`，也不补通用 reconcile 指令充数 |
@@ -438,7 +460,7 @@ S9 的同一份证据分类必须贯通候选、Main 集成检查和原已验证
 
 ### 10.9 接收失败的具名续接、失败交付与单次提示
 
-§10.8 定义了接线面，但“Main 恢复原消费者”还必须落实为可执行入口；已收事实的正确投影也不能替代执行时点、跨请求错误交付和单次组装。基础接线已进入原 `consume`、native 接收核心、失败发布与 Main 组装，native flat Result 和原 Targeted 请求均有具名入口；仿真又发现具体拒绝原因丢失和输入消失后仍给无效恢复动作，下文明确其待实施的校正合同，不将设计补齐记为实现已通过。正常交付仍由原 SubagentStop 接收；显式 Main 恢复只是原消费者的另一技术入口，不是每次交付的新手续。此前本地验证范围见[实现记录](../../.local/framework-maintenance/hook-handoff-implementation-20261026/RESULT.md)。
+§10.8 定义了接线面，但“Main 恢复原消费者”还必须落实为可执行入口；已收事实的正确投影也不能替代执行时点、跨请求错误交付和单次组装。基础接线已进入原 `consume`、native 接收核心、失败发布与 Main 组装，native flat Result 和原 Targeted 请求均有具名入口；仿真又发现具体拒绝原因丢失和输入消失后仍给无效恢复动作，下文明确其待实施的校正合同，不将设计补齐记为实现已通过。S7／S9 正常交付由 Pre 高频监听与成功 Post／Stop 兜底调用原消费者；显式 Main 恢复只是同一消费者的技术入口，不是每次交付的新手续。此前本地验证范围见[实现记录](../../.local/framework-maintenance/hook-handoff-implementation-20261026/RESULT.md)。
 
 #### 执行、接收与失败分别判断
 
@@ -458,11 +480,11 @@ S9 的同一份证据分类必须贯通候选、Main 集成检查和原已验证
 
 | 窗口 | 输入及原消费者 | Main 的技术动作／保留条件 |
 | --- | --- | --- |
-| 私人 flat Plan／Result 已返回，native 适配未完成且原输入仍可用 | 精确 `.claude/submissions/native-s9/<原Plan packet>/result.json` 及同 worktree 原 Plan；原 native adapter | `consume` 按准确原路径选择唯一当前责任，复用与 Stop 相同的适配／接收核心；Plan 已收则复用原回执；不伪造 SubagentStop、不为纯系统接续唤醒 Worker、不发替代 packet |
+| 私人 flat Plan／Result 已返回，native 适配未完成且原输入仍可用 | 新 D 精确 `.loop-submissions/native-s9/<原Plan packet>/result.json` 及同目录 `plan.json`；旧 issued／冻结来源保留原路径；原 native adapter | `consume` 按准确原路径选择唯一当前责任，复用与 Stop 相同的适配／接收核心；Plan 已收则复用原回执；不伪造 SubagentStop、不为纯系统接续唤醒 Worker、不发替代 packet |
 | 原 typed Result 已发行且系统适配输入仍可用，candidate 未收 | 准确原 `/S9-result/.../answer.json`；`SaveRepairResultFrom` | 直接复用已有 typed `consume`；先修具体来源／环境，再续原消费者，不从 flat 文件重写已保存输入；文件曾写出不等于它在私人 worktree 清理后仍有持久副本 |
-| 原 Writer 已有 staged／durable pending | 原固定输入、pending 和配对 Writer | Main 公开只读入口识别原类型化 pending 错误，给出准确 `stage-answer recover`；原 Writer 恢复配对，同次 CLI 再交付已知后继。不以当前私人文件替换已固定输入，不把通用 recover 当 native adapter |
+| 原 Writer 已有 staged／durable pending | 原固定输入、pending 和配对 Writer | Main 的 Pre／SessionStart／成功 Post 在原预算内恢复原配对 Writer，刷新后延续同一实际事件；失败给出具体系统诊断及原恢复入口。同次 CLI 仍可交付已知后继。不以当前私人文件替换已固定输入，不把通用 recover 当 native adapter |
 | candidate 已收，Main 集成／检查未完成 | 原 candidate／execution／checkpoint | 交付原准确 `runtime workspace integrate` 及实际检查选择；不重做专业接收 |
-| Final 已收，ACK／清理未完成 | 原 Final／checkpoint／冻结证据 | 只续原 ACK／清理；不重新 merge、检查或消费私人答案 |
+| Final 已收，ACK／清理未完成 | 原 Final／checkpoint／冻结证据及原 Impact 准备 | 若最后 Final 已进入影响工序，先补原 Impact 准备并交付后继，再独立续 ACK／清理；不重新 merge、检查或消费私人答案 |
 | Targeted 私人请求已返回，原独立结果尚未接收且输入仍可用 | 原准确 Targeted answer 和既有 performing assignment／Impact 选择；原 Targeted 消费者 | `consume` 的具名选择也复用该消费者，保留实际独立性、blocker 和同键异文拒错；不能给独立 verifier 套用 Builder flat 适配 |
 | Targeted 已收，Handoff／新 S7 准备未完成 | 原 Targeted 回执及原出口 | 复用已有 `runtime repair handoff complete`；不再接收或要求 verifier 重做观察 |
 | 未接收私人输入或其必需 source 已丢失，且没有原消费者可识别的固定副本/pending | 原准确责任、已收部分、捕获的失败及缺失坐标 | 如实交 Main 处理来源缺失；不输出以失效路径为现成输入的 consume 命令，不以 hash、同名目录或 Main 草稿替代原内容 |
@@ -470,6 +492,8 @@ S9 的同一份证据分类必须贯通候选、Main 集成检查和原已验证
 恢复选择必须区分原 draft、真正已保存的适配输入和 pending 的固定输入，不能仅凭“文件存在”认定已完成适配。无冻结输入时，显式恢复读取本次实际文件并沿原校验固定；不能声称此前未捕获的字节已被保留。正常已收结果查询／系统后继恢复与一次新的显式专业修改分别处理，同身份异文仍由原消费者拒绝。
 
 专业拒错后，未接收且未被原 staged/pending 事务固定的内容，仍允许原作者按原题目更正，并经正常专业交付重新适配；保留一份错误不将该草稿冻结为终身不可改。技术 `consume` 则重放其实际固定输入，不能把 Main 改过的 flat 文件当成原技术重试。已接收/已固定输入的同身份异文、原作者合法新稿和同答重放须按各自窗口判断，不能只见路径或 packet ID 相同就混为一类。
+
+typed 文件是原适配器的派生输入；文件非空不证明已接收或存在暂存事务。原适配器在同一原工作区锁内首次生成输入，且原消费者明确在创建 Candidate 前拒错时，可以核对本次实际写入字节后撤回该次派生输入，使原作者继续填写原稿；不得撤回已有固定事务或另一并发写入。原消费者提供发生阶段和原错误，不能靠错误文案、展示诊断或角色猜测是否已固定。历史非空输入缺少上述本次事实时，正常观察不扫描历史；只有准确原作者自然事件携带已经就绪且与派生输入不同的专业原稿，才在同一原锁内有界核验原不可变 Candidate 的身份、摘要和来源。确认未接收且未固定后，沿原消费者检查本次新稿；不先接收已经被作者更正的旧稿。空稿、未就绪稿和缺失原稿不构成新专业交付，继续保留原输入的技术恢复。未能完成核验时保留原输入并报告未知，不把查验失败解释为不存在暂存。Main 的技术重试与原作者专业更正分别选择原消费者，不新增提交动作、持久诊断权威或另一套接收状态。
 
 真实 worktree／Result 路径只能来自原登记、准确实际返回或原尝试已捕获的结构化引用。诊断只提供导航，不能授予来源效力；具名入口仍核 canonical worktree、准确原 packet／owner／代次、prepared Git baseline、当前来源和原拒错。来源未确定时明确缺少哪个实际引用，不猜目录、不按角色或唯一邻居选责任。已收 Plan 不因 Result 恢复而重新导入；历史或损坏 typed 来源仍不得回落 legacy。
 
