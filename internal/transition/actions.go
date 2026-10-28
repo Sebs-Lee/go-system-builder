@@ -985,9 +985,61 @@ func registerDocumentsFromDisk(root string, state map[string]any, ctx *ActionCon
 			"sha256": SHA256(data), "status": status, "generation": generation,
 			"author_agent_id": actor, "registered_at": occurredAt,
 		})
+		if kind == "task" {
+			// S8 spec rework re-locks the TASK at a new fingerprint while a
+			// prior-generation Assignment Record still pins the old one. The
+			// S6 dispatch projection then refuses both the replay branch
+			// (stale TASK fingerprint) and the revision branch (changed
+			// sources). Re-pin same-generation records to the re-locked TASK
+			// in this same Writer transaction so the record, the runtime
+			// entity and the locked document agree again.
+			repinStaleAssignmentTaskRefs(state, id, version, SHA256(data))
+		}
 		registered++
 	}
 	return registered, nil
+}
+
+// repinStaleAssignmentTaskRefs re-pins same-generation Assignment Records to
+// a re-locked TASK fingerprint. Without it, an S8-driven specification
+// rework leaves the prior S6 Assignment Record pointing at the pre-rework
+// TASK while the runtime entity already carries the new one, and S6 dispatch
+// refuses both branches. Work state and owner bindings are untouched; only
+// the TASK source ref (version/sha) is advanced. Best-effort: rows that do
+// not decode as records are left alone for the record validator.
+func repinStaleAssignmentTaskRefs(state map[string]any, taskID, version, sha256 string) {
+	entities, _ := state["entities"].(map[string]any)
+	if entities == nil {
+		return
+	}
+	baseline, _ := state["baseline"].(map[string]any)
+	generation := integerOf(baseline["generation"])
+	runtimeID, _ := state["runtime_id"].(string)
+	rows, _ := entities["assignments"].([]any)
+	for _, raw := range rows {
+		row, _ := raw.(map[string]any)
+		if row == nil {
+			continue
+		}
+		if rid, _ := row["runtime_id"].(string); rid != runtimeID {
+			continue
+		}
+		if integerOf(row["baseline_generation"]) != generation {
+			continue
+		}
+		task, _ := row["task"].(map[string]any)
+		if task == nil {
+			continue
+		}
+		if tid, _ := task["id"].(string); tid != taskID {
+			continue
+		}
+		if cur, _ := task["sha256"].(string); cur == sha256 {
+			continue
+		}
+		task["version"] = version
+		task["sha256"] = sha256
+	}
 }
 
 // refreshRuntimeTaskDocument keeps the mutable Runtime TASK projection aligned
