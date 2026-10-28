@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,7 +43,7 @@ func runWorkspaceDeliveryContext(parent context.Context, args []string, stdout, 
 	acceptedFinal := false
 	fail := func(err error) int {
 		if acceptedFinal {
-			fmt.Fprint(stderr, "Original Final remains accepted; Main resumes only original checkpoint ACK/cleanup and preserves completed integration/checks. ")
+			fmt.Fprint(stderr, "Original Final remains accepted; Main preserves completed integration/checks and resumes the original ACK/cleanup independently of the current repair responsibility. ")
 		}
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -273,7 +274,36 @@ func runWorkspaceDeliveryContext(parent context.Context, args []string, stdout, 
 	if typedResult && cp.State != integration.StateComplete {
 		config.WorkerLogEvidence, err = repair.WorkspaceCandidateLogProjectionForPacket(ctx, *root, typedPacket, e, candidate)
 		if err != nil {
-			return fail(err)
+			if !registered {
+				return fail(err)
+			}
+			config.WorkerCleanupError = errors.Join(config.WorkerCleanupError, err)
+		}
+		config.WorkerPrivateEvidence, err = repair.NativeS9PrivateProjection(ctx, *root, typedPacket, e, candidate, registered)
+		if err != nil {
+			if !registered {
+				return fail(err)
+			}
+			config.WorkerCleanupError = errors.Join(config.WorkerCleanupError, err)
+		}
+		privateArea, areaErr := workspaceNativePrivateArea(ctx, *root, typedPacket, e)
+		if areaErr != nil {
+			if !registered {
+				return fail(areaErr)
+			}
+			config.WorkerCleanupError = errors.Join(config.WorkerCleanupError, areaErr)
+		} else {
+			config.WorkerPrivateArea = privateArea.Path
+			config.WorkerPrivateBaseCommit = privateArea.BaseCommit
+			config.WorkerPrivateWritePaths = privateArea.WritePaths
+			config.WorkerPrivateBaselinePaths = privateArea.BaselinePaths
+		}
+		config.WorkerIgnoredEvidence, err = workspaceIgnoredOriginalProjection(ctx, *root, e.Path, typedPacket, candidate)
+		if err != nil {
+			if !registered {
+				return fail(err)
+			}
+			config.WorkerCleanupError = errors.Join(config.WorkerCleanupError, err)
 		}
 	}
 	var inspected integration.Inspection
@@ -314,6 +344,11 @@ func runWorkspaceDeliveryContext(parent context.Context, args []string, stdout, 
 		}}
 		if typedResult {
 			inspectCfg.WorkerLogEvidence = config.WorkerLogEvidence
+			inspectCfg.WorkerPrivateEvidence = config.WorkerPrivateEvidence
+			inspectCfg.WorkerPrivateArea = config.WorkerPrivateArea
+			inspectCfg.WorkerPrivateBaseCommit = config.WorkerPrivateBaseCommit
+			inspectCfg.WorkerPrivateWritePaths = config.WorkerPrivateWritePaths
+			inspectCfg.WorkerPrivateBaselinePaths = config.WorkerPrivateBaselinePaths
 		}
 		if typedResult && e.Purpose == workspace.NativeDeliveryPurpose && candidate.SourceHead == candidate.BaseCommit && len(candidate.Proposal.ChangedArtifacts) == 0 {
 			inspectCfg.ReceivedSourceHead = candidate.SourceHead
@@ -401,6 +436,22 @@ func runWorkspaceDeliveryContext(parent context.Context, args []string, stdout, 
 			return fail(err)
 		}
 	}
+	// Final reception unlocks its original successor independently of resource
+	// retirement. Prepare once through the original idempotent issuer before
+	// cleanup can return pending; never reach this boundary after failed checks.
+	snap, err = writer.Snapshot()
+	if err != nil {
+		return fail(err)
+	}
+	impactNext := ""
+	if stringValue(repairPointerCLI(snap.State)["status"]) == "impact_reconciliation" {
+		impactPath, impactErr := prepareRepairImpactQuestionnaire(*root, snap.State)
+		if impactErr != nil {
+			return fail(fmt.Errorf("Main integration recorded; ChangeImpact preparation: %w. Restore the named source/filesystem failure, then use %s; preserve accepted Final Results and completed integration", impactErr, repairImpactPreparationRecovery(*root)))
+		}
+		impactNext = "Main must complete and save ChangeImpact at " + impactPath + "."
+		fmt.Fprintln(stderr, impactNext)
+	}
 	finished, err := integration.Integrate(ctx, integration.IntegrateRequest{Inspection: integration.InspectionFromCheckpoint(cp), Acknowledge: true, Cleanup: true}, config)
 	if err != nil {
 		return fail(err)
@@ -418,13 +469,8 @@ func runWorkspaceDeliveryContext(parent context.Context, args []string, stdout, 
 	if next == "" {
 		next = "Main integration recorded; current repair status: " + stringValue(pointer["status"]) + ". Continue the remaining repair or test work and Main checks."
 	}
-	if stringValue(pointer["status"]) == "impact_reconciliation" {
-		impactPath, err := prepareRepairImpactQuestionnaire(*root, snap.State)
-		if err != nil {
-			return fail(fmt.Errorf("Main integration recorded; ChangeImpact preparation: %w. Restore the named source/filesystem failure, then use %s; preserve accepted Final Results and completed integration", err, repairImpactPreparationRecovery(*root)))
-		}
-		next = "Main must complete and save ChangeImpact at " + impactPath + "."
-		fmt.Fprintln(stderr, next)
+	if impactNext != "" {
+		next = impactNext
 	}
 	return encodeJSON(stdout, map[string]any{"checkpoint": finished.Checkpoint, "result_ref": resultRef, "revision": snap.Revision, "next": next})
 }

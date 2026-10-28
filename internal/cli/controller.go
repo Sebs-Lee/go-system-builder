@@ -229,7 +229,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 		}
 	}
 	if lifecycleState == "bug_resolution" && lifecyclePhase != "investigation" {
-		next.Action = repairNextAction(state, lifecyclePhase)
+		next.Action = repairNextAction(state, lifecyclePhase, root)
 	}
 	applyS7BudgetGateway(&next, state, root)
 
@@ -427,7 +427,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	// the milestone log. Read from state.review.observation_batch.
 	if lifecycleState == "bug_resolution" && (event == "SessionStart" || event == "PreCompact") {
 		applyS8EntryProjection(state, &guidance)
-		applyS9RepairProjection(state, &guidance)
+		applyS9RepairProjection(root, state, &guidance)
 	}
 
 	// L3-S10 §9: acceptance and release audit are read-only audit work, not
@@ -521,7 +521,64 @@ func investigationNextAction(root string, state map[string]any) string {
 	return fmt.Sprintf("continue InvestigationCase %s: run `runtime investigation status --case-id %s`, then dispatch independent hypothesis questions", caseID, caseID)
 }
 
-func repairNextAction(state map[string]any, phase string) string {
+// repairPlanningNextAction projects the original owner and packet index. It
+// does not issue a questionnaire or infer a new author from a role. The actual
+// division and dispatch listeners remain responsible for their source checks.
+func repairPlanningNextAction(state map[string]any, root string) string {
+	division := "the original Builder division supplied by the listener"
+	if root != "" {
+		if paths := repairDispatchPaths(root, state); len(paths) == 1 {
+			division = paths[0]
+		}
+	}
+	selection := "Main selects and saves each unselected Builder Assignment at " + division + ". "
+	pointer := repairPointerCLI(state)
+	owners := stringMapCLI(pointer["assignment_owners"])
+	if len(owners) == 0 {
+		return selection + "The original save prepares each selected responsibility; Main then dispatches its exact prepared brief through native Agent/worktree. Builders save their own Plan with real prechecks and their Result; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback."
+	}
+	packets, err := s9ListenerQuestionnaires(state, "", false)
+	if err != nil {
+		return selection + "The current original PlanReport index cannot be verified: " + err.Error() + ". Preserve selected owners and original sources while Main/system restores the named source."
+	}
+	byAssignment := map[string]s9ListenerQuestionnaire{}
+	for _, packet := range packets {
+		byAssignment[packet.binding.RepairAssignmentID] = packet
+	}
+	ids := make([]string, 0, len(owners))
+	for id, owner := range owners {
+		if owner != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	var issued, missing []string
+	for _, id := range ids {
+		owner := owners[id]
+		packet, ok := byAssignment[id]
+		if !ok {
+			missing = append(missing, id+" (owner "+owner+")")
+			continue
+		}
+		brief, _, _ := nativeS9Paths(workpacket.RepairPlanReportPacket{ID: packet.id, ViewPath: packet.view})
+		if root != "" {
+			brief = resolveRootPath(root, brief)
+		}
+		issued = append(issued, id+" (owner "+owner+", original brief "+brief+")")
+	}
+	var next strings.Builder
+	next.WriteString("For any other unselected Assignment, " + selection)
+	if len(issued) > 0 {
+		next.WriteString("For the selected and indexed responsibilities " + strings.Join(issued, "; ") + ", Main uses the exact original prepared brief for the initial native Agent/worktree dispatch, or continues the same actor when already started. If its actual original brief is unavailable, Main/system restores that original preparation. ")
+	}
+	if len(missing) > 0 {
+		next.WriteString("No current original PlanReport is indexed for " + strings.Join(missing, "; ") + "; Main/system restores the original division preparation at " + division + ", preserving the selected owner. ")
+	}
+	next.WriteString("Each Builder saves its own Plan with real prechecks before implementation and its Result after work. Natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback; accepted work is not submitted again.")
+	return next.String()
+}
+
+func repairNextAction(state map[string]any, phase string, roots ...string) string {
 	reviewMap, _ := state["review"].(map[string]any)
 	if investigation, _ := reviewMap["investigation"].(map[string]any); investigation == nil || stringValue(investigation["status"]) != "contract_approved" {
 		return "complete S8 InvestigationCase and approve the RepairContract before opening S9"
@@ -531,16 +588,18 @@ func repairNextAction(state map[string]any, phase string) string {
 		return "the approved S8 RepairContract is ready; the next writable Main Hook prepares the original RepairSession and RepairPlan. Main owns Assignment dispatch, and the listeners supply each Builder's exact PlanReport questionnaire path"
 	}
 	switch stringValue(pointer["status"]) {
-	case "planning":
-		return "Main actually dispatches native Builders with their exact prepared briefs; each saves a private professional PlanReport with real prechecks before implementation, continues work without a save receipt and returns its private Result for SubagentStop reception"
-	case "reproducing":
-		return "each native Builder saves its private PlanReport before implementation, continues repair/self-checks, then returns its private Result; Stop invokes the original consumers without a separate plan checkpoint exchange"
+	case "planning", "reproducing":
+		root := ""
+		if len(roots) > 0 {
+			root = roots[0]
+		}
+		return repairPlanningNextAction(state, root)
 	case "repairing":
-		return "native Builders use the supplied brief and save their private professional Plan/Result in the actual worktree; SubagentStop receives them. When the candidate is recorded, Main immediately follows the supplied `runtime workspace integrate` command with the actual root, assignment and owner and repeatable --check-command for necessary real Main checks. Do not redispatch an accepted native candidate for another RepairResult questionnaire or wait for Final before Main integration. Existing frozen executions retain their exact original RepairResult questionnaire and recovery path"
+		return "native Builders use the supplied brief and save their private professional Plan/Result in the actual worktree. Natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback. When the candidate is recorded, Main immediately follows the supplied `runtime workspace integrate` command with the actual root, assignment and owner and repeatable --check-command for necessary real Main checks. Do not redispatch an accepted native candidate for another RepairResult questionnaire or wait for Final before Main integration. Existing frozen executions retain their exact original RepairResult questionnaire and recovery path"
 	case "impact_reconciliation":
-		return "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis. The independent verifier saves and returns its separately supplied TargetedReverification answer for native Stop and the original Contract checks"
+		return "Main fills and saves the exact ChangeImpact questionnaire supplied by the listener; the original consumer records its professional change analysis. The independent verifier saves its separately supplied TargetedReverification answer; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback through the original Contract checks"
 	case "targeted_reverification":
-		return "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and handoff"
+		return "the registered independent verifier saves the exact TargetedReverification answer; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback through the original consumer and Contract assertions. Main retains integration and handoff"
 	case "ready_for_full_review":
 		return repairHandoffPendingInstruction
 	case "closed":
@@ -552,7 +611,7 @@ func repairNextAction(state map[string]any, phase string) string {
 	return fmt.Sprintf("continue from the current S9 %s Hook checkpoint; follow its supplied questionnaire paths and recorded recovery action", phase)
 }
 
-func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
+func applyS9RepairProjection(root string, state map[string]any, guidance *policy.Guidance) {
 	reviewMap, _ := state["review"].(map[string]any)
 	if reviewMap == nil {
 		return
@@ -569,7 +628,7 @@ func applyS9RepairProjection(state map[string]any, guidance *policy.Guidance) {
 		return
 	}
 	lifecycle, _ := state["lifecycle"].(map[string]any)
-	line := fmt.Sprintf("S9 repair %s: session=%s; next=%s", stringValue(pointer["status"]), stringValue(pointer["session_id"]), repairNextAction(state, stringValue(lifecycle["phase"])))
+	line := fmt.Sprintf("S9 repair %s: session=%s; next=%s", stringValue(pointer["status"]), stringValue(pointer["session_id"]), repairNextAction(state, stringValue(lifecycle["phase"]), root))
 	if stringValue(pointer["status"]) == "blocked" {
 		if route := stringValue(pointer["failure_route"]); route != "" {
 			line += "; failure_route=" + route + " — follow the recorded recovery action; do not create a symptom-only patch"

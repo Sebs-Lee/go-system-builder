@@ -566,7 +566,7 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "planned":
 			return "S7", PrimarySkillS7, "fill the original ReviewPlan questionnaire at the exact path supplied by the listener, including real Claim assertions, oracles and required coverage, then save for original registration"
 		case "running", "cannot_clean", "discovery_draining":
-			return "S7", "team-planning", "perform the assigned review using the current questionnaire at the exact path supplied by the listener; fill and save the answer, then return its exact reference for SubagentStop reception. Main owns dispatch, queue release and original round evaluation"
+			return "S7", "team-planning", "perform the assigned review using the current questionnaire at the exact path supplied by the listener; fill and save the answer. Natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback through the original consumer. Main owns dispatch, queue release and original round evaluation"
 		case "observation_sealed":
 			return "S7", "bug-resolution", "ObservationBatch sealed; the next PreToolUse auto-commits TR-008 to hand the batch to S8 — do not call the transition CLI"
 		case "clean":
@@ -582,13 +582,13 @@ func projectNext(state, phase, root string) (string, string, string) {
 		case "repair_readback":
 			return "S9", "bug-resolution", "the next writable Main Hook prepares the original RepairSession and Contract-derived RepairPlan; Main owns Assignment dispatch, and the listeners supply each Builder's exact PlanReport questionnaire path"
 		case "planning":
-			return "S9", "bug-resolution", "Main actually dispatches native Builders with exact prepared briefs; each saves a private professional PlanReport and real prechecks before implementation, continues without a save receipt, then returns its private Result for SubagentStop reception"
+			return "S9", "bug-resolution", "Main selects and saves each unselected Builder in the original division; for a selected responsibility, use its exact prepared brief for native Agent/worktree dispatch or continue the same actor. If the original material is unavailable, Main/system restores its original preparation. Builders save their Plan and Result; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback"
 		case "reproducing":
-			return "S9", "bug-resolution", "each native Builder saves its private PlanReport before implementation, continues repair/self-checks, then returns its private Result; Stop invokes the original consumers without a separate plan checkpoint exchange"
+			return "S9", "bug-resolution", "Main selects any unselected Builder in the original division and uses each selected responsibility's exact prepared brief for native Agent/worktree dispatch or same-actor continuation. Builders save their Plan with real prechecks and their Result; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback"
 		case "fixing":
-			return "S9", "bug-resolution", "native Builders use the supplied brief and save their private professional Plan/Result in the actual worktree; SubagentStop receives them. When the candidate is recorded, Main immediately follows the supplied `runtime workspace integrate` command with the actual root, assignment and owner and repeatable --check-command for necessary real Main checks. Do not redispatch an accepted native candidate for another RepairResult questionnaire or wait for Final before Main integration. Existing frozen executions retain their exact original RepairResult questionnaire and recovery path"
+			return "S9", "bug-resolution", "native Builders use the supplied brief and save their private professional Plan/Result in the actual worktree; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback. When the candidate is recorded, Main immediately follows the supplied `runtime workspace integrate` command with the actual root, assignment and owner and repeatable --check-command for necessary real Main checks. Do not redispatch an accepted native candidate for another RepairResult questionnaire or wait for Final before Main integration. Existing frozen executions retain their exact original RepairResult questionnaire and recovery path"
 		case "targeted_reverification":
-			return "S9", "bug-resolution", "the registered independent verifier saves and returns the exact TargetedReverification answer for SubagentStop; the original consumer checks Contract assertions, while Main retains integration and Handoff"
+			return "S9", "bug-resolution", "the registered independent verifier saves the exact TargetedReverification answer; natural PreToolUse and successful PostToolUse observe ready answers, with Stop/SubagentStop as fallback through the original Contract checks. Main retains integration and Handoff"
 		case "ready_for_full_review":
 			return "S9", "bug-resolution", repairHandoffPendingInstruction
 		}
