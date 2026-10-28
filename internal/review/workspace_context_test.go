@@ -26,6 +26,26 @@ func (c *workspaceReadCancellation) Err() error {
 	return c.Context.Err()
 }
 
+func TestPrepareWorkspacePreservesCancellationBeforeCreationAndDuringDigest(t *testing.T) {
+	root := t.TempDir()
+	workspace := "e2e-workspace/cancelled"
+	plan := &Plan{VerificationArtifactWorkspace: &workspace}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if digest, err := prepareVerificationWorkspace(root, plan, ctx); !errors.Is(err, context.Canceled) || digest != "" {
+		t.Fatalf("cancelled preparation returned %q %v", digest, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, workspace)); !os.IsNotExist(err) {
+		t.Fatalf("cancelled preparation created a workspace: %v", err)
+	}
+	parent, cancelWalk := context.WithCancel(context.Background())
+	defer cancelWalk()
+	interrupted := &workspaceReadCancellation{Context: parent, cancel: cancelWalk}
+	if digest, err := prepareVerificationWorkspace(root, plan, interrupted); !errors.Is(err, context.Canceled) || digest != "" {
+		t.Fatalf("preparation lost digest cancellation: %q %v", digest, err)
+	}
+}
+
 func TestWorkspaceDigestContextCancelsDuringWalkAndRechecksLiveFiles(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "e2e-workspace")

@@ -34,6 +34,10 @@ func BuildCoverageInventoryForRoot(root string, state map[string]any) []Coverage
 }
 
 func BuildCoverageInventoryForRootContext(ctx context.Context, root string, state map[string]any) []CoverageItem {
+	return coverageInventoryForProjection(buildS7BaselineProjection(root, state, ctx))
+}
+
+func coverageInventoryForProjection(projection s7BaselineProjection) []CoverageItem {
 	seen := map[string]bool{}
 	var items []CoverageItem
 	add := func(item CoverageItem) {
@@ -43,7 +47,6 @@ func BuildCoverageInventoryForRootContext(ctx context.Context, root string, stat
 		seen[item.SourceRef] = true
 		items = append(items, item)
 	}
-	projection := buildS7BaselineProjection(root, state, ctx)
 	for _, ref := range projection.ChangedPaths {
 		add(CoverageItem{
 			ID:        "surface:" + ref,
@@ -136,10 +139,38 @@ func validateCoverageInventory(root string, state map[string]any, plan *Plan, co
 			"loop-harness s7 draft --out plan.json",
 		)
 	}
-	if err := validateS7BaselineProjection(root, state, ctx); err != nil {
+	return validateVerifiedCoverageInventory(root, state, plan, ctx)
+}
+
+// validateVerifiedCoverageInventory consumes only the baseline declaration
+// freshly verified by this caller. Canonical registration invokes the complete
+// coverage gate inside its Writer, so coverage and live source proof share one CAS.
+func validateVerifiedCoverageInventory(root string, state map[string]any, plan *Plan, ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	required := BuildCoverageInventoryForRootContext(ctx, root, state)
+	// Validation and the coverage denominator consume the same synchronous
+	// projection. No verified projection is retained across a Writer boundary.
+	var projection s7BaselineProjection
+	if plan.ProductBaseline != nil {
+		// The caller freshly reconstructed every original source and
+		// proved DeepEqual with this declaration. Its Paths are therefore the
+		// same verified denominator; do not reconstruct the whole source proof
+		// again within the same validation. Writer checks remain live.
+		for _, path := range plan.ProductBaseline.Paths {
+			projection.ChangedPaths = append(projection.ChangedPaths, path.Path)
+		}
+		sort.Strings(projection.ChangedPaths)
+	} else {
+		projection = buildS7BaselineProjection(root, state, ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateBuiltS7BaselineProjection(root, projection); err != nil {
+		return err
+	}
+	required := coverageInventoryForProjection(projection)
 	if len(required) == 0 {
 		return nil
 	}

@@ -1859,12 +1859,10 @@ func setPlanStatus(reviewMap, lifecycleMap map[string]any, status string) {
 	}
 }
 
-// staleReviewPlanAfterDrift records baseline/workspace drift before returning
-// the validation error. A bare error leaves the runtime advertising a
-// runnable round, so the next Agent keeps retrying against bytes that no
-// longer belong to the pinned review. The mutation is plan-only: lifecycle
-// phase remains the last valid verification phase and the scheduler's plan
-// status is the admission gate.
+// staleReviewPlanAfterDrift suspends admission when the original baseline has
+// drifted or a required control source cannot be verified. The concrete error
+// distinguishes those cases; stale alone does not assert product drift. The
+// mutation is plan-only: lifecycle phase and accepted results are preserved.
 func staleReviewPlanAfterDrift(
 	ctx context.Context,
 	root, statePath, journalPath string,
@@ -1880,8 +1878,13 @@ func staleReviewPlanAfterDrift(
 	if plan == nil {
 		return loopruntime.Snapshot{}, driftErr
 	}
+	staleFailure := func() error {
+		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+		revive := quote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime review-plan revive --root " + quote(root)
+		return fmt.Errorf("%w; ReviewPlan %s is marked stale. Main restores the original source and, when the unchanged baseline matches, rechecks and resumes the same round with %s. If the product baseline actually changed, follow the original rework/new-round path. Preserve original answers and any accepted receipts", driftErr, plan.PlanID, revive)
+	}
 	if plan.Status == "stale" {
-		return loopruntime.Snapshot{}, driftErr
+		return loopruntime.Snapshot{}, staleFailure()
 	}
 	lifecycle, _ := current["lifecycle"].(map[string]any)
 	cursor := map[string]any{}
@@ -1919,7 +1922,7 @@ func staleReviewPlanAfterDrift(
 	if err != nil {
 		return snapshot, fmt.Errorf("%w; failed to persist ReviewPlan stale status: %v", driftErr, err)
 	}
-	return snapshot, fmt.Errorf("%w; ReviewPlan %s was marked stale and must be re-planned", driftErr, plan.PlanID)
+	return snapshot, staleFailure()
 }
 
 // ---------------------------------------------------------------------------

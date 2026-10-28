@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 
 func TestProductDriftUsesSelectedPacketIndexAndRequestCache(t *testing.T) {
 	root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
+	reviewDriftGitBaseline(t, root)
 	packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 	if err != nil {
 		t.Fatal(err)
@@ -22,9 +22,6 @@ func TestProductDriftUsesSelectedPacketIndexAndRequestCache(t *testing.T) {
 	issued, err := loopruntime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if output, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v %s", err, output)
 	}
 	entities := issued.State["entities"].(map[string]any)
 	rows := entities["work_packets"].([]any)

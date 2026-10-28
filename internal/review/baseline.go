@@ -190,6 +190,13 @@ func validateS7BaselineProjection(root string, state map[string]any, contexts ..
 		return nil
 	}
 	projection := buildS7BaselineProjection(root, state, contexts...)
+	return validateBuiltS7BaselineProjection(root, projection)
+}
+
+func validateBuiltS7BaselineProjection(root string, projection s7BaselineProjection) error {
+	if root == "" {
+		return nil
+	}
 	if errors.Is(projection.err, context.Canceled) || errors.Is(projection.err, context.DeadlineExceeded) {
 		return projection.err
 	}

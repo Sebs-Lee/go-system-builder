@@ -16,6 +16,23 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
+// These drift tests need a real HEAD before normal-original packet issuance.
+func reviewDriftGitBaseline(t *testing.T, root string) {
+	t.Helper()
+	git := func(args ...string) {
+		t.Helper()
+		if output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, output)
+		}
+	}
+	git("init", "-q")
+	git("config", "user.name", "S7 Fixture")
+	git("config", "user.email", "s7-fixture@example.invalid")
+	git("config", "commit.gpgsign", "false")
+	git("add", "-A")
+	git("commit", "--allow-empty", "-qm", "S7 product baseline")
+}
+
 // This fixture exercises the original Writer using synthetic dispatch rows.
 // It deliberately has no valid PLAN/activation; it cannot accept a typed save.
 func TestIssuedResultPacketStableOriginalWriterAndUntouchedAuthoring(t *testing.T) {
@@ -89,6 +106,7 @@ func TestIssuedResultPacketRejectsProductDriftBeforeRegistrationOrRestore(t *tes
 	for _, restore := range []bool{false, true} {
 		t.Run(fmt.Sprintf("restore=%t", restore), func(t *testing.T) {
 			root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
+			reviewDriftGitBaseline(t, root)
 			if restore {
 				packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 				if err != nil || len(packets) != 1 {
@@ -410,6 +428,7 @@ func TestIssuedResultPacketConcurrentIssuanceUsesOneOriginalEvent(t *testing.T) 
 
 func TestIssuedResultPacketDriftExceptionRequiresExactRegisteredFiles(t *testing.T) {
 	root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
+	reviewDriftGitBaseline(t, root)
 	packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 	if err != nil {
 		t.Fatal(err)
@@ -418,9 +437,6 @@ func TestIssuedResultPacketDriftExceptionRequiresExactRegisteredFiles(t *testing
 	issued, err := loopruntime.NewStore(statePath, journalPath).Snapshot()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if output, err := exec.Command("git", "-C", root, "init").CombinedOutput(); err != nil {
-		t.Fatalf("init git drift fixture: %v %s", err, output)
 	}
 	extra := filepath.ToSlash(filepath.Join(filepath.Dir(p.AnswerPath), "unissued.json"))
 	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(extra)), []byte("{}"), 0600); err != nil {

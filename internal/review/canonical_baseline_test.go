@@ -33,6 +33,9 @@ func TestCanonicalResultCannotBecomeEmptyS7Baseline(t *testing.T) {
 			if err := validateS7BaselineProjection(root, state); err == nil {
 				t.Fatal("canonical Result must block original ReviewPlan baseline validation")
 			}
+			if err := validateCoverageInventory(root, state, &Plan{}); err == nil || !strings.Contains(err.Error(), "S7_BASELINE_PROJECTION") {
+				t.Fatalf("shared coverage projection must preserve source failure instead of accepting an empty denominator: %v", err)
+			}
 		})
 	}
 }

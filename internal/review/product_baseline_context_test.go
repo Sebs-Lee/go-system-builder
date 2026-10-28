@@ -20,6 +20,8 @@ func TestBaselineConsumersPreserveRequestCancellation(t *testing.T) {
 		},
 		"declaration":           func() error { return verifyProductBaselineDeclarationContext(ctx, "", nil, nil) },
 		"coverage":              func() error { return validateCoverageInventory("", nil, nil, ctx) },
+		"verified coverage":     func() error { return validateVerifiedCoverageInventory("", nil, nil, ctx) },
+		"workspace preparation": func() error { _, err := prepareVerificationWorkspace("", nil, ctx); return err },
 		"projection":            func() error { return validateS7BaselineProjection("", nil, ctx) },
 		"capture":               func() error { return validateCapturePassProvenance("", nil, nil, nil, nil, nil, ctx) },
 		"registration artifact": func() error { return ValidatePlanArtifactForRegistration("", nil, nil, ctx) },

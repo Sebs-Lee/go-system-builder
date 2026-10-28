@@ -184,8 +184,10 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 	if err := ValidatePlanTaskCoverage(current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
 	}
-	if err := validateCoverageInventory(root, current, &plan, request.Context); err != nil {
-		return loopruntime.Snapshot{}, err
+	if !buildsurface.HasCanonical(current) {
+		if err := validateCoverageInventory(root, current, &plan, request.Context); err != nil {
+			return loopruntime.Snapshot{}, err
+		}
 	}
 	if err := validateKnownE2ECaseCoverage(request.Context, root, current, &plan); err != nil {
 		return loopruntime.Snapshot{}, err
@@ -201,15 +203,20 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 		workspace = *plan.VerificationArtifactWorkspace
 	}
 
-	artifactDigest, err := prepareVerificationWorkspace(root, &plan)
-	if err != nil {
-		return loopruntime.Snapshot{}, err
+	canonical := buildsurface.HasCanonical(current)
+	artifactDigest := ""
+	if !canonical {
+		artifactDigest, err = prepareVerificationWorkspace(root, &plan, request.Context)
+		if err != nil {
+			return loopruntime.Snapshot{}, err
+		}
 	}
 
 	// Pin the plan into the shared control plane directory; the runtime
 	// stores path+sha256 and every consumer hash-verifies on load.
 	planRel := filepath.ToSlash(filepath.Join(".claude", "review", "plans", plan.ReviewPlanID+".json"))
 	planBytes := append(canonicalJSON(data), '\n')
+	publishedPlan := false
 	publishPlan := func() error {
 		stored, err := workpacket.PublishBounded(root, planRel, planBytes, 20<<20)
 		if err != nil {
@@ -218,10 +225,13 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 		if !bytes.Equal(stored, planBytes) {
 			return fmt.Errorf("staged ReviewPlan at %s differs from this answer; Main preserves the original artifact and inspects its receipt/source before revision or recovery", planRel)
 		}
+		publishedPlan = true
 		return nil
 	}
-	if err := publishPlan(); err != nil {
-		return loopruntime.Snapshot{}, err
+	if !canonical {
+		if err := publishPlan(); err != nil {
+			return loopruntime.Snapshot{}, err
+		}
 	}
 	planSHA := sha256Of(planBytes)
 
@@ -257,7 +267,16 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 					return fmt.Errorf("original S9 seed changed before first professional registration")
 				}
 			}
-			if err := verifyFrozenSubjects(root, &plan, state, request.Context); err != nil {
+			if buildsurface.HasCanonical(state) {
+				// This original gate retains its source diagnostics and proves the
+				// complete denominator against fresh sources inside the Writer.
+				if err := validateCoverageInventory(root, state, &plan, request.Context); err != nil {
+					return err
+				}
+				if err := verifyCanonicalFrozenWorktree(root, &plan, state, request.Context); err != nil {
+					return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
+				}
+			} else if err := verifyFrozenSubjects(root, &plan, state, request.Context); err != nil {
 				return fmt.Errorf("canonical product baseline changed before ReviewPlan commit: %w", err)
 			}
 			if err := validateKnownE2ECaseCoverage(store.Context(), root, state, &plan); err != nil {
@@ -269,6 +288,14 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 			if err := store.Context().Err(); err != nil {
 				return err
 			}
+			if canonical {
+				// Reject invalid canonical sources/coverage before creating a
+				// workspace or publishing the unaccepted Plan.
+				artifactDigest, err = prepareVerificationWorkspace(root, &plan, request.Context)
+				if err != nil {
+					return err
+				}
+			}
 			// Another failed caller may have safely cleaned an unreferenced
 			// preflight artifact. Restore only these exact bytes under the
 			// original Writer before publishing their pointer.
@@ -279,6 +306,11 @@ func registerPlanBytes(root, statePath, journalPath string, request PlanRequest,
 		},
 	})
 	if err != nil {
+		if canonical && !publishedPlan {
+			// A validation refusal has not staged this attempt. Preserve any
+			// retained artifact from an earlier attempt instead of cleaning it.
+			return snapshot, err
+		}
 		// Error does not prove the original CAS is absent. The existing Writer
 		// fence preserves both durable pending and any concurrent accepted record.
 		removed, cleanupErr := removeStagedArtifactIfUnreferenced(store, current, commitRevision, planRel, planSHA)
