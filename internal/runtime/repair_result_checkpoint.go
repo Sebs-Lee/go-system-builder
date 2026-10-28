@@ -138,6 +138,23 @@ func ValidateRepairResultProvenanceBinding(p workpacket.RepairResultPacket, r Re
 	if r.Contract != "s9-repair-result-candidate-v1" || r.PacketID != p.ID || r.PacketSHA256 != digest || r.IssuanceEventID != p.IssuanceEventID || r.OwnerAgentID != b.OwnerAgentID || r.RuntimeID != b.RuntimeID || r.BaselineGeneration != b.BaselineGeneration || r.ReviewRound != b.ReviewRound || r.ExecutionSHA256 != p.Binding.ExecutionSHA256 || r.ExecutionAssignmentID != execution["assignment_id"] || !hypothesisJSONEqual(execution["execution_generation"], r.ExecutionGeneration) || r.ExecutionRoot != execution["worktree_path"] || r.BaseCommit != execution["base_commit"] || r.PlanReportRef != p.Binding.PlanReportRef || r.PlanReportSHA256 != p.Binding.PlanReportSHA256 || r.ReworkRef != p.Binding.ReworkRef || r.ReworkSHA256 != p.Binding.ReworkSHA256 || r.SourceHead == "" {
 		return fmt.Errorf("S9 candidate provenance identity differs")
 	}
+	if len(r.PrivateSubmissions) != 0 {
+		var report struct {
+			Receipt *struct {
+				PacketID string `json:"packet_id"`
+			} `json:"receipt"`
+		}
+		if err := json.Unmarshal(p.Inputs.PlanReport, &report); err != nil || report.Receipt == nil || len(r.PrivateSubmissions) != 2 {
+			return fmt.Errorf("S9 private provenance original Plan identity unavailable")
+		}
+		dir := ".loop-submissions/native-s9/" + report.Receipt.PacketID + "/"
+		for i, kind := range []string{"plan", "result"} {
+			item := r.PrivateSubmissions[i]
+			if item.Kind != kind || item.Path != dir+kind+".json" || len(item.SHA256) != 64 {
+				return fmt.Errorf("S9 private provenance differs from original responsibility")
+			}
+		}
+	}
 	resumeSHA, err := workpacket.RepairResultResumeSHA256(p.Binding.Resume)
 	if err != nil {
 		return err

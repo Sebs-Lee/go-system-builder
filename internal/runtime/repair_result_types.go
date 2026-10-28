@@ -21,7 +21,14 @@ type RepairResultLocalEvidence struct {
 // WorkspaceCandidate. It proves which answer produced the proposal, not that
 // the candidate was received. DeliveryRef/SHA and the original journal prove
 // reception; no candidate file contains its own hash or predicted sequence.
+type RepairResultPrivateSubmission struct {
+	Kind   string `json:"kind"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
 type RepairResultCandidateProvenance struct {
+	PrivateSubmissions      []RepairResultPrivateSubmission `json:"private_submissions,omitempty"`
 	LocalEvidence           []RepairResultLocalEvidence     `json:"local_evidence,omitempty"`
 	Contract                string                          `json:"contract"`
 	PacketID                string                          `json:"packet_id"`

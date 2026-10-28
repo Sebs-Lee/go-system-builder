@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/entroforge/go-system-builder/internal/integration"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
@@ -149,18 +150,32 @@ func prepareWorkspaceCandidate(ctx context.Context, root string, state map[strin
 	proposal.ProducerAgentID = e.AgentID
 	proposal.AssignmentID = a.Assignment.AssignmentID
 	typed := proposal.issued != nil
-	head, err := workspace.Git(ctx, e.Path, "rev-parse", "HEAD")
-	if err != nil {
-		return WorkspaceCandidate{}, err
+	var retained *NativeS9Source
+	if typed {
+		retained, err = RetainedNativeS9Source(ctx, root, e, proposal.issued.packet.Binding.Sources)
+		if err != nil {
+			return WorkspaceCandidate{}, err
+		}
 	}
-	status, err := candidateProductStatus(ctx, root, e, a.Session, proposal)
-	if err != nil {
-		return WorkspaceCandidate{}, err
+	sourceGit := e.Path
+	head, status := "", ""
+	if retained != nil {
+		head = retained.Head
+		sourceGit = root
+	} else {
+		head, err = workspace.Git(ctx, e.Path, "rev-parse", "HEAD")
+		if err != nil {
+			return WorkspaceCandidate{}, err
+		}
+		status, err = candidateProductStatus(ctx, root, e, a.Session, proposal)
+		if err != nil {
+			return WorkspaceCandidate{}, err
+		}
 	}
 	if status != "" {
 		return WorkspaceCandidate{}, fmt.Errorf("candidate requires a clean committed Worker: %s", status)
 	}
-	paths, err := workspace.GitBytes(ctx, e.Path, "diff", "--no-renames", "--name-only", "-z", e.BaseCommit, head)
+	paths, err := workspace.GitBytes(ctx, sourceGit, "diff", "--no-renames", "--name-only", "-z", e.BaseCommit, head)
 	if err != nil {
 		return WorkspaceCandidate{}, err
 	}
@@ -198,9 +213,10 @@ func prepareWorkspaceCandidate(ctx context.Context, root string, state map[strin
 	return c, nil
 }
 
-// Only this original consumer's captured log outputs may coexist with a clean
-// product commit. A directory, authored reference or filename alone grants no
-// exemption, and tracked/baseline product files always remain protected.
+// The original consumer separates the current D responsibility's private
+// runtime area from product changes. Authored originals and captured evidence
+// retain their exact checks; other private scratch needs no authored reference.
+// Tracked/baseline product files and other responsibilities remain protected.
 func candidateProductStatus(ctx context.Context, root string, e workspace.Execution, session RepairSession, proposal RepairResultRequest) (string, error) {
 	args := append([]string{"status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", "."}, workspace.WorkerSubmissionStatusExcludes()...)
 	status, err := workspace.GitBytes(ctx, e.Path, args...)
@@ -213,9 +229,29 @@ func candidateProductStatus(ctx context.Context, root string, e workspace.Execut
 			captured[local.SourcePath] = local
 		}
 	}
+	private := map[string]string{}
+	area := ""
+	if proposal.issued != nil {
+		private, err = NativeS9PrivateProjection(ctx, root, proposal.issued.packet, e, WorkspaceCandidate{Provenance: &proposal.issued.provenance}, false)
+		if err != nil {
+			return "", err
+		}
+		area, err = NativeS9PrivateArea(ctx, root, proposal.issued.packet, e)
+		if err != nil {
+			return "", err
+		}
+	}
 	protected := map[string]bool{}
+	baselinePaths := make([]string, 0, len(session.BaselineArtifacts))
 	for _, artifact := range session.BaselineArtifacts {
 		protected[artifact.Path] = true
+		baselinePaths = append(baselinePaths, artifact.Path)
+	}
+	areaProjection, err := integration.ObserveWorkerPrivateArea(ctx, e.Path, integration.WorkerPrivateAreaSpec{
+		Path: area, BaseCommit: e.BaseCommit, WritePaths: e.WritePaths, BaselinePaths: baselinePaths,
+	})
+	if err != nil {
+		return "", err
 	}
 	var remaining []string
 	for _, entry := range strings.Split(string(status), "\x00") {
@@ -229,8 +265,22 @@ func candidateProductStatus(ctx context.Context, root string, e workspace.Execut
 			return "", fmt.Errorf("invalid candidate Git status")
 		}
 		path := entry[3:]
+		if entry[:2] == "??" && private[path] != "" {
+			data, err := workpacket.ReadFile(e.Path, path, repairResultAnswerLimit)
+			if err != nil || workpacket.Digest(data) != private[path] {
+				return "", fmt.Errorf("S9 private original changed before candidate: %s", path)
+			}
+			continue
+		}
 		local, found := captured[path]
-		if entry[:2] == "??" && found && candidateLogPath(path, e, protected) {
+		privateOutput := false
+		if entry[:2] == "??" && areaProjection != nil {
+			privateOutput, err = areaProjection.Allows(path)
+			if err != nil {
+				return "", err
+			}
+		}
+		if entry[:2] == "??" && found && candidateLogPath(path, e, protected, area) && (area == "" || !nativeS9PrivateAreaPath(area, path) || privateOutput) {
 			data, err := workpacket.ReadFile(e.Path, path, repairResultAnswerLimit)
 			if err != nil || workpacket.Digest(data) != local.SHA256 {
 				return "", fmt.Errorf("S9 captured log source changed before candidate: %s", path)
@@ -242,6 +292,12 @@ func candidateProductStatus(ctx context.Context, root string, e workspace.Execut
 			if err != nil || workpacket.Digest(copy) != local.SHA256 {
 				return "", fmt.Errorf("S9 captured log handoff unavailable before candidate: %s", path)
 			}
+			continue
+		}
+		// Unreferenced scratch in this one original private area is not a
+		// product change. A referenced source never falls through if its own
+		// capture cannot be verified.
+		if entry[:2] == "??" && privateOutput && !found {
 			continue
 		}
 		remaining = append(remaining, entry)
@@ -267,7 +323,15 @@ func WorkspaceCandidateLogProjection(ctx context.Context, root string, state map
 	if err != nil {
 		return nil, err
 	}
-	return workspaceCandidateLogProjection(ctx, root, e, candidate, authority.Session)
+	packet, found, err := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), state, candidate.Provenance.PacketID)
+	if err != nil || !found {
+		return nil, fmt.Errorf("captured log projection requires its original Result packet: %v", err)
+	}
+	area, err := NativeS9PrivateArea(ctx, root, packet, e)
+	if err != nil {
+		return nil, err
+	}
+	return workspaceCandidateLogProjection(ctx, root, e, candidate, authority.Session, area)
 }
 
 // Typed delivery already carries the original frozen Session. Later ACK and
@@ -287,9 +351,13 @@ func WorkspaceCandidateLogProjectionForPacket(ctx context.Context, root string, 
 	if session.SessionID != packet.Binding.Sources.SessionID || session.RuntimeID != e.RuntimeID || session.BaselineGeneration != e.BaselineGeneration {
 		return nil, fmt.Errorf("captured log projection original frozen Session differs")
 	}
-	return workspaceCandidateLogProjection(ctx, root, e, candidate, session)
+	area, err := NativeS9PrivateArea(ctx, root, packet, e)
+	if err != nil {
+		return nil, err
+	}
+	return workspaceCandidateLogProjection(ctx, root, e, candidate, session, area)
 }
-func workspaceCandidateLogProjection(ctx context.Context, root string, e workspace.Execution, candidate WorkspaceCandidate, session RepairSession) (map[string]string, error) {
+func workspaceCandidateLogProjection(ctx context.Context, root string, e workspace.Execution, candidate WorkspaceCandidate, session RepairSession, area string) (map[string]string, error) {
 	out := map[string]string{}
 	if e.Purpose != workspace.NativeDeliveryPurpose || candidate.Provenance == nil {
 		return out, nil
@@ -299,7 +367,7 @@ func workspaceCandidateLogProjection(ctx context.Context, root string, e workspa
 		protected[artifact.Path] = true
 	}
 	for _, local := range candidate.Provenance.LocalEvidence {
-		if !candidateLogPath(local.SourcePath, e, protected) {
+		if !candidateLogPath(local.SourcePath, e, protected, area) {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -314,8 +382,12 @@ func workspaceCandidateLogProjection(ctx context.Context, root string, e workspa
 	return out, nil
 }
 
-func candidateLogPath(path string, e workspace.Execution, protected map[string]bool) bool {
-	if protected[path] || !(isRuntimeLogShape(path) || strings.HasPrefix(path, "logs/") && filepath.Ext(path) == ".txt") {
+func nativeS9PrivateAreaPath(area, path string) bool {
+	return area != "" && strings.HasPrefix(path, area+"/")
+}
+
+func candidateLogPath(path string, e workspace.Execution, protected map[string]bool, area string) bool {
+	if protected[path] {
 		return false
 	}
 	for _, scope := range e.WritePaths {
@@ -323,7 +395,10 @@ func candidateLogPath(path string, e workspace.Execution, protected map[string]b
 			return false
 		}
 	}
-	return true
+	if area != "" && strings.HasPrefix(path, ".loop-submissions/native-s9/") {
+		return nativeS9PrivateAreaPath(area, path)
+	}
+	return isRuntimeLogShape(path) || strings.HasPrefix(path, "logs/") && filepath.Ext(path) == ".txt"
 }
 
 func ValidateWorkspaceCandidate(root string, state map[string]any, e workspace.Execution, ref ArtifactRef) (WorkspaceCandidate, error) {

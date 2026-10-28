@@ -424,8 +424,12 @@ func verifyRepairResultPacketCurrentWithVerifier(root string, state map[string]a
 	if err != nil {
 		return err
 	}
-	if execution["status"] != "ready" || stringValue(execution["rework_ref"]) != p.Binding.ReworkRef || stringValue(execution["bootstrap_sha256"]) == "" {
-		return fmt.Errorf("S9 result execution/attempt is not current and bootstrapped")
+	// Native delivery is an observed original worktree, not a legacy launched
+	// execution. Its purpose is part of the frozen execution projection checked
+	// above. All other executions retain the original bootstrap requirement.
+	if execution["status"] != "ready" || stringValue(execution["rework_ref"]) != p.Binding.ReworkRef ||
+		(execution["purpose"] != "native_delivery" && stringValue(execution["bootstrap_sha256"]) == "") {
+		return fmt.Errorf("S9 result execution/attempt is not current or lacks its required bootstrap")
 	}
 	path := stringValue(execution["worktree_path"])
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {

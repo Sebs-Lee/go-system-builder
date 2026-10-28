@@ -168,14 +168,18 @@ func (packet *RepairPlanReportPacket) UnmarshalJSON(data []byte) error {
 // BuildRepairPlanReport constructs the deterministic S9 pre-execution
 // questionnaire from the trusted current dispatch/source projection.
 func BuildRepairPlanReport(binding RepairPlanReportBinding, inputs RepairPlanReportInputs) (RepairPlanReportPacket, error) {
+	templateBytes, err := schema.ReadAsset("stage-form-s9-plan-template.json")
+	if err != nil {
+		return RepairPlanReportPacket{}, err
+	}
+	return buildRepairPlanReportWithTemplate(binding, inputs, templateBytes)
+}
+
+func buildRepairPlanReportWithTemplate(binding RepairPlanReportBinding, inputs RepairPlanReportInputs, templateBytes []byte) (RepairPlanReportPacket, error) {
 	if err := validateRepairPlanReportBinding(binding); err != nil {
 		return RepairPlanReportPacket{}, err
 	}
 	canonicalInputs, err := canonicalRepairPlanReportInputs(binding, inputs)
-	if err != nil {
-		return RepairPlanReportPacket{}, err
-	}
-	templateBytes, err := schema.ReadAsset("stage-form-s9-plan-template.json")
 	if err != nil {
 		return RepairPlanReportPacket{}, err
 	}
@@ -236,7 +240,18 @@ func BuildRepairPlanReport(binding RepairPlanReportBinding, inputs RepairPlanRep
 }
 
 func RebuildRepairPlanReport(packet RepairPlanReportPacket) (RepairPlanReportPacket, error) {
-	return BuildRepairPlanReport(packet.Binding, packet.Inputs)
+	// An issued packet fixes the complete template bytes, not just the fields
+	// visible in its mutable draft. New work always uses the current template.
+	for _, name := range []string{"stage-form-s9-plan-template.json", "stage-form-s9-plan-template-before-natural-observation.json"} {
+		data, err := schema.ReadAsset(name)
+		if err != nil {
+			return RepairPlanReportPacket{}, err
+		}
+		if Digest(data) == packet.TemplateSHA {
+			return buildRepairPlanReportWithTemplate(packet.Binding, packet.Inputs, data)
+		}
+	}
+	return RepairPlanReportPacket{}, fmt.Errorf("unsupported frozen S9 PlanReport template digest")
 }
 
 func RepairPlanReportPacketDigest(packet RepairPlanReportPacket) (string, error) {

@@ -544,3 +544,25 @@ func TestRepairPlanReportFixtureUsesGenerationTwoAndExactReportPaths(t *testing.
 		t.Fatalf("fixture registration event is %v, want %s", f.registerEvent["event_id"], got)
 	}
 }
+
+// The original issuer permits a later Builder to receive its Plan packet
+// after a sibling has entered fixing. Verification must recognize that exact
+// issuance while retaining the same actor, approval and source closure gates.
+func TestRepairPlanReportPacketIssueAllowsOriginalFixingPhase(t *testing.T) {
+	f := newRepairPlanReportRuntimeFixture(t)
+	f.registerEvent["from"] = map[string]any{"state": "bug_resolution", "phase": "fixing"}
+	f.registerEvent["to"] = map[string]any{"state": "bug_resolution", "phase": "fixing"}
+	f.issueEvent["from"] = map[string]any{"state": "bug_resolution", "phase": "fixing"}
+	f.issueEvent["to"] = map[string]any{"state": "bug_resolution", "phase": "fixing"}
+	f.journal = s8CheckpointJournalBytes(t, f.approvalEvent, f.sessionEvent, f.planEvent, f.registerEvent, f.issueEvent)
+	writeRepairPlanReportJournal(t, &f)
+	if err := VerifyRepairPlanReportPacketIssue(f.root, f.state, f.packet); err != nil {
+		t.Fatalf("original issuer fixing packet was rejected: %v", err)
+	}
+	f.issueEvent["actor"] = map[string]any{"type": "agent", "id": "intruder"}
+	f.journal = s8CheckpointJournalBytes(t, f.approvalEvent, f.sessionEvent, f.planEvent, f.registerEvent, f.issueEvent)
+	writeRepairPlanReportJournal(t, &f)
+	if err := VerifyRepairPlanReportPacketIssue(f.root, f.state, f.packet); err == nil {
+		t.Fatal("fixing phase granted packet authority to another actor")
+	}
+}

@@ -40,9 +40,15 @@ func (s *Service) IssueRepairResults(ctx context.Context, ownerFilter string) ([
 		if err != nil {
 			return nil, err
 		}
-		sourceRoot, _, err := RepairResultRegisteredSource(s.Root, latest.State, packet)
+		sourceRoot, execution, err := RepairResultRegisteredSource(s.Root, latest.State, packet, ctx)
 		if err != nil {
 			return nil, err
+		}
+		if repair.NativeS9SourceReference(execution).Path != "" {
+			if _, err := repair.ReadRepairResultInput(ctx, s.Root, latest.State, packet, execution); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		if err := publishRepairResultAt(sourceRoot, s.Root, packet); err != nil {
 			return nil, err
@@ -66,40 +72,67 @@ func (s *Service) RepairResultSourceForPath(path string) (workpacket.RepairResul
 // registered Worker source is selected again inside the original CAS. Empty owner
 // and sourceRoot hints use the responsibility selected by the exact answer path.
 func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error) (Receipt, error) {
+	receipt, _, err := s.saveRepairResultFrom(ctx, owner, path, sourceRoot, authorize, false)
+	return receipt, err
+}
+
+// SaveRepairResultFromOrdinaryHook selects the current exact source before
+// reading an answer. Only a confirmed native delivery is quiet; receive means
+// the original receiver or its rejection feedback applies, not acceptance.
+func (s *Service) SaveRepairResultFromOrdinaryHook(ctx context.Context, path string) (Receipt, bool, error) {
+	return s.saveRepairResultFrom(ctx, "", path, "", nil, true)
+}
+
+func (s *Service) saveRepairResultFrom(ctx context.Context, owner, path, sourceRoot string, authorize func(root string, state map[string]any) error, ordinary bool) (Receipt, bool, error) {
 	s = s.WithContext(ctx)
 	if err := ctx.Err(); err != nil {
-		return Receipt{}, err
+		return Receipt{}, true, err
 	}
 	snapshot, err := s.snapshot()
 	if err != nil {
-		return Receipt{}, err
+		return Receipt{}, true, err
 	}
 	if err := ctx.Err(); err != nil {
-		return rejected(snapshot, "", err), err
+		return rejected(snapshot, "", err), true, err
 	}
-	packet, actualRoot, found, err := currentRepairResultSourceForPath(s.Root, snapshot.State, path, s.Context())
+	selection, found, err := selectCurrentRepairResultSource(s.Root, snapshot.State, path, s.Context())
 	if err != nil {
-		return rejected(snapshot, "", err), err
+		return rejected(snapshot, "", err), true, err
 	}
 	if !found {
 		err := errors.New("S9 result answer path has no current issuance for this registered Builder")
-		return rejected(snapshot, "", err), err
+		return rejected(snapshot, "", err), true, err
+	}
+	packet, actualRoot := selection.packet, selection.root
+	if err := ctx.Err(); err != nil {
+		return rejected(snapshot, packet.ID, err), true, err
+	}
+	if ordinary {
+		switch selection.execution.Purpose {
+		case workspace.NativeDeliveryPurpose:
+			return Receipt{}, false, nil
+		case "":
+			// The original selector has confirmed an independent registered source.
+		default:
+			err := fmt.Errorf("S9 ordinary Result save does not support execution purpose %q", selection.execution.Purpose)
+			return rejected(snapshot, packet.ID, err), true, err
+		}
 	}
 	owner = packet.Binding.Sources.OwnerAgentID
 	if sourceRoot != "" {
 		want, err := filepath.Abs(sourceRoot)
 		if err != nil {
-			return rejected(snapshot, packet.ID, err), err
+			return rejected(snapshot, packet.ID, err), true, err
 		}
 		got, err := filepath.Abs(actualRoot)
 		if err != nil || filepath.Clean(want) != filepath.Clean(got) {
 			err := errors.New("S9 result answer source root differs from the registered Worker execution")
-			return rejected(snapshot, packet.ID, err), err
+			return rejected(snapshot, packet.ID, err), true, err
 		}
 	}
-	answerBytes, err := workpacket.ReadFile(actualRoot, packet.AnswerPath, repairResultAnswerLimit)
+	answerBytes, err := repair.ReadRepairResultInput(ctx, s.Root, snapshot.State, packet, selection.execution)
 	if err != nil {
-		return rejected(snapshot, packet.ID, err), err
+		return rejected(snapshot, packet.ID, err), true, err
 	}
 	// Decode only the routing field here. The selected receiver validates the
 	// professional answer once, immediately before recording it.
@@ -107,11 +140,12 @@ func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceR
 		Answer workpacket.RepairResultProfessionalAnswer `json:"answer"`
 	}
 	if err := json.Unmarshal(answerBytes, &document); err != nil {
-		return rejected(snapshot, packet.ID, err), err
+		return rejected(snapshot, packet.ID, err), true, err
 	}
 	professional := document.Answer
 	if professional.Verdict != "completed" {
-		return s.saveRepairResultBlocker(ctx, packet, owner, actualRoot, professional.Verdict, nil)
+		receipt, err := s.saveRepairResultBlocker(ctx, packet, owner, actualRoot, professional.Verdict, nil)
+		return receipt, true, err
 	}
 	next, candidate, candidateRef, acceptErr := repair.AcceptIssuedRepairResultCandidate(ctx, s.Root, s.StatePath, s.JournalPath, repair.AcceptIssuedRepairResultCandidateRequest{
 		ExpectedRevision: snapshot.Revision,
@@ -122,7 +156,7 @@ func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceR
 		OccurredAt:       time.Now().UTC(),
 	})
 	if acceptErr != nil {
-		return rejected(next, packet.ID, acceptErr), acceptErr
+		return rejected(next, packet.ID, acceptErr), true, acceptErr
 	}
 	accepted := &loopruntime.RepairResultCandidateReceipt{
 		CandidateRef: candidateRef.Path, CandidateSHA256: candidateRef.SHA256,
@@ -131,7 +165,8 @@ func (s *Service) SaveRepairResultFrom(ctx context.Context, owner, path, sourceR
 	if candidate.Provenance != nil {
 		accepted.Provenance = *candidate.Provenance
 	}
-	return acceptedRepairResultCandidateReceipt(s.Root, next, packet, owner, accepted, s.Context())
+	receipt, err := acceptedRepairResultCandidateReceipt(s.Root, next, packet, owner, accepted, s.Context())
+	return receipt, true, err
 }
 
 // RepairResultReceipt is a read-only view of the original blocker, candidate or final receipt.
@@ -188,12 +223,23 @@ func (s *Service) RepairResultReceipt(owner, ref string) (Receipt, error) {
 	return acceptedRepairResultCandidateReceipt(s.Root, snapshot, packet, owner, nil, s.Context())
 }
 
+type repairResultSourceSelection struct {
+	packet    workpacket.RepairResultPacket
+	root      string
+	execution workspace.Execution
+}
+
 func currentRepairResultSourceForPath(root string, state map[string]any, inputPath string, contexts ...context.Context) (workpacket.RepairResultPacket, string, bool, error) {
+	selection, found, err := selectCurrentRepairResultSource(root, state, inputPath, contexts...)
+	return selection.packet, selection.root, found, err
+}
+
+func selectCurrentRepairResultSource(root string, state map[string]any, inputPath string, contexts ...context.Context) (repairResultSourceSelection, bool, error) {
 	packets, err := loopruntime.RepairResultPacketsForPathContext(loopruntime.WithPacketBodyRoot(submissionRepairPacketContext(contexts...), root), state, inputPath)
 	if err != nil {
-		return workpacket.RepairResultPacket{}, "", false, err
+		return repairResultSourceSelection{}, false, err
 	}
-	return repairResultPathInRoots(root, state, inputPath, packets)
+	return selectRepairResultPathInRoots(root, state, inputPath, packets, contexts...)
 }
 
 func repairResultByReference(root string, state map[string]any, ref string, contexts ...context.Context) (workpacket.RepairResultPacket, bool, error) {
@@ -204,7 +250,7 @@ func repairResultByReference(root string, state map[string]any, ref string, cont
 	if err != nil {
 		return workpacket.RepairResultPacket{}, false, err
 	}
-	packet, _, found, err := repairResultPathInRoots(root, state, ref, packets)
+	packet, _, found, err := repairResultPathInRoots(root, state, ref, packets, contexts...)
 	if err != nil || found {
 		return packet, found, err
 	}
@@ -281,22 +327,34 @@ func acceptedRepairResultPathWithSource(root string, state map[string]any, input
 	return *selected, selectedRoot, true, nil
 }
 
-func repairResultPathInRoots(root string, state map[string]any, inputPath string, packets []workpacket.RepairResultPacket) (workpacket.RepairResultPacket, string, bool, error) {
+func repairResultPathInRoots(root string, state map[string]any, inputPath string, packets []workpacket.RepairResultPacket, contexts ...context.Context) (workpacket.RepairResultPacket, string, bool, error) {
+	selection, found, err := selectRepairResultPathInRoots(root, state, inputPath, packets, contexts...)
+	return selection.packet, selection.root, found, err
+}
+
+func selectRepairResultPathInRoots(root string, state map[string]any, inputPath string, packets []workpacket.RepairResultPacket, contexts ...context.Context) (repairResultSourceSelection, bool, error) {
 	abs, err := filepath.Abs(inputPath)
 	if err != nil {
-		return workpacket.RepairResultPacket{}, "", false, err
+		return repairResultSourceSelection{}, false, err
 	}
 	if !filepath.IsAbs(inputPath) {
 		abs, err = filepath.Abs(filepath.Join(root, filepath.FromSlash(inputPath)))
 		if err != nil {
-			return workpacket.RepairResultPacket{}, "", false, err
+			return repairResultSourceSelection{}, false, err
 		}
 	}
 	var selected *workpacket.RepairResultPacket
 	selectedRoot := ""
+	var selectedExecution workspace.Execution
 	for _, packet := range packets {
-		sourceRoot, _, err := RepairResultRegisteredSource(root, state, packet)
+		if err := submissionRepairPacketContext(contexts...).Err(); err != nil {
+			return repairResultSourceSelection{}, false, err
+		}
+		sourceRoot, execution, err := RepairResultRegisteredSource(root, state, packet, submissionRepairPacketContext(contexts...))
 		if err != nil {
+			if canceled := submissionRepairPacketContext(contexts...).Err(); canceled != nil {
+				return repairResultSourceSelection{}, false, canceled
+			}
 			// A stale/historical packet is not a source-root grant. It remains
 			// readable by packet ID through its original receipt.
 			continue
@@ -305,24 +363,29 @@ func repairResultPathInRoots(root string, state map[string]any, inputPath string
 		if err != nil || filepath.Clean(candidate) != filepath.Clean(abs) {
 			continue
 		}
-		if err := workpacket.CheckPath(sourceRoot, packet.AnswerPath); err != nil {
-			return workpacket.RepairResultPacket{}, "", false, err
+		if repair.NativeS9SourceReference(execution).Path == "" {
+			if err := workpacket.CheckPath(sourceRoot, packet.AnswerPath); err != nil {
+				return repairResultSourceSelection{}, false, err
+			}
 		}
 		if selected != nil && (selected.ID != packet.ID || filepath.Clean(selectedRoot) != filepath.Clean(sourceRoot)) {
-			return workpacket.RepairResultPacket{}, "", false, errors.New("S9 answer path is ambiguous across issued packets")
+			return repairResultSourceSelection{}, false, errors.New("S9 answer path is ambiguous across issued packets")
 		}
 		copyPacket := packet
-		selected, selectedRoot = &copyPacket, sourceRoot
+		selected, selectedRoot, selectedExecution = &copyPacket, sourceRoot, execution
 	}
 	if selected == nil {
-		return workpacket.RepairResultPacket{}, "", false, nil
+		return repairResultSourceSelection{}, false, nil
 	}
-	return *selected, selectedRoot, true, nil
+	return repairResultSourceSelection{packet: *selected, root: selectedRoot, execution: selectedExecution}, true, nil
 }
 
 // RepairResultRegisteredSource reuses the original execution/source selector for
 // both the consumer and its questionnaire view; it does not authorize tool calls.
-func RepairResultRegisteredSource(root string, state map[string]any, packet workpacket.RepairResultPacket) (string, workspace.Execution, error) {
+func RepairResultRegisteredSource(root string, state map[string]any, packet workpacket.RepairResultPacket, contexts ...context.Context) (string, workspace.Execution, error) {
+	if err := submissionRepairPacketContext(contexts...).Err(); err != nil {
+		return "", workspace.Execution{}, err
+	}
 	raw, err := json.Marshal(state["workspace"])
 	if err != nil {
 		return "", workspace.Execution{}, err
@@ -366,6 +429,11 @@ func RepairResultRegisteredSource(root string, state map[string]any, packet work
 		issuedExecution.Generation != selected.Generation || packet.Binding.ReworkRef != selected.ReworkRef ||
 		filepath.Clean(issuedExecution.Path) != filepath.Clean(selected.Path) {
 		return "", workspace.Execution{}, errors.New("S9 packet execution association differs from the registered Worker")
+	}
+	if retained, err := repair.RetainedNativeS9Source(submissionRepairPacketContext(contexts...), root, *selected, b); err != nil {
+		return "", workspace.Execution{}, err
+	} else if retained != nil {
+		return selected.Path, *selected, nil
 	}
 	rootPath, err := workspace.Canonical(selected.Path)
 	if err != nil || rootPath != selected.Path {

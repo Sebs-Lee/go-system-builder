@@ -112,6 +112,37 @@ func IssueRepairPlanReportPacketsContext(ctx context.Context, root, statePath, j
 			issued = append(issued, prior)
 			continue
 		}
+		// A template update changes the derived packet ID, but cannot create a
+		// second question for the same issued responsibility. Find its original
+		// current owner/assignment and verify the frozen sources before reusing it.
+		retained, err := runtimepkg.CurrentRepairPlanReportPacketsContext(ctx, root, current.State, packet.Binding.OwnerAgentID)
+		if err != nil {
+			return nil, err
+		}
+		var original *workpacket.RepairPlanReportPacket
+		for i := range retained {
+			prior := &retained[i]
+			if prior.Binding.RepairAssignmentID != packet.Binding.RepairAssignmentID || prior.Binding.ReviewRound != packet.Binding.ReviewRound {
+				continue
+			}
+			if original != nil {
+				return nil, fmt.Errorf("S9 Assignment %s has multiple issued PlanReport questionnaires", packet.Binding.RepairAssignmentID)
+			}
+			if _, err := workpacket.RepairPlanReportPacketDigest(*prior); err != nil {
+				return nil, fmt.Errorf("S9 original PlanReport packet %s: %w", prior.ID, err)
+			}
+			if !reflect.DeepEqual(prior.Binding, packet.Binding) || !reflect.DeepEqual(prior.Inputs, packet.Inputs) {
+				return nil, fmt.Errorf("S9 original PlanReport packet %s differs from current frozen sources", prior.ID)
+			}
+			if err := runtimepkg.VerifyRepairPlanReportPacketIssueContext(ctx, root, current.State, *prior); err != nil {
+				return nil, fmt.Errorf("S9 original PlanReport packet %s issuance: %w", prior.ID, err)
+			}
+			original = prior
+		}
+		if original != nil {
+			issued = append(issued, *original)
+			continue
+		}
 		// An exact prior PACKET-ISSUE is replayed above before enforcing the
 		// caller's original CAS. This lets a mutation-capable Snapshot recover
 		// its pending write and then return the exact committed packet without

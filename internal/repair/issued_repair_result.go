@@ -29,6 +29,14 @@ const repairResultAnswerLimit int64 = 20 << 20
 const repairResultCandidateContract = "s9-repair-result-candidate-v1"
 const repairResultFinalContract = "s9-repair-result-receipt-v1"
 
+// RepairResultBeforeCandidateError reports that this particular consumer call
+// rejected its input before it could create a Candidate. It does not claim that
+// another attempt has no staged Candidate or that any Result was received.
+type RepairResultBeforeCandidateError struct{ Cause error }
+
+func (e *RepairResultBeforeCandidateError) Error() string { return e.Cause.Error() }
+func (e *RepairResultBeforeCandidateError) Unwrap() error { return e.Cause }
+
 var errRepairResultExecutionNotRegistered = errors.New("S9 RepairResult assignment has no registered Worker execution")
 
 type AcceptIssuedRepairResultCandidateRequest struct {
@@ -115,10 +123,7 @@ func IssueRepairResultPackets(ctx context.Context, root, statePath, journalPath 
 			}
 			callerRevisionChecked = true
 		}
-		if err := issueOneRepairResultPacket(ctx, root, writer, current, packet); err != nil {
-			return nil, err
-		}
-		latest, err := writer.Snapshot()
+		latest, err := issueOneRepairResultPacket(ctx, root, writer, current, packet)
 		if err != nil {
 			return nil, err
 		}
@@ -132,17 +137,17 @@ func IssueRepairResultPackets(ctx context.Context, root, statePath, journalPath 
 	return issued, nil
 }
 
-func issueOneRepairResultPacket(ctx context.Context, root string, writer *runtimepkg.Store, current runtimepkg.Snapshot, packet workpacket.RepairResultPacket) error {
+func issueOneRepairResultPacket(ctx context.Context, root string, writer *runtimepkg.Store, current runtimepkg.Snapshot, packet workpacket.RepairResultPacket) (runtimepkg.Snapshot, error) {
 	rowBytes, err := json.Marshal(packet)
 	if err != nil {
-		return err
+		return runtimepkg.Snapshot{}, err
 	}
 	if err := schema.NewEmbeddedValidator().ValidateBytes("repair-result-work-packet.schema.json", rowBytes); err != nil {
-		return err
+		return runtimepkg.Snapshot{}, err
 	}
 	var row map[string]any
 	if err := json.Unmarshal(rowBytes, &row); err != nil {
-		return err
+		return runtimepkg.Snapshot{}, err
 	}
 	from := cursor(current.State)
 	mutation := runtimepkg.Mutation{
@@ -172,18 +177,18 @@ func issueOneRepairResultPacket(ctx context.Context, root string, writer *runtim
 			return nil
 		},
 	}
-	_, err = writer.Update(current.Revision, mutation)
+	committed, err := writer.Update(current.Revision, mutation)
 	if err == nil {
-		return nil
+		return committed, nil
 	}
 	latest, readErr := writer.Snapshot()
 	if readErr == nil {
 		stored, found, findErr := runtimepkg.FindRepairResultPacketContext(runtimepkg.WithPacketBodyRoot(ctx, root), latest.State, packet.ID)
 		if findErr == nil && found && sameRepairResultPacket(stored, packet) {
-			return nil
+			return latest, nil
 		}
 	}
-	return fmt.Errorf("issue S9 RepairResult packet %s: %w", packet.ID, err)
+	return runtimepkg.Snapshot{}, fmt.Errorf("issue S9 RepairResult packet %s: %w", packet.ID, err)
 }
 
 func buildRepairResultPackets(ctx context.Context, root string, state map[string]any, ownerFilter string) ([]workpacket.RepairResultPacket, error) {
@@ -373,6 +378,11 @@ func repairResultExecutionFromState(ctx context.Context, state map[string]any, b
 	if (selected.Status != "ready" && selected.Status != "complete") || !filepath.IsAbs(selected.Path) || filepath.Clean(selected.Path) != selected.Path {
 		return workspace.Execution{}, fmt.Errorf("S9 Worker %s is not prepared at an absolute execution path (status %s)", selected.AssignmentID, selected.Status)
 	}
+	if retained, err := RetainedNativeS9Source(ctx, root, *selected, binding); err != nil {
+		return workspace.Execution{}, err
+	} else if retained != nil {
+		return *selected, nil
+	}
 	canonical, err := workspace.Canonical(selected.Path)
 	if err != nil || canonical != selected.Path {
 		return workspace.Execution{}, fmt.Errorf("S9 Worker checkout %s is unavailable or noncanonical: %v", selected.Path, err)
@@ -440,9 +450,16 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	if err != nil {
 		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, err
 	}
-	actualSource, err := workspace.Canonical(execution.Path)
-	if err != nil || actualSource != execution.Path {
-		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, errors.New("S9 RepairResult authoring Worker path is not its canonical registered root")
+	retained, err := RetainedNativeS9Source(ctx, root, execution, packet.Binding.Sources)
+	if err != nil {
+		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, err
+	}
+	actualSource := execution.Path
+	if retained == nil {
+		actualSource, err = workspace.Canonical(execution.Path)
+		if err != nil || actualSource != execution.Path {
+			return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, errors.New("S9 RepairResult authoring Worker path is not its canonical registered root")
+		}
 	}
 	acceptedOK := execution.DeliveryRef != ""
 	var accepted runtimepkg.RepairResultCandidateReceipt
@@ -466,13 +483,13 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	if req.SourceRoot == "" || !sameAbsolutePath(req.SourceRoot, actualSource) {
 		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, errors.New("S9 answer source root differs from the registered Worker execution")
 	}
-	answerBytes, err := workpacket.ReadFile(actualSource, packet.AnswerPath, repairResultAnswerLimit)
+	answerBytes, err := ReadRepairResultInput(ctx, root, mainSnapshot.State, packet, execution)
 	if err != nil {
 		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, err
 	}
 	answer, problems := workpacket.ValidateRepairResultAnswer(packet, answerBytes)
 	if len(problems) != 0 {
-		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, &workpacket.AnswerError{Label: "S9 answer", Fields: problems}
+		return mainSnapshot, WorkspaceCandidate{}, ArtifactRef{}, &RepairResultBeforeCandidateError{Cause: &workpacket.AnswerError{Label: "S9 answer", Fields: problems}}
 	}
 	answerSHA := workpacket.Digest(answer)
 	if acceptedOK {
@@ -492,15 +509,21 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 	}
 	// Frozen executions retain their original evidence contract. Only new
 	// native delivery captures local author sources at this boundary.
-	if execution.Purpose == workspace.NativeDeliveryPurpose {
+	if retained != nil {
+		provenance.LocalEvidence = retained.Evidence
+	} else if execution.Purpose == workspace.NativeDeliveryPurpose {
 		provenance.LocalEvidence, err = captureS9LocalEvidence(registry.MainRoot, actualSource, packet.ID, answer)
 		if err != nil {
-			return current, WorkspaceCandidate{}, ArtifactRef{}, err
+			return current, WorkspaceCandidate{}, ArtifactRef{}, &RepairResultBeforeCandidateError{Cause: err}
 		}
+	}
+	provenance.PrivateSubmissions, err = captureNativeS9Private(ctx, root, packet, execution, answer)
+	if err != nil {
+		return current, WorkspaceCandidate{}, ArtifactRef{}, &RepairResultBeforeCandidateError{Cause: err}
 	}
 	proposal, err := repairResultProposal(packet, answer, execution, registry.MainRoot, provenance)
 	if err != nil {
-		return current, WorkspaceCandidate{}, ArtifactRef{}, err
+		return current, WorkspaceCandidate{}, ArtifactRef{}, &RepairResultBeforeCandidateError{Cause: err}
 	}
 	proposal.issued = &issuedRepairResultCapability{packet: packet, provenance: provenance, beforeRevision: current.Revision}
 	candidate, ref, err := CreateWorkspaceCandidate(ctx, root, current.State, execution, proposal)
@@ -524,12 +547,21 @@ func AcceptIssuedRepairResultCandidate(ctx context.Context, root, statePath, jou
 			if freshExecution.Generation != execution.Generation || freshExecution.ReworkRef != execution.ReworkRef || !sameAbsolutePath(freshExecution.Path, execution.Path) {
 				return errors.New("S9 registered Worker attempt changed before candidate CAS")
 			}
-			actualAnswer, err := workpacket.ReadFile(actualSource, packet.AnswerPath, repairResultAnswerLimit)
+			actualAnswer, err := ReadRepairResultInput(ctx, root, state, packet, freshExecution)
 			if err != nil {
 				return err
 			}
 			if !bytes.Equal(actualAnswer, answerBytes) {
 				return runtimepkg.ErrSubmissionConflict
+			}
+			if _, err := NativeS9PrivateProjection(ctx, root, packet, freshExecution, candidate, false); err != nil {
+				return err
+			}
+			if len(candidate.Provenance.PrivateSubmissions) > 0 {
+				head, err := workspace.Git(ctx, freshExecution.Path, "rev-parse", "HEAD")
+				if err != nil || head != candidate.SourceHead {
+					return errors.New("S9 source HEAD changed before candidate CAS")
+				}
 			}
 			entry := workspaceRegistry.Executions[freshExecution.AssignmentID]
 			if entry.AssignmentID != freshExecution.AssignmentID || entry.DeliveryRef != "" && (entry.DeliveryRef != ref.Path || entry.DeliverySHA256 != ref.SHA256) {

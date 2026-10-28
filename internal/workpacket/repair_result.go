@@ -194,14 +194,18 @@ func (packet *RepairResultPacket) UnmarshalJSON(data []byte) error {
 // current, trusted PlanReport/Execution projection. It does not verify live
 // source authority; the original S9 issuer and consumer do that.
 func BuildRepairResult(binding RepairResultBinding, inputs RepairResultInputs) (RepairResultPacket, error) {
+	templateBytes, err := schema.ReadAsset("stage-form-s9-result-template.json")
+	if err != nil {
+		return RepairResultPacket{}, err
+	}
+	return buildRepairResultWithTemplate(binding, inputs, templateBytes)
+}
+
+func buildRepairResultWithTemplate(binding RepairResultBinding, inputs RepairResultInputs, templateBytes []byte) (RepairResultPacket, error) {
 	if err := validateRepairResultBinding(binding); err != nil {
 		return RepairResultPacket{}, err
 	}
 	canonicalInputs, err := canonicalRepairResultInputs(binding, inputs)
-	if err != nil {
-		return RepairResultPacket{}, err
-	}
-	templateBytes, err := schema.ReadAsset("stage-form-s9-result-template.json")
 	if err != nil {
 		return RepairResultPacket{}, err
 	}
@@ -270,9 +274,19 @@ func BuildRepairResult(binding RepairResultBinding, inputs RepairResultInputs) (
 }
 
 // RebuildRepairResult recomputes every machine-controlled field from the
-// embedded template and frozen source documents.
+// original embedded template and frozen source documents. New work uses the
+// current template; unknown historical digests cannot manufacture a template.
 func RebuildRepairResult(packet RepairResultPacket) (RepairResultPacket, error) {
-	return BuildRepairResult(packet.Binding, packet.Inputs)
+	for _, name := range []string{"stage-form-s9-result-template.json", "stage-form-s9-result-template-before-natural-observation.json"} {
+		data, err := schema.ReadAsset(name)
+		if err != nil {
+			return RepairResultPacket{}, err
+		}
+		if Digest(data) == packet.TemplateSHA {
+			return buildRepairResultWithTemplate(packet.Binding, packet.Inputs, data)
+		}
+	}
+	return RepairResultPacket{}, fmt.Errorf("unsupported frozen S9 RepairResult template digest")
 }
 
 // RepairResultPacketDigest returns the canonical digest of a complete packet

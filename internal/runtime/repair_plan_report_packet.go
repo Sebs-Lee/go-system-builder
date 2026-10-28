@@ -14,6 +14,12 @@ import (
 
 const repairPlanReportPacketTemplateID = "s9-plan-report-v1"
 
+// Builders may be dispatched while a sibling is already fixing; the original
+// issuer, current authority and registration/issue proofs share this scope.
+func repairPlanReportDispatchPhase(phase any) bool {
+	return phase == "planning" || phase == "reproducing" || phase == "fixing"
+}
+
 // RepairPlanReportPackets reads the existing packet registry. It does not
 // grant permission to answer or derive a repair plan report from packet inputs.
 func RepairPlanReportPackets(state map[string]any) ([]workpacket.RepairPlanReportPacket, error) {
@@ -123,7 +129,7 @@ func verifyRegisteredRepairPlanReportPacketIssue(root string, state map[string]a
 	before, be := integerField(e, "before_revision")
 	after, ae := integerField(e, "after_revision")
 	rev, re := integerField(state, "revision")
-	if e["event"] != "transition_committed" || e["outcome"] != "committed" || e["transition_id"] != "PACKET-ISSUE" || e["idempotency_key"] != "packet:"+p.ID || e["runtime_id"] != p.Binding.RuntimeID || actor["type"] != "orchestrator" || actor["id"] != "orchestrator" || ge != nil || gen != p.Binding.BaselineGeneration || be != nil || ae != nil || after != before+1 || re != nil || after > rev || from["state"] != "bug_resolution" || (from["phase"] != "planning" && from["phase"] != "reproducing") || !reflect.DeepEqual(from, to) {
+	if e["event"] != "transition_committed" || e["outcome"] != "committed" || e["transition_id"] != "PACKET-ISSUE" || e["idempotency_key"] != "packet:"+p.ID || e["runtime_id"] != p.Binding.RuntimeID || actor["type"] != "orchestrator" || actor["id"] != "orchestrator" || ge != nil || gen != p.Binding.BaselineGeneration || be != nil || ae != nil || after != before+1 || re != nil || after > rev || from["state"] != "bug_resolution" || !repairPlanReportDispatchPhase(from["phase"]) || !reflect.DeepEqual(from, to) {
 		return fmt.Errorf("S9 original issuance tuple differs")
 	}
 	return verifyRepairPlanReportSources(root, state, p, j, after, ctx)
@@ -301,7 +307,7 @@ func verifyRepairPlanReportSources(root string, state map[string]any, p workpack
 		actor, _ := e["actor"].(map[string]any)
 		from, _ := e["from"].(map[string]any)
 		to, _ := e["to"].(map[string]any)
-		if be != nil || after != before+1 || ge != nil || gen != b.BaselineGeneration || e["runtime_id"] != b.RuntimeID || actor["type"] != "orchestrator" || actor["id"] != "orchestrator" || e["event_id"] != fmt.Sprintf("evt-register-%s-r%d", b.TeamID, after) || e["idempotency_key"] != fmt.Sprintf("runtime:register:%s:%d", stringValue(manifest["manifest_id"]), before) || from["state"] != "bug_resolution" || (from["phase"] != "planning" && from["phase"] != "reproducing") || !hypothesisJSONEqual(from, to) {
+		if be != nil || after != before+1 || ge != nil || gen != b.BaselineGeneration || e["runtime_id"] != b.RuntimeID || actor["type"] != "orchestrator" || actor["id"] != "orchestrator" || e["event_id"] != fmt.Sprintf("evt-register-%s-r%d", b.TeamID, after) || e["idempotency_key"] != fmt.Sprintf("runtime:register:%s:%d", stringValue(manifest["manifest_id"]), before) || from["state"] != "bug_resolution" || !repairPlanReportDispatchPhase(from["phase"]) || !hypothesisJSONEqual(from, to) {
 			return fmt.Errorf("S9 original registration event tuple differs")
 		}
 		n++
@@ -331,7 +337,7 @@ func VerifyRepairPlanReportCurrent(root string, state map[string]any, p workpack
 	cp, _ := review["investigation"].(map[string]any)
 	base, _ := state["baseline"].(map[string]any)
 	life, _ := state["lifecycle"].(map[string]any)
-	if !PacketEnabled(state) || state["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(base["generation"], b.BaselineGeneration) || !hypothesisJSONEqual(review["round"], b.ReviewRound) || life["state"] != "bug_resolution" || (life["phase"] != "planning" && life["phase"] != "reproducing" && life["phase"] != "fixing") || (pointer["status"] != "planning" && pointer["status"] != "reproducing" && pointer["status"] != "repairing") || pointer["session_id"] != b.SessionID || pointer["path"] != b.SessionRef || pointer["sha256"] != b.SessionSHA256 || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 || pointer["contract_ref"] != b.ContractRef || pointer["contract_sha256"] != b.ContractSHA256 || pointer["case_id"] != b.CaseID || cp["case_id"] != b.CaseID || cp["path"] != b.CaseRef || cp["sha256"] != b.CaseSHA256 || cp["status"] != "contract_approved" {
+	if !PacketEnabled(state) || state["runtime_id"] != b.RuntimeID || !hypothesisJSONEqual(base["generation"], b.BaselineGeneration) || !hypothesisJSONEqual(review["round"], b.ReviewRound) || life["state"] != "bug_resolution" || !repairPlanReportDispatchPhase(life["phase"]) || (pointer["status"] != "planning" && pointer["status"] != "reproducing" && pointer["status"] != "repairing") || pointer["session_id"] != b.SessionID || pointer["path"] != b.SessionRef || pointer["sha256"] != b.SessionSHA256 || pointer["plan_ref"] != b.PlanRef || pointer["plan_sha256"] != b.PlanSHA256 || pointer["contract_ref"] != b.ContractRef || pointer["contract_sha256"] != b.ContractSHA256 || pointer["case_id"] != b.CaseID || cp["case_id"] != b.CaseID || cp["path"] != b.CaseRef || cp["sha256"] != b.CaseSHA256 || cp["status"] != "contract_approved" {
 		return fmt.Errorf("S9 fresh source/phase authority changed; recover by named dispatch")
 	}
 	owners, _ := pointer["assignment_owners"].(map[string]any)

@@ -239,6 +239,29 @@ func TestRepairResultCurrentRejectsExecutionSourceAndAttemptDrift(t *testing.T) 
 	}
 }
 
+func TestRepairResultCurrentRetainsLegacyBootstrapRequirement(t *testing.T) {
+	f := newRepairResultRuntimeFixture(t)
+	// A newly issued legacy packet must include its bootstrap in the original
+	// execution. Try to construct one with an otherwise matching definition.
+	delete(f.execution, "bootstrap_sha256")
+	definition, err := ProjectRepairResultExecution(f.execution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := f.packet.Binding
+	binding.ExecutionSHA256 = workpacket.Digest(definition)
+	inputs := f.packet.Inputs
+	inputs.Execution = definition
+	if _, err := workpacket.BuildRepairResult(binding, inputs); err == nil || !strings.Contains(err.Error(), "bootstrap_sha256") {
+		t.Fatalf("legacy packet without bootstrap was not rejected by its original schema: %v", err)
+	}
+	// The original valid packet still binds the bootstrap. Losing it from the
+	// live legacy execution must fail the original frozen-source comparison.
+	if err := VerifyRepairResultPacketCurrent(f.plan.root, f.plan.state, f.packet); err == nil || !strings.Contains(err.Error(), "registered execution definition differs from issued result") {
+		t.Fatalf("legacy execution that lost its frozen bootstrap was accepted: %v", err)
+	}
+}
+
 func TestRepairResultCheckpointRejectsOrphanTypedIssue(t *testing.T) {
 	f := newRepairResultRuntimeFixture(t)
 	entities := f.plan.state["entities"].(map[string]any)
