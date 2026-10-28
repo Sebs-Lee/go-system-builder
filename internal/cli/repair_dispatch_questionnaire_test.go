@@ -162,7 +162,7 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 		t.Fatalf("packet Builder TASK: %v", taskErr)
 	}
 	instruction := stringValue(taskDocument["instruction"]) + " " + stringValue(taskDocument["next_action"])
-	if !strings.Contains(instruction, "before implementation") || !strings.Contains(instruction, "SubagentStop") || !strings.Contains(instruction, "native worktree isolation") || strings.Contains(instruction, "PLAN_REPORT") || strings.Contains(instruction, "runtime repair plan-report") {
+	if !strings.Contains(instruction, "before implementation") || !strings.Contains(instruction, "PreToolUse") || !strings.Contains(instruction, "PostToolUse") || !strings.Contains(instruction, "Stop/SubagentStop as fallback") || !strings.Contains(instruction, "native worktree isolation") || strings.Contains(instruction, "Return the exact brief") || strings.Contains(instruction, "PLAN_REPORT") || strings.Contains(instruction, "runtime repair plan-report") {
 		t.Fatalf("packet Builder TASK retained manual/double plan submission: %s", instruction)
 	}
 	for _, ref := range []string{stringValue(team["manifest_ref"]), stringValue(task["path"])} {
@@ -181,6 +181,9 @@ func TestS9RepairDispatchQuestionnaireNormalPendingAndRealDispatch(t *testing.T)
 		t.Fatalf("same choice did not reuse original dispatch: %s", got)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
+	if after, err := os.ReadFile(resolveRootPath(root, stringValue(task["path"]))); err != nil || !bytes.Equal(after, taskData) {
+		t.Fatalf("same choice rewrote its already issued TASK: %v", err)
+	}
 }
 
 func TestS9RepairDispatchQuestionnairePartialRecoveryAndConflicts(t *testing.T) {

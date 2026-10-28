@@ -18,6 +18,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/targetedauthoring"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
@@ -89,7 +90,7 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			}
 			var b strings.Builder
 			for _, selection := range repairTargetedOutstandingSelections(selections, missing) {
-				path, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID)
+				path, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID, contextForHook(request))
 				if pathErr != nil {
 					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s has no resolvable answer path: %v\n", selection.verifierOwner, selection.performingAssignmentID, pathErr)
 					continue
@@ -100,9 +101,9 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 				}
 				readOnlyNote := repairLeadPreviousQuestionnaires(path)
 				if blockedResume {
-					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason. Return this exact answer path; SubagentStop invokes the original Resume/Create/Commit flow, while ordinary saves do not receive it; Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
+					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason. Save this exact original answer; PreToolUse invokes the original Resume/Create/Commit flow for a ready original answer, with successful PostToolUse and Stop/SubagentStop fallback; Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
 				} else {
-					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: fill and save its TargetedReverificationRequest at %s and return that exact path for SubagentStop reception; ordinary saves do not receive it. Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
+					fmt.Fprintf(&b, "S9 independent verifier %s assignment=%s: fill and save its TargetedReverificationRequest at %s and keep the original answer path for automatic reception via PreToolUse, with successful PostToolUse and Stop/SubagentStop fallback; report results to Main when finished; ready original answers use the same natural-event listener. Main does not author the independent result.%s\n", selection.verifierOwner, selection.performingAssignmentID, path, readOnlyNote)
 				}
 			}
 			return strings.TrimSpace(b.String()) + repairLeadAnswerHelp(root, snapshot.State, true)
@@ -114,7 +115,7 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			if err := repairTargetedRequestMappingError(selections, missing); err != nil {
 				return "S9 TargetedReverification assignment cannot be mapped to the current ChangeImpact obligation: " + err.Error() + ". Main must reconcile the original source; no answer was claimed."
 			}
-			path, err := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID)
+			path, err := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID, contextForHook(request))
 			if err != nil {
 				return fmt.Sprintf("S9 independent verifier %s assignment=%s has no resolvable answer path: %v", owner, selection.performingAssignmentID, err)
 			}
@@ -123,9 +124,9 @@ func stageRepairLeadQuestionnaireContext(root string, request policy.Input, snap
 			}
 			readOnlyNote := repairLeadPreviousQuestionnaires(path)
 			if blockedResume {
-				return fmt.Sprintf("S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason, and save. Return this exact answer path; SubagentStop invokes the original Resume/Create/Commit flow, while ordinary saves do not receive it; Main does not author the independent result.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
+				return fmt.Sprintf("S9 independent verifier %s assignment=%s: resolve the recorded environmental blocker, then update the same TargetedReverificationRequest at %s with the actual assertion observations, results, evidence and any unfinished-work reason, and save. Save this exact original answer; PreToolUse invokes the original Resume/Create/Commit flow for a ready original answer, with successful PostToolUse and Stop/SubagentStop fallback; Main does not author the independent result.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
 			}
-			return fmt.Sprintf("S9 independent verifier %s assignment=%s: record the actual assertion observations, results, evidence, verdict, and any non-pass reason in %s, then save and return this exact path for SubagentStop reception. Ordinary saves do not receive the result. The request is bound to the dispatched repair and verifier assignments; the original TargetedReverification consumer checks the independent work.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
+			return fmt.Sprintf("S9 independent verifier %s assignment=%s: record the actual assertion observations, results, evidence, verdict, and any non-pass reason in %s, then save the ready original answer. PreToolUse listens for it; successful PostToolUse and Stop/SubagentStop provide fallback. Report results to Main when finished. The request is bound to the dispatched repair and verifier assignments; the original TargetedReverification consumer checks the independent work.%s", owner, selection.performingAssignmentID, path, readOnlyNote) + repairLeadAnswerHelp(root, snapshot.State, true)
 		}
 		return ""
 
@@ -314,7 +315,7 @@ func repairLeadEvidenceHelp(root string, b *strings.Builder, value any) {
 // repairLeadQuestionnairePaths returns only the deterministic paths for the
 // current S9 answer phase. It is read-only so Hook fallback observers can
 // inspect a saved questionnaire without creating one or parsing prose.
-func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
+func repairLeadQuestionnairePaths(root string, state map[string]any, contexts ...context.Context) []string {
 	lifecycle := mapFieldCLI(state, "lifecycle")
 	if stringValue(lifecycle["state"]) != "bug_resolution" {
 		return nil
@@ -339,7 +340,7 @@ func repairLeadQuestionnairePaths(root string, state map[string]any) []string {
 			return nil
 		}
 		for _, selection := range repairTargetedOutstandingSelections(selections, missing) {
-			if path, pathErr := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID); pathErr == nil {
+			if path, pathErr := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID, contexts...); pathErr == nil {
 				paths = append(paths, path)
 			}
 		}
@@ -567,12 +568,41 @@ func repairLeadQuestionnairePath(root string, state map[string]any, name string)
 	return filepath.Abs(path)
 }
 
-func repairTargetedQuestionnairePath(root string, state map[string]any, assignmentID string) (string, error) {
+func repairTargetedQuestionnairePath(root string, state map[string]any, assignmentID string, contexts ...context.Context) (string, error) {
+	if len(contexts) > 0 && contexts[0] != nil {
+		if err := contexts[0].Err(); err != nil {
+			return "", err
+		}
+	}
 	segment := dispatchSlug(assignmentID)
 	if segment == "" {
 		return "", fmt.Errorf("current verifier assignment id is empty")
 	}
-	return repairLeadQuestionnairePath(root, state, "targeted-reverification-"+segment+".json")
+	legacy, err := repairLeadQuestionnairePath(root, state, "targeted-reverification-"+segment+".json")
+	if err != nil {
+		return "", err
+	}
+	owners := stringMapCLI(repairPointerCLI(state)["assignment_owners"])
+	original := ""
+	for candidate := range owners {
+		if repair.VerificationAssignmentID(candidate) == assignmentID {
+			if original != "" {
+				return "", fmt.Errorf("ambiguous original Targeted assignment")
+			}
+			original = candidate
+		}
+	}
+	if original == "" {
+		return legacy, nil
+	}
+	normal, err := repair.UsesSharedTargetedAuthoring(root, state, original, assignmentID, owners[assignmentID], contexts...)
+	if err != nil {
+		return "", err
+	}
+	if !normal {
+		return legacy, nil
+	}
+	return repair.TargetedSharedAnswerPath(root, legacy)
 }
 
 func prepareRepairImpactQuestionnaire(root string, state map[string]any) (string, error) {
@@ -682,10 +712,21 @@ func repairTargetedIDForSelection(selection repairTargetedSelection, selections 
 	return "reverify-" + hex.EncodeToString(digest[:]), nil
 }
 
-func prepareRepairTargetedQuestionnaire(root string, state map[string]any, selection repairTargetedSelection) (string, repair.TargetedReverificationRequest, error) {
-	path, err := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID)
+func prepareRepairTargetedQuestionnaire(root string, state map[string]any, selection repairTargetedSelection, contexts ...context.Context) (string, repair.TargetedReverificationRequest, error) {
+	parent := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		parent = contexts[0]
+	}
+	prepareContext, cancelPrepare := context.WithTimeout(parent, 3*time.Second)
+	defer cancelPrepare()
+	path, err := repairTargetedQuestionnairePath(root, state, selection.performingAssignmentID, prepareContext)
 	if err != nil {
 		return "", repair.TargetedReverificationRequest{}, err
+	}
+	if rel, relErr := filepath.Rel(root, path); relErr == nil && strings.HasPrefix(filepath.ToSlash(rel), ".loop-submissions/s9/") {
+		if err := targetedauthoring.CheckNormalOriginal(prepareContext, root, filepath.ToSlash(rel)); err != nil {
+			return "", repair.TargetedReverificationRequest{}, err
+		}
 	}
 	assertions, err := repairContractAssertionResults(root, repairPointerCLI(state))
 	if err != nil {
@@ -937,7 +978,7 @@ func runSavedRepairLeadQuestionnaire(root string, request policy.Input, stdout, 
 	}
 	if selections, selectErr := repairTargetedSelections(root, snapshot.State); selectErr == nil {
 		for _, selection := range selections {
-			expected, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID)
+			expected, pathErr := repairTargetedQuestionnairePath(root, snapshot.State, selection.performingAssignmentID, contextForHook(request))
 			if pathErr != nil || !samePath(path, expected) {
 				continue
 			}
@@ -1178,7 +1219,7 @@ func readRepairTargetedAnswerContext(ctx context.Context, path string, capture *
 		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s is not a valid original request DTO: %w", path, err)}
 	}
 	if strings.TrimSpace(answer.Result) == "" {
-		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s must record the actual independent verdict and assertion observations before SubagentStop reception; ordinary saves can retain unfinished work", path)}
+		return answer, &nativeAuthorError{fmt.Errorf("S9 TargetedReverification answer at %s must record the actual independent verdict and assertion observations before automatic reception; ordinary saves can retain unfinished work", path)}
 	}
 	return answer, nil
 }
@@ -1189,6 +1230,21 @@ func saveRepairTargetedAnswer(root string, snapshot runtime.Snapshot, path strin
 }
 
 func saveRepairTargetedAnswerContext(ctx context.Context, root string, snapshot runtime.Snapshot, path string, selection repairTargetedSelection, answer repair.TargetedReverificationRequest, stdout io.Writer, captures ...*nativeS9AttemptCapture) (bool, int, error) {
+	if strings.Contains(filepath.ToSlash(path), "/.loop-submissions/s9/") {
+		normal, sourceErr := repair.UsesSharedTargetedAuthoring(root, snapshot.State, selection.originalAssignmentID, selection.performingAssignmentID, selection.verifierOwner, ctx)
+		if sourceErr != nil {
+			return true, repairLeadFeedback(stdout, path, sourceErr.Error()), sourceErr
+		}
+		if !normal {
+			sourceErr = fmt.Errorf("Targeted ordinary original has no verified normal source contract")
+			return true, repairLeadFeedback(stdout, path, sourceErr.Error()), sourceErr
+		}
+	}
+	if rel, relErr := filepath.Rel(root, path); relErr == nil && strings.HasPrefix(filepath.ToSlash(rel), ".loop-submissions/s9/") {
+		if err := targetedauthoring.CheckNormalOriginal(ctx, root, filepath.ToSlash(rel)); err != nil {
+			return true, repairLeadFeedback(stdout, path, err.Error()), err
+		}
+	}
 	statePath := filepath.Join(root, ".claude", "loop-state.json")
 	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
 	var err error

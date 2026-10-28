@@ -60,7 +60,7 @@ func repairVerifierDispatchContext(root string, state map[string]any, assignment
 	if err == nil {
 		info, statErr := os.Stat(path)
 		if statErr == nil && info.Mode().IsRegular() {
-			return context + "Original Targeted answer: " + path + ". Main must actually spawn/resume the registered independent verifier with its real TASK and manifest context, carrying this exact answer path in the native prompt. The verifier returns it for SubagentStop reception; ordinary saves do not receive the result. "
+			return context + "Original Targeted answer: " + path + ". Main must actually spawn/resume the registered independent verifier with its real TASK and manifest context, carrying this exact answer path in the native prompt. The verifier saves its ready original answer for PreToolUse reception, with successful PostToolUse and Stop/SubagentStop fallback; no final message or returned reference is required for reception. "
 		}
 		context += "Original Targeted answer is not prepared as a regular file at " + path + ". "
 	} else {

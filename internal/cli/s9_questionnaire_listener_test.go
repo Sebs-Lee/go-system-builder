@@ -134,6 +134,16 @@ func TestS9ListenerExistingPacketsReadOnlyWithoutIssueRecoveryOrReceiptProof(t *
 		for _, event := range []string{"SessionStart", "SubagentStart", "PreCompact", "PreToolUse", "Stop", "SubagentStop", "TeammateIdle"} {
 			for _, owner := range []string{"Main", "builder-listener"} {
 				request := policy.Input{Event: event, AgentID: owner, CWD: f.root}
+				if owner == "Main" && (event == "SubagentStart" || event == "SubagentStop" || event == "TeammateIdle") {
+					// Native child events cannot borrow Main identity even when a
+					// malformed payload claims it explicitly. Keep Worker coverage
+					// for these events below and Main coverage on top-level events.
+					got := s9QuestionnaireContext(ctx, f.root, request, &submission.Service{}, runtime.Snapshot{State: f.state}, owner, result)
+					if strings.Contains(got, f.packet.answer) || strings.Contains(got, f.packet.view) {
+						t.Fatalf("child event %s claiming Main inherited Builder responsibility: %s", event, got)
+					}
+					continue
+				}
 				// A canceled context and unusable service would expose a repeated
 				// named Issue call. Source/journal files needed by full proofs do
 				// not exist in this reminder-only fixture.
@@ -352,12 +362,12 @@ func TestS9ListenerMissingSourceAndUnknownNativeOwnerKeepResponsibilityPaths(t *
 		if !strings.Contains(got, "not identified") || strings.Contains(got, f.packet.answer) || strings.Contains(got, "not currently prepared") {
 			t.Fatalf("unknown native owner inherited Main/another worker or reported a false missing question: %s", got)
 		}
-		if request.AgentID != "" && (!strings.Contains(got, "private worktree outputs") || !strings.Contains(got, "SubagentStop reception")) {
+		if request.AgentID != "" && (!strings.Contains(got, "private worktree outputs") || !strings.Contains(got, "PreToolUse")) {
 			t.Fatalf("native platform ID did not retain the Worker's exact original output/return contract: %s", got)
 		}
 		if request.AgentID != "" {
 			paths := s9ListenerKnownPaths(f.root, f.state, request.AgentID, true)
-			if strings.Contains(paths, "not prepared") || strings.Contains(paths, f.packet.answer) || !strings.Contains(paths, "save your own professional output") || !strings.Contains(paths, "SubagentStop reception") {
+			if strings.Contains(paths, "not prepared") || strings.Contains(paths, f.packet.answer) || !strings.Contains(paths, "save your own ready professional output") || !strings.Contains(paths, "PreToolUse") {
 				t.Fatalf("unknown native background guidance reported a false missing question: %s", paths)
 			}
 		}

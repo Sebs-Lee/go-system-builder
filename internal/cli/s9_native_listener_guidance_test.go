@@ -19,8 +19,11 @@ func TestS9NativeListenerKeepsPrivateOutputsOutOfMainAuthoring(t *testing.T) {
 		t.Fatalf("original Plan packet: %v %v", packets, err)
 	}
 	p := packets[0]
-	brief, _, result := nativeS9Paths(p)
+	brief, source, result := nativeS9Paths(p)
 	writeRepairLeadFile(t, f.root, brief, "original native brief")
+	// This fixture represents an existing preparation with legacy author
+	// coordinates. The immutable pin must exist; reminders cannot guess them.
+	writeRepairLeadFile(t, f.root, source, `{ "private_submission_version": 0 }`)
 	// Private authoring need not exist in Main. The reminder must not turn
 	// that absence into a missing-input prerequisite or a Main write target.
 	if err := os.Remove(resolveRootPath(f.root, p.AnswerPath)); err != nil {
@@ -30,7 +33,7 @@ func TestS9NativeListenerKeepsPrivateOutputsOutOfMainAuthoring(t *testing.T) {
 	for _, owner := range []string{"Main", p.Binding.OwnerAgentID} {
 		request := policy.Input{Event: "PreToolUse", AgentID: owner, CWD: f.root}
 		got := s9QuestionnaireContext(context.Background(), f.root, request, nil, runtime.Snapshot{State: f.state}, owner, false)
-		for _, want := range []string{resolveRootPath(f.root, brief), "read-only professional question", "worktree-relative PlanReport " + p.AnswerPath, result, "SubagentStop reception"} {
+		for _, want := range []string{resolveRootPath(f.root, brief), "read-only professional question", "worktree-relative PlanReport " + p.AnswerPath, result, "PreToolUse", "Stop/SubagentStop fallback"} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("owner=%s omitted %q: %s", owner, want, got)
 			}

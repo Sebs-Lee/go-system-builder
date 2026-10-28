@@ -63,10 +63,10 @@ func s9ResultQuestionnaireContext(ctx context.Context, root string, request poli
 func s9QuestionnaireContext(ctx context.Context, root string, request policy.Input, service *submission.Service, snapshot runtime.Snapshot, owner string, result bool) string {
 	main := mainQuestionnaireViewer(request) && (owner == "" || owner == "Main")
 	if owner == "" && (request.AgentType != "" || request.AgentTranscriptPath != "" || request.Event == "SubagentStart" || request.Event == "SubagentStop" || request.Event == "TeammateIdle") {
-		return "S9 native Worker responsibility is not identified by this event. Main must give this Worker its exact original brief or Targeted answer reference in the actual task prompt. Return that reference for SubagentStop reception; ordinary saves do not receive native work. No Main responsibility was inferred."
+		return "S9 native Worker responsibility is not identified by this event. Main must give this Worker its exact original brief or Targeted answer reference in the actual task prompt. Save the ready original answer for PreToolUse reception, with successful PostToolUse and Stop/SubagentStop fallback; reception does not wait for a final message or returned reference. No Main responsibility was inferred."
 	}
 	if owner != "" && owner != "Main" && !s9ListenerOwnerPresent(snapshot.State, owner) {
-		return "S9 native Worker responsibility is not identified in the Runtime registry by this event. Use the exact brief or Targeted answer reference Main already supplied in your actual task prompt. A Builder writes the brief's private worktree outputs; an independent verifier writes its original Targeted answer. Return the exact references for SubagentStop reception; ordinary saves do not receive native work. Main must not author this Worker's professional answer. No Runtime owner or Main responsibility was inferred from the platform ID or role."
+		return "S9 native Worker responsibility is not identified in the Runtime registry by this event. Use the exact brief or Targeted answer reference Main already supplied in your actual task prompt. A Builder writes the brief's private worktree outputs; an independent verifier writes its original Targeted answer. Save the ready original answers for automatic reception via PreToolUse, with successful PostToolUse and Stop/SubagentStop fallback; ready original answers use the same natural-event listener; no extra submit or done is needed. Main must not author this Worker's professional answer. No Runtime owner or Main responsibility was inferred from the platform ID or role."
 	}
 	filter := owner
 	if main {
@@ -95,8 +95,12 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		paths := s9ListenerPacketPaths(source, packet)
 		prefix := fmt.Sprintf("S9 Builder %s assignment=%s: %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, paths)
 		if isNative {
-			brief, _, resultPath := nativeS9Paths(native)
-			prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; read-only professional question %s; private worktree-relative PlanReport %s and Result %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), resolveRootPath(root, native.ViewPath), native.AnswerPath, resultPath)
+			brief, _, _ := nativeS9Paths(native)
+			planPath, resultPath, pathErr := nativeS9AuthorPaths(root, native)
+			prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; read-only professional question %s; private worktree-relative PlanReport %s and Result %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), resolveRootPath(root, native.ViewPath), planPath, resultPath)
+			if pathErr != nil {
+				prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; frozen private author coordinates unavailable: %v. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), pathErr)
+			}
 			if packet.result != nil {
 				prefix += "Original Result receiver reference (system-owned): " + resolveRootPath(source, packet.answer) + ". "
 			}
@@ -115,7 +119,7 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		}
 		if fact.kind != "" {
 			candidateState := s9CandidateComplete
-			next := "The PlanReport is recorded. Continue the same native Builder's repair, self-checks and private Result using its exact prepared brief; SubagentStop receives the professional artifacts. Main owns integration and necessary checks. Do not repeat the accepted Plan or add a workspace startup step."
+			next := "The PlanReport is recorded. Continue the same native Builder's repair, self-checks and private Result using its exact prepared brief; PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required; reception does not wait for a final message or returned reference. Main owns integration and necessary checks. Do not repeat the accepted Plan or add a workspace startup step."
 			_, originalExecution := repairExecutionForChoice(snapshot.State, repairDispatchChoice{AssignmentID: packet.binding.RepairAssignmentID, AgentID: packet.binding.OwnerAgentID})
 			if len(originalExecution) > 0 && originalExecution["purpose"] != "native_delivery" {
 				next = fmt.Sprintf("The PlanReport is recorded for an existing frozen execution. Main preserves its original workspace recovery: runtime workspace prepare --root %q --assignment %q --agent %q --check-location %s; then supplies this Builder’s exact RepairResult questionnaire. Do not repeat the accepted Plan or division answer.", root, packet.binding.ManifestAssignmentID, packet.binding.OwnerAgentID, stringValue(originalExecution["check_location"]))
@@ -177,7 +181,7 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 				lines = append(lines, prefix+handoff.summary(root)+" "+s9UnreceivedActionContext(ctx, root, handoff))
 				continue
 			}
-			note := "Use the brief's private outputs for professional fields. Save PlanReport before implementation, continue actual repair/self-checks, then save Result and return the exact brief and absolute Result path for SubagentStop reception. Ordinary saves do not receive or activate this responsibility."
+			note := "Use the brief's private outputs for professional fields. Save PlanReport before implementation, continue actual repair/self-checks, then save Result and report results to Main when finished; PreToolUse receives the ready original answers, with successful PostToolUse and Stop/SubagentStop fallback, without activation or a returned-reference prerequisite."
 			if main {
 				note += " Main supplies this exact brief to the actual native Builder; the Main-root question is read-only input."
 			}
@@ -420,7 +424,7 @@ func s9ListenerPacketPaths(root string, packet s9ListenerQuestionnaire) string {
 
 func s9ListenerKnownPaths(root string, state map[string]any, owner string, result bool) string {
 	if owner != "" && owner != "Main" && !s9ListenerOwnerPresent(state, owner) {
-		return "this platform event cannot locate a registered Runtime responsibility; use the exact native brief or Targeted answer already supplied by Main, save your own professional output and return its exact references for SubagentStop reception"
+		return "this platform event cannot locate a registered Runtime responsibility; use the exact native brief or Targeted answer already supplied by Main, save your own ready professional output for automatic reception via PreToolUse, with successful PostToolUse and Stop/SubagentStop fallback"
 	}
 	var paths []string
 	nativePackets := s9ListenerNativePlans(root, state)
@@ -446,8 +450,13 @@ func s9ListenerKnownPaths(root string, state map[string]any, owner string, resul
 			continue
 		}
 		if native, ok := s9ListenerNativePacket(state, nativePackets, packet); ok {
-			brief, _, resultPath := nativeS9Paths(native)
-			paths = append(paths, fmt.Sprintf("native brief %s; private worktree-relative PlanReport %s and Result %s", resolveRootPath(root, brief), native.AnswerPath, resultPath))
+			brief, _, _ := nativeS9Paths(native)
+			planPath, resultPath, pathErr := nativeS9AuthorPaths(root, native)
+			if pathErr != nil {
+				paths = append(paths, fmt.Sprintf("native brief %s; frozen private author coordinates unavailable: %v", resolveRootPath(root, brief), pathErr))
+			} else {
+				paths = append(paths, fmt.Sprintf("native brief %s; private worktree-relative PlanReport %s and Result %s", resolveRootPath(root, brief), planPath, resultPath))
+			}
 			continue
 		}
 		source := root

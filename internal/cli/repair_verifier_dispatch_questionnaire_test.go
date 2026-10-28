@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/policy"
 	"github.com/entroforge/go-system-builder/internal/repair"
 	"github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/targetedauthoring"
 )
 
 func repairVerifierDispatchSave(t *testing.T, root, path string, rows []repairVerifierDispatchChoice) string {
@@ -98,7 +100,26 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 	if len(assignments) != 1 || stringValue(assignments[0]["role_family"]) != "test-builder" || len(stringSliceAny(assignments[0]["write_paths"])) != 0 {
 		t.Fatalf("verifier acquired product writes or a different role: %#v", assignments)
 	}
-	targetPath, _ := repairTargetedQuestionnairePath(root, registered.State, verificationID)
+	targetPath, pathErr := repairTargetedQuestionnairePath(root, registered.State, verificationID)
+	if pathErr != nil || !strings.Contains(filepath.ToSlash(targetPath), "/.loop-submissions/s9/") {
+		t.Fatalf("new original Targeted source path %s: %v", targetPath, pathErr)
+	}
+	relativeTarget, err := filepath.Rel(root, targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualPaths, err := targetedauthoring.ControlPaths(root, registered.State, []string{filepath.ToSlash(relativeTarget)}, stdcontext.Background())
+	if err != nil || len(actualPaths) != 1 || actualPaths[0] != filepath.ToSlash(relativeTarget) {
+		t.Fatalf("actual generated TASK control path proof: %v %v", actualPaths, err)
+	}
+	historyBytes, _ := json.Marshal(registered.State)
+	var historyState map[string]any
+	json.Unmarshal(historyBytes, &historyState)
+	mapFieldCLI(historyState, "review")["repair"] = map[string]any{"session_id": "later-session"}
+	historyPaths, err := targetedauthoring.ControlPaths(root, historyState, []string{filepath.ToSlash(relativeTarget)}, stdcontext.Background())
+	if err != nil || len(historyPaths) != 1 || historyPaths[0] != filepath.ToSlash(relativeTarget) {
+		t.Fatalf("actual generated TASK historical control proof: %v %v", historyPaths, err)
+	}
 	taskFound := false
 	for _, task := range objectSliceAny(entities["tasks"]) {
 		for _, id := range stringSliceAny(verifierAgent["task_ids"]) {
@@ -110,8 +131,16 @@ func TestS9RepairVerifierDispatchQuestionnaireOneIndependentContractOwner(t *tes
 			if readErr != nil || json.Unmarshal(taskData, &taskDocument) != nil {
 				t.Fatalf("packet verifier TASK: %v", readErr)
 			}
+			declaration, _ := taskDocument["targeted_authoring"].(map[string]any)
+			if declaration["protocol"] != repair.SharedTargetedAuthoringProtocol {
+				t.Fatalf("new verifier TASK omitted its fixed source protocol: %v", declaration)
+			}
+			normal, sourceErr := repair.UsesSharedTargetedAuthoring(root, registered.State, plan.Assignments[0].AssignmentID, verificationID, owner)
+			if sourceErr != nil || !normal {
+				t.Fatalf("new original registered source proof %v: %v", normal, sourceErr)
+			}
 			instruction := stringValue(taskDocument["instruction"]) + " " + stringValue(taskDocument["next_action"])
-			if !strings.Contains(instruction, "Fill and save") || !strings.Contains(instruction, targetPath) || strings.Contains(instruction, "runtime repair targeted commit") || strings.Contains(instruction, "PLAN_REPORT") {
+			if !strings.Contains(instruction, "Fill and save") || !strings.Contains(instruction, targetPath) || !strings.Contains(instruction, "PreToolUse") || !strings.Contains(instruction, "PostToolUse") || !strings.Contains(instruction, "Stop/SubagentStop as fallback") || strings.Contains(instruction, "then return that path") || strings.Contains(instruction, "runtime repair targeted commit") || strings.Contains(instruction, "PLAN_REPORT") {
 				t.Fatalf("packet verifier TASK retained manual submission or omitted actual path: %s", instruction)
 			}
 			taskFound = true
@@ -181,7 +210,11 @@ func TestS9RepairVerifierDispatchQuestionnaireOriginalPhasesAndResponsibility(t 
 			t.Fatalf("Main verifier division delivered to Worker: %s", context)
 		}
 	}
-	for _, event := range []string{"PreCompact", "Stop", "Idle"} {
+	// Idle has no platform Main identity; only actual Main events receive this division.
+	if got := stageRepairVerifierDispatchContext(root, policy.Input{Event: "Idle"}, snapshot); got != "" {
+		t.Fatalf("unidentified Idle inherited Main verifier responsibility: %s", got)
+	}
+	for _, event := range []string{"PreCompact", "Stop", "SessionStart"} {
 		context := stageRepairVerifierDispatchContext(root, policy.Input{Event: event}, snapshot)
 		if !strings.Contains(context, path) || !strings.Contains(context, "must prepare this draft") {
 			t.Fatalf("%s omitted exact preparation gap: %s", event, context)
