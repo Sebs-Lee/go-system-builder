@@ -131,8 +131,10 @@ func s5DocumentReviewWithoutRound(requirement EvidenceRequirement, index map[str
 	if !evidenceKindsEqual(requirement.Kind, "document_review") {
 		return false
 	}
-	_, rowHas := index["review_round"]
-	if rowHas {
+	// A null round is the absence of a round: S5 reception writes the key
+	// with a null value. Only a non-null round counts as a stamped round
+	// that must match the current round.
+	if rowRound, rowHas := index["review_round"]; rowHas && rowRound != nil {
 		return false
 	}
 	return !envelopeHasRound && envelopeRound == 0
