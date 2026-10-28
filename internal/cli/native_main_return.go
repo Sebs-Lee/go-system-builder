@@ -19,7 +19,7 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
-// This is a read-only projection into Main's existing tool-return context.
+// Main projects original receipts and may continue an already retained S9 source.
 // Stop is the normal native receiver; named Main recovery reuses that consumer.
 // This projection adds no actor mapping or ACK.
 type nativeReturnSubject struct {
@@ -93,6 +93,7 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 	}
 	prompt, _ := in.ToolInput["prompt"].(string)
 	selected := selectSubjects(prompt)
+	issuedSelection := len(selected) == 1
 	if len(selected) == 0 {
 		text, _ := in.ToolResponse["text"].(string)
 		switch content := in.ToolResponse["content"].(type) {
@@ -117,6 +118,18 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 		subject := selected[0]
 		execution := nativeExecutionFromResponse(in.ToolResponse)
 		ctx := context.WithValue(contextForHook(in), nativeExecutionReturnKey{}, execution)
+		continuation := ""
+		if issuedSelection {
+			var attempted bool
+			var continueErr error
+			snap, attempted, continueErr = continueNativeS9MainReturn(ctx, root, in, snap, subject)
+			if attempted {
+				continuation = "System continued the original S9 consumer. "
+				if continueErr != nil {
+					continuation = "Original S9 consumer continuation remains unconfirmed: " + continueErr.Error() + ". Preserve original professional input; no additional author save or Stop is requested. "
+				}
+			}
+		}
 		summary, err := nativeReturnSummaryContext(ctx, root, snap, subject)
 		if err != nil {
 			summary = "Reception summary could not be refreshed; this observation establishes no new reception fact. Main preserves this exact return and uses the original receipt/Stop diagnostic when the request is available: " + err.Error()
@@ -126,7 +139,7 @@ func nativeMainReturnHook(root string, in policy.Input, out io.Writer) (bool, in
 			observation = "Native execution observation for "
 			summary = nativeExecutionPendingAction(execution) + " Original reception facts: " + summary
 		}
-		message = observation + subject.ref + ". " + summary + " This is a read-only reception summary, not product acceptance. Do not re-dispatch received work merely because Main or the next stage still has work."
+		message = observation + subject.ref + ". " + continuation + summary + " This reception summary does not establish product acceptance. Do not re-dispatch received work merely because Main or the next stage still has work."
 	}
 	if err := json.NewEncoder(out).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": message}}); err != nil {
 		return true, 1
@@ -201,8 +214,15 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 		}
 		return completion + " Original Targeted records: " + strings.Join(records, "; ") + ". " + repairHandoffProjectionContext(root, snap.State), nil
 	}
+	s7Diagnostic := ""
+	if subject.kind == "s7-review-result-v1" {
+		s7Diagnostic = submission.PlanningDiagnosticContext(ctx, root, snap.State, nativeS7DiagnosticKind(subject.id))
+	}
 	s, err := submission.NewContext(ctx, root, true)
 	if err != nil {
+		if subject.kind == "s7-review-result-v1" {
+			return nativeS7MainReceiptGap(ctx, root, snap, subject, s7Diagnostic, err), nil
+		}
 		return "", err
 	}
 	var receipt submission.Receipt
@@ -222,21 +242,30 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 			}
 		}
 	case "s7-review-result-v1":
+		// Preserve the original attempt diagnostic even if the independent
+		// receipt read fails. A failed query proves neither receipt state.
+		prefix = s7Diagnostic
 		p, _, e := runtime.FindReviewResultPacketContext(ctx, snap.State, subject.id)
 		if e != nil {
-			return "", e
+			return nativeS7MainReceiptGap(ctx, root, snap, subject, prefix, e), nil
 		}
 		receipt, err = s.ReviewResultReceipt(p.Binding.OwnerAgentID, p.ID)
+		if err != nil {
+			return nativeS7MainReceiptGap(ctx, root, snap, subject, prefix, err) + " Original receipt query: `" + s7CaptureShellQuote(filepath.Join(root, ".claude/bin/loop-harness")) + " runtime stage-answer receipt --root " + s7CaptureShellQuote(root) + " --agent " + s7CaptureShellQuote(p.Binding.OwnerAgentID) + " --packet " + s7CaptureShellQuote(p.ID) + "`.", nil
+		}
 		if err == nil && receipt.Accepted {
 			receipt.NextAction += nativeS7AcceptedOutletForRequest(ctx, root, snap, p)
 		}
 		if err == nil && !receipt.Accepted {
-			current, currentErr := runtime.CurrentReviewResultPacketsContext(ctx, snap.State, p.Binding.OwnerAgentID)
+			current, currentErr := runtime.ProjectCurrentReviewResultPacketIndex(snap.State, p.Binding.OwnerAgentID)
+			if currentErr != nil {
+				return prefix + " The original receipt query did not establish acceptance, but current responsibility membership could not be verified: " + currentErr.Error() + ". Main restores the original responsibility index; this does not establish that the exact questionnaire is historical or replaced.", nil
+			}
 			isCurrent := false
 			for _, candidate := range current {
 				isCurrent = isCurrent || candidate.ID == p.ID
 			}
-			if currentErr != nil || !isCurrent {
+			if !isCurrent {
 				return "This exact S7 questionnaire is historical or replaced; preserve its history and follow the current responsibility without resuming this old revision.", nil
 			}
 			if e := ctx.Err(); e != nil {
@@ -283,6 +312,15 @@ func nativeReturnSummaryContext(ctx context.Context, root string, snap runtime.S
 	}
 	data, err := json.Marshal(receipt)
 	return prefix + string(data), err
+}
+
+// This is a read failure, never a submission outcome. Keep any independently
+// captured submission diagnostic alongside the unknown current receipt.
+func nativeS7MainReceiptGap(ctx context.Context, root string, snap runtime.Snapshot, subject nativeReturnSubject, diagnostic string, cause error) string {
+	if diagnostic == "" {
+		diagnostic = submission.PlanningDiagnosticContext(ctx, root, snap.State, nativeS7DiagnosticKind(subject.id))
+	}
+	return diagnostic + " S7 current receipt is unknown for packet " + subject.id + " at " + subject.ref + ": " + cause.Error() + ". This independent read failure establishes neither acceptance nor non-acceptance and does not replace the original submission diagnostic. Main restores the exact original packet/source and verifies its original ReviewResult receipt; preserve any already recorded submission. If that receipt is verified, Main resumes only the pending original outlet with runtime review-continue, or runtime audit-prepare when TR-009 has already entered S10. No author correction, additional save, Stop or re-dispatch is requested for this system recovery."
 }
 
 // Project both original receipts, so a Result-source failure cannot erase an

@@ -11,6 +11,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/cli"
+	"github.com/entroforge/go-system-builder/internal/submission"
 )
 
 func mainNativeReturn(t *testing.T, root, prompt string, response ...string) string {
@@ -19,7 +20,12 @@ func mainNativeReturn(t *testing.T, root, prompt string, response ...string) str
 	if len(response) > 0 {
 		text = response[0]
 	}
-	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": prompt}, "tool_response": map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}})
+	return mainNativeReturnResponse(t, root, prompt, map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}})
+}
+
+func mainNativeReturnResponse(t *testing.T, root, prompt string, response map[string]any) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": prompt}, "tool_response": response})
 	before := dryRunTree(t, root)
 	var out, diagnostic bytes.Buffer
 	if code := cli.Run([]string{"hook", "--root", root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &diagnostic); code != 0 {
@@ -97,5 +103,60 @@ func TestNativeMainReturnReadsS6ResultWithoutPrivateArtifacts(t *testing.T) {
 	text := mainNativeReturn(t, root, filepath.Join(root, brief))
 	if !strings.Contains(text, "Result received") || !strings.Contains(text, "task-integrate") || !strings.Contains(text, r.Task.ID) {
 		t.Fatalf("Main missed the original Result and its own next responsibility: %s", text)
+	}
+}
+
+func TestNativeMainS7ReturnDoesNotTreatAnotherResponsibilityBodyAsHistorical(t *testing.T) {
+	root, p := s7ListenerFixture(t)
+	state := stageSnapshot(t, root).State
+	entities := state["entities"].(map[string]any)
+	rows := entities["work_packets"].([]any)
+	var other map[string]any
+	packetData, _ := json.Marshal(p)
+	if err := json.Unmarshal(packetData, &other); err != nil {
+		t.Fatal(err)
+	}
+	// A second responsibility for the same owner has an invalid body. Only
+	// the registered identity/coordinates are needed for current membership.
+	other["packet_id"] = "unrelated-same-owner-body"
+	other["view_path"] = "unrelated-same-owner/view.md"
+	other["answer_path"] = "unrelated-same-owner/answer.json"
+	other["binding"].(map[string]any)["assignment_id"] = "unrelated-same-owner-assignment"
+	other["inputs"] = "invalid original body"
+	entities["work_packets"] = append(rows, other)
+	assignments := state["review"].(map[string]any)["assignments"].(map[string]any)
+	data, _ := json.Marshal(assignments[p.Binding.AssignmentID])
+	var otherAssignment map[string]any
+	if err := json.Unmarshal(data, &otherAssignment); err != nil {
+		t.Fatal(err)
+	}
+	assignments["unrelated-same-owner-assignment"] = otherAssignment
+	stageJSON(t, root, ".claude/loop-state.json", state)
+	text := mainNativeReturn(t, root, filepath.Join(root, p.ViewPath))
+	if !strings.Contains(text, `"packet_id":"`+p.ID+`"`) || !strings.Contains(text, `"accepted":false`) || strings.Contains(text, "historical or replaced") || strings.Contains(text, "summary could not be refreshed") {
+		t.Fatalf("unrelated body erased current responsibility: %s", text)
+	}
+}
+
+func TestNativeMainS7ReturnKeepsSubmissionDiagnosticWhenOwnBodyFails(t *testing.T) {
+	root, p := s7ListenerFixture(t)
+	state := stageSnapshot(t, root).State
+	prior := "original submission succeeded at Runtime revision 42; receipt verification failed for " + p.Binding.OwnerAgentID
+	submission.RecordPlanningDiagnostic(root, state, "S7 native Stop "+p.ID, prior)
+	for _, raw := range state["entities"].(map[string]any)["work_packets"].([]any) {
+		row := raw.(map[string]any)
+		if row["packet_id"] == p.ID {
+			row["inputs"] = "invalid selected original body"
+		}
+	}
+	stageJSON(t, root, ".claude/loop-state.json", state)
+	text := mainNativeReturn(t, root, filepath.Join(root, p.ViewPath))
+	for _, want := range []string{prior, "current receipt is unknown", p.ID, "runtime review-continue", "runtime audit-prepare"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("lost original diagnostic or read failure %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, `"accepted":false`) || strings.Contains(text, `"accepted":true`) || strings.Contains(text, "historical or replaced") {
+		t.Fatalf("selected body failure manufactured reception state: %s", text)
 	}
 }

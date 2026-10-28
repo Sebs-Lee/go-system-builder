@@ -101,8 +101,8 @@ func TestNativeHookRoutesFailedReadIsRetriedByNextEvent(t *testing.T) {
 	}
 	ctx, timings := metrics.WithCallTimings(context.Background())
 	in := policy.Input{Context: ctx, Event: "SubagentStop", AgentID: "unrelated"}
-	if handled, _ := nativeHookRoutes(root, in, io.Discard, io.Discard); handled {
-		t.Fatal("pending state was accepted as a routing snapshot")
+	if handled, _ := nativeHookRoutes(root, in, io.Discard, io.Discard); !handled {
+		t.Fatal("failed pending recovery escaped the native Stop boundary")
 	}
 	if got := timings.Snapshot()["hook/native_routes/initial_snapshot"].Count; got != 1 {
 		t.Fatalf("failed actual Snapshot calls=%d, want 1", got)

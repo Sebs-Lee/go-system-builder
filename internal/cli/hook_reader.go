@@ -19,13 +19,14 @@ import (
 
 type hookReaderKey struct{}
 type hookReader struct {
-	Kind       string
-	Actor      string
-	Owner      string
-	References []string
-	Receipts   []string
-	Retired    bool
-	snapshot   runtime.Snapshot
+	Kind        string
+	Actor       string
+	Owner       string
+	References  []string
+	Receipts    []string
+	Retired     bool
+	snapshot    runtime.Snapshot
+	snapshotErr error
 }
 
 // The fallback recognizes actual top-level platform events, never a directory
@@ -35,6 +36,12 @@ func hookReaderIsMain(in policy.Input) bool {
 	if reader, ok := contextForHook(in).Value(hookReaderKey{}).(*hookReader); ok {
 		return reader.Kind == "Main"
 	}
+	return hookInputIsMain(in)
+}
+
+// Classify the platform payload without consulting an earlier provisional
+// reader. A successful routing snapshot can then replace a failed observation.
+func hookInputIsMain(in policy.Input) bool {
 	if (in.Runtime.Agent != nil && in.Runtime.Agent.ID != "") || in.Event == "SubagentStart" || in.Event == "SubagentStop" || in.Event == "TeammateIdle" || in.AgentType != "" || in.AgentTranscriptPath != "" || in.TeammateName != "" || in.TeamName != "" {
 		return false
 	}
@@ -54,20 +61,41 @@ func withHookReader(root string, in policy.Input) policy.Input {
 	if _, ok := contextForHook(in).Value(hookReaderKey{}).(*hookReader); ok {
 		return in
 	}
+	in.Context = context.WithValue(contextForHook(in), hookReaderKey{}, resolveHookReader(root, in))
+	return in
+}
+
+func resolveHookReader(root string, in policy.Input, supplied ...runtime.Snapshot) *hookReader {
 	reader := &hookReader{Kind: "Unknown", Actor: in.EffectiveAgentID(), Owner: in.EffectiveAgentID()}
+	if err := contextForHook(in).Err(); err != nil {
+		reader.snapshotErr = err
+		return reader
+	}
 	nested := (in.Runtime.Agent != nil && in.Runtime.Agent.ID != "") || in.Event == "SubagentStart" || in.Event == "SubagentStop" || in.Event == "TeammateIdle" || in.AgentType != "" || in.AgentTranscriptPath != "" || in.TeammateName != "" || in.TeamName != ""
 	if reader.Owner == "" && in.Runtime.Agent != nil {
 		reader.Owner = in.Runtime.Agent.ID
 	}
 	associationFailed := false
 	if reader.Actor == "" && !nested && in.SessionID != "" && in.CWD != "" {
-		ctx, cancel := context.WithTimeout(contextForHook(in), 2*time.Second)
-		owner, err := workspace.SessionOwner(ctx, root, in.CWD, in.SessionID)
-		cancel()
-		associationFailed = err != nil
-		if err == nil && owner != "" {
-			reader.Owner = owner
+		// SessionOwner first reads Runtime, although an unmarked Main root
+		// cannot be a registered Worker directory. Preserve that already known
+		// audience when Runtime itself is currently unreadable.
+		cwd, cwdErr := workspace.Canonical(in.CWD)
+		main, mainErr := workspace.Canonical(root)
+		atMain := cwdErr == nil && mainErr == nil && cwd == main && workspace.RequireMain(root) == nil
+		if !atMain {
+			ctx, cancel := context.WithTimeout(contextForHook(in), 2*time.Second)
+			owner, err := workspace.SessionOwner(ctx, root, in.CWD, in.SessionID)
+			cancel()
+			associationFailed = err != nil
+			if err == nil && owner != "" {
+				reader.Owner = owner
+			}
 		}
+	}
+	if err := contextForHook(in).Err(); err != nil {
+		reader.snapshotErr = err
+		return reader
 	}
 	// A marked Worker directory with no usable session association is unknown,
 	// even for an otherwise official top-level event. The directory identifies
@@ -78,7 +106,13 @@ func withHookReader(root string, in policy.Input) policy.Input {
 		}
 	}
 	if reader.Owner != "" && reader.Owner != "Main" || associationFailed {
-		snap, err := runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).ObservationSnapshot()
+		var snap runtime.Snapshot
+		var err error
+		if len(supplied) > 0 {
+			snap = supplied[0]
+		} else {
+			snap, err = runtime.NewStore(filepath.Join(root, ".claude/loop-state.json"), filepath.Join(root, ".claude/loop-events.jsonl")).WithContext(contextForHook(in)).ObservationSnapshot()
+		}
 		if err == nil {
 			reader.snapshot = snap
 			state := snap.State
@@ -144,17 +178,18 @@ func withHookReader(root string, in policy.Input) policy.Input {
 					}
 				}
 			}
+		} else {
+			reader.snapshotErr = err
 		}
 	}
 	if reader.Kind != "Worker" {
 		if nested {
 			reader.Kind = "Helper"
-		} else if !associationFailed && hookReaderIsMain(in) && (reader.Owner == "" || reader.Owner == "Main") {
+		} else if !associationFailed && hookInputIsMain(in) && (reader.Owner == "" || reader.Owner == "Main") {
 			reader.Kind = "Main"
 		}
 	}
-	in.Context = context.WithValue(contextForHook(in), hookReaderKey{}, reader)
-	return in
+	return reader
 }
 
 // Ordinary helper observations never run the Main Controller. A late Worker
@@ -218,26 +253,39 @@ func hookReaderObservation(root string, in policy.Input, out, diagnostic io.Writ
 	if in.Event == "PreCompact" {
 		return true, 0
 	}
-	if len(reader.References) == 0 {
-		return true, 0
-	}
-	message := fmt.Sprintf("Original Worker responsibility for %s: %s. Continue only this original responsibility; the global stage does not assign Main's current work to this Worker.", reader.Owner, strings.Join(reader.References, ", "))
-	if reader.Retired {
-		message = fmt.Sprintf("Original Worker responsibility for %s is retired/superseded: %s. Preserve its original receipt and completed work; no new Main responsibility is assigned by the current stage.", reader.Owner, strings.Join(reader.References, ", "))
-	}
-	if !reader.Retired && mapFieldCLI(reader.snapshot.State, "lifecycle")["state"] == "building" {
+	message, specialized := "", false
+	if !reader.Retired {
 		observed := in
 		if observed.EffectiveAgentID() == "" {
 			observed.AgentID = reader.Owner
 		}
-		// Reuse the original Builder projection, including the exact private
-		// PLAN/Result paths and its fixed engineering read order.
-		if own := stageBuilderQuestionLifecycleContext(root, observed, reader.snapshot); own != "" {
-			message = own
-		}
+		// The original S9 producer owns current paths and reception facts,
+		// including unavailable/unknown feedback. Never append stale generic
+		// Plan references or receipts to an applicable professional projection.
+		message, specialized = s9PacketQuestionnaireLifecycleContext(root, observed, reader.snapshot)
 	}
-	if len(reader.Receipts) > 0 {
-		message += " Recorded facts: " + strings.Join(reader.Receipts, "; ") + ". Accepted answers are not requested again."
+	if !specialized {
+		if len(reader.References) == 0 {
+			return true, 0
+		}
+		message = fmt.Sprintf("Original Worker responsibility for %s: %s. Continue only this original responsibility; the global stage does not assign Main's current work to this Worker.", reader.Owner, strings.Join(reader.References, ", "))
+		if reader.Retired {
+			message = fmt.Sprintf("Original Worker responsibility for %s is retired/superseded: %s. Preserve its original receipt and completed work; no new Main responsibility is assigned by the current stage.", reader.Owner, strings.Join(reader.References, ", "))
+		}
+		if !reader.Retired && mapFieldCLI(reader.snapshot.State, "lifecycle")["state"] == "building" {
+			observed := in
+			if observed.EffectiveAgentID() == "" {
+				observed.AgentID = reader.Owner
+			}
+			// Reuse the original Builder projection, including the exact private
+			// PLAN/Result paths and its fixed engineering read order.
+			if own := stageBuilderQuestionLifecycleContext(root, observed, reader.snapshot); own != "" {
+				message = own
+			}
+		}
+		if len(reader.Receipts) > 0 {
+			message += " Recorded facts: " + strings.Join(reader.Receipts, "; ") + ". Accepted answers are not requested again."
+		}
 	}
 	output, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": in.Event, "additionalContext": message}})
 	output, commit := hook.PrepareResponsibilityContext(root, in.SessionID, reader.Owner, in.Event, "original-worker", strings.Join(reader.References, "|"), output)

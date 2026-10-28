@@ -29,7 +29,7 @@ func receiveSavedQuestionnaire(root string, request policy.Input, stdout, stderr
 		if path, ok := request.ToolResponse["file_path"].(string); ok {
 			located := request
 			located.ToolInput = map[string]any{"file_path": path}
-			if actual, ok := savedQuestionnairePath(located); ok && (isS9RepairPlanReportPath(actual) || isS9RepairResultPath(actual) || isS9RepairResultResolutionPath(actual) || strings.Contains(filepath.ToSlash(actual), "/.claude/submissions/s9/")) {
+			if actual, ok := savedQuestionnairePath(located); ok && (isS9RepairPlanReportPath(actual) || isS9RepairResultPath(actual) || isS9RepairResultResolutionPath(actual) || (strings.Contains(filepath.ToSlash(actual), "/.claude/submissions/s9/") || strings.Contains(filepath.ToSlash(actual), "/.loop-submissions/s9/"))) {
 				request = located
 			}
 		}

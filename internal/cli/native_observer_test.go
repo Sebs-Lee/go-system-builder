@@ -67,6 +67,42 @@ func TestConfigChangeIsAuditedAndNeverPretendsToBlock(t *testing.T) {
 	}
 }
 
+func TestNativeObserverAuditsMainWhenRuntimeUnreadable(t *testing.T) {
+	for _, event := range []string{"PostToolUseFailure", "ConfigChange"} {
+		t.Run(event, func(t *testing.T) {
+			root := acFixtureRoot(t)
+			writeACState(t, root, planningState(t, root, "design", 1))
+			statePath := filepath.Join(root, ".claude", "loop-state.json")
+			journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+			invalid := []byte("{invalid runtime source\n")
+			if err := os.WriteFile(statePath, invalid, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(journalPath, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			payload := map[string]any{"hook_event_name": event, "session_id": "main-unreadable-" + event, "agent_id": "Main", "cwd": root, "tool_name": "Write", "error": "permission denied", "source": "project_settings", "file_path": "settings.json"}
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := cli.Run([]string{"hook", "--event", event, "--root", root}, bytes.NewReader(body), &stdout, &stderr); code != 0 || stdout.Len() != 0 {
+				t.Fatalf("%s changed the original tool outcome: code=%d stdout=%s stderr=%s", event, code, &stdout, &stderr)
+			}
+			if record := readLastHookDecision(t, root); record["hook_event"] != event || record["decision"] != "audit" {
+				t.Fatalf("%s lost its original audit: %#v", event, record)
+			}
+			if after, err := os.ReadFile(statePath); err != nil || !bytes.Equal(after, invalid) {
+				t.Fatalf("%s changed invalid Runtime: %v", event, err)
+			}
+			if after, err := os.ReadFile(journalPath); err != nil || len(after) != 0 {
+				t.Fatalf("%s wrote a Runtime event: %v", event, err)
+			}
+		})
+	}
+}
+
 func TestDistinctConfigChangeEventsAreNotDeduplicated(t *testing.T) {
 	root := acFixtureRoot(t)
 	state := planningState(t, root, "design", 1)
