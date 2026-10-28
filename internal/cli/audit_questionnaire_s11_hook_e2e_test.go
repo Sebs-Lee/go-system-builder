@@ -144,14 +144,65 @@ func TestS11QuestionnaireHookDeliversVerifiableS10PackageAndKeepsDecisionHuman(t
 		t.Fatalf("repeat prepare overwrote the human-editable application: %q", preserved)
 	}
 
-	request = map[string]any{
-		"hook_event_name": "PostToolUse", "cwd": root, "agent_id": "agent-self-approval", "tool_name": "Write",
+	unregisteredRequest := map[string]any{
+		"hook_event_name": "PostToolUse", "cwd": root, "agent_id": "unregistered-reviewer", "tool_name": "Write",
 		"tool_input":    map[string]any{"file_path": decisionPath},
 		"tool_response": map[string]any{"file_path": decisionPath},
 	}
-	if out = callS10QuestionnaireHook(t, root, request); out == "" {
-		t.Fatal("empty-choice draft save unexpectedly produced no observer output")
+	stateBeforeActor, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	journalPath := filepath.Join(root, ".claude", "loop-events.jsonl")
+	journalBeforeActor, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoDecision := func(saved []byte) {
+		t.Helper()
+		stateAfter, stateErr := os.ReadFile(statePath)
+		journalAfter, journalErr := os.ReadFile(journalPath)
+		answerAfter, answerErr := os.ReadFile(decisionPath)
+		if stateErr != nil || journalErr != nil || answerErr != nil || !bytes.Equal(stateBeforeActor, stateAfter) || !bytes.Equal(journalBeforeActor, journalAfter) || !bytes.Equal(saved, answerAfter) {
+			t.Fatalf("event changed Runtime, journal or saved decision: state=%v journal=%v answer=%v", stateErr, journalErr, answerErr)
+		}
+	}
+	// An unregistered actor is not routed to the Main questionnaire receiver.
+	// This routing does not authenticate the identity behind a Main event.
+	out = callS10QuestionnaireHook(t, root, unregisteredRequest)
+	if strings.Contains(out, "TR-028") || strings.Contains(out, "Recorded and consumed") {
+		t.Fatalf("unregistered actor received the empty draft: %s", out)
+	}
+	assertNoDecision(agentAttempt)
+
+	humanChoice, err := json.Marshal(map[string]any{"disposition": "reject_acceptance", "reason": "Synthetic human request: reconsider the acceptance interpretation."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(decisionPath, humanChoice, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = callS10QuestionnaireHook(t, root, unregisteredRequest)
+	if strings.Contains(out, "TR-028") || strings.Contains(out, "Recorded and consumed") {
+		t.Fatalf("unregistered actor received the non-empty draft: %s", out)
+	}
+	assertNoDecision(humanChoice)
+
+	// Restore the empty draft before Main saves it. Only a subsequent explicit
+	// synthetic human choice is carried through the original decision exit.
+	if err := os.WriteFile(decisionPath, agentAttempt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	request = map[string]any{
+		"hook_event_name": "PostToolUse", "cwd": root, "tool_name": "Write",
+		"tool_input":    map[string]any{"file_path": decisionPath},
+		"tool_response": map[string]any{"file_path": decisionPath},
+	}
+	out = callS10QuestionnaireHook(t, root, request)
+	if !strings.Contains(out, "Draft only") {
+		t.Fatalf("Main's empty-choice draft lacked feedback: %s", out)
+	}
+	assertNoDecision(agentAttempt)
 	state = readS10QuestionnaireState(t, statePath)
 	if state["lifecycle"].(map[string]any)["state"] != "awaiting_human_release" {
 		t.Fatalf("empty-choice draft ended the human gateway: %#v", state["lifecycle"])
@@ -161,12 +212,6 @@ func TestS11QuestionnaireHookDeliversVerifiableS10PackageAndKeepsDecisionHuman(t
 		if row != nil && row["kind"] == "human_decision" {
 			t.Fatalf("empty-choice draft registered human_decision evidence: %#v", row)
 		}
-	}
-	// This is a synthetic explicit human choice, faithfully saved through the
-	// ordinary questionnaire Hook; it is not a real release authorization.
-	humanChoice, err := json.Marshal(map[string]any{"disposition": "reject_acceptance", "reason": "Synthetic human request: reconsider the acceptance interpretation."})
-	if err != nil {
-		t.Fatal(err)
 	}
 	if err := os.WriteFile(decisionPath, humanChoice, 0o644); err != nil {
 		t.Fatal(err)

@@ -155,7 +155,7 @@ func TestReviewIssuedConcurrentContinuationRejectsChangedSources(t *testing.T) {
 			if change == "plan" {
 				p = packets[1]
 			}
-			input := filepath.Join(root, p.ResultID+".json")
+			input := filepath.Join(root, "docs", "reports", p.ResultID+".json")
 			request := SubmitRequest{Context: context.Background(), ExpectedRevision: before.Revision - 1, AssignmentID: p.Binding.AssignmentID, ResultPath: input, resultData: mustReadTestFile(t, input), issuedPacket: &p, packetOwner: p.Binding.OwnerAgentID, issuedSourceRoot: root}
 			switch change {
 			case "plan":

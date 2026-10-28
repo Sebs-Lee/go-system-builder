@@ -86,7 +86,7 @@ func TestNativeS9OriginalStopCauseReachesMainAfterSourceCleanup(t *testing.T) {
 		t.Fatalf("original contract has %d assertions, want 6", len(answer.BeforeFixResults))
 	}
 	answer.BeforeFixResults = answer.BeforeFixResults[:3]
-	_, _, flat := nativeS9Paths(plan)
+	flat := nativeS9TestResultPath(t, root, plan)
 	path := filepath.Join(worker, flat)
 	if err := persistRepairLeadQuestionnaire(path, answer); err != nil {
 		t.Fatal(err)

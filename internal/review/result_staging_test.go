@@ -236,7 +236,7 @@ func TestReviewStagingConcurrentDifferentAnswersNeverAdoptsOtherAnswer(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	different := filepath.Join(root, "different-answer.json")
+	different := filepath.Join(root, "docs", "reports", "different-answer.json")
 	if err := os.WriteFile(different, []byte(strings.Replace(string(data), "observed claim-qa-1", "a different exact observation", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}

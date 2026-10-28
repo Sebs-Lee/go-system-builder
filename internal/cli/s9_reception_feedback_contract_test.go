@@ -31,7 +31,7 @@ func TestS9ReceptionFeedbackNewExecutionKeepsOldFailureHistorical(t *testing.T) 
 				var worker string
 				var input policy.Input
 				root, worker, plan, input, _ = nativeS9WorkerFixture(t)
-				_, _, flat := nativeS9Paths(plan)
+				flat := nativeS9TestResultPath(t, root, plan)
 				malformed := []byte(`{"verdict":`)
 				originalError := workpacket.ValidateUniqueJSON(malformed)
 				if originalError == nil {
@@ -102,7 +102,8 @@ func TestS9ReceptionFeedbackMissingSavedTypedInputNamesOriginalWindowBeforeRetry
 	// No consume/Stop retry occurs between deleting the original saved input and
 	// these fresh Main observations. A retry-created diagnostic cannot hide the gap.
 	before := repairDispatchRuntimeBytes(t, root)
-	brief, _, flat := nativeS9Paths(plan)
+	brief, _, _ := nativeS9Paths(plan)
+	flat := nativeS9TestResultPath(t, root, plan)
 	for _, got := range []string{
 		currentQuestionnaireLifecycleContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: root}),
 		nativeExecutionMainOutput(t, root, filepath.Join(root, brief), map[string]any{"status": "completed"}),
@@ -160,46 +161,118 @@ func TestS9ReceptionFeedbackFrozenTypedResponsibilityDoesNotInventNativeFlat(t *
 	if strings.Contains(got, s9OriginalConsumeCommand(f.root, filepath.Join(f.worker, flat))) {
 		t.Errorf("frozen typed responsibility was given an invented native flat receiver: %s", got)
 	}
+	if strings.Contains(got, "PreToolUse observes ready original answers") || !strings.Contains(got, "original issued responsibility's reception and recovery contract") {
+		t.Errorf("frozen responsibility gained native natural-event guidance: %s", got)
+	}
 	repairDispatchAssertUnchanged(t, f.root, before)
 }
 
 func TestS9ReceptionFeedbackMissingBriefPreservesAcceptedPlanBeforeExecution(t *testing.T) {
 	root, worker, plan, input, _ := nativeS9WorkerFixture(t)
-	brief, pin, flat := nativeS9Paths(plan)
-	// The real Stop accepts the Plan before attempting its original source pin;
-	// removing only that pin interrupts before native execution registration.
-	if err := os.Remove(filepath.Join(root, pin)); err != nil {
-		t.Fatal(err)
-	}
-	input.Event = "SubagentStop"
-	var diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), filepath.Join(root, pin)) {
-		t.Fatalf("original Stop did not reach pin failure: handled=%v code=%d diagnostic=%s", handled, code, &diagnostic)
-	}
-	snap := repairDispatchSnapshot(t, root)
+	brief, pin, legacyResult := nativeS9Paths(plan)
+	privatePlan, privateResult := nativeS9TestAuthorPaths(t, root, plan)
 	service, err := submission.New(root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var diagnostic bytes.Buffer
+	if err := importNativeS9PlanReport(t.Context(), root, worker, plan, service, &diagnostic); err != nil {
+		t.Fatalf("import original Plan: %v", err)
+	}
+	receipt, err := service.SaveRepairPlanReportFrom(t.Context(), plan.Binding.OwnerAgentID, filepath.Join(root, plan.AnswerPath), root, nil)
+	if err != nil || !receipt.Accepted {
+		t.Fatalf("original Plan consumer did not accept: %+v %v", receipt, err)
+	}
+	// Lose the pin only after the original Plan receipt. The actual Stop observes
+	// this source gap before execution registration; later lose the display brief.
+	if err := os.Remove(filepath.Join(root, pin)); err != nil {
+		t.Fatal(err)
+	}
+	input.Event = "SubagentStop"
+	stopBody, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopOut bytes.Buffer
+	if code := Run([]string{"hook", "--root", root, "--event", "SubagentStop"}, bytes.NewReader(stopBody), &stopOut, &diagnostic); code != 0 || !strings.Contains(stopOut.String()+diagnostic.String(), filepath.Join(root, pin)) {
+		t.Fatalf("original public Stop did not reach pin failure: code=%d stdout=%s diagnostic=%s", code, &stopOut, &diagnostic)
+	}
+	snap := repairDispatchSnapshot(t, root)
 	if receipt, err := service.RepairPlanReportReceipt(plan.Binding.OwnerAgentID, plan.ID); err != nil || !receipt.Accepted {
-		t.Fatalf("real Stop did not preserve accepted Plan: %+v %v", receipt, err)
+		t.Fatalf("source gap erased accepted Plan: %+v %v", receipt, err)
 	}
 	registry, err := workspace.Decode(snap.State)
 	if err != nil || registry != nil && len(registry.Executions) != 0 {
 		t.Fatalf("fixture must fail before execution registration: %+v %v", registry, err)
 	}
+	// While the display brief still identifies native responsibility, both
+	// questionnaire projections must name the real error. Only Main receives
+	// the preparation source as a recovery task.
+	for _, owner := range []string{"Main", plan.Binding.OwnerAgentID} {
+		request := policy.Input{Event: "PreToolUse", AgentID: owner, CWD: root}
+		got := s9QuestionnaireContext(t.Context(), root, request, nil, snap, owner, false)
+		filter := owner
+		if owner == "Main" {
+			filter = ""
+		}
+		known := s9ListenerKnownPaths(root, snap.State, filter, false)
+		for _, text := range []string{got, known} {
+			if !strings.Contains(text, "frozen private author coordinates unavailable") {
+				t.Errorf("%s lost the original source error: %s", owner, text)
+			}
+			if strings.Contains(text, filepath.Join(root, pin)) != (owner == "Main") {
+				t.Errorf("%s got wrong preparation-source audience: %s", owner, text)
+			}
+			for _, guessed := range []string{privatePlan, privateResult, legacyResult} {
+				if strings.Contains(text, guessed) {
+					t.Errorf("%s guessed private coordinate %q: %s", owner, guessed, text)
+				}
+			}
+		}
+		if !strings.Contains(got, "PlanReport is recorded") || strings.Contains(got, "using its exact prepared brief") {
+			t.Errorf("%s lost accepted Plan or continued through missing preparation: %s", owner, got)
+		}
+	}
 	if err := os.Remove(filepath.Join(root, brief)); err != nil {
 		t.Fatal(err)
 	}
 	before := repairDispatchRuntimeBytes(t, root)
-	got := currentQuestionnaireLifecycleContext(root, policy.Input{Event: "PreToolUse", AgentID: "Main", CWD: root})
-	for _, want := range []string{
-		"PlanReport receipt is accepted", plan.Binding.OwnerAgentID,
-		filepath.Join(root, brief), filepath.Join(root, pin), filepath.Join(worker, flat),
+	for _, tc := range []struct {
+		name, event, tool string
+		toolInput         map[string]any
+		toolResponse      map[string]any
+	}{
+		{"ordinary progress", "PreToolUse", "Read", map[string]any{"file_path": filepath.Join(root, "internal/api/one.go")}, nil},
+		{"unknown execution", "PostToolUse", "Agent", map[string]any{"prompt": filepath.Join(root, brief)}, nil},
+		{"completed execution", "PostToolUse", "Agent", map[string]any{"prompt": filepath.Join(root, brief)}, map[string]any{"status": "completed"}},
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing brief erased original partial reception %q: %s", want, got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"hook_event_name": tc.event, "agent_id": "Main", "cwd": root, "tool_name": tc.tool, "tool_input": tc.toolInput, "tool_response": tc.toolResponse})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out, diagnostic bytes.Buffer
+			if code := Run([]string{"hook", "--root", root, "--event", tc.event}, bytes.NewReader(body), &out, &diagnostic); code != 0 {
+				t.Fatalf("public Main %s: %d stdout=%s stderr=%s", tc.event, code, &out, &diagnostic)
+			}
+			got := nativeS9ListenerFeedback(t, &out)
+			for _, want := range []string{
+				"PlanReport receipt is accepted", plan.Binding.OwnerAgentID, filepath.Join(root, brief),
+				filepath.Join(root, pin), "frozen private author coordinates unavailable", "PreToolUse", "PostToolUse", "Stop/SubagentStop",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing brief erased %q: %s", want, got)
+				}
+			}
+			for _, guessed := range []string{privatePlan, privateResult, legacyResult, "Normal SubagentStop remains the receiver"} {
+				if strings.Contains(got, guessed) {
+					t.Errorf("missing pin or old reception text inferred %q: %s", guessed, got)
+				}
+			}
+			if tc.name == "unknown execution" && (!strings.Contains(got, "Platform execution is unknown") || strings.Contains(got, "Native return for ") || strings.Contains(got, " runtime stage-answer consume ")) {
+				t.Errorf("unknown execution gained completion or recovery: %s", got)
+			}
+		})
 	}
 	repairDispatchAssertUnchanged(t, root, before)
 }

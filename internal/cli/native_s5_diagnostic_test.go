@@ -42,6 +42,27 @@ func TestNativeS5ReturnPreservesDistinctStopDiagnosticsWithoutReadingAnswers(t *
 		if err := os.Remove(filepath.Join(f.root, p.AnswerPath)); err != nil {
 			t.Fatal(err)
 		}
+		// A previous Stop failure does not prove that a later status-less
+		// observation or asynchronous launch is a completed return.
+		for _, observation := range []struct {
+			response map[string]any
+			want     []string
+		}{
+			{map[string]any{"content": []any{map[string]any{"type": "text", "text": "Finished."}}}, []string{"Platform execution is unknown here", "Do not infer a running or returned Worker, a failed Stop, or a need to re-dispatch"}},
+			{map[string]any{"status": "async_launched", "isAsync": true}, []string{"launch acknowledgement", "not a Worker return; it requests no reception repair"}},
+		} {
+			text := mainNativeReturnResponse(t, f.root, ref, observation.response)
+			for _, want := range append(observation.want, tc.pointer, p.Binding.Owner, filepath.Join(f.root, p.AnswerPath), `"accepted":false`, `"work_complete":false`) {
+				if !strings.Contains(text, want) {
+					t.Fatalf("execution observation lost %q: %s", want, text)
+				}
+			}
+			for _, bad := range []string{"Native return for ", "last attempted reception", "续跑原责任修正具体字段", "No readable original Stop diagnostic"} {
+				if strings.Contains(text, bad) {
+					t.Fatalf("execution observation inferred completion or a new recovery duty %q: %s", bad, text)
+				}
+			}
+		}
 		text := mainNativeReturn(t, f.root, ref)
 		for _, want := range []string{tc.pointer, p.Binding.Owner, filepath.Join(f.root, p.AnswerPath), `"accepted":false`, "last attempted reception"} {
 			if !strings.Contains(text, want) {
@@ -53,8 +74,8 @@ func TestNativeS5ReturnPreservesDistinctStopDiagnosticsWithoutReadingAnswers(t *
 		}
 		previous = text
 	}
-	peer := mainNativeReturn(t, f.root, filepath.Join(f.root, f.packets[1].ViewPath))
-	if strings.Contains(peer, "Last S5 native Stop "+p.ID) {
+	peer := mainNativeReturnResponse(t, f.root, filepath.Join(f.root, f.packets[1].ViewPath), map[string]any{"status": "unknown"})
+	if !strings.Contains(peer, "Platform execution is unknown here") || strings.Contains(peer, "Last S5 native Stop "+p.ID) {
 		t.Fatalf("another responsibility inherited this Stop error: %s", peer)
 	}
 	snapshot := stageSnapshot(t, f.root)

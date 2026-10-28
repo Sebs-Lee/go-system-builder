@@ -2,9 +2,13 @@ package investigation_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,6 +16,44 @@ import (
 	"github.com/entroforge/go-system-builder/internal/investigation"
 	"github.com/entroforge/go-system-builder/internal/submission"
 )
+
+// Include directories and files so an observation cannot silently write a
+// diagnostic, cache, or other artifact while leaving Runtime unchanged.
+func s8ObservationTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			tree[rel] = info.Mode().String()
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			tree[rel] = "symlink:" + target
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		tree[rel] = fmt.Sprintf("%s:%x", info.Mode(), sha256.Sum256(data))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
 
 func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t *testing.T) {
 	fixture, owners := prepareS8GenerationTwoFixture(t, false)
@@ -74,6 +116,35 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 		t.Fatalf("Main received S8 answer before native Stop: %d %s", code, diagnostic)
 	}
 	answerPath := filepath.Join(fixture.root, path)
+	observeMain := func(response map[string]any) string {
+		t.Helper()
+		event := map[string]any{"hook_event_name": "PostToolUse", "cwd": fixture.root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": filepath.Join(fixture.root, p.ViewPath)}}
+		if response != nil {
+			event["tool_response"] = response
+		}
+		body, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := s8ObservationTree(t, fixture.root)
+		var out, diagnostic bytes.Buffer
+		if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(body), &out, &diagnostic); code != 0 {
+			t.Fatalf("Main execution observation: %d %s", code, &diagnostic)
+		}
+		if !reflect.DeepEqual(before, s8ObservationTree(t, fixture.root)) {
+			t.Fatal("Main execution observation changed project files")
+		}
+		var message struct {
+			Output struct {
+				Event string `json:"hookEventName"`
+				Text  string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &message); err != nil || message.Output.Event != "PostToolUse" {
+			t.Fatalf("Main execution observation did not return Hook context: %v %s", err, &out)
+		}
+		return message.Output.Text
+	}
 	valid, err := os.ReadFile(answerPath)
 	if err != nil {
 		t.Fatal(err)
@@ -115,18 +186,40 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 			if receipt, code := query("--packet", p.ID, owner.ownerID); code != 0 || receipt.Accepted || receipt.WorkComplete {
 				t.Fatalf("%s incomplete return fabricated acceptance: %+v code=%d", scenario.name, receipt, code)
 			}
-			mainBody, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": fixture.root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": filepath.Join(fixture.root, p.ViewPath)}})
-			var out, diagnostic bytes.Buffer
-			if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(mainBody), &out, &diagnostic); code != 0 {
-				t.Fatalf("%s Main return failed: %d %s", scenario.name, code, &diagnostic)
+			prior := submission.PlanningDiagnostic(fixture.root, before.State, "S8 native Stop "+p.ID)
+			reason := strings.SplitN(prior, "answer "+answerPath+": ", 2)
+			if !strings.Contains(prior, "owner "+owner.ownerID) || len(reason) != 2 || strings.TrimSpace(reason[1]) == "" {
+				t.Fatalf("%s original Stop did not retain its owner, answer and reason: %s", scenario.name, prior)
 			}
-			var message struct {
-				Output struct {
-					Text string `json:"additionalContext"`
-				} `json:"hookSpecificOutput"`
-			}
-			if err := json.Unmarshal(out.Bytes(), &message); err != nil || !strings.Contains(message.Output.Text, `"accepted":false`) || !strings.Contains(message.Output.Text, "续跑原 Investigator") || !strings.Contains(message.Output.Text, "Last S8 native Stop "+p.ID) || !strings.Contains(message.Output.Text, answerPath) {
-				t.Fatalf("%s Main lost the unreceived responsibility: %v %s", scenario.name, err, &out)
+			// Each event independently projects the same original Stop and
+			// receipt; a missing tool_response never supplies completed status.
+			for _, observation := range []struct {
+				name     string
+				response map[string]any
+				want     []string
+				forbid   []string
+			}{
+				{"unknown", nil, []string{"Native execution observation for ", "Platform execution is unknown here", "Do not infer a running or returned Worker, a failed Stop, or a need to re-dispatch"}, []string{"Native return for ", "续跑原 Investigator", "不能把已结束但未接收的责任当作仍在后台运行"}},
+				{"statusless prose", map[string]any{"content": []any{map[string]any{"type": "text", "text": "Finished."}}}, []string{"Native execution observation for ", "Platform execution is unknown here", "Do not infer a running or returned Worker, a failed Stop, or a need to re-dispatch"}, []string{"Native return for ", "续跑原 Investigator", "不能把已结束但未接收的责任当作仍在后台运行"}},
+				{"completed", map[string]any{"status": "completed", "content": []any{map[string]any{"type": "text", "text": "Finished."}}}, []string{"Native return for ", "具体字段/来源诊断", "续跑原 Investigator", "不能把已结束但未接收的责任当作仍在后台运行"}, []string{"Platform execution is unknown here"}},
+			} {
+				text := observeMain(observation.response)
+				for _, want := range append(observation.want, prior, p.ID, owner.ownerID, answerPath, `"accepted":false`, `"work_complete":false`, "HypothesisResult has not been accepted") {
+					if !strings.Contains(text, want) {
+						t.Fatalf("%s repeated=%t %s lost %q: %s", scenario.name, repeated, observation.name, want, text)
+					}
+				}
+				for _, bad := range append(observation.forbid, `"accepted":true`, `"work_complete":true`) {
+					if strings.Contains(text, bad) {
+						t.Fatalf("%s repeated=%t %s inferred %q: %s", scenario.name, repeated, observation.name, bad, text)
+					}
+				}
+				if !bytes.Equal(beforeState, mustRead(t, fixture.statePath)) || !bytes.Equal(beforeJournal, mustRead(t, fixture.journalPath)) || submission.PlanningDiagnostic(fixture.root, before.State, "S8 native Stop "+p.ID) != prior {
+					t.Fatalf("%s %s changed Runtime, journal or original Stop diagnostic", scenario.name, observation.name)
+				}
+				if receipt, code := query("--packet", p.ID, owner.ownerID); code != 0 || receipt.Accepted || receipt.WorkComplete {
+					t.Fatalf("%s %s fabricated reception: %+v code=%d", scenario.name, observation.name, receipt, code)
+				}
 			}
 		}
 		if scenario.data != nil && !bytes.Equal(scenario.data, mustRead(t, answerPath)) {
@@ -158,18 +251,11 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 	if code, out, diagnostic := call("SubagentStop", "opaque-native-investigator", filepath.Join(fixture.root, p.ViewPath)); code != 0 || out != "" || !strings.Contains(diagnostic, "original consumer") {
 		t.Fatalf("native Stop: %d %s %s", code, out, diagnostic)
 	}
-	mainBody, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "cwd": fixture.root, "tool_name": "Agent", "tool_input": map[string]any{"prompt": filepath.Join(fixture.root, p.ViewPath)}})
-	var mainOut, mainDiagnostic bytes.Buffer
-	if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(mainBody), &mainOut, &mainDiagnostic); code != 0 {
-		t.Fatalf("Main return: %d %s", code, &mainDiagnostic)
+	if text := observeMain(nil); !strings.Contains(text, "Platform execution is unknown here") || !strings.Contains(text, `"accepted":true`) || !strings.Contains(text, p.ID) || strings.Contains(text, "Native return for ") {
+		t.Fatalf("unknown execution lost independently accepted Case reception: %s", text)
 	}
-	var message struct {
-		Output struct {
-			Text string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}
-	if err := json.Unmarshal(mainOut.Bytes(), &message); err != nil || !strings.Contains(message.Output.Text, `"accepted":true`) || !strings.Contains(message.Output.Text, p.ID) {
-		t.Fatalf("Main missed original Case reception: %v %s", err, &mainOut)
+	if text := observeMain(map[string]any{"status": "completed"}); !strings.Contains(text, "Native return for ") || !strings.Contains(text, `"accepted":true`) || !strings.Contains(text, p.ID) {
+		t.Fatalf("completed execution missed original Case reception: %s", text)
 	}
 	accepted := currentS8Snapshot(t, fixture)
 	if _, found, err := investigation.IssuedHypothesisResultReceipt(fixture.root, accepted.State, p.ID, owner.ownerID); err != nil || !found {
@@ -209,13 +295,8 @@ func TestNativeS8StopReceivesOriginalCaseAnswerWithoutGenericPlanOrActorAlias(t 
 				t.Fatalf("%s lost original accepted result with %s: %+v code=%d", mode, flag, receipt, code)
 			}
 		}
-		mainOut.Reset()
-		mainDiagnostic.Reset()
-		if code := cli.Run([]string{"hook", "--root", fixture.root, "--event", "PostToolUse"}, bytes.NewReader(mainBody), &mainOut, &mainDiagnostic); code != 0 {
-			t.Fatalf("%s Main receipt return: code=%d %s", mode, code, &mainDiagnostic)
-		}
-		if err := json.Unmarshal(mainOut.Bytes(), &message); err != nil || !strings.Contains(message.Output.Text, `"accepted":true`) || !strings.Contains(message.Output.Text, canonical.SuccessorCaseRef) {
-			t.Fatalf("%s Main asked for private answer instead of original receipt: %v %s", mode, err, &mainOut)
+		if text := observeMain(nil); !strings.Contains(text, "Platform execution is unknown here") || !strings.Contains(text, `"accepted":true`) || !strings.Contains(text, canonical.SuccessorCaseRef) {
+			t.Fatalf("%s Main asked for private answer instead of original receipt: %s", mode, text)
 		}
 	}
 	if receipt, code := query("--packet", p.ID, "different-investigator"); code == 0 && (receipt.Accepted || receipt.WorkComplete) {

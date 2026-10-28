@@ -35,10 +35,10 @@ func TestNativeS9PendingPublicPreReturnsExecutableOriginalWriterRecovery(t *test
 	if err := os.Remove(filepath.Join(worker, packet.AnswerPath)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(worker, p.AnswerPath)); err != nil {
+	plan, relative := nativeS9TestAuthorPaths(t, root, p)
+	if err := os.Remove(filepath.Join(worker, plan)); err != nil {
 		t.Fatal(err)
 	}
-	_, _, relative := nativeS9Paths(p)
 	flatPath := filepath.Join(worker, relative)
 	later := []byte("unrelated later private bytes; never adapt these during pending recovery")
 	if err := os.WriteFile(flatPath, later, 0600); err != nil {
@@ -75,7 +75,7 @@ func TestNativeS9PendingPublicPreReturnsExecutableOriginalWriterRecovery(t *test
 			t.Fatalf("ordinary Pre changed %s: %v", check.path, err)
 		}
 	}
-	for _, path := range []string{filepath.Join(worker, packet.AnswerPath), filepath.Join(worker, p.AnswerPath)} {
+	for _, path := range []string{filepath.Join(worker, packet.AnswerPath), filepath.Join(worker, plan)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("ordinary Pre recreated professional input %s: %v", path, err)
 		}

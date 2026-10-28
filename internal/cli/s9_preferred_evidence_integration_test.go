@@ -14,7 +14,7 @@ func TestS9PreferredEvidenceReachesOriginalMainIntegration(t *testing.T) {
 	root, worker, p, input, answer := nativeS9WorkerFixture(t)
 	writeRepairLeadFile(t, worker, "logs/check.txt", "actual original fixture check output\n")
 	answer.EvidenceRefs = []string{"path:logs/check.txt"}
-	_, _, result := nativeS9Paths(p)
+	result := nativeS9TestResultPath(t, root, p)
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, result), answer); err != nil {
 		t.Fatal(err)
 	}

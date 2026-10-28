@@ -576,7 +576,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 	// has uncommitted changes — we check the integration tree here too
 	// so a dirty target branch is preserved instead of merged into.
 	if lessThan(next.State, StateMerged) {
-		clean, err := worktreeClean(ctx, gitRoot)
+		clean, err := mainWorktreeClean(ctx, gitRoot)
 		if err != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, mainWorktreeCheckFailure(gitRoot, err), ErrDirtyWorktree)
 		}
@@ -685,7 +685,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		// Refuse to advance to verified if the target tree is now
 		// dirty (e.g. an external process wrote into the integration
 		// branch). The worktree-preserved recovery applies.
-		clean, err := worktreeClean(ctx, gitRoot)
+		clean, err := mainWorktreeClean(ctx, gitRoot)
 		if err != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, mainWorktreeCheckFailure(gitRoot, err), ErrDirtyWorktree)
 		}
@@ -751,7 +751,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 			}
 		}
 		finalHead, headErr := revParse(ctx, gitRoot, "HEAD")
-		cleanAfter, cleanErr := worktreeClean(ctx, gitRoot)
+		cleanAfter, cleanErr := mainWorktreeClean(ctx, gitRoot)
 		if cleanErr != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, mainWorktreeCheckFailure(gitRoot, cleanErr), ErrCheckFailed)
 		}
@@ -807,7 +807,7 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 				return preserveAfterCAS(ctx, store, checkpointPath, current, next, err, ErrCheckFailed)
 			}
 		}
-		clean, err = worktreeClean(ctx, gitRoot)
+		clean, err = mainWorktreeClean(ctx, gitRoot)
 		if err != nil {
 			return preserveAfterCAS(ctx, store, checkpointPath, current, next, mainWorktreeCheckFailure(gitRoot, err), ErrDirtyWorktree)
 		}

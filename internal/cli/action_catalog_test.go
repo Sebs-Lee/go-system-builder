@@ -34,7 +34,7 @@ func TestActionsCatalogShowsCanonicalReviewRepairLoop(t *testing.T) {
 		"Contract approval prepares the original RepairSession, RepairPlan",
 		"original `runtime repair dispatch`",
 		"original PlanReport consumer",
-		"absolute Result path",
+		"no extra path return or submission is required for reception",
 		"Hook-provided ChangeImpact answer",
 		"TargetedReverification answer",
 		"existing handoff consumer",
@@ -62,6 +62,28 @@ func TestActionsCatalogShowsCanonicalReviewRepairLoop(t *testing.T) {
 	} {
 		if strings.Contains(stdout.String(), obsoleteNormalFlow) {
 			t.Fatalf("action catalog still presents %q as normal flow:\n%s", obsoleteNormalFlow, stdout.String())
+		}
+	}
+	text := stdout.String()
+	for _, section := range []string{"S7 complete verification", "S9 complete repair and return"} {
+		start := strings.Index(text, section)
+		if start < 0 {
+			t.Fatalf("missing section %q: %s", section, text)
+		}
+		end := strings.Index(text[start+len(section):], "\nS")
+		if end < 0 {
+			t.Fatalf("missing section %q: %s", section, text)
+		}
+		body := text[start : start+len(section)+end]
+		for _, want := range []string{"PreToolUse", "PostToolUse", "Stop/SubagentStop", "original"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s missing natural reception %q: %s", section, want, body)
+			}
+		}
+		for _, stale := range []string{"for SubagentStop reception", "SubagentStop receives the private", "then return the exact brief and absolute Result path"} {
+			if strings.Contains(body, stale) {
+				t.Errorf("%s retains obsolete reception %q: %s", section, stale, body)
+			}
 		}
 	}
 }

@@ -21,11 +21,13 @@ https://code.claude.com/docs/en/scheduled-tasks.
   rely on `Agent.resume`: in the preserved 2.1.299 run the model requested it,
   the actual Hook input omitted it and a new actor/worktree was created.
   No framework alias can turn that replacement into the original actor.
-- Immediate SendMessage success establishes sending only. Wait for the actual
-  completion notification and original actor's SubagentStop, then inspect the
-  original consumer receipt/current delivery. Original Stop remains the answer
-  receiver; Main still owns integration/checks. SDK `task_notification` frames
-  are actual platform evidence, not a new registered Hook. Main's existing
+- Immediate SendMessage success establishes sending only. Follow the actual
+  completion notification and inspect the original consumer receipt/current
+  delivery. S7/S9 observe ready original answers at PreToolUse, with successful
+  PostToolUse and Stop/SubagentStop as fallback through the same consumer; S6
+  and S8 retain their original SubagentStop reception. Main still owns
+  integration/checks. SDK `task_notification` frames are actual platform
+  evidence, not a new registered Hook. Main's existing
   read-only progress supplies current responsibility and reception facts; real
   platform acceptance must demonstrate the notification and accurate handoff
   reach Main, without assuming a second Agent PostToolUse after SendMessage.

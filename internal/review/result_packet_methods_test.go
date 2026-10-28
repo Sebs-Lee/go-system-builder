@@ -79,6 +79,7 @@ func selectResultFixtureMethods(t *testing.T, root, statePath string, state map[
 			row["manifest_sha256"] = workpacket.Digest(data)
 		}
 	}
+	paths := make([]string, 0, len(skills))
 	for _, name := range skills {
 		path := filepath.Join(root, ".claude/skills", name, "SKILL.md")
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -87,6 +88,13 @@ func selectResultFixtureMethods(t *testing.T, root, statePath string, state map[
 		if err := os.WriteFile(path, []byte("# "+name+"\nSelected fixture method.\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
+		paths = append(paths, filepath.ToSlash(filepath.Join(".claude/skills", name, "SKILL.md")))
+	}
+	// The selected skills are existing method sources, not new product drift.
+	// Commit only these paths before issuance so later changes remain visible.
+	if len(paths) > 0 {
+		reviewFixtureGit(t, root, append([]string{"add", "--"}, paths...)...)
+		reviewFixtureGit(t, root, "commit", "-qm", "Add selected S7 fixture methods")
 	}
 	for _, raw := range state["entities"].(map[string]any)["agents"].([]any) {
 		agent := raw.(map[string]any)

@@ -549,7 +549,9 @@ func TestNativeS6SameRoleConcurrentWorktreesDoNotBorrowDeliveries(t *testing.T) 
 		}
 	}
 	for _, brief := range []string{brief1, brief2} {
-		context := mainNativeReturn(t, root, filepath.Join(root, brief))
+		// Inspect each recorded diagnostic without claiming that both
+		// responsibilities have returned from the platform.
+		context := mainNativeReturnResponse(t, root, filepath.Join(root, brief), map[string]any{"status": "unknown"})
 		if !strings.Contains(context, "responsibility mismatch") || !strings.Contains(context, first.OwnerAgentID) || !strings.Contains(context, filepath.Join(root, brief1)) || !strings.Contains(context, filepath.Join(root, brief2)) {
 			t.Fatalf("Main lost owner/brief mismatch: %s", context)
 		}

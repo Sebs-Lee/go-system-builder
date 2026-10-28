@@ -49,7 +49,7 @@ func nativeExecutionHasReturn(ctx context.Context) bool {
 }
 func nativeExecutionPendingAction(value nativeExecutionReturn) string {
 	if value == nativeExecutionLaunched {
-		return "The platform reports asynchronous execution was launched. This is a launch acknowledgement, not a Worker return; it requests no reception repair. Main continues independent work and uses the actual completion notification and original Stop reception for the handoff."
+		return "The platform reports asynchronous execution was launched. This is a launch acknowledgement, not a Worker return; it requests no reception repair. Main continues independent work and follows the actual completion notification and original reception facts for the handoff."
 	}
 	return "This response establishes no supported execution completion state. Platform execution is unknown here; preserve original responsibility and independently recorded receipts. Do not infer a running or returned Worker, a failed Stop, or a need to re-dispatch from this observation."
 }

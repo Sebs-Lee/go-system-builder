@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	"github.com/entroforge/go-system-builder/internal/processtree"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 )
@@ -279,6 +280,23 @@ func (b *ExecutionRegistry) CleanInputs(ctx context.Context) error {
 	}
 	var dirty []string
 	rows := strings.Split(out, "\x00")
+	normalUntracked := map[string]bool{}
+	seen := map[string]bool{}
+	for i := 0; i < len(rows); i++ {
+		row := rows[i]
+		if len(row) >= 4 {
+			path := row[3:]
+			if seen[path] {
+				normalUntracked[path] = false
+			} else {
+				seen[path] = true
+				normalUntracked[path] = row[:2] == "??"
+			}
+		}
+		if len(row) >= 3 && strings.ContainsAny(row[:2], "RC") {
+			i++
+		}
+	}
 	for i := 0; i < len(rows); i++ {
 		row := rows[i]
 		if len(row) >= 3 && strings.ContainsAny(row[:2], "RC") {
@@ -292,6 +310,15 @@ func (b *ExecutionRegistry) CleanInputs(ctx context.Context) error {
 			continue
 		}
 		p := row[3:]
+		if normalUntracked[p] && metrics.IsTemporaryPath(p) {
+			recognized, err := metrics.RecognizeTemporary(ctx, b.MainRoot, p)
+			if err != nil {
+				return fmt.Errorf("inspect metrics temporary: %w", err)
+			}
+			if recognized {
+				continue
+			}
+		}
 		if ControlFile(p) {
 			continue
 		}

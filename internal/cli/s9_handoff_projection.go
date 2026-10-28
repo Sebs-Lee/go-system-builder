@@ -156,7 +156,7 @@ func (p s9HandoffProjection) summary(root string) string {
 		if p.Native {
 			plan, result, err := nativeS9AuthorPaths(root, packet)
 			if err != nil {
-				parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; frozen private author coordinates unavailable: %v.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), err))
+				parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; %s.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), s9NativeAuthorCoordinatesFailure(root, packet, err, true)))
 			} else {
 				parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; private worktree-relative PlanReport %s and Result %s.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), plan, result))
 			}
@@ -192,8 +192,22 @@ func (p s9HandoffProjection) summary(root string) string {
 	return strings.Join(parts, " ")
 }
 
+// Only Main receives the preparation source as a recovery responsibility. The
+// pin's own coordinates come from the issued packet, not the missing pin's
+// version or a guessed private Plan/Result path.
+func s9NativeAuthorCoordinatesFailure(root string, packet workpacket.RepairPlanReportPacket, err error, main bool) string {
+	message := fmt.Sprintf("frozen private author coordinates unavailable: %v", err)
+	if main {
+		_, pin, _ := nativeS9Paths(packet)
+		message += "; Main owns the original preparation source at " + resolveRootPath(root, pin) + " and restores or resolves it when needed for the original continuation; no private author path or version was inferred"
+	} else {
+		message += "; Main owns the original preparation gap"
+	}
+	return message
+}
+
 func s9UnreceivedAction() string {
-	return "Candidate has not formed; ready execution is not delivery. This observation alone establishes no failed Stop or platform completion. Preserve the exact original responsibility and accepted PlanReport; Main continues the original Builder only for specific unfinished professional work. Normal SubagentStop remains the receiver; no repeated accepted submission is due."
+	return "Candidate reception is not established; ready execution is not delivery. This observation alone establishes no failed Stop or platform completion. Preserve the exact original responsibility and any accepted PlanReport; Main continues the original Builder only for specific unfinished professional work."
 }
 
 func s9CandidateAction(root, assignment, owner string) string {

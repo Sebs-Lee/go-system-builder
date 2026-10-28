@@ -173,7 +173,7 @@ func TestNativeS9ObservesActualGitBaseAfterDependencyAdvancesMain(t *testing.T) 
 
 func TestNativeS9BlockerResumesThroughOriginalResolutionWithoutPrepare(t *testing.T) {
 	root, worker, p, input, complete := nativeS9WorkerFixture(t)
-	_, _, result := nativeS9Paths(p)
+	result := nativeS9TestResultPath(t, root, p)
 	blocked := complete
 	blocked.Verdict, blocked.ResidualRisks = "blocked", []string{"The independent check environment is temporarily unavailable"}
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, result), blocked); err != nil {
@@ -222,7 +222,7 @@ func TestNativeS9BlockerResumesThroughOriginalResolutionWithoutPrepare(t *testin
 
 func TestNativeS9MalformedProfessionalArtifactIsNotReceived(t *testing.T) {
 	root, worker, p, input, answer := nativeS9WorkerFixture(t)
-	_, _, result := nativeS9Paths(p)
+	result := nativeS9TestResultPath(t, root, p)
 	data, _ := json.Marshal(answer)
 	var malformed map[string]any
 	if err := json.Unmarshal(data, &malformed); err != nil {
@@ -250,7 +250,7 @@ func TestNativeS9MalformedProfessionalArtifactIsNotReceived(t *testing.T) {
 
 func TestNativeS9NullProfessionalReferenceIsNotConvertedToNotApplicable(t *testing.T) {
 	root, worker, p, input, answer := nativeS9WorkerFixture(t)
-	_, _, result := nativeS9Paths(p)
+	result := nativeS9TestResultPath(t, root, p)
 	data, _ := json.Marshal(answer)
 	var malformed map[string]any
 	if err := json.Unmarshal(data, &malformed); err != nil {
@@ -313,35 +313,83 @@ func TestNativeS9MissingPreparationKeepsMainOnOriginalDivision(t *testing.T) {
 }
 
 func TestNativeS9MissingWorktreePlanDoesNotBorrowMainAnswer(t *testing.T) {
-	root, worker, p, input, _ := nativeS9WorkerFixture(t)
-	local := filepath.Join(worker, p.AnswerPath)
-	raw, err := os.ReadFile(local)
-	if err != nil {
-		t.Fatal(err)
+	for _, legacy := range []bool{false, true} {
+		name := "current-private"
+		if legacy {
+			name = "legacy"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := nativeS9WorkerFixture
+			if legacy {
+				fixture = nativeS9LegacyWorkerFixture
+			}
+			root, worker, p, input, _ := fixture(t)
+			plan, result := nativeS9TestAuthorPaths(t, root, p)
+			local := filepath.Join(worker, plan)
+			raw, err := os.ReadFile(local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mainDraft := p.Draft
+			mainDraft.Answer = raw
+			mainPath := filepath.Join(root, p.AnswerPath)
+			if err := persistRepairLeadQuestionnaire(mainPath, mainDraft); err != nil {
+				t.Fatal(err)
+			}
+			mainBefore, err := os.ReadFile(mainPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resultPath := filepath.Join(worker, result)
+			resultBefore, err := os.ReadFile(resultPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(local); err != nil {
+				t.Fatal(err)
+			}
+			before := repairDispatchRuntimeBytes(t, root)
+			input.Event = "SubagentStop"
+			var out, diagnostic bytes.Buffer
+			handled, code := nativeS9Hook(root, input, &out, &diagnostic)
+			want := "native private original must be exactly untracked"
+			if legacy {
+				want = "Main's draft cannot substitute"
+			}
+			for _, detail := range []string{want, local, "Main owns recovery"} {
+				if !handled || code != 0 || !strings.Contains(diagnostic.String(), detail) {
+					t.Fatalf("missing actual source borrowed Main or lost %q: %t %d %s %s", detail, handled, code, &out, &diagnostic)
+				}
+			}
+			repairDispatchAssertUnchanged(t, root, before)
+			for path, expected := range map[string][]byte{mainPath: mainBefore, resultPath: resultBefore} {
+				got, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(got, expected) {
+					t.Fatalf("missing Plan changed original %s: %v", path, err)
+				}
+			}
+			service, err := submission.NewReadOnly(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt, err := service.RepairPlanReportReceipt(p.Binding.OwnerAgentID, p.ID); err != nil || receipt.Accepted {
+				t.Fatalf("missing Plan received a receipt: %+v %v", receipt, err)
+			}
+			registry, err := workspace.Decode(repairDispatchSnapshot(t, root).State)
+			if err != nil || registry != nil && len(registry.Executions) != 0 {
+				t.Fatalf("missing Plan fabricated a candidate: %+v %v", registry, err)
+			}
+		})
 	}
-	mainDraft := p.Draft
-	mainDraft.Answer = raw
-	if err := persistRepairLeadQuestionnaire(filepath.Join(root, p.AnswerPath), mainDraft); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(local); err != nil {
-		t.Fatal(err)
-	}
-	before := repairDispatchRuntimeBytes(t, root)
-	input.Event = "SubagentStop"
-	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main's draft cannot substitute") {
-		t.Fatalf("missing actual source borrowed Main: %t %d %s %s", handled, code, &out, &diagnostic)
-	}
-	repairDispatchAssertUnchanged(t, root, before)
 }
 
 func TestNativeS9ActualBlockerCanReturnWithoutPrivatePlan(t *testing.T) {
 	root, worker, p, input, answer := nativeS9WorkerFixture(t)
-	if err := os.Remove(filepath.Join(worker, p.AnswerPath)); err != nil {
+	plan, result := nativeS9TestAuthorPaths(t, root, p)
+	missingPlan := filepath.Join(worker, plan)
+	if err := os.Remove(missingPlan); err != nil {
 		t.Fatal(err)
 	}
-	_, _, result := nativeS9Paths(p)
 	answer.Verdict = "blocked"
 	answer.ResidualRisks = []string{"actual dependency unavailable; Main must supply it before repair"}
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, result), answer); err != nil {
@@ -350,7 +398,7 @@ func TestNativeS9ActualBlockerCanReturnWithoutPrivatePlan(t *testing.T) {
 	before := repairDispatchRuntimeBytes(t, root)
 	input.Event = "SubagentStop"
 	var out, diagnostic bytes.Buffer
-	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main owns recovery") || !strings.Contains(diagnostic.String(), "PlanReport is missing") {
+	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 || !strings.Contains(diagnostic.String(), "Main owns recovery") || !strings.Contains(diagnostic.String(), "native private original must be exactly untracked") || !strings.Contains(diagnostic.String(), missingPlan) {
 		t.Fatalf("actual blocker forced a successful Plan: %t %d %s %s", handled, code, &out, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
@@ -419,8 +467,8 @@ func TestNativeMainReturnShowsOriginalS9CandidateWithoutPrivateAnswers(t *testin
 	if handled, code := nativeS9Hook(root, input, &out, &diagnostic); !handled || code != 0 {
 		t.Fatalf("native Stop: %t %d %s", handled, code, &diagnostic)
 	}
-	_, _, result := nativeS9Paths(p)
-	for _, ref := range []string{p.AnswerPath, result} {
+	plan, result := nativeS9TestAuthorPaths(t, root, p)
+	for _, ref := range []string{plan, result} {
 		if err := os.Remove(filepath.Join(worker, ref)); err != nil {
 			t.Fatal(err)
 		}
@@ -480,10 +528,11 @@ func TestNativeS9FirstIncompleteStopReturnsExactGapToMainWithoutAcceptance(t *te
 	for _, missing := range []string{"Result", "PlanReport"} {
 		t.Run(missing, func(t *testing.T) {
 			root, worker, p, input, _ := nativeS9WorkerFixture(t)
-			brief, _, result := nativeS9Paths(p)
+			brief, _, _ := nativeS9Paths(p)
+			plan, result := nativeS9TestAuthorPaths(t, root, p)
 			local := filepath.Join(worker, result)
 			if missing == "PlanReport" {
-				local = filepath.Join(worker, p.AnswerPath)
+				local = filepath.Join(worker, plan)
 			}
 			original, err := os.ReadFile(local)
 			if err != nil {

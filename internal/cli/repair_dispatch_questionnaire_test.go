@@ -271,7 +271,8 @@ func TestS9RepairDispatchExplicitSavePreparesNativeBriefAndPreservesOriginalSour
 	}
 	firstPacket := packets[0]
 	brief, _, _ := nativeS9Paths(firstPacket)
-	for _, want := range []string{firstPacket.Binding.OwnerAgentID, resolveRootPath(root, firstPacket.ViewPath), resolveRootPath(root, brief), firstPacket.AnswerPath, "private PlanReport output relative to the actual native worktree", "exact S9 brief", "worktree isolation", "SubagentStop", "No workspace prepare/launch", "Main does not write professional answers"} {
+	firstAuthorPlan := nativeS9TestPlanPath(t, root, firstPacket)
+	for _, want := range []string{firstPacket.Binding.OwnerAgentID, resolveRootPath(root, firstPacket.ViewPath), resolveRootPath(root, brief), firstAuthorPlan, "private PlanReport output relative to the actual native worktree", "exact S9 brief", "worktree isolation", "SubagentStop", "No workspace prepare/launch", "Main does not write professional answers"} {
 		if !strings.Contains(feedback, want) {
 			t.Fatalf("same-callback native brief lacks %q: %s", want, feedback)
 		}
@@ -312,7 +313,8 @@ func TestS9RepairDispatchExplicitSavePreparesNativeBriefAndPreservesOriginalSour
 			}
 		}
 		brief, _, _ := nativeS9Paths(packet)
-		for _, ref := range []string{resolveRootPath(root, packet.ViewPath), resolveRootPath(root, brief), packet.AnswerPath} {
+		authorPlan := nativeS9TestPlanPath(t, root, packet)
+		for _, ref := range []string{resolveRootPath(root, packet.ViewPath), resolveRootPath(root, brief), authorPlan} {
 			if !strings.Contains(feedback, ref) {
 				t.Fatalf("native handoff omitted the original precise reference %s: %s", ref, feedback)
 			}

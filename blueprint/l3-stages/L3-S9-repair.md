@@ -247,6 +247,8 @@ Main 的真实 `PostToolUse(Agent/Task)` 只有无失败的实际 completed 返�
 
 若 Plan 已接收、私人文件后来丢失，原不可变接收事实可用于恢复；若从未接收且私人 Plan 缺失，不能借 Main 草稿冒充。真实 blocked 或 contract_conflict 即使暂时缺 Plan，也可以把具体缺口交回 Main，但不会因此取得本人完成或 Final。
 
+原准备 source pin 不可读或缺失时，Main 的普通进度、返回和恢复反馈给出原 packet 确定的精确 pin 路径及实际错误，由 Main 处理原准备来源；Worker 不承担该系统恢复。保留已接收 Plan 及原责任，不从缺失 pin 猜测私人 Plan／Result 路径或格式，也不因此推断平台执行已完成。简报显示缺失同样不得抹除已收事实。
+
 实际返回坐标只供原交付接收与集成使用。无法准确关联原责任、多个来源或来源冲突时由 Main 处理，不能按角色、启动顺序或不透明平台 ID 猜 owner，也不能把旧独立来源替换成 Main。
 
 ## 7. Candidate、Main 集成与 Final 为什么分开

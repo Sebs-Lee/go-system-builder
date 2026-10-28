@@ -35,7 +35,8 @@ func TestNativeS9PreparedBriefAndConsumerPreserveSatisfiedAssertion(t *testing.T
 			if err := json.Unmarshal(p.Inputs.RepairAssignment, &assignment); err != nil {
 				t.Fatal(err)
 			}
-			brief, _, result := nativeS9Paths(p)
+			brief, _, _ := nativeS9Paths(p)
+			planPath, result := nativeS9TestAuthorPaths(t, root, p)
 			data, err := os.ReadFile(filepath.Join(root, brief))
 			if err != nil {
 				t.Fatal(err)
@@ -63,7 +64,7 @@ func TestNativeS9PreparedBriefAndConsumerPreserveSatisfiedAssertion(t *testing.T
 				}
 			}
 			var plan workpacket.RepairPlanReportProfessionalAnswer
-			readRepairLeadJSON(t, filepath.Join(worker, p.AnswerPath), &plan)
+			readRepairLeadJSON(t, filepath.Join(worker, planPath), &plan)
 			if len(plan.RedChecks) != 1 || plan.RedChecks[0].Result != "pass" {
 				t.Fatalf("fixture must actually submit a passing precheck subset: %#v", plan.RedChecks)
 			}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/entroforge/go-system-builder/internal/policy"
+	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
 func TestNativeExecutionReturnUsesActualFields(t *testing.T) {
@@ -122,7 +123,7 @@ func TestS9CapturedInputCoordinateAloneIsNotSavedTypedInput(t *testing.T) {
 	p.Attempt.Stage = "typed_result_prepared"
 	p.Attempt.TypedInputRef = filepath.Join(worker, packet.AnswerPath)
 	text := s9UnreceivedActionContext(t.Context(), root, p)
-	_, _, flat := nativeS9Paths(plan)
+	flat := nativeS9TestResultPath(t, root, plan)
 	if !strings.Contains(text, s9OriginalConsumeCommand(root, filepath.Join(worker, flat))) {
 		t.Fatal("prepared draft incorrectly selected typed saved window: " + text)
 	}
@@ -143,17 +144,17 @@ func TestNativeS9OriginalFinalRecoveryDoesNotReopenLivePlanOrPrivateInput(t *tes
 	if err := os.Remove(filepath.Join(root, planPath)); err != nil {
 		t.Fatal(err)
 	}
-	var originalPlanID string
+	var originalPlan workpacket.RepairPlanReportPacket
 	for _, row := range objectSliceAny(mapFieldCLI(snap.State, "entities")["work_packets"]) {
 		if row["template_id"] == "s9-plan-report-v1" {
-			originalPlanID = stringValue(row["packet_id"])
+			originalPlan = workpacket.RepairPlanReportPacket{ID: stringValue(row["packet_id"]), ViewPath: stringValue(row["view_path"]), AnswerPath: stringValue(row["answer_path"])}
 			break
 		}
 	}
-	if originalPlanID == "" {
-		t.Fatal("missing exact original Plan packet")
+	if originalPlan.ID == "" || originalPlan.ViewPath == "" {
+		t.Fatal("missing exact original Plan packet coordinates")
 	}
-	relative := filepath.Join(".claude", "submissions", "native-s9", originalPlanID, "result.json")
+	relative := nativeS9TestResultPath(t, root, originalPlan)
 	if err := os.Remove(filepath.Join(worker, relative)); err != nil {
 		t.Fatal(err)
 	}

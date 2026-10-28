@@ -493,8 +493,9 @@ func TestS9SaveAdapterFindsChangedCurrentPlanWithoutRewritingCaller(t *testing.T
 	}
 	second := packets[1]
 	reminder, handled := s9PacketQuestionnaireLifecycleContext(root, policy.Input{Event: "PreToolUse", AgentID: second.Binding.OwnerAgentID, CWD: root}, after)
-	brief, _, resultPath := nativeS9Paths(second)
-	if !handled || !strings.Contains(reminder, "exact native brief "+resolveRootPath(root, brief)) || !strings.Contains(reminder, "private worktree-relative PlanReport "+second.AnswerPath) || !strings.Contains(reminder, resultPath) || !strings.Contains(reminder, "Ordinary saves do not receive or activate this responsibility") {
+	brief, _, _ := nativeS9Paths(second)
+	planPath, resultPath := nativeS9TestAuthorPaths(t, root, second)
+	if !handled || !strings.Contains(reminder, "exact native brief "+resolveRootPath(root, brief)) || !strings.Contains(reminder, "private worktree-relative PlanReport "+planPath) || !strings.Contains(reminder, resultPath) || !strings.Contains(reminder, "Ordinary saves do not receive or activate this responsibility") {
 		t.Fatalf("sibling implementation hid the original native Builder Plan/Result route: %s", reminder)
 	}
 	var secondScope []string

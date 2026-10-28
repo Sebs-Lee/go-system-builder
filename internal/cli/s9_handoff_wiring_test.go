@@ -24,13 +24,36 @@ import (
 func s9HandoffMissingCandidate(t *testing.T) (string, string, workpacket.RepairPlanReportPacket, workspace.Execution, workpacket.RepairResultPacket) {
 	t.Helper()
 	root, worker, plan, input, answer := nativeS9WorkerFixture(t)
+	ctx := t.Context()
+	service, err := submission.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diagnostic bytes.Buffer
+	if err := importNativeS9PlanReport(ctx, root, worker, plan, service, &diagnostic); err != nil {
+		t.Fatalf("import the original Plan: %v", err)
+	}
+	receipt, err := service.SaveRepairPlanReportFrom(ctx, plan.Binding.OwnerAgentID, filepath.Join(root, plan.AnswerPath), root, nil)
+	if err != nil || !receipt.Accepted {
+		t.Fatalf("original Plan was not received: %+v %v", receipt, err)
+	}
+	if err := recordNativeS9Source(ctx, root, worker, repairLeadGit(t, root, "rev-parse", "HEAD"), plan); err != nil {
+		t.Fatalf("register original native source: %v", err)
+	}
+	issued, err := service.IssueRepairResults(ctx, plan.Binding.OwnerAgentID)
+	if err != nil || len(issued) != 1 {
+		t.Fatalf("issue original Result before its saved-input attempt: %v %+v", err, issued)
+	}
+	// A previously issued Result preserves its saved typed input when the
+	// original consumer encounters the missing evidence; the first-issue path
+	// instead restores its untouched draft and remains a flat-input window.
 	answer.EvidenceRefs = append(answer.EvidenceRefs, ".claude/submissions/logs/missing-handoff.txt")
-	_, _, result := nativeS9Paths(plan)
+	result := nativeS9TestResultPath(t, root, plan)
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, result), answer); err != nil {
 		t.Fatal(err)
 	}
 	input.Event = "SubagentStop"
-	var diagnostic bytes.Buffer
+	diagnostic.Reset()
 	if _, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); code != 0 || !strings.Contains(diagnostic.String(), "S9 local evidence source gap") {
 		t.Fatalf("original Stop did not reach source gap: %d %s", code, &diagnostic)
 	}
@@ -44,8 +67,13 @@ func s9HandoffMissingCandidate(t *testing.T) (string, string, workpacket.RepairP
 		t.Fatalf("expected registered execution without delivery: %+v", e)
 	}
 	packet, found, err := typedRepairResultPacketForAssignmentContext(context.Background(), root, snap.State, e.AssignmentID, e.AgentID)
-	if err != nil || !found {
-		t.Fatalf("original issued Result: %t %v", found, err)
+	if err != nil || !found || packet.ID != issued[0].ID {
+		t.Fatalf("original issued Result: %t %v %+v", found, err, packet)
+	}
+	typed := filepath.Join(worker, packet.AnswerPath)
+	previous, found := nativeS9ReturnDiagnosticRecordContext(ctx, root, snap, plan.ID)
+	if !found || previous.Attempt == nil || previous.Attempt.Stage != "typed_result_consumer" || previous.Attempt.TypedInputRef != typed || len(previous.Files[typed]) != 64 {
+		t.Fatalf("original consumer did not preserve the saved typed boundary: %+v found=%v", previous, found)
 	}
 	return root, worker, plan, e, packet
 }
@@ -60,14 +88,14 @@ func TestS9HandoffMissingCandidatePreservesPlanAcrossAllEntrances(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"Only the PlanReport receipt is accepted", "Candidate has not formed", "Consumer diagnostic", filepath.Join(root, brief), worker} {
+		for _, want := range []string{"Only the PlanReport receipt is accepted", "Candidate reception is not established", "Consumer diagnostic", filepath.Join(root, brief), worker} {
 			if !strings.Contains(summary, want) {
 				t.Errorf("Main %s missing %q: %s", subject.kind, want, summary)
 			}
 		}
 	}
 	progress := s9QuestionnaireContext(context.Background(), root, policy.Input{AgentID: "Main"}, nil, snap, "Main", true)
-	for _, want := range []string{"The PlanReport receipt is accepted", "Candidate has not formed", "Consumer diagnostic"} {
+	for _, want := range []string{"The PlanReport receipt is accepted", "Candidate reception is not established", "Consumer diagnostic"} {
 		if !strings.Contains(progress, want) {
 			t.Errorf("progress missing %q: %s", want, progress)
 		}
@@ -76,7 +104,7 @@ func TestS9HandoffMissingCandidatePreservesPlanAcrossAllEntrances(t *testing.T) 
 	if code := runWorkspaceDelivery([]string{"integrate", "--root", root, "--assignment", e.AssignmentID, "--agent", e.AgentID}, &out, &diagnostic); code == 0 {
 		t.Fatal("missing candidate was integrated")
 	}
-	for _, want := range []string{"The PlanReport receipt is accepted", "Candidate has not formed", "Consumer diagnostic", filepath.Join(root, brief), worker} {
+	for _, want := range []string{"The PlanReport receipt is accepted", "Candidate reception is not established", "Consumer diagnostic", filepath.Join(root, brief), worker} {
 		if !strings.Contains(diagnostic.String(), want) {
 			t.Errorf("integrate missing %q: %s", want, &diagnostic)
 		}
@@ -319,7 +347,7 @@ func TestS9HandoffPartialCandidateDoesNotBecomeIntegrationDuty(t *testing.T) {
 		t.Fatal("fixture has no assigned repair unit")
 	}
 	answer.UnitResults[0].Status = "fail"
-	_, _, resultPath := nativeS9Paths(plan)
+	resultPath := nativeS9TestResultPath(t, root, plan)
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, resultPath), answer); err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +488,7 @@ func TestS9HandoffPublicMainProgressUsesOriginalReceptionFacts(t *testing.T) {
 				root = actual
 				if scenario == "partial candidate" {
 					answer.UnitResults[0].Status = "fail"
-					_, _, path := nativeS9Paths(plan)
+					path := nativeS9TestResultPath(t, root, plan)
 					if err := persistRepairLeadQuestionnaire(filepath.Join(worker, path), answer); err != nil {
 						t.Fatal(err)
 					}
@@ -480,7 +508,7 @@ func TestS9HandoffPublicMainProgressUsesOriginalReceptionFacts(t *testing.T) {
 			text := out.String()
 			switch scenario {
 			case "no candidate":
-				for _, want := range []string{"Candidate has not formed", "PlanReport receipt is accepted", "Consumer diagnostic"} {
+				for _, want := range []string{"Candidate reception is not established", "PlanReport receipt is accepted", "Consumer diagnostic"} {
 					if !strings.Contains(text, want) {
 						t.Errorf("missing %q: %s", want, text)
 					}

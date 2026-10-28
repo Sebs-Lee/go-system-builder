@@ -16,6 +16,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/assignmentrecord"
 	"github.com/entroforge/go-system-builder/internal/fileview"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 )
@@ -31,11 +32,26 @@ func worktreeClean(ctx context.Context, root string) (bool, error) {
 	return worktreeCleanWithProjection(ctx, root, workerAssets)
 }
 
+// Metrics staging is a Main checkout observation only. The worker and
+// cleanup callers of worktreeClean must not acquire deletion authority from a
+// reserved filename.
+func mainWorktreeClean(ctx context.Context, root string) (bool, error) {
+	workerAssets, err := workerBootstrapProjection(ctx, root)
+	if err != nil {
+		return false, err
+	}
+	return worktreeCleanWithMetrics(ctx, root, workerAssets, nil, true)
+}
+
 func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets map[string]string, logEvidence ...map[string]string) (bool, error) {
 	return worktreeCleanWithPrivateArea(ctx, root, workerAssets, nil, logEvidence...)
 }
 
 func worktreeCleanWithPrivateArea(ctx context.Context, root string, workerAssets map[string]string, area *WorkerPrivateAreaProjection, logEvidence ...map[string]string) (bool, error) {
+	return worktreeCleanWithMetrics(ctx, root, workerAssets, area, false, logEvidence...)
+}
+
+func worktreeCleanWithMetrics(ctx context.Context, root string, workerAssets map[string]string, area *WorkerPrivateAreaProjection, allowMetrics bool, logEvidence ...map[string]string) (bool, error) {
 	out, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
@@ -53,6 +69,21 @@ func worktreeCleanWithPrivateArea(ctx context.Context, root string, workerAssets
 		status, path := entry[:2], filepath.ToSlash(filepath.Clean(entry[3:]))
 		if status != " M" && status != "??" {
 			return false, nil
+		}
+		if allowMetrics && status == "??" && entry[3:] == path && metrics.IsTemporaryPath(path) {
+			protected := workerAssets[path] != ""
+			for _, evidence := range logEvidence {
+				protected = protected || evidence[path] != ""
+			}
+			if !protected {
+				recognized, err := metrics.RecognizeTemporary(ctx, root, path)
+				if err != nil {
+					return false, fmt.Errorf("inspect metrics temporary: %w", err)
+				}
+				if recognized {
+					continue
+				}
+			}
 		}
 		if status == "??" && area != nil && strings.HasPrefix(path, area.path+"/") {
 			allowed, err := area.Allows(path)

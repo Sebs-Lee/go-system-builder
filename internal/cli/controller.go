@@ -286,7 +286,7 @@ func buildGuidance(root string, state map[string]any, event string, input policy
 	}
 	if lifecycleState == "bug_resolution" && lifecyclePhase != "investigation" {
 		guidance.Automation = []string{
-			"Main saves its own division/impact answers; native Workers return private Plan/Result references for SubagentStop reception",
+			"Main saves its own division/impact answers; native Workers save their original Plan/Result for PreToolUse observation, with successful PostToolUse and Stop/SubagentStop fallback through the original consumers",
 			"Main saves the original Builder division and uses its exact prepared brief with Claude Code native Agent/worktree; a missing professional question is recovered through that same division save, not a workspace or session launcher",
 			"Existing frozen registered executions retain their exact original recovery coordinates; native work never falls back to that startup protocol",
 			"Main uses the exact current `runtime workspace integrate --root <Main-root> --assignment <execution-assignment-id> --agent <owner-agent-id>` command supplied with the S9 candidate, adding --check-command for each actual necessary Main check; do not substitute generic runtime task-integrate",

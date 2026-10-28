@@ -757,7 +757,16 @@ func TestNativeS9OriginalRecoveryPreparationPreservesFrozenLegacySource(t *testi
 
 func TestNativeS9OriginalConsumeRejectsUnpreparedPacketWithoutGuessingNative(t *testing.T) {
 	root, worker, p, _, _ := nativeS9WorkerFixture(t)
-	brief, pin, relative := nativeS9Paths(p)
+	brief, pin, _ := nativeS9Paths(p)
+	plan, relative := nativeS9TestAuthorPaths(t, root, p)
+	originals := map[string][]byte{}
+	for _, path := range []string{filepath.Join(root, p.AnswerPath), filepath.Join(worker, plan), filepath.Join(worker, relative)} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		originals[path] = raw
+	}
 	if err := os.Remove(filepath.Join(root, pin)); err != nil {
 		t.Fatal(err)
 	}
@@ -766,10 +775,23 @@ func TestNativeS9OriginalConsumeRejectsUnpreparedPacketWithoutGuessingNative(t *
 	}
 	before := repairDispatchRuntimeBytes(t, root)
 	var out, diagnostic bytes.Buffer
-	if code := runStageAnswer([]string{"consume", "--root", root, "--path", filepath.Join(worker, relative)}, &out, &diagnostic); code == 0 {
-		t.Fatalf("unknown preparation claimed as native: %s %s", &out, &diagnostic)
+	if code := runStageAnswer([]string{"consume", "--root", root, "--path", filepath.Join(worker, relative)}, &out, &diagnostic); code == 0 || !strings.Contains(diagnostic.String(), "read frozen native author contract") || !strings.Contains(diagnostic.String(), filepath.Join(root, pin)) {
+		t.Errorf("unknown preparation claimed or gap omitted: %s %s", &out, &diagnostic)
 	}
 	repairDispatchAssertUnchanged(t, root, before)
+	for path, expected := range originals {
+		actual, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(actual, expected) {
+			t.Fatalf("missing preparation changed original %s: %v", path, err)
+		}
+	}
+	registry, err := workspace.Decode(repairDispatchSnapshot(t, root).State)
+	if err != nil || registry != nil && len(registry.Executions) != 0 {
+		t.Fatalf("missing preparation fabricated a candidate execution: %+v %v", registry, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude/review/repair/candidates")); !os.IsNotExist(err) {
+		t.Fatalf("missing preparation published a candidate: %v", err)
+	}
 }
 
 func TestNativeS9AcceptedDRecoveryPreservesMissingButRejectsChangedOriginals(t *testing.T) {

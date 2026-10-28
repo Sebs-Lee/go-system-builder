@@ -122,7 +122,7 @@ func TestReviewDeadlineContinuationUsesOriginalCapturePreparation(t *testing.T) 
 	const id = "review-result-frozen-capture"
 	input := writeResultFile(t, root, plan, "assignment-qa-1", id, "agent-qa-1", "pass", map[string]string{"claim-qa-1": "pass", "claim-qa-2": "pass"}, nil)
 	artifact := filepath.Join(root, ".claude", "evidence", snapshot.State["runtime_id"].(string), "g1", "reviews", "agent-qa-1", id+".json")
-	capture := filepath.Join(root, "original-capture.jsonl")
+	capture := filepath.Join(root, "docs", "reports", "original-capture.jsonl")
 	ctx := &deadlineAfterFrozenCapture{deadlineAfterReviewStaging: &deadlineAfterReviewStaging{Context: context.Background(), artifact: artifact}, capture: capture}
 	accepted, err := SubmitResult(root, sp, jp, SubmitRequest{Context: ctx, ExpectedRevision: snapshot.Revision, AssignmentID: "assignment-qa-1", ResultPath: input, CaptureDir: capture})
 	if err != nil {

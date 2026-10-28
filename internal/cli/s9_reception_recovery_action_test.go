@@ -60,8 +60,17 @@ func TestS9RecoveryActionUsesFrozenNativeAuthorCoordinates(t *testing.T) {
 			if scenario == "missing-D-plan" && !strings.Contains(message, filepath.Join(worker, plan)) {
 				t.Fatal(message)
 			}
-			if (scenario == "missing-pin" || scenario == "unknown-version") && !strings.Contains(message, "Original native author contract is unavailable") {
-				t.Fatal(message)
+			if scenario == "missing-pin" || scenario == "unknown-version" {
+				for _, want := range []string{"Original native author contract is unavailable", filepath.Join(root, pin), "no private author path or version was inferred"} {
+					if !strings.Contains(message, want) {
+						t.Fatalf("missing %q: %s", want, message)
+					}
+				}
+				for _, guessed := range []string{plan, result, legacyResult} {
+					if strings.Contains(message, guessed) {
+						t.Fatalf("guessed private coordinate %q: %s", guessed, message)
+					}
+				}
 			}
 		})
 	}

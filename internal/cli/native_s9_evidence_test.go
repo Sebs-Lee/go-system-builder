@@ -21,7 +21,7 @@ func TestNativeS9LocalEvidenceHandoffRetainsActualWorkerSource(t *testing.T) {
 	for i := range answer.UnitResults {
 		answer.UnitResults[i].EvidenceRefs = []string{log}
 	}
-	_, _, resultPath := nativeS9Paths(p)
+	resultPath := nativeS9TestResultPath(t, root, p)
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, resultPath), answer); err != nil {
 		t.Fatal(err)
 	}

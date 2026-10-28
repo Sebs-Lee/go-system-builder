@@ -18,6 +18,10 @@ import (
 // user Git rules or hiding any directory. It is valid before first publication
 // and while a later author edit remains the original untracked regular file.
 func CheckNormalOriginal(ctx context.Context, root, rel string) error {
+	return checkNormalOriginal(ctx, root, rel, true)
+}
+
+func checkNormalOriginal(ctx context.Context, root, rel string, retryPublished bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -76,6 +80,12 @@ func CheckNormalOriginal(ctx context.Context, root, rel string) error {
 		return fmt.Errorf("ordinary original %s must remain exactly untracked", rel)
 	}
 	if !exists && len(data) != 0 {
+		// Another publisher may have created this exact original after Lstat.
+		// Recheck every source boundary once rather than treating the earlier
+		// absence as proof that a now-untracked original conflicts.
+		if retryPublished && string(data) == "?? "+rel+"\x00" {
+			return checkNormalOriginal(ctx, root, rel, false)
+		}
 		return fmt.Errorf("ordinary original %s has conflicting Git status", rel)
 	}
 	return nil

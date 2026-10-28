@@ -7,6 +7,7 @@ package metrics
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -205,6 +206,10 @@ func RecordIntegrationDuration(root, status string, durationMS int64) error {
 }
 
 func (s *Store) mutate(apply func(*Snapshot)) error {
+	return s.mutateWith(apply, atomicWriteMetrics)
+}
+
+func (s *Store) mutateWith(apply func(*Snapshot), write func(string, []byte) error) error {
 	if strings.TrimSpace(s.root) == "" {
 		return errors.New("metrics: root is required")
 	}
@@ -228,7 +233,7 @@ func (s *Store) mutate(apply func(*Snapshot)) error {
 	if err != nil {
 		return fmt.Errorf("encode metrics: %w", err)
 	}
-	if err := atomicWriteMetrics(s.path, append(data, '\n')); err != nil {
+	if err := write(s.path, append(data, '\n')); err != nil {
 		return fmt.Errorf("write metrics: %w", err)
 	}
 	return nil
@@ -298,14 +303,39 @@ func pruneDeadFamilies(snap *Snapshot) {
 }
 
 func atomicWriteMetrics(path string, data []byte) error {
+	return atomicWriteMetricsWith(path, data, metricsWriteHooks{})
+}
+
+// Private hooks let tests pause the real publisher at its filesystem
+// boundaries without adding synchronization to production callers.
+type metricsWriteHooks struct {
+	created      func(*os.File) error
+	write        func(*os.File, []byte) error
+	beforeRename func() error
+}
+
+func atomicWriteMetricsWith(path string, data []byte, hooks metricsWriteHooks) error {
 	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, ".loop-metrics-*.tmp")
+	file, err := createMetricsTemp(dir)
 	if err != nil {
 		return err
 	}
 	tempPath := file.Name()
 	defer os.Remove(tempPath)
-	if _, err := file.Write(data); err != nil {
+	if hooks.created != nil {
+		if err := hooks.created(file); err != nil {
+			file.Close()
+			return err
+		}
+	}
+	write := hooks.write
+	if write == nil {
+		write = func(file *os.File, data []byte) error {
+			_, err := file.Write(data)
+			return err
+		}
+	}
+	if err := write(file, data); err != nil {
 		file.Close()
 		return err
 	}
@@ -315,6 +345,11 @@ func atomicWriteMetrics(path string, data []byte) error {
 	}
 	if err := file.Close(); err != nil {
 		return err
+	}
+	if hooks.beforeRename != nil {
+		if err := hooks.beforeRename(); err != nil {
+			return err
+		}
 	}
 	if err := os.Rename(tempPath, path); err != nil {
 		return err
@@ -326,6 +361,25 @@ func atomicWriteMetrics(path string, data []byte) error {
 	defer f.Close()
 	_ = f.Sync()
 	return nil
+}
+
+// createMetricsTemp owns the reserved v1 name independently of CreateTemp's
+// undocumented random-suffix encoding. Exclusive creation preserves any
+// existing file, including one that happens to have the same name.
+func createMetricsTemp(dir string) (*os.File, error) {
+	for tries := 0; tries < 100; tries++ {
+		var random [16]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return nil, err
+		}
+		name := fmt.Sprintf(".loop-metrics-v1-%x.tmp", random)
+		file, err := os.OpenFile(filepath.Join(dir, name), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		return file, err
+	}
+	return nil, fmt.Errorf("create metrics temporary file: too many name collisions")
 }
 
 // FormatDoctor renders a human-readable metrics summary for loop-harness doctor.

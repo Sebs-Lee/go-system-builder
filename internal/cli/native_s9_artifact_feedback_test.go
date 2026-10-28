@@ -18,10 +18,10 @@ func TestNativeS9FlatValidationFeedbackUsesPrivateFileFields(t *testing.T) {
 	for _, kind := range []string{"PlanReport", "completed Result", "blocked Result", "unknown Result field", "wrong Result type"} {
 		t.Run(kind, func(t *testing.T) {
 			root, worker, packet, input, _ := nativeS9WorkerFixture(t)
-			_, _, result := nativeS9Paths(packet)
+			plan, result := nativeS9TestAuthorPaths(t, root, packet)
 			path, pointer := filepath.Join(worker, result), "/migration_ref"
 			if kind == "PlanReport" {
-				path, pointer = filepath.Join(worker, packet.AnswerPath), "/red_checks/0/result"
+				path, pointer = filepath.Join(worker, plan), "/red_checks/0/result"
 			}
 			raw, err := os.ReadFile(path)
 			if err != nil {
@@ -78,7 +78,7 @@ func TestNativeS9FlatValidationFeedbackUsesPrivateFileFields(t *testing.T) {
 }
 
 func TestNativeS9LegacyPlanValidationKeepsOriginalEnvelopeFeedback(t *testing.T) {
-	root, worker, packet, _, _ := nativeS9WorkerFixture(t)
+	root, worker, packet, _, _ := nativeS9LegacyWorkerFixture(t)
 	draft := packet.Draft
 	draft.Answer = json.RawMessage(`{"plan":"","red_checks":[],"proposed_paths":[]}`)
 	data, err := json.Marshal(draft)

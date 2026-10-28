@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	runtimepkg "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
@@ -235,6 +236,17 @@ func captureRepositoryBaseline(root string, protected ...ArtifactRef) ([]Artifac
 			return nil
 		}
 		relSlash := filepath.ToSlash(rel)
+		// HEAD, index and the Session's historical members always win over a
+		// temporary name. A missing/unavailable Git proof grants no exception.
+		if boundary.gitOK && boundary.headOK && !boundary.hasTracked(relSlash) && metrics.IsTemporaryPath(relSlash) {
+			recognized, err := metrics.RecognizeTemporary(context.Background(), rootAbs, relSlash)
+			if err != nil {
+				return fmt.Errorf("inspect metrics temporary %s: %w", relSlash, err)
+			}
+			if recognized {
+				return nil
+			}
+		}
 		if (scope.Excludes(path) && !boundary.hasTracked(relSlash)) || ignoreBaselinePath(relSlash, rootAbs) || boundary.excludes(relSlash) || (entry.IsDir() && boundary.discoverEnvironment(relSlash)) {
 			if entry.IsDir() {
 				return filepath.SkipDir

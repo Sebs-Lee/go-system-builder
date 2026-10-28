@@ -14,7 +14,6 @@ import (
 
 func TestProductDriftUsesSelectedPacketIndexAndRequestCache(t *testing.T) {
 	root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
-	reviewDriftGitBaseline(t, root)
 	packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 	if err != nil {
 		t.Fatal(err)

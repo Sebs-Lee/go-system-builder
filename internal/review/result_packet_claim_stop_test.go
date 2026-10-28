@@ -42,6 +42,28 @@ func issuedClaimStopFixture(t *testing.T) (string, string, string, workpacket.Re
 	return root, statePath, journalPath, p, IssuedSubmitRequest{ExpectedRevision: -1, PacketID: p.ID, AnswerPath: p.AnswerPath, OwnerAgentID: p.Binding.OwnerAgentID}
 }
 
+// Each negative case gets its own copy of a genuinely issued Git and Runtime
+// fixture, so a rejected answer cannot leave artifacts for another case.
+func cloneIssuedClaimStopFixture(t *testing.T, root, statePath, journalPath string, packet workpacket.ReviewResultPacket, request IssuedSubmitRequest) (string, string, string, workpacket.ReviewResultPacket, IssuedSubmitRequest) {
+	t.Helper()
+	clone := t.TempDir()
+	if err := os.CopyFS(clone, os.DirFS(root)); err != nil {
+		t.Fatalf("clone issued fixture: %v", err)
+	}
+	stateRel, err := filepath.Rel(root, statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalRel, err := filepath.Rel(root, journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := fixtureEvidenceRoot
+	fixtureEvidenceRoot = clone
+	t.Cleanup(func() { fixtureEvidenceRoot = previous })
+	return clone, filepath.Join(clone, stateRel), filepath.Join(clone, journalRel), packet, request
+}
+
 func claimStopAnswer(t *testing.T, severity string) map[string]any {
 	t.Helper()
 	finding := codeInspectionFinding("finding-safety-stop", "claim-qa-1")
@@ -116,6 +138,7 @@ func TestIssuedP0PartialClaimStopPreservesUnobservedAndReplay(t *testing.T) {
 }
 
 func TestIssuedPartialClaimStopRejectsInvalidExceptions(t *testing.T) {
+	templateRoot, templateState, templateJournal, templatePacket, templateRequest := issuedClaimStopFixture(t)
 	for _, test := range []struct {
 		name string
 		edit func(map[string]any)
@@ -141,7 +164,7 @@ func TestIssuedPartialClaimStopRejectsInvalidExceptions(t *testing.T) {
 		{"pause_cannot_bypass_coverage", func(a map[string]any) { a["verdict"] = "release_blocked" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root, statePath, journalPath, packet, request := issuedClaimStopFixture(t)
+			root, statePath, journalPath, packet, request := cloneIssuedClaimStopFixture(t, templateRoot, templateState, templateJournal, templatePacket, templateRequest)
 			answer := claimStopAnswer(t, "P0")
 			test.edit(answer)
 			saveClaimStopAnswer(t, root, packet, answer)
@@ -205,6 +228,7 @@ func TestIssuedBlockedClaimConsumesTemplateEvidence(t *testing.T) {
 }
 
 func TestIssuedBlockedClaimRejectsFalseBindingsAndEvidence(t *testing.T) {
+	templateRoot, templateState, templateJournal, templatePacket, templateRequest := issuedClaimStopFixture(t)
 	for _, test := range []struct {
 		name string
 		edit func(map[string]any)
@@ -221,7 +245,7 @@ func TestIssuedBlockedClaimRejectsFalseBindingsAndEvidence(t *testing.T) {
 		{"already_answered_claim", func(b map[string]any) { b["claim_id"] = "claim-qa-1" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root, statePath, journalPath, packet, request := issuedClaimStopFixture(t)
+			root, statePath, journalPath, packet, request := cloneIssuedClaimStopFixture(t, templateRoot, templateState, templateJournal, templatePacket, templateRequest)
 			answer := claimStopAnswer(t, "P1")
 			finding := answer["findings"].([]any)[0].(map[string]any)
 			finding["finding_id"] = "finding-product-blocker"
@@ -285,6 +309,15 @@ func TestIssuedHistoricalS7TemplateRestoresAcceptsAndReplays(t *testing.T) {
 	old, err := workpacket.RebuildReviewResult(workpacket.ReviewResultPacket{Binding: current.Binding, Inputs: legacyInputs, TemplateSHA: workpacket.Digest(priorTemplate)})
 	if err != nil || old.ID == current.ID {
 		t.Fatalf("historical template fixture: %v", err)
+	}
+	// The helper issued today's packet only to obtain its responsibility. Its
+	// synthetic answer and view did not exist in this simulated old history.
+	// Remove exactly those synthetic files before replacing the registry row,
+	// so the real Git drift scan still rejects unrelated orphaned artifacts.
+	for _, rel := range []string{current.ViewPath, current.AnswerPath} {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// Seed a historical issuance, including its original event, as if the
 	// binary had been upgraded after that issuance. Production never rewrites

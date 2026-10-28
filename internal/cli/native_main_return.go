@@ -20,7 +20,8 @@ import (
 )
 
 // Main projects original receipts and may continue an already retained S9 source.
-// Stop is the normal native receiver; named Main recovery reuses that consumer.
+// S7/S9 natural observations and Stop fallback use the original receiver;
+// named Main recovery reuses it. Other stages keep their own event boundaries.
 // This projection adds no actor mapping or ACK.
 type nativeReturnSubject struct {
 	kind, id, ref string

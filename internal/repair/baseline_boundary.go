@@ -17,6 +17,7 @@ type baselineBoundary struct {
 	trackedDirs map[string]bool
 	worktrees   []string
 	gitOK       bool
+	headOK      bool
 	cache       map[string]bool
 }
 
@@ -37,6 +38,7 @@ func newBaselineBoundary(root string) baselineBoundary {
 	b.cache = map[string]bool{}
 	// Include HEAD ownership so a staged deletion cannot acquire cache exemption.
 	if head, e := exec.Command("git", "-C", rootAbs, "ls-tree", "-r", "--name-only", "-z", "HEAD").Output(); e == nil {
+		b.headOK = true
 		data = append(data, head...)
 	}
 	for _, p := range strings.Split(string(data), "\x00") {

@@ -94,12 +94,14 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		}
 		paths := s9ListenerPacketPaths(source, packet)
 		prefix := fmt.Sprintf("S9 Builder %s assignment=%s: %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, paths)
+		var nativeAuthorErr error
 		if isNative {
 			brief, _, _ := nativeS9Paths(native)
 			planPath, resultPath, pathErr := nativeS9AuthorPaths(root, native)
+			nativeAuthorErr = pathErr
 			prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; read-only professional question %s; private worktree-relative PlanReport %s and Result %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), resolveRootPath(root, native.ViewPath), planPath, resultPath)
 			if pathErr != nil {
-				prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; frozen private author coordinates unavailable: %v. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), pathErr)
+				prefix = fmt.Sprintf("S9 Builder %s assignment=%s: exact native brief %s; %s. ", packet.binding.OwnerAgentID, packet.binding.RepairAssignmentID, resolveRootPath(root, brief), s9NativeAuthorCoordinatesFailure(root, native, pathErr, main))
 			}
 			if packet.result != nil {
 				prefix += "Original Result receiver reference (system-owned): " + resolveRootPath(source, packet.answer) + ". "
@@ -120,6 +122,9 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 		if fact.kind != "" {
 			candidateState := s9CandidateComplete
 			next := "The PlanReport is recorded. Continue the same native Builder's repair, self-checks and private Result using its exact prepared brief; PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required; reception does not wait for a final message or returned reference. Main owns integration and necessary checks. Do not repeat the accepted Plan or add a workspace startup step."
+			if isNative && nativeAuthorErr != nil {
+				next = "The PlanReport is recorded; preserve the accepted Plan. Main owns the original preparation gap before the same Builder continues; no repeated Plan is due."
+			}
 			_, originalExecution := repairExecutionForChoice(snapshot.State, repairDispatchChoice{AssignmentID: packet.binding.RepairAssignmentID, AgentID: packet.binding.OwnerAgentID})
 			if len(originalExecution) > 0 && originalExecution["purpose"] != "native_delivery" {
 				next = fmt.Sprintf("The PlanReport is recorded for an existing frozen execution. Main preserves its original workspace recovery: runtime workspace prepare --root %q --assignment %q --agent %q --check-location %s; then supplies this Builder’s exact RepairResult questionnaire. Do not repeat the accepted Plan or division answer.", root, packet.binding.ManifestAssignmentID, packet.binding.OwnerAgentID, stringValue(originalExecution["check_location"]))
@@ -182,7 +187,10 @@ func s9QuestionnaireContext(ctx context.Context, root string, request policy.Inp
 				continue
 			}
 			note := "Use the brief's private outputs for professional fields. Save PlanReport before implementation, continue actual repair/self-checks, then save Result and report results to Main when finished; PreToolUse receives the ready original answers, with successful PostToolUse and Stop/SubagentStop fallback, without activation or a returned-reference prerequisite."
-			if main {
+			if nativeAuthorErr != nil {
+				note = "Original preparation is unavailable. Main owns this gap; preserve the original responsibility and independently accepted work without guessing private author coordinates."
+			}
+			if main && nativeAuthorErr == nil {
 				note += " Main supplies this exact brief to the actual native Builder; the Main-root question is read-only input."
 			}
 			if ctx.Err() != nil {
@@ -453,7 +461,7 @@ func s9ListenerKnownPaths(root string, state map[string]any, owner string, resul
 			brief, _, _ := nativeS9Paths(native)
 			planPath, resultPath, pathErr := nativeS9AuthorPaths(root, native)
 			if pathErr != nil {
-				paths = append(paths, fmt.Sprintf("native brief %s; frozen private author coordinates unavailable: %v", resolveRootPath(root, brief), pathErr))
+				paths = append(paths, fmt.Sprintf("native brief %s; %s", resolveRootPath(root, brief), s9NativeAuthorCoordinatesFailure(root, native, pathErr, owner == "" || owner == "Main")))
 			} else {
 				paths = append(paths, fmt.Sprintf("native brief %s; private worktree-relative PlanReport %s and Result %s", resolveRootPath(root, brief), planPath, resultPath))
 			}

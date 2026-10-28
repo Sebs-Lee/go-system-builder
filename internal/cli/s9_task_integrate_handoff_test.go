@@ -16,7 +16,7 @@ import (
 func TestS9TaskIntegratePreservesAcceptedPlanWhenCandidateIsMissing(t *testing.T) {
 	root, worker, packet, input, answer := nativeS9WorkerFixture(t)
 	answer.UnitResults = nil // Real professional omission, after the Plan was saved.
-	_, _, result := nativeS9Paths(packet)
+	result := nativeS9TestResultPath(t, root, packet)
 	privateResult := filepath.Join(worker, result)
 	if err := persistRepairLeadQuestionnaire(privateResult, answer); err != nil {
 		t.Fatal(err)

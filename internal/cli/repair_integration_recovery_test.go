@@ -42,13 +42,27 @@ func s9NativeIntegrationCandidate(t *testing.T) (string, string, workspace.Execu
 	if err != nil || !typed {
 		t.Fatalf("original typed candidate: %v", err)
 	}
+	ctx := context.Background()
+	logs, err := repair.WorkspaceCandidateLogProjectionForPacket(ctx, root, packet, e, candidate)
+	if err != nil {
+		t.Fatalf("original captured Worker evidence projection: %v", err)
+	}
+	private, err := repair.NativeS9PrivateProjection(ctx, root, packet, e, candidate, false)
+	if err != nil {
+		t.Fatalf("original Worker private evidence projection: %v", err)
+	}
+	area, err := workspaceNativePrivateArea(ctx, root, packet, e)
+	if err != nil || area.Path == "" {
+		t.Fatalf("original frozen Worker private area: %+v %v", area, err)
+	}
 	a := hookctx.AssignmentContext{AssignmentID: e.AssignmentID, OwnerAgentID: e.AgentID, TaskID: packet.Binding.Sources.TaskID, WorktreePath: e.Path, Branch: e.Branch, TargetBranch: e.TargetBranch}
-	inspection, err := integration.Inspect(context.Background(), integration.InspectRequest{Root: root, Assignment: a, TargetBranch: e.TargetBranch, BaselineGeneration: e.BaselineGeneration, RuntimeID: e.RuntimeID}, integration.InspectConfig{ValidateDelivery: func(_ context.Context, in integration.Inspection) error {
-		if in.SourceHead != candidate.SourceHead {
-			return fmt.Errorf("candidate source changed")
-		}
-		return nil
-	}})
+	inspection, err := integration.Inspect(ctx, integration.InspectRequest{Root: root, Assignment: a, TargetBranch: e.TargetBranch, BaselineGeneration: e.BaselineGeneration, RuntimeID: e.RuntimeID}, integration.InspectConfig{WorkerLogEvidence: logs, WorkerPrivateEvidence: private,
+		WorkerPrivateArea: area.Path, WorkerPrivateBaseCommit: area.BaseCommit, WorkerPrivateWritePaths: area.WritePaths, WorkerPrivateBaselinePaths: area.BaselinePaths, ValidateDelivery: func(_ context.Context, in integration.Inspection) error {
+			if in.SourceHead != candidate.SourceHead {
+				return fmt.Errorf("candidate source changed")
+			}
+			return nil
+		}})
 	if err != nil || !inspection.Ready {
 		t.Fatalf("original Main Inspect: %+v %v", inspection, err)
 	}

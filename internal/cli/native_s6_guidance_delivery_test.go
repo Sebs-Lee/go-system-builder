@@ -45,8 +45,8 @@ func TestNativeS6MainDistinguishesPendingBlockerAndReceptionFailure(t *testing.T
 	brief, _, result := assignmentrecord.NativePaths(r)
 	briefPath, resultPath := filepath.Join(root, brief), filepath.Join(source, result)
 	before := stageSnapshot(t, root)
-	pending := mainNativeReturn(t, root, briefPath)
-	if !strings.Contains(pending, "checks the actual native execution") {
+	pending := mainNativeReturnResponse(t, root, briefPath, map[string]any{"status": "async_launched", "isAsync": true})
+	if !strings.Contains(pending, "launch acknowledgement") || strings.Contains(pending, "Native return for ") || strings.Contains(pending, "Main reads the actual native return") {
 		t.Fatalf("pending execution: %s", pending)
 	}
 	marker := "Required private fixture x17 is unavailable"
@@ -69,8 +69,10 @@ func TestNativeS6MainDistinguishesPendingBlockerAndReceptionFailure(t *testing.T
 	if code, output := nativeEvent(t, root, source, "SubagentStop", briefPath+"\n"+resultPath, false); code != 2 {
 		t.Fatalf("missing Plan: %d %s", code, output)
 	}
-	failure := mainNativeReturn(t, root, briefPath)
-	if !strings.Contains(failure, "Stop returned code 2 to the Worker") || !strings.Contains(failure, "reception failure") || !strings.Contains(failure, "professional Plan") || strings.Contains(failure, marker) {
+	// A blocked Stop has not established a completed platform return. Its
+	// recorded diagnostic remains visible in an explicit unknown observation.
+	failure := mainNativeReturnResponse(t, root, briefPath, map[string]any{"status": "unknown"})
+	if !strings.Contains(failure, "Platform execution is unknown here") || !strings.Contains(failure, "Stop returned code 2 to the Worker") || !strings.Contains(failure, "reception failure") || !strings.Contains(failure, "professional Plan") || strings.Contains(failure, marker) || strings.Contains(failure, "Native return for ") {
 		t.Fatalf("failure did not replace blocker: %s", failure)
 	}
 	if stageSnapshot(t, root).Revision != before.Revision {

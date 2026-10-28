@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
+	"github.com/entroforge/go-system-builder/internal/metrics"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/targetedauthoring"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
@@ -420,6 +421,7 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	}
 	var drift []string
 	normalUntracked := map[string]bool{}
+	exactStatusPath := map[string]bool{}
 	seenStatus := map[string]bool{}
 	for _, entry := range strings.Split(string(output), "\x00") {
 		if entry == "" {
@@ -436,9 +438,11 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		}
 		if !seenStatus[rel] {
 			normalUntracked[rel] = entry[:2] == "??"
+			exactStatusPath[rel] = entry[3:] == rel
 			seenStatus[rel] = true
 		} else {
 			normalUntracked[rel] = false
+			exactStatusPath[rel] = false
 		}
 		if frozen[rel] {
 			continue
@@ -446,11 +450,40 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		if controlPaths[rel] {
 			continue
 		}
+		// An untracked symlink or file named .claude is not the control
+		// directory, even though Git reports it as one bare path.
+		if rel == ".claude" {
+			info, statErr := os.Lstat(filepath.Join(root, ".claude"))
+			if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+				return nil, fmt.Errorf("%w: inspect control directory: %w", errResultPacketDriftProof, statErr)
+			}
+			if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				drift = append(drift, rel)
+				continue
+			}
+		}
 		if scope.Excludes(rel) || isAllowedDriftSurface(rel) || diagnosticstorage.Recognizes(parent, root, rel) {
 			continue
 		}
 		drift = append(drift, rel)
 	}
+	// Git can report a staged deletion and an untracked replacement under the
+	// same name. First aggregate every status; only an exclusively untracked
+	// temporary can be classified as metrics storage.
+	remaining := drift[:0]
+	for _, path := range drift {
+		if normalUntracked[path] && exactStatusPath[path] && !frozen[path] && metrics.IsTemporaryPath(path) {
+			recognized, err := metrics.RecognizeTemporary(parent, root, path)
+			if err != nil {
+				return nil, fmt.Errorf("%w: inspect metrics temporary: %w", errResultPacketDriftProof, err)
+			}
+			if recognized {
+				continue
+			}
+		}
+		remaining = append(remaining, path)
+	}
+	drift = remaining
 	storagePaths, err := loopruntime.ClassifyPacketBodyStoragePathsContext(parent, root, drift)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
@@ -458,7 +491,7 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 	for _, path := range storagePaths {
 		controlPaths[path] = true
 	}
-	remaining := drift[:0]
+	remaining = drift[:0]
 	for _, path := range drift {
 		if !controlPaths[path] {
 			remaining = append(remaining, path)

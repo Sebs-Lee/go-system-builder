@@ -16,21 +16,28 @@ import (
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
-// These drift tests need a real HEAD before normal-original packet issuance.
-func reviewDriftGitBaseline(t *testing.T, root string) {
+// Normal-original packet issuance requires a real HEAD and an unignored,
+// untracked answer path. Commit the fixture's existing product baseline
+// before it can issue any packets.
+func reviewGitBaseline(t *testing.T, root string) {
 	t.Helper()
-	git := func(args ...string) {
-		t.Helper()
-		if output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v %s", args, err, output)
-		}
+	reviewFixtureGit(t, root, "init", "-q")
+	reviewFixtureGit(t, root, "config", "user.name", "S7 Fixture")
+	reviewFixtureGit(t, root, "config", "user.email", "s7-fixture@example.invalid")
+	reviewFixtureGit(t, root, "config", "commit.gpgsign", "false")
+	reviewFixtureGit(t, root, "config", "core.excludesFile", os.DevNull)
+	reviewFixtureGit(t, root, "config", "core.hooksPath", os.DevNull)
+	reviewFixtureGit(t, root, "add", "-A")
+	reviewFixtureGit(t, root, "commit", "--allow-empty", "-qm", "S7 product baseline")
+}
+
+func reviewFixtureGit(t *testing.T, root string, args ...string) []byte {
+	t.Helper()
+	output, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, output)
 	}
-	git("init", "-q")
-	git("config", "user.name", "S7 Fixture")
-	git("config", "user.email", "s7-fixture@example.invalid")
-	git("config", "commit.gpgsign", "false")
-	git("add", "-A")
-	git("commit", "--allow-empty", "-qm", "S7 product baseline")
+	return output
 }
 
 // This fixture exercises the original Writer using synthetic dispatch rows.
@@ -106,7 +113,6 @@ func TestIssuedResultPacketRejectsProductDriftBeforeRegistrationOrRestore(t *tes
 	for _, restore := range []bool{false, true} {
 		t.Run(fmt.Sprintf("restore=%t", restore), func(t *testing.T) {
 			root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
-			reviewDriftGitBaseline(t, root)
 			if restore {
 				packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 				if err != nil || len(packets) != 1 {
@@ -166,6 +172,50 @@ func TestIssuedResultPacketRefusesWrongActorUnansweredAndDirectBypass(t *testing
 	}
 	if receipt, accepted, err := IssuedResultReceipt(root, issued.State, p.ID, p.Binding.OwnerAgentID); err != nil || accepted || receipt.ResultRef != "" {
 		t.Fatalf("unanswered draft became receipt: %+v,%t,%v", receipt, accepted, err)
+	}
+}
+
+func TestIssuedResultPacketRejectsAbnormalOriginalGitSource(t *testing.T) {
+	for _, source := range []string{"staged", "tracked", "ignored"} {
+		t.Run(source, func(t *testing.T) {
+			root, statePath, journalPath, snapshot, _ := packetModeFixture(t)
+			packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
+			if err != nil || len(packets) != 1 {
+				t.Fatalf("issue packet: count=%d err=%v", len(packets), err)
+			}
+			p := packets[0]
+			answerPath := filepath.Join(root, filepath.FromSlash(p.AnswerPath))
+			authorBytes := mustReadTestFile(t, answerPath)
+			wantDiagnostic := "conflicts with HEAD or index product"
+			switch source {
+			case "staged":
+				reviewFixtureGit(t, root, "add", "--", p.AnswerPath)
+				if len(reviewFixtureGit(t, root, "ls-files", "--stage", "--", p.AnswerPath)) == 0 || len(reviewFixtureGit(t, root, "ls-tree", "HEAD", "--", p.AnswerPath)) != 0 {
+					t.Fatal("fixture did not isolate an index conflict")
+				}
+			case "tracked":
+				reviewFixtureGit(t, root, "add", "--", p.AnswerPath)
+				reviewFixtureGit(t, root, "commit", "-qm", "Track conflicting answer")
+				reviewFixtureGit(t, root, "rm", "--cached", "--", p.AnswerPath)
+				if len(reviewFixtureGit(t, root, "ls-files", "--stage", "--", p.AnswerPath)) != 0 || len(reviewFixtureGit(t, root, "ls-tree", "HEAD", "--", p.AnswerPath)) == 0 {
+					t.Fatal("fixture did not isolate a HEAD conflict")
+				}
+			case "ignored":
+				if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".loop-submissions/\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				reviewFixtureGit(t, root, "check-ignore", "-q", "--no-index", "--", p.AnswerPath)
+				wantDiagnostic = "is ignored by Git"
+			}
+			beforeState, beforeJournal := mustReadTestFile(t, statePath), mustReadTestFile(t, journalPath)
+			_, err = SubmitIssuedResult(root, statePath, journalPath, IssuedSubmitRequest{ExpectedRevision: -1, PacketID: p.ID, AnswerPath: p.AnswerPath, OwnerAgentID: p.Binding.OwnerAgentID})
+			if err == nil || !strings.Contains(err.Error(), "receive S7 original") || !strings.Contains(err.Error(), wantDiagnostic) {
+				t.Fatalf("%s original bypassed Git source verification: %v", source, err)
+			}
+			if !reflect.DeepEqual(beforeState, mustReadTestFile(t, statePath)) || !reflect.DeepEqual(beforeJournal, mustReadTestFile(t, journalPath)) || !reflect.DeepEqual(authorBytes, mustReadTestFile(t, answerPath)) {
+				t.Fatal("rejected Git source changed Runtime, journal, or author bytes")
+			}
+		})
 	}
 }
 
@@ -428,7 +478,6 @@ func TestIssuedResultPacketConcurrentIssuanceUsesOneOriginalEvent(t *testing.T) 
 
 func TestIssuedResultPacketDriftExceptionRequiresExactRegisteredFiles(t *testing.T) {
 	root, statePath, journalPath, snapshot, plan := packetModeFixture(t)
-	reviewDriftGitBaseline(t, root)
 	packets, err := IssueResultPackets(root, statePath, journalPath, snapshot.Revision, "agent-qa-1")
 	if err != nil {
 		t.Fatal(err)
@@ -497,6 +546,7 @@ func TestIssuedE2ENilArtifactDigestAcceptsAndReplaysWithoutMutableWorkspace(t *t
 	state = snapshotState(t, statePath, journalPath)
 	seedResultMethodSources(t, root, state, plan)
 	writeMethodState(t, statePath, state)
+	reviewGitBaseline(t, root)
 	packets, err := IssueResultPackets(root, statePath, journalPath, -1, "agent-e2e-1")
 	if err != nil || len(packets) != 1 {
 		t.Fatalf("issue E2E packet: count=%d err=%v", len(packets), err)
@@ -505,6 +555,9 @@ func TestIssuedE2ENilArtifactDigestAcceptsAndReplaysWithoutMutableWorkspace(t *t
 	resultPath := writeE2EResultFile(t, root, plan, packet.ResultID, "", "path:"+workspaceRel+"/fixture.txt")
 	var original map[string]json.RawMessage
 	if err := json.Unmarshal(mustReadTestFile(t, resultPath), &original); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(resultPath); err != nil {
 		t.Fatal(err)
 	}
 	packet.Draft.Answer, _ = json.Marshal(s7ProfessionalTestAnswer(t, original))

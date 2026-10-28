@@ -18,6 +18,12 @@ func s9OriginalConsumeCommand(root, input string) string {
 // consumer must still verify current issuance, worktree, input and receipt.
 func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9HandoffProjection) string {
 	base := s9UnreceivedAction()
+	if handoff.Native {
+		base += " PreToolUse observes ready original answers; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer."
+	} else {
+		base += " Follow the original issued responsibility's reception and recovery contract."
+	}
+	base += " No repeated accepted submission is due."
 	if observed := nativeExecutionInContext(ctx); observed == nativeExecutionLaunched || observed == nativeExecutionUnknown {
 		return base + " " + nativeExecutionPendingAction(observed)
 	}
@@ -45,11 +51,14 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 	}
 	input := ""
 	nativePlan, nativeResult := "", ""
+	packet := workpacket.RepairPlanReportPacket{ID: handoff.Plan.id, ViewPath: handoff.Plan.view, AnswerPath: handoff.Plan.answer, Binding: handoff.Plan.binding}
 	nativePaths := func() error {
-		packet := workpacket.RepairPlanReportPacket{ID: handoff.Plan.id, ViewPath: handoff.Plan.view, AnswerPath: handoff.Plan.answer, Binding: handoff.Plan.binding}
 		var err error
 		nativePlan, nativeResult, err = nativeS9AuthorPaths(root, packet)
 		return err
+	}
+	nativePathFailure := func(err error) string {
+		return base + " Original native author contract is unavailable: " + s9NativeAuthorCoordinatesFailure(root, packet, err, true) + "."
 	}
 	if handoff.Result != nil && filepath.IsAbs(handoff.Result.originalRoot) && filepath.Clean(handoff.Result.originalRoot) != filepath.Clean(root) {
 		typed := filepath.Join(handoff.Result.originalRoot, handoff.Result.answer)
@@ -64,7 +73,7 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 	}
 	if input == "" && handoff.Native && handoff.Plan.id != "" {
 		if err := nativePaths(); err != nil {
-			return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+			return nativePathFailure(err)
 		}
 		suffix := filepath.FromSlash(nativeResult)
 		if attempt != nil && filepath.IsAbs(attempt.InputRef) && strings.HasSuffix(filepath.Clean(attempt.InputRef), string(filepath.Separator)+suffix) {
@@ -91,7 +100,7 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 		if source == "" && handoff.Plan.id != "" {
 			if nativeResult == "" {
 				if err := nativePaths(); err != nil {
-					return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+					return nativePathFailure(err)
 				}
 			}
 			suffix := filepath.FromSlash(nativeResult)
@@ -106,7 +115,7 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 			if !handoff.PlanAccepted && handoff.Plan.answer != "" {
 				if nativePlan == "" {
 					if err := nativePaths(); err != nil {
-						return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+						return nativePathFailure(err)
 					}
 				}
 				if available, reason := s9OriginalInputAvailable(ctx, filepath.Join(source, nativePlan)); !available {

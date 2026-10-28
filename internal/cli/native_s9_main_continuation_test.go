@@ -125,13 +125,25 @@ func nativeS9LegacyWorkerFixture(t *testing.T, assertionCopies ...int) (string, 
 	return root, worker, p, stop, answer
 }
 
-func nativeS9TestPlanPath(t *testing.T, root string, p workpacket.RepairPlanReportPacket) string {
+func nativeS9TestAuthorPaths(t *testing.T, root string, p workpacket.RepairPlanReportPacket) (string, string) {
 	t.Helper()
-	plan, _, err := nativeS9AuthorPaths(root, p)
+	plan, result, err := nativeS9AuthorPaths(root, p)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return plan, result
+}
+
+func nativeS9TestPlanPath(t *testing.T, root string, p workpacket.RepairPlanReportPacket) string {
+	t.Helper()
+	plan, _ := nativeS9TestAuthorPaths(t, root, p)
 	return plan
+}
+
+func nativeS9TestResultPath(t *testing.T, root string, p workpacket.RepairPlanReportPacket) string {
+	t.Helper()
+	_, result := nativeS9TestAuthorPaths(t, root, p)
+	return result
 }
 
 func TestNativeS9MainCompletedReturnContinuesExactLiveDSource(t *testing.T) {

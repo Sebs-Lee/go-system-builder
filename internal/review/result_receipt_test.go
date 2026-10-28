@@ -38,6 +38,7 @@ func packetModeFixture(t *testing.T) (string, string, string, loopruntime.Snapsh
 	}
 	seedResultMethodSources(t, root, snapshot.State, plan)
 	writeMethodState(t, statePath, snapshot.State)
+	reviewGitBaseline(t, root)
 	return root, statePath, journalPath, snapshot, plan
 }
 
@@ -1071,7 +1072,10 @@ func receiptRevisionPlan(t *testing.T, root string, state map[string]any, source
 			}
 		}
 	}
-	path := filepath.Join(root, "plan-revision.json")
+	path := filepath.Join(root, "docs", "reports", "plan-revision.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	writeJSONFile(t, path, body)
 	return path
 }

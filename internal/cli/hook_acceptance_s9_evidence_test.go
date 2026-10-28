@@ -16,7 +16,7 @@ func TestAcceptanceS9PreferredLogEvidenceDoesNotBlockCandidate(t *testing.T) {
 	root, worker, packet, input, answer := nativeS9WorkerFixture(t)
 	writeRepairLeadFile(t, worker, "logs/check.txt", "synthetic fixture check output for this original delivery\n")
 	answer.EvidenceRefs = []string{"path:logs/check.txt"}
-	_, _, result := nativeS9Paths(packet)
+	result := nativeS9TestResultPath(t, root, packet)
 	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, result), answer); err != nil {
 		t.Fatal(err)
 	}

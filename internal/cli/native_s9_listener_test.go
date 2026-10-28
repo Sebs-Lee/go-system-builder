@@ -86,7 +86,8 @@ func TestNativeS9ListenerReceivesPlanBeforeResultAndPreservesDirtyWork(t *testin
 	}
 	in.Event = "PostToolUse"
 	diagnostic.Reset()
-	if _, code := nativeS9Hook(root, in, &out, &diagnostic); code != 0 || !strings.Contains(diagnostic.String(), "professional Result received") {
+	request, _ = json.Marshal(in)
+	if code := Run([]string{"hook", "--root", root, "--event", in.Event}, bytes.NewReader(request), &out, &diagnostic); code != 0 || !strings.Contains(diagnostic.String(), "professional Result received") {
 		t.Fatalf("natural Result: %d %s", code, &diagnostic)
 	}
 	resultFeedback := nativeS9ListenerFeedback(t, &out)

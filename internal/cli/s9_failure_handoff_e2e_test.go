@@ -83,7 +83,7 @@ func TestS9FailureHandoffRealStopDeadlineReachesFreshPublicMain(t *testing.T) {
 	}
 	snap := repairDispatchSnapshot(t, root)
 	record, ok := nativeS9ReturnDiagnosticRecordContext(t.Context(), root, snap, plan.ID)
-	_, _, flatRelative := nativeS9Paths(plan)
+	flatRelative := nativeS9TestResultPath(t, root, plan)
 	flat := filepath.Join(worker, flatRelative)
 	if !ok || record.Attempt == nil || record.Attempt.FailureKind != "deadline" || record.Attempt.Stage != "plan_received" || record.Attempt.InputRef != flat {
 		t.Fatalf("original attempt was not published after work expiry: %#v ok=%v stderr=%s", record, ok, &stopDiagnostic)
