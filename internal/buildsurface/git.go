@@ -76,8 +76,11 @@ func safePath(p string) bool {
 
 // ProductPath excludes only the existing control and verification write
 // surfaces. Specification/document changes remain part of the real diff.
+// .loop-submissions/ is framework staging (S7 review answers, Worker drafts,
+// packet publication temps), never product: an S7 answer landing there must
+// not stale the round that issued it.
 func ProductPath(p string) bool {
-	for _, prefix := range []string{".git", ".claude", ".worktrees", "docs/reports", "e2e-workspace"} {
+	for _, prefix := range []string{".git", ".claude", ".worktrees", "docs/reports", "e2e-workspace", ".loop-submissions"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return false
 		}

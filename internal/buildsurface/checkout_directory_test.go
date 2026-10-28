@@ -1,6 +1,8 @@
 package buildsurface
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,6 +26,18 @@ func TestVerifyCheckoutHandlesGitDirectoryMarkersWithoutIgnoringProductDirectori
 	}
 	if err := verifyCheckout(root, head); err != nil {
 		t.Fatalf("retained control worktree should use the existing non-product projection: %v", err)
+	}
+	// Framework staging (.loop-submissions/) holds S7 review answers and
+	// Worker drafts; an S7 answer landing there must not stale the round
+	// that issued it (same-round S7 self-blocking).
+	if err := os.MkdirAll(filepath.Join(root, ".loop-submissions/s7/packet-fixture/reviewer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".loop-submissions/s7/packet-fixture/reviewer/answer.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCheckout(root, head); err != nil {
+		t.Fatalf("framework staging must not stale the round: %v", err)
 	}
 	gitFixture(t, root, "worktree", "add", "-b", "untracked-product", "product-nested")
 	if err := verifyCheckout(root, head); err == nil || !strings.Contains(err.Error(), "product checkout differs from pinned Main: product-nested") {
