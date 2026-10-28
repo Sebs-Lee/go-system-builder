@@ -66,6 +66,10 @@ func (f *fakeRunner) run(ctx context.Context, stdin string, root string, args ..
 		return "", errors.New("fakeRunner: empty args")
 	}
 	switch args[0] {
+	case "ls-files":
+		if len(args) > 1 && args[1] == "--others" {
+			return "", nil
+		}
 	case "status":
 		if len(args) >= 2 && args[1] == "--porcelain" {
 			if f.workdirClean[root] {

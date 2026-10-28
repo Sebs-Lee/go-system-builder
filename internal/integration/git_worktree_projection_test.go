@@ -248,6 +248,26 @@ func TestPinnedBootstrapProjectionIntegratesAndRestoresOnlyReceiptAssets(t *test
 		RequiredChecks: []string{"integration-check"},
 		CheckRunner:    func(context.Context, string, string) error { return nil },
 	}
+	// Installed files may be ignored by the project. Their exact original
+	// Main-pinned receipt remains the proof; no .claude directory exemption.
+	exclude := git(worker, "rev-parse", "--git-path", "info/exclude")
+	excluded, err := os.ReadFile(exclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exclude, append(excluded, []byte("\n.claude/inputs/assignment-context.json\n.claude/loop-bootstrap.json\n.claude/loop-workspace.json\n")...), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ignoredProjection, err := workerBootstrapProjectionAt(ctx, worker, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guardIgnoredCleanup(ctx, worker, ignoredProjection); err != nil {
+		t.Fatalf("exact installed ignored assets blocked: %v", err)
+	}
+	if err := os.WriteFile(exclude, excluded, 0600); err != nil {
+		t.Fatal(err)
+	}
 	failure := &bootstrapCleanupFailureRunner{gitRunner: execRunner{}, failAsset: untrackedRel}
 	defaultRunner = failure
 	result, err := Integrate(ctx, IntegrateRequest{Inspection: inspection, Acknowledge: true, Cleanup: true}, cfg)

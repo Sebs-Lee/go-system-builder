@@ -20,6 +20,21 @@ type CheckpointStoreFactory func() *CheckpointStore
 
 // IntegrateConfig tunes Integrate's behaviour.
 type IntegrateConfig struct {
+	// WorkerPrivateEvidence contains only original accepted professional files.
+	// It is separate from captured logs and grants no directory-wide exemption.
+	WorkerPrivateEvidence map[string]string
+	// WorkerPrivateArea is the original responsibility's call-only scratch
+	// area; its frozen product boundaries are supplied alongside it.
+	WorkerPrivateArea          string
+	WorkerPrivateBaseCommit    string
+	WorkerPrivateWritePaths    []string
+	WorkerPrivateBaselinePaths []string
+	// WorkerIgnoredEvidence proves exact system-issued/accepted ignored bytes.
+	// Unknown ignored files always prevent removal, including when this is nil.
+	WorkerIgnoredEvidence map[string]string
+	// WorkerCleanupError defers an original receiver proof failure to resource
+	// cleanup, after an already accepted Final has exposed its successor.
+	WorkerCleanupError error
 	// WorkerLogEvidence is the original receiver's captured output projection.
 	// Verified cleanup may remove only these unchanged untracked copies; Main's
 	// immutable evidence remains the source for accepted Results.
@@ -855,7 +870,11 @@ func Integrate(ctx context.Context, req IntegrateRequest, cfg IntegrateConfig) (
 		}
 		// The original cleanup helper owns the single coordinate/cleanliness
 		// check and recovery from an interrupted installation restoration.
-		if err := cleanupWorktree(ctx, gitRoot, req.Inspection.WorktreePath, current, cfg.WorkerLogEvidence); err != nil {
+		if cfg.WorkerCleanupError != nil {
+			return deferCleanup(store, checkpointPath, current, next, cfg.WorkerCleanupError)
+		}
+		area := WorkerPrivateAreaSpec{Path: cfg.WorkerPrivateArea, BaseCommit: cfg.WorkerPrivateBaseCommit, WritePaths: cfg.WorkerPrivateWritePaths, BaselinePaths: cfg.WorkerPrivateBaselinePaths}
+		if err := cleanupWorktree(ctx, gitRoot, req.Inspection.WorktreePath, current, area, cfg.WorkerLogEvidence, cfg.WorkerPrivateEvidence, cfg.WorkerIgnoredEvidence); err != nil {
 			return deferCleanup(store, checkpointPath, current, next, err)
 		}
 		next.State = StateComplete

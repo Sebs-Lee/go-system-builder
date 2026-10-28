@@ -29,7 +29,15 @@ type InspectConfig struct {
 	// original domain receiver. Only untracked matching bytes may be projected;
 	// this is used only with ValidateDelivery, never as a general cleanliness bypass.
 	WorkerLogEvidence map[string]string
-	LockedArtifacts   []string
+	// WorkerPrivateEvidence is the exact original accepted professional input.
+	WorkerPrivateEvidence map[string]string
+	// WorkerPrivateArea and its frozen source facts are call-only data from the
+	// original native responsibility; they never authorize product changes.
+	WorkerPrivateArea          string
+	WorkerPrivateBaseCommit    string
+	WorkerPrivateWritePaths    []string
+	WorkerPrivateBaselinePaths []string
+	LockedArtifacts            []string
 	// RecoveryBase retains the original scope denominator for an already merged branch.
 	RecoveryBase string
 	// ReceivedSourceHead is an immutable source from the original domain
@@ -192,11 +200,20 @@ func Inspect(ctx context.Context, req InspectRequest, cfg InspectConfig) (Inspec
 				return out, fmt.Errorf("accepted native S6 checkout %q is missing; Main restores the original Git checkout/branch %q at accepted SourceHead %s, then retries the original task-integrate. The original Plan/Result are already retained in Main; do not recreate private answer caches, recapture HEAD, or add a new commit to repair source identity", req.Assignment.WorktreePath, req.Assignment.Branch, canonical.Accepted.SourceHead)
 			}
 		}
-		var logEvidence map[string]string
+		var logEvidence, privateEvidence map[string]string
+		var privateArea *WorkerPrivateAreaProjection
 		if canonical == nil && cfg.ValidateDelivery != nil {
 			logEvidence = cfg.WorkerLogEvidence
+			privateEvidence = cfg.WorkerPrivateEvidence
+			privateArea, err = ObserveWorkerPrivateArea(ctx, req.Assignment.WorktreePath, WorkerPrivateAreaSpec{
+				Path: cfg.WorkerPrivateArea, BaseCommit: cfg.WorkerPrivateBaseCommit,
+				WritePaths: cfg.WorkerPrivateWritePaths, BaselinePaths: cfg.WorkerPrivateBaselinePaths,
+			})
+			if err != nil {
+				return out, fmt.Errorf("observe original Worker private area: %w", err)
+			}
 		}
-		clean, err := workerWorktreeClean(ctx, req.Root, req.Assignment.WorktreePath, logEvidence)
+		clean, err := workerWorktreeCleanWithPrivateArea(ctx, req.Root, req.Assignment.WorktreePath, privateArea, logEvidence, privateEvidence)
 		if err != nil {
 			workerRoot := req.Assignment.WorktreePath
 			return out, fmt.Errorf("Worker checkout %q clean check failed; inspect with git -C %q status --short: %w", workerRoot, workerRoot, err)

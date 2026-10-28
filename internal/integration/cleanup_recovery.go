@@ -20,10 +20,17 @@ var ErrCleanupPending = errors.New("integration verified; worktree cleanup pendi
 // Git registration; never prune other worktrees or force-delete remaining files.
 // The checkpoint is the existing authorization: this helper is called only
 // after verified Main checks, ACK, and cleanup_pending have been persisted.
-func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoint, logEvidence ...map[string]string) error {
+func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoint, areaSpec WorkerPrivateAreaSpec, logEvidence ...map[string]string) error {
 	var logs map[string]string
+	var private, ignored map[string]string
 	if len(logEvidence) > 0 {
 		logs = logEvidence[0]
+	}
+	if len(logEvidence) > 1 {
+		private = logEvidence[1]
+	}
+	if len(logEvidence) > 2 {
+		ignored = logEvidence[2]
 	}
 	if checkpoint.State != StateCleanupPending || checkpoint.VerifiedAt == "" || checkpoint.MergeCommit == "" || checkpoint.SourceHead == "" || checkpoint.TargetBranch == "" || filepath.Clean(checkpoint.WorktreePath) != filepath.Clean(path) {
 		return fmt.Errorf("Worker cleanup requires its verified cleanup_pending checkpoint")
@@ -31,20 +38,17 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 	if _, err := RecoveryBaseForCheckpoint(ctx, root, checkpoint); err != nil {
 		return fmt.Errorf("verified cleanup checkpoint no longer matches the target merge: %w", err)
 	}
-	if _, err := os.Lstat(path); err == nil {
+	if info, err := os.Lstat(path); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("Worker cleanup source is not its original regular directory; preserve it")
+		}
 		head, err := revParse(ctx, path, "HEAD")
 		if err != nil || head != checkpoint.SourceHead {
 			return fmt.Errorf("Worker HEAD differs from verified checkpoint source; preserve it")
 		}
-		// A previous attempt may have restored all installation files before
-		// ordinary Git removal failed. The verified source coordinate above
-		// and a clean checkout are enough to retry that removal.
-		clean, err := worktreeCleanWithProjection(ctx, path, nil)
+		privateArea, err := ObserveWorkerPrivateArea(ctx, path, areaSpec)
 		if err != nil {
-			return err
-		}
-		if clean {
-			return removeWorktree(ctx, root, path)
+			return fmt.Errorf("observe original Worker private area before cleanup: %w", err)
 		}
 		projection, err := workerBootstrapProjectionAt(ctx, path, true)
 		if err != nil {
@@ -60,14 +64,45 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 		for rel, digest := range native {
 			projection[rel] = digest
 		}
-		clean, err = worktreeCleanWithProjection(ctx, path, projection, logs)
+		for rel, digest := range private {
+			projection[rel] = digest
+		}
+		// Existing exact receipt/accepted projections also prove ignored system
+		// assets. This is a file map, never an installation-directory exemption.
+		knownIgnored := map[string]string{}
+		for _, evidence := range []map[string]string{ignored, projection, logs} {
+			for rel, digest := range evidence {
+				if prior := knownIgnored[rel]; prior != "" && prior != digest {
+					return fmt.Errorf("conflicting cleanup byte identities for %s", rel)
+				}
+				knownIgnored[rel] = digest
+			}
+		}
+		// Git's ordinary cleanliness check omits ignored files, but ordinary
+		// worktree removal deletes them. Inventory before removing any original
+		// professional file, captured log or installation projection.
+		if err := guardIgnoredCleanupWithPrivateArea(ctx, path, knownIgnored, privateArea); err != nil {
+			return err
+		}
+		// A previous attempt may have restored all installation files before
+		// ordinary Git removal failed. The verified source coordinate above
+		// and a clean checkout are enough to retry that removal.
+		clean, err := worktreeCleanWithProjection(ctx, path, nil)
+		if err != nil {
+			return err
+		}
+		if clean && privateArea == nil {
+			return removeGuardedWorktree(ctx, root, path, knownIgnored)
+		}
+
+		clean, err = worktreeCleanWithPrivateArea(ctx, path, projection, privateArea, logs)
 		if err != nil {
 			return err
 		}
 		if !clean {
 			return fmt.Errorf("Builder checkout %q is dirty; inspect with git -C %q status --short: %w", path, path, ErrDirtyWorktree)
 		}
-		if len(projection) > 0 || len(logs) > 0 {
+		if len(projection) > 0 || len(logs) > 0 || privateArea != nil {
 			// Recheck the source coordinate immediately before restoring only the
 			// receipt-listed installation overlay.
 			head, err = revParse(ctx, path, "HEAD")
@@ -80,6 +115,9 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 			if err := restorePinnedBootstrap(ctx, path, projection); err != nil {
 				return err
 			}
+			if err := removeWorkerPrivateAreaScratch(ctx, path, privateArea, knownIgnored); err != nil {
+				return err
+			}
 			clean, err = worktreeCleanWithProjection(ctx, path, nil)
 			if err != nil {
 				return err
@@ -88,7 +126,7 @@ func cleanupWorktree(ctx context.Context, root, path string, checkpoint Checkpoi
 				return fmt.Errorf("Builder checkout %q is still dirty after bootstrap restore; inspect with git -C %q status --short: %w", path, path, ErrDirtyWorktree)
 			}
 		}
-		return removeWorktree(ctx, root, path)
+		return removeGuardedWorktree(ctx, root, path, knownIgnored)
 	} else if !os.IsNotExist(err) {
 		return err
 	}

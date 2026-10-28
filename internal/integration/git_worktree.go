@@ -32,6 +32,10 @@ func worktreeClean(ctx context.Context, root string) (bool, error) {
 }
 
 func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets map[string]string, logEvidence ...map[string]string) (bool, error) {
+	return worktreeCleanWithPrivateArea(ctx, root, workerAssets, nil, logEvidence...)
+}
+
+func worktreeCleanWithPrivateArea(ctx context.Context, root string, workerAssets map[string]string, area *WorkerPrivateAreaProjection, logEvidence ...map[string]string) (bool, error) {
 	out, err := defaultRunner.Run(ctx, root, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return false, fmt.Errorf("git status: %w", err)
@@ -49,6 +53,30 @@ func worktreeCleanWithProjection(ctx context.Context, root string, workerAssets 
 		status, path := entry[:2], filepath.ToSlash(filepath.Clean(entry[3:]))
 		if status != " M" && status != "??" {
 			return false, nil
+		}
+		if status == "??" && area != nil && strings.HasPrefix(path, area.path+"/") {
+			allowed, err := area.Allows(path)
+			if err != nil {
+				return false, err
+			}
+			if !allowed {
+				return false, nil
+			}
+			// An accepted original or captured check never becomes anonymous
+			// scratch merely because its bytes changed.
+			known := false
+			for _, evidence := range append([]map[string]string{workerAssets}, logEvidence...) {
+				if digest := evidence[path]; digest != "" {
+					known = true
+					if !fileMatchesDigest(root, path, digest) {
+						return false, nil
+					}
+				}
+			}
+			if known {
+				continue
+			}
+			continue
 		}
 		if status == "??" && len(logEvidence) > 0 && logEvidence[0][path] != "" && fileMatchesDigest(root, path, logEvidence[0][path]) {
 			continue
@@ -109,6 +137,10 @@ func isOriginalMainWorkspace(ctx context.Context, root string) bool {
 }
 
 func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string, logEvidence ...map[string]string) (bool, error) {
+	return workerWorktreeCleanWithPrivateArea(ctx, mainRoot, workerRoot, nil, logEvidence...)
+}
+
+func workerWorktreeCleanWithPrivateArea(ctx context.Context, mainRoot, workerRoot string, area *WorkerPrivateAreaProjection, logEvidence ...map[string]string) (bool, error) {
 	pinned, err := registeredWorkerBootstrapPin(ctx, mainRoot, workerRoot)
 	if err != nil {
 		return false, err
@@ -137,7 +169,12 @@ func workerWorktreeClean(ctx context.Context, mainRoot, workerRoot string, logEv
 	for path, digest := range native {
 		projection[path] = digest
 	}
-	return worktreeCleanWithProjection(ctx, workerRoot, projection, logEvidence...)
+	if len(logEvidence) > 1 {
+		for path, digest := range logEvidence[1] {
+			projection[path] = digest
+		}
+	}
+	return worktreeCleanWithPrivateArea(ctx, workerRoot, projection, area, logEvidence...)
 }
 
 func registeredWorkerBootstrapPin(ctx context.Context, mainRoot, workerRoot string) (bool, error) {
