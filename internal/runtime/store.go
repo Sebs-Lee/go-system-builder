@@ -3618,6 +3618,21 @@ func integerField(object map[string]any, key string) (int, error) {
 	}
 }
 
+// optionalIntegerField reports whether key holds an integer without failing
+// on absent keys. Scans over heterogeneous packet indexes (e.g. S5 issuance
+// meeting S7 review-plan bindings) use it to skip foreign rows instead of
+// aborting the whole issuance.
+func optionalIntegerField(object map[string]any, key string) (int, bool) {
+	switch value := object[key].(type) {
+	case float64:
+		return int(value), true
+	case int:
+		return value, true
+	default:
+		return 0, false
+	}
+}
+
 func objectField(object map[string]any, key string) (map[string]any, error) {
 	value, ok := object[key].(map[string]any)
 	if !ok {

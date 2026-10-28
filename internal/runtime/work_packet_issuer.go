@@ -118,9 +118,12 @@ func S5PacketsWithFiles(root string, state map[string]any, owner string, files f
 			for _, raw := range issued {
 				row, _ := raw.(map[string]any)
 				b, _ := row["binding"].(map[string]any)
-				oldEntry, err := integerField(b, "stage_entry")
-				if err != nil {
-					return nil, err
+				// S7 review packets share the work_packets index but carry
+				// review-plan bindings without stage_entry; skip rows that are
+				// not S5 document-reviewer packets instead of aborting issuance.
+				oldEntry, ok := optionalIntegerField(b, "stage_entry")
+				if !ok {
+					continue
 				}
 				if b["owner"] == id && b["responsibility"] == assignment.Responsibility && oldEntry == entry && b["runtime_id"] == state["runtime_id"] && numberBindingGeneration(b) == generation {
 					found = true
