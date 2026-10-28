@@ -132,7 +132,7 @@ func TestNativePendingRuntimeFeedbackDoesNotClaimWorkerOrUnrelatedEvents(t *test
 	}
 	for _, request := range []policy.Input{
 		{Event: "PreToolUse", AgentID: "worker", CWD: root},
-		{Event: "PostToolUse", AgentID: "Main", CWD: root, ToolName: "Read"},
+		{Event: "PostToolUse", AgentID: "Main", CWD: root, ToolName: "Read", Error: "tool failed"},
 		{Event: "SubagentStop", AgentID: "Main", CWD: root},
 		{Event: "PreToolUse", AgentID: "Main", CWD: t.TempDir()},
 	} {

@@ -44,6 +44,13 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 		return base
 	}
 	input := ""
+	nativePlan, nativeResult := "", ""
+	nativePaths := func() error {
+		packet := workpacket.RepairPlanReportPacket{ID: handoff.Plan.id, ViewPath: handoff.Plan.view, AnswerPath: handoff.Plan.answer, Binding: handoff.Plan.binding}
+		var err error
+		nativePlan, nativeResult, err = nativeS9AuthorPaths(root, packet)
+		return err
+	}
 	if handoff.Result != nil && filepath.IsAbs(handoff.Result.originalRoot) && filepath.Clean(handoff.Result.originalRoot) != filepath.Clean(root) {
 		typed := filepath.Join(handoff.Result.originalRoot, handoff.Result.answer)
 		// A coordinate by itself is not a saved input. The producer's actual saved
@@ -56,7 +63,10 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 		input = filepath.Join(handoff.Result.originalRoot, handoff.Result.answer)
 	}
 	if input == "" && handoff.Native && handoff.Plan.id != "" {
-		suffix := filepath.Join(".claude", "submissions", "native-s9", handoff.Plan.id, "result.json")
+		if err := nativePaths(); err != nil {
+			return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+		}
+		suffix := filepath.FromSlash(nativeResult)
 		if attempt != nil && filepath.IsAbs(attempt.InputRef) && strings.HasSuffix(filepath.Clean(attempt.InputRef), string(filepath.Separator)+suffix) {
 			source := strings.TrimSuffix(filepath.Clean(attempt.InputRef), string(filepath.Separator)+suffix)
 			if source != "" && source != filepath.Clean(root) && (handoff.Result == nil || handoff.Result.originalRoot == "" || filepath.Clean(source) == filepath.Clean(handoff.Result.originalRoot)) {
@@ -79,7 +89,12 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 			source = handoff.Result.originalRoot
 		}
 		if source == "" && handoff.Plan.id != "" {
-			suffix := filepath.Join(".claude", "submissions", "native-s9", handoff.Plan.id, "result.json")
+			if nativeResult == "" {
+				if err := nativePaths(); err != nil {
+					return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+				}
+			}
+			suffix := filepath.FromSlash(nativeResult)
 			if strings.HasSuffix(input, string(filepath.Separator)+suffix) {
 				source = strings.TrimSuffix(input, string(filepath.Separator)+suffix)
 			}
@@ -89,8 +104,13 @@ func s9UnreceivedActionContext(ctx context.Context, root string, handoff s9Hando
 				return base + " Original worktree Git source is unavailable at " + source + ": " + err.Error() + ". Main owns the missing original environment/source; preserve accepted facts and the captured cause. No source replacement has been established."
 			}
 			if !handoff.PlanAccepted && handoff.Plan.answer != "" {
-				if available, reason := s9OriginalInputAvailable(ctx, filepath.Join(source, handoff.Plan.answer)); !available {
-					return base + " Original unreceived PlanReport input is unavailable at " + filepath.Join(source, handoff.Plan.answer) + ": " + reason + ". Main owns this missing source; preserve the original responsibility and captured consumer cause."
+				if nativePlan == "" {
+					if err := nativePaths(); err != nil {
+						return base + " Original native author contract is unavailable: " + err.Error() + ". Main restores its frozen preparation; no alternative author path or version was inferred."
+					}
+				}
+				if available, reason := s9OriginalInputAvailable(ctx, filepath.Join(source, nativePlan)); !available {
+					return base + " Original unreceived PlanReport input is unavailable at " + filepath.Join(source, nativePlan) + ": " + reason + ". Main owns this missing source; preserve the original responsibility and captured consumer cause."
 				}
 			}
 		}

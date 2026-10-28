@@ -28,7 +28,11 @@ func nativeS9WorkerFixture(t *testing.T, assertionCopies ...int) (string, string
 		t.Fatalf("preparation created an execution: %s", feedback)
 	}
 	p := packets[0]
-	brief, _, result := nativeS9Paths(p)
+	brief, _, _ := nativeS9Paths(p)
+	planPath, result, pathErr := nativeS9AuthorPaths(root, p)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	if !strings.Contains(feedback, filepath.Join(root, brief)) || !strings.Contains(feedback, "private PlanReport output relative to the actual native worktree") || strings.Contains(feedback, "PlanReport answer: "+filepath.Join(root, p.AnswerPath)) || strings.Contains(feedback, "Main normally runs runtime workspace prepare") {
 		t.Fatal(feedback)
 	}
@@ -44,10 +48,10 @@ func nativeS9WorkerFixture(t *testing.T, assertionCopies ...int) (string, string
 	var draft workpacket.RepairPlanReportDraft
 	readRepairLeadJSON(t, filepath.Join(root, p.AnswerPath), &draft)
 	draft.Answer, _ = json.Marshal(workpacket.RepairPlanReportProfessionalAnswer{Plan: "Restore the first API authority and verify the discriminator", RedChecks: []workpacket.RepairPlanReportCheck{{Name: "first authority", Command: "test -f internal/api/one.go", Result: "pass", EvidenceRefs: []string{"internal/api/one.go"}}}, ProposedPaths: plan.Assignments[0].Scope})
-	if err := os.MkdirAll(filepath.Dir(filepath.Join(worker, p.AnswerPath)), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(worker, planPath)), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, p.AnswerPath), draft.Answer); err != nil {
+	if err := persistRepairLeadQuestionnaire(filepath.Join(worker, planPath), draft.Answer); err != nil {
 		t.Fatal(err)
 	}
 	writeRepairLeadFile(t, worker, "internal/api/one.go", "package api\n\nconst Restored = true\n")

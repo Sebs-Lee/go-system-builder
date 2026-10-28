@@ -151,9 +151,15 @@ func s9HandoffForBinding(ctx context.Context, root string, snap runtime.Snapshot
 func (p s9HandoffProjection) summary(root string) string {
 	var parts []string
 	if p.Plan.id != "" {
-		brief, _, result := nativeS9Paths(workpacket.RepairPlanReportPacket{ID: p.Plan.id, ViewPath: p.Plan.view})
+		packet := workpacket.RepairPlanReportPacket{ID: p.Plan.id, ViewPath: p.Plan.view, AnswerPath: p.Plan.answer}
+		brief, _, _ := nativeS9Paths(packet)
 		if p.Native {
-			parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; PlanReport answer %s; private Result %s.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), filepath.Join(root, p.Plan.answer), result))
+			plan, result, err := nativeS9AuthorPaths(root, packet)
+			if err != nil {
+				parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; frozen private author coordinates unavailable: %v.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), err))
+			} else {
+				parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; exact brief %s; private worktree-relative PlanReport %s and Result %s.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, brief), plan, result))
+			}
 		} else {
 			parts = append(parts, fmt.Sprintf("Original S9 owner=%s assignment=%s; PlanReport question %s; PlanReport answer %s.", p.Plan.binding.OwnerAgentID, p.Plan.binding.ManifestAssignmentID, filepath.Join(root, p.Plan.view), filepath.Join(root, p.Plan.answer)))
 		}
@@ -195,7 +201,7 @@ func s9CandidateAction(root, assignment, owner string) string {
 }
 
 func s9FinalAction() string {
-	return "The original Main Result is recorded as accepted; Main continues only the original checkpoint ACK/cleanup and remaining S9 flow. Preserve accepted Final and Main checks; do not merge, check or receive completed work again. Do not repeat this answer."
+	return "The original Main Result is recorded as accepted. When the complete Final batch enters impact reconciliation, Main prepares or resumes its original ChangeImpact before independent checkpoint ACK/cleanup. A cleanup pending resource does not cancel the accepted Final or block its unlocked professional successor; Impact and independent verification still require their original consumers. Preserve accepted Final and Main checks; do not merge, check or receive completed work again. Do not repeat this answer."
 }
 
 // Select the original typed responsibility before looking at candidate

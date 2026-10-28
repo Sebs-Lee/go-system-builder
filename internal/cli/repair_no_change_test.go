@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,10 @@ func TestNativeS9NoChangeAfterPlatformCleanup(t *testing.T) {
 	for _, outcome := range []string{"complete", "missing-assertion", "implementer", "recreated-directory", "rewritten-target", "moved-branch"} {
 		t.Run(outcome, func(t *testing.T) { testNativeS9NoChangeContractOutcome(t, outcome, true) })
 	}
+}
+
+func TestNativeS9RetainedSourceResumesOriginalConsumersAfterPreCandidateCleanup(t *testing.T) {
+	testNativeS9NoChangeContractOutcome(t, "source-interrupted", true)
 }
 
 func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformCleanup bool) {
@@ -81,9 +86,57 @@ func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformC
 		}
 		writeRepairLeadJSON(t, resolveRootPath(worker, resultPath), answer)
 		input.Event, input.LastAssistantMessage = "SubagentStop", resolveRootPath(root, brief)+"\n"+resolveRootPath(worker, resultPath)
-		diagnostic.Reset()
-		if handled, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || code != 0 {
-			t.Fatalf("native no-change Stop: %t %d %s", handled, code, &diagnostic)
+		typedBlocker := filepath.Join(root, ".claude/evidence/s9-source", packet.ID, "typed")
+		if outcome == "source-interrupted" {
+			writeRepairLeadFile(t, root, filepath.ToSlash(filepath.Join(".claude/evidence/s9-source", packet.ID, "typed")), "injected interruption before typed publication")
+			diagnostic.Reset()
+			if handled, _ := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || !strings.Contains(diagnostic.String(), "incomplete") {
+				t.Fatalf("injected source interruption was not reported: %s", &diagnostic)
+			}
+			partial := repairDispatchSnapshot(t, root)
+			registry, err := workspace.Decode(partial.State)
+			if err != nil || registry == nil {
+				t.Fatalf("no durable source: %v", err)
+			}
+			e := registry.Executions[packet.Binding.ManifestAssignmentID]
+			if repair.NativeS9SourceReference(e).Path == "" || e.DeliveryRef != "" {
+				t.Fatalf("capture became acceptance or was missing: %+v; %s", e, &diagnostic)
+			}
+			if len(repairArtifactRefs(repairPointerCLI(partial.State), "plan_report_refs", "", "")) == 0 {
+				t.Fatal("interruption did not occur after original Plan acceptance")
+			}
+			source, err := repair.RetainedNativeS9Source(context.Background(), root, e, packet.Binding)
+			if err != nil || source == nil {
+				t.Fatalf("retained source unavailable: %v", err)
+			}
+			originalPlan := append([]byte(nil), source.Plan...)
+			pendingMarker := stopFingerprintPending(t, root)
+			repairLeadGit(t, root, "worktree", "remove", "--force", worker)
+			repairLeadGit(t, root, "branch", "-D", fmt.Sprintf("no-change-%d", index))
+			if err := os.Remove(typedBlocker); err != nil {
+				t.Fatal(err)
+			}
+			diagnostic.Reset()
+			_, recoveredDiagnostic := stopPendingPublic(t, root, input)
+			diagnostic.WriteString(recoveredDiagnostic)
+			if !strings.Contains(recoveredDiagnostic, "recovered the original pending Writer") {
+				t.Fatalf("public source recovery did not recover Writer: %s", recoveredDiagnostic)
+			}
+			if _, err := os.Stat(pendingMarker); !os.IsNotExist(err) {
+				t.Fatalf("Writer marker not retired: %v", err)
+			}
+			source, err = repair.RetainedNativeS9Source(context.Background(), root, e, packet.Binding)
+			if err != nil || !bytes.Equal(source.Plan, originalPlan) {
+				t.Fatalf("Plan input changed: %v", err)
+			}
+			if _, err := os.Stat(worker); !os.IsNotExist(err) {
+				t.Fatalf("recovery recreated Worker: %v", err)
+			}
+		} else {
+			diagnostic.Reset()
+			if handled, code := nativeS9Hook(root, input, &bytes.Buffer{}, &diagnostic); !handled || code != 0 {
+				t.Fatalf("native no-change Stop: %t %d %s", handled, code, &diagnostic)
+			}
 		}
 		received := repairDispatchSnapshot(t, root)
 		registry, err := workspace.Decode(received.State)
@@ -95,7 +148,7 @@ func testNativeS9NoChangeContractOutcome(t *testing.T, outcome string, platformC
 		if err != nil || candidate.SourceHead != head || len(candidate.Proposal.ChangedArtifacts) != 0 {
 			t.Fatalf("no-change delivery invented a contribution: %+v %v", candidate, err)
 		}
-		if platformCleanup {
+		if platformCleanup && outcome != "source-interrupted" {
 			repairLeadGit(t, root, "worktree", "remove", "--force", worker)
 			repairLeadGit(t, root, "branch", "-D", fmt.Sprintf("no-change-%d", index))
 		}
