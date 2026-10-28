@@ -92,7 +92,7 @@ func TestS7NativeTaskCarriesActualSourceCaptureAndReturn(t *testing.T) {
 	root, source := "/main review", "/reviewer's original"
 	p := workpacket.ReviewResultPacket{Binding: workpacket.ReviewResultBinding{RuntimeID: "loop-req", BaselineGeneration: 3, AssignmentID: "qa-current", OwnerAgentID: "reviewer-current"}}
 	out := s7ReviewerTaskGuidance(root, source, source+"/view.json", source+"/answer.json", p, true)
-	for _, want := range []string{source + "/view.json", source + "/answer.json", "frozen subjects/Claims", "SubagentStop", "source/environment blockers to Main", "Optional capture", "--cwd " + s7CaptureShellQuote(source), "--assignment 'qa-current'", "capture step", review.CaptureFile(root, "loop-req", 3, "qa-current"), "path: evidence"} {
+	for _, want := range []string{source + "/view.json", source + "/answer.json", "frozen subjects/Claims", "PreToolUse", "Stop/SubagentStop", "reception does not wait for a final message or returned reference", "source/environment blockers to Main", "Optional capture", "--cwd " + s7CaptureShellQuote(source), "--assignment 'qa-current'", "capture step", review.CaptureFile(root, "loop-req", 3, "qa-current"), "path: evidence"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q: %s", want, out)
 		}

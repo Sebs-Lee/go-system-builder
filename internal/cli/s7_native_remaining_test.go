@@ -100,3 +100,39 @@ func TestS7AcceptedRemainingProjectionManifestQueueAndBound(t *testing.T) {
 		t.Fatalf("unbounded or missing overflow entry: %d bytes", len(text))
 	}
 }
+
+func TestS7RemainingProjectionUsesCoordinatesWhenAnotherBodyIsInvalid(t *testing.T) {
+	root := t.TempDir()
+	state := s7RecoveryFixtureState("running", "running")
+	state["baseline"] = map[string]any{"generation": 1}
+	state["configuration"] = map[string]any{"optimization": map[string]any{"packet": true}}
+	ptr := mapFieldCLI(mapFieldCLI(state, "review"), "plan")
+	var packets []any
+	for _, suffix := range []string{"2", "3"} {
+		packets = append(packets, map[string]any{
+			"packet_id": "packet-qa-" + suffix, "template_id": "s7-review-result-v1",
+			"binding":   workpacket.ReviewResultBinding{RuntimeID: "loop-REQ-TEST", BaselineGeneration: 1, ReviewPlanID: "plan-r2", ReviewPlanRevision: 1, ReviewPlanRef: ptr["path"].(string), ReviewPlanSHA256: ptr["sha256"].(string), ReviewRound: 2, AssignmentID: "assignment-qa-" + suffix, OwnerAgentID: "agent-qa-" + suffix, ClaimIDs: []string{"CLAIM-QA-" + suffix}},
+			"view_path": "original/qa-" + suffix + "/view.md", "answer_path": "original/qa-" + suffix + "/answer.json",
+			// These invalid bodies must remain invalid to the body reader;
+			// Main's queue handoff needs only their registered coordinates.
+			"inputs": "unreadable original body",
+		})
+	}
+	mapFieldCLI(state, "entities")["work_packets"] = packets
+	if _, err := runtime.CurrentReviewResultPackets(state, ""); err == nil {
+		t.Fatal("fixture unexpectedly has a valid body")
+	}
+	text := nativeS7RemainingOutletContext(root, state)
+	for _, want := range []string{"original/qa-2/view.md", "original/qa-3/answer.json", "registration=dispatched"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("unrelated body erased known handoff %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "restores original current issued packet metadata") {
+		t.Fatalf("body was read for coordinate projection: %s", text)
+	}
+	mapFieldCLI(state, "entities")["work_packets"] = append(packets, packets[0])
+	if text := nativeS7RemainingOutletContext(root, state); !strings.Contains(text, "duplicate Runtime work packet ID") {
+		t.Fatalf("index projection hid shared identity corruption: %s", text)
+	}
+}

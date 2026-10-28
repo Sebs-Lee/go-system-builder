@@ -124,6 +124,9 @@ func TestS7MainPreparesAllDispatchedQuestionnairesInOneOriginalHandoff(t *testin
 	}
 	f.state["review"] = map[string]any{"round": 1, "clean_round": nil, "claims": map[string]any{}, "assignments": assignments, "plan": map[string]any{"plan_id": plan.ReviewPlanID, "path": planRel, "sha256": workpacket.Digest(data), "revision": 1, "review_round": 1, "status": "running", "e2e_coverage_state": "not_applicable", "submitted_at": "2026-10-23T00:00:00Z"}}
 	f.persist(t)
+	// Original issuance freezes a real Git source, even when the professional
+	// Plan/dispatch facts were registered synthetically by this fixture.
+	repairLeadCommitFixture(t, f.root)
 	service := &submission.Service{Root: f.root, StatePath: f.statePath, JournalPath: f.journalPath, Validator: semantic.RuntimeCandidateValidator{}}
 	snapshot, err := runtime.NewStore(f.statePath, f.journalPath).Snapshot()
 	if err != nil {

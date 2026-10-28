@@ -140,7 +140,7 @@ func s7ManifestRegistrationGuidance(root, out string, draft *review.ManifestDraf
 	if candidates == 0 {
 		fmt.Fprintln(&stdout, "preparation gap: no current-generation registered TASK document with an ID/path; Main must restore the TASK source before registration.")
 	} else {
-		fmt.Fprintln(&stdout, "After original registration, Main obtains the issued exact view/answer references and carries both into the native Agent task: read the frozen subjects and assigned Claims; perform independent checks; save only the professional answer at its supplied path and return that exact reference. SubagentStop receives it. Preserve actual evidence and report a real source/environment blocker to Main; do not invent conclusions or add a generic activation/report handshake.")
+		fmt.Fprintln(&stdout, "After original registration, Main obtains the issued exact view/answer references and carries both into the native Agent task: read the frozen subjects and assigned Claims; perform independent checks; save only the professional answer at its supplied path and return that exact reference. PreToolUse listens for the ready original answer; successful PostToolUse and Stop/SubagentStop provide fallback through the same original consumer. No extra submit, done or activation is required; reception does not wait for a final message or returned reference. Preserve actual evidence and report a real source/environment blocker to Main; do not invent conclusions or add a generic activation/report handshake.")
 	}
 	return stdout.String()
 }

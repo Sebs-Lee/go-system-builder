@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -639,7 +640,7 @@ func registeredAcceptedS5PacketOwnerForPath(root, path string) (string, bool, er
 
 func isS7ReviewResultPath(path string) bool {
 	clean := "/" + strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))), "/") + "/"
-	return strings.Contains(clean, "/.claude/submissions/") && strings.Contains(clean, "/S7/") && strings.HasSuffix(clean, "/answer.json/")
+	return ((strings.Contains(clean, "/.claude/submissions/") && strings.Contains(clean, "/S7/")) || strings.Contains(clean, "/.loop-submissions/s7/")) && strings.HasSuffix(clean, "/answer.json/")
 }
 
 func saveReviewResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
@@ -657,17 +658,41 @@ func saveReviewResultHook(root string, request policy.Input, path string, stdout
 	if !found {
 		return true, renderStageAnswerHook(stdout, path, submission.Receipt{ResponsibilityStatus: "not_accepted", Error: "S7 answer path has no current registered issuance"}, "S7")
 	}
+	if workpacket.ReviewResultUsesNormalAuthoring(packet) {
+		return true, 0 // New native originals are drafts until their actual Stop.
+	}
 	ctx, cancel := context.WithTimeout(contextForHook(request), 6*time.Second)
 	defer cancel()
 	owner := packet.Binding.OwnerAgentID
 	receipt, saveErr := service.SaveReviewResultFrom(ctx, owner, path, sourceRoot, nil)
+	return true, renderReviewResultSaveHook(stdout, stderr, path, receipt, saveErr)
+}
+
+func renderReviewResultSaveHook(stdout, stderr io.Writer, path string, receipt submission.Receipt, saveErr error) int {
 	if saveErr != nil {
-		fmt.Fprintf(stderr, "S7 ReviewResult not accepted: %v\n", saveErr)
+		writeReviewResultSaveDiagnostic(stderr, saveErr)
+		var gap *submission.ReviewResultReceiptError
+		if errors.As(saveErr, &gap) {
+			// A verified receipt is unavailable. Do not pass this committed
+			// submission through the generic not_accepted receipt default.
+			message := "S7 original submission succeeded; receipt verification remains incomplete: " + saveErr.Error() + ". " + receipt.NextAction + " Main verifies the exact original ReviewResult receipt and then resumes only its pending original outlet with runtime review-continue, or runtime audit-prepare after TR-009 entered S10. No author correction, additional save, Stop or re-dispatch is requested."
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": "PostToolUse", "additionalContext": message}})
+			return 0
+		}
 		if receipt.Error == "" {
 			receipt.Error = saveErr.Error()
 		}
 	}
-	return true, renderStageAnswerHook(stdout, path, receipt, "S7")
+	return renderStageAnswerHook(stdout, path, receipt, "S7")
+}
+
+func writeReviewResultSaveDiagnostic(stderr io.Writer, saveErr error) {
+	var gap *submission.ReviewResultReceiptError
+	if errors.As(saveErr, &gap) {
+		fmt.Fprintf(stderr, "S7 original submission succeeded; receipt verification remains incomplete: %v. Main verifies the exact original receipt and resumes its pending outlet; no author correction, additional save or re-dispatch is requested.\n", saveErr)
+		return
+	}
+	fmt.Fprintf(stderr, "S7 original submission is unconfirmed: %v\n", saveErr)
 }
 
 func isS8HypothesisResultPath(path string) bool {
@@ -685,6 +710,26 @@ func isS9RepairResultPath(path string) bool {
 	return strings.Contains(clean, "/.claude/submissions/") && strings.Contains(clean, "/S9-result/") && strings.HasSuffix(clean, "/answer.json/")
 }
 
+// runSavedS9RepairResultHook is the narrow ordinary-save adapter used before
+// broad native quiet routes. The path identifies a candidate, never a grant.
+func runSavedS9RepairResultHook(root string, in policy.Input, out, diagnostic io.Writer) (bool, int) {
+	if mainQuestionnaireViewer(in) {
+		return false, 0
+	}
+	path, saved := savedQuestionnairePath(in)
+	if !saved {
+		if returned, ok := in.ToolResponse["file_path"].(string); ok {
+			located := in
+			located.ToolInput = map[string]any{"file_path": returned}
+			path, saved = savedQuestionnairePath(located)
+		}
+	}
+	if !saved || !isS9RepairResultPath(path) {
+		return false, 0
+	}
+	return saveRepairResultHook(root, in, path, out, diagnostic)
+}
+
 func saveRepairResultHook(root string, request policy.Input, path string, stdout, stderr io.Writer) (bool, int) {
 	if mainQuestionnaireViewer(request) {
 		return false, 0 // Native professional reception belongs to SubagentStop.
@@ -696,7 +741,10 @@ func saveRepairResultHook(root string, request policy.Input, path string, stdout
 		JournalPath: filepath.Join(root, ".claude/loop-events.jsonl"),
 		Validator:   semantic.RuntimeCandidateValidator{},
 	}
-	receipt, saveErr := service.SaveRepairResultFrom(ctx, "", path, "", nil)
+	receipt, receive, saveErr := service.SaveRepairResultFromOrdinaryHook(ctx, path)
+	if !receive && saveErr == nil {
+		return true, 0
+	}
 	if saveErr != nil {
 		fmt.Fprintf(stderr, "S9 RepairResult not accepted: %v\n", saveErr)
 		if receipt.Error == "" {

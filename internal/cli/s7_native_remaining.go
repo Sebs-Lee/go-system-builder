@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,7 +9,6 @@ import (
 	"github.com/entroforge/go-system-builder/internal/assignment"
 	"github.com/entroforge/go-system-builder/internal/review"
 	"github.com/entroforge/go-system-builder/internal/runtime"
-	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workstate"
 )
 
@@ -52,8 +50,11 @@ func nativeS7RemainingOutletContext(root string, state map[string]any) string {
 	if planErr != nil {
 		appendBounded(fmt.Sprintf("Main/system restores the original ReviewPlan source before dispatch: %v.\n", planErr))
 	}
-	packets, packetErr := runtime.CurrentReviewResultPacketsContext(runtime.WithPacketBodyRoot(context.Background(), root), state, "")
-	byID := map[string]workpacket.ReviewResultPacket{}
+	// These coordinates are a handoff projection, not receipt or body
+	// verification. The index retains shared identity checks without opening
+	// unrelated bodies; the original consumer verifies a selected packet.
+	packets, packetErr := runtime.ProjectCurrentReviewResultPacketIndex(state, "")
+	byID := map[string]runtime.ReviewResultPacketIndex{}
 	for _, p := range packets {
 		byID[p.Binding.AssignmentID] = p
 	}
@@ -120,7 +121,7 @@ func nativeS7RemainingOutletContext(root string, state map[string]any) string {
 		case "blocked":
 			line += s7BlockedAssignmentGuidance(root, state, id)
 		case "dispatched", "result_submitted":
-			line += "Main checks this owner's actual native Agent/return and original receipt; carry its exact issued references when restoring this same responsibility. The Reviewer saves and returns its original answer for SubagentStop reception.\n"
+			line += "Main checks this owner's actual native Agent/return and original receipt; carry its exact issued references when restoring this same responsibility. The Reviewer saves its ready original answer for PreToolUse reception, with successful PostToolUse and Stop/SubagentStop fallback; report results to Main when finished.\n"
 		default:
 			line += "Main/system restores the original Assignment lifecycle metadata before selecting any continuation.\n"
 		}

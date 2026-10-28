@@ -85,7 +85,34 @@ func TestS7IncompleteNativeReturnHandsOriginalResponsibilityToMain(t *testing.T)
 				if after.Revision != before || after.State["lifecycle"].(map[string]any)["state"] != "verification" {
 					t.Fatalf("unreceived return changed Runtime: revision %d/%d lifecycle %v", after.Revision, before, after.State["lifecycle"])
 				}
-				text := mainNativeReturn(t, root, ref, tc.message)
+				// A prior Stop diagnostic identifies its original responsibility;
+				// it does not prove a later status-less or async response has returned.
+				for _, response := range []map[string]any{
+					{"content": []any{map[string]any{"type": "text", "text": tc.message}}},
+					{"status": "async_launched", "isAsync": true},
+				} {
+					observation := mainNativeReturnResponse(t, root, ref, response)
+					executionFact := "Platform execution is unknown here"
+					if response["status"] == "async_launched" {
+						executionFact = "launch acknowledgement"
+					}
+					if !strings.Contains(observation, executionFact) {
+						t.Fatalf("lost actual execution fact %q: %s", executionFact, observation)
+					}
+					for _, want := range []string{tc.want, p.ID, p.Binding.OwnerAgentID, answerPath, `"accepted":false`, `"work_complete":false`} {
+						if !strings.Contains(observation, want) {
+							t.Fatalf("execution observation lost original fact %q: %s", want, observation)
+						}
+					}
+					for _, bad := range []string{"Native return for ", "续跑原 Reviewer", "不能把已结束但未接收的责任当作仍在后台运行"} {
+						if strings.Contains(observation, bad) {
+							t.Fatalf("unknown/launch inferred completion or new author duty %q: %s", bad, observation)
+						}
+					}
+				}
+				// The real supported completed field supplies execution evidence;
+				// prose alone supplies no execution or professional acceptance.
+				text := mainNativeReturnResponse(t, root, ref, map[string]any{"status": "completed", "content": []any{map[string]any{"type": "text", "text": tc.message}}})
 				for _, want := range []string{tc.want, p.ID, p.Binding.OwnerAgentID, `"accepted":false`, `"work_complete":false`, "Stop 的具名作者", "具体字段/来源诊断", "续跑原 Reviewer", "不能把已结束但未接收的责任当作仍在后台运行"} {
 					if !strings.Contains(text, want) {
 						t.Fatalf("Main lost unfinished recovery %q: %s", want, text)

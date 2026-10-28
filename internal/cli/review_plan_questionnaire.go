@@ -146,7 +146,7 @@ func runSavedReviewPlanQuestionnaire(root string, request policy.Input, stdout, 
 		return false, 0
 	}
 	var output, commandErr bytes.Buffer
-	next := "Main prepares and registers eligible Reviewer assignments before native dispatch; each Reviewer saves and returns its own answer for SubagentStop reception."
+	next := "Main prepares and registers eligible Reviewer assignments before native dispatch. Each Reviewer saves its ready original answer; PreToolUse receives it through the original consumer, with successful PostToolUse and Stop/SubagentStop fallback. Reception does not wait for a final message or returned reference; report results to Main when finished."
 	roundFacts, _ := snapshot.State["review"].(map[string]any)
 	if ptr := review.PlanPointerFromState(snapshot.State); ptr != nil && ptr.ReviewRound == tolerantInt(roundFacts["round"]) && !repairSeedAwaitingPlan(snapshot.State) {
 		_, _, loadErr := review.LoadPlan(root, snapshot.State)
