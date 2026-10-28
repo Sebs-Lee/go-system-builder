@@ -17,6 +17,22 @@ import (
 
 const reviewResultAnswerLimit int64 = 20 << 20
 
+// ReviewResultReceiptError reports a receipt failure after the original S7
+// SubmitIssuedResult explicitly succeeded. Its coordinates identify the
+// committed submission for Main's receipt recovery; they are not a verified
+// receipt or proof that the round or stage has completed.
+type ReviewResultReceiptError struct {
+	PacketID, OwnerAgentID, AnswerPath, SourceRoot string
+	Revision                                       int
+	Cause                                          error
+}
+
+func (e *ReviewResultReceiptError) Error() string {
+	return fmt.Sprintf("S7 packet %s, owner %s, answer %s, source %s: original submission succeeded at Runtime revision %d, but receipt verification failed: %v", e.PacketID, e.OwnerAgentID, e.AnswerPath, e.SourceRoot, e.Revision, e.Cause)
+}
+
+func (e *ReviewResultReceiptError) Unwrap() error { return e.Cause }
+
 // IssueReviewResults is the Main-side adapter to the original ReviewPlan
 // issuer. It publishes only immutable views and authoring drafts for the exact
 // currently registered ReviewResult packets. A ready Worker gets the same
@@ -182,7 +198,24 @@ func (s *Service) SaveReviewResultFrom(ctx context.Context, owner, path, sourceR
 	}
 	completionCtx, cancel := review.ResultCompletionContext(ctx)
 	defer cancel()
-	return issuedReviewResultReceipt(s.Root, next, packet, owner, completionCtx)
+	return submittedReviewResultReceipt(s.Root, actualRoot, next, packet, owner, completionCtx)
+}
+
+// Only the successful SubmitIssuedResult branch may call this helper. Receipt
+// lookup on its own cannot establish that this attempt committed a submission.
+func submittedReviewResultReceipt(root, sourceRoot string, snapshot loopruntime.Snapshot, packet workpacket.ReviewResultPacket, owner string, ctx context.Context) (Receipt, error) {
+	receipt, err := issuedReviewResultReceipt(root, snapshot, packet, owner, ctx)
+	if err == nil && receipt.Accepted {
+		return receipt, nil
+	}
+	if err == nil {
+		err = errors.New("original ReviewResult consumer did not record an accepted receipt")
+	}
+	gap := &ReviewResultReceiptError{PacketID: packet.ID, OwnerAgentID: owner, AnswerPath: packet.AnswerPath, SourceRoot: sourceRoot, Revision: snapshot.Revision, Cause: err}
+	receipt = emptyReceipt(snapshot, packet.ID)
+	receipt.Error = gap.Error()
+	receipt.NextAction = "原 S7 提交已成功，但回执校验未完成；Main 沿准确 packet、owner 和原来源复核原回执及出口，不要求作者改稿、重存或重派。"
+	return receipt, gap
 }
 
 // ReviewResultReceipt rebuilds a receipt from the original accepted S7
@@ -220,11 +253,37 @@ func currentReviewResultSourceForPath(root string, state map[string]any, path st
 }
 
 func currentReviewResultSourceForPathContext(ctx context.Context, root string, state map[string]any, path string) (workpacket.ReviewResultPacket, string, bool, error) {
-	packets, err := loopruntime.CurrentReviewResultPacketsContext(loopruntime.WithPacketBodyRoot(ctx, root), state, "")
+	if err := ctx.Err(); err != nil {
+		return workpacket.ReviewResultPacket{}, "", false, err
+	}
+	index, err := loopruntime.ProjectCurrentReviewResultPacketIndex(state, "")
 	if err != nil {
 		return workpacket.ReviewResultPacket{}, "", false, err
 	}
-	return reviewResultPathInRoots(root, state, path, packets, true)
+	if err := ctx.Err(); err != nil {
+		return workpacket.ReviewResultPacket{}, "", false, err
+	}
+	// Index coordinates select only exact path candidates. They neither stand
+	// in for the canonical packet nor grant permission to consume an answer.
+	clean := filepath.ToSlash(filepath.Clean(path))
+	var candidates []workpacket.ReviewResultPacket
+	for _, entry := range index {
+		if clean == entry.AnswerPath || strings.HasSuffix(clean, "/"+entry.AnswerPath) {
+			candidates = append(candidates, workpacket.ReviewResultPacket{ID: entry.ID, Binding: entry.Binding, ViewPath: entry.ViewPath, AnswerPath: entry.AnswerPath})
+		}
+	}
+	selected, _, found, err := reviewResultPathInRoots(root, state, path, candidates, true)
+	if err != nil || !found {
+		return workpacket.ReviewResultPacket{}, "", false, err
+	}
+	packet, found, err := loopruntime.FindReviewResultPacketContext(loopruntime.WithPacketBodyRoot(ctx, root), state, selected.ID)
+	if err != nil {
+		return workpacket.ReviewResultPacket{}, "", false, err
+	}
+	if !found {
+		return workpacket.ReviewResultPacket{}, "", false, fmt.Errorf("selected S7 packet %s is unavailable", selected.ID)
+	}
+	return reviewResultPathInRoots(root, state, path, []workpacket.ReviewResultPacket{packet}, true)
 }
 
 func reviewResultByReference(root string, state map[string]any, ref string) (workpacket.ReviewResultPacket, bool, error) {

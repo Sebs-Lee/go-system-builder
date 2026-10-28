@@ -49,7 +49,7 @@ func TestBuildReviewResultPacketIsStableAndSchemasCompile(t *testing.T) {
 	if p.TemplateID != "s7-review-result-v1" || p.ResultID != "review-result-"+strings.TrimPrefix(p.ID, "packet-") || p.IssuanceEventID != "evt-review-result-packet-"+p.ID {
 		t.Fatalf("derived S7 identity mismatch: %+v", p)
 	}
-	if !strings.Contains(p.ViewPath, "/S7/") || !strings.Contains(p.AnswerPath, "/S7/") || !strings.HasSuffix(p.AnswerPath, "/reviewer-qa-1/answer.json") {
+	if !strings.Contains(p.ViewPath, "/S7/") || !strings.HasPrefix(p.AnswerPath, ".loop-submissions/s7/"+p.ID+"/") || !strings.HasSuffix(p.AnswerPath, "/reviewer-qa-1/answer.json") {
 		t.Fatalf("S7 paths do not isolate this owner: view=%s answer=%s", p.ViewPath, p.AnswerPath)
 	}
 	for _, test := range []struct {
@@ -115,7 +115,7 @@ func TestBuildReviewResultPacketIsStableAndSchemasCompile(t *testing.T) {
 }
 
 func TestHistoricalReviewResultTemplateOnlyRestoresKnownFrozenQuestions(t *testing.T) {
-	for _, name := range []string{"stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-safety-stop.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json"} {
+	for _, name := range []string{"stage-form-s7-template-before-normal-authoring.json", "stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-safety-stop.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json"} {
 		t.Run(name, func(t *testing.T) {
 			data, err := schema.ReadAsset(name)
 			if err != nil {
@@ -124,6 +124,9 @@ func TestHistoricalReviewResultTemplateOnlyRestoresKnownFrozenQuestions(t *testi
 			old, err := buildReviewResultWithTemplate(reviewResultTestBinding(), reviewResultTestInputs(), data)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if !strings.HasPrefix(old.AnswerPath, ".claude/submissions/") {
+				t.Fatal("historical issuance moved authoring path")
 			}
 			rebuilt, err := RebuildReviewResult(old)
 			if err != nil || !reflect.DeepEqual(rebuilt, old) {
@@ -145,6 +148,116 @@ func TestHistoricalReviewResultTemplateOnlyRestoresKnownFrozenQuestions(t *testi
 				t.Fatal("arbitrary author-supplied template accepted")
 			}
 		})
+	}
+}
+
+// The last shared-checkout issuance still required an explicit returned
+// reference. Its complete original bytes remain authoritative for frozen work.
+func TestReviewResultNaturalObservationPreservesFrozenIssuance(t *testing.T) {
+	const oldSHA = "0ff208925c6ce8ac696770af6161ac189ea299a80019348f0057345673c3acda"
+	oldBytes, err := schema.ReadAsset("stage-form-s7-template-before-natural-observation.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Digest(oldBytes) != oldSHA {
+		t.Fatal("archived template differs from the previously issued bytes")
+	}
+	inputs := reviewResultTestInputs()
+	inputs.Methods = []ReadItem{{Path: ".claude/skills/review-qa/SKILL.md", Purpose: ReviewMethodPurpose("review-qa")}}
+	inputs.MethodSource = &ReviewMethodSource{ManifestRef: ".claude/workgroups/qa.json", SHA256: strings.Repeat("e", 64)}
+	old, err := buildReviewResultWithTemplate(reviewResultTestBinding(), inputs, oldBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.TemplateSHA != oldSHA || !strings.Contains(old.Draft.Instruction, "保存后返回同一准确引用，由原生 SubagentStop 接收") {
+		t.Fatal("historical issuance lost its original template or instruction")
+	}
+	if old.AnswerPath != ".loop-submissions/s7/"+old.ID+"/"+old.Binding.OwnerAgentID+"/answer.json" {
+		t.Fatal("historical shared-checkout answer moved to a different protocol")
+	}
+	frozen := mustReviewPacketJSON(t, old)
+	var restored ReviewResultPacket
+	if err := json.Unmarshal(frozen, &restored); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := RebuildReviewResult(restored)
+	if err != nil || !bytes.Equal(frozen, mustReviewPacketJSON(t, rebuilt)) {
+		t.Fatalf("historical packet identity, paths, questions or source changed: %v", err)
+	}
+	oldDigest, err := ReviewResultPacketDigest(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := BuildReviewResult(old.Binding, old.Inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.TemplateSHA == oldSHA || current.ID == old.ID || current.ResultID == old.ResultID || current.IssuanceEventID == old.IssuanceEventID {
+		t.Fatal("new issuance reused the historical template identity")
+	}
+	if !ReviewResultUsesNormalAuthoring(current) || !reflect.DeepEqual(current.Binding, old.Binding) || !reflect.DeepEqual(current.Inputs, old.Inputs) {
+		t.Fatal("new issuance changed authoring protocol, frozen binding or source")
+	}
+	if current.Draft.Title != old.Draft.Title || !reflect.DeepEqual(current.Draft.Read, old.Draft.Read) || !bytes.Equal(current.Draft.Answer, old.Draft.Answer) {
+		t.Fatal("natural observation changed author fields or frozen reading")
+	}
+	expectedQuestions := make(map[string]Question, len(old.Draft.Questions))
+	for name, question := range old.Draft.Questions {
+		expectedQuestions[name] = question
+	}
+	digestQuestion := expectedQuestions["verification_artifact_digest"]
+	if !strings.Contains(digestQuestion.Question, "由原生结束时的原答卷适配器") {
+		t.Fatal("historical digest question lost its original timing instruction")
+	}
+	digestQuestion.Question = strings.Replace(digestQuestion.Question, "由原生结束时的原答卷适配器", "由原答卷接收过程", 1)
+	expectedQuestions["verification_artifact_digest"] = digestQuestion
+	if !reflect.DeepEqual(current.Draft.Questions, expectedQuestions) {
+		t.Fatal("natural observation changed professional questions beyond digest acceptance timing")
+	}
+	if question := current.Draft.Questions["verification_artifact_digest"].Question; !strings.Contains(question, "由原答卷接收过程从实际来源绑定") || strings.Contains(question, "原生结束时") {
+		t.Fatal("new digest question still depends on native Stop timing")
+	}
+	for _, wording := range []string{"PreToolUse 自然观察", "成功 PostToolUse", "SubagentStop 兜底", "必要字段、证据与专业条件", "不要求额外返回引用作为接收动作"} {
+		if !strings.Contains(current.Draft.Instruction, wording) {
+			t.Fatalf("new issuance omits the natural acceptance contract %q", wording)
+		}
+	}
+	if strings.Contains(current.Draft.Instruction, "保存后返回同一准确引用，由原生 SubagentStop 接收") {
+		t.Fatal("new issuance still requires an explicit returned reference")
+	}
+	var authorFields map[string]json.RawMessage
+	if err := json.Unmarshal(mustReviewPacketJSON(t, current.Draft), &authorFields); err != nil {
+		t.Fatal(err)
+	}
+	if len(authorFields) != 5 {
+		t.Fatalf("author draft has %d top-level fields, want five", len(authorFields))
+	}
+	if _, err := ReviewResultPacketDigest(current); err != nil {
+		t.Fatal(err)
+	}
+	if digest, err := ReviewResultPacketDigest(restored); err != nil || digest != oldDigest || !bytes.Equal(frozen, mustReviewPacketJSON(t, restored)) {
+		t.Fatalf("new issuance mutated the historical packet: %v", err)
+	}
+
+	// Existing authors can finish their original five-field questionnaire;
+	// neither reissuance nor replacement with the new wording is required.
+	var draft map[string]any
+	if err := json.Unmarshal(mustReviewPacketJSON(t, old.Draft), &draft); err != nil {
+		t.Fatal(err)
+	}
+	answer := draft["answer"].(map[string]any)
+	for _, value := range answer["claim_results"].([]any) {
+		row := value.(map[string]any)
+		row["conclusion"] = "pass"
+		row["observed"] = "Observed the expected behavior."
+	}
+	answer["verdict"] = "pass"
+	if _, fields := ValidateReviewResultAnswer(restored, mustReviewPacketJSON(t, draft)); len(fields) != 0 {
+		t.Fatalf("original historical answer no longer validates: %#v", fields)
+	}
+	draft["instruction"] = current.Draft.Instruction
+	if _, fields := ValidateReviewResultAnswer(restored, mustReviewPacketJSON(t, draft)); len(fields) == 0 {
+		t.Fatal("historical answer accepted a replacement current instruction")
 	}
 }
 

@@ -45,7 +45,7 @@
     },
     "answer_path": {
       "type": "string",
-      "pattern": "^\\.claude/submissions/[^\\\\:]+/answer\\.json$"
+      "pattern": "^(\\.claude/submissions/[^\\\\:]+|\\.loop-submissions/s7/packet-[a-f0-9]{64}/[A-Za-z0-9._-]+)/answer\\.json$"
     },
     "storage_format": {
       "const": "packet-body-ref-v1"

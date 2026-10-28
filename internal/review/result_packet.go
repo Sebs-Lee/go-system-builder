@@ -19,6 +19,7 @@ import (
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
 	"github.com/entroforge/go-system-builder/internal/schema"
 	"github.com/entroforge/go-system-builder/internal/semantic"
+	"github.com/entroforge/go-system-builder/internal/targetedauthoring"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 	"github.com/entroforge/go-system-builder/internal/workspace"
 	"github.com/entroforge/go-system-builder/internal/workstate"
@@ -66,7 +67,7 @@ func ReadIssuedResultInput(ctx context.Context, sourceRoot string, packet workpa
 	}
 	data, err := workpacket.ReadFile(canonicalRoot, packet.AnswerPath, resultReceiptReadLimit)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("read exact S7 original %s: %w", packet.AnswerPath, err)
 	}
 	professional, issues := workpacket.ValidateReviewResultAnswer(packet, data)
 	input := &IssuedResultInput{sourceRoot: canonicalRoot, path: packet.AnswerPath, owner: owner, packetDigest: digest, data: data, professional: append([]byte(nil), professional...), issues: append([]workpacket.FieldError(nil), issues...)}
@@ -241,6 +242,11 @@ func IssueResultPacketsContext(ctx context.Context, root, statePath, journalPath
 			return nil, err
 		}
 		if !independent {
+			if workpacket.ReviewResultUsesNormalAuthoring(packet) {
+				if err := targetedauthoring.CheckNormalOriginal(ctx, root, packet.AnswerPath); err != nil {
+					return nil, fmt.Errorf("prepare S7 original: %w", err)
+				}
+			}
 			if _, err := workpacket.PublishBounded(root, packet.AnswerPath, append(draft, '\n'), resultReceiptReadLimit); err != nil {
 				return nil, err
 			}
@@ -553,6 +559,11 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 	if err != nil {
 		return snapshot, err
 	}
+	if !isReplay && workpacket.ReviewResultUsesNormalAuthoring(p) {
+		if err := targetedauthoring.CheckNormalOriginal(request.Context, sourceRoot, p.AnswerPath); err != nil {
+			return snapshot, fmt.Errorf("receive S7 original: %w", err)
+		}
+	}
 	if request.SourceRoot != "" {
 		requestedRoot, err := workspace.Canonical(request.SourceRoot)
 		if err != nil {
@@ -629,7 +640,11 @@ func SubmitIssuedResult(root, statePath, journalPath string, request IssuedSubmi
 	if err != nil {
 		return snapshot, err
 	}
-	return SubmitResult(root, statePath, journalPath, SubmitRequest{Context: request.Context, ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: capturePath, OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
+	received, err := SubmitResult(root, statePath, journalPath, SubmitRequest{Context: request.Context, ExpectedRevision: request.ExpectedRevision, AssignmentID: b.AssignmentID, ResultPath: filepath.Join(sourceRoot, filepath.FromSlash(path)), CaptureDir: capturePath, OccurredAt: request.OccurredAt, resultData: resultData, issuedPacket: &p, packetOwner: request.OwnerAgentID, issuedSourceRoot: sourceRoot})
+	if err != nil {
+		return received, fmt.Errorf("original S7 result consumer: %w", err)
+	}
+	return received, nil
 }
 
 // Bind only the local path references consumed by the original evidence validator.

@@ -151,15 +151,19 @@ func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewRes
 		return ReviewResultPacket{}, err
 	}
 	var template struct {
-		SchemaVersion string              `json:"schema_version"`
-		Stage         string              `json:"stage"`
-		Adapter       string              `json:"adapter"`
-		Title         string              `json:"title"`
-		Instruction   string              `json:"instruction"`
-		Questions     map[string]Question `json:"questions"`
+		SchemaVersion     string              `json:"schema_version"`
+		Stage             string              `json:"stage"`
+		Adapter           string              `json:"adapter"`
+		AuthoringProtocol string              `json:"authoring_protocol"`
+		Title             string              `json:"title"`
+		Instruction       string              `json:"instruction"`
+		Questions         map[string]Question `json:"questions"`
 	}
 	if err := decodeOneJSON(templateBytes, &template); err != nil || template.SchemaVersion != "1.0.0" || template.Stage != "S7" || template.Adapter != "review_result" || template.Title == "" || template.Instruction == "" || len(template.Questions) != 8 {
 		return ReviewResultPacket{}, fmt.Errorf("unregistered S7 ReviewResult template")
+	}
+	if template.AuthoringProtocol != "" && template.AuthoringProtocol != "shared-checkout-s7-v1" {
+		return ReviewResultPacket{}, fmt.Errorf("unsupported original S7 authoring protocol")
 	}
 	templateSHA := Digest(templateBytes)
 	identityData, err := json.Marshal(struct {
@@ -200,7 +204,7 @@ func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewRes
 		ResultID:        "review-result-" + packetHash,
 		IssuanceEventID: "evt-review-result-packet-" + packetID,
 		ViewPath:        ".claude/work-packets/" + base + ".json",
-		AnswerPath:      ".claude/submissions/" + base + "/" + binding.OwnerAgentID + "/answer.json",
+		AnswerPath:      reviewResultAnswerPath(template.AuthoringProtocol, base, packetID, binding.OwnerAgentID),
 		Draft:           ReviewResultDraft{Title: template.Title, Instruction: template.Instruction, Read: read, Questions: template.Questions, Answer: canonicalAnswer},
 	}
 	if !reviewResultIDRE.MatchString(packet.ResultID) {
@@ -216,12 +220,26 @@ func buildReviewResultWithTemplate(binding ReviewResultBinding, inputs ReviewRes
 	return packet, nil
 }
 
+// The original template digest fixes the authoring path protocol. Historical
+// templates must rebuild their original complete packet, including its path.
+func reviewResultAnswerPath(protocol, base, packetID, owner string) string {
+	if protocol == "shared-checkout-s7-v1" {
+		return ".loop-submissions/s7/" + packetID + "/" + owner + "/answer.json"
+	}
+	return ".claude/submissions/" + base + "/" + owner + "/answer.json"
+}
+
+// ReviewResultUsesNormalAuthoring identifies only a canonical current issuance.
+func ReviewResultUsesNormalAuthoring(packet ReviewResultPacket) bool {
+	return packet.AnswerPath == ".loop-submissions/s7/"+packet.ID+"/"+packet.Binding.OwnerAgentID+"/answer.json"
+}
+
 // RebuildReviewResult reconstructs every machine-controlled field from a known
 // embedded template and frozen inputs. A supported historical template is only
 // for restoring its original issuance; new work always uses BuildReviewResult.
 // Never trust the caller's questions as a new template or refresh its digest.
 func RebuildReviewResult(old ReviewResultPacket) (ReviewResultPacket, error) {
-	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json", "stage-form-s7-template-before-safety-stop.json"} {
+	for _, name := range []string{"stage-form-s7-template.json", "stage-form-s7-template-before-natural-observation.json", "stage-form-s7-template-before-normal-authoring.json", "stage-form-s7-template-before-answer-shape.json", "stage-form-s7-template-before-s7-s10-guidance.json", "stage-form-s7-template-before-boundary-guidance.json", "stage-form-s7-template-before-safety-stop.json"} {
 		data, err := schema.ReadAsset(name)
 		if err != nil {
 			return ReviewResultPacket{}, err

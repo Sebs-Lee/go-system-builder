@@ -19,6 +19,7 @@ import (
 
 	"github.com/entroforge/go-system-builder/internal/buildsurface"
 	loopruntime "github.com/entroforge/go-system-builder/internal/runtime"
+	"github.com/entroforge/go-system-builder/internal/targetedauthoring"
 	"github.com/entroforge/go-system-builder/internal/workpacket"
 )
 
@@ -102,7 +103,11 @@ func WorkspaceDigestContext(ctx context.Context, root, workspaceRel string) (dig
 // prepareVerificationWorkspace validates and creates the E2E cold-start
 // workspace: it must live under e2e-workspace/ inside the repository so the
 // reviewer write-scope rule and the digest recomputation can see it.
-func prepareVerificationWorkspace(root string, plan *Plan) (string, error) {
+func prepareVerificationWorkspace(root string, plan *Plan, contexts ...context.Context) (string, error) {
+	ctx := reviewRequestContext(contexts)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if plan.VerificationArtifactWorkspace == nil || strings.TrimSpace(*plan.VerificationArtifactWorkspace) == "" {
 		return "", nil
 	}
@@ -117,10 +122,13 @@ func prepareVerificationWorkspace(root string, plan *Plan) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("verification_artifact_workspace must stay inside repository: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return "", fmt.Errorf("create verification workspace: %w", err)
 	}
-	digest, err := WorkspaceDigest(root, workspace)
+	digest, err := WorkspaceDigestContext(ctx, root, workspace)
 	if err != nil {
 		return "", err
 	}
@@ -195,17 +203,7 @@ func verifyFrozenSubjects(root string, plan *Plan, state map[string]any, context
 		if err := verifyProductBaselineDeclarationContext(reviewRequestContext(contexts), root, state, plan); err != nil {
 			return err
 		}
-		if err := verifyCanonicalFrozenSubjectFiles(root, plan, contexts...); err != nil {
-			return err
-		}
-		drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
-		if err != nil {
-			return fmt.Errorf("canonical frozen baseline drift scan: %w", err)
-		}
-		if len(drift) > 0 {
-			return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; revert or include them in a newly authorized review round", strings.Join(drift, ", "))
-		}
-		return nil
+		return verifyCanonicalFrozenWorktree(root, plan, state, contexts...)
 	}
 	if plan.ProductBaseline != nil {
 		return fmt.Errorf("ReviewPlan declares a canonical product baseline but Runtime has no canonical S6 Assignment registry")
@@ -421,6 +419,8 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		frozen[normalizeGitStatusPath(subject.Path)] = true
 	}
 	var drift []string
+	normalUntracked := map[string]bool{}
+	seenStatus := map[string]bool{}
 	for _, entry := range strings.Split(string(output), "\x00") {
 		if entry == "" {
 			continue
@@ -433,6 +433,12 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		rel := normalizeGitStatusPath(entry[3:])
 		if rel == "" {
 			return nil, fmt.Errorf("Git status contains an unsafe product path")
+		}
+		if !seenStatus[rel] {
+			normalUntracked[rel] = entry[:2] == "??"
+			seenStatus[rel] = true
+		} else {
+			normalUntracked[rel] = false
 		}
 		if frozen[rel] {
 			continue
@@ -465,6 +471,9 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 			return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
 		}
 		for _, path := range paths {
+			if strings.HasPrefix(path, ".loop-submissions/s7/") && (!normalUntracked[path] || frozen[path]) {
+				continue
+			}
 			if err := workpacket.CheckPath(root, path); err != nil {
 				return nil, fmt.Errorf("%w: %w", errResultPacketDriftProof, err)
 			}
@@ -473,6 +482,30 @@ func detectUndeclaredProductDriftWithState(root string, plan *Plan, state map[st
 		remaining := drift[:0]
 		for _, path := range drift {
 			if !controlPaths[path] {
+				remaining = append(remaining, path)
+			}
+		}
+		drift = remaining
+	}
+	// Independent Targeted has its own registered TASK/manifest authority;
+	// proximity to a legitimate questionnaire grants no exception.
+	if filepath.Clean(root) == filepath.Clean(authorityRoot) {
+		paths, err := targetedauthoring.ControlPaths(authorityRoot, state, drift, parent)
+		if err != nil {
+			return nil, fmt.Errorf("Targeted original control source: %w", err)
+		}
+		allowed := map[string]bool{}
+		for _, path := range paths {
+			if normalUntracked[path] && !frozen[path] {
+				if err := workpacket.CheckPath(root, path); err != nil {
+					return nil, err
+				}
+				allowed[path] = true
+			}
+		}
+		remaining := drift[:0]
+		for _, path := range drift {
+			if !allowed[path] {
 				remaining = append(remaining, path)
 			}
 		}
@@ -1086,6 +1119,22 @@ func mergeCapturedTimelineChecked(findings []Finding, steps []CaptureStep) error
 		if len(findings[index].Encounter.Timeline) == 0 {
 			mergeCapturedTimeline(findings[index:index+1], group)
 		}
+	}
+	return nil
+}
+
+// verifyCanonicalFrozenWorktree complements a canonical declaration freshly
+// verified in the same synchronous validation with live disk and drift checks.
+func verifyCanonicalFrozenWorktree(root string, plan *Plan, state map[string]any, contexts ...context.Context) error {
+	if err := verifyCanonicalFrozenSubjectFiles(root, plan, contexts...); err != nil {
+		return err
+	}
+	drift, err := detectUndeclaredProductDriftWithState(root, plan, state, root, contexts...)
+	if err != nil {
+		return fmt.Errorf("canonical frozen baseline drift scan: %w", err)
+	}
+	if len(drift) > 0 {
+		return fmt.Errorf("frozen baseline drift: undeclared product file(s) %s outside frozen_subjects; revert or include them in a newly authorized review round", strings.Join(drift, ", "))
 	}
 	return nil
 }

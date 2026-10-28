@@ -14,7 +14,7 @@
     "result_id": {"type": "string", "pattern": "^review-result-[a-f0-9]{64}$"},
     "issuance_event_id": {"type": "string", "pattern": "^evt-review-result-packet-packet-[a-f0-9]{64}$"},
     "view_path": {"type": "string", "pattern": "^\\.claude/work-packets/[^\\\\:]+\\.json$"},
-    "answer_path": {"type": "string", "pattern": "^\\.claude/submissions/[^\\\\:]+/answer\\.json$"},
+    "answer_path": {"type": "string", "pattern": "^(\\.claude/submissions/[^\\\\:]+|\\.loop-submissions/s7/packet-[a-f0-9]{64}/[A-Za-z0-9._-]+)/answer\\.json$"},
     "draft": {"$ref": "stage-answer-s7.schema.json"}
   },
   "$defs": {
