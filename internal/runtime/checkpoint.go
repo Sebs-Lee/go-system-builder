@@ -72,7 +72,11 @@ func (s *Store) publishCheckpointLocked() error {
 	if s.offlineRecovery || s.root == "" {
 		return nil
 	}
-	state, err := s.read()
+	stateBytes, err := os.ReadFile(s.statePath)
+	if err != nil {
+		return fmt.Errorf("read runtime: %w", err)
+	}
+	state, err := s.decodeState(stateBytes)
 	if err != nil {
 		return err
 	}
@@ -87,10 +91,6 @@ func (s *Store) publishCheckpointLocked() error {
 		return err
 	}
 	if err := validateStateJournalPair(state, journal); err != nil {
-		return err
-	}
-	stateBytes, err := os.ReadFile(s.statePath)
-	if err != nil {
 		return err
 	}
 	var journalBytes []byte

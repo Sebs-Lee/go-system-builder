@@ -1628,27 +1628,30 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 			return Snapshot{}, fmt.Errorf("packet body index candidate invalid: %w", err)
 		}
 	}
-	if err := s.validateCheckpointPublicationBudget(state, journalEvent, existingJournal); err != nil {
+	// Freeze the final externalized representation once; pending coherence checks
+	// state/event linkage and recovery independently verifies the hashes.
+	stateDocument, err := jsonDocumentBytes(state)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	eventLine, err := jsonLineBytes(journalEvent)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if err := s.validateCheckpointPublicationBytesBudget(state, stateDocument, eventLine, existingJournal); err != nil {
 		return Snapshot{}, err
 	}
 	previousStateSHA256, err := hashState(previousState)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	stateSHA256, err := hashState(state)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	journalEventBytes, err := jsonLineBytes(journalEvent)
-	if err != nil {
-		return Snapshot{}, err
-	}
+	stateSHA256 := sha256Hex(stateDocument)
 	pending := commitPending{
 		SchemaVersion:        "1.0.0",
 		PreviousStateSHA256:  previousStateSHA256,
 		PreviousRevision:     expectedRevision,
 		StateSHA256:          stateSHA256,
-		JournalEventSHA256:   sha256Hex(journalEventBytes),
+		JournalEventSHA256:   sha256Hex(eventLine),
 		RequestID:            stringValue(journalEvent["request_id"]),
 		IdempotencyKey:       mutation.IdempotencyKey,
 		RetainLastTransition: mutation.RetainLastTransition,
@@ -1666,10 +1669,10 @@ func (s *Store) applyMutation(expectedRevision int, mutation Mutation) (Snapshot
 	if err := atomicWriteJSON(s.commitMarkerPath(), pending); err != nil {
 		return Snapshot{}, fmt.Errorf("record pending runtime commit: %w", err)
 	}
-	if err := atomicWriteJSON(s.statePath, state); err != nil {
+	if err := atomicWriteBytes(s.statePath, stateDocument, ".loop-state-*.tmp"); err != nil {
 		return Snapshot{}, fmt.Errorf("write committed runtime state: %w", err)
 	}
-	if err := appendJSONLine(s.journalPath, journalEvent); err != nil {
+	if err := appendJournalBytes(s.journalPath, eventLine); err != nil {
 		return Snapshot{}, fmt.Errorf("append committed runtime journal: %w", err)
 	}
 	if err := s.maybeRotateJournalLocked(); err != nil {
@@ -3310,6 +3313,15 @@ func emitJournalRotationDiagnostic(path string) {
 }
 
 func appendJSONLine(path string, value any) error {
+	data, err := jsonLineBytes(value)
+	if err != nil {
+		return err
+	}
+	return appendJournalBytes(path, data)
+}
+
+// appendJournalBytes appends the already encoded event, including its LF.
+func appendJournalBytes(path string, data []byte) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open journal: %w", err)
@@ -3317,14 +3329,21 @@ func appendJSONLine(path string, value any) error {
 	defer file.Close()
 
 	writer := bufio.NewWriter(file)
-	if err := json.NewEncoder(writer).Encode(value); err != nil {
-		return fmt.Errorf("encode journal: %w", err)
+	n, err := writer.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return fmt.Errorf("write journal: %w", err)
 	}
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("flush journal: %w", err)
 	}
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync journal: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close journal: %w", err)
 	}
 	emitJournalRotationDiagnostic(path)
 	return nil

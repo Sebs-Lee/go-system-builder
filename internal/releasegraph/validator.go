@@ -273,6 +273,12 @@ func shouldSkipPathReference(raw string) bool {
 	if strings.HasPrefix(raw, ".claude/") {
 		return true
 	}
+	// Native stage answers are created in the target project at runtime, not
+	// shipped in a release. Clean the path first so an escape from this root
+	// cannot exempt an unrelated static dependency.
+	if strings.HasPrefix(filepath.ToSlash(filepath.Clean(raw)), ".loop-submissions/") {
+		return true
+	}
 	// The project map is created by the installer from
 	// docs/project-map-template.md. It is intentionally absent from the
 	// distributable template because it is instance-specific, but methodology
