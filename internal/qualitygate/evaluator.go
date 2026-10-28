@@ -119,6 +119,16 @@ func evidenceKindsEqual(requirementKind, actualKind string) bool {
 	return evidence.DefaultCatalog().Accepts(requirementKind, actualKind)
 }
 
+// s5DocumentReviewRequirement reports whether the requirement is satisfied by
+// S5 document-review evidence. S5 evidence carries no review_round by design
+// (work_packet.go rejects it, the envelope has no such field); its freshness
+// is the S5 entry tip (currentS5Evidence), not the S7 review round. Comparing
+// its review_round against review.round would deadlock every generation that
+// has ever run S7 before returning to S5.
+func s5DocumentReviewRequirement(requirement EvidenceRequirement) bool {
+	return evidenceKindsEqual(requirement.Kind, "document_review")
+}
+
 func currentS5Evidence(state map[string]any, evidenceID, kind string) bool {
 	if !runtime.PacketEnabled(state) || !evidenceKindsEqual("document_review_record", kind) {
 		return true
@@ -895,7 +905,7 @@ func envelopeMatchesAnyRequirement(envelope evidenceEnvelope, index map[string]a
 			!containsString(requirement.Conclusions, envelope.Conclusion) {
 			continue
 		}
-		if requirement.CurrentReviewRound &&
+		if requirement.CurrentReviewRound && !s5DocumentReviewRequirement(requirement) &&
 			(envelope.ReviewRound != currentRound || intValue(index["review_round"]) != currentRound) {
 			continue
 		}
@@ -936,7 +946,7 @@ func qualifiedEvidence(
 			index["invalidated_by"] != nil {
 			continue
 		}
-		if requirement.CurrentReviewRound && intValue(index["review_round"]) != currentRound {
+		if requirement.CurrentReviewRound && !s5DocumentReviewRequirement(requirement) && intValue(index["review_round"]) != currentRound {
 			continue
 		}
 		path := stringValue(index["path"])
